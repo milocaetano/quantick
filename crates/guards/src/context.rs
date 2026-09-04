@@ -47,7 +47,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Policy};
+use crate::ratchet::{self, Baseline, Policy};
 
 /// Bytes above which a context file must carry a baseline entry.
 ///
@@ -268,6 +268,13 @@ fn relative_to(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// What every tracked path measures today, summed, for
+/// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
+/// walk it sums, which is the one thing that differs per guard.
+pub fn measured(root: &Path) -> usize {
+    ratchet::total(&measure(root).counts)
 }
 
 /// Byte counts for every context file, sorted by path.

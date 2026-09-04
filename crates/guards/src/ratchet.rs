@@ -35,6 +35,23 @@ use crate::Finding;
 /// somebody reflows the file.
 pub const BUDGET_DIRECTIVE: &str = "!budget";
 
+/// What a guard's own walk measured, summed.
+///
+/// One owner for the arithmetic, three one-line callers that each name their
+/// own `measure`. The three copies this replaces were byte-identical, in a
+/// change that elsewhere removed a duplicated constant for exactly this
+/// reason — and the failure they invited is quiet: a guard summing its counts
+/// differently from its siblings makes [`crate::report`] print three totals
+/// that are not comparable, with nothing to fail.
+///
+/// Deliberately the *measurement* and not [`Baseline::recorded`]. The budget
+/// caps what the repository has signed for; this is what its files actually
+/// weigh, and the gap between the two is the debt `--tighten` has yet to
+/// write off.
+pub fn total(counts: &[(String, usize)]) -> usize {
+    counts.iter().map(|(_, count)| count).sum()
+}
+
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
 /// rewrite it.
 #[derive(Debug)]

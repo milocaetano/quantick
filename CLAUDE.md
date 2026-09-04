@@ -15,7 +15,9 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-`cargo test -p quantick-guards` runs the repository guards in about a second — that crate has no dependencies to build, so ask it after a batch of edits rather than at the end of a suite run. A `PostToolUse` hook runs the same binary over each edited file, but a fresh worktree has no `target/`, so it reports nothing at all — not "clean", *nothing* — until `cargo build -p quantick-guards` has run there. Advisory; gates nothing.
+`cargo test -p quantick-guards` runs the guards in about a second — no dependencies to build, so ask it after a batch of edits, not at the end of a suite. The `PostToolUse` hook runs the same binary per edited file; advisory, gates nothing, and in a fresh worktree reports nothing at all — not "clean", *nothing* — until `cargo build -p quantick-guards` has run there.
+
+`cargo run -p quantick-guards -- --report` prints the numbers a refactor is judged on — lines per crate, largest files, widest structs, each ratchet against its budget — deterministically, so two runs diff into what a merge changed.
 
 CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
 
@@ -51,7 +53,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 
 ## Keeping the instructions small
 
-The same ratchet over the other tree — `crates/guards/src/context.rs`, ceilings in `context-baseline.txt`, mechanism shared with the size guard in `ratchet.rs`. It counts **bytes** (prose wrapped at 80 columns makes a line count meaningless) of what a session loads: this file, `AGENTS.md`, every `.md` under `.claude/skills/`. Goal files are out of scope on purpose.
+The same ratchet over the other tree — `crates/guards/src/context.rs`, ceilings in `context-baseline.txt`, mechanism shared with `size` in `ratchet.rs`. It counts **bytes** of what a session loads: this file, `AGENTS.md`, every `.md` under `.claude/skills/`. Goal files are out of scope on purpose.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
 - **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.
@@ -70,7 +72,7 @@ The same ratchet over the other tree — `crates/guards/src/context.rs`, ceiling
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
 - **One mission, one tier** — `/mission` takes `small` (the default), `medium`, `high` or `max`, scaling the ceremony and whether `delivery-review` runs. `small` is the only tier the hooks see; the skill owns the table.
-- **Arch-review before PR** — over `git diff origin/main...HEAD` (the remote ref deliberately: `main...HEAD` in a worktree credits other branches' merged work to this one). Its step 0 runs `code-review` on the same diff. Resolve every Blocker and Should-fix; note deferrals in the PR body. A docs/skills change waives shape dimensions 1–7 and 9, never 8 and never step 0.
+- **Arch-review before PR** — over `git diff origin/main...HEAD`. Its step 0 runs `code-review` on the same diff. Resolve every Blocker and Should-fix; note deferrals in the PR body. A docs/skills change waives shape dimensions 1–7 and 9, never 8 and never step 0.
 - **Delivery-review before PR** — arch-review asks whether the branch is well built, never whether it is what was asked for. Runs last, over the branch as shipped, grading every ask in the goal file (`.claude/GOAL.md` or its `GOAL-archive-<slug>.md`, committed before either review) and every criterion as DELIVERED / PARTIAL / MISSING / UNPROVEN, from a fresh-context subagent. Passes only when nothing is unmet. A `small` mission is exempt, bounded by a diff-size ceiling that revokes the exemption if the branch grows. A branch not from `/mission` is graded against its issue's criteria, and the verdict says so.
 - **The review chain has a budget: three rounds per branch**, then the remainder ships as recorded PR follow-ups. A round is one pass by everything that owes the branch a review — arch-review's bug pass and shape pass, then delivery-review — plus the commit answering them; not three per skill, since a fix commit stales both markers and re-runs both. Nothing is discarded to fit: findings defer into the PR body with their severity. An open Blocker never defers, and if it runs the budget out the branch goes to the trader. On reaching it, say the shape — findings shrinking is convergence, findings flat or climbing into the last round's code is a design problem.
 - **Subagents are routed by model, named at the call** — retrieval `haiku`, applying someone else's checklist `sonnet`, open judgement (bugs, docking, design) the default strong model. Omitting the field inherits the caller's and bills retrieval at open-judgement rates. `delivery-review`'s criteria pass is the standard the next routed site meets.
