@@ -29,6 +29,8 @@ pub mod metatrader;
 pub mod mt5_bridge;
 pub mod ohlcv_plan;
 pub mod replay;
+#[cfg(test)]
+mod scratch;
 pub mod stall;
 
 use std::path::PathBuf;
