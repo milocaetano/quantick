@@ -6,8 +6,7 @@
 //! sit together because they answer one question from one set of counters,
 //! and because the log line and the bar must never be able to disagree.
 
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 

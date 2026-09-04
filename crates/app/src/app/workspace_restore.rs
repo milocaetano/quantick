@@ -8,8 +8,7 @@
 //! `app.rs` because nothing else in the window needs to see it.
 
 use crate::state::BarSpec;
-use crate::tab::CanvasLayout;
-use crate::tab::LegendFold;
+use crate::tab::{CanvasLayout, LegendFold};
 use crate::ui_state;
 
 use super::{FIRST_TAB_ID, QuantickApp, saved_context_intervals};

@@ -1,12 +1,13 @@
 //! The harness demo appliers: the launch hooks that stage a state a
 //! screenshot needs and no click can reach.
 //!
-//! Each is one `QUANTICK_*` hook's other half — the hook itself is read in
-//! [`super::QuantickApp::new_with_workspace`] and parked on the application,
-//! and the method here spends it on the first frames, once the panes have a
-//! viewport to place objects against. They are grouped because they share
-//! that shape and the constants below, and because nothing else calls them:
-//! `draw_frame` runs the group and moves on.
+//! Each is one `QUANTICK_*` hook's other half. The hook is read at launch —
+//! in [`super::QuantickApp::new_with_workspace`] for the evidence bundle, in
+//! [`crate::harness`] for the rest — and parked on the application; the
+//! method here spends it on the first frames, once the panes have a viewport
+//! to place objects against. They are grouped because they share that shape
+//! and the constants below, and because one caller runs the whole group:
+//! `draw_frame` applies them in order and moves on.
 //!
 //! No hook is declared here. Every `QUANTICK_*` these bodies name, they name
 //! in a doc comment or a log message; the reads themselves stay beside the
@@ -16,13 +17,8 @@
 use eframe::egui;
 
 use crate::drawings;
-use crate::harness::DrawingDraft;
-use crate::harness::DrawingsDemo;
-use crate::harness::FrvpDemo;
-use crate::harness::StrategyDemoMode;
-use crate::harness::VenueHistoryDemo;
-use crate::pane;
-use crate::pane::ChartPane;
+use crate::harness::{DrawingDraft, DrawingsDemo, FrvpDemo, StrategyDemoMode, VenueHistoryDemo};
+use crate::pane::{self, ChartPane};
 use crate::tab::CanvasLayout;
 
 use super::{DEMO_VISIBLE_SLOTS, QuantickApp};
