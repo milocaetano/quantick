@@ -14,11 +14,8 @@ before doing anything else.
 same instruction. Anything else is objective text and the objective keeps every
 word of it. With no tier given, the mission runs at **`small`**.
 
-The bare form misreads an objective that genuinely opens with one of those
-words (`/mission small fonts are unreadable`). Two things hold it, and neither
-pretends to be a parser: step 1's echo names **what the tier drops**, not
-merely the word it read, and the flagged form exists for exactly the sentence a
-bare word guesses wrong on. Use it when the tier word reads as an adjective.
+An objective that genuinely starts with a tier word uses the flagged form so
+the adjective is not parsed as a tier; step 1's echo exposes any misparse.
 
 The mission is the orchestrator: it decides which other skills are part of
 *done* so the user never has to list them. One session, one mission, one
@@ -60,15 +57,10 @@ than it looked, and rewrite the tier file from step 6 when you do. Lowering one
 mid-mission cannot be told apart from dodging a review that was about to fail,
 so it is not available.
 
-**What `small` costs at the gate.** It is the only tier `pr-gate` can see: a
-`small` branch opens its PR on `arch-review-ok` alone. That hole is bounded
-rather than trusted — the exemption lapses once the branch exceeds
-`SMALL_TIER_MAX_CHANGED_LINES` in `guardrails.sh` (insertions plus deletions
-against `origin/main`), and past it the branch pays in full whatever the tier
-file says. So the word has to be true when the branch *ships*: a `small`
-mission that grows either raises its tier and runs `delivery-review`, or splits
-until a branch really is small. Shrinking a diff to get under a review is the
-dishonest third option. `.claude/hooks/README.md` owns the mechanism.
+`pr-gate` exempts `small` from `delivery-review` only while insertions plus
+deletions against `origin/main` stay within `SMALL_TIER_MAX_CHANGED_LINES`.
+Past it, raise the tier or split the work; never shrink a diff to evade review.
+`.claude/hooks/README.md` owns the mechanism.
 
 ## Steps
 
@@ -100,9 +92,6 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
      for `cargo clippy` to pass. Step 4's table is their provenance.
    - Numbers are stable for the life of the mission. Never renumber. A
      withdrawn ask stays on the ledger, struck through, with the reason.
-
-   The ledger is what turns "they only did part of it" from a feeling into a
-   detectable event.
 
 3. **Interrogate — once, before any work starts.** Raise everything that
    qualifies in a single `AskUserQuestion` call (at most four questions,
@@ -141,11 +130,8 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    trader**. A decision recorded there is settled: re-opening one is a scope
    change.
 
-   **When more than four things qualify**, rank by the cost of being wrong —
-   how much work a wrong guess throws away, and how hard it is to reverse — ask
-   the top four, and record every one you did not ask as an `S` marked *wanted
-   to ask*. Dropping the fifth ambiguity in silence is the same failure as
-   dropping the fifth ask.
+   **When more than four things qualify**, ask the four costliest to get wrong
+   and record every omitted one as an `S` marked *wanted to ask*.
 
    If nothing qualifies, say so in one line. Legitimate, but stated, never
    silent. After this round the mission runs on its own: a later doubt becomes
@@ -173,9 +159,7 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
    | Docs/skills only | four checks still run; `arch-review`'s shape dimensions 1–7 and 9 waived — **dimension 8 is not**, and neither is step 0; `pr-gate` wants whichever markers the tier owes. The waiver covers prose: a shell script, a config file or a test shipping alongside it takes the full shape pass |
 
-   Write down what is **not applicable and why**. A gate silently omitted and
-   one deliberately excluded look identical to the next reader, and only one of
-   them is honest.
+   Write down every non-applicable gate and why it does not apply.
 
    ### Closing steps are not criteria
 
@@ -184,12 +168,7 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    under **Closing steps**. **At `small` the first is not listed at all** — a
    closing step the mission is exempt from is not one it owes, and writing it
    down leaves the archive recording an obligation nothing will discharge.
-   Archiving `GOAL.md` is *not* among them: step 8 puts it before the reviews.
-
-   They are not criteria because they cannot be graded when the grading
-   happens — `delivery-review`'s own verdict does not exist while it is being
-   written, so written as criteria they come back UNPROVEN on every mission and
-   burn the fix loop on gaps no edit can close.
+   Archiving `GOAL.md` is not among them: step 8 puts it before the reviews.
 
    Present the merged checklist to the user before starting work.
 
@@ -206,23 +185,12 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    acceptance criteria; what is not applicable and why; and last, **the request
    as received, quoted in full and verbatim**.
 
-   The tier line is not bookkeeping: `delivery-review` reads this file and
-   nothing else, so a branch declaring `small` needs the file to say why the
-   exemption was earned. At `small` the file may drop the decisions and the
-   not-applicable sections when both are empty, and keeps everything else.
-
-   The verbatim request is not optional. Without it the ledger becomes its own
-   source of truth, and an ask dropped while *writing* the ledger is one no
-   reviewer can ever find — `delivery-review` refuses to grade a goal file that
-   lacks it. On the language rule this is **one marked, attributed
-   quotation**, the shape `CLAUDE.md`'s exemption describes; say in the
-   section's preamble why the words are not translated, and keep every other
-   line English.
+   At `small`, the tier line says why the exemption was earned; empty decisions
+   and not-applicable sections may be omitted. `delivery-review` refuses a file
+   without the verbatim request. Mark it as an attributed quotation under
+   `CLAUDE.md`'s language exemption; keep every other line English.
 
    ### The checklist format
-
-   A contract, not a style preference: `delivery-review` reads it, and a
-   criterion it cannot grade is a criterion nobody grades.
 
    ```markdown
    - [ ] **A3** — <one observable outcome, stated so two readers would agree
@@ -232,15 +200,9 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
          → <path where that evidence will be written>. *(R3, R4)*
    ```
 
-   - **Stable ID.** `A1`…`An` mission-specific, `G1`…`Gn` injected gates. Never
-     renumbered.
-   - **One observable outcome.** Not "the ledger works well" — "every ask
-     appears as a numbered line mapped to a criterion". If you cannot say how
-     an outsider would check it, the criterion is not finished being written.
-   - **Evidence kind, and the path it lands at.** Naming the path in advance is
-     what stops evidence from being remembered instead of recorded. Evidence
-     that exists only as a claim in the transcript comes back **UNPROVEN**.
-   - **Ledger back-reference.** The `(R…)` tail, on `A` lines only.
+   Each item has a stable ID (`A` mission-specific, `G` injected), one
+   observable outcome, an evidence kind and destination path, and an `(R…)`
+   tail on `A` lines only. Never renumber. Transcript-only claims are UNPROVEN.
 
    Assumptions get their own list, `S1`…`Sn`, each with the reason it was safe
    to assume rather than ask. `delivery-review` audits that list: an assumption
@@ -251,10 +213,8 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    main checkout, and check the worktree for a live writer before the first
    write. The `worktree-guard` hook denies the write if this step is skipped.
 
-   **Arm the worktree before the first edit**, with both commands, in the new
-   worktree. Both assignments are inside the fence on purpose: `WT` does not
-   survive between tool calls, and an unquoted `<placeholder>` is not a
-   placeholder to `sh` — it is two redirections.
+   **Arm the worktree before the first edit** with both commands. Keep the
+   assignments inside the same shell call and replace every placeholder.
 
    ```sh
    WT=/path/to/worktree
@@ -264,9 +224,7 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
      cargo check -p "$CRATE" --all-targets
    ```
 
-   `CLAUDE.md`'s *Verification loop* owns why. What belongs here is only that
-   the two commands run **before the first edit**: a guard armed afterwards has
-   already missed the edit worth reporting.
+   Both commands run **before the first edit**.
 
    **Record the tier here**, before the first line of work, beside the two
    review markers in that worktree's own git dir — per-branch, never committed:
@@ -279,15 +237,8 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
        > "$(git rev-parse --absolute-git-dir)/mission-tier"
    ```
 
-   **The branch name is half the record.** A bare tier word would outlive the
-   mission that wrote it, and the next branch checked out in that worktree
-   would inherit an exemption it never asked for. `guardrails.sh` refuses a
-   declaration naming any other branch, and refuses the one-field format
-   outright rather than guessing.
-
-   `pr-gate` reads that file and nothing else: a tier declared only in
-   `GOAL.md` changes nothing at the gate. Rewrite the file with the same
-   command whenever the tier is raised.
+   `guardrails.sh` accepts only `<current-branch> <tier>`; `pr-gate` reads that
+   file, not `GOAL.md`. Rewrite it whenever the tier is raised.
 
 7. **Stay on track**: refuse scope creep. A necessary detour is stated
    explicitly and tied back to the mission, or taken to the user. Keep the
@@ -332,13 +283,8 @@ dishonest third option. `.claude/hooks/README.md` owns the mechanism.
    and it is written anyway — the file is the only record of what the branch
    was for.
 
-   The order is the whole point. Archive *after* recording the markers and that
-   commit moves `HEAD`, both markers go stale, `pr-gate` denies — and the
-   cheapest way out is to re-stamp both without re-running either review, which
-   destroys the one property a sha-based marker exists to give. If either
-   review sends you back to the code, you commit again and both markers are
-   stale by design: re-run the review that owns each one before re-recording
-   it.
+   If either review changes the branch, commit and re-run both reviews before
+   recording their now-stale markers again.
 
 9. **Hand over the `/goal` condition.** Skipped at `small`. At every other
    tier, right after step 4, print the built-in command for the user to paste:

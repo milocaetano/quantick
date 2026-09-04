@@ -6,16 +6,18 @@ work happens in a worktree, `arch-review` runs before the PR, and
 instruction in markdown is advice a long session can drift away from. A hook
 is a wall. These make the harness enforce all three.
 
-Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
-`jq`, so it runs under Git Bash on Windows and dash in CI) and covered by
-`guardrails_test.sh`.
+Wired for Claude Code in `.claude/settings.json` and for Codex in
+`.codex/hooks.json`; both call `guardrails.sh` (POSIX sh, no `jq`) and are
+covered by `guardrails_test.sh`. Codex project hooks require one-time trust in
+its `/hooks` screen, as required by the
+[Codex hooks contract](https://learn.chatgpt.com/docs/hooks).
 
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
-| `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
+| `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
 | `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
-| `guard-watch` | `PostToolUse` | `Edit`, `Write` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over the file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
+| `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 
 ## Why `guard-watch` never blocks and never builds
 
@@ -125,16 +127,12 @@ prove the latter from outside the review. What it does remove is the failure
 this repo actually hits: forgetting entirely, or reviewing and then pushing
 three more commits.
 
-### The gate runs from the main checkout
+### The gate runs from the session checkout
 
-`.claude/settings.json` invokes the hook as
-`${CLAUDE_PROJECT_DIR}/.claude/hooks/guardrails.sh`, and that variable points
-at the session's project directory — the main checkout — not at whichever
-worktree a command runs in. So a branch that *edits* `guardrails.sh` is still
-gated by the copy on `main`: the change takes effect for sessions started after
-it merges. Nothing about the gated branch is special; it just cannot test its
-own gate through the hook, which is why `guardrails_test.sh` runs the script
-directly.
+Both host configurations resolve `guardrails.sh` from the git root where the
+session started, not from a worktree named inside a later command. A branch
+editing the script therefore tests it directly with `guardrails_test.sh`; the
+hook behavior changes for sessions started from that branch or after it merges.
 
 ## Why the filtering lives in the script
 
@@ -174,38 +172,25 @@ and then pushing three more commits.
 
 ### What worktree-guard does not see
 
-It matches `Edit|Write|NotebookEdit`, so it guards writes made through the file
-tools. A write driven from a shell — `Set-Content`, `sed -i`, `python` editing
-a file in place, a heredoc redirect — reaches the main checkout unguarded, and
-this repo's own notes make scripted edits routine. Same reasoning as above:
-deciding "does this command write a file, and where" from a command string is a
-larger version of the problem that would not converge for one named program.
+It guards Claude file tools and Codex `apply_patch`; for the latter it reads
+every Add, Update, Delete, or Move destination header from
+`tool_input.command`. A write driven from a shell — `Set-Content`, `sed -i`, a
+script, or a redirect — remains unguarded because reliably deriving its targets
+requires parsing the shell.
 
 ## Fail-open by design
 
-Anything `guardrails.sh` cannot determine exits 0 and the normal permission
-flow applies: no `file_path` in the payload, a path outside a git repo, a
-`git` invocation that errors. A guardrail that blocks the session over its own
-bugs would be worse than no guardrail, and the rules it protects are also
-written down in CLAUDE.md.
+Anything `guardrails.sh` cannot determine exits 0 and normal permissions apply:
+no edit path or patch header, a path outside a repository, or a failed `git`
+query. The rules it protects are also written in `CLAUDE.md`.
 
 ## Overrides
 
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
-- Paths under `.claude/` are always allowed on the main checkout, even while
-  it sits on `main`: the goal file, its archives and the skills live there by
-  design, and blocking them would break the workflow the guard exists to
-  protect.
-
-  **This is the guard's broadest hole and it is worth naming.** The exemption
-  covers `.claude/hooks/guardrails.sh` and `.claude/settings.json` — the two
-  files that arm every session — so a single `Edit` on the main checkout
-  disarms both gates for every branch, with no worktree, no branch and no
-  review. Narrowing it was tried on this branch and reverted: the carve-out
-  guarded the script but not `settings.json`, and the version that guarded
-  both still could not see a shell-driven write. It is documented rather than
-  half-closed, which is the same call made about `runs_command` above.
+- `.claude/GOAL.md` is always allowed because it is untracked working state.
+  Archives, skills, settings, and hooks are tracked artifacts and receive the
+  normal worktree protection.
 
 - `pr-gate` has **no override**, and that is a real cost rather than a design
   boast. `runs_command` matches the gated command at the start of *any*

@@ -1,5 +1,5 @@
 # The recorded ceiling, in bytes, for every context file over the threshold —
-# the files a Claude session loads before it reads any code. One
+# the files a Claude Code or Codex session loads before it reads any code. One
 # `path ceiling` pair per line; `#` starts a comment.
 #
 # These are costs, not targets. Every byte here is paid on every turn of every
@@ -18,7 +18,7 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 22007
+.claude/skills/mission/SKILL.md 18664
 .claude/skills/arch-review/SKILL.md 19573
 .claude/skills/delivery-review/SKILL.md 18087
 
