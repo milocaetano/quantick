@@ -18,6 +18,7 @@ quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
+quantick-orderflow = { path = "../orderflow" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }

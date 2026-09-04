@@ -77,6 +77,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("mcp", &["control", "control-local"]),
     ("engine", &[]),
     ("orderbook", &[]),
+    // The order-flow engine reads bars from `engine` and depth events from
+    // `orderbook`, and is told the time by its caller. It sits beside
+    // `indicators`: something the chart draws and `backtest` may consume.
+    ("orderflow", &["engine", "orderbook"]),
     ("replay", &["engine"]),
     // The venue-neutral trading vocabulary sits beside `engine`, not above
     // it: it is what `sim` and any future broker adapter both speak.

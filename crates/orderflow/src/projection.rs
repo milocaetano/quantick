@@ -260,13 +260,13 @@ pub struct HeatmapProjection {
 }
 
 impl HeatmapProjection {
-    /// A frame with nothing to draw: the seed the render tests build a
+    /// A frame with nothing to draw: the seed the chart's render tests build a
     /// projection from, so they exercise the same struct the pipeline emits.
+    /// Not `cfg(test)`: those tests live in the crate that links this one.
     ///
     /// The pipeline itself starts from [`SettledProjection::empty`] — it always
     /// has a live half to attach, even when that half is empty too.
-    #[cfg(test)]
-    pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
+    pub fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
             summarized: false,
@@ -365,7 +365,7 @@ pub struct LiveMarks {
 
 impl SettledProjection {
     /// A settled half with nothing in it.
-    pub(crate) fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
+    pub fn empty(enabled: bool, effective_grouping: EffectiveGrouping) -> Self {
         Self {
             enabled,
             summarized: false,
@@ -1833,10 +1833,10 @@ fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
     positive[rank.saturating_sub(1)]
 }
 
-/// Shared with the live strip (`crate::live_strip`), which normalizes its
+/// Shared with the live strip in the chart, which normalizes its
 /// depth rows against the same reference the heatmap cells used, so one wall
 /// reads with one colour on both sides of the chart edge.
-pub(crate) fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
+pub fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
     if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
         return 0.0;
     }
@@ -1848,7 +1848,7 @@ pub(crate) fn normalized_log_intensity(quantity: Decimal, reference: Decimal, ga
 /// Shared with the live strip's aggression histogram, which sizes its bars by
 /// the same square-root area rule the bubbles use — twice the quantity reads
 /// as twice the ink, on both.
-pub(crate) fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
+pub fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
     if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
         return 0.0;
     }
@@ -1862,10 +1862,8 @@ pub(crate) fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orderflow::config::{
-        BubbleSizeReference, BubbleStyle, DisplayGrouping, LiveLaneStyle,
-    };
-    use crate::orderflow::history::LiquidityHistory;
+    use crate::config::{BubbleSizeReference, BubbleStyle, DisplayGrouping, LiveLaneStyle};
+    use crate::history::LiquidityHistory;
     use quantick_engine::{Bar, Side, Trade};
     use quantick_orderbook::BookSide;
     use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
@@ -1877,11 +1875,11 @@ mod tests {
 
     /// The live edge as the chart supplies it while the newest bar is on
     /// screen: the lane shows the recent bars' typical duration, unzoomed.
-    fn live(now_ms: i64, closed: &[Bar]) -> Option<crate::orderflow::LiveEdge> {
-        Some(crate::orderflow::LiveEdge {
+    fn live(now_ms: i64, closed: &[Bar]) -> Option<crate::LiveEdge> {
+        Some(crate::LiveEdge {
             now_ms,
-            window_ms: crate::orderflow::reserved_span_ms(closed),
-            reference_ms: crate::orderflow::reserved_span_ms(closed),
+            window_ms: crate::reserved_span_ms(closed),
+            reference_ms: crate::reserved_span_ms(closed),
             on_newest_bar: true,
         })
     }
@@ -1959,7 +1957,7 @@ mod tests {
             0,
             &closed,
             None,
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
                 reference_ms: 1_500,
@@ -2020,7 +2018,7 @@ mod tests {
             0,
             &closed,
             None,
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
                 reference_ms: 1_500,
@@ -2097,7 +2095,7 @@ mod tests {
             0,
             &closed,
             None,
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
                 reference_ms: 1_500,
@@ -2159,7 +2157,7 @@ mod tests {
             0,
             &closed,
             None,
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 3_900,
                 window_ms: 1_500,
                 reference_ms: 1_500,
@@ -2216,7 +2214,7 @@ mod tests {
                 0,
                 &closed,
                 None,
-                Some(crate::orderflow::LiveEdge {
+                Some(crate::LiveEdge {
                     now_ms,
                     // A lane wide enough to cover more than one bar, which is
                     // what makes the seam fall inside a bar rather than on it.
@@ -2854,7 +2852,7 @@ mod tests {
                 0,
                 &closed,
                 None,
-                Some(crate::orderflow::LiveEdge {
+                Some(crate::LiveEdge {
                     now_ms: 20_000,
                     window_ms: 5_000,
                     reference_ms: 5_000,
@@ -3230,13 +3228,10 @@ mod tests {
             &[(1, 16_000, "100", "3", Side::Buy)],
         );
         history.install_snapshot(20_000, 1, snapshot(10)).unwrap();
-        assert_eq!(
-            history.tape_age(),
-            Some(crate::orderflow::TapeAge::Behind(4_000))
-        );
+        assert_eq!(history.tape_age(), Some(crate::TapeAge::Behind(4_000)));
 
         let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
-        let window_ms = crate::orderflow::reserved_span_ms(&closed);
+        let window_ms = crate::reserved_span_ms(&closed);
         assert_eq!(window_ms, 10_000, "the lane shows one bar's worth of flow");
 
         let frame_at = |now_ms: i64, history: &LiquidityHistory| {
@@ -3274,10 +3269,7 @@ mod tests {
                 &BookDelta::new(11, 11, vec![level("100", "7")], vec![]),
             )
             .unwrap();
-        assert_eq!(
-            history.tape_age(),
-            Some(crate::orderflow::TapeAge::Behind(16_000))
-        );
+        assert_eq!(history.tape_age(), Some(crate::TapeAge::Behind(16_000)));
 
         let starved = frame_at(32_000, &history);
         assert!(
@@ -4220,7 +4212,7 @@ mod tests {
             0,
             &closed,
             Some(&partial),
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 18_100,
                 window_ms: 3_000,
                 reference_ms: 3_000,
@@ -4558,7 +4550,7 @@ mod tests {
                 0,
                 &closed,
                 Some(&partial),
-                Some(crate::orderflow::LiveEdge {
+                Some(crate::LiveEdge {
                     now_ms: 18_100,
                     window_ms,
                     reference_ms: 3_000,
@@ -4624,7 +4616,7 @@ mod tests {
                         0,
                         &closed,
                         Some(&partial),
-                        Some(crate::orderflow::LiveEdge {
+                        Some(crate::LiveEdge {
                             now_ms: 18_100,
                             window_ms,
                             reference_ms: 3_000,
@@ -4727,7 +4719,7 @@ mod tests {
                 0,
                 &closed,
                 Some(&partial),
-                Some(crate::orderflow::LiveEdge {
+                Some(crate::LiveEdge {
                     now_ms: 18_100,
                     window_ms,
                     reference_ms: 3_000,
@@ -4807,7 +4799,7 @@ mod tests {
             0,
             &closed,
             Some(&partial),
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 1_000_100,
                 window_ms: 5_000,
                 reference_ms: 5_000,
@@ -4881,7 +4873,7 @@ mod tests {
             0,
             &closed,
             Some(&partial),
-            Some(crate::orderflow::LiveEdge {
+            Some(crate::LiveEdge {
                 now_ms: 1_000_100,
                 window_ms: 5_000,
                 reference_ms: 5_000,

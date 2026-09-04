@@ -1,11 +1,14 @@
-//! Pure order-flow view model used by the chart heatmap.
+//! The order-flow engine: liquidity history, grouping, timeline and the
+//! settled/live heatmap projections built from L2 depth and prints.
 //!
-//! Nothing in this module depends on `egui`, a renderer, a wall clock or the
+//! Nothing in this crate depends on `egui`, a renderer, a wall clock or the
 //! network. The live feed owns synchronization; this layer retains honest
 //! coverage, compresses displayed liquidity into runs and projects those runs
-//! onto the existing alternative-bar chart.
+//! onto the existing alternative-bar chart. The projection cache is *told*
+//! the time by its caller ([`engine::BookEngine::project_at`]).
 
 pub mod config;
+pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
@@ -50,3 +53,26 @@ pub use projection::{
 pub use scale::SessionScale;
 #[allow(unused_imports)]
 pub use timeline::{BarTimeline, LiveEdge, TimelinePosition, reserved_span_ms};
+
+/// Source-to-consumer delay observed when an event arrives.
+///
+/// `None` when there is no event timestamp to compare. Can be slightly negative
+/// if the local clock is behind the source's — reported as-is (honest), not
+/// clamped.
+#[must_use]
+pub fn feed_lag_ms(received_at_ms: i64, event_time_ms: Option<i64>) -> Option<i64> {
+    event_time_ms.map(|timestamp_ms| received_at_ms.saturating_sub(timestamp_ms))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lag_is_observation_minus_event_time() {
+        assert_eq!(feed_lag_ms(1_000, Some(600)), Some(400));
+        assert_eq!(feed_lag_ms(1_000, None), None);
+        // Local clock behind the exchange: negative lag, reported honestly.
+        assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
+    }
+}

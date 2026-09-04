@@ -28,7 +28,7 @@
 //! the preset explicitly refuses to carry them (a look may not switch a layer),
 //! which left them with no home at all and the tape opening on its defaults
 //! every launch. They resolve to the fields on
-//! [`crate::orderflow::LiveLaneStyle`], same as every other entry resolves to
+//! [`quantick_orderflow::LiveLaneStyle`], same as every other entry resolves to
 //! the one field that already owns its layer.
 //!
 //! The file records each layer's *state*, not a list of hidden ones, because

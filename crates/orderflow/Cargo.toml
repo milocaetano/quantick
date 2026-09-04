@@ -1,0 +1,29 @@
+[package]
+name = "quantick-orderflow"
+description = "Headless order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections built from L2 depth and prints"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+# The depth-event vocabulary this engine consumes: snapshots, level updates,
+# sequence status. `orderbook` is a leaf like `engine`, so this edge points
+# down, never sideways.
+quantick-orderbook = { path = "../orderbook" }
+rust_decimal = { workspace = true }
+# `HeatmapConfig` and its parts are what the chart persists per pane, so the
+# derives live with the types, not with the file that writes them.
+serde = { workspace = true }
+# Log lines only; a facade with no clock or I/O of its own. Nothing below
+# `app` may read a wall clock, and nothing here does — see `README.md`.
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The config round-trip tests parse and print the TOML the chart persists.
+toml = { workspace = true }
+
+[lints]
+workspace = true

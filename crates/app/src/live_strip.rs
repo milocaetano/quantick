@@ -19,7 +19,7 @@
 use quantick_engine::Side;
 use rust_decimal::Decimal;
 
-use crate::orderflow::projection::AggressionPrimitive;
+use quantick_orderflow::projection::AggressionPrimitive;
 
 /// Width of the strip, in pixels. The proposal band is 72–96 px: wide enough
 /// for the histogram to read, narrow enough to never crowd the chart.
