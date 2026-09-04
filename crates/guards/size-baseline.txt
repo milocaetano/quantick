@@ -129,9 +129,31 @@
 # `pane.rs` and `app.rs` were cut in parallel, both lower this line, and the
 # second to land subtracts its own fall from the first's number rather than
 # from the one it measured against. 57,394 - 2,149 = 55,245.
-!budget 55595
+#
+# Then lowered by 3,456 -- `app.rs` from 5,388 to 1,932 -- by the final cut of
+# the same campaign, which moved the last seven `impl QuantickApp` groups to
+# siblings under `crates/app/src/app/`: the control host, the tab lifecycle,
+# the toolbar wiring, the menu bar, the drawing chrome, the replay/history/
+# alarm appliers and `draw_frame`. Same trade as the three cuts before it, and
+# it costs nothing here for the same reason: `menu_bar.rs` (778 production
+# lines), `frame.rs` (732), `replay_and_history.rs` (511), `control_host.rs`
+# (496), `drawing_chrome_wiring.rs` (430), `tabs.rs` (375) and
+# `toolbar_wiring.rs` (307) are each under the 1,500-line threshold, so none
+# takes an entry. They come to 3,629 against a fall of 3,456; the 173
+# difference is seven module headers, seven import blocks and the
+# `impl QuantickApp` wrappers -- the price of seven addresses, paid once.
+# 55,595 - 3,456 = 52,139.
+#
+# What is left in `app.rs` is the window's definition and nothing else: the
+# struct, `new`, `new_with_workspace`, the pickers and `persist_*`,
+# `adopt_tab`, `arm_strategy_instance`, `attach_surface`, the `eframe::App`
+# impl and `declare_hooks!`. Those stayed on purpose -- they are the regions
+# the paper-policy branch was editing in parallel, and moving them would have
+# turned that branch's edits into modify/delete conflicts. It has since landed,
+# so giving the constructor a shape is the next cut's job, not this one's.
+!budget 52139
 
-crates/app/src/app.rs 5388
+crates/app/src/app.rs 1932
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
