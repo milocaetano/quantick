@@ -87,9 +87,18 @@
 # the budget alone should be able to see that this branch cost 13 lines and ask
 # whether an index that cannot drift was worth them. Nothing was extracted in
 # return, and that is the honest shape of it: this is a raise, not a trade.
-!budget 61410
+#
+# Then lowered by 1,863 -- the whole of `app.rs`'s fall from 9,362 to 7,499 --
+# by `--tighten` after four `impl QuantickApp` groups moved to siblings under
+# `crates/app/src/app/`: the harness demo appliers, the drawing input, the
+# health summary and the workspace restore. None of the four files reaches
+# the 1,500-line threshold, so none of them takes an entry here and the fall
+# is a trade of nothing for 1,863: the lines still exist, they are simply no
+# longer in the file the ratchet was written for. The first cut of this
+# sprint that moves this number down rather than sideways.
+!budget 59547
 
-crates/app/src/app.rs 9362
+crates/app/src/app.rs 7499
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
