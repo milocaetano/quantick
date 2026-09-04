@@ -709,7 +709,7 @@ impl PaperAccount {
     ) -> Option<(Decimal, Bracket)> {
         let (state, resting) = self.risk_sized(side, reference, ticket, env);
         if state.blocks_entry(self.risk.lock) {
-            self.push_toast(format!("SIM: {}", state.sentence()));
+            self.set_toast(format!("SIM: {}", state.sentence()));
             return None;
         }
         if let Some(quantity) = state.derived_quantity() {
@@ -724,7 +724,7 @@ impl PaperAccount {
                 self.aim_bracket(side, reference, quantity, ticket, env),
             )),
             Err(complaint) => {
-                self.push_toast(complaint);
+                self.set_toast(complaint);
                 None
             }
         }
@@ -791,29 +791,18 @@ impl PaperAccount {
         }
     }
 
-    /// Post an acknowledgement for the host to hand on. An outbox, not a
-    /// toast: this module owns no lane and no clock, and the message leaves
-    /// through [`AccountResponse::toast`].
-    fn push_toast(&mut self, message: String) {
-        self.outbox.toast = Some(message);
-    }
-
-    /// Post an acknowledgement on the host's behalf. The ticket's own
-    /// `show_toast` - the door `QUANTICK_TOAST=paper` knocks on - comes
-    /// through here, so there is one slot and not two.
+    /// Post an acknowledgement. An outbox, not a toast: this module owns no
+    /// lane and no clock, and the message leaves through
+    /// [`AccountResponse::toast`]. The ticket's own `show_toast` - the door
+    /// `QUANTICK_TOAST=paper` knocks on - comes through here too, so there is
+    /// one slot and one way into it.
     pub(crate) fn set_toast(&mut self, message: String) {
         self.outbox.toast = Some(message);
     }
 
-    /// Test-only: whether an acknowledgement is waiting. A question rather
-    /// than a field, which is what keeps the outbox private now that the
-    /// ticket no longer owns one.
-    #[cfg(test)]
-    pub(crate) fn has_toast(&self) -> bool {
-        self.outbox.toast.is_some()
-    }
-
-    /// Test-only: the acknowledgement waiting, if any.
+    /// Test-only: the acknowledgement waiting, if any. A question rather than
+    /// a field, which is what keeps the outbox private now that the ticket no
+    /// longer owns one.
     #[cfg(test)]
     pub(crate) fn peek_toast(&self) -> Option<&String> {
         self.outbox.toast.as_ref()
@@ -860,7 +849,7 @@ impl PaperAccount {
         self.journal_warned = false;
         let env = account_env!(self);
         self.report.trades_dir_changed(&env);
-        self.push_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
+        self.set_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
     }
 
     /// Apply a raw simulator command through the normal event funnel
@@ -970,7 +959,7 @@ impl PaperAccount {
             // policy inside the domain crate. The trader gets the toast; a
             // named caller gets the same sentence as an error, because
             // `control::trade` asks this same function first.
-            self.push_toast(format!("SIM: {refusal}"));
+            self.set_toast(format!("SIM: {refusal}"));
             return Vec::new();
         }
         let events = self.venue.submit(intent);
@@ -1643,7 +1632,7 @@ impl PaperAccount {
     /// backup). One dialog at a time.
     pub(crate) fn start_import(&mut self) {
         if self.import_rx.is_some() {
-            self.push_toast("SIM: an import is already running.".to_owned());
+            self.set_toast("SIM: an import is already running.".to_owned());
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -1674,7 +1663,7 @@ impl PaperAccount {
         self.import_rx = None;
         let Some(source) = choice else { return };
         let summary = crate::paper_home::consolidate_into(&self.dir, &[source]);
-        self.push_toast(crate::paper_home::import_toast(&summary));
+        self.set_toast(crate::paper_home::import_toast(&summary));
         let env = account_env!(self);
         self.report.history_imported(&env);
     }
@@ -1688,7 +1677,7 @@ impl PaperAccount {
     /// toast answers with the path or the failure.
     pub(crate) fn start_export(&mut self) {
         if self.export_rx.is_some() {
-            self.push_toast("SIM: an export is already running.".to_owned());
+            self.set_toast("SIM: an export is already running.".to_owned());
             return;
         }
         // The saved half of the export, loaded if the ledger has not been
@@ -1720,7 +1709,7 @@ impl PaperAccount {
         );
         rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
         if rows.is_empty() {
-            self.push_toast("SIM: nothing to export yet - close a trade first.".to_owned());
+            self.set_toast("SIM: nothing to export yet - close a trade first.".to_owned());
             return;
         }
         let text = export_csv(&rows);
@@ -1761,7 +1750,7 @@ impl PaperAccount {
                     trades = count,
                     "exported the simulated trade history"
                 );
-                self.push_toast(format!("Exported {count} trades to {}", elide_path(&path)));
+                self.set_toast(format!("Exported {count} trades to {}", elide_path(&path)));
             }
             Err(error) => {
                 tracing::warn!(
@@ -1772,7 +1761,7 @@ impl PaperAccount {
                     action = "export_not_saved",
                     "could not write the trade export"
                 );
-                self.push_toast(
+                self.set_toast(
                     "SIM: could not write the export - see the log for the path.".to_owned(),
                 );
             }
@@ -1799,13 +1788,13 @@ impl PaperAccount {
         }
         for event in events {
             match event {
-                VenueEvent::Rejected(reason) => self.push_toast(format!("SIM: {reason}")),
+                VenueEvent::Rejected(reason) => self.set_toast(format!("SIM: {reason}")),
                 VenueEvent::BracketDropped { reason } => {
-                    self.push_toast(format!("SIM: dropped at the fill - {reason}"));
+                    self.set_toast(format!("SIM: dropped at the fill - {reason}"));
                 }
                 VenueEvent::Filled(fill) => {
                     if matches!(fill.role, quantick_sim::FillRole::Entry(_)) {
-                        self.push_toast(format!(
+                        self.set_toast(format!(
                             "SIM fill: {} {} @ {}",
                             side_word(fill.side),
                             fmt_decimal(fill.quantity),
@@ -1831,7 +1820,7 @@ impl PaperAccount {
                     // The toast slot holds one message: a healthy "closed"
                     // must not paint over the could-not-save warning.
                     if saved {
-                        self.push_toast(format!(
+                        self.set_toast(format!(
                             // Same reason as the hover card above: the
                             // toast is a proportional-font label.
                             "SIM closed: {} {} for {} pts ({})",
@@ -1850,13 +1839,13 @@ impl PaperAccount {
                     order,
                     reason: quantick_sim::CancelReason::PriceTouched,
                 } => {
-                    self.push_toast(format!("SIM cancelled {}: target traded first", order.id));
+                    self.set_toast(format!("SIM cancelled {}: target traded first", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_sim::CancelReason::AccountOccupied,
                 } => {
-                    self.push_toast(format!(
+                    self.set_toast(format!(
                         "SIM stood down {}: account busy at its price",
                         order.id
                     ));
@@ -1869,13 +1858,13 @@ impl PaperAccount {
                     order,
                     reason: quantick_sim::CancelReason::OcoFilled,
                 } => {
-                    self.push_toast(format!("SIM cancelled {}: its pair filled", order.id));
+                    self.set_toast(format!("SIM cancelled {}: its pair filled", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
                     reason: quantick_sim::CancelReason::PositionClosed,
                 } => {
-                    self.push_toast(format!(
+                    self.set_toast(format!(
                         "SIM cancelled {}: the position it protected is closed",
                         order.id
                     ));
@@ -1884,7 +1873,7 @@ impl PaperAccount {
                     order,
                     reason: quantick_sim::CancelReason::BracketReplaced,
                 } => {
-                    self.push_toast(format!("SIM cancelled {}: protection replaced", order.id));
+                    self.set_toast(format!("SIM cancelled {}: protection replaced", order.id));
                 }
                 _ => {}
             }
@@ -1935,7 +1924,7 @@ impl PaperAccount {
                 action = "trade_not_saved",
                 "could not append to the paper-trading history"
             );
-            self.push_toast(
+            self.set_toast(
                 "SIM: could not save the trade history - see the log for the path.".to_owned(),
             );
         }
