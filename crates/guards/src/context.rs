@@ -1,7 +1,7 @@
-//! A ratchet for the files that are injected into a Claude session.
+//! A ratchet for the files that are injected into an agent session.
 //!
-//! `CLAUDE.md` is read at the start of every session; a skill's `SKILL.md` is
-//! read whole the moment that skill is invoked. Those bytes are paid for on
+//! `CLAUDE.md` and `AGENTS.md` are session instructions; a skill's `SKILL.md`
+//! is read whole the moment that skill is invoked. Those bytes are paid for on
 //! every turn that follows, before a single line of the repository has been
 //! looked at — and unlike the code, nothing has ever rationed them.
 //!
@@ -38,9 +38,9 @@
 //!
 //! Exactly the files a session loads: `CLAUDE.md`, `AGENTS.md` (which
 //! `CLAUDE.md` delegates the crate map to, so a cut that moves weight there
-//! must still be paid for), and every `.md` under `.claude/skills/`. The goal
-//! files under `.claude/` are not in scope — a `GOAL.md` is a record of one
-//! mission, read deliberately and never at start-up, and rationing it would
+//! must still be paid for), and every `.md` under the Claude and Codex
+//! instruction trees. Goal files are not in scope — a `GOAL.md` is a record
+//! of one mission, read deliberately and never at start-up. Rationing it would
 //! push authors to write down less of what they were asked for.
 
 use std::fs;
@@ -90,14 +90,14 @@ pub const BUDGET_SLACK: usize = 4_000;
 /// `--tighten` pulls the number back down whenever prose leaves.
 pub const BUDGET_HEADROOM: usize = 2_000;
 
-/// The directory every skill lives under.
+/// The directories that carry agent instructions.
 ///
 /// Carries its trailing slash so a prefix test is a directory test. Without
 /// it, `.claude/skills-old/notes.md` starts with `.claude/skills` and would be
 /// rationed as a skill — and, worse, an entry recorded for such a file would
 /// never be found by [`measure`], which walks the real directory, so the
 /// guard would report its own scan as a stale entry.
-const SKILLS: &str = ".claude/skills/";
+const INSTRUCTION_DIRS: [&str; 2] = [".claude/skills/", ".agents/"];
 
 /// The context files that are not skills, relative to the workspace root.
 const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
@@ -163,7 +163,11 @@ pub const POLICY: Policy = Policy {
 /// [`check_file`], because those are the two surfaces the edit-time hook
 /// trusts to say the same thing.
 pub fn tracked(relative: &str) -> bool {
-    ROOT_FILES.contains(&relative) || (relative.starts_with(SKILLS) && relative.ends_with(".md"))
+    ROOT_FILES.contains(&relative)
+        || (INSTRUCTION_DIRS
+            .iter()
+            .any(|directory| relative.starts_with(directory))
+            && relative.ends_with(".md"))
 }
 
 /// What a walk of the context tree found.
@@ -299,9 +303,11 @@ pub fn measure(root: &Path) -> Measured {
                 .push(format!("  {name}: could not be read: {e}")),
         }
     }
-    let skills = root.join(SKILLS);
-    if skills.is_dir() {
-        walk(&skills, root, &mut found);
+    for directory in INSTRUCTION_DIRS {
+        let path = root.join(directory);
+        if path.is_dir() {
+            walk(&path, root, &mut found);
+        }
     }
     found.counts.sort();
     found
@@ -334,16 +340,18 @@ pub fn check(root: &Path) -> Vec<Finding> {
     // measures as *empty* — and an empty measurement makes every baseline
     // entry look stale, whose stated remedy is to delete it. That one edit
     // switches the ratchet off for every instruction file at once.
-    let skills = root.join(SKILLS);
-    if !skills.is_dir() {
-        return vec![Finding::new(
-            format!(
-                "  {} is not a readable directory — there is nothing to measure, and every \
-                 baseline entry would otherwise be reported stale",
-                skills.display()
-            ),
-            BASELINE_REMEDY,
-        )];
+    for directory in INSTRUCTION_DIRS {
+        let path = root.join(directory);
+        if !path.is_dir() {
+            return vec![Finding::new(
+                format!(
+                    "  {} is not a readable directory — there is nothing to measure, and every \
+                     baseline entry would otherwise be reported stale",
+                    path.display()
+                ),
+                BASELINE_REMEDY,
+            )];
+        }
     }
     let recorded = match POLICY.baseline(root) {
         Ok(recorded) => recorded,
@@ -438,13 +446,15 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 /// delete prose nobody had added. `check` already refuses the same
 /// conditions; this is the surface that *writes*, so it refuses harder.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    let skills = root.join(SKILLS);
-    if !skills.is_dir() {
-        return Err(format!(
-            "{} is not a readable directory — refusing to tighten from a scan that measured \
-             nothing, which would write a budget missing every skill",
-            skills.display()
-        ));
+    for directory in INSTRUCTION_DIRS {
+        let path = root.join(directory);
+        if !path.is_dir() {
+            return Err(format!(
+                "{} is not a readable directory — refusing to tighten from a scan that measured \
+                 nothing, which would write a budget missing agent instructions",
+                path.display()
+            ));
+        }
     }
     let found = measure(root);
     if !found.unreadable.is_empty() {
@@ -510,6 +520,8 @@ mod tests {
         assert!(tracked(
             ".claude/skills/ui-harness/references/hook-registry.md"
         ));
+        assert!(tracked(".agents/skills/mission/SKILL.md"));
+        assert!(tracked(".agents/references/codex-compatibility.md"));
     }
 
     #[test]
@@ -524,6 +536,7 @@ mod tests {
         // the walk would never reach reports as a stale entry for ever.
         assert!(!tracked(".claude/skills-old/notes.md"));
         assert!(!tracked(".claude/skillsets.md"));
+        assert!(!tracked(".agents-old/skills/mission/SKILL.md"));
     }
 
     #[test]
@@ -534,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn the_scan_finds_claude_md_and_every_skill() {
+    fn the_scan_finds_root_instructions_and_both_skill_surfaces() {
         let found = measure(&workspace_root());
         assert!(
             found.counts.iter().any(|(path, _)| path == "CLAUDE.md"),
@@ -545,7 +558,7 @@ mod tests {
             .iter()
             .filter(|(path, _)| path.ends_with("/SKILL.md"))
             .count();
-        assert!(skills >= 8, "found only {skills} skills");
+        assert!(skills >= 16, "found only {skills} skills across both hosts");
     }
 
     #[test]
@@ -739,6 +752,7 @@ mod tests {
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join(".agents/skills")).expect("scratch dirs are creatable");
         fs::write(
             root.join(BASELINE_FILE),
             format!(

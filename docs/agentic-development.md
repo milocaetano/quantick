@@ -26,9 +26,16 @@ loadable procedure with its own acceptance criteria, invoked by name.
 
 ## The skills
 
-Each is a directory under `.claude/skills/` with a `SKILL.md`. The agent loads
+Each canonical workflow is a directory under `.claude/skills/` with a
+`SKILL.md`. Claude Code invokes it as `/name`. Codex discovers the thin adapter
+with the same name under `.agents/skills/` and invokes it as `$name`; the
+adapter reads the canonical workflow and the shared host mappings, so the two
+agents do not own competing copies. The agent loads
 one when the task matches its description, or when the maintainer types its
 name as a slash command.
+
+The adapter location and `$name` spelling follow the
+[Codex skill discovery contract](https://developers.openai.com/codex/skills).
 
 | Skill | What it owns |
 | --- | --- |
