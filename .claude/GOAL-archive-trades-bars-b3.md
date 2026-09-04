@@ -55,6 +55,11 @@ default-on setting, history list of recorded days, B3-only scope).
   ("roda a ultima versao do quantick e ativa mcp"). Delivered in the session
   before the branch existed (release build of `main` bc39248, control plane
   read over `quantick-mcp`); not graded on the branch.
+- **R11** — A drawing of how the recording would look to the user ("consegue
+  fazer um desenho de como ficaria para o usuario entender que ta gravando
+  ao vivo?"). Delivered in the session before the branch existed, as the
+  artifact D5 names (three versions, the third approved); not graded on the
+  branch.
 
 ## Decisions taken by the trader
 
