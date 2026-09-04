@@ -1,0 +1,23 @@
+A2 — nothing feed-side is defined in crates/app any more.
+
+$ grep -rn "mod history_reach\|mod replay_download" crates/app/src
+(no matches)
+
+$ grep -rn "crate::history_reach\|crate::replay_download" crates/app/src
+(no matches)
+
+Every surviving mention of either name in crates/app is one of:
+  - a struct field or local named history_reach (unchanged, and A5 depends on it)
+  - a path into the feed crate, via the module imports listed below.
+
+$ grep -rn "use quantick_feed::history_reach\|use quantick_feed::replay_download" crates/app/src
+crates/app/src/app/tests/drawings_tests.rs:2:use quantick_feed::history_reach;
+crates/app/src/app/tests/feeds_sources_tests.rs:2:use quantick_feed::history_reach;
+crates/app/src/app/tests/panes_layout_tests.rs:2:use quantick_feed::history_reach;
+crates/app/src/app.rs:55:use quantick_feed::history_reach;
+crates/app/src/config.rs:19:use quantick_feed::history_reach;
+crates/app/src/harness.rs:75:use quantick_feed::history_reach::CampaignEnd;
+crates/app/src/replay_get_data.rs:34:use quantick_feed::replay_download::{
+crates/app/src/replay_view.rs:27:use quantick_feed::replay_download;
+crates/app/src/tab.rs:39:use quantick_feed::history_reach::{
+crates/app/src/toolbar.rs:28:use quantick_feed::history_reach;

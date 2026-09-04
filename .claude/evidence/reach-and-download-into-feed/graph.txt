@@ -1,0 +1,4 @@
+A7 — no new edge, no new dependency.
+
+$ git diff -- crates/pine/tests/workspace_deps.rs crates/feed/Cargo.toml
+(empty above means neither the allowed-edge table nor the feed manifest changed)
