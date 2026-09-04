@@ -88,11 +88,13 @@ foreach ($scene in $scenes) {
     $env:QUANTICK_INDICATORS_STATE = Join-Path $sceneScratch "indicators-state.json"
     $env:QUANTICK_INDICATORS_DIR = Join-Path $sceneScratch "indicators"
     $env:QUANTICK_LAYOUTS = Join-Path $sceneScratch "layouts.json"
-    # The depth book is fed independently of the replay tape - it comes from a
-    # live venue - so a run with network shows a book and one without shows
-    # "no book", and the two are not comparable. Stalling the feed pins it
-    # empty on both builds, which is what makes the comparison mean anything.
-    $env:QUANTICK_FEED_STALL = "silent"
+    # The depth book is fed independently of the replay tape - it comes from
+    # whichever venue the default feed dials - so a run with network paints a
+    # book and one without says "no book", and the two are not comparable.
+    # This config's only feed is a MetaTrader listener on a port nothing ever
+    # connects to, and it names no bridge_command, so nothing is spawned and
+    # no book ever arrives. The tape still comes from the replay recording.
+    $env:QUANTICK_CONFIG = Join-Path $PSScriptRoot "offline.toml"
     if ($ReplayDir -ne "") {
         $env:QUANTICK_REPLAY_DIR = $ReplayDir
         $env:QUANTICK_REPLAY_AUTOSTART = $Autostart

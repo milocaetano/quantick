@@ -362,13 +362,13 @@ them. Neither is a gap the branch failed to notice; each is a criterion the
 trader chose to release once it was measured.
 
 - **A11's first clause — `paper_trading.rs` at most 3,500 production lines.**
-  It fell 1,730, from 6,407 to **4,677**, and stopped there. What remains is
+  It fell 1,760, from 6,407 to **4,647**, and stopped there. What remains is
   about 3,100 lines of genuine drawing and gesture plus about 1,500 of types,
   constants and `impl PaintCtx`; reaching 3,500 needs a **third** module the
-  brief never asked for. Told that, the trader chose to accept 4,677 and record
+  brief never asked for. Told that, the trader chose to accept 4,647 and record
   the deviation rather than grow the change. The rest of A11 is delivered:
-  `paper_account.rs` is 2,000, well under its own 3,500, the baseline is
-  tightened, and the `!budget` rises 272 with a signed reason — inside the 300
+  `paper_account.rs` is 2,055, well under its own 3,500, the baseline is
+  tightened, and the `!budget` rises 297 with a signed reason — inside the 300
   the criterion allows. See **D5**.
 - **G6 — a `visual-qa` pass over the nine surfaces.** The nine are byte-for-byte
   identical to `origin/main` outside the measured mask, on both control runs,

@@ -123,6 +123,28 @@ snapshot reports, so it *must* stay reachable; and it is ticket state by ledger
 ticket for the same reason: each answer depends on where the ruler is or what
 is typed, so the ticket builds the `AccountEnv` and asks the account.
 
+## Parallel work
+
+`fix/tests-own-their-scratch` was the one real overlap. It had **no PR open**
+when this branch was cut, so the branch was cut from `origin/main` instead of
+stacking on it. It has since merged, and this branch rebased onto it.
+
+The tests it edits and where each landed — all of them stayed in
+`paper_trading.rs`'s `mod tests`, and all of them now use its helper rather
+than a hand-rolled temp dir:
+
+| Test | Landed | Carries its version |
+| --- | --- | --- |
+| `closed_trades_journal_to_one_session_file_and_reload` | ticket | `ScratchDir::new("paper-journal-test")` |
+| `a_second_session_adds_a_file_and_never_touches_the_first` | ticket | `ScratchDir::new("paper-accumulate-test")` |
+| `a_timeline_reset_journals_the_flatten_and_clears_the_form_state` | ticket | `ScratchDir::new("paper-reset-test")` |
+| `switching_the_trades_dir_retargets_journal_ledger_and_report` | ticket | `ScratchDir::new("paper-dir-a"/"-b")` |
+| `the_ledger_cache_excludes_the_live_session_file` | ticket | `ScratchDir` |
+| `the_journal_bytes_are_fixed` (this branch's own) | ticket | `ScratchDir::new("paper-journal-golden")` |
+
+`crates/app/src/app/tests/paper_trading_tests.rs` is byte-identical to
+`origin/main` — not one line, not even a name.
+
 ## Blast radius
 
 `app.rs`, `tab.rs`, `dock.rs`, `pane.rs` and `main.rs` change **only** on
@@ -165,24 +187,30 @@ Numbers and the script are in
 
 ## Baselines
 
-`paper_trading.rs` falls **1,730** production lines, 6,407 → 4,677.
-`paper_account.rs` arrives at **2,000**. `tab.rs` takes **2** for the receivers.
-The `!budget` rises by the difference, **272**, signed in the entry with the
-reason.
+`paper_trading.rs` falls **1,760** production lines, 6,407 → 4,647.
+`paper_account.rs` arrives at **2,055**. `tab.rs` takes **2** for the
+receivers. The `!budget` rises by the difference, **297** — inside the 300 the
+criterion allows — signed in the entry with the reason.
+
+It stood at +308 for a while, over the limit, because moving `place_resting`
+and `reverse_position` costs a signature on each side of the seam. The 11 came
+back from two real duplications the move exposed, not from shaved comments:
+`push_toast` and `set_toast` had identical bodies (two doors into a one-slot
+outbox), and `has_toast` was `peek_toast().is_some()` written twice.
 
 ## Deferred, with the trader's approval
 
 Both released in session, after the measurement that prompted them, and both
 written into the archived goal file under `## Deferred`.
 
-1. **`paper_trading.rs` is 4,677, not the ≤3,500 the brief asked for.**
+1. **`paper_trading.rs` is 4,647, not the ≤3,500 the brief asked for.**
    Measured, not estimated: what remains is ~3,100 lines of genuine drawing and
    gesture plus ~1,500 of types, constants and `impl PaintCtx`. Reaching 3,500
    needs a *third* module (a paint module) that the brief did not ask for. The
    trader was asked and chose to accept 4,677 and record the deviation rather
    than grow the change. The purpose the ceiling served — the money path reads
    without egui — is met in full, and the rest of the criterion is: the account
-   is 2,000 against its own 3,500 ceiling, and the `!budget` rises 272 with a
+   is 2,055 against its own 3,500 ceiling, and the `!budget` rises 297 with a
    signed reason, inside the 300 the criterion allows.
 
 2. **The `visual-qa` pass over the nine surfaces.** They are byte-for-byte

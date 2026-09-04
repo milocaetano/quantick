@@ -1,53 +1,58 @@
-# Pixels: what this fixture can and cannot prove
+# Pixels: four rounds of trying, and what the fixture can actually prove
 
-Read this before trusting a number in it.
+Read this before quoting a number from it. The short version: **the pixel
+criterion is not met, and not because of the branch.**
 
-## The honest summary
+## What was tried, and what each round surfaced
 
-The pixel criterion asked for captures that are identical between `origin/main`
-and this branch. **This fixture cannot deliver that reliably, and the control
-runs are what say so.** Every claim below is stated against its own control:
-two runs of the SAME `origin/main` build, captured the same way. Where the
-control does not match itself, the branch cannot be asked to match it either.
+Every round is stated against its own control - two runs of the SAME
+`origin/main` build, captured identically. Where the control does not match
+itself, the branch cannot be asked to match it either.
 
-Two independent inputs move under the capture and neither is the tape:
+| Round | Fixture | Control (main vs main) | Branch vs main |
+| --- | --- | --- | --- |
+| 1 | tape drained | 9/9 | 9/9, twice |
+| 2 | same, later | 9/9 | 4/9, then 6/9 |
+| 3 | `QUANTICK_FEED_STALL=silent` | 6/9 | 7/9 |
+| 4 | offline config, no reachable feed | 8/9 | 7/9 and 6/9 |
 
-1. **The clock and the tape position**, painted in two bands - rows 0-30 and
-   662-672. Those are masked, and the mask was measured rather than chosen.
-2. **The depth book.** It arrives from a live venue, independently of the
-   replay recording, so one run shows a book and the next shows "no book" -
-   a 58x200 px block of the chart, worth about 0.15% of the frame. This was
-   found by cropping the region two runs disagreed on and looking at it.
-   `QUANTICK_FEED_STALL=silent` pins it empty, but stalling introduces its own
-   timing and the control gets *worse*, not better.
+Round 1 looked like proof and was not: the same branch build scored 9/9 and
+then 4/9 against a control that never moved. Each round after it was an
+attempt to remove one uncontrolled input, and each one surfaced another.
 
-## The numbers, each against its control
+## The uncontrolled inputs, in the order they were found
 
-| Round | Control (main vs main) | Branch vs main |
-| --- | --- | --- |
-| Tape drained, book unpinned | 9/9 | 9/9, twice |
-| Tape drained, book unpinned, later | 9/9 | 4/9 and 6/9 - the book had arrived |
-| Book pinned with the stall hook | 6/9 | 7/9 against each control run |
+1. **The clock and the tape position** - two horizontal bands, rows 0-30 and
+   662-672, measured from the control rather than chosen. Masked. Round 4
+   showed the top band actually reaches row 31 in one scene, so even the mask
+   was a row short.
+2. **The depth book.** It comes from whichever venue the default feed dials,
+   not from the replay recording, so one run paints a book and the next says
+   "no book" - a 58x200 px block, found by cropping the region two runs
+   disagreed on and looking at it. `offline.toml` points the only feed at a
+   port nothing connects to and names no `bridge_command`; it reduced the
+   problem and did not remove it.
+3. **The window size.** `offMain2-paper_order_hover.png` came back
+   2576x1408 where every other capture is 1116x689 - one launch did not take
+   `__COMPAT_LAYER=DPIUNAWARE`. A capture at a different size is not a
+   different picture, it is a broken one, and it read as a control failure.
 
-The first row is the one the branch was first measured on and it is real, but
-the second row shows it was not repeatable: the same branch build scored 9/9
-and then 4/9 against a control that never moved. In the third row the branch
-matches main on **every scene where main matches itself**, which is the most
-this fixture can honestly assert.
+## The verdict
 
-## What that means for the claim
+**A10 is not met.** Three independent inputs move under this fixture and the
+mission's own control run is the thing that says so. No number here should be
+quoted as evidence that the branch changed nothing on screen.
 
-"Pixel-identical" is **not proven** here, and this file says so rather than
-reporting the round that happened to be flattering. What is proven, by
-evidence that does not move:
+What carries that claim instead, all of it deterministic and re-runnable:
 
-- `the_journal_bytes_are_fixed` - the money path's output, byte for byte, same
-  SHA-256 before and after the split, in CI on every run.
-- `scene-compare.txt` - the control plane's own answer for what is on screen:
-  4/4 scenes identical across 64-84 stable fields per scene, with only
+- `the_journal_bytes_are_fixed` - the money path's whole output, byte for
+  byte, same SHA-256 before and after the split and after a rebase.
+- `scene-compare.txt` - the control plane's own answer for what is on screen,
+  4/4 scenes identical across 64-84 stable fields each, with only
   `instance_id`, `captured_at_unix_ms` and `capture_elapsed_us` differing.
 - 1,937 tests, 206 of them paper, against 1,935 and 204 on `origin/main`.
+- `health-compare.txt` - fps and frame CPU under a dense tape, flat.
 
-A future run of this fixture should pin the book properly - a config with no
-reachable venue rather than the stall hook - before its numbers are quoted.
-
+A fixture that could support the claim needs the book pinned at the source and
+the window size asserted per capture before the shutter. That is a mission of
+its own, and it is named as a follow-up rather than pretended away here.
