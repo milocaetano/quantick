@@ -13,8 +13,8 @@ grandfathered, and a diff that relocates, reindents or deletes one is not
 writing it — a cleanup that translates an old comment must not earn a finding
 for the Portuguese it is removing. The known pre-existing debt, so nobody
 re-litigates it: `docs/ux/drawing-tools-ux-spec.html` (a full spec, ~46 lines),
-`heatmap-design-ref/`, the tracked `.claude/GOAL-archive-*.md`, and two doc
-comments in `app.rs` / `fib.rs` that quote the trader and are exempt anyway.
+the tracked `.claude/GOAL-archive-*.md`, and two doc comments in `app.rs` /
+`fib.rs` that quote the trader and are exempt anyway.
 Translating any of them is welcome as its own change; this rule never demands
 it.
 

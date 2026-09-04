@@ -1,5 +1,10 @@
 # A13 / R15 / G5 — the surfaces before and after
 
+> The screenshots this document names were **captured locally, not
+> tracked**: `.gitignore` keeps `.claude/evidence/**/*.png` out of the
+> tree, so the reading written here beside each filename is the evidence,
+> and the pixels are the local proof of it.
+
 Three surfaces, both builds, captured back to back from the same fixed
 journal (83 trades, 3 session files, 2 symbol folders, fixed dates in
 2026) so the only variable is the code.

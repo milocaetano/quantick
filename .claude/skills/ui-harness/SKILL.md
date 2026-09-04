@@ -68,7 +68,7 @@ misspelt hook used to present as a surface that never opened.
    `RUST_LOG=quantick=info`, stderr to a log file. A bash background job
    produces a window whose GL surface never presents (pure-white captures).
 4. **Capture by PID, never by window title**: use
-   `heatmap-design-ref/capture_window.ps1` (PrintWindow with
+   `tools/capture_window.ps1` (PrintWindow with
    PW_RENDERFULLCONTENT) adapted to filter by the PID you launched — title
    matching grabs the wrong window when other instances or editors are open.
 5. **Gate on health before trusting a capture**: `APP_HEALTH_SUMMARY` prints

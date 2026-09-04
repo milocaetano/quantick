@@ -19,6 +19,12 @@ __pycache__/
 /quantick-drawing-presets.toml
 # Which chart layers the app was last showing (the right-click layer menu)
 /chart-layers.toml
+# The saved chart layouts the app remembers between runs
+/layouts.toml
+# The paper sidecar: journal folder pick and cmd-trading settings, per machine
+/paper-state.toml
+# Instruments added from the app's source picker (its own header says so)
+/quantick-symbols.toml
 crates/app/indicators-state.toml
 
 # Footprint settings the app writes at runtime (like chart-layers.toml).
@@ -39,3 +45,8 @@ indicator-presets.toml
 # Evidence logs are the point of the evidence folder: a measurement whose log
 # is ignored is a claim with a dead link under it.
 !.claude/evidence/**/*.log
+
+# Screenshots under the evidence folder: the capture's hash written into the
+# text file beside it is the evidence a reader can check; the pixels are the
+# trader's local proof and cost 10 MB to carry for everyone else.
+.claude/evidence/**/*.png

@@ -162,7 +162,7 @@ class Canvas:
         ys, xs = np.mgrid[yi0:yi1, xi0:xi1]
         dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
         if fill:
-            mask = clamp01(r - dist + 0.5) if False else np.clip(r - dist + 0.5, 0.0, 1.0)
+            mask = np.clip(r - dist + 0.5, 0.0, 1.0)
         else:
             mask = np.clip(width * 0.5 - np.abs(dist - r) + 0.5, 0.0, 1.0)
         a = mask * clamp01(alpha)
@@ -596,8 +596,8 @@ def render_bubble_proposed(cv, x, y, r, color, linked, band_h=0.0, buy=True):
 def render_ramps(w=1000, h=150):
     cv = Canvas(w, h, bg=(17, 21, 31))
     labels = [
-        ("Bookmap ramp — atual (Codex)", BOOKMAP_RAMP, (19, 23, 34)),
-        ("Bookmap ramp — proposta (refinada)", BOOKMAP_RAMP_V2, (17, 21, 31)),
+        ("Bookmap ramp — current (Codex)", BOOKMAP_RAMP, (19, 23, 34)),
+        ("Bookmap ramp — proposed (refined)", BOOKMAP_RAMP_V2, (17, 21, 31)),
     ]
     pad = 12
     strip_h = (h - pad * (len(labels) + 1)) / len(labels)

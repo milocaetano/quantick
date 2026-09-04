@@ -1,12 +1,17 @@
 # The whole thing, in the actual application
 
+> The screenshots this document names were **captured locally, not
+> tracked**: `.gitignore` keeps `.claude/evidence/**/*.png` out of the
+> tree, so the reading written here beside each filename is the evidence,
+> and the pixels are the local proof of it.
+
 Criteria **A2**, **A4**, **G4** and the `visual-qa` pass. Everything above this
 file measures a part; this is the trader's own scenario end to end — the
 desktop app, opened on WINV26, against the live MetaTrader terminal.
 
 Run with [`mt5_open.ps1`](mt5_open.ps1) and
 [`mt5-config.toml`](mt5-config.toml). Full log: [`mt5-open.log`](mt5-open.log).
-Screenshot: [`shots/mt5-session-open.png`](shots/mt5-session-open.png).
+Screenshot: `shots/mt5-session-open.png` (captured locally, not tracked).
 
 ## What the run says
 

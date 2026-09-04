@@ -83,7 +83,7 @@ rendering on a busy order book, build optimized:
 cargo run --release -p quantick-app
 ```
 
-> The chart is a native desktop app (egui) and needs a graphical display; it won't run on a headless server. It's tested on Windows, Linux and macOS.
+> The chart is a native desktop app (egui) and needs a graphical display; it won't run on a headless server. CI builds the whole workspace on Linux and on Windows, runs the full test suite on Linux and the engine and guard tests on Windows; it's used daily on Windows. macOS is neither built nor tested by CI.
 
 ### 5. (Optional) Pick a different feed or symbol
 
