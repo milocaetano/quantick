@@ -1,13 +1,13 @@
 # The ceiling and the budget
 
-  5353 crates/app/src/app.rs
+  5354 crates/app/src/app.rs
   1124 crates/app/src/app/workspace_save.rs
    835 crates/app/src/app/indicator_manager.rs
    270 crates/app/src/app/chart_layers_wiring.rs
-  7582 total
+  7583 total
 
-app.rs: 7,501 lines before, 5,353 after. The guard counts production lines
-only and reads 5,349, setting aside the trailing test module. None of the
+app.rs: 7,501 lines before, 5,354 after. The guard counts production lines
+only and reads 5,350, setting aside the trailing test module. None of the
 three new files carries a test module, so their totals are production counts
 entire, and all three are well under the 1,500-line threshold.
 
@@ -55,9 +55,9 @@ index 2fa97dc..15151bd 100644
 
 ## Against the criteria
 
-  app.rs at most 5,600 lines ......... 5,353 total, 5,349 production. Met.
-  ceiling tightened to the new size .. 7,499 -> 5,349. Met.
-  !budget lower by at least 1,800 .... 57,394 -> 55,244, a fall of 2,150. Met.
+  app.rs at most 5,600 lines ......... 5,354 total, 5,350 production. Met.
+  ceiling tightened to the new size .. 7,499 -> 5,350. Met.
+  !budget lower by at least 1,800 .... 57,394 -> 55,245, a fall of 2,149. Met.
   no new baseline entry .............. none of the three reaches 1,500. Met.
 
 The budget is measured against 57,394, the number on origin/main after PR
