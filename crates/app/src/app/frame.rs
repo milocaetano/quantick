@@ -36,7 +36,7 @@ use super::{QuantickApp, TabSlot};
 /// environment, and a method would want the whole of `self` back. Per-frame,
 /// and shaped to leave immediately: no dialog open — the ordinary case — is
 /// one `Option` test before the tab scan is reached.
-pub(super) fn indicator_preview_area(
+fn indicator_preview_area(
     tabs: &[Tab],
     dialog: Option<&SettingsDialog>,
     target: TabSlot,

@@ -1,11 +1,18 @@
 //! Replay transport, history back-fill, alarms, and the harness hooks that
 //! script all three.
 //!
-//! One file because they share a shape rather than a subject: each is an
-//! *applier* run once per frame from [`super::QuantickApp::draw_frame`],
-//! reads at most one harness hook, and either does its one thing or
-//! returns. The scripted pointer helpers are here for the same reason —
-//! they are what lets a capture drive the transport without a mouse.
+//! One file because most of them share a shape rather than a subject: an
+//! *applier* run once per frame from [`super::QuantickApp::draw_frame`], which
+//! reads at most one harness hook and either does its one thing or returns.
+//! The scripted pointer helpers are here for the same reason — they are what
+//! lets a capture drive the transport without a mouse.
+//!
+//! Two are not appliers: `duplicate_selected_drawing` and its
+//! `carry_strategy_to_duplicate` half are reached from
+//! [`super::drawing_input`] on a gesture, and sit here because
+//! `DUPLICATE_OFFSET_BARS` and the alarm the copy can inherit came with this
+//! group. Moving them beside the rest of the drawing chrome is a follow-up,
+//! not this cut's business.
 
 use eframe::egui;
 
@@ -155,7 +162,7 @@ impl QuantickApp {
     /// The `QUANTICK_LOAD_OLDER` hook: press "+ older" this many times, once
     /// the chart has something to page back from.
     ///
-    /// Goes through [`Tab::request_older_history`] — the very function the
+    /// Goes through [`crate::tab::Tab::request_older_history`] — the very function the
     /// toolbar button calls — rather than reaching for the feed command itself,
     /// so a run under this hook exercises the trader's path including its
     /// loading indicator, and cannot drift from it.
@@ -453,7 +460,7 @@ impl QuantickApp {
     /// identical bands wearing one badge and believe both were watching.
     ///
     /// Rate: rare — one keystroke.
-    pub(super) fn carry_strategy_to_duplicate(
+    fn carry_strategy_to_duplicate(
         &mut self,
         side: pane::PaneSide,
         duplicated: drawings::Duplicated,

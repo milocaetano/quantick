@@ -136,10 +136,10 @@
 # the toolbar wiring, the menu bar, the drawing chrome, the replay/history/
 # alarm appliers and `draw_frame`. Same trade as the three cuts before it, and
 # it costs nothing here for the same reason: `menu_bar.rs` (778 production
-# lines), `frame.rs` (732), `replay_and_history.rs` (511), `control_host.rs`
+# lines), `frame.rs` (732), `replay_and_history.rs` (518), `control_host.rs`
 # (496), `drawing_chrome_wiring.rs` (430), `tabs.rs` (375) and
 # `toolbar_wiring.rs` (307) are each under the 1,500-line threshold, so none
-# takes an entry. They come to 3,629 against a fall of 3,456; the 173
+# takes an entry. They come to 3,636 against a fall of 3,456; the 180
 # difference is seven module headers, seven import blocks and the
 # `impl QuantickApp` wrappers -- the price of seven addresses, paid once.
 # 55,595 - 3,456 = 52,139.

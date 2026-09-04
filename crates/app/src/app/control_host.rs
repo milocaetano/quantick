@@ -414,7 +414,7 @@ impl QuantickApp {
 
     /// A launch hook's action, with its failure reported where a scripted run
     /// will see it: the hook is fire-and-forget, so nothing else would.
-    pub(super) fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
+    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
         if let Err(error) = self.run_agent_action(capability_id, input) {
             tracing::warn!(
                 target: "quantick::control",

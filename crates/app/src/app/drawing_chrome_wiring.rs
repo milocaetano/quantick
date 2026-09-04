@@ -23,15 +23,15 @@ use super::{DEMO_VISIBLE_SLOTS, QuantickApp};
 /// application it is allowed to see.
 ///
 /// A free function rather than a method for the reason
-/// [`indicator_preview_area`] is one: every caller has already split
-/// `QuantickApp` into disjoint borrows to draw a surface through `&mut`, and a
-/// method would want the whole of `self` back. That the compiler insists on
-/// the split is the port working.
+/// [`super::frame::indicator_preview_area`] is one: every caller has already
+/// split `QuantickApp` into disjoint borrows to draw a surface through `&mut`,
+/// and a method would want the whole of `self` back. That the compiler insists
+/// on the split is the port working.
 ///
 /// `manager_rows` is handed in rather than gathered here. Only one of the two
 /// call sites draws the list, and building a row per object for the site that
 /// does not would be a per-frame allocation for a window nobody is looking at.
-pub(super) fn drawing_env<'a>(
+fn drawing_env<'a>(
     tab: &'a Tab,
     toolrail: &ToolRail,
     presets: &'a drawings::presets::PresetStore,
@@ -72,7 +72,7 @@ pub(super) fn drawing_env<'a>(
 /// three are per-frame while a selection is on screen, which is why the pass
 /// that only runs the capture hooks gathers none of them and says so.
 #[derive(Default)]
-pub(super) struct DrawingRead<'a> {
+struct DrawingRead<'a> {
     selected_bbox: Option<egui::Rect>,
     selected_band: Option<String>,
     authored_objects: usize,
@@ -208,7 +208,7 @@ impl QuantickApp {
     /// needing all three. Built only while the window is open, like the market
     /// dialog's list of open markets: a dozen short strings once a frame, on a
     /// window that is shut the rest of the session.
-    pub(super) fn drawing_manager_rows(&self) -> Vec<crate::surfaces::drawing_chrome::ManagerRow> {
+    fn drawing_manager_rows(&self) -> Vec<crate::surfaces::drawing_chrome::ManagerRow> {
         let pane = self.drawing_pane();
         let selected = pane.drawings.selected();
         let focused = self.focused_pane();
@@ -240,7 +240,7 @@ impl QuantickApp {
     /// things and not every pass wants both — this one walks the object's
     /// anchors through the price scale. Nothing is projected while nothing is
     /// selected, which is every frame of an ordinary session.
-    pub(super) fn selected_drawing_bbox(&self) -> Option<egui::Rect> {
+    fn selected_drawing_bbox(&self) -> Option<egui::Rect> {
         let pane = self.drawing_pane();
         let index = pane.drawings.selected()?;
         let chart = pane.last_chart_area?;
@@ -251,7 +251,7 @@ impl QuantickApp {
     /// inspector's title. `None` on the price band, where a suffix on every
     /// object would be noise. Formats a string, so it is asked for only by a
     /// pass that shows the title.
-    pub(super) fn selected_drawing_band(&self) -> Option<String> {
+    fn selected_drawing_band(&self) -> Option<String> {
         let pane = self.drawing_pane();
         let index = pane.drawings.selected()?;
         self.focused_pane()
@@ -316,7 +316,7 @@ impl QuantickApp {
 
     /// One split for both call sites. `floating` picks which of the surface's
     /// two entry points runs.
-    pub(super) fn draw_chrome_pass(
+    fn draw_chrome_pass(
         &mut self,
         ctx: &egui::Context,
         read: DrawingRead<'_>,

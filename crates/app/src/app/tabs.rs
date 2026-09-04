@@ -26,7 +26,7 @@ use super::{QuantickApp, TabSlot};
 /// The interval a saved bar rule names, when it is a time rule at all — a
 /// workspace that recorded `tick:50` for a context chart is a file written by
 /// hand, and the chart opens on the default rather than on a guess.
-pub(super) fn saved_time_interval(text: Option<&str>) -> Option<i64> {
+fn saved_time_interval(text: Option<&str>) -> Option<i64> {
     text.and_then(|text| match BarSpec::parse(text) {
         Ok(BarSpec::Time(ms)) => Some(ms),
         _ => None,

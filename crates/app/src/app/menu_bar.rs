@@ -17,7 +17,7 @@ use crate::toolrail::ToolboxDock;
 use super::QuantickApp;
 
 /// Opens the Market Replay browser (§10).
-pub(super) const REPLAY_SHORTCUT: egui::KeyboardShortcut =
+const REPLAY_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::R);
 /// Shows/hides the panels dock (§10).
 /// `Ctrl+1` … `Ctrl+9` apply the layout registry's presets, in table order.
@@ -27,7 +27,7 @@ pub(super) const REPLAY_SHORTCUT: egui::KeyboardShortcut =
 /// or its dispatch being edited — the same rule the picker and the View menu
 /// follow. Nine is what a number row has; `MAX_CANVAS_PANES` keeps the
 /// registry far below that.
-pub(super) const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
+const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
     egui::Key::Num1,
     egui::Key::Num2,
     egui::Key::Num3,
@@ -41,7 +41,7 @@ pub(super) const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [
 
 /// The shortcut that reaches the preset at `index` in the registry, if a
 /// number key still reaches that far.
-pub(super) fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
     LAYOUT_PRESET_KEYS
         .get(index)
         .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::CTRL, *key))
@@ -49,7 +49,7 @@ pub(super) fn layout_preset_shortcut(index: usize) -> Option<egui::KeyboardShort
 
 /// The shortcut that reaches the layout tab at strip position `index`, if a
 /// number key still reaches that far.
-pub(super) fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
+fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
     LAYOUT_PRESET_KEYS
         .get(index)
         .map(|key| egui::KeyboardShortcut::new(egui::Modifiers::ALT, *key))
@@ -62,10 +62,10 @@ pub(super) fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut
 /// put beside the heatmap. Without it the only way to collapse was a drag,
 /// which a trader working by keyboard cannot make and which WCAG 2.2's
 /// dragging rule wants an alternative to besides.
-pub(super) const COLLAPSE_CONTEXT_SHORTCUT: egui::KeyboardShortcut =
+const COLLAPSE_CONTEXT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Num0);
 
-pub(super) const DOCK_SHORTCUT: egui::KeyboardShortcut =
+const DOCK_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
 /// Folds the focused pane's on-chart indicator legend to its count puck, or
 /// opens it back up (see [`crate::indicator_legend`]).
@@ -73,7 +73,7 @@ pub(super) const DOCK_SHORTCUT: egui::KeyboardShortcut =
 /// Ctrl+letter like the dock's own switch above, not the bare `L` the drawing
 /// tools answer to: bare letters are the toolbox's namespace, and a chrome
 /// switch borrowing one would arm a tool on every trader who learned it there.
-pub(super) const LEGEND_SHORTCUT: egui::KeyboardShortcut =
+const LEGEND_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::L);
 /// Saves the workspace — the arrangement the next launch opens on.
 ///
@@ -81,7 +81,7 @@ pub(super) const LEGEND_SHORTCUT: egui::KeyboardShortcut =
 /// chart has no document, and a trader who reaches for Ctrl+S out of habit
 /// mid-session should hit nothing rather than silently redefine what their
 /// platform opens on.
-pub(super) const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+const SAVE_WORKSPACE_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
     egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
     egui::Key::S,
 );
@@ -119,7 +119,7 @@ pub(super) const PAPER_FLATTEN_SHORTCUT: egui::KeyboardShortcut =
 pub(super) const PAPER_CANCEL_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::X);
 /// Height of the menu bar, in pixels (§5 zone 1).
-pub(super) const MENU_BAR_HEIGHT: f32 = 28.0;
+const MENU_BAR_HEIGHT: f32 = 28.0;
 
 impl QuantickApp {
     /// The window's menu bar (§10): shallow menus for discoverability and
