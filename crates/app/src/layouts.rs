@@ -925,13 +925,7 @@ mod tests {
 
     #[test]
     fn the_file_round_trips_and_refuses_what_it_cannot_read() {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-layouts-test-{}-{}",
-            std::process::id(),
-            line!()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("layouts");
         let path = dir.join(LAYOUTS_FILE);
         assert_eq!(load(&path), Loaded::Missing);
 

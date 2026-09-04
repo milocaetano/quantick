@@ -9,14 +9,10 @@ use std::{
 
 use serde_json::{Value, json};
 
-fn scratch_directory(name: &str) -> std::path::PathBuf {
-    let directory = std::env::temp_dir().join(format!(
-        "quantick-mcp-stdio-{name}-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    let _ = std::fs::remove_dir_all(&directory);
-    directory
+mod common;
+
+fn scratch_directory(name: &str) -> common::ScratchDir {
+    common::ScratchDir::new(name)
 }
 
 fn frames(stdout: &[u8]) -> Vec<Value> {
@@ -39,7 +35,7 @@ fn startup_errors_and_shutdown_emit_only_mcp_frames_on_stdout() {
     let directory = scratch_directory("smoke");
     let mut child = Command::new(env!("CARGO_BIN_EXE_quantick-mcp"))
         .arg("--instances-dir")
-        .arg(&directory)
+        .arg(directory.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

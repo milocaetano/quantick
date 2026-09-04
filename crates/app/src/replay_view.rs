@@ -1271,13 +1271,8 @@ mod tests {
     /// joined in front of it. Naming the day is what makes the other reachable.
     #[test]
     fn naming_a_day_selects_it_over_the_one_the_scan_lists_first() {
-        let folder = std::env::temp_dir().join(format!(
-            "quantick-replay-view-select-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        let folder = crate::scratch::ScratchDir::new("replay-view-select");
         let instrument = folder.join("WINJ26");
-        let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&instrument).expect("scratch folder");
         for (name, day) in [
             ("20260313.csv", "2026-03-13"),

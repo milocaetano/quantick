@@ -722,14 +722,8 @@ mod tests {
 
     /// A scratch workspace whose baseline names two skill files, so a raise on
     /// one can be paid for — or not — by the other.
-    fn scratch(test: &str, first: usize, second: usize, budget: usize) -> std::path::PathBuf {
-        // Process-unique, like `ratchet::tests::tempdir`: two worktrees running
-        // the suite at once — the workflow `CLAUDE.md` prescribes — would
-        // otherwise have one run `remove_dir_all` the other's fixture
-        // mid-test.
-        let root =
-            std::env::temp_dir().join(format!("quantick-context-{test}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn scratch(test: &str, first: usize, second: usize, budget: usize) -> crate::tempdir::TempDir {
+        let root = crate::tempdir::TempDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");

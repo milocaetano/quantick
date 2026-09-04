@@ -274,14 +274,11 @@ crate::hooks::declare_hooks!["QUANTICK_DRAWING_PRESETS"];
 mod tests {
     use super::*;
 
+    /// A preset file of this test's own. `thread_dir` rather than a
+    /// `ScratchFile`, because a `PresetStore` outlives the expression that
+    /// built it and keeps writing to the path.
     fn scratch_path(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "quantick-preset-test-{name}-{}.toml",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        path
+        crate::scratch::thread_dir("preset-test").join(format!("{name}.toml"))
     }
 
     fn sample_value(marker: &str) -> toml::Value {

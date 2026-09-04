@@ -261,7 +261,7 @@ pub(crate) fn next_test_home() {
     TEST_HOME_EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
 }
 
-/// A per-process scratch home for stores built by a test.
+/// A scratch home for stores built by a test, per thread and per epoch.
 ///
 /// Stable within a process and distinct per file, so a `default_path()` a
 /// test calls twice answers twice the same — and no test can reach the real
@@ -274,18 +274,15 @@ pub(crate) fn test_path(file: &str) -> PathBuf {
     // this replaced did give, and `--test-threads=1` would otherwise take
     // away, since libtest then runs every test on the same thread.
     //
-    // So: stable per (process, thread, epoch), where the epoch is bumped by
+    // So: stable per (run, thread, epoch), where the epoch is bumped by
     // `next_test_home` when a test builds an app.
-    let home = std::env::temp_dir().join(format!(
-        "quantick-test-home-{}-{:?}-{}",
-        std::process::id(),
-        std::thread::current().id(),
+    // `thread_dir` supplies the rest: a token no other run can reproduce, the
+    // thread, creation, and removal when the test's thread ends. The epoch is
+    // this module's own contribution to the label.
+    let home = crate::scratch::thread_dir(&format!(
+        "home-{}",
         TEST_HOME_EPOCH.with(std::cell::Cell::get)
     ));
-    // The real home is created by the startup rescue, which a test does not
-    // run; without this every store's first save would fail on a missing
-    // folder rather than on anything the test is about.
-    let _ = std::fs::create_dir_all(&home);
     home.join(file)
 }
 
@@ -484,15 +481,8 @@ fn write_marker(marker: &Path) {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "quantick-store-home-{name}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch");
-        dir
+    fn scratch(name: &str) -> crate::scratch::ScratchDir {
+        crate::scratch::ScratchDir::new(name)
     }
 
     /// The whole point of the module: the answer does not depend on where the
@@ -501,7 +491,7 @@ mod tests {
     fn a_store_resolves_into_the_home_not_the_launch_directory() {
         let home = scratch("resolve");
         assert_eq!(
-            resolve_in(Some(home.clone()), "ui-state.toml"),
+            resolve_in(Some(home.path().to_path_buf()), "ui-state.toml"),
             home.join("ui-state.toml")
         );
     }

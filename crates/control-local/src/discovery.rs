@@ -1059,17 +1059,10 @@ mod tests {
         }
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "quantick-control-discovery-{}-{name}",
-            std::process::id()
-        ));
-        if path.exists() {
-            fs::remove_dir_all(&path).unwrap();
-        }
-        fs::create_dir(&path).unwrap();
-        set_and_verify_private_directory(&path).unwrap();
-        path
+    fn scratch(name: &str) -> crate::scratch::ScratchDir {
+        let dir = crate::scratch::ScratchDir::new(name);
+        set_and_verify_private_directory(dir.path()).unwrap();
+        dir
     }
 
     #[test]

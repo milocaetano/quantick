@@ -33,11 +33,7 @@ fn a_click_in_an_indicator_pane_draws_on_that_band() {
 #[test]
 fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    let file = std::env::temp_dir().join(format!(
-        "quantick-app-persist-{}-{:?}.qws.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let file = crate::scratch::ScratchFile::new("app-persist", "workspace.qws.toml");
     app.export_workspace_to(&file);
     // A market the live tab is not on, so the import replaces the strip.
     app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);

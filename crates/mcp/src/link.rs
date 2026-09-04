@@ -255,11 +255,7 @@ mod tests {
     fn link(pinned: Option<InstanceId>) -> LocalLink {
         LocalLink::new(
             ConnectOptions::observer("test", "0", BTreeSet::new()),
-            Some(std::env::temp_dir().join(format!(
-                "quantick-mcp-link-{}-{}",
-                std::process::id(),
-                line!()
-            ))),
+            Some(crate::scratch::ScratchDir::new("link").path().to_path_buf()),
             pinned,
         )
     }

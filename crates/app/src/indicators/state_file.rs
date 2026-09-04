@@ -303,8 +303,7 @@ mod tests {
 
     #[test]
     fn the_state_round_trips_through_disk() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("indicators-state.toml");
         let saved = sample();
         save(&path, &saved);
@@ -318,8 +317,7 @@ mod tests {
     /// unknown shape and take the whole workspace with it.
     #[test]
     fn a_file_written_before_styles_existed_still_loads() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("pre-style-state.toml");
         std::fs::write(
             &path,
@@ -342,8 +340,7 @@ mod tests {
     /// user had before this change is the file they have after it.
     #[test]
     fn an_unstyled_workspace_writes_no_style_tables() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("unstyled-state.toml");
         save(
             &path,
@@ -408,8 +405,7 @@ mod tests {
 
     #[test]
     fn unknown_versions_and_garbage_start_empty() {
-        let dir = std::env::temp_dir().join("quantick-indicator-state-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::scratch::ScratchDir::new("indicator-state");
         let path = dir.join("bad-state.toml");
         std::fs::write(&path, "version = 99\n").unwrap();
         assert!(load(&path).is_empty(), "unknown version starts empty");

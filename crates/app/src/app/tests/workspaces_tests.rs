@@ -16,11 +16,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.toolrail.set_favorites(&["measure".to_owned()]);
     app.save_workspace("test");
 
-    let file = std::env::temp_dir().join(format!(
-        "quantick-app-bundle-{}-{:?}.qws.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let file = crate::scratch::ScratchFile::new("app-bundle", "workspace.qws.toml");
     app.export_workspace_to(&file);
     assert!(file.is_file(), "the export reached the disk");
     assert_eq!(
@@ -110,11 +106,7 @@ fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
     app.toolrail.set_favorites(&["measure".to_owned()]);
     let before = app.starred_tool_ids();
 
-    let file = std::env::temp_dir().join(format!(
-        "quantick-app-bad-bundle-{}-{:?}.qws.toml",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let file = crate::scratch::ScratchFile::new("app-bad-bundle", "workspace.qws.toml");
     std::fs::write(&file, "version = 99\nname = \"from tomorrow\"\n").unwrap();
     app.import_workspace_from(&file);
 
@@ -366,10 +358,8 @@ fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
     assert_eq!(standard_levels, 7);
 
     // Save a compact custom preset and make it the default for new fibs.
-    let mut store = drawings::presets::PresetStore::load_from(std::env::temp_dir().join(format!(
-        "quantick-default-preset-test-{}.toml",
-        std::process::id()
-    )));
+    let presets = crate::scratch::ScratchFile::new("default-preset-test", "presets.toml");
+    let mut store = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
     let mut compact = FibPayload::new(drawings::fib::FibKind::Retracement);
     compact.apply_preset(&drawings::fib::RETRACEMENT_PRESETS[1]);
     let exported = compact.export_preset().expect("fib exports presets");

@@ -10,9 +10,7 @@ use super::*;
 #[test]
 fn a_script_that_no_longer_reads_becomes_a_visible_error_slot() {
     let (mut app, _events, _commands, _book) = test_app();
-    let dir = std::env::temp_dir().join(format!("quantick-app-script-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let dir = crate::scratch::ScratchDir::new("app-script");
     let path = dir.join("vanishing.pine");
     std::fs::write(
         &path,
@@ -179,11 +177,7 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
 #[test]
 fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     let (mut app, evt_tx, mut cmd_rx, _book_tx) = test_app();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-replay-restart-hook-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("replay-restart-hook");
     let journal = dir.join("journal");
     app.active_tab_mut().paper.redirect_history_dir(journal);
     app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
@@ -1655,8 +1649,7 @@ fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
 
 #[test]
 fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
-    let dir = std::env::temp_dir().join(format!("quantick-observer-replay-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("observer-replay");
     let (mut app, _commands) = app_with_history(4);
 
     // A live tab is not replaying, and says so rather than reporting a
@@ -3332,11 +3325,7 @@ fn gateway_journals_a_focus_change_the_human_made() {
 #[test]
 fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let ctx = egui::Context::default();
-    let dir = std::env::temp_dir().join(format!(
-        "quantick-control-trace-two-tabs-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = crate::scratch::ScratchDir::new("control-trace-two-tabs");
     let (mut app, _commands) = app_with_history(12);
     app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
     hover_bar(&mut app, &ctx, 6);

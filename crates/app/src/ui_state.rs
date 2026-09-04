@@ -1039,11 +1039,7 @@ mod tests {
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "quantick-ui-state-{name}-{}-{:?}.toml",
-            std::process::id(),
-            std::thread::current().id()
-        ))
+        crate::scratch::thread_dir("ui-state").join(format!("{name}.toml"))
     }
 
     fn sample() -> Workspace {

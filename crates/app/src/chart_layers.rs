@@ -631,10 +631,14 @@ crate::hooks::declare_hooks!["QUANTICK_CHART_LAYERS"];
 mod tests {
     use super::*;
 
+    /// A directory of this test's own thread. It used to be one fixed folder
+    /// shared by every test in this module *and* by every concurrent run on
+    /// the machine — two worktrees running the suite at once wrote each
+    /// other's fixtures. `thread_dir` rather than a `ScratchDir` because
+    /// every caller spells `temp_dir().join(..)` in a single statement, where
+    /// a value would be dropped before the file it names is written.
     fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join("quantick-chart-layers-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::scratch::thread_dir("chart-layers")
     }
 
     /// The words a trader actually reads, checked as words.

@@ -573,18 +573,19 @@ async fn forward_bridge_line(line: &str, symbol: &str, notices: &mpsc::Sender<Fe
 mod tests {
     use super::*;
 
-    /// A throwaway directory tree, cleaned up when the test ends.
-    struct TempTree(PathBuf);
+    /// A throwaway directory tree, cleaned up when the test ends. The
+    /// `PathBuf` beside the scratch directory is the same path, kept owned
+    /// because `resolve_script` takes a `&[PathBuf]`.
+    struct TempTree(crate::scratch::ScratchDir, PathBuf);
 
     impl TempTree {
         fn new(tag: &str) -> Self {
-            // Unique per test without a temp-file crate: the process id keeps
-            // parallel runs apart, the tag keeps tests within one run apart.
-            let path =
-                std::env::temp_dir().join(format!("quantick-bridge-{}-{tag}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            std::fs::create_dir_all(&path).expect("create temp tree");
-            Self(path)
+            // The process id alone let a reused pid hand this tree to a later
+            // run; `ScratchDir` carries a run token no other run can produce
+            // and removes itself, which is what this type wanted all along.
+            let scratch = crate::scratch::ScratchDir::new(tag);
+            let path = scratch.path().to_path_buf();
+            Self(scratch, path)
         }
 
         fn file(&self, relative: &str) -> PathBuf {
@@ -595,12 +596,6 @@ mod tests {
         }
     }
 
-    impl Drop for TempTree {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     #[test]
     fn the_script_is_found_in_the_working_directory() {
         let tree = TempTree::new("cwd");
@@ -608,7 +603,7 @@ mod tests {
         assert_eq!(
             resolve_script(
                 "bridge/mt5/quantick_bridge.py",
-                std::slice::from_ref(&tree.0)
+                std::slice::from_ref(&tree.1)
             ),
             Some(script)
         );
@@ -634,7 +629,7 @@ mod tests {
         assert_eq!(
             resolve_script(
                 "bridge/mt5/quantick_bridge.py",
-                std::slice::from_ref(&tree.0)
+                std::slice::from_ref(&tree.1)
             ),
             None
         );
@@ -652,7 +647,7 @@ mod tests {
         // ...and a wrong absolute path is a miss, not a search elsewhere.
         let wrong = tree.0.join("elsewhere/absent.py");
         assert_eq!(
-            resolve_script(&wrong.to_string_lossy(), std::slice::from_ref(&tree.0)),
+            resolve_script(&wrong.to_string_lossy(), std::slice::from_ref(&tree.1)),
             None
         );
     }
@@ -662,7 +657,7 @@ mod tests {
         let tree = TempTree::new("dir");
         std::fs::create_dir_all(tree.0.join("bridge/mt5")).expect("create dirs");
         assert_eq!(
-            resolve_script("bridge/mt5", std::slice::from_ref(&tree.0)),
+            resolve_script("bridge/mt5", std::slice::from_ref(&tree.1)),
             None
         );
     }

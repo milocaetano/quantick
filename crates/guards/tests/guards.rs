@@ -1,4 +1,4 @@
-//! The six repository guards, as the tests CI runs.
+//! The seven repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,13 +17,14 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 6] = [
+const TESTED: [&str; 7] = [
     "size",
     "language",
     "encoding",
     "context",
     "cycle",
     "generated",
+    "scratch",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -99,4 +100,13 @@ fn no_crate_grows_a_module_cycle_past_its_recorded_ceiling() {
 #[test]
 fn the_generated_indexes_match_the_code_they_describe() {
     assert_clean(TESTED[5]);
+}
+
+/// The one that keeps a red honest: a test naming its own temporary folder
+/// after a process id inherits a reused id's leftovers and fails on the
+/// previous run's files, while leaving the folder behind for ever. Neither
+/// half is visible to fmt, clippy, the build or the suite.
+#[test]
+fn no_test_mints_a_temporary_path_outside_its_scratch_module() {
+    assert_clean(TESTED[6]);
 }
