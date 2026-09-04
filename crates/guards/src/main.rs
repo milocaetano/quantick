@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, context, ratchet, remedies, size, workspace_root};
+use quantick_guards::{GUARDS, context, cycle, ratchet, remedies, size, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -144,10 +144,11 @@ fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
 /// Lower every baseline entry whose file has shrunk past the slack, and the
 /// `!budget` total with it. Both directions are down only.
 ///
-/// Both ratchets run. A command that tightened code and quietly left the
-/// context ceilings stale would report the good news it happened to know
-/// about, and the author would find the other half as a failing test later —
-/// which is exactly the shape of surprise this flag exists to remove.
+/// Every ratchet runs. A command that tightened code and quietly left the
+/// context or cycle ceilings stale would report the good news it happened to
+/// know about, and the author would find the other half as a failing test
+/// later — which is exactly the shape of surprise this flag exists to
+/// remove.
 fn tighten(root: &std::path::Path) -> ExitCode {
     let mut failed = false;
     for outcome in [
@@ -164,6 +165,13 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             context::tighten(root),
             context::BASELINE_FILE,
             context::BUDGET_SLACK,
+        ),
+        tighten_one(
+            root,
+            "cycle",
+            cycle::tighten(root),
+            cycle::BASELINE_FILE,
+            cycle::BUDGET_SLACK,
         ),
     ] {
         failed |= outcome;

@@ -21,7 +21,7 @@ Wired in `.claude/settings.json`, implemented in `guardrails.sh` (POSIX sh, no
 
 The other three modes are gates. This one is a courier.
 
-The repository guards — the size and context ratchets, the language scan, the encoding
+The repository guards — the size, context and cycle ratchets, the language scan, the encoding
 check — are the cheapest checks in the codebase and used to be the slowest to
 consult, because they lived under `crates/app/tests/` and cargo built the
 largest crate in the repo before it could answer. Four minutes of link for

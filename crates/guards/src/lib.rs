@@ -1,7 +1,8 @@
 //! Repository guards for the things the compiler cannot see.
 //!
-//! Three rules hold in this repo that no amount of `cargo build` can check: a
-//! file may not silently absorb a crate ([`size`]), everything written into a
+//! Four rules hold in this repo that no amount of `cargo build` can check: a
+//! file may not silently absorb a crate ([`size`]), a crate's modules may not
+//! weld themselves into a cycle ([`cycle`]), everything written into a
 //! tracked file is English ([`language`]), and sources are UTF-8 without a BOM
 //! and without welded doc comments ([`encoding`]). Each is a rule
 //! `CLAUDE.md` states and each fails invisibly — fmt, clippy, build and the
@@ -35,6 +36,7 @@
 //! was born inside.
 
 pub mod context;
+pub mod cycle;
 pub mod encoding;
 pub mod language;
 pub mod ratchet;
@@ -122,6 +124,11 @@ pub const GUARDS: &[Guard] = &[
         name: "context",
         check: context::check,
         check_file: context::check_file,
+    },
+    Guard {
+        name: "cycle",
+        check: cycle::check,
+        check_file: cycle::check_file,
     },
     Guard {
         name: "language",
