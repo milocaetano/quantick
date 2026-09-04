@@ -38,6 +38,7 @@
 pub mod context;
 pub mod cycle;
 pub mod encoding;
+pub mod generated;
 pub mod language;
 pub mod ratchet;
 pub mod size;
@@ -178,5 +179,10 @@ pub const GUARDS: &[Guard] = &[
         check: encoding::check,
         check_file: encoding::check_file,
         ratchet: None,
+    },
+    Guard {
+        name: "generated",
+        check: generated::check,
+        check_file: generated::check_file,
     },
 ];

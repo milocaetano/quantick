@@ -39,16 +39,16 @@ use super::{
 /// The module every layout capability belongs to.
 pub(crate) const LAYOUT_MODULE_ID: &str = "layout";
 
-const APPLY_PRESET_ID: &str = "layout.preset.apply";
-const MOVE_PANE_ID: &str = "layout.pane.move";
-const RESIZE_ID: &str = "layout.pane.resize";
-const COLLAPSE_ID: &str = "layout.pane.collapse";
-const EXPAND_ID: &str = "layout.pane.expand";
-const FOCUS_ID: &str = "layout.focus.set";
-const INTERVAL_ID: &str = "layout.pane.set_interval";
-const TAB_SWITCH_ID: &str = "layout.tab.switch";
-const TAB_CREATE_ID: &str = "layout.tab.create";
-const TAB_RENAME_ID: &str = "layout.tab.rename";
+const APPLY_PRESET_CAPABILITY_ID: &str = "layout.preset.apply";
+const MOVE_PANE_CAPABILITY_ID: &str = "layout.pane.move";
+const RESIZE_CAPABILITY_ID: &str = "layout.pane.resize";
+const COLLAPSE_CAPABILITY_ID: &str = "layout.pane.collapse";
+const EXPAND_CAPABILITY_ID: &str = "layout.pane.expand";
+const FOCUS_CAPABILITY_ID: &str = "layout.focus.set";
+const INTERVAL_CAPABILITY_ID: &str = "layout.pane.set_interval";
+const TAB_SWITCH_CAPABILITY_ID: &str = "layout.tab.switch";
+const TAB_CREATE_CAPABILITY_ID: &str = "layout.tab.create";
+const TAB_RENAME_CAPABILITY_ID: &str = "layout.tab.rename";
 
 /// Which tab a call is about. Omitted means the one the trader is looking at —
 /// the same default the chrome's own commands take.
@@ -229,7 +229,7 @@ pub(crate) struct LayoutResult {
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         descriptor(
-            APPLY_PRESET_ID,
+            APPLY_PRESET_CAPABILITY_ID,
             "Apply a layout preset",
             "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
             generated_schema::<ApplyPresetInput>(),
@@ -238,7 +238,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            MOVE_PANE_ID,
+            MOVE_PANE_CAPABILITY_ID,
             "Move a chart within the stack",
             "Moves one context chart up or down the column beside the heatmap. The flow pane does not move: its column is the one thing every preset agrees on.",
             generated_schema::<MovePaneInput>(),
@@ -247,7 +247,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            RESIZE_ID,
+            RESIZE_CAPABILITY_ID,
             "Resize the context column",
             "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to.",
             generated_schema::<ResizeInput>(),
@@ -256,7 +256,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            COLLAPSE_ID,
+            COLLAPSE_CAPABILITY_ID,
             "Collapse the context column",
             "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
             generated_schema::<TabTarget>(),
@@ -265,7 +265,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            EXPAND_ID,
+            EXPAND_CAPABILITY_ID,
             "Expand the context column",
             "Brings the context charts back at the width they had before they were collapsed.",
             generated_schema::<TabTarget>(),
@@ -274,7 +274,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            FOCUS_ID,
+            FOCUS_CAPABILITY_ID,
             "Focus a chart",
             "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
             generated_schema::<FocusInput>(),
@@ -283,7 +283,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
-            INTERVAL_ID,
+            INTERVAL_CAPABILITY_ID,
             "Set a chart's timeframe",
             "Sets one context chart's interval, the same value its own header selector writes.",
             generated_schema::<IntervalInput>(),
@@ -292,7 +292,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         tab_descriptor(
-            TAB_SWITCH_ID,
+            TAB_SWITCH_CAPABILITY_ID,
             "Switch layout tab",
             "Puts one of the workspace's layouts on one pane — the focused pane of the active tab unless `tab_id`/`pane` name another: its indicators replace what that chart shows, and the market's drawings under it come out. Panes on other layouts are untouched. The same call the strip's click and Alt+1..9 make.",
             generated_schema::<SwitchLayoutTabInput>(),
@@ -301,7 +301,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         tab_descriptor(
-            TAB_CREATE_ID,
+            TAB_CREATE_CAPABILITY_ID,
             "Create layout tab",
             "Adds an empty layout after the others and puts it on one pane — the focused pane of the active tab, the way the strip's + does. The panes on other layouts are untouched.",
             generated_schema::<CreateLayoutTabInput>(),
@@ -310,7 +310,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         tab_descriptor(
-            TAB_RENAME_ID,
+            TAB_RENAME_CAPABILITY_ID,
             "Rename layout tab",
             "Renames one layout. Names are unique within the workspace and bounded to what a tab can show.",
             generated_schema::<RenameLayoutTabInput>(),

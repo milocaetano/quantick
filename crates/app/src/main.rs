@@ -127,7 +127,36 @@ fn init_tracing() {
     }
 }
 
+/// Offline dump paths, served before anything opens a window.
+///
+/// The generated indexes under `docs/` and `.claude/skills/` are produced from
+/// here rather than from a separate tool, because the registries they describe
+/// are private to this binary — `crates/app` has no library target, so no
+/// `examples/` binary and no sibling crate can reach them the way
+/// `crates/control/examples/export_schemas.rs` reaches the wire schemas.
+///
+/// Each writes to stdout and exits 0, so a caller can redirect it over the
+/// committed file and let `git diff` say whether anything moved.
+fn run_dump_subcommand(argument: &str) -> bool {
+    match argument {
+        "--dump-capability-inventory" => {
+            print!("{}", control::inventory::capability_inventory_markdown());
+            true
+        }
+        _ => false,
+    }
+}
+
 fn main() -> eframe::Result {
+    // Before tracing, before the config read, before the window: a dump is a
+    // pure function of the registries and must not depend on a loadable
+    // configuration or a usable display.
+    if let Some(argument) = std::env::args().nth(1)
+        && run_dump_subcommand(&argument)
+    {
+        return Ok(());
+    }
+
     init_tracing();
 
     // Feed and asset are configuration, not constants. A malformed external

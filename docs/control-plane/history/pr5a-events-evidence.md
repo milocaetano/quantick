@@ -1,5 +1,9 @@
 # PR 5a events, cursor and the pointing channel — evidence
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 **Branch:** `feat/control-events`
 
 **Rate class:** Semantic changes only — never trade or frame frequency. With

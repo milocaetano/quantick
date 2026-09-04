@@ -1,5 +1,9 @@
 # PR 2 observer performance evidence
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 | Environment | Value |
 | --- | --- |
 | Date | 2026-08-19 |

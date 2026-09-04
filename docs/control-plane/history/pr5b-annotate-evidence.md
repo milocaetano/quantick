@@ -1,8 +1,12 @@
 # PR 5b evidence: the annotate and notify tier
 
+> **Archaeology, not current state.** This document records what was true
+> when it was written and is kept for the reasoning it carries. For what
+> has shipped, ask the registry — see [Precedence](../README.md#precedence).
+
 **Branch:** `feat/control-annotate`, cut from `origin/feat/control-events` (PR 5a).
 
-**Plan:** [PR 5b](../mcp-control-plane-development-plan.md) · **Roadmap:** §5.3.
+**Plan:** [PR 5b](../../mcp-control-plane-development-plan.md) · **Roadmap:** §5.3.
 
 This is the first tier that writes, and deliberately the one that cannot lose
 the trader's work. It is also what makes the loop bidirectional: until it
