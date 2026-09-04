@@ -56,10 +56,6 @@ use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspacePick, WorkspaceStore};
 use smallvec::SmallVec;
 
-/// Width of the right-hand price-axis gutter, in pixels (§5 zone 9).
-const AXIS_GUTTER: f32 = 64.0;
-/// Height of the bottom time-axis strip, in pixels (§5 zone 6).
-const TIME_STRIP: f32 = 24.0;
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
@@ -204,112 +200,6 @@ fn indicator_preview_area(
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Split the padded plot area into the candle chart, the indicator panes, the
-/// optional live strip, the right price gutter and the bottom time strip, so
-/// the input handler and the renderer agree on the boundaries.
-/// `live_strip_width` of zero means the strip is off and the chart runs
-/// straight into the gutter, exactly as it did before the strip existed.
-///
-/// `pane_sizing` carries one entry per *visible* pane indicator, top to
-/// bottom: the band they claim is carved here, once, rather than by each
-/// caller — a chart rect that two call sites disagree about is two price
-/// scales for the same pixels. Sizing rather than a count, because how tall a
-/// pane is and whether it has room to be drawn at all is the same decision.
-pub fn plot_split(
-    area: egui::Rect,
-    live_strip_width: f32,
-    pane_sizing: &[crate::indicators::PaneSizing],
-) -> PlotAreas {
-    let plot = area.shrink(16.0);
-    let strip_width = live_strip_width.max(0.0);
-    let gutter_x = (plot.right() - AXIS_GUTTER).max(plot.left() + 20.0);
-    let split_x = (gutter_x - strip_width).max(plot.left() + 20.0);
-    let split_y = (plot.bottom() - TIME_STRIP).max(plot.top() + 20.0);
-    let body = egui::Rect::from_min_max(plot.min, egui::pos2(split_x, split_y));
-    let (chart, indicator_panes) = crate::indicators::split_panes(body, pane_sizing);
-    // The gutter is banded exactly like the body it labels: the candles' price
-    // scale owns the height of the candles and not a pixel more, so a drag
-    // over a pane's numbers can only ever move that pane.
-    let band = |top: f32, bottom: f32| {
-        egui::Rect::from_min_max(egui::pos2(gutter_x, top), egui::pos2(plot.right(), bottom))
-    };
-    let pane_gutters = indicator_panes
-        .iter()
-        .map(|pane| band(pane.rect.top(), pane.rect.bottom()))
-        .collect();
-    PlotAreas {
-        chart,
-        indicator_panes,
-        pane_gutters,
-        live_strip: (strip_width > 0.0).then(|| {
-            egui::Rect::from_min_max(
-                egui::pos2(split_x, plot.top()),
-                egui::pos2(gutter_x, split_y),
-            )
-        }),
-        price_gutter: band(plot.top(), chart.bottom()),
-        time_strip: egui::Rect::from_min_max(
-            egui::pos2(plot.left(), split_y),
-            egui::pos2(split_x, plot.bottom()),
-        ),
-    }
-}
-
-/// Whether a pointer at `x` is on the lane divider's own resize handle.
-///
-/// The one strip of the tape a chart gesture may not have: the resize drag and
-/// the pan must never both fire on the same pixel. Everything else in the band
-/// is the candles' — the tape is pinned to the live edge and does not pan, so a
-/// drag across it has no second meaning to protect, and reserving a third of
-/// the canvas to guard a ten-pixel handle is a dead zone rather than a guard.
-/// Without a lane there is no handle, and every pixel is the candles'.
-#[must_use]
-pub fn gesture_hits_lane_divider(divider_x: Option<f32>, x: f32, half_width: f32) -> bool {
-    divider_x.is_some_and(|divider| (x - divider).abs() <= half_width)
-}
-
-/// Split the bottom time strip at the lane's divider: the candles' own time
-/// axis on the left, the lane's on the right.
-///
-/// Each pane zooms from the strip under it, which is the only place a zoom
-/// gesture can say *which* time axis it means. Without a divider the whole
-/// strip belongs to the candles, exactly as it did before the lane had a zoom.
-pub fn split_time_strip(
-    strip: egui::Rect,
-    divider_x: Option<f32>,
-) -> (egui::Rect, Option<egui::Rect>) {
-    let Some(divider) = divider_x.filter(|x| strip.x_range().contains(*x)) else {
-        return (strip, None);
-    };
-    (
-        egui::Rect::from_min_max(strip.min, egui::pos2(divider, strip.bottom())),
-        Some(egui::Rect::from_min_max(
-            egui::pos2(divider, strip.top()),
-            strip.max,
-        )),
-    )
-}
-
-/// The interactive regions of the plot, plus the optional live strip.
-pub struct PlotAreas {
-    /// The candle body, with the indicator pane band already taken out of it.
-    /// Every consumer — renderer and input handler alike — reads the chart
-    /// rect from here, which is what keeps the price scale a drawing is
-    /// placed against identical to the one it is hit-tested against.
-    pub chart: egui::Rect,
-    /// Stacked indicator panes below the candles, top to bottom. Empty when
-    /// no pane indicator is visible.
-    pub indicator_panes: Vec<crate::indicators::PaneSlot>,
-    /// The gutter band beside each pane, in the same order: where that pane's
-    /// value labels are drawn and where its own zoom gesture lives.
-    pub pane_gutters: Vec<egui::Rect>,
-    /// Present only while the strip is shown; sits between `chart` and
-    /// `price_gutter` and is not an input region.
-    pub live_strip: Option<egui::Rect>,
-    pub price_gutter: egui::Rect,
-    pub time_strip: egui::Rect,
-}
-
 /// Format the forming bar's countdown, e.g. `37/50 ticks`.
 ///
 /// Trailing zeros are trimmed on both figures: a volume bar's accumulator
@@ -352,20 +242,6 @@ fn parse_tape_window(value: &str) -> Option<LaneWindow> {
     Some(LaneWindow::Fixed {
         ms: (parsed * f64::from(scale)).round() as i64,
     })
-}
-
-/// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
-/// timezone `tz`, for the time axis.
-pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
-    fmt_time_as(ms, tz, crate::chart::TimeLabelFormat::Full)
-}
-
-/// The same instant written in a chosen [`TimeLabelFormat`] — what the time
-/// axis calls when the strip is too narrow for the full form.
-pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat) -> String {
-    let local = ms.saturating_add(tz.offset_ms());
-    let secs = local.div_euclid(1000).rem_euclid(86_400);
-    format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
 /// Read-only frame observations exposed to on-demand semantic projections.

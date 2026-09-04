@@ -27,6 +27,8 @@
 // work around a problem that was really the shadowing. There is no such rule.
 // The suffix fixes it; the second glob was redundant and is gone.
 
+use crate::plot_area::plot_split;
+
 mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;

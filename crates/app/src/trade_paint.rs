@@ -329,7 +329,7 @@ fn draw_tooltip(
     let detail = format!(
         "{} · {} · {}",
         trade.exit_reason.as_str().replace('_', " "),
-        crate::app::fmt_time(trade.closed_ms, frame.tz),
+        crate::plot_area::fmt_time(trade.closed_ms, frame.tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
     );
     let head_galley = painter.layout_no_wrap(head, font, theme::TEXT_PRIMARY);

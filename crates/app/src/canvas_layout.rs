@@ -220,7 +220,7 @@ const _: () = assert!(
 
 /// Narrowest a pane may be squeezed to while it is still open.
 ///
-/// A pane is not all chart. The price axis takes `app::AXIS_GUTTER` (64 px)
+/// A pane is not all chart. The price axis takes `plot_area`'s gutter constant (64 px)
 /// off its right edge before a single candle is drawn, and the flow pane's
 /// tape takes more. This was 120 px and the doc said "below this a chart stops
 /// being one" — which was true of 120 px itself: a floored pane came out with

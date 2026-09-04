@@ -20,7 +20,6 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
-use crate::app::{PlotAreas, fmt_time_as, plot_split, split_time_strip};
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::candle_view::draw_candle;
 use crate::chart::{self, PriceScale};
@@ -40,6 +39,7 @@ use crate::orderflow::{
 };
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::paper_trading::{ChartInput, PaperTrading};
+use crate::plot_area::{self, PlotAreas, fmt_time_as, plot_split, split_time_strip};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
 use crate::state::{BarKind, BarSpec, ChartState, ImbalanceUnit};
@@ -4286,7 +4286,7 @@ impl ChartPane {
         // spending a third of the canvas to protect a ten-pixel handle is a
         // dead zone, not a guard.
         let on_divider = |position: egui::Pos2| {
-            crate::app::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
+            plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
         };
 
         // Chart body: drag pans both axes; scroll zooms time.

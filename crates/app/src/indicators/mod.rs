@@ -495,7 +495,7 @@ impl IndicatorViews {
     /// because how tall each one gets is one decision about all of them.
     ///
     /// Written into a caller-owned array rather than returned as a `Vec`:
-    /// [`plot_split`](crate::app::plot_split) runs more than once per frame,
+    /// [`plot_split`](crate::plot_area::plot_split) runs more than once per frame,
     /// and there is no reason for a chart to reach the allocator sixty times a
     /// second for at most [`MAX_PANES`] copies of an eight-byte enum. Returns
     /// the slice actually written.

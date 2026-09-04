@@ -568,13 +568,6 @@ fn candle_appearance_change_is_render_only() {
     );
 }
 
-#[test]
-fn fmt_time_in_utc() {
-    // Epoch: 1970-01-01 00:00:00 UTC, then +1h 2m 3s.
-    assert_eq!(fmt_time(0, TzOffset::new(0)), "00:00:00");
-    assert_eq!(fmt_time(3_723_000, TzOffset::new(0)), "01:02:03");
-}
-
 /// The BARS selectors read the pane's own fields, so restoring the state
 /// without them would give the trader a chart whose controls disagree with
 /// it — and snap it back to a rule they never chose on first touch.
@@ -640,12 +633,4 @@ fn a_reply_at_an_unexpected_base_interval_is_refused() {
     );
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(has_price_axis(&texts), "and the pane draws: {texts:?}");
-}
-
-#[test]
-fn fmt_time_applies_the_offset() {
-    // UTC midnight shown in UTC−03:00 is 21:00 of the previous day.
-    assert_eq!(fmt_time(0, TzOffset::new(-180)), "21:00:00");
-    // UTC midnight in UTC+05:30 is 05:30.
-    assert_eq!(fmt_time(0, TzOffset::new(330)), "05:30:00");
 }

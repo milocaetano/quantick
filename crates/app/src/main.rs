@@ -59,6 +59,7 @@ mod paper_hud;
 mod paper_report;
 mod paper_state;
 mod paper_trading;
+mod plot_area;
 mod pointer_compass;
 mod popup;
 mod price_view;

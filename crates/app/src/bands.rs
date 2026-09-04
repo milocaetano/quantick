@@ -21,10 +21,10 @@ use std::sync::Arc;
 use eframe::egui;
 use smallvec::SmallVec;
 
-use crate::app::PlotAreas;
 use crate::chart::PriceScale;
 use crate::drawings::{Drawing, DrawingBand, ValueUnit};
 use crate::indicators::{IndicatorView, IndicatorViews};
+use crate::plot_area::PlotAreas;
 
 /// What the price band is called where a band has to name itself.
 pub const PRICE_BAND_LABEL: &str = "price";

@@ -2496,7 +2496,7 @@ fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) -> bool {
                             CivilDate::from_ms(trade.closed_ms, view.tz).iso(),
                             theme::TEXT_PRIMARY,
                         ),
-                        (crate::app::fmt_time(trade.closed_ms, view.tz), muted),
+                        (crate::plot_area::fmt_time(trade.closed_ms, view.tz), muted),
                         (row.symbol.clone(), theme::TEXT_PRIMARY),
                         (
                             format!(
@@ -3297,7 +3297,7 @@ fn draw_ledger_row(
 fn ledger_detail(trade: &ClosedTrade, tz: TzOffset) -> String {
     format!(
         "{} · {} · {}",
-        crate::app::fmt_time(trade.closed_ms, tz),
+        crate::plot_area::fmt_time(trade.closed_ms, tz),
         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
         trade.exit_reason.as_str().replace('_', " "),
     )
