@@ -79,6 +79,10 @@ pub(crate) struct DealRecordingSnapshot {
     /// counter — what the Tools menu's checkbox reads, saved with the
     /// workspace.
     pub record_by_default: bool,
+    /// The counter has not moved for the stale span while prints kept
+    /// coming — REC on (state `stale`) or off, where the chart's chip says
+    /// `counter stale` or `counter stuck at 0` (`session_deals` 0).
+    pub counter_stale: bool,
     /// The newest reading of the venue's session deal counter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_deals: Option<WireU64>,
@@ -154,6 +158,7 @@ pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
         loaded_days: view.loaded_days.clone(),
         error: view.error.clone(),
         record_by_default: view.default_on,
+        counter_stale: view.counter_stale,
     }
 }
 
@@ -301,6 +306,7 @@ mod tests {
             loaded_days: vec!["2026-09-02".to_owned()],
             tz_minutes: -180,
             default_on: false,
+            counter_stale: false,
         }
     }
 

@@ -6,8 +6,9 @@
 //! (`SYMBOL_SESSION_DEALS`). The bridge reads that total once per poll and
 //! stamps it on every tick the poll fetched (`deals` in `PROTOCOL.md`). This
 //! module reduces those stamps to one [`DealSample`] per *change* — the first
-//! tick carrying a new reading — on the tape's own clock, so the engine can
-//! join a print to the reading in force when it was read.
+//! tick carrying a new reading, dated at the last tick the previous reading
+//! covered — on the tape's own clock, so the engine can join a print to the
+//! reading in force when it was read.
 //!
 //! One sample per change rather than per tick because the reading is a fact
 //! about the poll, not the print: forty ticks fetched together carry the
@@ -26,6 +27,10 @@ pub struct DealSampler {
     offset_ms: i64,
     /// The last reading turned into a sample; the dedupe.
     last: Option<u64>,
+    /// When the last stamped tick was printed, on the tape's clock: the
+    /// instant a new reading is dated at, being the last print the previous
+    /// reading is known to cover.
+    last_tick_ms: Option<i64>,
     /// How many ticks carried a stamp, and how many of those became samples.
     pub stats: DealSampleStats,
 }
@@ -53,6 +58,7 @@ impl DealSampler {
             // declared by any process that dials the port.
             offset_ms: server_utc_offset_s.saturating_mul(1000),
             last: None,
+            last_tick_ms: None,
             stats: DealSampleStats::default(),
         }
     }
@@ -64,6 +70,16 @@ impl DealSampler {
     pub fn observe(&mut self, tick: &Tick) -> Option<DealSample> {
         let deals = tick.deals?;
         self.stats.stamped += 1;
+        // The bridge reads the counter after it fetched a round's ticks, so
+        // a reading covers every tick up to the last one of its round. A
+        // new reading is therefore dated at the previous stamped tick — the
+        // last print the previous reading covered — not at the tick that
+        // carries it: the engine joins a print to the reading strictly
+        // before it, and the round's prints belong to this reading, not the
+        // next window's volume. The first reading has no previous tick and
+        // is dated at its own.
+        let taken_ms = self.last_tick_ms.unwrap_or(tick.time_ms);
+        self.last_tick_ms = Some(tick.time_ms);
         if self.last == Some(deals) {
             return None;
         }
@@ -73,7 +89,7 @@ impl DealSampler {
         self.last = Some(deals);
         self.stats.samples += 1;
         Some(DealSample {
-            time_ms: tick.time_ms.saturating_sub(self.offset_ms),
+            time_ms: taken_ms.saturating_sub(self.offset_ms),
             session_deals: deals,
         })
     }
@@ -125,6 +141,9 @@ mod tests {
         assert!(sampler.observe(&tick(3, 1_010, Some(2_000_000))).is_none());
         let next = sampler.observe(&tick(4, 1_020, Some(2_000_007)));
         assert_eq!(next.map(|s| s.session_deals), Some(2_000_007));
+        // Dated at the last tick the previous reading covered, not at the
+        // tick that carries the new one.
+        assert_eq!(next.map(|s| s.time_ms), Some(1_010 + 10_800_000));
         assert_eq!(sampler.stats.stamped, 4);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));

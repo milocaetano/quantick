@@ -699,6 +699,15 @@ impl DealRecorder {
         let day = day_of(current.map_or(now_ms, |s| s.time_ms), self.tz_minutes);
         let resumed = self.open_day(&day);
         self.recording_since_ms = resumed.first().map(|s| s.time_ms);
+        if self.recording.is_some()
+            && let Some(latest) = current
+        {
+            // The reading already in hand — drained in the same frame as
+            // the hello, before the default fired — is the file's first
+            // line, or a restart resumes from the next one and the first
+            // window is uncounted.
+            self.append(latest, now_ms);
+        }
         if self.recording.is_none() {
             // The open failed and said why. Not recording, then — the
             // surfaces say Off with the reason in the popover, and REC
@@ -868,14 +877,18 @@ impl DealRecorder {
                 (true, true) => RecState::Off,
             };
         }
-        let stale = self
-            .counter_age_ms(latest_trade_ms)
-            .is_some_and(|age| age >= STALE_AFTER_MS);
-        if stale {
+        if self.counter_stale(latest_trade_ms) {
             RecState::Stale
         } else {
             RecState::Recording
         }
+    }
+
+    /// The counter stands still while prints keep coming: judged once, for
+    /// the button, the chip, the cell and the wire alike, REC on or off.
+    fn counter_stale(&self, latest_trade_ms: Option<i64>) -> bool {
+        self.counter_age_ms(latest_trade_ms)
+            .is_some_and(|age| age >= STALE_AFTER_MS)
     }
 
     /// How far the tape has moved past the newest reading, on the tape's
@@ -895,6 +908,7 @@ impl DealRecorder {
             since_ms: self.recording_since_ms,
             first_reading_ms: self.first_reading.map(|s| s.time_ms),
             counter_age_ms: self.counter_age_ms(latest_trade_ms),
+            counter_stale: self.counter_stale(latest_trade_ms),
             default_on: self.default_on,
             written: self.recording.as_ref().map_or(0, |r| r.written),
             path: self.recording.as_ref().map(|r| r.path.clone()),
@@ -935,6 +949,10 @@ pub struct RecordingView {
     pub tz_minutes: i32,
     /// The standing choice this recorder opens on: record by default.
     pub default_on: bool,
+    /// The counter has not moved for [`STALE_AFTER_MS`] of tape while
+    /// prints kept coming — REC on or off. With `reading == Some(0)` it
+    /// never moved at all.
+    pub counter_stale: bool,
 }
 
 impl RecordingView {
@@ -1025,8 +1043,8 @@ pub fn day_of(time_ms: i64, tz_minutes: i32) -> String {
 /// `HH:MM:SS` of `time_ms` in the display timezone.
 #[must_use]
 pub fn fmt_hms(time_ms: i64, tz_minutes: i32) -> String {
-    let (_, _, _, h, m, s) = crate::paper_calendar::civil_utc(shifted(time_ms, tz_minutes));
-    format!("{h:02}:{m:02}:{s:02}")
+    // The time axis's own formatter: one clock, one spelling.
+    crate::plot_area::fmt_time(time_ms, crate::timezone::TzOffset::new(tz_minutes))
 }
 
 fn shifted(time_ms: i64, tz_minutes: i32) -> i64 {
@@ -1037,15 +1055,8 @@ fn shifted(time_ms: i64, tz_minutes: i32) -> i64 {
 /// glance where a bare seven-digit number is not.
 #[must_use]
 pub fn fmt_count(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(' ');
-        }
-        out.push(c);
-    }
-    out
+    // The replay browser's grouping, so a count reads the same everywhere.
+    crate::replay_view::thousands(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 crate::hooks::declare_hooks!["QUANTICK_DEALS_DIR", "QUANTICK_DEAL_RECORDING"];
@@ -1204,6 +1215,33 @@ mod tests {
         assert!(rec.view(None).loaded_days.is_empty());
         assert!(rec.view(None).error.is_some());
         assert_eq!(rec.state(None), RecState::Recording);
+    }
+
+    /// A reading drained before the default fired — the same frame as the
+    /// hello — is the file's first line, not the one a restart starts after.
+    #[test]
+    fn a_start_writes_the_reading_already_in_hand() {
+        let dir = scratch("start-writes-latest");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), true);
+        rec.set_timezone(-180);
+        rec.set_available(true);
+        rec.observe(sample(LATE_EVENING_BRT_MS, 10), LATE_EVENING_BRT_MS);
+        assert!(rec.auto_start_due());
+        rec.start(LATE_EVENING_BRT_MS + 20);
+        rec.observe(
+            sample(LATE_EVENING_BRT_MS + 31_000, 12),
+            LATE_EVENING_BRT_MS + 31_000,
+        );
+        rec.stop();
+        let path = dir.path().join("WINV26").join("2026-09-03.deals");
+        let file = read_file(&path).unwrap();
+        assert_eq!(
+            file.samples,
+            vec![
+                sample(LATE_EVENING_BRT_MS, 10),
+                sample(LATE_EVENING_BRT_MS + 31_000, 12)
+            ]
+        );
     }
 
     #[test]

@@ -359,10 +359,7 @@ pub fn chip_for(
                     "trades bars need MetaTrader B3's session deal counter; this feed declares none"
                         .to_owned(),
                 )
-            } else if view
-                .counter_age_ms
-                .is_some_and(|age| age >= crate::deal_recording::STALE_AFTER_MS)
-            {
+            } else if view.counter_stale {
                 // The counter stands still while prints keep coming, REC on
                 // or off: the trades pane is the one that suffers, so it is
                 // the one that says so.
@@ -543,6 +540,7 @@ mod tests {
             loaded_days: vec!["2026-09-03".to_owned()],
             tz_minutes: -180,
             default_on: false,
+            counter_stale: false,
         }
     }
 
@@ -554,12 +552,14 @@ mod tests {
         off.loaded_days.clear();
         off.reading = Some(0);
         off.counter_age_ms = Some(100_000);
+        off.counter_stale = true;
         let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
         assert_eq!(chip.text, "no deal count · counter stuck at 0");
         off.reading = Some(2_301_455);
         let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
         assert_eq!(chip.text, "counting · counter stale");
         off.counter_age_ms = Some(50);
+        off.counter_stale = false;
         let chip = chip_for(&off, BarKind::Trades, true, 0).unwrap();
         assert_eq!(chip.text, "counting · not written to disk");
     }

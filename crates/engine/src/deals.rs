@@ -109,6 +109,17 @@ pub struct DealBarBuilder {
     total: Decimal,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
+    /// Whether a print was credited deals since the reading in force —
+    /// the difference between "nothing was forming" and "a bar just closed"
+    /// when a reading reaches the boundary.
+    window_counted: bool,
+    /// Whether a print since the reading in force fell beyond what a
+    /// reading holds for: its deals are in the next delta, its contracts
+    /// are not in the divisor, so that window sets no rate.
+    window_had_uncounted: bool,
+    /// The bar opened by a rollover print whose own estimate already
+    /// reached the multiple closes on the next push, before that print.
+    close_next: bool,
     current: Option<Bar>,
     uncounted: u64,
 }
@@ -132,6 +143,9 @@ impl DealBarBuilder {
             window_volume: Decimal::ZERO,
             total: Decimal::ZERO,
             next_boundary: 0,
+            window_counted: false,
+            window_had_uncounted: false,
+            close_next: false,
             current: None,
             uncounted: 0,
         }
@@ -163,6 +177,8 @@ impl DealBarBuilder {
 
     /// Join every pending sample strictly before `time_ms` into the
     /// reading. Returns a closed bar when a rollover ended the forming one.
+    /// Join every pending sample strictly before `time_ms` into the
+    /// reading. Returns a closed bar when a rollover ended the forming one.
     fn advance_to(&mut self, time_ms: i64) -> Option<Bar> {
         let mut closed = None;
         while let Some(sample) = self.pending.front().copied() {
@@ -183,29 +199,33 @@ impl DealBarBuilder {
                     if let Some(bar) = self.current.take() {
                         closed = Some(bar);
                     }
+                    self.close_next = false;
                     self.next_boundary = self.boundary_above(deals);
                 }
                 // A smaller dip is the terminal answering a poll late —
-                // polls are milliseconds apart, a bar is minutes — and
-                // changes nothing: acting on it would end the bar and cut a
-                // second one the venue never counted.
-                Some(current) if deals < current => continue,
+                // polls are milliseconds apart, a bar is minutes — and an
+                // unchanged reading is a reconnect re-emitting what it
+                // found. Neither is a window: nothing changes.
+                Some(current) if deals <= current => continue,
                 Some(current) => {
                     // A completed window: its exact deals over its contracts
-                    // is the rate the next window's prints are estimated at.
-                    // A window with prints of no volume — a quoted tape —
-                    // keeps the rate it had.
-                    if self.window_volume > Decimal::ZERO {
+                    // is the rate the next window's prints are estimated at
+                    // — unless a print of the window fell beyond what a
+                    // reading holds for, since its deals are in the delta
+                    // and its contracts are not, and the rate would be
+                    // inflated; that window keeps the rate it had. A window
+                    // with prints of no volume — a quoted tape — too.
+                    if self.window_volume > Decimal::ZERO && !self.window_had_uncounted {
                         self.rate = Some(Decimal::from(deals - current) / self.window_volume);
                     }
-                    // A multiple crossed while nothing was forming — its
-                    // prints uncounted — has no bar to close: the count
-                    // moves on. Otherwise the boundary stands: a multiple
-                    // the estimate missed is below the re-anchored total
-                    // and closes on the next print; one it closed early is
-                    // above it and is not cut twice — the next window fills
-                    // up to it.
-                    if self.current.is_none() && deals >= self.next_boundary {
+                    // A multiple crossed while no print was credited — the
+                    // window's prints uncounted, or none — has no bar to
+                    // close: the count moves on. Otherwise the boundary
+                    // stands: a multiple the estimate missed is below the
+                    // re-anchored total and closes on the next print; one it
+                    // closed early is above it and is not cut twice — the
+                    // next window fills up to it.
+                    if !self.window_counted && deals >= self.next_boundary {
                         self.next_boundary = self.boundary_above(deals);
                     }
                 }
@@ -213,6 +233,8 @@ impl DealBarBuilder {
             self.reading = Some(sample);
             self.total = Decimal::from(deals);
             self.window_volume = Decimal::ZERO;
+            self.window_counted = false;
+            self.window_had_uncounted = false;
         }
         closed
     }
@@ -222,14 +244,28 @@ impl DealBarBuilder {
     fn crossed_boundary(&self) -> bool {
         self.total >= Decimal::from(self.next_boundary)
     }
+
+    /// The running total as a count, for the next multiple above it.
+    fn total_floor(&self) -> u64 {
+        self.total
+            .max(Decimal::ZERO)
+            .trunc()
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
 }
 
 impl BarBuilder for DealBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         // A rollover can close a bar before this print is placed; that bar
-        // is returned and the print opens the next one. At most one bar
-        // closes per print either way.
-        let rolled = self.advance_to(trade.timestamp_ms);
+        // is returned and the print opens the next one. So can a bar a
+        // rollover print opened whose own estimate reached the multiple. At
+        // most one bar closes per print either way.
+        let mut rolled = self.advance_to(trade.timestamp_ms);
+        if rolled.is_none() && self.close_next {
+            self.close_next = false;
+            rolled = self.current.take();
+        }
         let Some(reading) = self.reading else {
             self.uncounted = self.uncounted.saturating_add(1);
             return rolled;
@@ -239,6 +275,7 @@ impl BarBuilder for DealBarBuilder {
         // being credited a rate from another day.
         if trade.timestamp_ms.saturating_sub(reading.time_ms) > READING_MAX_AGE_MS {
             self.uncounted = self.uncounted.saturating_add(1);
+            self.window_had_uncounted = true;
             return rolled;
         }
         self.window_volume += trade.quantity;
@@ -249,8 +286,15 @@ impl BarBuilder for DealBarBuilder {
             return rolled;
         };
         self.total += trade.quantity * rate;
+        self.window_counted = true;
         if rolled.is_some() {
             self.current = Some(Bar::opened_by(trade));
+            if self.crossed_boundary() {
+                // This print's own estimate reached the multiple: its bar
+                // closes on the next push, before the print after it.
+                self.next_boundary = self.boundary_above(self.total_floor());
+                self.close_next = true;
+            }
             return rolled;
         }
         match self.current.as_mut() {
@@ -261,13 +305,7 @@ impl BarBuilder for DealBarBuilder {
             // Overshoot — an estimate past the multiple, a reading past it —
             // is not carried into the next bar: the next boundary is the
             // next multiple above where the total stands.
-            let floor = self
-                .total
-                .max(Decimal::ZERO)
-                .trunc()
-                .try_into()
-                .unwrap_or(u64::MAX);
-            self.next_boundary = self.boundary_above(floor);
+            self.next_boundary = self.boundary_above(self.total_floor());
             return self.current.take();
         }
         None
@@ -630,6 +668,96 @@ mod tests {
         b.observe_deals(sample(50, 9)); // late and out of order: dropped
         assert!(b.push(&trade(1, 100, "100")).is_none());
         assert_eq!(b.reading(), Some(3));
+    }
+
+    /// A reconnect re-emits the reading it finds: an unchanged reading at
+    /// a later time is not a window, and sets no rate of zero.
+    #[test]
+    fn a_repeated_reading_is_not_a_window() {
+        let mut b = DealBarBuilder::new(1_000);
+        b.observe_deals(sample(99, 100));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 200)); // rate 10
+        assert_eq!(b.rate(), None, "a rate is known at the next print");
+        b.push(&trade_of(2, 30_100, "100", "1"));
+        assert_eq!(b.rate(), Some(Decimal::from(10)));
+        b.observe_deals(sample(45_099, 200)); // the same reading, re-emitted
+        b.push(&trade_of(3, 45_100, "100", "1"));
+        assert_eq!(b.rate(), Some(Decimal::from(10)), "unchanged: not a window");
+        assert_eq!(b.reading(), Some(200));
+    }
+
+    /// A window with a print beyond what a reading holds for sets no rate:
+    /// that print's deals are in the delta and its contracts are not, and a
+    /// rate from them would be inflated. The window keeps the rate it had.
+    #[test]
+    fn an_uncounted_stretch_does_not_inflate_the_rate() {
+        let mut b = DealBarBuilder::new(1_000_000);
+        b.observe_deals(sample(99, 1_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 2_000)); // rate 100
+        b.push(&trade_of(2, 30_100, "100", "1"));
+        assert_eq!(b.rate(), Some(Decimal::from(100)));
+        // Twelve minutes of silence, then a print the reading no longer
+        // holds for, then a reading whose delta covers the silence.
+        b.push(&trade_of(3, 750_000, "100", "50"));
+        assert_eq!(b.uncounted_trades(), 2, "the first print, and this one");
+        b.observe_deals(sample(760_099, 60_000));
+        b.push(&trade_of(4, 760_100, "100", "1"));
+        assert_eq!(
+            b.rate(),
+            Some(Decimal::from(100)),
+            "not 58 000 per contract"
+        );
+    }
+
+    /// A reading that reaches the next multiple right after a print closed
+    /// a bar still gives that multiple its bar, on the next print: "nothing
+    /// forming" means no print was credited, not a bar just closed.
+    #[test]
+    fn a_multiple_reached_right_after_a_close_gets_its_bar() {
+        let (samples, mut trades) = fixture();
+        // Keep window 2's first two prints only — bar A closes on the second,
+        // the boundary moves to 1 006 000 — and put a reading past 1 006 000
+        // right after that close, with nothing forming.
+        trades.truncate(8);
+        let mut samples = samples;
+        samples[2] = sample(60_099, 1_006_200);
+        let (mut b, bars) = run(&samples, &trades, 2_000);
+        assert_eq!(bars.len(), 1);
+        let bar = b
+            .push(&trade_of(20, 60_100, "100", "10"))
+            .expect("1 006 000, reached by the reading, gets its bar");
+        assert_eq!(bar.trade_count, 1);
+    }
+
+    /// The print that opens the bar after a rollover can itself reach the
+    /// new session's first multiple: its bar closes on the next push, before
+    /// the print after it, never one print late.
+    #[test]
+    fn the_first_print_after_a_rollover_can_close_its_own_bar() {
+        let mut b = DealBarBuilder::new(2_000);
+        b.observe_deals(sample(99, 1_000_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 1_000_750)); // rate 75
+        b.push(&trade_of(2, 30_100, "100", "1"));
+        // The restart, at 1 950: ten contracts are 750, past 2 000.
+        b.observe_deals(sample(60_099, 1_950));
+        let ended = b
+            .push(&trade_of(3, 60_100, "100", "10"))
+            .expect("the restart ends the old bar");
+        assert_eq!(
+            ended.trade_count, 1,
+            "the print credited a rate; the first had none"
+        );
+        let own = b
+            .push(&trade_of(4, 60_200, "100", "1"))
+            .expect("the rollover print's own bar closes next");
+        assert_eq!((own.open_time, own.trade_count), (60_100, 1));
+        assert_eq!(
+            b.partial().map(|bar| (bar.open_time, bar.trade_count)),
+            Some((60_200, 1))
+        );
     }
 
     /// A reading a little lower than the one in force is the terminal

@@ -4484,6 +4484,10 @@
           "DealRecordingSnapshot": {
             "description": "The recorder as the chrome reads it, on the wire.",
             "properties": {
+              "counter_stale": {
+                "description": "The counter has not moved for the stale span while prints kept\ncoming — REC on (state `stale`) or off, where the chart's chip says\n`counter stale` or `counter stuck at 0` (`session_deals` 0).",
+                "type": "boolean"
+              },
               "deal_count_available": {
                 "description": "Whether a `trades` pane has a count to cut on right now.",
                 "type": "boolean"
@@ -4559,6 +4563,7 @@
             "required": [
               "state",
               "record_by_default",
+              "counter_stale",
               "samples_written",
               "deal_count_available",
               "recorded_days",
@@ -9443,6 +9448,10 @@
           "DealRecordingSnapshot": {
             "description": "The recorder as the chrome reads it, on the wire.",
             "properties": {
+              "counter_stale": {
+                "description": "The counter has not moved for the stale span while prints kept\ncoming — REC on (state `stale`) or off, where the chart's chip says\n`counter stale` or `counter stuck at 0` (`session_deals` 0).",
+                "type": "boolean"
+              },
               "deal_count_available": {
                 "description": "Whether a `trades` pane has a count to cut on right now.",
                 "type": "boolean"
@@ -9518,6 +9527,7 @@
             "required": [
               "state",
               "record_by_default",
+              "counter_stale",
               "samples_written",
               "deal_count_available",
               "recorded_days",
