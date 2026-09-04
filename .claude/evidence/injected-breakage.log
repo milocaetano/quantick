@@ -37,3 +37,28 @@ $ git status --short -- crates/engine/Cargo.toml crates/sim/src/lib.rs
 (no output above means both files are back as committed)
 $ quantick-guards
 exit=0
+
+=== the brief's "parallel work to respect": PR #293 landed first ===
+
+The brief asked that if refactor/native-indicator-docking (#293) landed before
+this branch, the scan be re-run over crates/indicators/native -- "a native
+indicator has no reason to read a clock". It did land: d3cf317 is in this
+branch's base.
+
+Re-run, and proven to actually reach those files rather than merely reporting
+nothing about them:
+
+$ (inject `let t = std::time::Instant::now();` into
+   crates/indicators/src/native/mod.rs)
+$ quantick-guards
+headless: 1 finding(s)
+crates/indicators/src/native/mod.rs:288: reaches `Instant::now` — the wall
+clock in a crate the headless rule names — CLAUDE.md: Architecture, headless
+exit=1
+
+$ git checkout -- crates/indicators/src/native/
+$ quantick-guards
+exit=0
+
+So the zero findings over indicators/native are a measurement, not a blind
+spot: the eleven native indicators read no clock.
