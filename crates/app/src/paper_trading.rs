@@ -9291,6 +9291,125 @@ mod tests {
         assert_eq!(whole.snap(182_036.7), Decimal::from(182_037));
     }
 
+    /// The session file [`the_journal_bytes_are_fixed`] must open, named
+    /// from the first close's own timestamp.
+    const JOURNAL_GOLDEN_FILE: &str = "19700101-000002.csv";
+
+    /// Every byte [`the_journal_bytes_are_fixed`] must write. Recorded from
+    /// a run against this file *before* the policy half moved out, and not
+    /// touched since.
+    ///
+    /// SHA-256 of these bytes:
+    /// `ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6`.
+    /// The hash is written down so that the "before" and the "after" of the
+    /// extraction can be compared by someone who is reading neither this
+    /// file's history nor the diff — a reviewer, or the trader.
+    const JOURNAL_GOLDEN: &str = concat!(
+        "# quantick-trades 2\n",
+        "# symbol=GOLDEN\n",
+        "# source=live\n",
+        "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,",
+        "exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points\n",
+        // A long taken at the market and closed by hand: 100 to 105.
+        "1000,2000,long,1,100,105,5,manual,1,2,0,5\n",
+        // A short, the same way: 105 down to 103.
+        "3000,4000,short,1,105,103,2,manual,3,4,0,2\n",
+        // A long stopped out. The entry is 103 and the ticket's stop offset
+        // is 2, so the stop sits at 101 and the tape reaches it.
+        "5000,6000,long,1,103,101,-2,stop_loss,5,6,2,0\n",
+        // A long taken at its target: entry 101, offset 6, filled at 107.
+        "7000,8000,long,1,101,107,6,take_profit,7,8,0,6\n",
+    );
+
+    /// One fixed tape, one journal, asserted byte for byte.
+    ///
+    /// This is the money path's golden. It is written *before* the policy
+    /// half of this file moves into `paper_account.rs`, and its expected
+    /// bytes do not change when it does — that is the whole point. An
+    /// extraction that alters a fill rule, a bracket price, the risk lock's
+    /// arithmetic, a rounding or the journal's own format fails here rather
+    /// than in front of the trader, and it fails naming the byte.
+    ///
+    /// The tape is fixed in every respect the writer reads: prices and
+    /// quantities are exact decimals, every timestamp is derived from the
+    /// print's own `agg_id` rather than a clock, and the session file's name
+    /// comes from the first close's `closed_ms`. So the file name is
+    /// asserted too — a session that opened a differently named file would
+    /// still hold the right rows, and the trader would still have lost the
+    /// trade in a folder nobody reads.
+    ///
+    /// Four round trips, chosen to cover the four ways a position ends:
+    /// a long closed by hand, a short closed by hand, a long stopped out,
+    /// and a long taken at its target. The last two go through the ticket's
+    /// offset text, so the bracket arithmetic is under the golden and not
+    /// only the flat manual close.
+    #[test]
+    fn the_journal_bytes_are_fixed() {
+        let dir = std::env::temp_dir().join(format!(
+            "quantick-paper-journal-golden-{}",
+            std::process::id()
+        ));
+        // Removed first, not merely on the way out: a reused process id
+        // would otherwise hand this run the last one's journal and the
+        // golden would fail on a file it never wrote.
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut paper = PaperTrading::new();
+        paper.dir.clone_from(&dir);
+        paper.set_symbol("GOLDEN");
+        paper.seed(&print(0, 100));
+
+        // 1. A long, entered at the market and closed by hand: +5.
+        paper.market(Side::Buy);
+        paper.on_trade(&print(1, 100));
+        let events = paper.dispatch(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(2, 105));
+
+        // 2. A short, the same way: 105 down to 103 is +2.
+        paper.market(Side::Sell);
+        paper.on_trade(&print(3, 105));
+        let events = paper.dispatch(Command::ClosePosition);
+        paper.handle_events(events);
+        paper.on_trade(&print(4, 103));
+
+        // 3. A long with protection, stopped out. The offsets are the
+        //    ticket's own text, so `ticket_bracket` and the rounding that
+        //    follows it are under the golden with everything else.
+        paper.stop_offset_text = "2".to_owned();
+        paper.profit_offset_text = "6".to_owned();
+        paper.market(Side::Buy);
+        paper.on_trade(&print(5, 103));
+        paper.on_trade(&print(6, 101));
+
+        // 4. A long with the same protection, taken at its target.
+        paper.market(Side::Buy);
+        paper.on_trade(&print(7, 101));
+        paper.on_trade(&print(8, 107));
+
+        let folder = dir.join("GOLDEN");
+        let mut files: Vec<_> = std::fs::read_dir(&folder)
+            .expect("the symbol folder exists")
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        files.sort();
+        assert_eq!(files.len(), 1, "one session, one file: {files:?}");
+        assert_eq!(
+            files[0].file_name().and_then(|name| name.to_str()),
+            Some(JOURNAL_GOLDEN_FILE),
+            "the session file is named from the first close, not from a clock"
+        );
+
+        let text = std::fs::read_to_string(&files[0]).expect("readable");
+        assert_eq!(
+            text, JOURNAL_GOLDEN,
+            "the journal's bytes moved; the money path is not what it was"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn closed_trades_journal_to_one_session_file_and_reload() {
         let dir = crate::scratch::ScratchDir::new("paper-journal-test");
