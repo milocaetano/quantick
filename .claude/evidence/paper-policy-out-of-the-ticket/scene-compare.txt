@@ -1,0 +1,11 @@
+Control plane: what the application believes is on screen,
+origin/main against the branch. Ignored, as environment rather than
+state: ['capture_elapsed_us', 'captured_at_unix_ms', 'instance_id'].
+
+scene                  match  fields  main / branch
+paper_orders              OK      64  83f89c02efb7b686 / 83f89c02efb7b686
+paper_order_bracket       OK      72  2ee6c205223c9b1f / 2ee6c205223c9b1f
+paper_risk                OK      42  7e5bdeba8eb164ae / 7e5bdeba8eb164ae
+paper_demo                OK      84  ec20d27f9e432b9e / ec20d27f9e432b9e
+
+4/4 paper snapshots identical

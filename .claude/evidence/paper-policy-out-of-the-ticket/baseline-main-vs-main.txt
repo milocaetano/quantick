@@ -1,0 +1,16 @@
+mask: rows [(0, 30), (662, 672)] blanked, full width
+
+scene                    match  tinyA / tinyB
+paper_orders                OK  3696c0caaeccf8cb / 3696c0caaeccf8cb
+paper_order_bracket         OK  9830f0b144efde59 / 9830f0b144efde59
+paper_order_hover           OK  6699abbfdbaf5861 / 6699abbfdbaf5861
+paper_risk                  OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+paper_demo                  OK  6b007370721642d7 / 6b007370721642d7
+paper_strategy_editor     DIFF  6cd5697d736c9da9 / c55542a959269872
+cmd_preview                 OK  c16e47bc85670bf2 / c16e47bc85670bf2
+paper_ruler_ticks           OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+toast_paper                 OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+
+8/9 identical outside the mask
+
+[exited with code 1]
