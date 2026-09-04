@@ -2593,6 +2593,7 @@ impl QuantickApp {
             ToolbarAction::PaperClose => self.active_tab_mut().paper.close_position(),
         }
     }
+
     /// Hand the app the window it is drawing into.
     ///
     /// Called once from `main`, which is where eframe offers the handle: the
