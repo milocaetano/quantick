@@ -1036,11 +1036,13 @@ impl Tab {
         self.replay = handle.replay;
         // The journal records where a session's trades came from; the
         // attached handle is the single truth for that.
-        self.paper.set_session_source(if self.replay.is_some() {
-            quantick_sim::history::SessionSource::Replay
-        } else {
-            quantick_sim::history::SessionSource::Live
-        });
+        self.paper
+            .account_mut()
+            .set_session_source(if self.replay.is_some() {
+                quantick_sim::history::SessionSource::Replay
+            } else {
+                quantick_sim::history::SessionSource::Live
+            });
         self.book_channel_closed_reported = false;
     }
 
@@ -3005,7 +3007,7 @@ impl Tab {
                     .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
                 let _ = pane.take_strategy_bars();
                 for command in cleanup {
-                    let _ = self.paper.apply_strategy_command(command);
+                    let _ = self.paper.account_mut().apply_strategy_command(command);
                 }
                 self.drop_overlay_gestures();
             }
@@ -3322,7 +3324,7 @@ impl Tab {
     /// through this one door and the tests drive it from a fixture.
     fn run_strategies_at(&mut self, now_ms: i64) {
         let now_ms = u64::try_from(now_ms).unwrap_or(0);
-        let print_events = self.paper.drain_bot_events();
+        let print_events = self.paper.account_mut().drain_bot_events();
         let Self {
             paper,
             flow_pane,
@@ -3349,7 +3351,7 @@ impl Tab {
                         .armed
                         .on_sim_events(&print_events);
                     for command in responses {
-                        let events = paper.apply_strategy_command(command);
+                        let events = paper.account_mut().apply_strategy_command(command);
                         let _ = pane.strategies.instances[index]
                             .armed
                             .on_sim_events(&events);
@@ -3371,7 +3373,7 @@ impl Tab {
                 for command in orphan_cleanup {
                     // A dead drawing's bot must not leave its entry resting
                     // with no badge over it; swept through the same funnel.
-                    let _ = paper.apply_strategy_command(command);
+                    let _ = paper.account_mut().apply_strategy_command(command);
                 }
             }
             for (bar, slot) in &bars {
@@ -3400,7 +3402,7 @@ impl Tab {
                     // reported here, and this bar's repeat budget resets.
                     sounds.extend(pane.strategies.instances[index].alarm_on_closed_bar(now_ms));
                     for command in commands {
-                        let events = paper.apply_strategy_command(command);
+                        let events = paper.account_mut().apply_strategy_command(command);
                         let _ = pane.strategies.instances[index]
                             .armed
                             .on_sim_events(&events);
@@ -3452,7 +3454,7 @@ impl Tab {
             }
             watching += pane.strategies.watching();
         }
-        paper.set_bot_listening(watching > 0);
+        paper.account_mut().set_bot_listening(watching > 0);
         self.pending_alarm_sounds.extend(sounds);
     }
 
@@ -3469,7 +3471,7 @@ impl Tab {
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
             for command in pane.take_strategy_cleanup() {
-                let _ = paper.apply_strategy_command(command);
+                let _ = paper.account_mut().apply_strategy_command(command);
             }
         }
     }

@@ -298,7 +298,7 @@ pub(crate) fn selection_identity(app: &QuantickApp) -> SelectionIdentity {
             .selected()
             .and_then(|index| drawing_pane.drawings.items().get(index))
             .map(|drawing| (drawing_pane.id, drawing.id.0)),
-        paper_trade_row: tab.paper.selected_trade_index(),
+        paper_trade_row: tab.paper.account().selected_trade_index(),
     }
 }
 
@@ -324,7 +324,7 @@ pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: focused_side.into(),
         drawing,
-        paper_trade_row: tab.paper.selected_trade_index().map(|row_index| {
+        paper_trade_row: tab.paper.account().selected_trade_index().map(|row_index| {
             PaperTradeSelectionSnapshot {
                 row_index: wire_usize(row_index),
                 provenance: "paper_trading_session_ledger".to_owned(),
