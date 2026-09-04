@@ -66,7 +66,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::Policy;
+use crate::ratchet::{self, Policy};
 use crate::size::production_source;
 
 /// The number of cycles a crate may have without a signed baseline entry.
@@ -452,6 +452,13 @@ fn collect_sources(
             Err(e) => unreadable.push(format!("  {crate_path}/src/{relative}: unreadable: {e}")),
         }
     }
+}
+
+/// What every tracked path measures today, summed, for
+/// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
+/// walk it sums, which is the one thing that differs per guard.
+pub fn measured(root: &Path) -> usize {
+    ratchet::total(&measure(root).counts)
 }
 
 /// Cycle counts for every crate in the workspace, sorted by crate path.

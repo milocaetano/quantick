@@ -83,7 +83,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
-use crate::ratchet::{Baseline, Policy};
+use crate::ratchet::{self, Baseline, Policy};
 
 /// Production lines above which a file must carry a baseline entry. Files
 /// below it are not the problem this guard exists for, and tracking them
@@ -369,6 +369,13 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
                 .push(format!("  {relative}: could not be read: {e}")),
         }
     }
+}
+
+/// What every tracked path measures today, summed, for
+/// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
+/// walk it sums, which is the one thing that differs per guard.
+pub fn measured(root: &Path) -> usize {
+    ratchet::total(&measure(root).counts)
 }
 
 /// Production-line counts for every scanned file, sorted by path.

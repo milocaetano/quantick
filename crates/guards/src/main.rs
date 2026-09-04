@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, ratchet, remedies, workspace_root};
+use quantick_guards::{GUARDS, ratchet, remedies, report, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -57,15 +57,19 @@ fn relative_to(root: &Path, argument: &str) -> Result<String, String> {
 // would do both, while only the first argument was ever honoured — a mistyped
 // invocation exiting 0 having done half of what was asked.
 const USAGE: &str = "\
-usage: quantick-guards (--file <path> | --tighten)
+usage: quantick-guards (--file <path> | --tighten | --report)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
-  --tighten        lower any baseline entry whose file has shrunk, in both
-                   ratchets, and the !budget totals to match -- only downward
+  --tighten        lower any baseline entry whose file has shrunk, in every
+                   ratchet, and the !budget totals to match -- only downward
+  --report         print the repository's health numbers as a label<TAB>value
+                   table; deterministic, so a diff between two runs is the
+                   report of what changed between them
 
-The two modes are alternatives; they cannot be combined.
-Exit code 1 means a guard found something.";
+The three modes are alternatives; they cannot be combined.
+Exit code 1 means a guard found something. --report exits 0: it measures the
+tree, it does not judge it.";
 
 fn main() -> ExitCode {
     // A set-but-empty variable is not a root. `var_os` hands back
@@ -79,10 +83,18 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     match args.first().map(String::as_str) {
-        None => report(&root, None),
+        None => run_guards(&root, None),
         Some("--tighten") if args.len() == 1 => tighten(&root),
+        // Printed rather than returned as findings, and always exit 0. These
+        // numbers describe the tree; none of them is ratcheted, and a
+        // measurement that can fail a build is one people negotiate with
+        // instead of reading.
+        Some("--report") if args.len() == 1 => {
+            print!("{}", report::render(&root));
+            ExitCode::SUCCESS
+        }
         Some("--file") if args.len() == 2 => match relative_to(&root, &args[1]) {
-            Ok(relative) => report(&root, Some(relative)),
+            Ok(relative) => run_guards(&root, Some(relative)),
             Err(problem) => {
                 eprintln!("{problem}\n\n{USAGE}");
                 ExitCode::FAILURE
@@ -95,8 +107,8 @@ fn main() -> ExitCode {
         // Everything left over is refused rather than ignored. Silently
         // dropping a trailing argument is how a caller ends up trusting a
         // clean exit for a run that never did what they asked.
-        Some(mode @ ("--file" | "--tighten")) => {
-            // `--file` consumes the path beside it; `--tighten` consumes
+        Some(mode @ ("--file" | "--tighten" | "--report")) => {
+            // `--file` consumes the path beside it; the other two consume
             // nothing. Naming only what is actually unconsumed keeps the
             // message from accusing the caller of the argument they got right.
             let consumed = if mode == "--file" { 2 } else { 1 };
@@ -115,7 +127,7 @@ fn main() -> ExitCode {
 
 /// Run every guard, over the whole repository or over one file, and print
 /// what each found.
-fn report(root: &std::path::Path, only: Option<String>) -> ExitCode {
+fn run_guards(root: &std::path::Path, only: Option<String>) -> ExitCode {
     let mut clean = true;
     for guard in GUARDS {
         let violations = match &only {
@@ -161,8 +173,8 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             root,
             guard.name,
             (ratchet.tighten)(root),
-            ratchet.baseline_file,
-            ratchet.budget_slack,
+            ratchet.policy.baseline_file,
+            ratchet.policy.budget_slack,
         );
     }
     if failed {
