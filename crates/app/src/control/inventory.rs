@@ -50,18 +50,20 @@ pub(crate) const GENERATED_MARKER: &str =
 /// order and two runs of this function on the same tree cannot disagree. That
 /// is what lets the committed copy be compared byte for byte instead of
 /// parsed.
-pub(crate) fn capability_inventory_markdown() -> String {
-    let projections = super::standard_registry().expect("built-in projection registry is valid");
-    let actions = super::actions::standard_actions().expect("action registry is valid");
+pub(crate) fn capability_inventory_markdown() -> Result<String, String> {
+    let projections =
+        super::standard_registry().map_err(|error| format!("projection registry: {error}"))?;
+    let actions =
+        super::actions::standard_actions().map_err(|error| format!("action registry: {error}"))?;
     let contract = ObserverContract::new(
         &projections,
         std::sync::Arc::new(actions),
         super::evidence::EvidenceStore::new(),
     )
-    .expect("observer contract is valid");
+    .map_err(|error| format!("observer contract: {error}"))?;
 
     let capabilities: Vec<&CapabilityDescriptor> = contract.registry().capabilities().collect();
-    render(&capabilities)
+    Ok(render(&capabilities))
 }
 
 fn render(capabilities: &[&CapabilityDescriptor]) -> String {
@@ -147,7 +149,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
         assert_eq!(
             committed,
-            capability_inventory_markdown(),
+            capability_inventory_markdown().expect("the registry builds"),
             "the committed capability inventory is stale. Regenerate it:\n  \
              cargo run -p quantick-app -- --dump-capability-inventory > \
              docs/control-plane/capability-inventory.md"
@@ -160,7 +162,7 @@ mod tests {
     /// comparing against.
     #[test]
     fn every_row_carries_identifier_version_module_and_permissions() {
-        let markdown = capability_inventory_markdown();
+        let markdown = capability_inventory_markdown().expect("the registry builds");
         let rows: Vec<&str> = markdown
             .lines()
             .filter(|line| line.starts_with("| `"))

@@ -6,7 +6,7 @@
 //! application through them, and until this module existed the documentation
 //! was the only record that a hook was real.
 //!
-//! That record was wrong in both directions. Six hooks the application reads
+//! That record was wrong in both directions. Three hooks the application reads
 //! had no row at all. One row — `QUANTICK_DRAWING_MANAGER`, singular — named a
 //! variable nothing has ever read; the code reads `QUANTICK_DRAWINGS_MANAGER`,
 //! and the same file spells it correctly two rows further down. A capture run
@@ -91,6 +91,34 @@ macro_rules! declare_hooks {
 }
 
 pub(crate) use declare_hooks;
+
+/// `QUANTICK_*` variables that are deliberately **not** launch hooks.
+///
+/// One definition, two readers. [`log_unknown_hooks`] skips them, so a build
+/// that sets `QUANTICK_GIT_COMMIT` is not warned about its own build metadata;
+/// and `crates/guards/src/generated.rs` parses this same table out of this
+/// file, so the guard cannot demand a harness row for something the
+/// application never reads. A second copy kept by hand in the guard would be
+/// the duplicated truth this module exists to end, and it would drift the
+/// first time either side gained an entry.
+///
+/// Each carries its reason, because an allowlist is how a parity guard is
+/// quietly defeated: a reader who disagrees with an entry has something to
+/// disagree with.
+pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[
+    (
+        "QUANTICK_GIT_COMMIT",
+        "build metadata, read through `option_env!` at compile time and reported          in the control plane's system info. Setting it at runtime does nothing.",
+    ),
+    (
+        "QUANTICK_FAKE_STORE",
+        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module.          Never read by a release build.",
+    ),
+    (
+        "QUANTICK_TEST_STORE_HOME_ENV",
+        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which          lets a test redirect the store home. Never read by a release build.",
+    ),
+];
 
 /// Every module that owns hooks, with the path a reader should open to find
 /// them.
@@ -230,6 +258,7 @@ pub(crate) fn unknown_hooks<'a>(
     let mut out: Vec<String> = environment
         .filter(|name| name.starts_with("QUANTICK_"))
         .filter(|name| !declared.contains(name))
+        .filter(|name| !NOT_HOOKS.iter().any(|(known, _)| known == name))
         .map(str::to_owned)
         .collect();
     out.sort();

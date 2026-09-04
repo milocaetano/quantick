@@ -37,6 +37,14 @@
 //! So the delta this guard reports is the true delta, not an approximation of
 //! it — for capabilities. It cannot see a capability registered from a string
 //! literal written inline, which is why the authoritative test still runs.
+//!
+//! # The hook side closes a loop the first version left open
+//!
+//! Hooks are checked in three directions, not two, and the third is the one
+//! that matters: a `QUANTICK_*` the application **reads** must be declared.
+//! Comparing declarations against prose alone left the worst case invisible —
+//! a brand-new read declares nothing and is described nowhere, so both sets
+//! agreed and the guard passed a hook that existed and could not be found.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -58,31 +66,8 @@ pub const PROSE_PATH: &str = "docs/ui-harness/hook-prose.md";
 /// Where the `declare_hooks!` declarations live.
 const APP_SRC: &str = "crates/app/src";
 
-/// Environment variables under the `QUANTICK_` prefix that are deliberately
-/// not launch hooks, and so owe the harness no row.
-///
-/// Signed, because an allowlist is how a parity guard is silently defeated:
-/// every entry states what it is instead, and a reader who disagrees has
-/// something to disagree with. Nothing reaches a UI surface from here.
-const ALLOWLIST: &[(&str, &str)] = &[
-    (
-        "QUANTICK_GIT_COMMIT",
-        "build metadata, read through `option_env!` at compile time and \
-         reported in the control plane's system info. Setting it at runtime \
-         does nothing, so a harness row would describe a hook that is not one.",
-    ),
-    (
-        "QUANTICK_TEST_STORE_HOME_ENV",
-        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which \
-         lets a test redirect the store home without touching the real one. \
-         Never read by a release build.",
-    ),
-    (
-        "QUANTICK_FAKE_STORE",
-        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module. \
-         Never read by a release build.",
-    ),
-];
+/// Where the shared not-a-hook table is declared.
+const HOOKS_MODULE: &str = "crates/app/src/hooks.rs";
 
 /// The marker the generator writes and a hand-written file will not have.
 const GENERATED_MARKER: &str =
@@ -223,12 +208,20 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
         return;
     };
 
-    let allowed: BTreeSet<&str> = ALLOWLIST.iter().map(|(name, _)| *name).collect();
+    let allowed = not_hooks(root);
+    if allowed.is_empty() {
+        findings.push(Finding::new(
+            format!(
+                "{HOOKS_MODULE}: the `NOT_HOOKS` table is missing or unreadable — the guard                  cannot tell a deliberate non-hook from an undeclared one"
+            ),
+            REMEDY_HOOKS,
+        ));
+    }
     let described: BTreeSet<String> = hook_names(&prose);
     let declared = declared_hooks(root);
 
     for (name, site) in &declared {
-        if !described.contains(name) && !allowed.contains(name.as_str()) {
+        if !described.contains(name) && !allowed.contains(name) {
             findings.push(Finding::new(
                 format!(
                     "{site}: `{name}` is declared as a hook but {PROSE_PATH} never mentions it"
@@ -237,8 +230,24 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
             ));
         }
     }
+    // The direction that closes the loop. Without it a *new* read declares
+    // nothing, is described nowhere, and both comparisons above stay silent —
+    // which is precisely the hook that exists and cannot be found, the defect
+    // this whole guard was written against.
+    for (name, site) in read_hooks(root) {
+        if !declared.contains_key(&name) && !allowed.contains(&name) {
+            findings.push(Finding::new(
+                format!(
+                    "{site}: `{name}` is read by the application but no `declare_hooks!` \
+                     declares it — it would reach no registry and no reader"
+                ),
+                REMEDY_HOOKS,
+            ));
+        }
+    }
+
     for name in &described {
-        if !declared.contains_key(name) && !allowed.contains(name.as_str()) {
+        if !declared.contains_key(name) && !allowed.contains(name) {
             findings.push(Finding::new(
                 format!(
                     "{PROSE_PATH}: `{name}` is described but no `declare_hooks!` in {APP_SRC} \
@@ -248,6 +257,136 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
             ));
         }
     }
+}
+
+/// Every `QUANTICK_*` the shipped application names, with where it names it.
+///
+/// String literals in production code, which catches the two shapes a read
+/// takes here: `env::var("QUANTICK_X")` directly, and the indirection through
+/// a `const FOO_ENV: &str = "QUANTICK_X"` that several modules prefer. A name
+/// appearing only in a comment is not a read and is not collected.
+///
+/// `#[cfg(test)] mod` blocks are skipped whole. Three variables live in them
+/// and are not launch hooks; without this they would demand harness rows
+/// describing hooks a release build never reads.
+fn read_hooks(root: &Path) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    let mut files = Vec::new();
+    collect_rust_files(&root.join(APP_SRC), &mut files);
+    files.sort();
+    for file in files {
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let relative = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if is_test_source(&relative) {
+            continue;
+        }
+        for (line_number, line) in production_lines(&source) {
+            for name in literal_hook_names(line) {
+                out.entry(name)
+                    .or_insert_with(|| format!("{relative}:{line_number}"));
+            }
+        }
+    }
+    out
+}
+
+/// The lines of a source file that a release build compiles, numbered from 1.
+///
+/// Brace-counted rather than parsed: a `#[cfg(test)]` attribute opens a region
+/// that ends when the braces it opened close again. Crude, and right for the
+/// shape this repository actually writes — one `#[cfg(test)] mod tests` per
+/// file, at the end.
+fn production_lines(source: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut depth: i32 = 0;
+    let mut skipping = false;
+    for (index, line) in source.lines().enumerate() {
+        if !skipping && line.trim_start().starts_with("#[cfg(test)]") {
+            skipping = true;
+            depth = 0;
+            continue;
+        }
+        if skipping {
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            if depth <= 0 && line.contains('}') {
+                skipping = false;
+            }
+            continue;
+        }
+        out.push((index + 1, line));
+    }
+    out
+}
+
+/// Every `QUANTICK_*` inside a double-quoted literal on one line.
+///
+/// A name in a `//` comment is documentation, not a read, so the comment tail
+/// is cut first. Quote counting is deliberately simple: the literals this
+/// looks for are plain names with no escapes.
+fn literal_hook_names(line: &str) -> BTreeSet<String> {
+    let code = match line.find("//") {
+        Some(at) if line[..at].matches('"').count().is_multiple_of(2) => &line[..at],
+        _ => line,
+    };
+    let mut out = BTreeSet::new();
+    let mut rest = code;
+    while let Some(open) = rest.find('"') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('"') else { break };
+        // `"QUANTICK_"` with nothing after it is the prefix the diagnostic
+        // filters on, not the name of a hook.
+        out.extend(
+            hook_names(&after[..close])
+                .into_iter()
+                .filter(|name| name.len() > "QUANTICK_".len()),
+        );
+        rest = &after[close + 1..];
+    }
+    out
+}
+
+/// The `QUANTICK_*` names the application itself declares as not-a-hook.
+///
+/// Parsed out of `crates/app/src/hooks.rs` rather than copied here. The table
+/// is read at runtime by the startup diagnostic, so it has to live in the
+/// application; this crate has no dependencies and cannot link it, and a
+/// second copy kept in step by hand is the failure this guard exists to catch.
+/// `crates/guards/tests/session_gap_agreement.rs` is the same pattern.
+fn not_hooks(root: &Path) -> BTreeSet<String> {
+    let Ok(source) = std::fs::read_to_string(root.join(HOOKS_MODULE)) else {
+        return BTreeSet::new();
+    };
+    let Some(start) = source.find("const NOT_HOOKS:") else {
+        return BTreeSet::new();
+    };
+    let table = match source[start..].find("];") {
+        Some(end) => &source[start..start + end],
+        None => &source[start..],
+    };
+    let mut out = BTreeSet::new();
+    for line in table.lines() {
+        for name in literal_hook_names(line) {
+            out.insert(name);
+        }
+    }
+    out
+}
+
+/// Whether a source file holds tests rather than shipped code.
+///
+/// `crates/app` keeps whole modules of tests in `src/**/tests/` and in files
+/// suffixed `_tests.rs`, neither of which a release build compiles. A
+/// `QUANTICK_*` named in one is a fixture, not a hook, and demanding a harness
+/// row for it would document something that does not exist.
+fn is_test_source(relative: &str) -> bool {
+    relative.contains("/tests/") || relative.ends_with("_tests.rs")
 }
 
 /// Every hook name a `declare_hooks!` or `MAIN_HOOKS` declaration carries,
@@ -376,9 +515,9 @@ fn is_capability_id(candidate: &str) -> bool {
     candidate.contains('.')
         && candidate.split('.').all(|segment| {
             !segment.is_empty()
-                && segment
-                    .chars()
-                    .all(|character| character.is_ascii_lowercase() || character == '_')
+                && segment.chars().all(|character| {
+                    character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+                })
         })
 }
 
@@ -449,6 +588,77 @@ mod tests {
         ] {
             assert_eq!(capability_constant(line), None, "{line}");
         }
+    }
+
+    /// A capability identifier may carry a digit, and dropping one is worse
+    /// than reporting it wrongly: `is_capability_id` is applied to *both* the
+    /// documented and the declared side, so a name it rejects vanishes from
+    /// each and the two then compare equal. Real drift on `orderflow.l2.read`
+    /// — `orderflow.l2` is already a registered scope — would have passed this
+    /// guard in silence.
+    #[test]
+    fn an_identifier_with_a_digit_is_still_an_identifier() {
+        assert!(is_capability_id("orderflow.l2.read"));
+        assert_eq!(
+            capability_constant("const L2_CAPABILITY_ID: &str = \"orderflow.l2.read\";"),
+            Some("orderflow.l2.read".to_owned())
+        );
+    }
+
+    /// A hook read but declared nowhere is the defect the whole guard exists
+    /// for, and the first version of it could not see the case at all: it
+    /// compared declarations against prose, so a brand-new read appeared in
+    /// neither set and both comparisons stayed silent.
+    #[test]
+    fn a_read_that_declares_nothing_is_visible_to_the_scan() {
+        assert!(
+            literal_hook_names("    std::env::var(\"QUANTICK_NEW\").ok()").contains("QUANTICK_NEW")
+        );
+        assert!(
+            literal_hook_names("const SETTINGS_ENV: &str = \"QUANTICK_VIA_CONST\";")
+                .contains("QUANTICK_VIA_CONST")
+        );
+    }
+
+    /// The bare prefix is what the diagnostic filters on, not a hook.
+    #[test]
+    fn the_bare_prefix_is_not_a_hook_name() {
+        assert!(literal_hook_names("name.starts_with(\"QUANTICK_\")").is_empty());
+    }
+
+    /// A name in a comment is documentation, not a read.
+    #[test]
+    fn a_name_in_a_comment_is_not_a_read() {
+        assert!(literal_hook_names("// pair with QUANTICK_BOOK_AUTOSTART").is_empty());
+        assert!(literal_hook_names("let x = 1; // see \"QUANTICK_MENTIONED\"").is_empty());
+    }
+
+    /// Test modules are skipped whole: three `QUANTICK_*` live in them and are
+    /// not launch hooks.
+    #[test]
+    fn a_cfg_test_module_is_not_production() {
+        let source = "fn real() {}
+#[cfg(test)]
+mod tests {
+    const X: &str = \"QUANTICK_FIXTURE\";
+}
+";
+        let lines: Vec<&str> = production_lines(source)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect();
+        assert!(lines.iter().any(|l| l.contains("fn real")));
+        assert!(!lines.iter().any(|l| l.contains("QUANTICK_FIXTURE")));
+    }
+
+    /// The two directories `crates/app` keeps whole test modules in.
+    #[test]
+    fn test_sources_are_recognised_by_path() {
+        assert!(is_test_source(
+            "crates/app/src/app/tests/control_plane_tests.rs"
+        ));
+        assert!(is_test_source("crates/app/src/app/drawings_tests.rs"));
+        assert!(!is_test_source("crates/app/src/frvp.rs"));
     }
 
     #[test]

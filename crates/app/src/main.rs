@@ -138,20 +138,31 @@ fn init_tracing() {
 ///
 /// Each writes to stdout and exits 0, so a caller can redirect it over the
 /// committed file and let `git diff` say whether anything moved.
+/// Write a rendered dump, or fail loudly without writing a byte.
+///
+/// Never a panic and never a partial write. A caller redirects this over a
+/// committed file, and the shell truncates that file before the process starts
+/// — so half a document on stdout is a corrupted index the next `git diff`
+/// reports as a real change. Either the whole thing lands, or nothing does and
+/// the exit code says so.
+fn emit(rendered: Result<String, String>) {
+    match rendered {
+        Ok(markdown) => print!("{markdown}"),
+        Err(error) => {
+            eprintln!("quantick-app: cannot render the dump: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn run_dump_subcommand(argument: &str) -> bool {
     match argument {
         "--dump-capability-inventory" => {
-            print!("{}", control::inventory::capability_inventory_markdown());
+            emit(control::inventory::capability_inventory_markdown());
             true
         }
         "--dump-hook-registry" => {
-            match hooks::hook_registry_markdown() {
-                Ok(markdown) => print!("{markdown}"),
-                Err(error) => {
-                    eprintln!("cannot render the hook registry: {error}");
-                    std::process::exit(1);
-                }
-            }
+            emit(hooks::hook_registry_markdown());
             true
         }
         _ => false,
