@@ -4549,7 +4549,7 @@ impl ChartPane {
             crate::trade_paint::draw(
                 &frame,
                 chrome.paper.session_trades(),
-                chrome.paper.selected_trade_index(),
+                chrome.paper.account().selected_trade_index(),
                 |ms| {
                     covered
                         .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)

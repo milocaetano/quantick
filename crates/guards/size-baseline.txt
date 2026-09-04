@@ -129,9 +129,9 @@
 # `pane.rs` and `app.rs` were cut in parallel, both lower this line, and the
 # second to land subtracts its own fall from the first's number rather than
 # from the one it measured against. 57,394 - 2,149 = 55,245.
-!budget 55245
+!budget 55595
 
-crates/app/src/app.rs 5350
+crates/app/src/app.rs 5388
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -181,7 +181,50 @@ crates/app/src/paper_report.rs 3300
 
 # +11: the eight `QUANTICK_PAPER_*` hooks this file reads, declared beside
 # them. See the budget note above.
-crates/app/src/paper_trading.rs 6407
+# The money path came out of `paper_trading.rs` as `paper_account.rs` - the
+# deciding half of paper trading, split from the drawing half, exactly as
+# `paper_report.rs` was the reading half. That file placed orders, projected
+# brackets, sized risk against capital and wrote the trades journal *and* drew
+# the ticket, and an auditor asking "was the stop placed at the right price?"
+# had to read through drawing code to answer.
+#
+# 1,818 production lines left, against 2,128 arriving here, plus 2 in `tab.rs`
+# and 38 in `app.rs` for the receivers the split moved to `account()` - a
+# `tab.paper.set_risk_settings(..)` becoming
+# `tab.paper.account_mut().set_risk_settings(..)` wraps where it used to fit.
+# So the sum of ceilings rises by 350.
+#
+# The mission allowed +300 and this is 50 over, granted by the trader with the
+# measurement in front of them. Its own two criteria pull against each other:
+# it asked for twenty-one named functions on the account AND a rise under 300,
+# and a function moved across a seam pays for its signature twice - once where
+# it lives, once where the ticket resolves its text before calling it. At
+# seventeen moved the rise was 297; the last four - `market`, `settle`,
+# `on_trade`, `set_symbol`, all named in the brief - cost the rest. Reverting
+# them would buy the number and lose the delivery.
+#
+# Eleven lines were already returned from real duplication the move exposed:
+# `push_toast` against `set_toast` (two doors into a one-slot outbox),
+# `has_toast` against `peek_toast`, and one explanation written into both
+# halves of `set_symbol`. What remains is signatures, and shaving a doc comment
+# to reach a round number would buy the number and lose the reason.
+#
+# It also closes the note below. The five private items that entry said would
+# have to be widened were why the risk seam stopped short; each has landed on
+# exactly one side. `aim_bracket` moved (arithmetic, and its only tie to the
+# ticket was the ruler, which now arrives as two resolved prices) and so did
+# `venue`; `show_toast`, `parse_quantity` and `quantity_preview` stayed,
+# because each reads a text box or writes the ticket's one-slot outbox.
+#
+# The numbers are pinned, not merely moved: `the_journal_bytes_are_fixed`
+# asserts a fixed tape's whole journal byte for byte over four round trips - a
+# manual long, a manual short, a stop-out and a target. It was written against
+# the old code in its old home and its expected text did not change - same
+# SHA-256 before and after,
+# ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6.
+crates/app/src/paper_account.rs 2128
+
+crates/app/src/paper_trading.rs 4589
 
 # Lowered by 2,153 by `--tighten` after the four sidecar moves described in
 # the budget note above. The +14 this entry used to carry -- the strategy
@@ -193,7 +236,7 @@ crates/app/src/pane.rs 5618
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-crates/app/src/tab.rs 4470
+crates/app/src/tab.rs 4472
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485

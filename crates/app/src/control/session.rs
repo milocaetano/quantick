@@ -339,8 +339,8 @@ fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
                 .iter()
                 .map(OrderRevisionKey::of)
                 .collect(),
-            closed_trades: tab.paper.session_trades().len(),
-            selected_trade_row: tab.paper.selected_trade_index(),
+            closed_trades: tab.paper.account().session_trades().len(),
+            selected_trade_row: tab.paper.account().selected_trade_index(),
         })
         .collect()
 }
@@ -472,8 +472,8 @@ fn paper_snapshot(app: &QuantickApp) -> PaperSnapshot {
 }
 
 fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
-    let orders = tab.paper.working_orders();
-    let trades = tab.paper.session_trades();
+    let orders = tab.paper.account().working_orders();
+    let trades = tab.paper.account().session_trades();
     // The ledger is read from its end, so a truncated page keeps the newest
     // rows rather than the first ones ever recorded.
     let trade_page_start = trades
@@ -492,18 +492,20 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
         tab_id: WireU64::new(tab.id),
         symbol: tab.symbol.clone(),
         provenance: PAPER_PROVENANCE.to_owned(),
-        flat: tab.paper.is_flat(),
+        flat: tab.paper.account().is_flat(),
         armed_strategy: tab
             .paper
+            .account()
             .selected_order_strategy()
             .map(|strategy| strategy.name.clone()),
         armed_strategy_refusal: tab
             .paper
+            .account()
             .selected_order_strategy()
             .and_then(|strategy| strategy.validate().err())
             .map(|error| error.advice().to_owned()),
         ruler_ticks: tab.paper.ruler_ticks(),
-        tick_size: canonical_decimal(tab.paper.tick_size()),
+        tick_size: canonical_decimal(tab.paper.account().tick_size()),
         risk_state: risk_state.code().to_owned(),
         risk_quantity: risk_state.derived_quantity().map(canonical_decimal),
         risk_amount: risk_amount
@@ -514,7 +516,11 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
             .map(|risk| risk.currency.code().to_owned()),
         risk_blocks_entry: risk_blocks,
         risk_sentence: Some(risk_state.sentence()).filter(|sentence| !sentence.is_empty()),
-        position: tab.paper.position_summary().map(position_snapshot),
+        position: tab
+            .paper
+            .account()
+            .position_summary()
+            .map(position_snapshot),
         working_orders: orders
             .iter()
             .take(CONTROL_SNAPSHOT_MAX_WORKING_ORDERS)
@@ -529,7 +535,7 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
         closed_trade_count: wire_usize(trades.len()),
         closed_trades_truncated: trade_page_start > 0,
         closed_trades_page_start: wire_usize(trade_page_start),
-        selected_trade_row: tab.paper.selected_trade_index().map(wire_usize),
+        selected_trade_row: tab.paper.account().selected_trade_index().map(wire_usize),
     }
 }
 

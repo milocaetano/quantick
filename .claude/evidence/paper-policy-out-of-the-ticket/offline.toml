@@ -1,0 +1,15 @@
+# A feed that cannot connect, so the depth book is deterministically empty.
+#
+# The capture's tape comes from the replay recording; the BOOK does not - it
+# comes from whichever venue the default feed dials. A MetaTrader listener on
+# a port nothing ever connects to receives no book and no trades, which is
+# what makes two captures comparable.
+default_feed = "offline"
+default_symbol = "WINV26"
+
+[[feeds]]
+id = "offline"
+name = "Offline (capture fixture)"
+provider = "metatrader"
+symbols = ["WINV26"]
+listen_addr = "127.0.0.1:9187"

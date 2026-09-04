@@ -579,7 +579,7 @@ impl QuantickApp {
         // ticket was set to. A selection naming a strategy the file no
         // longer carries selects nothing, which `set_order_strategies`
         // enforces rather than each caller remembering to.
-        tab.paper.set_order_strategies(
+        tab.paper.account_mut().set_order_strategies(
             paper_state.order_strategies.clone().unwrap_or_default(),
             paper_state.selected_order_strategy.as_deref(),
         );
@@ -602,8 +602,9 @@ impl QuantickApp {
         // outranks the stored settings. Restoring them here left the hook's
         // whole point - the derived size, the sentence, the lock -
         // unreachable from a capture.
-        if !tab.paper.risk_from_hook() {
+        if !tab.paper.account().risk_from_hook() {
             tab.paper
+                .account_mut()
                 .set_risk_settings(crate::risk_sizing::settings_from_sidecar(
                     paper_state.risk_per_trade_basis.as_deref(),
                     paper_state.risk_per_trade_amount.as_deref(),
@@ -612,11 +613,13 @@ impl QuantickApp {
                     paper_state.risk_per_trade_lock,
                 ));
             tab.paper
+                .account_mut()
                 .set_capital(crate::risk_sizing::capital_from_records(
                     &paper_state.paper_capital,
                 ));
         }
         tab.paper
+            .account_mut()
             .set_instrument_money(crate::risk_sizing::book_from_records(
                 &paper_state.instrument_money,
             ));
@@ -1303,13 +1306,17 @@ impl QuantickApp {
         // And for the performance report window — the Report… button's own
         // path, so a scripted run can show it.
         if std::env::var("QUANTICK_PAPER_REPORT_AUTOSTART").is_ok_and(|value| value == "1") {
-            app.active_tab_mut().paper.autostart_report();
+            app.active_tab_mut().paper.account_mut().autostart_report();
         }
         // The calendar the report grew: reachable open, on a chosen day or
         // a chosen span, with no clicks at all.
         if let Ok(spec) = std::env::var("QUANTICK_PAPER_CALENDAR") {
             match crate::paper_calendar::parse_selection(&spec) {
-                Some(selection) => app.active_tab_mut().paper.autostart_calendar(selection),
+                Some(selection) => app
+                    .active_tab_mut()
+                    .paper
+                    .account_mut()
+                    .autostart_calendar(selection),
                 None => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -1329,7 +1336,11 @@ impl QuantickApp {
                 symbol => Some(crate::paper_trading::LedgerScope::Symbol(symbol.to_owned())),
             };
             match scope {
-                Some(scope) => app.active_tab_mut().paper.set_ledger_scope(scope),
+                Some(scope) => app
+                    .active_tab_mut()
+                    .paper
+                    .account_mut()
+                    .set_ledger_scope(scope),
                 None => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -1345,7 +1356,10 @@ impl QuantickApp {
         if let Ok(text) = std::env::var("QUANTICK_LEDGER_PAGES") {
             match text.trim().parse::<usize>() {
                 Ok(pages) if pages >= 1 => {
-                    app.active_tab_mut().paper.autostart_ledger_pages(pages);
+                    app.active_tab_mut()
+                        .paper
+                        .account_mut()
+                        .autostart_ledger_pages(pages);
                 }
                 _ => tracing::warn!(
                     target: "quantick::app",
@@ -1361,13 +1375,17 @@ impl QuantickApp {
         // otherwise a click on each header.
         if std::env::var("QUANTICK_LEDGER_FOLD").is_ok_and(|value| value == "1") {
             let tz = app.tz;
-            app.active_tab_mut().paper.autostart_folded_days(tz);
+            app.active_tab_mut()
+                .paper
+                .account_mut()
+                .autostart_folded_days(tz);
         }
         // The report's trade list is open by default, so the hook is how a
         // capture reaches it collapsed.
         if let Ok(value) = std::env::var("QUANTICK_PAPER_REPORT_LIST") {
             app.active_tab_mut()
                 .paper
+                .account_mut()
                 .set_report_list_open(value.trim() != "0");
         }
         // Open on a named canvas layout, through the same path the View menu
@@ -1465,7 +1483,7 @@ impl QuantickApp {
         let (sender, receiver) = std::sync::mpsc::channel();
         // Start where trades actually go right now — under an env override
         // that is the override's folder, not the stored base.
-        let start = self.active_tab().paper.trades_dir().to_path_buf();
+        let start = self.active_tab().paper.account().trades_dir().to_path_buf();
         std::thread::Builder::new()
             .name("quantick-trades-dir-picker".into())
             .spawn(move || {
@@ -1498,6 +1516,7 @@ impl QuantickApp {
         self.workspace.set_trades_dir(dir);
         for tab in &mut self.tabs {
             tab.paper
+                .account_mut()
                 .set_trades_dir(self.workspace.trades_dir().to_path_buf());
         }
     }
@@ -1505,7 +1524,7 @@ impl QuantickApp {
     /// Persist the active tab's cmd-trading settings and fan them out —
     /// one gesture, one meaning, every tab (the trades-dir rule).
     fn persist_cmd_trading(&mut self) {
-        let settings = self.active_tab().paper.cmd_trading();
+        let settings = self.active_tab().paper.account().cmd_trading();
         for tab in &mut self.tabs {
             tab.paper.set_cmd_trading(settings);
         }
@@ -1536,13 +1555,13 @@ impl QuantickApp {
     /// in one tab is one they mean everywhere, and what a point of WIN is
     /// worth does not change because a second tab is looking at it.
     pub(crate) fn persist_risk_settings(&mut self) {
-        let risk = self.active_tab().paper.risk_settings().clone();
-        let capital = self.active_tab().paper.capital().clone();
-        let book = self.active_tab().paper.instrument_money().clone();
+        let risk = self.active_tab().paper.account().risk_settings().clone();
+        let capital = self.active_tab().paper.account().capital().clone();
+        let book = self.active_tab().paper.account().instrument_money().clone();
         for tab in &mut self.tabs {
-            tab.paper.set_risk_settings(risk.clone());
-            tab.paper.set_capital(capital.clone());
-            tab.paper.set_instrument_money(book.clone());
+            tab.paper.account_mut().set_risk_settings(risk.clone());
+            tab.paper.account_mut().set_capital(capital.clone());
+            tab.paper.account_mut().set_instrument_money(book.clone());
         }
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
@@ -1569,14 +1588,21 @@ impl QuantickApp {
             .iter()
             .map(|(symbol, step)| (symbol.clone(), step.normalize().to_string()))
             .collect();
-        let strategies = self.active_tab().paper.order_strategies().to_vec();
+        let strategies = self
+            .active_tab()
+            .paper
+            .account()
+            .order_strategies()
+            .to_vec();
         let selected = self
             .active_tab()
             .paper
+            .account()
             .selected_order_strategy()
             .map(|strategy| strategy.name.clone());
         for tab in &mut self.tabs {
             tab.paper
+                .account_mut()
                 .set_order_strategies(strategies.clone(), selected.as_deref());
             tab.paper.set_ruler_steps(
                 steps
@@ -2148,11 +2174,17 @@ impl QuantickApp {
         let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
-        let cmd_trading = self.active_tab().paper.cmd_trading();
-        let inherited_strategies = self.active_tab().paper.order_strategies().to_vec();
+        let cmd_trading = self.active_tab().paper.account().cmd_trading();
+        let inherited_strategies = self
+            .active_tab()
+            .paper
+            .account()
+            .order_strategies()
+            .to_vec();
         let inherited_selection = self
             .active_tab()
             .paper
+            .account()
             .selected_order_strategy()
             .map(|strategy| strategy.name.clone());
         // Orientation travels with the working state the new tab inherits —
@@ -2167,9 +2199,9 @@ impl QuantickApp {
         // that map speaks for every layer, and applying it here would undo the
         // switches of the session mid-flight. Reading the live state is also
         // what the comment below has always promised.
-        let inherited_risk = self.active_tab().paper.risk_settings().clone();
-        let inherited_capital = self.active_tab().paper.capital().clone();
-        let inherited_money = self.active_tab().paper.instrument_money().clone();
+        let inherited_risk = self.active_tab().paper.account().risk_settings().clone();
+        let inherited_capital = self.active_tab().paper.account().capital().clone();
+        let inherited_money = self.active_tab().paper.account().instrument_money().clone();
         let inherited_layers = self.active_tab().flow_pane.layer_states(&self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
@@ -2183,14 +2215,17 @@ impl QuantickApp {
         let mut tab = Tab::new(id, flow_pane_id, feed_id, symbol, spec, feed, trades_dir);
         tab.paper.set_cmd_trading(cmd_trading);
         tab.paper
+            .account_mut()
             .set_order_strategies(inherited_strategies, inherited_selection.as_deref());
         // The risk per trade travels with them. It is app-wide like the rest
         // of the ticket's settings, and a tab that opened without it would
         // hand the trader a bare quantity field on a market they meant to
         // size the same way as the one beside it.
-        tab.paper.set_risk_settings(inherited_risk);
-        tab.paper.set_capital(inherited_capital);
-        tab.paper.set_instrument_money(inherited_money);
+        tab.paper.account_mut().set_risk_settings(inherited_risk);
+        tab.paper.account_mut().set_capital(inherited_capital);
+        tab.paper
+            .account_mut()
+            .set_instrument_money(inherited_money);
         tab.flow_pane.layout = inherited_layout;
         self.tabs.push(tab);
         self.active_tab = self.tabs.len() - 1;
@@ -2791,7 +2826,10 @@ impl QuantickApp {
                 self.active_tab_mut().paper.flatten();
             }
             if ctx.input_mut(|i| i.consume_shortcut(&PAPER_CANCEL_SHORTCUT)) {
-                self.active_tab_mut().paper.cancel_all_orders();
+                self.active_tab_mut()
+                    .paper
+                    .account_mut()
+                    .cancel_all_orders();
             }
         }
 
@@ -4347,9 +4385,9 @@ impl QuantickApp {
         for command in replaced_cleanup {
             // Arming over an instance with a pending entry sweeps that
             // entry — a resting order must never outlive its bot.
-            let _ = tab.paper.apply_strategy_command(command);
+            let _ = tab.paper.account_mut().apply_strategy_command(command);
         }
-        tab.paper.set_bot_listening(true);
+        tab.paper.account_mut().set_bot_listening(true);
         // Only now, past every gate: the sink opens its device at arm time
         // so the first signal does not pay for it on the tape's path, but a
         // *refused* arm must open nothing. Ctrl+D over a band the copy

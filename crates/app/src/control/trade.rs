@@ -254,7 +254,7 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
     TradeResult {
         selected_strategy: app
             .control_active_paper()
-            .and_then(|paper| paper.selected_order_strategy())
+            .and_then(|paper| paper.account().selected_order_strategy())
             .map(|strategy| strategy.name.clone()),
         ruler_ticks: app
             .control_active_paper()
@@ -395,7 +395,7 @@ fn place_order(
         let paper = app.control_active_paper().ok_or_else(no_chart_open)?;
         let reference = intent
             .price
-            .or_else(|| paper.mark_price())
+            .or_else(|| paper.account().mark_price())
             .unwrap_or_default();
         paper.armed_bracket(intent.side, reference, intent.quantity)
     } else {
@@ -407,10 +407,10 @@ fn place_order(
     // path too. Asked of the same function the ticket asks, so an operator
     // reads the refusal the trader would have read - and gets it as an
     // error rather than as an empty answer it has to interpret.
-    if let Some(refusal) = paper.risk_refusal_for(&intent) {
+    if let Some(refusal) = paper.account().risk_refusal_for(&intent) {
         return Err(ControlError::invalid_request(refusal));
     }
-    let events = paper.place_intent(intent);
+    let events = paper.account_mut().place_intent(intent);
     let result = answer(app, &events);
     journal(access, actor, PLACE_EVENT_KIND, &result, asked);
     to_value(result)
@@ -440,6 +440,7 @@ fn bracket_order(
     let events = app
         .control_active_paper_mut()
         .ok_or_else(no_chart_open)?
+        .account_mut()
         .set_order_bracket(OrderId(input.order_id), bracket);
     let result = answer(app, &events);
     journal(access, actor, BRACKET_EVENT_KIND, &result, asked);
@@ -458,6 +459,7 @@ fn cancel_order(
     let events = app
         .control_active_paper_mut()
         .ok_or_else(no_chart_open)?
+        .account_mut()
         .cancel_order(OrderId(input.order_id));
     let result = answer(app, &events);
     journal(access, actor, CANCEL_EVENT_KIND, &result, asked);
@@ -675,7 +677,7 @@ fn select_strategy(
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
-    let strategies = paper.order_strategies().to_vec();
+    let strategies = paper.account().order_strategies().to_vec();
     if let Some(name) = input.name.as_deref()
         && !strategies.iter().any(|strategy| strategy.name == name)
     {
@@ -683,7 +685,9 @@ fn select_strategy(
             "no exit strategy is named `{name}`"
         )));
     }
-    paper.set_order_strategies(strategies, input.name.as_deref());
+    paper
+        .account_mut()
+        .set_order_strategies(strategies, input.name.as_deref());
     app.control_persist_order_strategies();
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
@@ -780,10 +784,11 @@ fn set_risk(
     // the call named, or the chart's own instrument. Read before the mutation
     // so it describes the instrument the caller was looking at.
     let instrument_currency = paper
+        .account()
         .instrument_money()
-        .get(paper.symbol())
+        .get(paper.account().symbol())
         .map(|money| money.currency.clone());
-    let mut risk = paper.risk_settings().clone();
+    let mut risk = paper.account().risk_settings().clone();
     risk.basis = basis;
     if let Some(amount) = amount {
         risk.amount = amount;
@@ -797,15 +802,15 @@ fn set_risk(
     if let Some(lock) = input.lock {
         risk.lock = lock;
     }
-    paper.set_risk_settings(risk);
+    paper.account_mut().set_risk_settings(risk);
     if let (Some(amount), Some(currency)) = (capital, currency) {
-        let mut declared = paper.capital().clone();
+        let mut declared = paper.account().capital().clone();
         if amount > Decimal::ZERO {
             declared.insert(currency.code().to_owned(), amount);
         } else {
             declared.remove(currency.code());
         }
-        paper.set_capital(declared);
+        paper.account_mut().set_capital(declared);
     }
     app.control_persist_risk_settings();
     let result = answer(app, &[]);
@@ -825,14 +830,14 @@ fn set_instrument_money(
     let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
     let symbol = match input.symbol.as_deref().map(str::trim) {
         Some(symbol) if !symbol.is_empty() => symbol.to_owned(),
-        _ => paper.symbol().to_owned(),
+        _ => paper.account().symbol().to_owned(),
     };
     if symbol.is_empty() {
         return Err(ControlError::invalid_request(
             "no chart symbol to declare money for - name one",
         ));
     }
-    let mut book = paper.instrument_money().clone();
+    let mut book = paper.account().instrument_money().clone();
     let declared = match (
         input.point_value.as_deref(),
         input.size_step.as_deref(),
@@ -877,7 +882,7 @@ fn set_instrument_money(
             book.remove(&symbol);
         }
     }
-    paper.set_instrument_money(book);
+    paper.account_mut().set_instrument_money(book);
     app.control_persist_risk_settings();
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);

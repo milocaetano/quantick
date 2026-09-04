@@ -317,7 +317,7 @@ impl Dock {
                         }
                     });
                     if export {
-                        env.paper.start_export();
+                        env.paper.account_mut().start_export();
                     }
                     match tab {
                         DockTab::L2 => {

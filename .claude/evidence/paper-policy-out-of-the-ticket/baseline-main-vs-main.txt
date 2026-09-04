@@ -1,0 +1,55 @@
+# How the mask was derived, and the one scene that was flaky before the rebase
+
+Two rounds of measurement, on two different bases. Both are kept because the
+second alone would not explain where the mask came from, and a reviewer who
+found only the first would reasonably ask why a scene diverged.
+
+## Round 1 - before the rebase, base d551813
+
+Two runs of the SAME origin/main build, tape drained, and the comparison below.
+Eight of nine scenes matched outside the mask; `paper_strategy_editor` did not.
+That is what the mask is FOR: this round is what showed that the divergence
+between two identical builds is confined to rows 0-30 and 662-672, and that one
+scene could still wobble outside them on a tape that had not fully settled.
+
+mask: rows [(0, 30), (662, 672)] blanked, full width
+
+scene                    match  tinyA / tinyB
+paper_orders                OK  3696c0caaeccf8cb / 3696c0caaeccf8cb
+paper_order_bracket         OK  9830f0b144efde59 / 9830f0b144efde59
+paper_order_hover           OK  6699abbfdbaf5861 / 6699abbfdbaf5861
+paper_risk                  OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+paper_demo                  OK  6b007370721642d7 / 6b007370721642d7
+paper_strategy_editor     DIFF  6cd5697d736c9da9 / c55542a959269872
+cmd_preview                 OK  c16e47bc85670bf2 / c16e47bc85670bf2
+paper_ruler_ticks           OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+toast_paper                 OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+
+8/9 identical outside the mask
+
+## Round 2 - after the rebase onto d3cf317, and the run the PR reports
+
+The same fixture on the rebased base, with the hold long enough for the tape to
+drain completely. Here `paper_strategy_editor` is stable too, so the control is
+9/9 and the branch matches it 9/9. This is the round `pixels-golden.txt`
+reports, and the round the claim rests on.
+
+The two rounds disagree about that one scene because the first did not let the
+tape finish; nothing about the branch changed between them - round 1 compared
+main against main, and so did round 2.
+```
+mask: rows [(0, 30), (662, 672)] blanked, full width
+
+scene                    match  mainC1 / mainC2
+paper_orders                OK  3696c0caaeccf8cb / 3696c0caaeccf8cb
+paper_order_bracket         OK  9830f0b144efde59 / 9830f0b144efde59
+paper_order_hover           OK  6699abbfdbaf5861 / 6699abbfdbaf5861
+paper_risk                  OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+paper_demo                  OK  6b007370721642d7 / 6b007370721642d7
+paper_strategy_editor       OK  c55542a959269872 / c55542a959269872
+cmd_preview                 OK  c16e47bc85670bf2 / c16e47bc85670bf2
+paper_ruler_ticks           OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+toast_paper                 OK  9d977cdb37ff0324 / 9d977cdb37ff0324
+
+9/9 identical outside the mask
+```
