@@ -301,7 +301,9 @@ fn collect(dir: &Path, root: &Path, paths: &mut Vec<String>, findings: &mut Vec<
             continue;
         }
         let relative = relative_to(&path, root);
-        if relative.ends_with(".rs") {
+        // Through `in_scope`, so the walk and `check_file` cannot disagree --
+        // which they did while this arm carried its own `.rs` test.
+        if in_scope(&relative) {
             paths.push(relative);
         }
     }
@@ -321,8 +323,20 @@ fn relative_to(path: &Path, root: &Path) -> String {
 /// The single owner of that question, called by the walk and by
 /// [`check_file`], so the whole-repo run and the edit-time hook can never
 /// disagree about scope.
+///
+/// A path under a `tests/` directory is out of scope, the same exclusion
+/// [`size::is_tracked`] makes and for the same reason this module's own
+/// header gives: test code never ships, so reporting it would teach an author
+/// to write fewer tests. [`size::production_source`] already drops an *inline*
+/// `#[cfg(test)]` module, which covered every test in the repository while
+/// every test lived inside its host. A test module that moves out to
+/// `<host>/tests/mod.rs` is a whole file the slice cannot see into, and
+/// without this line the guard would read a `#[test]` fn that reaches
+/// `Instant::now` as shipping production code -- a finding against a file
+/// whose contents are compiled out of the binary entirely.
 fn in_scope(relative: &str) -> bool {
     relative.ends_with(".rs")
+        && !relative.split('/').any(|part| part == "tests")
         && HEADLESS_CRATES
             .iter()
             .any(|name| relative.starts_with(&format!("crates/{name}/src/")))
@@ -811,6 +825,9 @@ fn z() { let f = std::collections::HashSet::new(); }
     fn the_hook_reads_headless_sources_and_nothing_else() {
         assert!(in_scope("crates/engine/src/lib.rs"));
         assert!(in_scope("crates/control-local/src/client.rs"));
+        // A test module that moved out of its host is still test code.
+        assert!(!in_scope("crates/orderflow/src/projection/tests/mod.rs"));
+        assert!(!in_scope("crates/engine/src/tests/bars.rs"));
         assert!(!in_scope("crates/app/src/app.rs"));
         assert!(!in_scope("crates/feed/src/lib.rs"));
         assert!(!in_scope("crates/feed-mt5/src/lib.rs"));
