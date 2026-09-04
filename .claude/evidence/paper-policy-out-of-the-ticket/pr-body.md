@@ -150,6 +150,34 @@ than a hand-rolled temp dir:
 `crates/app/src/app/tests/paper_trading_tests.rs` is byte-identical to
 `origin/main` — not one line, not even a name.
 
+## What moved, what stayed, and the account's own tests
+
+**Nineteen of the twenty-one functions the brief names are on the account.**
+Seven appear on both sides, which is the seam working rather than a half-move:
+the account holds the policy and the ticket holds a thin half that resolves its
+own text or pixels first — `market` reads the offset boxes, `settle` forgets
+the hovered order, `on_trade` rests the capture orders, `set_symbol` forgets
+the ruler.
+
+Two did not move, and each reads a field the brief's *own* field list calls the
+ticket's: `rest_capture_orders` reads `orders_demo` and `order_bracket_demo`
+(harness hooks whose orders are photographed, not traded), and
+`decide_pending_leg` reads `drag`. Moving either would move pixels into the
+account, which is the one thing this change exists to prevent.
+
+`paper_account.rs` carries three tests that construct a `PaperAccount` and
+nothing else — no `PaperTrading` anywhere in them. One takes a round trip and
+reads the journal back off disk; one puts the risk lock in front of an
+oversized entry and finds the refusal in the outbox rather than on a toast lane
+the module does not own; one checks `set_symbol` tells arriving apart from
+switching.
+
+The ten journal tests in `paper_trading.rs` stayed, deliberately. Rewriting
+them to drive the account would change their bodies — and one is
+`the_journal_bytes_are_fixed`, whose entire value is that its body and expected
+bytes have *not* changed since before the code moved. A test rewritten to prove
+a refactor is not evidence about that refactor; R17 outranks R14 for that one.
+
 ## Blast radius
 
 `app.rs`, `tab.rs`, `dock.rs`, `pane.rs` and `main.rs` change **only** on
