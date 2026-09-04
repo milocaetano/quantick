@@ -1,0 +1,24 @@
+1c1
+< crate.lines.app	108188
+---
+> crate.lines.app	108308
+20c20
+< crate.lines.total	173375
+---
+> crate.lines.total	173495
+26c26
+< file.largest.crates/app/src/pane.rs	7771
+---
+> file.largest.crates/app/src/pane.rs	5618
+41,43c41,43
+< ratchet.size.budget	59547
+< ratchet.size.recorded	59547
+< ratchet.size.measured	173375
+---
+> ratchet.size.budget	57394
+> ratchet.size.recorded	57394
+> ratchet.size.measured	173495
+53c53
+< app.lines.without_egui	104495
+---
+> app.lines.without_egui	104611
