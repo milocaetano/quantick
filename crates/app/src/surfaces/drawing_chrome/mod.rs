@@ -1137,6 +1137,15 @@ pub(crate) fn clamp_into_chart(
     )
 }
 
+crate::hooks::declare_hooks![
+    "QUANTICK_CONTEXT_BAR_POS",
+    "QUANTICK_DRAWINGS_MANAGER",
+    "QUANTICK_DRAWING_INSPECTOR",
+    "QUANTICK_DRAWING_INSPECTOR_POS",
+    "QUANTICK_DRAWING_INSPECTOR_TAB",
+    "QUANTICK_TEXT_NOTE"
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

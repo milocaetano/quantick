@@ -126,6 +126,8 @@ pub(crate) fn resolve(stored: Option<&str>) -> String {
     )
 }
 
+crate::hooks::declare_hooks!["QUANTICK_REPLAY_DIR"];
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

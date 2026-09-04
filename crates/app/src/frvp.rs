@@ -506,6 +506,8 @@ fn derive(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>)
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FRVP_FOLD_BUDGET"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

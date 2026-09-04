@@ -268,6 +268,8 @@ impl PresetHost for PresetStore {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_DRAWING_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

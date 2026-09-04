@@ -111,6 +111,8 @@ impl Surface for FootprintSettingsSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_PANEL"];
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;

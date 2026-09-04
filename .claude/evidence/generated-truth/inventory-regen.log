@@ -1,0 +1,18 @@
+=== A2: the dump path reproduces the committed file byte for byte (R4, R5) ===
+
+--- the command ---
+$ cargo run -q -p quantick-app -- --dump-capability-inventory > docs/control-plane/capability-inventory.md
+exit=0
+
+--- git diff --exit-code over the regenerated file ---
+exit=0   (0 = the committed copy is exactly what the generator emits)
+
+--- what the file carries: 38 capabilities, four facts each ---
+| Capability | Version | Module | Read-only | Permissions |
+| --- | --- | --- | --- | --- |
+| `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+
+38 capabilities registered.
+
+--- the authoritative test, which holds the real registry ---
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2189 filtered out; finished in 0.04s

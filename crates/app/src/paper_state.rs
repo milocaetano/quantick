@@ -247,6 +247,8 @@ pub(crate) fn clear_trades_dir(path: &Path) {
     save(path, &state);
 }
 
+crate::hooks::declare_hooks!["QUANTICK_PAPER_STATE"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

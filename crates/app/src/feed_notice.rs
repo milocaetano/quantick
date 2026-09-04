@@ -706,6 +706,8 @@ pub fn draw_popup(
     (action, popup)
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FEED_POPUP"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

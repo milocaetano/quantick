@@ -218,6 +218,8 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PRESETS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

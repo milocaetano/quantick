@@ -178,6 +178,43 @@ the start of every session.
 arguments are here, because every one of these rules was written after the
 thing it forbids had already happened.
 
+**The headless rule names the feeds as an exception because they always
+were.** `CLAUDE.md` listed "the feeds" among the crates with no async and no
+wall clock, and had listed them there for as long as the rule existed. They
+never satisfied it and never could: a feed's whole job is a socket. The three
+crates hold 190 `.await` points — 96 in `feed-binance`, 51 in `feed-mt5`, 43
+in `feed-hyperliquid` — and read the clock three times, at
+`feed-binance/src/depth/stream.rs:665`, `feed-mt5/src/stream.rs:2058` and
+`feed-hyperliquid/src/candles.rs:414`, each stamping arrival for the latency
+readout the status bar shows.
+
+A rule with a standing exception nobody wrote down is worse than a narrower
+rule, because the first agent to check it finds the rule false and cannot tell
+which half is wrong — the code, or the rule. So the exception is stated, and
+stated narrowly: what determinism actually depends on is that neither the
+async nor the clock read *crosses the `FeedEvent` channel*. A feed emits
+events carrying the venue's own timestamps, and nothing downstream is allowed
+to know a clock was read. That is the property the golden tests protect, and
+it is unchanged.
+
+**Not every hook belongs in `harness.rs`, and the fifty in `app.rs` are
+not all debt.**
+
+*Almost*, because about fifty reads are still in `app.rs` and are not debt in
+the same sense. Most are hooks that keep **no state at all** — they call a
+setter on a tab and are finished (`QUANTICK_TAPE`, `QUANTICK_INVERTED`,
+`QUANTICK_INDICATORS_AUTOSTART`), so there is no field for an owner to hold.
+The rest belong to clusters that are each their own extraction — the
+`QUANTICK_CONTROL_*` family, the tab and layout hooks, the replay and
+workspace hooks — and they reach `self.tabs` and the control gateway, which
+`harness.rs` deliberately cannot see. A hook of yours that keeps a field, and
+needs nothing but its own parsed value, belongs in the owner.
+
+That surface rule used to live at the bottom of the registry, which is now a
+61KB data file this skill tells you to `grep` rather than read. An authoring
+rule nobody reads is one the size guard enforces by failing you instead, so it
+belongs here, beside the instruction it is the exception to.
+
 **The edit loop is not the gate.** `cargo check` appeared nowhere in this
 repository's documentation, so the four-check gate was doubling as the loop
 between edits. An agent with no name for the fast path defaults to the slow

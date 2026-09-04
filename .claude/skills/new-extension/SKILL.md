@@ -18,12 +18,28 @@ repo's existing ports:
 | --- | --- | --- |
 | Market data source | `FeedEvent` channel + `FeedCapabilities` | new `feed-*` crate; config entry in `crates/app/config/feeds.toml` |
 | Bar/aggregation type | engine aggregator trait | new module in `engine`, one registration |
-| Indicator / kernel | `Indicator` trait (commit/preview + rollback) | `indicators` crate, or a `.pine` script compiled by `pine` |
+| Indicator / kernel | `Indicator` trait (commit/preview + rollback) | a `.pine` script is data only. A **native** is a new file plus one `pub use` in `indicators` — and then 15 edits in `app`. See *The indicator port is only half a port* below |
 | Chart layer / overlay | chart layer registry (`QUANTICK_CHART_LAYERS` set) | new layer module in `app` |
 | Panel / dock tab | dock tab set | new module in `app`, one tab registration |
 | Floating UI surface (popup, toast, overlay box) | `Surface` trait + `SurfaceEnv`/`SurfaceResponse` | new module in `app/src/surfaces/`, one field on `Surfaces` |
 | Look / preset | config file (`bubbles.toml`, drawing presets) | data only — no code |
 | Sim/backtest behaviour | `sim` fill model + metrics | `sim` crate, consumed by chart and runner alike |
+
+**The indicator port is only half a port**, and the table used to hide it.
+`crates/indicators/src/native/mod.rs` says "a third native is a new file plus
+one line", which is true *of that crate* and is where the claim came from. It
+is not true of adding an indicator. Measured against `NativeCvd`, the newest
+native, the `app` side costs a `SavedKind` variant in
+`indicators/state_file.rs` and **14 further call sites**: nine in
+`indicator_worker.rs`, three in `app.rs`, one in `app/layout_wiring.rs`.
+Adding a fourth native means visiting all fifteen.
+
+So: a `.pine` script is the real extension point and costs no code at all —
+prefer it. If a native is genuinely required (performance, or a kernel the
+dialect cannot express), the honest plan says fifteen sites, and carving
+`SavedKind` into a registry keyed by a string — the shape
+`indicators/library.rs` already uses for scripts — is a legitimate first
+slice of that goal rather than scope creep.
 
 **No port fits?** Then the goal has two parts: first carve the port (a
 trait, a registry, a capability flag) as its own reviewable slice, then

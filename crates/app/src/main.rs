@@ -34,6 +34,7 @@ mod footprint_series;
 mod frvp;
 mod harness;
 mod history_reach;
+mod hooks;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
@@ -143,6 +144,16 @@ fn run_dump_subcommand(argument: &str) -> bool {
             print!("{}", control::inventory::capability_inventory_markdown());
             true
         }
+        "--dump-hook-registry" => {
+            match hooks::hook_registry_markdown() {
+                Ok(markdown) => print!("{markdown}"),
+                Err(error) => {
+                    eprintln!("cannot render the hook registry: {error}");
+                    std::process::exit(1);
+                }
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -158,6 +169,11 @@ fn main() -> eframe::Result {
     }
 
     init_tracing();
+
+    // Immediately after the subscriber exists, so a mistyped hook is the first
+    // thing the run says rather than something inferred later from a surface
+    // that never opened.
+    hooks::log_unknown_hooks();
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
@@ -387,6 +403,12 @@ fn parse_window_size(raw: &str) -> Option<[f32; 2]> {
     (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
         .then_some([width, height])
 }
+
+/// The launch hooks read from the crate root; see [`crate::hooks`].
+pub(crate) const MAIN_HOOKS: &[hooks::HookSpec] = &[
+    hooks::HookSpec::new("QUANTICK_LOG_FORMAT"),
+    hooks::HookSpec::new("QUANTICK_WINDOW_SIZE"),
+];
 
 #[cfg(test)]
 mod window_size_tests {

@@ -30,7 +30,8 @@
 # `CLAUDE.md` delegates the crate map to, so it is load-bearing rather than
 # merely long — but it is loaded all the same, and PR #279 moved weight into
 # it, which is exactly why it is rationed here.
-.claude/skills/ui-harness/references/hook-registry.md 69177
+# +935: see the budget note above. Generated, not written.
+.claude/skills/ui-harness/references/hook-registry.md 70112
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
@@ -62,4 +63,25 @@ AGENTS.md 12825
 # The cost is a total that drifts with ordinary edits. That is what the guard's
 # BUDGET_SLACK absorbs, and why this number is expected to move down over time
 # and to be argued over when it moves up.
-!budget 231950
+# Raised by 935 for the generated hook registry, and this is the whole of that
+# raise. The file stopped being hand-written: existence now comes from the
+# `declare_hooks!` line beside each read and the prose from
+# `docs/ui-harness/hook-prose.md`, fused by
+# `quantick-app --dump-hook-registry`. Measured, 69,177 -> 70,112:
+#
+#   +1,473  three hooks that had no row at all -- `QUANTICK_LOG_FORMAT`,
+#           `QUANTICK_FOOTPRINT` and `QUANTICK_INDICATORS_DIR` -- now described.
+#   +2,206  a `Declared in` column on every row, which is the fact the code
+#           owns and the reason the file can no longer drift.
+#   -2,461  43 stale "Landing with the X goal" / "once merged, move these into
+#           the table above" staging lines, whose branches are long merged.
+#     -726  22 duplicate table headers and separators, now one table.
+#     +443  the rest: a preamble saying how to regenerate rather than asking
+#           the reader to grep `env::var`, and the hook count in the footer.
+#
+# The authored prose is 67 KB and deliberately does NOT live under
+# `.claude/skills/`, so a session is not charged for it twice: it loads the
+# generated file only. Not one `Reaches` cell was shortened -- the long ones
+# say which class of defect is invisible without that hook, which is the most
+# valuable content in the harness and the thing a grep cannot supply.
+!budget 232885

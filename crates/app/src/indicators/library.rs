@@ -197,6 +197,8 @@ impl ScriptLibrary {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_INDICATORS_DIR"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

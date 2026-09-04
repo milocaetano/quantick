@@ -26,9 +26,9 @@ surface you need** rather than reading it whole:
 grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-It was moved out of this file rather than shortened, and no row was dropped.
-The table is 61KB — four fifths of this skill — and it is *data*, looked up one
-row at a time by a run that drives one or two surfaces. Loading it whole to
+It was moved out of this file rather than shortened, and no row has ever been
+dropped. The table is 69KB — five sixths of this skill — and it is *data*,
+looked up one row at a time by a run that drives one or two surfaces. Loading it whole to
 answer "what turns the heatmap on" was the single largest token cost in this
 repository's whole agentic flow, paid on every capture. A grep answers the same
 question from the same rows.
@@ -37,15 +37,20 @@ Read it whole when you genuinely need the whole thing: taking inventory of what
 is reachable, or auditing coverage before a release. That is the rare case, and
 it now costs the same as it always did instead of being charged to every run.
 
-Code is the source of truth either way — `grep env::var crates/app/src` — and
-the table is the index. A hook the registry does not list is a hook nobody can
-find; see *Adding a new hook* below, which still requires the row.
+**The registry is generated and cannot lie about what exists.** Rows come from
+the `declare_hooks!` line beside each read, fused with the prose in
+`docs/ui-harness/hook-prose.md`; a hook read but not described, or described
+but not read, fails `cargo test -p quantick-guards`. Edit the prose, never the
+registry, then `cargo run -p quantick-app -- --dump-hook-registry` over it.
 
-For the code itself there is now one file to open rather than a grep:
-**`crates/app/src/harness.rs`** owns every hook the window reads at launch —
-the parse, the value, and the budget a multi-frame hook counts down. The
-exception is a hook belonging to a floating surface, which parses itself beside
-that surface. *Adding a new hook* below says which of the two a new hook is.
+**No one file owns the hooks**, and this section used to say `harness.rs` did
+— sending anyone after the other hundred to the wrong file. It holds 24 of the
+126; the rest are declared where they are read, across 37 files (50 in
+`app.rs`, 8 in `paper_trading.rs`, 6 in `surfaces/drawing_chrome/mod.rs`). The
+registry's *Declared in* column is the answer.
+
+**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`. A
+misspelt hook used to present as a surface that never opened.
 
 ## Launch and capture workflow
 
@@ -191,9 +196,11 @@ off, and are never written to disk.
 ## Adding a new hook
 
 New surface → new `QUANTICK_*` env hook in the same commit: read the var, call
-the same function the manual toggle calls, default off. Then add one row to
-`references/hook-registry.md`. That row is part of the feature's definition
-of done: a hook nobody can find is a surface nobody can reach.
+the same function the manual toggle calls, default off. Then **two more edits,
+both enforced**: add the name to that module's `crate::hooks::declare_hooks![…]`,
+and a row to `docs/ui-harness/hook-prose.md`. Regenerate the registry; do not
+hand-edit it. Miss either and `cargo test -p quantick-guards` fails — a hook
+nobody can find is a surface nobody can reach.
 
 **Where the var is read depends on what it reaches**, and getting this wrong is
 now a build failure rather than a style note. There are exactly two homes, and
@@ -218,15 +225,9 @@ So: **a surface's hook goes beside the surface; every other hook goes in
 `harness.rs`.** If you are about to add a `std::env::var` call to `app.rs`, the
 answer is almost always one of those two files instead.
 
-*Almost*, because about fifty reads are still in `app.rs` and are not debt in
-the same sense. Most are hooks that keep **no state at all** — they call a
-setter on a tab and are finished (`QUANTICK_TAPE`, `QUANTICK_INVERTED`,
-`QUANTICK_INDICATORS_AUTOSTART`), so there is no field for an owner to hold.
-The rest belong to clusters that are each their own extraction — the
-`QUANTICK_CONTROL_*` family, the tab and layout hooks, the replay and
-workspace hooks — and they reach `self.tabs` and the control gateway, which
-`harness.rs` deliberately cannot see. A hook of yours that keeps a field, and
-needs nothing but its own parsed value, belongs in the owner.
+*Almost*: about fifty reads stay in `app.rs`, and are not debt in the same
+sense — see `docs/agentic-development.md`. A hook that keeps a field and
+needs nothing but its own parsed value belongs in the owner.
 
 **Prefer a defaulting field to a new variant.** A hook that already exists and
 needs a second dimension — "the same demo, but shared across the split", "the
@@ -235,8 +236,3 @@ same profile, but left selected" — becomes a field on that hook's struct
 does not become a new arm of an enum, which reopens every call site that
 matches on it. `ChartLayer`'s 21 variants across 264 call sites are what that
 rule is written against.
-
-That surface rule used to live at the bottom of the registry, which is now a
-61KB data file this skill tells you to `grep` rather than read. An authoring
-rule nobody reads is one the size guard enforces by failing you instead, so it
-belongs here, beside the instruction it is the exception to.

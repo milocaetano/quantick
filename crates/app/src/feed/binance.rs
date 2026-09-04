@@ -531,6 +531,8 @@ async fn load_older(
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_BOOK_DEPTH"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

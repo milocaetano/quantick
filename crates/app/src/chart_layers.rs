@@ -625,6 +625,8 @@ pub(crate) fn save(path: &Path, states: &BTreeMap<ChartLayer, bool>) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_CHART_LAYERS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

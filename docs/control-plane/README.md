@@ -66,14 +66,15 @@ the reasoning it records, and never current state.
   schema snapshot diff.
 - A transport or trust-boundary change requires a new ADR and an updated
   threat model.
-- A new action must appear in the capability registry. The inventory in this
-  directory is a migration baseline, not a second runtime registry.
+- A new action must appear in the capability registry, and the inventory in
+  this directory is regenerated from it — never hand-edited into agreement.
 
 ## Roadmap
 
-[Roadmap](roadmap.md) is the ledger between the plan and the code: which plan
-item is at which stage and in which pull request, the merge order of the open
-stack, the gaps each pull request carried forward, and the docking points and
-acceptance criteria of the remaining MVP work (snapshot modules, semantic
-scene, PR 5b, PR 5c). It adds no decisions; when it and the plan disagree, the
-plan wins and the roadmap is corrected.
+[Roadmap](roadmap.md) used to be a hand-kept ledger of which plan item was at
+which stage. It stopped being true without anyone noticing, which is how a
+document that claims currency fails, so it no longer states a delivery status
+of its own: it points at the generated inventory for what exists, the plan for
+what is intended, and [`history/`](history/) for why a past decision was taken.
+The ledger as it stood on 2026-08-26 is
+[`history/roadmap-2026-08.md`](history/roadmap-2026-08.md).

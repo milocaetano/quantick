@@ -100,6 +100,8 @@ impl Surface for AgentPopupSurface {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_AGENT_POPUP"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

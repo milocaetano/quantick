@@ -1256,6 +1256,8 @@ fn log_status(symbol: &str, status: &Mt5Status) {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FAKE_LATENCY_SPLIT"];
+
 #[cfg(test)]
 mod tests {
     use super::*;

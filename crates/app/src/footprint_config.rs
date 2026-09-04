@@ -644,6 +644,8 @@ pub(crate) fn resolve(file: FootprintFile) -> FootprintConfig {
     }
 }
 
+crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT", "QUANTICK_FOOTPRINT_SETTINGS"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
