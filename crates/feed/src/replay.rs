@@ -224,21 +224,13 @@ impl ReplayStatus {
     }
 
     /// The worker applied a restart or a seek that landed at `target_ms`.
-    ///
-    /// Public because the tests that drive a rewind live in `quantick-app`,
-    /// which owns the tab this status is published to.
-    pub fn note_rewind(&self, target_ms: i64) {
+    pub(crate) fn note_rewind(&self, target_ms: i64) {
         self.rewind_target_ms.store(target_ms, Ordering::Relaxed);
         self.rewinds.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Move the published playhead, as a worker's forward play would.
-    ///
-    /// Compiled into the library rather than gated behind `#[cfg(test)]`: the
-    /// tests that need it live in `quantick-app`, and a `cfg(test)` item is
-    /// invisible to another crate. The `_for_test` suffix is what keeps it
-    /// out of production paths.
-    pub fn set_position_ms_for_test(&self, position_ms: i64) {
+    pub(crate) fn set_position_ms(&self, position_ms: i64) {
         self.position_ms.store(position_ms, Ordering::Relaxed);
     }
 
@@ -304,13 +296,8 @@ impl ReplayLink {
     /// For tests that need a tab to believe a recording is its source —
     /// `replay.is_some()` is the one flag the rest of the UI reads — without
     /// spawning playback and waiting on a thread.
-    ///
-    /// Compiled into the library rather than gated behind `#[cfg(test)]`: the
-    /// tests that need it live in `quantick-app`, and a `cfg(test)` item is
-    /// invisible to another crate. The `_test` in the name is what keeps it
-    /// out of production paths.
     #[must_use]
-    pub fn for_test(session: Session) -> Self {
+    pub(crate) fn detached(session: Session) -> Self {
         let playhead = Playhead::new(&session.trades, PlaybackConfig::default());
         Self {
             status: Arc::new(ReplayStatus::new(&playhead)),
@@ -1623,5 +1610,47 @@ mod tests {
             crate::OHLCV_BASE_INTERVAL_MS,
             "the interval is tagged even on an empty answer, so a consumer never              has to guess what it would have been resampling"
         );
+    }
+}
+
+/// Test support, published on purpose.
+///
+/// The tests that need to drive a replay's published state live in
+/// `quantick-app`, which owns the tab the state is published to — so
+/// `#[cfg(test)]` cannot serve them: the attribute is false when this crate is
+/// compiled as a dependency, and the items would vanish exactly where they are
+/// wanted. This repo's answer to that is a module declared as test support and
+/// documented as part of what the crate is, the way `engine::fixture` and
+/// `control::fake` are, rather than a cargo feature — no crate here has a
+/// `[features]` section, and adding one for this would be a second way to do a
+/// solved thing.
+///
+/// Everything here reaches a `pub(crate)` item, so the module boundary is the
+/// only door: a production caller cannot move a playhead by accident, because
+/// nothing outside this module can name the setter at all.
+pub mod test_support {
+    use quantick_replay::Session;
+
+    use super::{ReplayLink, ReplayStatus};
+
+    /// A [`ReplayLink`] with no worker behind it: the status a fresh playhead
+    /// over `session` publishes, and nothing releasing trades.
+    ///
+    /// For a test that needs a tab to believe a recording is its source —
+    /// `replay.is_some()` is the one flag the rest of the UI reads — without
+    /// spawning playback and waiting on a thread.
+    #[must_use]
+    pub fn detached_link(session: Session) -> ReplayLink {
+        ReplayLink::detached(session)
+    }
+
+    /// Move the published playhead, as a worker's forward play would.
+    pub fn set_position_ms(status: &ReplayStatus, position_ms: i64) {
+        status.set_position_ms(position_ms);
+    }
+
+    /// Note a restart or a seek that landed at `target_ms`, as the worker does.
+    pub fn note_rewind(status: &ReplayStatus, target_ms: i64) {
+        status.note_rewind(target_ms);
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::replay::test_support as replay_test_support;
 
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live
@@ -180,7 +181,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     let dir = crate::scratch::ScratchDir::new("replay-restart-hook");
     let journal = dir.join("journal");
     app.active_tab_mut().paper.redirect_history_dir(journal);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     while cmd_rx.try_recv().is_ok() {}
     app.harness.arm_replay_restart(1);
 
@@ -1665,7 +1666,7 @@ fn observer_projects_the_replay_playhead_and_its_trace_sidecar() {
     assert!(live.scopes[&scope].value["tabs"][0]["session"].is_null());
 
     // The same tab, now playing a recording written to disk.
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let playing = registry
         .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
         .unwrap()
@@ -3327,15 +3328,15 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let ctx = egui::Context::default();
     let dir = crate::scratch::ScratchDir::new("control-trace-two-tabs");
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     hover_bar(&mut app, &ctx, 6);
     app.take_mark(Some("once".to_owned()));
     drop(app);
 
     let (mut app, _commands) = app_with_history(12);
-    app.active_tab_mut().replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    app.tabs[1].replay = Some(feed::ReplayLink::for_test(recording_at(&dir)));
+    app.tabs[1].replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     app.active_tab = 0;
     for _ in 0..3 {
         run_frame(&mut app, &ctx);

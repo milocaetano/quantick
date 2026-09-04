@@ -52,6 +52,11 @@ impl HookSpec {
 /// visibility and the `use` are the same in every one of them, so writing them
 /// out forty times spends the size ratchet's budget on boilerplate and gives a
 /// reader forty chances to write a subtly different one.
+///
+/// The slice is `pub` rather than `pub(crate)` because `quantick-app`'s
+/// `OWNERS` table has to name the slices declared in *this* crate. In the
+/// application — a binary with no library target — `pub` and `pub(crate)`
+/// reach the same set of callers, so the wider word costs nothing there.
 #[macro_export]
 macro_rules! declare_hooks {
     ($($name:literal),+ $(,)?) => {

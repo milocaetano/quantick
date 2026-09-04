@@ -94,7 +94,13 @@ CLAUDE.md 10148
 # A raise, not a trade: nothing left this file. The alternative is a crate map
 # missing a crate, which is the failure mode the map is rationed to prevent
 # rather than an economy it can make.
-AGENTS.md 13107
+#
+# 72 of the 354 are the clause naming `replay::test_support`, which the review
+# asked for: this repo publishes test support as a documented module rather
+# than behind a cargo feature, and the map is where `control::fake` is named
+# for the same reason. A published module the map does not mention is one a
+# reader has no way to tell from a leak.
+AGENTS.md 13179
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
