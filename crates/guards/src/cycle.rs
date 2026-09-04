@@ -472,15 +472,21 @@ fn detailed(found: &Measured, path: &str, verdict: Option<Finding>) -> Vec<Findi
     out
 }
 
-/// What every crate carries that its baseline entry does not.
-fn unrecorded(recorded: &crate::ratchet::Baseline, found: &Measured) -> usize {
-    found
-        .counts
-        .iter()
-        .filter(|(path, _)| recorded.entry(path).is_none())
-        .map(|(_, count)| *count)
-        .sum()
-}
+/// What the budget counts outside the baseline: nothing.
+///
+/// [`crate::context`] passes a real sum here because a tracked file can be
+/// split into sub-threshold pieces whose weight the ceilings stop seeing.
+/// Nothing can hide below a threshold of zero, so this ratchet passes `0`
+/// like [`crate::size`] does, and the budget stays a pure statement of
+/// signed permissions.
+///
+/// Written as a named constant rather than a literal at the two call sites
+/// because the first version summed the unrecorded counts, and every new
+/// cycle in an unlisted crate then reported *twice* — once as a crate over
+/// its threshold, once as a repository over budget, each with a different
+/// remedy. Two instructions for one defect is how an author ends up
+/// following the wrong one.
+const UNRECORDED: usize = 0;
 
 /// Every way the recorded baseline and the module graph disagree.
 pub fn check(root: &Path) -> Vec<Finding> {
@@ -515,7 +521,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
             POLICY.verdict(recorded.entry(path), path, *count),
         ));
     }
-    violations.extend(POLICY.budget_verdict(&recorded, unrecorded(&recorded, &found)));
+    violations.extend(POLICY.budget_verdict(&recorded, UNRECORDED));
     violations.extend(
         recorded
             .entries
@@ -535,17 +541,13 @@ pub fn check(root: &Path) -> Vec<Finding> {
 /// is the crate, which is a few dozen small reads rather than a walk of the
 /// workspace.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
+    // The whole scan, not just the budget: with a threshold of zero every
+    // entry in this baseline is load-bearing, so *lowering* one below its
+    // crate's real count is the edit that matters here — and a hook that
+    // answered only the budget would have called that edit clean and left
+    // the suite to find it. The scan is a few hundred small reads.
     if relative == BASELINE_FILE {
-        return match POLICY.baseline(root) {
-            Ok(recorded) => {
-                let found = measure(root);
-                POLICY
-                    .budget_verdict(&recorded, unrecorded(&recorded, &found))
-                    .into_iter()
-                    .collect()
-            }
-            Err(problem) => vec![POLICY.unparsed(&problem)],
-        };
+        return check(root);
     }
     let Some(crate_name) = crate_of(relative) else {
         return Vec::new();
@@ -595,10 +597,8 @@ fn crate_of(relative: &str) -> Option<String> {
 /// Lower any entry whose crate now has fewer cycles than it is signed for.
 /// Down only, like every other ratchet here.
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
-    let recorded = POLICY.baseline(root)?;
     let found = measure(root);
-    let unrecorded = unrecorded(&recorded, &found);
-    POLICY.tighten(root, &found.counts, unrecorded)
+    POLICY.tighten(root, &found.counts, UNRECORDED)
 }
 
 #[cfg(test)]
@@ -798,6 +798,41 @@ mod tests {
         assert_eq!(module_of("app/tests/mod.rs"), None);
         assert_eq!(module_of("app/tests/paper_trading_tests.rs"), None);
         assert_eq!(module_of("resample_tests.rs"), None);
+    }
+
+    /// The hook and the suite must say the same thing about the same
+    /// crate. Both sibling ratchets pin this, and the failure it forbids is
+    /// the worst one a guard has: an author edits, is told nothing, and
+    /// finds the violation in CI.
+    #[test]
+    fn check_file_agrees_with_the_whole_repo_scan() {
+        let root = crate::workspace_root();
+        let scan = check(&root);
+        let whole: Vec<&str> = scan.iter().map(|f| f.line.as_str()).collect();
+        for (crate_path, _) in measure(&root).counts {
+            let source = ["src/lib.rs", "src/main.rs"]
+                .into_iter()
+                .map(|tail| format!("{crate_path}/{tail}"))
+                .find(|candidate| root.join(candidate).is_file())
+                .unwrap_or_else(|| panic!("{crate_path} has a crate root"));
+            let single = check_file(&root, &source);
+            let prefix = format!("  {crate_path}: ");
+            assert_eq!(
+                single
+                    .iter()
+                    .filter(|f| f.line.starts_with(&prefix))
+                    .count(),
+                whole.iter().filter(|l| l.starts_with(&prefix)).count(),
+                "the two surfaces disagree about whether {crate_path} has a verdict"
+            );
+            for finding in &single {
+                assert!(
+                    whole.contains(&finding.line.as_str()),
+                    "the hook reports `{}` for {crate_path} and the scan does not",
+                    finding.line
+                );
+            }
+        }
     }
 
     #[test]

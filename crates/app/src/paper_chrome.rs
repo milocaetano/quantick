@@ -1,7 +1,7 @@
 //! The vocabulary every paper-trading surface shares: how a simulated
 //! number, label, colour and journal folder are spelled.
 //!
-//! This module exists because two modules above it needed the same twelve
+//! This module exists because two modules above it needed the same eleven
 //! items and reached for each other to get them. `paper_report` — the
 //! reading half — imported them from `paper_trading` — the writing half —
 //! while `paper_trading` re-exported the ledger's own types back, and the
@@ -14,11 +14,13 @@
 //! - **It never reaches up.** Nothing here names `PaperTrading`,
 //!   `ReportState` or any surface that draws. The imports below are the
 //!   proof, and they are meant to stay that short.
-//! - **It never reaches sideways either.** `paper_calendar` owns the date
-//!   law and paints day cells in these colours, so it sits *below* this
-//!   module and the two date formatters that need `CivilDate` live there
-//!   rather than here. Hosting them here would have traded one cycle for
-//!   another.
+//! - **It never reaches sideways either.** `theme` is the only module of
+//!   this crate it imports. `paper_calendar` sits *above* it, painting its
+//!   day cells with `points_color` and `fmt_signed_points` — which is
+//!   exactly why `fmt_offset_minute` and `today` live there rather than
+//!   here. Both need `CivilDate`, and hosting them here would have pointed
+//!   this module back at the calendar that imports it: one cycle traded for
+//!   another, in the module built to prevent it.
 //! - **Presentation only.** Nothing here holds session state, opens a
 //!   file picker, places an order or reads a clock. [`PositionSummary`] is
 //!   the one type, and it is a read-only snapshot the host hands out.
