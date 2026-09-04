@@ -103,9 +103,12 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// mark. Any distance the tab cannot possibly hold would do; an hour is
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
-/// Length of the EMA the toolbar's hardcoded M1 entry adds (the settings UI
-/// generated from `InputSpec` replaces this in M4).
-const DEFAULT_EMA_LEN: usize = 9;
+/// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
+/// the pane, so a scripted run photographs both shapes. Named by catalog id
+/// rather than "all of them", because the hook's contract is a fixed,
+/// deterministic pair — a native added later must not silently change what
+/// every existing capture shows.
+const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 /// How often the hot-reload poll checks script files for changes.
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
@@ -1089,11 +1092,12 @@ impl QuantickApp {
         // menu takes, so a scripted validation run needs no clicks.
         if std::env::var("QUANTICK_INDICATORS_AUTOSTART").is_ok_and(|value| value == "1") {
             let pane = &mut app.active_tab_mut().flow_pane;
-            pane.add_indicator(IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            });
-            pane.add_indicator(IndicatorSource::NativeCvd);
+            for id in AUTOSTART_NATIVES {
+                pane.add_indicator(IndicatorSource::Native {
+                    id: (*id).to_owned(),
+                    values: Vec::new(),
+                });
+            }
         }
         // The folded legend, reachable from a clean launch: without it the
         // collapsed state is un-photographable by an agent, and a surface no
@@ -2787,13 +2791,9 @@ impl QuantickApp {
             // path, the trader's own, and not in `ChartPane::add_indicator`,
             // which the workspace restore and the harness hooks also travel —
             // there it would erase the fold on every launch.
-            ToolbarAction::AddEmaIndicator => {
+            ToolbarAction::AddNative(id) => {
                 self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(SavedKind::NativeEma);
-            }
-            ToolbarAction::AddCvdIndicator => {
-                self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(SavedKind::NativeCvd);
+                self.add_native_indicator(id);
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 let target = self.target_slot(SlotId(slot));
@@ -3517,15 +3517,16 @@ impl QuantickApp {
 
     /// Add one of the built-in indicators to the focused pane and register how
     /// it restores.
-    fn add_native_indicator(&mut self, kind: SavedKind) -> SlotId {
-        let source = match kind {
-            SavedKind::NativeCvd => IndicatorSource::NativeCvd,
-            // Every other kind is a script, which comes through
-            // `add_script_indicator`; EMA is the remaining native.
-            _ => IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
-            },
+    ///
+    /// The kind travels to the worker as-is: an id no build ships becomes an
+    /// error slot naming it, which is why there is no fallback arm here. The
+    /// one this replaced turned every unrecognised kind into an EMA, so a
+    /// mistyped id put an indicator on the chart that nobody had asked for.
+    fn add_native_indicator(&mut self, id: &str) -> SlotId {
+        let kind = SavedKind::native(id);
+        let source = IndicatorSource::Native {
+            id: id.to_owned(),
+            values: Vec::new(),
         };
         let slot = self.focused_pane_mut().add_indicator(source);
         let owner = self.target_slot(slot);

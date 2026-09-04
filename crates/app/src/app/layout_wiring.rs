@@ -50,7 +50,7 @@ use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, Saved
 use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, Loaded, SavedDrawing};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
-use super::{DEFAULT_EMA_LEN, QuantickApp, TabSlot};
+use super::{QuantickApp, TabSlot};
 use crate::workspace_store::LayoutSave;
 
 /// The feed half of a drawing key while a tab plays a recording.
@@ -632,10 +632,11 @@ impl QuantickApp {
         kind: &SavedKind,
     ) -> Option<SlotId> {
         let source = match kind {
-            SavedKind::NativeCvd => IndicatorSource::NativeCvd,
-            SavedKind::NativeEma => IndicatorSource::NativeEma {
-                len: DEFAULT_EMA_LEN,
-                source: quantick_indicators::SourceId::Close,
+            // Unresolved on purpose: the worker owns the catalog, and an id
+            // it does not know becomes an error slot naming it.
+            SavedKind::Native { id } => IndicatorSource::Native {
+                id: id.clone(),
+                values: Vec::new(),
             },
             SavedKind::Script { name } => {
                 let index = self

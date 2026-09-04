@@ -2002,8 +2002,8 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
 
     let point = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, point);
-    app.apply_toolbar_action(ToolbarAction::AddEmaIndicator);
-    app.apply_toolbar_action(ToolbarAction::AddCvdIndicator);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     assert_eq!(
         app.slot_kinds.len(),

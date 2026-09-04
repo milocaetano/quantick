@@ -385,11 +385,11 @@ pub enum ToolbarAction {
     ToggleDock,
     /// Open or close the appearance dialog.
     ToggleAppearance,
-    /// Add the native EMA overlay (M1's hardcoded entry; the script library
-    /// browser replaces this menu in M2).
-    AddEmaIndicator,
-    /// Add the native CVD pane.
-    AddCvdIndicator,
+    /// Add a native indicator, by its catalog id
+    /// (`quantick_indicators::native`). One variant for every native there
+    /// will ever be — the menu is drawn from the catalog, so the toolbar
+    /// never learns which natives exist.
+    AddNative(&'static str),
     /// Flip an indicator's render-side eye toggle (no recompute).
     ToggleIndicatorHidden(u64),
     /// Remove an indicator.
@@ -1235,9 +1235,14 @@ fn draw_layers(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolba
     }
 }
 
-/// INDICATORS: add the M1 native indicators and manage the active ones —
-/// status dot, eye toggle, remove. M2 swaps the two hardcoded add entries
-/// for the script library browser; the entry list stays.
+/// INDICATORS: add the native indicators and manage the active ones —
+/// status dot, eye toggle, remove.
+///
+/// The native entries are the catalog in menu order, not a hand-written list:
+/// a native added to `quantick-indicators` appears here with no edit to this
+/// file. Each entry prints its own `menu_label` verbatim rather than a label
+/// this function assembles, so the strings a trader reads are owned in one
+/// place.
 fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
     let any_active = !model.indicators.is_empty();
     let icon = egui::RichText::new(LAYER_INDICATORS_ICON)
@@ -1248,16 +1253,14 @@ fn draw_indicators_menu(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut V
             theme::TEXT_MUTED
         });
     ui.menu_button(icon, |ui| {
-        if ui
-            .button(format!("{} Add EMA(9) on close", icons::PLUS))
-            .clicked()
-        {
-            actions.push(ToolbarAction::AddEmaIndicator);
-            ui.close_menu();
-        }
-        if ui.button(format!("{} Add CVD pane", icons::PLUS)).clicked() {
-            actions.push(ToolbarAction::AddCvdIndicator);
-            ui.close_menu();
+        for entry in quantick_indicators::native::NATIVES {
+            if ui
+                .button(format!("{} {}", icons::PLUS, entry.menu_label))
+                .clicked()
+            {
+                actions.push(ToolbarAction::AddNative(entry.id));
+                ui.close_menu();
+            }
         }
         if !model.scripts.is_empty() {
             ui.separator();

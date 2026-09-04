@@ -73,6 +73,15 @@ rodio = { workspace = true }
 # without one reports that instead of pretending (see `audio/platform.rs`).
 windows-sys = { workspace = true }
 
+[dev-dependencies]
+# The same crate the `[dependencies]` table already carries, asking for the
+# throwaway native the docking port is tested through. Feature resolution
+# keeps a dev-dependency's features out of the normal build, so the binary
+# `cargo build --workspace` produces ships the two real natives and nothing
+# else — while the tests get a third one to prove the app never learned their
+# names. See `crates/indicators/src/native/fake.rs`.
+quantick-indicators = { path = "../indicators", features = ["fake-native"] }
+
 [target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }
 
