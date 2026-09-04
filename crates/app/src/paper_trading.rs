@@ -759,18 +759,6 @@ impl PaperTrading {
         )
     }
 
-    /// The size and bracket an entry would take, or nothing with the reason
-    /// already posted.
-    fn entry_size(
-        &mut self,
-        side: Side,
-        reference: Decimal,
-        ticket: Bracket,
-    ) -> Option<(Decimal, Bracket)> {
-        let env = self.account_env(side, reference);
-        self.account.entry_size(side, reference, ticket, &env)
-    }
-
     /// The report's state, as its own surfaces read it. Test-only, like the
     /// account's own pair: the drawing code reaches the report through
     /// `report_parts`.
@@ -892,63 +880,28 @@ impl PaperTrading {
     /// simulator itself was already flattened by the timeline reset that
     /// every switch performs.
     pub fn set_symbol(&mut self, symbol: &str) {
-        if self.account.symbol != symbol {
-            // Leaving an instrument is what forgets its geometry; *arriving*
-            // at the first one is not a switch. The app names the opening
-            // symbol a frame after construction, so treating that as a
-            // departure wiped a ruler the launch had just been asked for -
-            // which is also why the harness hook below could never paint a
-            // stop and target.
-            let arriving = self.account.symbol.is_empty();
-            self.account.symbol = symbol.to_owned();
-            // Money a launch hook asked for lands on the symbol the tab
-            // opens with, for the same reason the ruler does: the app names
-            // that symbol a frame after construction, so there is nothing to
-            // key it by until now. Spent once - a later switch is a real
-            // switch, and the trader's own book answers for it.
-            if let Some(money) = self.account.hook_money.take() {
-                self.account
-                    .instrument_money
-                    .insert(symbol.to_owned(), money);
-            }
-            // The tick is the *instrument's*, and it only ever ratchets
-            // finer: carried across a switch it would price the next
-            // market's ruler and ladders in a precision that market has
-            // never printed. The standing ruler goes with it — a distance
-            // chosen on one instrument means nothing on the next, and it
-            // would silently arm the first order placed there.
-            self.account.tick_scale = 0;
-            if !arriving {
-                self.ruler_notches = 0;
-            }
-            self.ruler_travel_px = 0.0;
-            self.ruler_step_text = self
-                .ruler_steps
-                .get(symbol)
-                .map(|step| fmt_decimal(*step))
-                .unwrap_or_default();
-            self.account.journal_path = None;
-            self.account.report.symbol_changed();
-            // The revealed page is deliberately left alone. Every tab
-            // syncs its journal to its symbol on every drain, so this
-            // runs on the frame — resetting here retired the
-            // `QUANTICK_LEDGER_PAGES` hook before the first row was
-            // painted, and would retire a trader's scroll-back just as
-            // silently. `LedgerPage::of` already clamps a page count the
-            // new history cannot back.
+        let Some(arriving) = self.account.set_symbol(symbol) else {
+            return;
+        };
+        // The ruler goes with the instrument for the reason the tick does -
+        // see `PaperAccount::set_symbol`. Arriving is not a switch.
+        if !arriving {
+            self.ruler_notches = 0;
         }
+        self.ruler_travel_px = 0.0;
+        self.ruler_step_text = self
+            .ruler_steps
+            .get(symbol)
+            .map(|step| fmt_decimal(*step))
+            .unwrap_or_default();
     }
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
-        self.account.observe_precision(trade);
-        let events = self.account.venue.on_trade(trade);
-        self.account.handle_events(events);
+        self.account.on_trade(trade);
+        // `orders_demo` is a harness field, so its orders rest from here.
         if self.orders_demo.is_some() {
             self.rest_capture_orders();
-        }
-        if self.account.demo.is_some() {
-            self.account.run_demo_step();
         }
     }
 
@@ -1087,23 +1040,13 @@ impl PaperTrading {
 
     /// A toolbar/panel market order using the form's quantity and offsets.
     pub fn market(&mut self, side: Side) {
-        let reference = self.account.venue.mark_price().unwrap_or_default();
+        let reference = self.account.mark_price().unwrap_or_default();
+        // The offsets are the ticket's text; the rest is placement.
         let Some(ticket) = self.parse_bracket(side, reference) else {
             return;
         };
-        // The same three sources the aim reads, in the same order. A button
-        // sitting directly under the Strategy row must not place a bare
-        // order while that row says a ladder is armed. The size comes from
-        // the same call, so the risk per trade governs a toolbar press as
-        // much as it governs the aim.
-        let Some((quantity, bracket)) = self.entry_size(side, reference, ticket) else {
-            return;
-        };
-        let events = self
-            .account
-            .venue
-            .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
-        self.account.handle_events(events);
+        let env = self.account_env(side, reference);
+        self.account.market(side, reference, ticket, &env);
     }
 
     /// Flip the open position: one market order for twice its size, which
@@ -3933,8 +3876,7 @@ impl PaperTrading {
     /// window's one toast, through [`Self::take_toast`].
     pub fn settle(&mut self) {
         self.hovered_order = None;
-        self.account.poll_export();
-        self.account.poll_import();
+        self.account.settle();
     }
 
     /// Take the acknowledgement waiting to be shown, if there is one.

@@ -507,6 +507,78 @@ pub(crate) struct PaperAccount {
     outbox: AccountResponse,
 }
 impl PaperAccount {
+    /// Take an entry at the market, protected by `ticket`.
+    pub(crate) fn market(
+        &mut self,
+        side: Side,
+        reference: Decimal,
+        ticket: Bracket,
+        env: &AccountEnv,
+    ) {
+        // The same three sources the aim reads, in the same order. A button
+        // sitting directly under the Strategy row must not place a bare
+        // order while that row says a ladder is armed. The size comes from
+        // the same call, so the risk per trade governs a toolbar press as
+        // much as it governs the aim.
+        let Some((quantity, bracket)) = self.entry_size(side, reference, ticket, env) else {
+            return;
+        };
+        let events = self
+            .venue
+            .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
+        self.handle_events(events);
+    }
+
+    /// Drain whatever the export and import threads finished, once a frame.
+    pub(crate) fn settle(&mut self) {
+        self.poll_export();
+        self.poll_import();
+    }
+
+    /// Feed one live print through the simulator and act on what it did.
+    pub(crate) fn on_trade(&mut self, trade: &Trade) {
+        self.observe_precision(trade);
+        let events = self.venue.on_trade(trade);
+        self.handle_events(events);
+        if self.demo.is_some() {
+            self.run_demo_step();
+        }
+    }
+
+    /// Point the account at an instrument. `None` when nothing changed,
+    /// `Some(arriving)` when it did.
+    ///
+    /// `arriving` is the caller's to act on: leaving an instrument forgets its
+    /// geometry, and arriving at the first one is not a departure. The app
+    /// names the opening symbol a frame after construction, so treating that
+    /// as a switch wiped a ruler the launch had just been asked for.
+    pub(crate) fn set_symbol(&mut self, symbol: &str) -> Option<bool> {
+        if self.symbol == symbol {
+            return None;
+        }
+        let arriving = self.symbol.is_empty();
+        self.symbol = symbol.to_owned();
+        // Money a launch hook asked for lands on the symbol the tab opens
+        // with, for the same reason the ruler does: the app names that symbol
+        // a frame after construction, so there is nothing to key it by until
+        // now. Spent once - a later switch is a real switch, and the trader's
+        // own book answers for it.
+        if let Some(money) = self.hook_money.take() {
+            self.instrument_money.insert(symbol.to_owned(), money);
+        }
+        // The tick is the *instrument's*, and it only ever ratchets finer:
+        // carried across a switch it would price the next market's ruler and
+        // ladders in a precision that market has never printed.
+        self.tick_scale = 0;
+        self.journal_path = None;
+        self.report.symbol_changed();
+        // The revealed page is deliberately left alone: resetting it here
+        // retired the `QUANTICK_LEDGER_PAGES` hook before the first row was
+        // painted, and would retire a trader's scroll-back as silently.
+        // `LedgerPage::of` already clamps a page the new history cannot back.
+        Some(arriving)
+    }
+
     /// Rest an entry at `price`, protected by `ticket`. Answers whether
     /// anything is actually resting, which is what the caller paints.
     pub(crate) fn place_resting(
