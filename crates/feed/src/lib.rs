@@ -23,12 +23,14 @@
 pub mod binance;
 pub mod clock;
 pub mod config;
+pub mod history_reach;
 pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
 pub mod ohlcv_plan;
 pub mod replay;
+pub mod replay_download;
 #[cfg(test)]
 mod scratch;
 pub mod stall;

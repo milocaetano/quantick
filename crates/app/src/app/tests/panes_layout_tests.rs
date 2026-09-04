@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::history_reach;
 
 /// The whole point of collapsing: a strip is not a dead band. One click on
 /// it brings the curve back, and it must survive the frame after — the
@@ -2591,14 +2592,14 @@ fn the_reach_is_a_standing_choice_mirrored_onto_every_tab() {
     let (mut app, _events, _commands) = history_app(&ctx);
     assert_eq!(
         app.active_tab().history_reach,
-        crate::history_reach::HistoryReach::Page,
+        history_reach::HistoryReach::Page,
         "the press the button has always had is what a chart opens on"
     );
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().history_reach,
-        crate::history_reach::HistoryReach::PreviousSession
+        history_reach::HistoryReach::PreviousSession
     );
 }
 

@@ -1,0 +1,21 @@
+G2, G5 — the four checks, each run on its own.
+Chained with && or || they can print a false all-clear, so each was run
+as its own command and its own exit code read.
+
+$ cargo fmt --all -- --check          -> exit 0 (no output)
+$ cargo clippy --workspace --all-targets -> exit 0 (no error, no warning)
+$ cargo build --workspace             -> exit 0, Finished in 5m 43s
+$ cargo test --workspace              -> exit 0
+
+The test run in full, counted rather than sampled — a grep capped with
+head can hide a FAILED line, so nothing here is truncated:
+  result lines: 94
+  passed:       3404
+  failed:       0
+  result lines that do not say ok:
+    (none)
+
+$ cargo test -p quantick-guards       -> exit 0
+  14 lib guards + 5 session_gap_agreement, all green.
+  guard-watch was armed in this worktree with cargo build -p
+  quantick-guards before the first edit.

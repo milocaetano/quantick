@@ -11,7 +11,7 @@ missing, with nothing on screen to say so.
 The anchor is now the *tape*: the walk steps back from the newest print in
 windows and stops at the first one holding nothing, because a stretch with no
 prints longer than `SESSION_GAP_MS` is the market having been closed. That is
-the same rule the app already applies in `crate::history_reach`, and
+the same rule the app already applies in `quantick_feed::history_reach`, and
 `crates/guards/tests/session_gap_agreement.rs` fails if the two values drift.
 
 Run directly (`python bridge/mt5/tests/test_session_backfill.py`) or through

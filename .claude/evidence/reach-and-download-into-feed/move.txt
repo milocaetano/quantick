@@ -1,0 +1,2127 @@
+A1 — both files are recorded as renames, not as a delete plus an add.
+
+$ git diff --find-renames --stat origin/main...HEAD
+ AGENTS.md                                       |  2 +-
+ bridge/mt5/quantick_bridge.py                   |  2 +-
+ bridge/mt5/tests/test_session_backfill.py       |  2 +-
+ crates/app/src/app.rs                           | 17 +++++++------
+ crates/app/src/app/tests/drawings_tests.rs      |  5 ++--
+ crates/app/src/app/tests/feeds_sources_tests.rs | 33 +++++++++++++------------
+ crates/app/src/app/tests/panes_layout_tests.rs  |  7 +++---
+ crates/app/src/config.rs                        | 17 +++++++------
+ crates/app/src/harness.rs                       |  2 +-
+ crates/app/src/main.rs                          |  2 --
+ crates/app/src/replay_get_data.rs               | 17 +++++++------
+ crates/app/src/replay_view.rs                   |  5 ++--
+ crates/app/src/tab.rs                           | 16 ++++++------
+ crates/app/src/toolbar.rs                       | 17 +++++++------
+ crates/app/src/ui_state.rs                      |  2 +-
+ crates/{app => feed}/src/history_reach.rs       |  0
+ crates/feed/src/lib.rs                          |  2 ++
+ crates/{app => feed}/src/replay_download.rs     | 28 +++++++++++++++------
+ crates/guards/tests/session_gap_agreement.rs    |  8 +++---
+ 19 files changed, 103 insertions(+), 81 deletions(-)
+
+The two moved files, in full, so the body changes can be read as a whole:
+
+$ git diff --find-renames -M origin/main...HEAD -- crates/feed/src/history_reach.rs crates/feed/src/replay_download.rs
+diff --git a/crates/feed/src/history_reach.rs b/crates/feed/src/history_reach.rs
+new file mode 100644
+index 0000000..7ca7f4a
+--- /dev/null
++++ b/crates/feed/src/history_reach.rs
+@@ -0,0 +1,1204 @@
++//! How far one press of *load older* reaches into the past.
++//!
++//! The trade half of the chart's history is paged, never spanned: every
++//! transport that serves it — the MetaTrader bridge's `load_older`, Binance's
++//! `aggTrades` window — takes a **count** and a cursor, because that is what a
++//! venue will answer. A trader does not think in counts. They think "show me
++//! back to yesterday", and one page of two thousand prints is minutes of a
++//! liquid contract.
++//!
++//! This module is the bridge between the two: a [`HistoryReach`] the trader
++//! picks, and a [`Campaign`] that spends pages until the reach is met. The
++//! campaign owns no channel and no clock — it is told what the chart holds and
++//! answers what to do next — so every stop condition is a unit test rather
++//! than a session with a live venue.
++//!
++//! # Where a session's open comes from
++//!
++//! Not from a calendar. quantick has no venue session table and inventing one
++//! would be a second source of truth about every exchange's hours, wrong the
++//! first time a holiday moved. The tape already says it: a stretch with **no
++//! prints at all** longer than [`SESSION_GAP_MS`] is the market having been
++//! closed, and the print on its older side is that session's last. This is
++//! observed rather than assumed, which is the data-honesty rule applied to
++//! time — and it costs nothing on a market that never closes, where there is
++//! simply no gap and the campaign ends on its span cap instead.
++
++use quantick_engine::Trade;
++
++/// A stretch with no prints longer than this reads as the market having been
++/// closed rather than as a quiet patch.
++///
++/// One hour. B3's index future — the tape this was sized against — runs
++/// 09:00–18:25 with no break and reopens the next morning, so the overnight
++/// stretch is around fourteen hours and the quietest in-session minute is
++/// nowhere near an hour. A venue with a real lunch break longer than this
++/// reads that break as a close, which costs the trader one extra press and
++/// never invents data.
++pub const SESSION_GAP_MS: i64 = 60 * 60 * 1_000;
++
++/// How far past a session's last print [`HistoryReach::PreviousSession`] keeps
++/// going, so the day before is on screen to compare against rather than
++/// merely touched.
++///
++/// Three hours: enough of a session to carry its open and the range built off
++/// it, short enough that one press is not a whole extra day of prints.
++pub const PREVIOUS_SESSION_LEAD_MS: i64 = 3 * 60 * 60 * 1_000;
++
++/// Pages one campaign may spend before it stops and lets the trader decide.
++///
++/// A bound on round trips, not a target: a campaign that meets its reach in
++/// three pages spends three. Stopping here is not a failure — the next press
++/// starts from where this one reached, because the anchor moves with it.
++pub const MAX_CAMPAIGN_PAGES: u32 = 64;
++
++/// Prints one campaign may pull before it stops and lets the trader decide.
++///
++/// The page budget bounds *round trips*; this bounds *work*. Every page is
++/// prepended through `ChartState::prepend_history`, which re-cuts every bar
++/// the chart holds — so the cost of a run is the tape it fetched, not the
++/// number of requests, and a trader who raised the page size to 50 000 would
++/// otherwise buy sixty-four of those rebuilds with one press. A quarter of a
++/// million prints is a heavy session's worth: enough that a reach lands in one
++/// press on any ordinary tape, bounded enough that the frame it costs is one
++/// frame.
++pub const MAX_CAMPAIGN_PRINTS: usize = 250_000;
++
++/// Replies that may bring nothing new before a campaign gives up.
++///
++/// An empty page is not by itself the end of the record, and stopping on the
++/// first one would break the case this feature exists for: a bridge crossing a
++/// weekend searches hours and maps no trades at all, and its own walk covers
++/// up to about four days per request. Three of those is a fortnight of dead
++/// air — past any holiday — while a venue that answers empty because it is
++/// rate-limiting or broken costs three requests instead of sixty-four. That
++/// second case is the one this number is really sized against: Binance never
++/// withdraws its paging capability, and a 429 answered as an empty block is
++/// indistinguishable here from a market that was closed. It is also why
++/// [`CampaignEnd::NothingComingBack`]'s sentence asks the trader to wait a
++/// moment rather than to press again: a note that invited an immediate retry
++/// would hand back, one press at a time, the burst this budget just refused.
++pub const MAX_IDLE_PAGES: u32 = 3;
++
++/// Span one campaign may cover *while the tape has shown no close at all*.
++///
++/// The answer for a market that never closes: crypto has no overnight gap, so
++/// [`Campaign`] would otherwise page until its budgets ran out. Two days is
++/// past any "previous session" a continuous market has.
++///
++/// Deliberately **not** applied once a close is in sight. The first session
++/// after a weekend sits further behind than any fixed span — Monday's open is
++/// some sixty-two hours after Friday's close plus this reach's lead — so a cap
++/// that outranked the reach would stop at the gap having pulled seconds of
++/// Friday, on exactly the mornings the feature is named for.
++pub const MAX_CAMPAIGN_SPAN_MS: i64 = 48 * 60 * 60 * 1_000;
++
++/// What one press of [`HistoryReach::Page`] is told when its single reply
++/// brought no prints back.
++///
++/// Separate from [`CampaignEnd::NothingComingBack`], which is a *run* giving
++/// up after several such replies in a row: one empty answer is not evidence
++/// that a record is spent, so this sentence claims less than that one does.
++pub const EMPTY_PAGE_NOTICE: &str = "no older trades came back from that request";
++
++/// What [`HistoryReach::Span`] reaches back by until the trader says otherwise.
++///
++/// Two hours of traded time. Long enough to be worth a press on a contract
++/// printing a million and a half times a day — where the old fixed page of
++/// 2 000 prints is a couple of minutes — and short enough that one press is
++/// not most of a session, which is what [`HistoryReach::PreviousSession`] is
++/// already for. A trader who wants the day before should ask for the day
++/// before by name; this is the reach for "a bit more than I have".
++///
++/// The ceiling is [`MAX_CAMPAIGN_SPAN_MS`]: a run cannot reach past it, so a
++/// larger value would promise a reach the budgets forbid.
++pub const DEFAULT_REACH_SPAN_MS: i64 = 2 * 60 * 60 * 1_000;
++
++/// What a press is told when its request could not even be queued.
++///
++/// A closed command channel is a feed that has gone; a full one is a frame so
++/// busy that pressing again is the honest recovery. Neither will ever be
++/// answered, so neither may be left looking like a request in flight.
++pub const REQUEST_REFUSED_NOTICE: &str = "could not ask for older trades just now; press again";
++
++/// The two bounds a [`Campaign`] measures its reach against, as the trader's
++/// configuration set them.
++///
++/// Passed in rather than read from the constants above, because both are
++/// facts about a venue and not about quantick: `[history]` in the TOML owns
++/// them, and the constants are only what that section defaults to.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ReachBounds {
++    /// See [`SESSION_GAP_MS`].
++    pub session_gap_ms: i64,
++    /// See [`PREVIOUS_SESSION_LEAD_MS`].
++    pub previous_session_lead_ms: i64,
++    /// See [`DEFAULT_REACH_SPAN_MS`]. Only read by [`HistoryReach::Span`].
++    pub span_ms: i64,
++}
++
++impl Default for ReachBounds {
++    fn default() -> Self {
++        Self {
++            session_gap_ms: SESSION_GAP_MS,
++            previous_session_lead_ms: PREVIOUS_SESSION_LEAD_MS,
++            span_ms: DEFAULT_REACH_SPAN_MS,
++        }
++    }
++}
++
++/// How far one press of *load older* reaches.
++///
++/// Deliberately two values and not a free-form duration. A trader asking for
++/// history is asking for a *session*, not for "six hours" — six hours from
++/// 10:00 lands mid-morning yesterday on one instrument and inside a weekend on
++/// another. The reach names the thing they mean and the tape supplies the
++/// arithmetic.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
++pub enum HistoryReach {
++    /// One page of `history_step` trades — what the button has always done,
++    /// and what it still does until the trader asks for more.
++    #[default]
++    Page,
++    /// Keep paging until the tape shows the close of the session before the
++    /// one the chart already reaches, then a further
++    /// [`PREVIOUS_SESSION_LEAD_MS`] into it.
++    PreviousSession,
++    /// Keep paging until the chart reaches [`ReachBounds::span_ms`] further
++    /// back in *traded* time.
++    ///
++    /// The duration lives beside the reach rather than inside it, the way the
++    /// page size already does: the reach names what a press means and the
++    /// setting says how much, so both are one value in a saved workspace and
++    /// neither has to be re-encoded when the other changes.
++    ///
++    /// **Traded time, not clock time.** The doc on [`HistoryReach`] argues
++    /// against a free-form duration, and it is right about the thing it
++    /// describes: six hours counted on the clock lands mid-morning yesterday
++    /// on one instrument and inside a weekend on another, which is not a
++    /// reach a trader can predict. What makes this variant answerable is that
++    /// dead time is *crossed rather than counted* — a stretch with no prints
++    /// wider than [`ReachBounds::session_gap_ms`] adds nothing to the total,
++    /// so "two more hours" means two more hours of tape wherever the run has
++    /// to go to find them, and a press that lands in an overnight gap
++    /// continues into the previous session instead of stopping in the void.
++    Span,
++}
++
++impl HistoryReach {
++    /// Every reach, in the order the menu offers them.
++    pub const ALL: [Self; 3] = [Self::Page, Self::PreviousSession, Self::Span];
++
++    /// The label on the control.
++    #[must_use]
++    pub const fn label(self) -> &'static str {
++        match self {
++            Self::Page => "one page",
++            Self::PreviousSession => "previous session",
++            Self::Span => "by time",
++        }
++    }
++
++    /// What one press of this reach promises, for the hover text.
++    #[must_use]
++    pub const fn hover(self) -> &'static str {
++        match self {
++            Self::Page => {
++                "one request of the page size below, prepended and done — the \
++                 press this button has always been"
++            }
++            Self::PreviousSession => {
++                "keep asking until the chart reaches back past the market's \
++                 last close, plus a few hours of the session before it, so \
++                 yesterday is on screen to compare against"
++            }
++            Self::Span => {
++                "keep asking until the chart holds the span below in traded \
++                 time — nights and weekends are crossed, not counted, so the \
++                 hours you ask for are hours the market was open"
++            }
++        }
++    }
++
++    /// The stable token this reach is written and read back as — settings on
++    /// disk, the harness hook, the control plane. Separate from
++    /// [`label`](Self::label) on purpose: the label is prose a release may
++    /// reword, and a saved workspace must survive that.
++    #[must_use]
++    pub const fn token(self) -> &'static str {
++        match self {
++            Self::Page => "page",
++            Self::PreviousSession => "previous-session",
++            Self::Span => "span",
++        }
++    }
++
++    /// Whether one press of this reach is a *run* of requests rather than a
++    /// single one.
++    ///
++    /// Asked rather than matched on, so a third reach that also pages is a
++    /// variant and its arms in this file and nothing in `tab.rs`. The tab
++    /// reads this in two places — starting a run, and deciding whether one
++    /// still has its trader's consent — and a `== PreviousSession` in either
++    /// would be the type switch that grows.
++    #[must_use]
++    pub const fn runs_a_campaign(self) -> bool {
++        match self {
++            Self::Page => false,
++            Self::PreviousSession | Self::Span => true,
++        }
++    }
++
++    /// Read a reach back from its token. Unknown text is no reach at all
++    /// rather than a silent default: the caller decides whether to keep what
++    /// it had or say the value was not understood.
++    #[must_use]
++    pub fn from_token(token: &str) -> Option<Self> {
++        Self::ALL
++            .into_iter()
++            .find(|reach| reach.token() == token.trim())
++    }
++}
++
++/// Why a campaign stopped, in the words its log line uses.
++///
++/// An enum rather than a bool because the trader's next press depends on
++/// which one it was: `ReachMet` means it worked, `Exhausted` means the button
++/// is about to grey out, and the two budgets mean pressing again continues.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum CampaignEnd {
++    /// The tape now reaches past a session close and the lead beyond it.
++    ReachMet,
++    /// The feed withdrew paging: the venue has nothing older.
++    Exhausted,
++    /// [`MAX_CAMPAIGN_PAGES`] spent. Pressing again continues from here.
++    PagesSpent,
++    /// [`MAX_CAMPAIGN_PRINTS`] pulled. Pressing again continues from here.
++    PrintsPulled,
++    /// [`MAX_IDLE_PAGES`] replies in a row brought nothing new. Either the
++    /// venue has run out without saying so, or it is refusing — and neither is
++    /// worth another sixty requests.
++    NothingComingBack,
++    /// [`MAX_CAMPAIGN_SPAN_MS`] covered without the tape ever showing a close
++    /// — a market that does not shut. Pressing again continues from here.
++    SpanCovered,
++    /// The chart holds no trades at all, so there is nothing to page back
++    /// *from*. Only reachable when a reset lands between two replies.
++    NothingCharted,
++}
++
++impl CampaignEnd {
++    /// The `action` field of the log line that records this ending.
++    #[must_use]
++    pub const fn action(self) -> &'static str {
++        match self {
++            Self::ReachMet => "reach_met",
++            Self::Exhausted => "venue_exhausted",
++            Self::PagesSpent => "page_budget_spent",
++            Self::PrintsPulled => "print_budget_spent",
++            Self::NothingComingBack => "nothing_coming_back",
++            Self::SpanCovered => "span_cap_covered",
++            Self::NothingCharted => "nothing_charted",
++        }
++    }
++
++    /// Every ending, in declaration order — the list a caller resolves a
++    /// name against, so an ending that exists is reachable by name and a
++    /// new one is reachable the day it is added.
++    pub const ALL: [Self; 7] = [
++        Self::ReachMet,
++        Self::Exhausted,
++        Self::PagesSpent,
++        Self::PrintsPulled,
++        Self::NothingComingBack,
++        Self::SpanCovered,
++        Self::NothingCharted,
++    ];
++
++    /// Read an ending back from its [`action`](Self::action) token.
++    ///
++    /// Unknown text is no ending at all rather than a silent default, for the
++    /// reason every other `from_*` in this crate gives: a typo in a validation
++    /// script must not photograph the wrong state and call it a pass.
++    #[must_use]
++    pub fn from_action(action: &str) -> Option<Self> {
++        Self::ALL
++            .into_iter()
++            .find(|end| end.action() == action.trim())
++    }
++
++    /// What the trader is told when a run ends this way, or [`None`] when the
++    /// chart has already said it better.
++    ///
++    /// Only [`ReachMet`](Self::ReachMet) is silent: the session before this
++    /// one is on screen, and a sentence announcing that would be noise a
++    /// trader learns to stop reading. Every other ending means the press left
++    /// the chart where it was, or stopped short of the reach it promised —
++    /// and an outcome nobody can see is how this feature came to look like a
++    /// facade with no tape behind it.
++    ///
++    /// The sentences carry the one distinction a trader acts on: whether
++    /// pressing again continues from here, or whether the record is spent and
++    /// another press would ask a venue for something it has already refused.
++    /// Neither names a budget's size — [`MAX_CAMPAIGN_PAGES`] and its
++    /// siblings are configuration-adjacent numbers, and a sentence carrying
++    /// its own copy of one starts lying the day it moves.
++    #[must_use]
++    pub const fn notice(self) -> Option<&'static str> {
++        match self {
++            Self::ReachMet => None,
++            Self::Exhausted => Some("no older trades: this source has given everything it has"),
++            Self::NothingComingBack => Some(
++                "nothing older came back — the venue has run out, or is \
++                 refusing for now; give it a moment before pressing again",
++            ),
++            Self::NothingCharted => Some("no bars on the chart to page back from yet"),
++            Self::PagesSpent | Self::PrintsPulled => {
++                Some("stopped on this run's budget — press again to keep reaching back")
++            }
++            Self::SpanCovered => Some(
++                "this market never closed over the stretch fetched — press \
++                 again to keep reaching back",
++            ),
++        }
++    }
++}
++
++/// What a campaign does after one page lands.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum CampaignStep {
++    /// Ask for another page.
++    Ask,
++    /// Stop, for this reason.
++    Stop(CampaignEnd),
++}
++
++/// A run of *load older* requests that ends on a reach rather than on a count.
++///
++/// One outstanding request at a time — the MetaTrader protocol refuses a
++/// second and every other transport is happier for it — so the campaign is a
++/// state machine driven by replies, not a loop.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct Campaign {
++    /// The oldest print the chart held when the trader pressed. Everything
++    /// older than this arrived because of this campaign, which is what makes
++    /// a second press reach the session before the first one did instead of
++    /// finding its work already done.
++    anchor_ms: i64,
++    /// Requests sent so far, this campaign's first press included.
++    pages_spent: u32,
++    /// Prints the chart held when the trader pressed, so the run can bound
++    /// the *work* it causes and not only the round trips it makes.
++    prints_at_start: usize,
++    /// Prints the chart held when the previous reply was judged, so a page
++    /// that brought nothing is recognisable as one.
++    prints_seen: usize,
++    /// What this venue's session gap and lead are, from `[history]`.
++    bounds: ReachBounds,
++    /// Replies in a row that brought nothing new.
++    ///
++    /// Reset by any page that moves the oldest print. Counted rather than
++    /// latched because a single empty page is ordinary — a bridge crossing a
++    /// weekend finds no trades in hours of searching and is still advancing.
++    idle_pages: u32,
++    /// Which reach this run is serving, and therefore what "arrived" means.
++    ///
++    /// Held rather than passed to [`Campaign::advance`] because it is a
++    /// property of the press, not of the page: a trader who changes the reach
++    /// mid-run is calling that run off — `tab.rs` drops the campaign — rather
++    /// than redirecting it at a goal it has already spent pages against.
++    reach: HistoryReach,
++}
++
++impl Campaign {
++    /// Start a campaign from the oldest print the chart holds, and from how
++    /// many prints it holds.
++    ///
++    /// The first request is the trader's press, so the budget opens at one.
++    #[must_use]
++    pub const fn new(
++        anchor_ms: i64,
++        prints_at_start: usize,
++        bounds: ReachBounds,
++        reach: HistoryReach,
++    ) -> Self {
++        Self {
++            anchor_ms,
++            pages_spent: 1,
++            prints_at_start,
++            prints_seen: prints_at_start,
++            idle_pages: 0,
++            bounds,
++            reach,
++        }
++    }
++
++    /// The oldest print held when this campaign started.
++    #[must_use]
++    pub const fn anchor_ms(&self) -> i64 {
++        self.anchor_ms
++    }
++
++    /// Requests this campaign has sent.
++    #[must_use]
++    pub const fn pages_spent(&self) -> u32 {
++        self.pages_spent
++    }
++
++    /// Decide what to do now that a page has landed.
++    ///
++    /// `trades` is everything the chart holds, oldest first; `can_page` is the
++    /// feed's own answer to whether another request could be served — it goes
++    /// false the moment a venue reports its record exhausted, and asking a
++    /// feed that has said so would spin against a wall.
++    ///
++    /// Rate: **rare** — once per history reply, never per trade or per frame.
++    /// [`last_close_before`] walks back from the anchor and stops at the first
++    /// break, so the usual cost is the page that just arrived; only a tape
++    /// with no break in it at all is scanned whole, and that is the case the
++    /// span cap ends.
++    pub fn advance(&mut self, trades: &[Trade], can_page: bool) -> CampaignStep {
++        if !can_page {
++            return CampaignStep::Stop(CampaignEnd::Exhausted);
++        }
++        let Some(oldest) = trades.first().map(|trade| trade.timestamp_ms) else {
++            return CampaignStep::Stop(CampaignEnd::NothingCharted);
++        };
++        match self.reach {
++            // Not a campaign at all; `tab.rs` never builds one for it. Answered
++            // rather than ignored so that a reach added later, which forgets to
++            // say whether it runs, stops after one page instead of spending a
++            // budget nobody asked it to.
++            HistoryReach::Page => return CampaignStep::Stop(CampaignEnd::ReachMet),
++            HistoryReach::Span => {
++                let covered = traded_span_before(
++                    trades,
++                    self.anchor_ms,
++                    self.bounds.session_gap_ms,
++                    self.bounds.span_ms,
++                );
++                if covered >= self.bounds.span_ms {
++                    return CampaignStep::Stop(CampaignEnd::ReachMet);
++                }
++                // The overall cap still applies: a tape whose dead time is
++                // never crossed — a symbol that stopped printing for good — must
++                // not page until its budgets run out looking for hours that do
++                // not exist.
++                if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS {
++                    return CampaignStep::Stop(CampaignEnd::SpanCovered);
++                }
++            }
++            HistoryReach::PreviousSession => {
++                match last_close_before(trades, self.anchor_ms, self.bounds.session_gap_ms) {
++                    Some(close) => {
++                        if oldest <= close.saturating_sub(self.bounds.previous_session_lead_ms) {
++                            return CampaignStep::Stop(CampaignEnd::ReachMet);
++                        }
++                        // A close is in sight and the lead is not covered yet.
++                        // The span cap deliberately does not pre-empt this: see
++                        // its own doc.
++                    }
++                    None if self.anchor_ms.saturating_sub(oldest) >= MAX_CAMPAIGN_SPAN_MS => {
++                        return CampaignStep::Stop(CampaignEnd::SpanCovered);
++                    }
++                    None => {}
++                }
++            }
++        }
++        // Did that page bring anything? A venue with nothing left to give does
++        // not always say so — only the MetaTrader bridge withdraws its paging
++        // capability, while Binance's is a compile-time `true` that answers an
++        // empty block to a rate-limited request exactly as it does to a market
++        // that was closed. Without this the run would spend its whole page
++        // budget on back-to-back requests, which is how a 429 becomes a ban.
++        if trades.len() <= self.prints_seen {
++            self.idle_pages = self.idle_pages.saturating_add(1);
++            if self.idle_pages >= MAX_IDLE_PAGES {
++                return CampaignStep::Stop(CampaignEnd::NothingComingBack);
++            }
++        } else {
++            self.idle_pages = 0;
++        }
++        self.prints_seen = trades.len();
++        if trades.len().saturating_sub(self.prints_at_start) >= MAX_CAMPAIGN_PRINTS {
++            return CampaignStep::Stop(CampaignEnd::PrintsPulled);
++        }
++        if self.pages_spent >= MAX_CAMPAIGN_PAGES {
++            return CampaignStep::Stop(CampaignEnd::PagesSpent);
++        }
++        self.pages_spent = self.pages_spent.saturating_add(1);
++        CampaignStep::Ask
++    }
++}
++
++/// How much **traded** time the chart holds behind `anchor_ms`, up to `want_ms`.
++///
++/// Walks backwards from the anchor adding the distance between adjacent prints,
++/// and adds nothing for a distance wider than `session_gap_ms` — that stretch
++/// is the market having been closed, so it is crossed rather than counted.
++/// This is what makes [`HistoryReach::Span`] answerable: "two more hours" is
++/// two more hours of tape wherever the run has to go to find them, instead of
++/// two hours on a clock that may land inside a weekend.
++///
++/// Stops as soon as `want_ms` is reached, and returns at most that. The early
++/// exit is not an optimisation detail, it is what keeps the cost of a run
++/// linear in the pages it fetched rather than quadratic: without it every
++/// reply would re-walk the whole tape, and a run of sixty-four pages would
++/// walk it sixty-four times. The anchor's own position is found by binary
++/// search, as [`last_close_before`] does, so the prints newer than the press
++/// cost nothing at all.
++///
++/// Rate: **rare** — once per history reply.
++#[must_use]
++pub fn traded_span_before(
++    trades: &[Trade],
++    anchor_ms: i64,
++    session_gap_ms: i64,
++    want_ms: i64,
++) -> i64 {
++    // The first print at or after the anchor; everything below it is what this
++    // campaign pulled in.
++    let end = trades.partition_point(|trade| trade.timestamp_ms < anchor_ms);
++    let mut covered: i64 = 0;
++    let mut newer = anchor_ms;
++    for trade in trades[..end].iter().rev() {
++        let older = trade.timestamp_ms;
++        let step = newer.saturating_sub(older);
++        if step < session_gap_ms {
++            covered = covered.saturating_add(step);
++            if covered >= want_ms {
++                return want_ms;
++            }
++        }
++        newer = older;
++    }
++    covered
++}
++
++/// The last print of the newest session that closed strictly before `anchor_ms`
++/// — the older side of the newest gap wider than `session_gap_ms` among the
++/// prints older than the anchor.
++///
++/// `None` means the tape shows no such close: either nothing older than the
++/// anchor has arrived yet, or the market in question does not close.
++///
++/// Walked **backwards from the anchor**, so the first break found is the
++/// newest one and the search ends there. The anchor's own position is found by
++/// binary search — prints are ascending by stamp, which is what the chart's
++/// retained stream guarantees — so a tape of a million prints costs the same
++/// as one of a thousand, and the walk itself covers only what the campaign has
++/// fetched *since* the break. Scanning forward from the oldest print instead
++/// would grow by a page on every reply and make the run quadratic in pages:
++/// the same answer, arrived at the expensive way round.
++#[must_use]
++pub fn last_close_before(trades: &[Trade], anchor_ms: i64, session_gap_ms: i64) -> Option<i64> {
++    // Pairs are (i, i + 1), and only the older side has to sit before the
++    // anchor — the break between the previous session and the anchor's own is
++    // exactly the one whose newer side is the anchor.
++    let last_pair = trades.len().checked_sub(1)?;
++    let before_anchor = trades
++        .partition_point(|trade| trade.timestamp_ms < anchor_ms)
++        .min(last_pair);
++    (0..before_anchor).rev().find_map(|index| {
++        let earlier = trades[index].timestamp_ms;
++        let later = trades[index + 1].timestamp_ms;
++        (later.saturating_sub(earlier) > session_gap_ms).then_some(earlier)
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use quantick_engine::Side;
++    use rust_decimal::Decimal;
++
++    /// A print at `ms`. Only the stamp matters here — the reach is arithmetic
++    /// over time, and price and size never enter it.
++    fn trade(ms: i64) -> Trade {
++        Trade {
++            agg_id: ms as u64,
++            timestamp_ms: ms,
++            price: Decimal::ONE,
++            quantity: Decimal::ONE,
++            side: Side::Buy,
++        }
++    }
++
++    /// Prints every `step_ms` from `start_ms`, `count` of them.
++    fn run(start_ms: i64, step_ms: i64, count: usize) -> Vec<Trade> {
++        (0..count)
++            .map(|i| trade(start_ms + step_ms * i as i64))
++            .collect()
++    }
++
++    const MINUTE: i64 = 60 * 1_000;
++    const HOUR: i64 = 60 * MINUTE;
++
++    #[test]
++    fn a_tape_with_no_break_in_it_shows_no_close() {
++        let dense = run(0, MINUTE, 600);
++        assert_eq!(
++            last_close_before(&dense, i64::MAX, SESSION_GAP_MS),
++            None,
++            "ten hours of minute prints is one session, however long it runs"
++        );
++    }
++
++    #[test]
++    fn the_print_on_the_older_side_of_the_break_is_the_close() {
++        let mut tape = run(0, MINUTE, 60);
++        let close = tape.last().expect("the run is not empty").timestamp_ms;
++        tape.extend(run(close + 14 * HOUR, MINUTE, 60));
++        assert_eq!(
++            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
++            Some(close),
++            "the session ended at its last print, not at the next one's open"
++        );
++    }
++
++    #[test]
++    fn a_quiet_stretch_shorter_than_the_threshold_is_not_a_close() {
++        let mut tape = run(0, MINUTE, 10);
++        let quiet = tape.last().unwrap().timestamp_ms + SESSION_GAP_MS;
++        tape.extend(run(quiet, MINUTE, 10));
++        assert_eq!(
++            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
++            None,
++            "an hour of silence is a thin market, not a closed one"
++        );
++    }
++
++    #[test]
++    fn the_newest_close_older_than_the_anchor_is_the_one_reported() {
++        // Three sessions, so there are two closes to choose between.
++        let mut tape = run(0, MINUTE, 30);
++        let first_close = tape.last().unwrap().timestamp_ms;
++        tape.extend(run(first_close + 14 * HOUR, MINUTE, 30));
++        let second_close = tape.last().unwrap().timestamp_ms;
++        tape.extend(run(second_close + 14 * HOUR, MINUTE, 30));
++
++        assert_eq!(
++            last_close_before(&tape, i64::MAX, SESSION_GAP_MS),
++            Some(second_close),
++            "with no anchor in the way, the newest close wins"
++        );
++        assert_eq!(
++            last_close_before(&tape, second_close, SESSION_GAP_MS),
++            Some(first_close),
++            "an anchor at the newest close pushes the answer to the one before it"
++        );
++    }
++
++    /// A tape long enough to page over, `count` prints of it, ending just
++    /// before minute zero. The campaigns below start from its oldest print.
++    fn session(count: usize) -> Vec<Trade> {
++        run(-(count as i64) * MINUTE, MINUTE, count)
++    }
++
++    #[test]
++    fn a_campaign_keeps_asking_while_the_tape_is_still_inside_one_session() {
++        let mut tape = session(120);
++        let anchor = tape.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            tape.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        // One page arrives, still inside the same session.
++        let mut older = run(anchor - 60 * MINUTE, MINUTE, 60);
++        older.append(&mut tape);
++        assert_eq!(
++            campaign.advance(&older, true),
++            CampaignStep::Ask,
++            "no break has been reached, so there is more to fetch"
++        );
++        assert_eq!(campaign.pages_spent(), 2, "the press plus this request");
++    }
++
++    #[test]
++    fn a_campaign_stops_once_the_lead_past_the_close_is_covered() {
++        // Today's session, and the anchor at its first print.
++        let today = run(20 * HOUR, MINUTE, 60);
++        let anchor = today.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            today.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++
++        // Yesterday arrives, but only its last hour: short of the lead.
++        let close = anchor - 14 * HOUR;
++        let mut tape = run(close - HOUR, MINUTE, 61);
++        tape.extend_from_slice(&today);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Ask,
++            "one hour of the previous session is not the lead asked for"
++        );
++
++        // Now enough of it.
++        let mut tape = run(close - PREVIOUS_SESSION_LEAD_MS, MINUTE, 181);
++        tape.extend_from_slice(&today);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::ReachMet),
++            "the previous session is on screen with its lead"
++        );
++    }
++
++    /// Monday. Friday's close is some sixty-two hours behind Monday's open, so
++    /// a span cap that outranked the reach would stop the run at the weekend
++    /// gap having brought back minutes of Friday — on exactly the mornings
++    /// this reach exists for.
++    #[test]
++    fn a_weekend_does_not_let_the_span_cap_pre_empt_the_reach() {
++        let monday_open = 100 * 24 * HOUR;
++        let today = run(monday_open, MINUTE, 30);
++        let anchor = today.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            today.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++
++        // Friday's last print, a weekend and a half-session behind.
++        let friday_close = anchor - 63 * HOUR;
++        let mut tape = run(friday_close - 30 * MINUTE, MINUTE, 31);
++        tape.extend_from_slice(&today);
++        assert!(
++            anchor - tape.first().unwrap().timestamp_ms > MAX_CAMPAIGN_SPAN_MS,
++            "the fixture has to be past the cap or it proves nothing"
++        );
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Ask,
++            "the close is in sight, so the run keeps going for its lead"
++        );
++
++        let mut tape = run(friday_close - PREVIOUS_SESSION_LEAD_MS, MINUTE, 181);
++        tape.extend_from_slice(&today);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::ReachMet),
++            "and Friday afternoon is on the chart"
++        );
++    }
++
++    /// Bounds whose span reach is `minutes` of traded time.
++    fn span_bounds(minutes: i64) -> ReachBounds {
++        ReachBounds {
++            span_ms: minutes * MINUTE,
++            ..ReachBounds::default()
++        }
++    }
++
++    /// Prints one a minute from `first_ms` to `last_ms` inclusive.
++    fn minutes_of_tape(first_ms: i64, last_ms: i64) -> Vec<Trade> {
++        let count = ((last_ms - first_ms) / MINUTE + 1) as usize;
++        run(first_ms, MINUTE, count)
++    }
++
++    #[test]
++    fn the_span_reach_stops_once_it_holds_the_hours_it_was_asked_for() {
++        // Three hours of unbroken tape, a press wanting two of them.
++        let tape = minutes_of_tape(0, 3 * 60 * MINUTE);
++        let anchor = tape.last().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::ReachMet),
++            "the chart already holds three hours behind the press"
++        );
++    }
++
++    #[test]
++    fn the_span_reach_keeps_asking_until_it_does() {
++        // Only half an hour behind the press; two were asked for.
++        let tape = minutes_of_tape(0, 30 * MINUTE);
++        let anchor = tape.last().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Ask,
++            "half an hour is not two hours, so the run continues"
++        );
++    }
++
++    #[test]
++    fn a_night_is_crossed_rather_than_counted_toward_the_span() {
++        // The case the reach's whole design rests on, and the objection the
++        // two-value reach was written against: a span counted on the clock
++        // would be "met" by a chart holding ten minutes of today and a gap.
++        // Counted in traded time it is not met until the tape itself adds up.
++        let session_gap = ReachBounds::default().session_gap_ms;
++        let yesterday = minutes_of_tape(0, 90 * MINUTE);
++        let overnight = yesterday.last().unwrap().timestamp_ms + 14 * 60 * MINUTE;
++        let today = minutes_of_tape(overnight, overnight + 10 * MINUTE);
++        let anchor = today.last().unwrap().timestamp_ms;
++        let tape: Vec<Trade> = yesterday.iter().chain(today.iter()).cloned().collect();
++
++        assert!(
++            14 * 60 * MINUTE > session_gap,
++            "the fixture's night has to read as a close for this to test anything"
++        );
++        // Ten minutes of today plus ninety of yesterday: a hundred of tape,
++        // across a night that adds nothing.
++        assert_eq!(
++            traded_span_before(&tape, anchor, session_gap, 10 * 60 * MINUTE),
++            100 * MINUTE,
++            "the night between the two sessions is crossed, not counted"
++        );
++
++        // Asked for two hours, the run continues even though the *clock* span
++        // is more than fifteen.
++        let mut campaign = Campaign::new(anchor, 1, span_bounds(120), HistoryReach::Span);
++        assert_eq!(campaign.advance(&tape, true), CampaignStep::Ask);
++
++        // Asked for ninety minutes, it is met.
++        let mut met = Campaign::new(anchor, 1, span_bounds(90), HistoryReach::Span);
++        assert_eq!(
++            met.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::ReachMet)
++        );
++    }
++
++    #[test]
++    fn the_span_measure_stops_counting_once_it_has_enough() {
++        // The early exit is what keeps a run linear in the pages it fetched
++        // rather than quadratic, so it is asserted rather than assumed: the
++        // answer is capped at what was wanted even on a much longer tape.
++        let tape = minutes_of_tape(0, 10 * 60 * MINUTE);
++        let anchor = tape.last().unwrap().timestamp_ms;
++        let want = 30 * MINUTE;
++        assert_eq!(
++            traded_span_before(&tape, anchor, ReachBounds::default().session_gap_ms, want),
++            want
++        );
++    }
++
++    #[test]
++    fn a_span_run_still_stops_on_a_tape_that_cannot_reach_it() {
++        // A contract that stopped printing for good: the span will never be
++        // met, and the run must end on the overall cap rather than spending
++        // every page looking for hours that do not exist.
++        let tape = minutes_of_tape(0, 5 * MINUTE);
++        let anchor = tape.last().unwrap().timestamp_ms + MAX_CAMPAIGN_SPAN_MS;
++        let mut campaign = Campaign::new(anchor, 1, span_bounds(600), HistoryReach::Span);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::SpanCovered)
++        );
++    }
++
++    #[test]
++    fn every_reach_is_reachable_by_its_token_and_says_what_it_does() {
++        // The registry test: a reach added without a token, a label or a
++        // hover is one a saved workspace cannot restore and a menu cannot
++        // explain. Cheaper to assert than to notice.
++        for reach in HistoryReach::ALL {
++            assert_eq!(
++                HistoryReach::from_token(reach.token()),
++                Some(reach),
++                "{} does not survive a round trip through its token",
++                reach.label()
++            );
++            assert!(!reach.label().is_empty(), "{:?} has no label", reach);
++            assert!(!reach.hover().is_empty(), "{:?} has no hover", reach);
++        }
++        assert_eq!(
++            HistoryReach::from_token("span"),
++            Some(HistoryReach::Span),
++            "the token a saved workspace holds"
++        );
++    }
++
++    #[test]
++    fn a_feed_that_has_run_out_stops_the_campaign_rather_than_being_asked_again() {
++        let tape = session(10);
++        let mut campaign = Campaign::new(
++            tape.first().unwrap().timestamp_ms,
++            tape.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        assert_eq!(
++            campaign.advance(&tape, false),
++            CampaignStep::Stop(CampaignEnd::Exhausted),
++            "a venue that reported its record exhausted is not asked once more"
++        );
++    }
++
++    #[test]
++    fn a_market_that_never_closes_ends_on_the_span_cap() {
++        // Continuous prints reaching further back than the cap: no gap will
++        // ever appear, so the span is the only thing that can stop this.
++        let anchor = MAX_CAMPAIGN_SPAN_MS + 10 * MINUTE;
++        let tape = run(0, 10 * MINUTE, (anchor / (10 * MINUTE)) as usize + 1);
++        let mut campaign = Campaign::new(
++            anchor,
++            1,
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::SpanCovered),
++            "crypto has no overnight break; the cap is what ends the run"
++        );
++    }
++
++    /// The stop that keeps one press from becoming sixty-four requests against
++    /// a venue that is refusing rather than empty.
++    ///
++    /// Only the MetaTrader bridge ever withdraws its paging capability.
++    /// Binance's is a compile-time `true` and answers a rate-limited fetch with
++    /// the same empty block it answers "nothing older" with, so `can_page`
++    /// cannot be what stops this — and sixty-four back-to-back REST calls is
++    /// how a 429 becomes an IP ban.
++    #[test]
++    fn a_venue_that_keeps_answering_empty_is_not_asked_sixty_four_times() {
++        let tape = session(10);
++        let mut campaign = Campaign::new(
++            tape.first().unwrap().timestamp_ms,
++            tape.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        for page in 1..MAX_IDLE_PAGES {
++            assert_eq!(
++                campaign.advance(&tape, true),
++                CampaignStep::Ask,
++                "empty page {page} could still be dead time being crossed"
++            );
++        }
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::NothingComingBack),
++            "but a run of them is a venue with nothing coming back"
++        );
++        assert!(
++            campaign.pages_spent() < MAX_CAMPAIGN_PAGES,
++            "and it cost a handful of requests, not the whole budget"
++        );
++    }
++
++    /// The other half of the same rule: an empty page is *ordinary* while a
++    /// bridge crosses a weekend, and stopping on the first one would break the
++    /// case this reach is named for.
++    #[test]
++    fn a_single_empty_page_does_not_end_a_run_crossing_dead_time() {
++        let today = session(60);
++        let anchor = today.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            today.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        assert_eq!(
++            campaign.advance(&today, true),
++            CampaignStep::Ask,
++            "the search moved hours and mapped no trades; that is a weekend"
++        );
++        // The next page lands the previous session, and the idle count clears.
++        let close = anchor - 14 * HOUR;
++        let mut tape = run(close - PREVIOUS_SESSION_LEAD_MS, MINUTE, 181);
++        tape.extend_from_slice(&today);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::ReachMet)
++        );
++    }
++
++    /// Every page is prepended through a full re-cut of the chart's bars, so
++    /// the run bounds the prints it pulls and not only the requests it makes.
++    #[test]
++    fn the_print_budget_bounds_the_work_one_press_causes() {
++        let today = session(10);
++        let anchor = today.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            today.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        // One enormous page, inside a session that never breaks: nothing but
++        // this budget can stop it before the span cap, and the tape is far
++        // newer than that.
++        let mut tape = run(anchor - MAX_CAMPAIGN_PRINTS as i64, 1, MAX_CAMPAIGN_PRINTS);
++        tape.extend_from_slice(&today);
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::PrintsPulled),
++            "a quarter of a million prints is one press's worth of re-cutting"
++        );
++    }
++
++    #[test]
++    fn the_page_budget_bounds_a_run_that_keeps_making_progress() {
++        let today = session(10);
++        let anchor = today.first().unwrap().timestamp_ms;
++        let mut campaign = Campaign::new(
++            anchor,
++            today.len(),
++            ReachBounds::default(),
++            HistoryReach::PreviousSession,
++        );
++        // Every page brings one more print and never a break, so neither the
++        // idle count nor the reach can end this. The prints stay far inside
++        // both the span cap and the print budget.
++        let mut tape = today.clone();
++        for page in 1..MAX_CAMPAIGN_PAGES {
++            tape.insert(0, trade(tape[0].timestamp_ms - MINUTE));
++            assert_eq!(
++                campaign.advance(&tape, true),
++                CampaignStep::Ask,
++                "page {page} is inside the budget"
++            );
++        }
++        tape.insert(0, trade(tape[0].timestamp_ms - MINUTE));
++        assert_eq!(
++            campaign.advance(&tape, true),
++            CampaignStep::Stop(CampaignEnd::PagesSpent),
++            "sixty-four round trips is enough for one press"
++        );
++        assert_eq!(campaign.pages_spent(), MAX_CAMPAIGN_PAGES);
++    }
++
++    #[test]
++    fn a_chart_emptied_under_a_running_campaign_stops_it() {
++        let mut campaign =
++            Campaign::new(0, 1, ReachBounds::default(), HistoryReach::PreviousSession);
++        assert_eq!(
++            campaign.advance(&[], true),
++            CampaignStep::Stop(CampaignEnd::NothingCharted),
++            "a reset between two replies leaves nothing to page back from"
++        );
++    }
++
++    #[test]
++    fn every_reach_round_trips_through_its_token() {
++        for reach in HistoryReach::ALL {
++            assert_eq!(
++                HistoryReach::from_token(reach.token()),
++                Some(reach),
++                "{} must survive a save and a reload",
++                reach.label()
++            );
++        }
++        assert_eq!(
++            HistoryReach::from_token("a reach from a later release"),
++            None,
++            "unknown text is no reach at all, never a silent default"
++        );
++    }
++
++    #[test]
++    fn the_default_reach_is_the_press_this_button_has_always_had() {
++        assert_eq!(HistoryReach::default(), HistoryReach::Page);
++    }
++
++    /// The ending a trader never has to be told about is the one that worked.
++    /// Every other ending left the chart where it was or stopped short of what
++    /// the press promised, and a press whose outcome is invisible is exactly
++    /// how this feature shipped looking like a facade.
++    /// Every ending reaches the list it is discovered through.
++    ///
++    /// `ALL` is what [`CampaignEnd::from_action`] scans and what
++    /// `QUANTICK_HISTORY_NOTE` resolves through, so an ending missing from it
++    /// is unreachable by name and unphotographable — with every other test
++    /// still green, because they all iterate `ALL` too. The `match` below is
++    /// exhaustive on purpose: an eighth variant stops this file compiling, and
++    /// the fix is one line here and one in `ALL`, three lines apart.
++    #[test]
++    fn every_ending_reaches_the_list_it_is_discovered_through() {
++        for end in CampaignEnd::ALL {
++            let named = match end {
++                CampaignEnd::ReachMet => "reach_met",
++                CampaignEnd::Exhausted => "venue_exhausted",
++                CampaignEnd::PagesSpent => "page_budget_spent",
++                CampaignEnd::PrintsPulled => "print_budget_spent",
++                CampaignEnd::NothingComingBack => "nothing_coming_back",
++                CampaignEnd::SpanCovered => "span_cap_covered",
++                CampaignEnd::NothingCharted => "nothing_charted",
++            };
++            assert_eq!(end.action(), named, "the token this ending logs under");
++        }
++        let mut tokens: Vec<_> = CampaignEnd::ALL.iter().map(|end| end.action()).collect();
++        tokens.sort_unstable();
++        let listed = tokens.len();
++        tokens.dedup();
++        assert_eq!(
++            tokens.len(),
++            listed,
++            "two endings sharing a token would make one of them unreachable"
++        );
++    }
++
++    /// An ending that exists is reachable by its own name, both ways.
++    #[test]
++    fn every_ending_survives_a_round_trip_through_its_token() {
++        for end in CampaignEnd::ALL {
++            assert_eq!(
++                CampaignEnd::from_action(end.action()),
++                Some(end),
++                "{} must be reachable by the name its log line uses",
++                end.action()
++            );
++        }
++        assert_eq!(
++            CampaignEnd::from_action("an ending from a later release"),
++            None,
++            "unknown text is no ending at all, never a silent default"
++        );
++    }
++
++    #[test]
++    fn every_ending_but_the_one_that_worked_has_something_to_say() {
++        assert_eq!(
++            CampaignEnd::ReachMet.notice(),
++            None,
++            "the session before this one is on the chart; the chart says it better"
++        );
++        for end in CampaignEnd::ALL
++            .into_iter()
++            .filter(|end| *end != CampaignEnd::ReachMet)
++        {
++            let notice = end
++                .notice()
++                .unwrap_or_else(|| panic!("{} stops the run in silence", end.action()));
++            assert!(
++                !notice.is_empty(),
++                "{} has an empty sentence, which is silence with extra steps",
++                end.action()
++            );
++        }
++    }
++
++    /// Two endings mean *the record is spent* and two mean *press again*. A
++    /// trader acts on that difference, so the sentence has to carry it.
++    #[test]
++    fn an_ending_that_continues_invites_another_press() {
++        for end in [
++            CampaignEnd::PagesSpent,
++            CampaignEnd::PrintsPulled,
++            CampaignEnd::SpanCovered,
++        ] {
++            assert!(
++                end.notice().expect("a sentence").contains("press again"),
++                "{} continues from here and must say so",
++                end.action()
++            );
++        }
++        assert!(
++            !CampaignEnd::Exhausted
++                .notice()
++                .expect("a sentence")
++                .contains("press again"),
++            "a spent record must not invite a press that cannot be served"
++        );
++    }
++}
+diff --git a/crates/feed/src/replay_download.rs b/crates/feed/src/replay_download.rs
+new file mode 100644
+index 0000000..83949fb
+--- /dev/null
++++ b/crates/feed/src/replay_download.rs
+@@ -0,0 +1,884 @@
++//! Downloading a replay session, and where the data comes from.
++//!
++//! Market Replay could always *play* a recording; making one was a command
++//! line. This is the port that closes that gap: a [`SessionSource`] knows how
++//! to ask a provider which days it holds and how to write the two files
++//! `quantick-replay` reads. MetaTrader is the first implementation and is not
++//! privileged — a second provider registers here and the interface does not
++//! change.
++//!
++//! # Why a separate process, not the live bridge
++//!
++//! A tape export moves tens of millions of ticks. Sharing the streaming
++//! bridge's socket with that would let a download stall — or take down — a
++//! chart someone is trading on, and would need the EA attached to a chart. The
++//! MetaTrader source therefore launches `tools/mt5/export_session.py` once per
++//! request and reads its progress off stderr, reusing the interpreter
++//! resolution the live bridge already owns.
++//!
++//! # What is pure here, and what is not
++//!
++//! Everything that decides *what* to run and *what a line means* is pure and
++//! tested: [`Mt5SessionSource::command`] builds the argv, [`parse_event`] turns
++//! one stderr line into a [`DownloadEvent`]. Only [`run`] touches a process,
++//! which is what lets a second, fake source drive the whole interface in tests
++//! without MetaTrader, Python, or a network.
++
++use std::collections::VecDeque;
++use std::path::{Path, PathBuf};
++use std::process::{Command, Stdio};
++use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::mpsc::{Receiver, Sender};
++
++use crate::config::ProviderKind;
++use crate::mt5_bridge;
++
++/// Where `export_session.py` lives, relative to the repository root.
++const EXPORT_SCRIPT: &str = "tools/mt5/export_session.py";
++
++/// Trading days of context offered by default.
++///
++/// A trader asked for "the day before" and every trader asked for more than
++/// one: a week of sessions is what makes a gap, a level or a range legible
++/// before the tape starts. Cheap, too — a week of minute candles is under a
++/// megabyte against tens for the tape.
++pub const DEFAULT_CONTEXT_SESSIONS: u32 = 5;
++
++/// Whether a trader who has never said otherwise gets the day before.
++///
++/// On. The run-up above it is broker candles, and the panel says in as many
++/// words that they carry no order flow — so a rehearsed open had nothing to
++/// read behind it, which is the report this exists to answer. A trader who
++/// wants one day unticks it once and the workspace remembers.
++///
++/// A `const` rather than a line in a TOML, following the run-up default above
++/// it: the trader's own answer lives in their workspace file the moment they
++/// give one, and this is only what is true before they have.
++pub const DEFAULT_JOIN_DAY_BEFORE: bool = true;
++
++/// What one download is for.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct DownloadRequest {
++    /// Instrument as the provider names it, e.g. `WINQ26`.
++    pub symbol: String,
++    /// Session day to fetch the tape for, `YYYY-MM-DD`. `None` asks only which
++    /// days are available.
++    pub day: Option<String>,
++    /// Trading days of minute candles to fetch before `day`.
++    pub context_sessions: u32,
++    /// Replay folder to write into.
++    pub out_dir: PathBuf,
++    /// The broker's clock, as seconds ahead of UTC, when the trader had to
++    /// state it.
++    ///
++    /// `None` asks the provider to measure it. Measuring needs a fresh tick,
++    /// which needs an open market — and replays are downloaded after the
++    /// close, which is exactly when there is none. So the interface can hand
++    /// the answer over instead of failing, and says that it was declared
++    /// rather than measured.
++    pub utc_offset_s: Option<i32>,
++}
++
++impl DownloadRequest {
++    /// Whether this only asks what is available, writing nothing.
++    #[must_use]
++    pub fn is_probe(&self) -> bool {
++        self.day.is_none()
++    }
++}
++
++/// Something that happened during a download, in the interface's terms.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum DownloadEvent {
++    /// The provider holds data for these days, `YYYY-MM-DD`, ascending.
++    DaysAvailable {
++        /// The instrument they belong to.
++        symbol: String,
++        /// Days a tape can be fetched for.
++        days: Vec<String>,
++    },
++    /// Ticks written so far.
++    Progress {
++        /// Count, not a fraction: the total is not known until the end.
++        ticks: u64,
++    },
++    /// The tape landed.
++    TapeWritten {
++        /// Where it landed.
++        path: PathBuf,
++        /// How many prints it holds.
++        ticks: u64,
++        /// How big it is on disk.
++        bytes: u64,
++    },
++    /// The context candles landed.
++    ContextWritten {
++        /// Trading days of candles served.
++        sessions: u32,
++        /// Whether the provider served every session that was asked for.
++        complete: bool,
++    },
++    /// The whole request finished; the tape is at `tape`.
++    Done {
++        /// The session file to open.
++        tape: PathBuf,
++    },
++    /// The request failed, with the one thing to do about it.
++    Failed {
++        /// What happened, in the user's terms.
++        headline: String,
++        /// The single next step, when there is one.
++        fix: Option<String>,
++    },
++}
++
++/// Why a download could not be started at all.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum DownloadError {
++    /// The exporter script was not found next to the app or the repository.
++    ScriptMissing {
++        /// What was looked for.
++        looked_for: String,
++    },
++    /// No Python interpreter could be launched.
++    NoInterpreter {
++        /// The names that were tried.
++        tried: String,
++    },
++}
++
++impl DownloadError {
++    /// What to change so a download can start.
++    #[must_use]
++    pub fn advice(&self) -> String {
++        match self {
++            DownloadError::ScriptMissing { looked_for } => format!(
++                "quantick could not find {looked_for}. Run the app from the \
++                 repository, or copy the tools folder next to the executable."
++            ),
++            DownloadError::NoInterpreter { tried } => format!(
++                "No Python interpreter was found (tried {tried}). Install \
++                 Python 3 and make sure it is on PATH."
++            ),
++        }
++    }
++}
++
++impl std::fmt::Display for DownloadError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            DownloadError::ScriptMissing { looked_for } => {
++                write!(f, "the exporter {looked_for} was not found")
++            }
++            DownloadError::NoInterpreter { .. } => write!(f, "no Python interpreter was found"),
++        }
++    }
++}
++
++/// Turn one line of an exporter's stderr into an event.
++///
++/// Unknown codes and non-JSON lines are `None`: every line still reaches the
++/// log verbatim, and a provider that grows a new diagnostic must never break a
++/// download that is already running.
++#[must_use]
++pub fn parse_event(line: &str) -> Option<DownloadEvent> {
++    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
++    let code = value.get("event_code")?.as_str()?;
++    let text = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_owned);
++    let number = |key: &str| value.get(key).and_then(serde_json::Value::as_u64);
++
++    match code {
++        "EXPORT_DAYS_AVAILABLE" => Some(DownloadEvent::DaysAvailable {
++            symbol: text("symbol").unwrap_or_default(),
++            days: value
++                .get("days")?
++                .as_array()?
++                .iter()
++                .filter_map(|d| d.as_str().map(str::to_owned))
++                .collect(),
++        }),
++        "EXPORT_TAPE_PROGRESS" => Some(DownloadEvent::Progress {
++            ticks: number("ticks")?,
++        }),
++        "EXPORT_TAPE_WRITTEN" => Some(DownloadEvent::TapeWritten {
++            path: PathBuf::from(text("path")?),
++            ticks: number("ticks").unwrap_or_default(),
++            bytes: number("bytes").unwrap_or_default(),
++        }),
++        "EXPORT_CONTEXT_WRITTEN" => Some(DownloadEvent::ContextWritten {
++            sessions: u32::try_from(number("sessions").unwrap_or_default()).unwrap_or(u32::MAX),
++            complete: value
++                .get("complete")
++                .and_then(serde_json::Value::as_bool)
++                .unwrap_or(true),
++        }),
++        "EXPORT_DONE" => Some(DownloadEvent::Done {
++            tape: PathBuf::from(text("tape")?),
++        }),
++        // Every failure the exporter can report carries a `fix`, and every one
++        // of them is something the person at the keyboard can act on: the
++        // terminal is closed, the symbol is misspelled, the day is a holiday.
++        // Surfacing the raw MT5 error code instead would be the difference
++        // between a user who fixes it and one who files a bug.
++        "EXPORT_PKG_MISSING" => Some(DownloadEvent::Failed {
++            headline: "the MetaTrader 5 Python package is not installed".to_string(),
++            fix: text("fix"),
++        }),
++        "EXPORT_ATTACH_FAILED" => Some(DownloadEvent::Failed {
++            headline: "quantick could not reach the MetaTrader 5 terminal".to_string(),
++            fix: text("fix"),
++        }),
++        "EXPORT_SYMBOL_UNKNOWN" | "EXPORT_SYMBOL_UNAVAILABLE" => Some(DownloadEvent::Failed {
++            headline: format!(
++                "the terminal does not serve {}",
++                text("symbol").unwrap_or_else(|| "this symbol".to_string())
++            ),
++            fix: text("fix"),
++        }),
++        "EXPORT_TAPE_EMPTY" => Some(DownloadEvent::Failed {
++            headline: format!(
++                "{} has no trades on {}",
++                text("symbol").unwrap_or_else(|| "this symbol".to_string()),
++                text("day").unwrap_or_else(|| "that day".to_string())
++            ),
++            fix: text("fix"),
++        }),
++        "EXPORT_TAPE_FAILED" => Some(DownloadEvent::Failed {
++            headline: "the terminal served no ticks for that day".to_string(),
++            fix: text("fix"),
++        }),
++        "EXPORT_UTC_OFFSET_UNMEASURED" => Some(DownloadEvent::Failed {
++            headline: "quantick does not know this broker's clock offset yet".to_string(),
++            fix: text("fix"),
++        }),
++        _ => None,
++    }
++}
++
++/// A provider that can list and download replay sessions.
++///
++/// One method, deliberately: everything a source has to decide is *what
++/// command answers this request*. Running it, reading its progress and
++/// cancelling it are the same for every provider and live in [`run`].
++pub trait SessionSource: Send + Sync {
++    /// Name for the interface, e.g. `MetaTrader 5`.
++    fn label(&self) -> String;
++
++    /// The provider whose instruments this source can actually deliver.
++    ///
++    /// The browser offers contracts to click, and a contract this source
++    /// cannot serve is a click that ends in a refusal — a MetaTrader exporter
++    /// asked for `BTCUSDT` because that is what the chart behind the window
++    /// happens to show. Answering here keeps that judgement with the source
++    /// that knows, rather than in the caller that would have to be edited
++    /// again for the next one.
++    fn provider(&self) -> ProviderKind;
++
++    /// The commands that could answer `request`, best first.
++    ///
++    /// A list rather than one command because launching is where Windows
++    /// disagrees with itself: `python` is often a Store stub that exits
++    /// immediately, and the real interpreter answers to `py`. The runner tries
++    /// each in turn and keeps the first that starts — the same order the live
++    /// bridge already uses, so a machine that streams can also download.
++    ///
++    /// # Errors
++    ///
++    /// [`DownloadError`] when the provider cannot be invoked at all — a
++    /// missing script, no interpreter to try. A provider that *can* run
++    /// reports its own problems as [`DownloadEvent::Failed`] instead, so the
++    /// user reads them in the same place.
++    fn commands(&self, request: &DownloadRequest) -> Result<Vec<Command>, DownloadError>;
++}
++
++/// Downloads served by the MetaTrader 5 terminal this machine is logged in to.
++pub struct Mt5SessionSource {
++    /// How to launch Python, from the same setting the live bridge uses.
++    interpreter: String,
++    /// Where to look for the exporter script.
++    roots: Vec<PathBuf>,
++    /// Where the live bridge wrote this broker's measured clock, when the
++    /// platform has a durable home for it.
++    ///
++    /// Resolved once here rather than read inside `arguments`, which must stay
++    /// pure: an argv that depends on the machine cannot be asserted in a test,
++    /// and this flag would then be the one part of the command line no test
++    /// covers.
++    clock_cache: Option<PathBuf>,
++}
++
++impl Mt5SessionSource {
++    /// A source that resolves Python and the script the way the bridge does.
++    ///
++    /// `shelf_dir` is the trader's own folder, handed in rather than looked
++    /// up: where a machine keeps a user's documents is the application's
++    /// question, and this crate does not get to ask it. `None` means the
++    /// platform has no durable home for the cache, which is a normal answer
++    /// and not an error — the same contract [`mt5_bridge::clock_cache_path`]
++    /// already states.
++    #[must_use]
++    pub fn new(interpreter: &str, shelf_dir: Option<&Path>) -> Self {
++        Self {
++            interpreter: interpreter.to_string(),
++            roots: mt5_bridge::default_search_roots(),
++            clock_cache: mt5_bridge::clock_cache_path(shelf_dir),
++        }
++    }
++
++    /// The same, looking for the script under `roots` — for tests.
++    #[cfg(test)]
++    #[must_use]
++    pub fn with_roots(interpreter: &str, roots: Vec<PathBuf>, shelf_dir: Option<&Path>) -> Self {
++        Self {
++            interpreter: interpreter.to_string(),
++            roots,
++            clock_cache: mt5_bridge::clock_cache_path(shelf_dir),
++        }
++    }
++
++    /// The arguments `export_session.py` is called with, in order.
++    ///
++    /// Split out from [`command`](Self::command) so the mapping from a
++    /// request to a command line is testable without a Python on the machine.
++    #[must_use]
++    pub fn arguments(
++        script: &Path,
++        request: &DownloadRequest,
++        clock_cache: Option<&Path>,
++    ) -> Vec<String> {
++        let mut args = vec![
++            script.display().to_string(),
++            "--symbol".to_string(),
++            request.symbol.clone(),
++            "--out".to_string(),
++            request.out_dir.display().to_string(),
++        ];
++        if let Some(offset) = request.utc_offset_s {
++            args.push("--utc-offset-s".to_string());
++            args.push(offset.to_string());
++        }
++        // Where the live bridge wrote down this broker's clock. Without it the
++        // exporter only knows the copy inside its own checkout, and after the
++        // close — when replays are actually downloaded — no offset means no
++        // download at all.
++        if let Some(cache) = clock_cache {
++            args.push("--clock-cache".to_string());
++            args.push(cache.display().to_string());
++        }
++        match &request.day {
++            Some(day) => {
++                args.push("--day".to_string());
++                args.push(day.clone());
++                args.push("--context-sessions".to_string());
++                args.push(request.context_sessions.to_string());
++            }
++            None => args.push("--probe".to_string()),
++        }
++        args
++    }
++}
++
++impl SessionSource for Mt5SessionSource {
++    fn label(&self) -> String {
++        "MetaTrader 5".to_string()
++    }
++
++    fn provider(&self) -> ProviderKind {
++        ProviderKind::MetaTrader
++    }
++
++    fn commands(&self, request: &DownloadRequest) -> Result<Vec<Command>, DownloadError> {
++        let script = mt5_bridge::resolve_script(EXPORT_SCRIPT, &self.roots).ok_or_else(|| {
++            DownloadError::ScriptMissing {
++                looked_for: EXPORT_SCRIPT.to_string(),
++            }
++        })?;
++        let candidates = mt5_bridge::interpreter_candidates(&self.interpreter);
++        if candidates.is_empty() {
++            return Err(DownloadError::NoInterpreter {
++                tried: self.interpreter.clone(),
++            });
++        }
++        let args = Self::arguments(&script, request, self.clock_cache.as_deref());
++        Ok(candidates
++            .into_iter()
++            .map(|program| {
++                let mut command = Command::new(program);
++                command.args(&args);
++                command
++            })
++            .collect())
++    }
++}
++
++/// A download in flight.
++pub struct DownloadJob {
++    /// Events as they arrive; the sender is dropped when the job ends.
++    pub events: Receiver<DownloadEvent>,
++    cancelled: Arc<AtomicBool>,
++}
++
++impl DownloadJob {
++    /// A job whose worker is already gone: the receiver end alone, with
++    /// nothing behind it.
++    ///
++    /// What a cancel, a killed terminal and a crashed exporter all look like
++    /// to the panel draining it — a channel that only ever says
++    /// `Disconnected`. Lets the paths that have to survive that be tested
++    /// without a process, which is the only way they are exercised at all.
++    ///
++    /// Test support, published on purpose rather than `#[cfg(test)]`, for the
++    /// reason [`crate::replay::test_support`] spells out in full: the attribute
++    /// is false when this crate is compiled as a dependency, and the panel that
++    /// needs this constructor is in `app`, one crate up.
++    #[must_use]
++    pub fn stopped_for_test(events: Receiver<DownloadEvent>) -> Self {
++        Self {
++            events,
++            cancelled: Arc::new(AtomicBool::new(true)),
++        }
++    }
++}
++
++impl DownloadJob {
++    /// Ask the download to stop.
++    ///
++    /// The exporter writes each file beside its destination and moves it into
++    /// place only once whole, so a cancelled download leaves nothing the
++    /// session browser would list as a playable day.
++    pub fn cancel(&self) {
++        self.cancelled.store(true, Ordering::Relaxed);
++    }
++}
++
++/// Start `request` on `source`, reporting progress on a channel.
++///
++/// Runs on its own thread: an export of a busy session day moves tens of
++/// millions of ticks, and none of that may happen on the thread drawing the
++/// chart.
++///
++/// # Errors
++///
++/// [`DownloadError`] when the source cannot be invoked at all.
++pub fn run(
++    source: &dyn SessionSource,
++    request: &DownloadRequest,
++) -> Result<DownloadJob, DownloadError> {
++    let commands = source.commands(request)?;
++    let (tx, rx) = std::sync::mpsc::channel();
++    let cancelled = Arc::new(AtomicBool::new(false));
++    let flag = Arc::clone(&cancelled);
++    let label = source.label();
++
++    std::thread::Builder::new()
++        .name("quantick-replay-download".into())
++        .spawn(move || pump(commands, &label, &tx, &flag))
++        .expect("spawn replay download thread");
++
++    Ok(DownloadJob {
++        events: rx,
++        cancelled,
++    })
++}
++
++/// How many of the exporter's last lines an unexplained exit carries.
++///
++/// Enough for a Python traceback's business end — the raise and the line that
++/// raised it — and short enough to stay inside the panel without turning the
++/// interface into a log viewer.
++const FAILURE_TAIL_LINES: usize = 4;
++
++/// What the exporter said just before it stopped, as advice a person can read.
++///
++/// `None` when it said nothing: an empty box under a headline would be one
++/// more thing to interpret, and silence is already reported by the headline.
++fn last_words<'a>(tail: impl Iterator<Item = &'a str>) -> Option<String> {
++    let body: Vec<&str> = tail.collect();
++    if body.is_empty() {
++        return None;
++    }
++    Some(format!("It last said:\n{}", body.join("\n")))
++}
++
++/// Run the command and translate its stderr until it ends or is cancelled.
++fn pump(
++    mut commands: Vec<Command>,
++    label: &str,
++    tx: &Sender<DownloadEvent>,
++    cancelled: &AtomicBool,
++) {
++    use std::io::{BufRead, BufReader};
++
++    // Try each candidate interpreter in turn: on Windows `python` is often a
++    // Store stub, and the working one answers to `py`.
++    let mut last_error = None;
++    let mut spawned = None;
++    for command in &mut commands {
++        command.stdout(Stdio::null()).stderr(Stdio::piped());
++        match command.spawn() {
++            Ok(child) => {
++                spawned = Some(child);
++                break;
++            }
++            Err(e) => last_error = Some(e),
++        }
++    }
++    let Some(mut child) = spawned else {
++        let detail =
++            last_error.map_or_else(|| "no interpreter to try".to_string(), |e| e.to_string());
++        let _ = tx.send(DownloadEvent::Failed {
++            headline: format!("{label} could not be started: {detail}"),
++            fix: Some("Install Python 3 and make sure it is on PATH.".to_string()),
++        });
++        return;
++    };
++    let Some(stderr) = child.stderr.take() else {
++        return;
++    };
++
++    // The last thing the exporter said before it stopped, kept for the exit
++    // that explains nothing. A `NameError` on the line before the file is
++    // written exits 1 with a perfectly clear Python traceback on stderr, and
++    // the interface used to show none of it — "MetaTrader 5 stopped with code
++    // 1" is what a whole afternoon of that bug looked like from the outside.
++    let mut tail: VecDeque<String> = VecDeque::with_capacity(FAILURE_TAIL_LINES);
++    // Whether a refusal already reached the interface in the exporter's own
++    // words. Those are plain sentences with a fix attached; the exit code that
++    // follows them explains nothing and must not overwrite them.
++    let mut explained = false;
++    for line in BufReader::new(stderr).lines().map_while(Result::ok) {
++        // Verbatim to the log, recognised or not: a diagnostic this build does
++        // not know about is still the thing a person needs when it goes wrong.
++        tracing::info!(
++            target: "quantick::app",
++            schema_version = 1_u8,
++            event_code = "REPLAY_DOWNLOAD_LINE",
++            source = label,
++            line = line.as_str(),
++            "exporter said"
++        );
++        if cancelled.load(Ordering::Relaxed) {
++            let _ = child.kill();
++            break;
++        }
++        match parse_event(&line) {
++            Some(event) => {
++                explained |= matches!(event, DownloadEvent::Failed { .. });
++                if tx.send(event).is_err() {
++                    // The interface is gone; so is the reason to keep going.
++                    let _ = child.kill();
++                    break;
++                }
++            }
++            // Only what the app could *not* read is worth quoting back: a
++            // recognised line already reached the panel as plain words, and
++            // showing its JSON underneath would be the event code the
++            // interface deliberately never puts in front of a person.
++            None if !line.trim().is_empty() => {
++                if tail.len() == FAILURE_TAIL_LINES {
++                    tail.pop_front();
++                }
++                tail.push_back(line);
++            }
++            None => {}
++        }
++    }
++
++    match child.wait() {
++        Ok(status) if status.success() => {}
++        // A refusal the exporter already explained, in its own words, with its
++        // own fix. The exit code adds nothing a person can act on.
++        Ok(_) if explained => {}
++        Ok(status) if cancelled.load(Ordering::Relaxed) => {
++            tracing::info!(
++                target: "quantick::app",
++                schema_version = 1_u8,
++                event_code = "REPLAY_DOWNLOAD_CANCELLED",
++                code = status.code().unwrap_or(-1),
++                "download cancelled by the user"
++            );
++        }
++        Ok(status) => {
++            // A non-zero exit with no `Failed` line already sent would leave
++            // the interface waiting forever, so the exit itself becomes one —
++            // carrying what the exporter last said, because an exit code alone
++            // is a fact about the process, not about the download.
++            let _ = tx.send(DownloadEvent::Failed {
++                headline: format!("{label} stopped with code {}", status.code().unwrap_or(-1)),
++                fix: last_words(tail.iter().map(String::as_str)),
++            });
++        }
++        Err(e) => {
++            let _ = tx.send(DownloadEvent::Failed {
++                headline: format!("{label} could not be waited on: {e}"),
++                fix: None,
++            });
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn request() -> DownloadRequest {
++        DownloadRequest {
++            symbol: "WINQ26".to_string(),
++            day: Some("2026-08-12".to_string()),
++            context_sessions: 5,
++            out_dir: PathBuf::from("/replay"),
++            utc_offset_s: None,
++        }
++    }
++
++    #[test]
++    fn a_declared_broker_clock_reaches_the_exporter() {
++        // Measuring needs an open market; replays are downloaded after the
++        // close. Handing the answer over is what keeps the flow usable at the
++        // hour a trader actually prepares.
++        let declared = DownloadRequest {
++            utc_offset_s: Some(-10_800),
++            ..request()
++        };
++        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &declared, None);
++        assert!(args.windows(2).any(|w| w == ["--utc-offset-s", "-10800"]));
++
++        let measured = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
++        assert!(
++            !measured.iter().any(|a| a == "--utc-offset-s"),
++            "left out entirely when the provider should measure it"
++        );
++    }
++
++    #[test]
++    fn a_days_reply_is_read_into_the_calendar() {
++        let line = r#"{"event_code":"EXPORT_DAYS_AVAILABLE","symbol":"WINQ26",
++            "days":["2026-08-11","2026-08-12"]}"#;
++        assert_eq!(
++            parse_event(line),
++            Some(DownloadEvent::DaysAvailable {
++                symbol: "WINQ26".to_string(),
++                days: vec!["2026-08-11".to_string(), "2026-08-12".to_string()],
++            })
++        );
++    }
++
++    #[test]
++    fn progress_and_completion_carry_the_numbers_the_bar_shows() {
++        assert_eq!(
++            parse_event(r#"{"event_code":"EXPORT_TAPE_PROGRESS","ticks":250000}"#),
++            Some(DownloadEvent::Progress { ticks: 250_000 })
++        );
++        assert_eq!(
++            parse_event(
++                r#"{"event_code":"EXPORT_TAPE_WRITTEN","path":"a/b.csv","ticks":9,"bytes":123}"#
++            ),
++            Some(DownloadEvent::TapeWritten {
++                path: PathBuf::from("a/b.csv"),
++                ticks: 9,
++                bytes: 123,
++            })
++        );
++    }
++
++    #[test]
++    fn a_short_context_is_reported_as_short() {
++        assert_eq!(
++            parse_event(r#"{"event_code":"EXPORT_CONTEXT_WRITTEN","sessions":2,"complete":false}"#),
++            Some(DownloadEvent::ContextWritten {
++                sessions: 2,
++                complete: false,
++            })
++        );
++    }
++
++    #[test]
++    fn every_failure_a_user_can_hit_arrives_with_its_next_step() {
++        for line in [
++            r#"{"event_code":"EXPORT_ATTACH_FAILED","fix":"open the terminal"}"#,
++            r#"{"event_code":"EXPORT_SYMBOL_UNKNOWN","symbol":"WINX99","fix":"check the spelling"}"#,
++            r#"{"event_code":"EXPORT_TAPE_EMPTY","symbol":"WINQ26","day":"2026-08-15","fix":"pick another day"}"#,
++            r#"{"event_code":"EXPORT_PKG_MISSING","fix":"pip install MetaTrader5"}"#,
++            r#"{"event_code":"EXPORT_UTC_OFFSET_UNMEASURED","fix":"connect live once"}"#,
++        ] {
++            let Some(DownloadEvent::Failed { headline, fix }) = parse_event(line) else {
++                panic!("{line} must reach the user as a failure");
++            };
++            assert!(!headline.is_empty(), "{line}");
++            assert!(fix.is_some(), "a failure with no next step is a dead end");
++            assert!(
++                !headline.contains("EXPORT_"),
++                "the user reads plain words, not event codes: {headline}"
++            );
++        }
++    }
++
++    #[test]
++    fn unknown_and_malformed_lines_are_passed_over() {
++        assert_eq!(parse_event("not json at all"), None);
++        assert_eq!(
++            parse_event(r#"{"event_code":"EXPORT_SOMETHING_NEW"}"#),
++            None
++        );
++        assert_eq!(parse_event(""), None);
++    }
++
++    #[test]
++    fn a_download_asks_for_the_day_and_its_context() {
++        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
++        assert!(args.windows(2).any(|w| w == ["--symbol", "WINQ26"]));
++        assert!(args.windows(2).any(|w| w == ["--day", "2026-08-12"]));
++        assert!(args.windows(2).any(|w| w == ["--context-sessions", "5"]));
++        assert!(!args.iter().any(|a| a == "--probe"));
++    }
++
++    /// The second half of a two-day download: the same command line, the day
++    /// before, and no run-up of its own. A zero has to be *stated* — the
++    /// exporter's own default is five sessions, so an omitted flag would
++    /// download the same week of candles a second time.
++    #[test]
++    fn the_day_before_is_fetched_with_no_run_up_of_its_own() {
++        let day_before = DownloadRequest {
++            day: Some("2026-08-11".to_string()),
++            context_sessions: 0,
++            ..request()
++        };
++        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &day_before, None);
++        assert!(args.windows(2).any(|w| w == ["--day", "2026-08-11"]));
++        assert!(args.windows(2).any(|w| w == ["--context-sessions", "0"]));
++        assert!(!args.iter().any(|a| a == "--probe"));
++    }
++
++    #[test]
++    fn a_probe_asks_for_nothing_but_the_days() {
++        let probe = DownloadRequest {
++            day: None,
++            ..request()
++        };
++        assert!(probe.is_probe());
++        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &probe, None);
++        assert!(args.iter().any(|a| a == "--probe"));
++        assert!(
++            !args.iter().any(|a| a == "--day"),
++            "a probe writes nothing, so it names no day"
++        );
++    }
++
++    #[test]
++    fn a_missing_script_says_where_to_put_it() {
++        let source = Mt5SessionSource::with_roots("python", vec![PathBuf::from("/nowhere")], None);
++        let err = source
++            .commands(&request())
++            .expect_err("there is no exporter under /nowhere");
++        assert_eq!(
++            err,
++            DownloadError::ScriptMissing {
++                looked_for: EXPORT_SCRIPT.to_string()
++            }
++        );
++        assert!(err.advice().contains("repository"), "{}", err.advice());
++    }
++
++    /// A second implementation of the port, proving nothing about downloading
++    /// is MetaTrader-shaped. It answers from a canned script instead of a
++    /// terminal, which is what lets the interface be driven in tests with no
++    /// Python, no MetaTrader and no network.
++    struct ScriptedSource {
++        lines: Vec<String>,
++    }
++
++    impl SessionSource for ScriptedSource {
++        fn label(&self) -> String {
++            "Scripted".to_string()
++        }
++
++        fn provider(&self) -> ProviderKind {
++            // A second implementer, so the port is exercised by more than the
++            // one provider that shipped with it.
++            ProviderKind::Hyperliquid
++        }
++
++        fn commands(&self, _request: &DownloadRequest) -> Result<Vec<Command>, DownloadError> {
++            // Never launched: the test reads `lines` directly. A real second
++            // provider would build its own command here.
++            Err(DownloadError::NoInterpreter {
++                tried: "none".to_string(),
++            })
++        }
++    }
++
++    #[test]
++    fn a_second_source_drives_the_same_events() {
++        let source = ScriptedSource {
++            lines: vec![
++                r#"{"event_code":"EXPORT_TAPE_PROGRESS","ticks":1000}"#.to_string(),
++                r#"{"event_code":"EXPORT_DONE","tape":"x/y.csv"}"#.to_string(),
++            ],
++        };
++        assert_eq!(source.label(), "Scripted");
++        let events: Vec<_> = source.lines.iter().filter_map(|l| parse_event(l)).collect();
++        assert_eq!(
++            events,
++            vec![
++                DownloadEvent::Progress { ticks: 1000 },
++                DownloadEvent::Done {
++                    tape: PathBuf::from("x/y.csv")
++                },
++            ],
++            "the event vocabulary belongs to the port, not to MetaTrader"
++        );
++    }
++
++    /// An exit code is a fact about the process. What the exporter said is the
++    /// fact about the download — and the one the trader can act on.
++    #[test]
++    fn an_unexplained_exit_carries_the_exporter_s_last_words() {
++        let advice = last_words(
++            [
++                "Traceback (most recent call last):",
++                "  File \"export_session.py\", line 490, in export_tape",
++                "NameError: name 'flagged' is not defined",
++            ]
++            .into_iter(),
++        )
++        .expect("something was said");
++        assert!(
++            advice.contains("NameError: name 'flagged' is not defined"),
++            "the reason has to survive the trip to the panel: {advice}"
++        );
++    }
++
++    #[test]
++    fn an_exit_that_said_nothing_offers_no_empty_box() {
++        assert_eq!(last_words(std::iter::empty()), None);
++    }
++
++    /// The clock cache is stated by the caller, never read from the machine
++    /// inside `arguments`: an argv that changes with the documents folder is
++    /// an argv no test can assert.
++    #[test]
++    fn the_clock_cache_is_passed_when_there_is_one() {
++        let args = Mt5SessionSource::arguments(
++            Path::new("tools/export.py"),
++            &request(),
++            Some(Path::new("/docs/Quantick/mt5-clock.json")),
++        );
++        assert!(
++            args.windows(2)
++                .any(|pair| pair == ["--clock-cache", "/docs/Quantick/mt5-clock.json"]),
++            "the exporter must be told where the measured clock lives: {args:?}"
++        );
++    }
++
++    /// A platform with no documents folder gets the scripts' own default
++    /// rather than an invented path, so the flag is simply absent.
++    #[test]
++    fn no_durable_home_passes_no_clock_cache() {
++        let args = Mt5SessionSource::arguments(Path::new("tools/export.py"), &request(), None);
++        assert!(
++            !args.iter().any(|arg| arg == "--clock-cache"),
++            "nothing to state, so nothing is stated: {args:?}"
++        );
++    }
++}

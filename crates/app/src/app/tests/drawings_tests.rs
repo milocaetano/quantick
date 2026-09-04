@@ -1,4 +1,5 @@
 use super::*;
+use quantick_feed::history_reach;
 use quantick_feed::replay::test_support as replay_test_support;
 
 #[test]
@@ -3950,7 +3951,7 @@ fn withdrawing_the_reach_calls_off_a_run_in_flight() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = crate::history_reach::HistoryReach::PreviousSession;
+    app.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -3958,7 +3959,7 @@ fn withdrawing_the_reach_calls_off_a_run_in_flight() {
     assert!(app.active_tab().history_reach_running());
 
     // The trader changes their mind and picks "one page" again.
-    app.history_reach = crate::history_reach::HistoryReach::Page;
+    app.history_reach = history_reach::HistoryReach::Page;
     app.drain_tabs();
     events
         .try_send(FeedEvent::HistoryPrepended(

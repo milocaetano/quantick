@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::symbols_file::AddedSymbols;
+use quantick_feed::history_reach;
 
 // The feed-shaped half of this file lives with the adapters it describes, in
 // `quantick-feed`: which backend streams a feed, what that backend can report,
@@ -249,10 +250,10 @@ pub struct HistorySettings {
 impl Default for HistorySettings {
     fn default() -> Self {
         Self {
-            session_gap_minutes: (crate::history_reach::SESSION_GAP_MS / 60_000) as u32,
-            previous_session_lead_minutes: (crate::history_reach::PREVIOUS_SESSION_LEAD_MS / 60_000)
+            session_gap_minutes: (history_reach::SESSION_GAP_MS / 60_000) as u32,
+            previous_session_lead_minutes: (history_reach::PREVIOUS_SESSION_LEAD_MS / 60_000)
                 as u32,
-            reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000) as u32,
+            reach_span_minutes: (history_reach::DEFAULT_REACH_SPAN_MS / 60_000) as u32,
         }
     }
 }
@@ -260,8 +261,8 @@ impl Default for HistorySettings {
 impl HistorySettings {
     /// The settings as the reach reads them: milliseconds.
     #[must_use]
-    pub fn reach_bounds(&self) -> crate::history_reach::ReachBounds {
-        crate::history_reach::ReachBounds {
+    pub fn reach_bounds(&self) -> history_reach::ReachBounds {
+        history_reach::ReachBounds {
             session_gap_ms: i64::from(self.session_gap_minutes) * 60_000,
             previous_session_lead_ms: i64::from(self.previous_session_lead_minutes) * 60_000,
             span_ms: i64::from(self.reach_span_minutes) * 60_000,
@@ -281,7 +282,7 @@ impl HistorySettings {
         // `SpanCovered` or a budget and never on `ReachMet`. Refused at load
         // with the number that would work, the way every other config error
         // is, rather than silently clamped somewhere the trader cannot see.
-        let ceiling = crate::history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000;
+        let ceiling = history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000;
         if i64::from(self.reach_span_minutes) > ceiling {
             return Err(format!(
                 "history.reach_span_minutes is {} but one run can reach at most \
@@ -1993,10 +1994,10 @@ mod tests {
     fn an_absent_history_section_defaults_to_the_reach_constants() {
         let (config, _) = sample();
         let bounds = config.history.reach_bounds();
-        assert_eq!(bounds.session_gap_ms, crate::history_reach::SESSION_GAP_MS);
+        assert_eq!(bounds.session_gap_ms, history_reach::SESSION_GAP_MS);
         assert_eq!(
             bounds.previous_session_lead_ms,
-            crate::history_reach::PREVIOUS_SESSION_LEAD_MS
+            history_reach::PREVIOUS_SESSION_LEAD_MS
         );
     }
 

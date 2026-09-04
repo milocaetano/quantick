@@ -23,9 +23,6 @@ use crate::canvas_layout::{
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
-use crate::history_reach::{
-    Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach, REQUEST_REFUSED_NOTICE,
-};
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
@@ -40,6 +37,10 @@ use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
+use quantick_feed::history_reach::{
+    self, Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach,
+    REQUEST_REFUSED_NOTICE,
+};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
     self as feed, FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency,
@@ -374,7 +375,7 @@ pub const HISTORY_NOTE_LINGER: std::time::Duration = std::time::Duration::from_s
 #[derive(Debug, Clone, Copy)]
 struct HistoryNote {
     /// Borrowed, never owned: every sentence is a fixed one belonging to
-    /// [`crate::history_reach`], so the outcome and the run that produced it
+    /// [`quantick_feed::history_reach`], so the outcome and the run that produced it
     /// cannot drift into two different accounts of the same press.
     text: &'static str,
     raised_at: std::time::Instant,
@@ -505,7 +506,7 @@ pub struct Tab {
     ///
     /// One per tab, because the transports serve one request at a time: the
     /// reply is what sends the next request, so this is a state machine and
-    /// never a loop. See [`crate::history_reach`].
+    /// never a loop. See [`quantick_feed::history_reach`].
     campaign: Option<Campaign>,
     /// What the last *load older* press had to say, while it is still on
     /// screen. See [`HistoryNote`].
@@ -914,8 +915,7 @@ impl Tab {
             opening_slices_remaining: None,
             // Overwritten by `drain_tabs` on the first frame from the
             // window's own value; this is only what a tab holds before that.
-            history_reach_span_minutes: (crate::history_reach::DEFAULT_REACH_SPAN_MS / 60_000)
-                as u32,
+            history_reach_span_minutes: (history_reach::DEFAULT_REACH_SPAN_MS / 60_000) as u32,
             campaign: None,
             history_note: None,
             venue_lead_in: false,
@@ -2236,7 +2236,7 @@ impl Tab {
             // and the control plane both write the window's value, and a run
             // started after that must reach what they asked for rather than
             // what the file said at startup.
-            let bounds = crate::history_reach::ReachBounds {
+            let bounds = history_reach::ReachBounds {
                 span_ms: i64::from(self.history_reach_span_minutes) * 60_000,
                 ..config.history.reach_bounds()
             };
