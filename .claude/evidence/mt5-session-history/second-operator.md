@@ -1,5 +1,10 @@
 # The second operator
 
+> The screenshots this document names were **captured locally, not
+> tracked**: `.gitignore` keeps `.claude/evidence/**/*.png` out of the
+> tree, so the reading written here beside each filename is the evidence,
+> and the pixels are the local proof of it.
+
 Criterion **G7**: can something that is not holding the mouse set what this
 branch adds, read back what it did, and discover that it exists?
 
@@ -76,7 +81,7 @@ So the claim here is the narrow one: the field is wired end to end and unit
 tested, and a live sample of a transient this short is beyond a client that
 pays a process spawn per read.
 The corroborating artifact that the state exists at all is
-[`progressive/mt5-mid-fill.png`](progressive/mt5-mid-fill.png) — the chart
+`progressive/mt5-mid-fill.png` — captured locally, not tracked — the chart
 caught mid-fill at `7999+0 bars` with six slices still to come, against
 `30510+0 bars` when complete.
 

@@ -117,3 +117,33 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+
+  # The second operating system the README is allowed to claim. It exists so
+  # that sentence is backed by a workflow file rather than by memory: the
+  # trader runs quantick on Windows every day, and until this job every line of
+  # evidence for that was a screenshot.
+  #
+  # Deliberately narrow. `cargo build --workspace` proves the whole tree still
+  # compiles for `x86_64-pc-windows-msvc` — which is where a path separator, a
+  # `std::os::unix` import or a Windows-only linker error shows up — and the
+  # tests are the two crates that are pure computation: `engine` is the
+  # determinism the whole product rests on, `guards` is the ratchets. Neither
+  # opens a window, a socket or a MetaTrader terminal, so this job cannot flake
+  # the way the app's tests can on a runner with no GPU. The Linux job above
+  # stays the one that runs everything.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        # Same reasoning as the Linux job: `rust-toolchain.toml` names the
+        # version, and `rustc --version` through the rustup shim is what
+        # installs it.
+        run: |
+          rustc --version
+          cargo --version
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test -p quantick-engine -p quantick-guards

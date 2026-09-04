@@ -1,9 +1,9 @@
-# capture_window.ps1 — captura a janela de um app rodando e salva PNG.
-# Usa PrintWindow com PW_RENDERFULLCONTENT (0x2) para pegar conteúdo
-# renderizado por GPU (egui/glow/wgpu), que um BitBlt comum não captura.
+# capture_window.ps1 — capture a running app's window and save it as a PNG.
+# Uses PrintWindow with PW_RENDERFULLCONTENT (0x2) to grab GPU-rendered content
+# (egui/glow/wgpu), which a plain BitBlt does not capture.
 #
-# Uso:
-#   powershell -File capture_window.ps1 -TitleMatch quantick -OutPath shot.png
+# Usage:
+#   powershell -File capture_window.ps1 -ProcessName quantick-app -OutPath shot.png
 param(
     [string]$ProcessName = "quantick-app",
     [string]$OutPath = "shot.png"
@@ -30,7 +30,7 @@ $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
     Select-Object -First 1
 
 if (-not $proc) {
-    Write-Output "NOT_FOUND: processo '$ProcessName' com janela nao encontrado (o app esta rodando?)"
+    Write-Output "NOT_FOUND: no process '$ProcessName' with a window (is the app running?)"
     exit 2
 }
 

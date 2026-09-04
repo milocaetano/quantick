@@ -596,8 +596,8 @@ def render_bubble_proposed(cv, x, y, r, color, linked, band_h=0.0, buy=True):
 def render_ramps(w=1000, h=150):
     cv = Canvas(w, h, bg=(17, 21, 31))
     labels = [
-        ("Bookmap ramp — atual (Codex)", BOOKMAP_RAMP, (19, 23, 34)),
-        ("Bookmap ramp — proposta (refinada)", BOOKMAP_RAMP_V2, (17, 21, 31)),
+        ("Bookmap ramp — current (Codex)", BOOKMAP_RAMP, (19, 23, 34)),
+        ("Bookmap ramp — proposed (refined)", BOOKMAP_RAMP_V2, (17, 21, 31)),
     ]
     pad = 12
     strip_h = (h - pad * (len(labels) + 1)) / len(labels)
