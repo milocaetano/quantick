@@ -49,6 +49,7 @@ full; the `/mission` line is its own summary of it.
 | R9 | Respect the context budget: the two skill-line edits leave `cargo test -p quantick-guards` green, and a path may get shorter, never longer. |
 | R10 | State in the PR body that the checkout shrank by about 10.7 MB and the clone did not — history keeps every PNG and rewriting it is out of scope. |
 | R11 | **The statement of purpose, which judges the rest:** "Fix all five so the tree, the README and the CI agree, with nothing the app or the harness depends on going missing." |
+| R12 | Read `C:\src\mission-public-surface.md` in full before anything else, and build this ledger from it rather than from the `/mission` line that summarises it. Added after the completeness pass found the request's last sentence discharged in this section's preamble and closing paragraph but carried by no numbered ask. |
 
 Out of scope by the brief's own instruction, and therefore not on this ledger:
 rewriting history to purge the PNGs or the personal path; the 78
@@ -136,6 +137,19 @@ readings that could have been questions are recorded as **S3** and **S4**.
       *Evidence:* both quoted side by side in the PR body, and `gh pr checks`
       showing the new job. *(R8, R11)*
       → **MET.** README:86 and `ci.yml` both name Linux and Windows and both say what each runs; the `windows-latest` job builds the workspace and tests `engine` + `guards`. Quoted in the PR body; `gh pr checks` after push.
+- [x] **A10** — the ledger is derived from the brief, not from the `/mission`
+      summary of it: it carries the brief's scope items 2, 3, 4 and 6 as `R3`,
+      `R5`, `R7`, `R9` and `R10`, none of which appears in the `/mission` line,
+      and the brief's evidence ledger #1–#10 was re-verified against
+      `origin/main` at `aaf74d3` before the first edit.
+      *Evidence:* this section's preamble and closing paragraph, and the
+      re-verification recorded in the evidence file.
+      → `.claude/evidence/public-surface/tree.md`. *(R12)*
+      → **MET.** `R3` re-ran the brief's ledger-#3 grep and paid for the one
+      build; `R5` repaired the citations the `/mission` line never mentions;
+      `R9` held the context budget the brief alone states. All ten evidence
+      claims were re-measured before any file changed, and one — the brief's
+      "31 PNGs of 128 files" — is quoted back with its own byte count.
 - [x] **A9** — the PR body states that the checkout shrank by about 10.7 MB and
       the clone did not, with the pack size that proves it.
       *Evidence:* the PR body. *(R10)*
