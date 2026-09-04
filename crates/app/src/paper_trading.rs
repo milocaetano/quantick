@@ -5043,7 +5043,7 @@ mod tests {
         paper.stop_offset_text = "abc".to_owned();
         assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
         assert!(
-            paper.account.outbox.toast.is_some(),
+            paper.account.has_toast(),
             "the refusal teaches, never silent"
         );
     }
@@ -5219,12 +5219,7 @@ mod tests {
             None,
             "the refusal left the order as it was"
         );
-        let toast = paper
-            .account
-            .outbox
-            .toast
-            .as_ref()
-            .expect("the refusal teaches");
+        let toast = paper.account.peek_toast().expect("the refusal teaches");
         assert!(
             toast.contains("stop loss"),
             "and says which leg was wrong: {}",
@@ -6408,10 +6403,7 @@ mod tests {
             "the user clicks again after the toast"
         );
         assert!(paper.account.venue.working_orders().is_empty());
-        assert!(
-            paper.account.outbox.toast.is_some(),
-            "the refusal explains itself"
-        );
+        assert!(paper.account.has_toast(), "the refusal explains itself");
     }
 
     /// The lines say what a press would do before it happens (audit M3/M4):
@@ -7988,10 +7980,7 @@ mod tests {
             paper.account.armed.is_none(),
             "an armed click dies with the timeline"
         );
-        assert!(
-            paper.account.outbox.toast.is_some(),
-            "the flatten is never silent"
-        );
+        assert!(paper.account.has_toast(), "the flatten is never silent");
         let history = load_history(&dir, Some("RESETX"), &[]);
         assert_eq!(history.rows.len(), 1);
         assert_eq!(
@@ -8040,10 +8029,7 @@ mod tests {
             paper.account.report_state().saved_rows_loaded().is_none(),
             "the ledger re-reads from the new home"
         );
-        assert!(
-            paper.account.outbox.toast.is_some(),
-            "the switch is never silent"
-        );
+        assert!(paper.account.has_toast(), "the switch is never silent");
         assert!(
             dir_a.join("SWITCHX").exists(),
             "files already written stay where they are"

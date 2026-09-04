@@ -422,16 +422,19 @@ pub(crate) struct PaperAccount {
     /// all — their trades are still in the simulator, which keeps closed
     /// trades across every retarget; excluding only the current file
     /// double-counted after a symbol or source switch.
+    // `pub(crate)` for one reason: `account_env!` expands at the ticket's
+    // own call sites, so this field is read there even though nothing else
+    // outside this module names it.
     pub(crate) session_journal_paths: Vec<PathBuf>,
     /// The session source each of the simulator's closed trades closed
     /// under, index-aligned with `sim.closed_trades()` — the export must
     /// not stamp a pre-switch trade with the current source.
     pub(crate) session_trade_sources: Vec<history::SessionSource>,
     /// A failed journal write warns once, not once per trade.
-    pub(crate) journal_warned: bool,
+    journal_warned: bool,
     /// Where this session's trades come from — the tab's feed sets it,
     /// the journal header records it.
-    pub(crate) session_source: history::SessionSource,
+    session_source: history::SessionSource,
     /// Cmd trading: the toggle and its two key bindings (app-wide; the
     /// app persists and fans out changes).
     pub(crate) cmd_trading: CmdTradingSettings,
@@ -473,14 +476,14 @@ pub(crate) struct PaperAccount {
     /// outranks the sidecar - and the sidecar fan-out that follows
     /// construction has to be told, or it silently restores the stored
     /// settings over the ones the run asked for.
-    pub(crate) risk_from_hook: bool,
+    risk_from_hook: bool,
     /// The in-flight export, if any; resolved by [`PaperTrading::settle`]'s
     /// poll.
-    pub(crate) export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
+    export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
     /// The in-flight history-folder import, if any; resolved by
     /// [`PaperTrading::settle`]'s poll. Imports copy — the picked folder
     /// keeps its files.
-    pub(crate) import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
+    import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
     /// The performance report and the trades ledger - the reading half of
     /// paper trading, which owns its own state (`paper_report`). One field
     /// here in place of the twenty-one that used to spread across this
@@ -492,14 +495,14 @@ pub(crate) struct PaperAccount {
     /// Whether anything is listening for per-print simulator events (armed
     /// strategy instances). Off, `on_trade` buffers nothing — the hot path
     /// pays for the bot only while a bot exists.
-    pub(crate) bot_listening: bool,
+    bot_listening: bool,
     /// Per-print events buffered for the strategy instances since the last
     /// drain. Only ever non-empty while `bot_listening`, and prints with
     /// nothing to report push nothing.
     pub(crate) bot_events: Vec<VenueEvent>,
     /// What this module asked its host to do. Drained by the ticket
     /// after every call; see [`AccountResponse`].
-    pub(crate) outbox: AccountResponse,
+    outbox: AccountResponse,
 }
 impl PaperAccount {
     /// Test-only: the report state *and* the environment this host would
@@ -732,6 +735,20 @@ impl PaperAccount {
     /// through here, so there is one slot and not two.
     pub(crate) fn set_toast(&mut self, message: String) {
         self.outbox.toast = Some(message);
+    }
+
+    /// Test-only: whether an acknowledgement is waiting. A question rather
+    /// than a field, which is what keeps the outbox private now that the
+    /// ticket no longer owns one.
+    #[cfg(test)]
+    pub(crate) fn has_toast(&self) -> bool {
+        self.outbox.toast.is_some()
+    }
+
+    /// Test-only: the acknowledgement waiting, if any.
+    #[cfg(test)]
+    pub(crate) fn peek_toast(&self) -> Option<&String> {
+        self.outbox.toast.as_ref()
     }
 
     /// Take the acknowledgement, if one is waiting.
