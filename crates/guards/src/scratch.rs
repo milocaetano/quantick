@@ -49,16 +49,11 @@ const SCRATCH_MODULES: &[&str] = &[
     "crates/replay/src/scratch.rs",
 ];
 
-/// The one place outside a scratch module that legitimately reads the
-/// temporary directory, and why.
-///
-/// `pane.rs` names a path it never creates — `load_from(temp_dir().join(
-/// "no-such.toml"))`, twice, asking what a missing preset file does — so it
-/// leaks nothing. It is exempt rather than fixed because
-/// `refactor/pane-tests-out` is relocating that whole test module as this
-/// lands, and a two-line edit inside it buys a rebase conflict for no
-/// behaviour. Remove this entry once that branch has merged.
-const ALLOWED: &[&str] = &["crates/app/src/pane.rs"];
+/// Files outside a scratch module that may still read the temporary
+/// directory. Empty, and meant to stay that way: an entry here is a place the
+/// rule does not reach, so each one needs a reason beside it saying why the
+/// path it mints cannot leak and when the entry goes.
+const ALLOWED: &[&str] = &[];
 
 /// The call this guard hunts for. Written split so the guard's own source
 /// does not match it — the file would otherwise be its own first finding.

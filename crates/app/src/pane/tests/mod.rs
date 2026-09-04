@@ -1139,8 +1139,9 @@ fn drive_navigation(
     events: Vec<egui::Event>,
 ) -> Option<SlotId> {
     let mut toolrail = crate::toolrail::ToolRail::new();
-    let presets =
-        drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
+    let presets = drawings::presets::PresetStore::load_from(
+        crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
+    );
     let mut begin_text_edit = false;
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
@@ -1190,8 +1191,9 @@ fn drive_navigation(
 fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R {
     let mut toolrail = crate::toolrail::ToolRail::new();
     toolrail.arm(tool);
-    let presets =
-        drawings::presets::PresetStore::load_from(std::env::temp_dir().join("no-such.toml"));
+    let presets = drawings::presets::PresetStore::load_from(
+        crate::scratch::thread_dir("pane-presets").join("no-such.toml"),
+    );
     let mut begin_text_edit = false;
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
