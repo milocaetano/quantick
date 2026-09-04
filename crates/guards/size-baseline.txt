@@ -96,7 +96,16 @@
 # is a trade of nothing for 1,863: the lines still exist, they are simply no
 # longer in the file the ratchet was written for. The first cut of this
 # sprint that moves this number down rather than sideways.
-!budget 59547
+#
+# Then lowered by 2,153 more, the same way and for the same reason: `pane.rs`
+# fell from 7,771 to 5,618 when four `impl ChartPane` groups moved to siblings
+# under `crates/app/src/pane/` -- the context menus, the strategy badges and
+# their lifecycle, the drawing gestures, and the axes and chrome painters.
+# None of the four reaches the 1,500-line threshold, so again no new entry is
+# taken and the fall is a trade of nothing for 2,153. The two functions that
+# are the pane, `handle_navigation` and `draw_chart`, stayed put on purpose:
+# they are the next cut, and they need a shape rather than a new address.
+!budget 57394
 
 crates/app/src/app.rs 7499
 
@@ -150,15 +159,12 @@ crates/app/src/paper_report.rs 3300
 # them. See the budget note above.
 crates/app/src/paper_trading.rs 6407
 
-# Raised by 14 for the strategy badge, and deliberately: not a capability
-# docking by trunk-edit, but a repair to `badge_text_for`, which reached only
-# for a *stale* hold reason and so answered "why did nothing happen here?"
-# with a sentence about an earlier bar. It now leads with the ruler's reading
-# of the bar actually under the cursor, the way `ArmedStrategy::status_line`
-# and the right-click menu always have. The lines are three short branches and
-# the comment saying why the order matters; there is no new module to carve,
-# because the fix is that this function was reading one input too few.
-crates/app/src/pane.rs 7771
+# Lowered by 2,153 by `--tighten` after the four sidecar moves described in
+# the budget note above. The +14 this entry used to carry -- the strategy
+# badge's repair to `badge_text_for` -- is not undone: those lines moved to
+# `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
+# simply not here.
+crates/app/src/pane.rs 5618
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
