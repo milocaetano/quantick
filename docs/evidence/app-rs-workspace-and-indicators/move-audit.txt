@@ -1,13 +1,14 @@
 # Is this a move? Every added line matched against the removed ones
 
-Each line the branch adds is looked up in the multiset of lines the branch
-removes. See `colour-moved.txt` for why this replaces the coloured view.
+`git diff origin/main...HEAD -- crates`. Each line the branch adds is looked
+up in the multiset of lines the branch removes. See `colour-moved.txt` for
+why this replaces the coloured view.
 
-    added lines, whole branch ........................ 2272
+    added lines, whole branch ........................ 2277
     same text removed elsewhere: a verbatim move ..... 1804
     same text but for a new `pub(super) ` prefix ..... 46
     blank lines and bare braces (not evidence) ....... 327
-    genuinely new lines .............................. 95
+    genuinely new lines .............................. 100
 
 No moved body is among the genuinely-new lines: every one below is a module
 doc comment, an import, an `impl QuantickApp {` wrapper, a `mod` line, or
@@ -15,8 +16,8 @@ prose in the size baseline. The list is exhaustive, not a sample.
 
 ## The 46 methods that gained `pub(super)`
 
-A method moved to a child module and still called by `app.rs` has to be
-visible to it. This is the visibility the five existing siblings use.
+A method a child module owns and `app.rs` still calls has to be visible to
+it. This is the visibility the existing siblings already use.
 
 ### crates/app/src/app/chart_layers_wiring.rs
     apply_layer_actions(&mut self)
@@ -157,16 +158,16 @@ visible to it. This is the visibility the five existing siblings use.
     use super::{QuantickApp, saved_context_intervals};
     impl QuantickApp {
 
-### crates/guards/size-baseline.txt  (20)
+### crates/guards/size-baseline.txt  (25)
     #
-    # Then lowered by 2,150 more -- `app.rs` from 7,499 to 5,349 -- after the second
-    # cut of the same sprint moved three more `impl QuantickApp` groups to
-    # siblings: the workspace store's write half, the indicator manager and the
-    # chart-layer wiring. Same trade as the first cut and the same reason it costs
-    # nothing here: `workspace_save.rs` (1,124 lines), `indicator_manager.rs` (835)
-    # and `chart_layers_wiring.rs` (270) are each under the 1,500-line threshold,
-    # so none of them takes an entry. None of the three carries a test module, so
-    # those are production counts entire.
+    # Then lowered by 2,150 more -- `app.rs` from 7,499 to 5,349 -- after the third
+    # cut of the same sprint moved three `impl QuantickApp` groups to siblings
+    # under `crates/app/src/app/`: the workspace store's write half, the indicator
+    # manager and the chart-layer wiring. Same trade as the two cuts before it and
+    # the same reason it costs nothing here: `workspace_save.rs` (1,124 lines),
+    # `indicator_manager.rs` (835) and `chart_layers_wiring.rs` (270) are each
+    # under the 1,500-line threshold, so none takes an entry. None of the three
+    # carries a test module, so those are production counts entire.
     #
     # `--tighten` first wrote 5,339. The ten lines between that and the number
     # above are `attach_surface`, which the mission brief listed with the workspace
@@ -176,6 +177,11 @@ visible to it. This is the visibility the five existing siblings use.
     # than let `workspace_save.rs`'s name lie about what is in it. Recorded here
     # because a ceiling that moved for a reason should say the reason, even when
     # the reason made it ten lines worse.
-    !budget 57397
+    #
+    # The budget arithmetic is done by hand, as the two briefs agreed it would be:
+    # `pane.rs` and `app.rs` were cut in parallel, both lower this line, and the
+    # second to land subtracts its own fall from the first's number rather than
+    # from the one it measured against. 57,394 - 2,150 = 55,244.
+    !budget 55244
     crates/app/src/app.rs 5349
 

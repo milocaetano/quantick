@@ -1,10 +1,11 @@
 # The paper branch's `app.rs` hunks, mapped to the functions that own them
 
-Run twice: once before the first line was moved, and once with the branch
-finished, against a freshly fetched `refactor/paper-policy-out-of-the-ticket`.
-Both runs produced this same mapping.
+Run twice, as the mission required: once before the first line was moved
+(against merge base `d3cf317`) and once with the branch finished and rebased
+(against merge base `e0ae2ac`, after PR #298 moved `origin/main` forward).
+Both runs produced the same set of owning functions.
 
-Merge base: `d3cf317`. 27 hunks, 9 distinct owners.
+Branch: `refactor/paper-policy-out-of-the-ticket`. 27 hunks, 9 distinct owners.
 
 | Hunk starts at | Owning function |
 | --- | --- |
@@ -36,15 +37,9 @@ Merge base: `d3cf317`. 27 hunks, 9 distinct owners.
 | 6497 | `arm_strategy_instance` |
 | 6499 | `arm_strategy_instance` |
 
-## The functions this branch moved
-
-`capture_workspace` … `note_workspace`, `open_requested_indicator_settings`
-… `maintain_indicator_state`, `attach_script_indicator`,
-`detach_script_indicator`, and `apply_layer_actions` … `apply_layer_defaults`.
-
 ## Overlap
 
-None. The paper branch's owners are:
+The paper branch's owners:
 
   - `adopt_tab`
   - `arm_strategy_instance`
@@ -56,6 +51,10 @@ None. The paper branch's owners are:
   - `persist_risk_settings`
   - `poll_trades_dir_picker`
 
-Not one of them is a method this branch moved, and every one of them is on
-the mission's own out-of-scope list. The two branches touch `app.rs` in
-disjoint regions and meet only at `size-baseline.txt`'s `!budget` line.
+This branch moved 60 methods. The intersection of the two sets is
+**empty**.
+
+Every one of the paper branch's owners is also on this mission's own
+out-of-scope list. The two branches touch `app.rs` in disjoint regions and
+meet only at `size-baseline.txt`'s `!budget` line, which this branch now
+resolves by hand against the post-#298 number.

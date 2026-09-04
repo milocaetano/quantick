@@ -11,21 +11,20 @@ and gone from app.rs entirely: one definition, one use, one file.
 
 ## Visibility
 
-46 methods gained pub(super) and nothing else changed visibility. A method
-a child module owns and app.rs still calls has to be visible to app.rs;
-pub(super) is the narrowest that works, and is what the five existing
-siblings already use (workspace_restore.rs:29).
+46 methods gained pub(super) and nothing else changed visibility. A method a
+child module owns and app.rs still calls has to be visible to app.rs;
+pub(super) is the narrowest that works and is what the existing siblings use
+(workspace_restore.rs).
 
-$ git diff --cached origin/main -- crates | grep -c '^+.*pub(super) fn '
+$ git diff origin/main...HEAD -- crates | grep -c '^+.*pub(super) fn '
 46
 
-Two already-public methods appear as added lines. Neither is a widening:
-each was removed from app.rs with the visibility it still has, and the move
-audit matches both as verbatim moves.
+Two already-public methods appear as added lines. Neither is a widening: each
+left app.rs with the visibility it still has, and the move audit matches both
+as verbatim moves.
+  36:    pub(crate) fn attach_script_indicator(
+  71:    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
 
-36:    pub(crate) fn attach_script_indicator(
-71:    pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
-
-No pub, field, struct, enum or const visibility widened anywhere else:
-$ git diff --cached origin/main -- crates | grep '^+' | grep -cE 'pub(\(crate\))? (struct|enum|const|static|mod) '
+No struct, enum, const, static or module visibility widened anywhere:
+$ git diff origin/main...HEAD -- crates | grep '^+' | grep -cE 'pub(\(crate\))? (struct|enum|const|static|mod) '
 0
