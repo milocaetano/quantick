@@ -101,9 +101,6 @@ pub struct DealBarBuilder {
     /// taken.
     reading: Option<u64>,
     reading_time_ms: i64,
-    /// The time of the newest sample accepted, joined or pending — a hole
-    /// is measured between this and the next pending one.
-    newest_time_ms: Option<i64>,
     /// The counter value that closes the forming bar.
     next_boundary: u64,
     current: Option<Bar>,
@@ -126,7 +123,6 @@ impl DealBarBuilder {
             newest: None,
             reading: None,
             reading_time_ms: 0,
-            newest_time_ms: None,
             next_boundary: 0,
             current: None,
             uncounted: 0,
@@ -149,7 +145,7 @@ impl DealBarBuilder {
     /// When the newest reading in hand was taken, joined to a print or not.
     #[must_use]
     pub fn newest_reading_time_ms(&self) -> Option<i64> {
-        self.newest_time_ms
+        self.newest.map(|sample| sample.time_ms)
     }
 
     /// Whether a print at `time_ms` lies in a hole: the next reading in hand
@@ -251,7 +247,6 @@ impl BarBuilder for DealBarBuilder {
             return;
         }
         self.newest = Some(sample);
-        self.newest_time_ms = Some(sample.time_ms);
         self.pending.push_back(sample);
     }
 
@@ -469,6 +464,28 @@ mod tests {
             .push(&trade(3, much_later + 10, "102"))
             .expect("closes at 5 001 000");
         assert_eq!(closed.trade_count, 3);
+    }
+
+    /// A rollover that lands inside a hole: the old session's bar ends on the
+    /// rollover, and the print itself is uncounted rather than opening a bar
+    /// nothing covers.
+    #[test]
+    fn a_rollover_inside_a_hole_ends_the_bar_and_counts_the_print_as_uncounted() {
+        let mut b = DealBarBuilder::new(1_000);
+        let rollover_at = 100 + READING_MAX_AGE_MS + 1;
+        b.observe_deals(sample(100, 5_000_400));
+        b.observe_deals(sample(rollover_at, 3));
+        b.observe_deals(sample(rollover_at + 3 * READING_MAX_AGE_MS, 4));
+        assert!(b.push(&trade(1, 100, "100")).is_none());
+        // Past the rollover sample by more than the limit, inside the hole
+        // before the next reading.
+        let inside = rollover_at + READING_MAX_AGE_MS + 1;
+        let ended = b
+            .push(&trade(2, inside, "101"))
+            .expect("the old session's bar ends");
+        assert_eq!(ended.trade_count, 1);
+        assert!(b.partial().is_none(), "the print opened nothing");
+        assert_eq!(b.uncounted_trades(), 1);
     }
 
     #[test]

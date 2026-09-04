@@ -477,7 +477,13 @@ impl ChartState {
             return;
         }
         self.deal_samples.extend_from_slice(samples);
-        self.deal_samples.sort_by_key(|sample| sample.time_ms);
+        // By time *and* reading: two readings can share a millisecond (ticks
+        // do, across poll rounds), and a file batched over a live series that
+        // already holds them must fold each pair onto itself — sorted by time
+        // alone the union reads A B A B, nothing is adjacent, and the rebuild
+        // sees the lower reading return as a session rollover.
+        self.deal_samples
+            .sort_by_key(|sample| (sample.time_ms, sample.session_deals));
         self.deal_samples.dedup();
     }
 
@@ -1182,6 +1188,19 @@ mod tests {
         s.observe_deals_batch(&[at(1_300, 6), at(1_000, 1), at(1_200, 4)]);
         let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
         assert_eq!(times, [1_000, 1_100, 1_200, 1_300, 1_500]);
+        // Two readings at one millisecond, held live and batched again from
+        // the file: each pair folds onto itself, in reading order, so the
+        // rebuild never sees the lower one return.
+        s.observe_deals(at(1_600, 12));
+        s.observe_deals(at(1_600, 14));
+        s.observe_deals_batch(&[at(1_600, 12), at(1_600, 14)]);
+        let tail: Vec<(i64, u64)> = s
+            .deal_samples()
+            .iter()
+            .skip(5)
+            .map(|d| (d.time_ms, d.session_deals))
+            .collect();
+        assert_eq!(tail, [(1_600, 12), (1_600, 14)]);
         // Prints at 1100..1500 (see `trade`): after a rebuild every one is
         // counted, and the five readings cut four bars (at 2, 4, 6 and 8)
         // plus a partial.

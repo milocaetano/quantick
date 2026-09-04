@@ -381,9 +381,11 @@ pub fn read_file(path: &Path) -> io::Result<DealFile> {
                 complete_bytes += read as u64;
             }
             // An unterminated last line is a torn write even when it parses:
-            // its digits may be half of the number.
+            // its digits may be half of the number. A terminated line that
+            // does not parse was written whole, and is corruption.
             Ok(_) => torn = Some(bad(line_no, "unterminated line")),
-            Err(error) => torn = Some(error),
+            Err(error) if !terminated => torn = Some(error),
+            Err(error) => return Err(error),
         }
     }
     Ok(DealFile {
@@ -1107,7 +1109,7 @@ mod tests {
         let path = dir.join("bad.deals");
         fs::write(
             &path,
-            "# quantick-deals v1 symbol=X day=2026-01-01\n+5 +1\n100 3\n",
+            "# quantick-deals v1 symbol=X day=2026-01-01\n+5 +1\n",
         )
         .unwrap();
         let error = read_file(&path).unwrap_err().to_string();
