@@ -2157,8 +2157,8 @@ mod tests {
     }
 
     /// An account with nothing but a scratch folder and a symbol: no ticket,
-    /// no window, no egui. That this compiles and trades at all is the point
-    /// of the split, and this module is where it is proved.
+    /// no window, no drawing type. That this compiles and trades at all is
+    /// the point of the split, and this module is where it is proved.
     fn account(dir: &crate::scratch::ScratchDir, symbol: &str) -> PaperAccount {
         let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
         account.set_symbol(symbol);
