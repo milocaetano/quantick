@@ -243,8 +243,9 @@ impl Recording {
             }
         }
         // Fresh means no header yet: a header-only file is a day that has
-        // not printed, and must not gain a second header.
-        let fresh = len == 0;
+        // not printed, and must not gain a second header — while a header
+        // torn mid-line was just cut away, and needs one.
+        let fresh = complete_bytes.unwrap_or(0) == 0;
         let mut writer = BufWriter::new(OpenOptions::new().create(true).append(true).open(&path)?);
         if fresh {
             writeln!(
@@ -638,7 +639,9 @@ impl DealRecorder {
     pub fn reload(&mut self) -> Vec<DealSample> {
         let mut samples = Vec::new();
         if let Some(recording) = self.recording.as_mut() {
-            let _ = recording.flush();
+            if let Err(error) = recording.flush() {
+                self.error = Some(format!("cannot write the recording: {error}"));
+            }
             if let Ok(file) = read_file(&recording.path) {
                 samples.extend(file.samples);
             }
@@ -1167,6 +1170,34 @@ mod tests {
         drop(recording);
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text.matches(HEADER).count(), 1, "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A crash in the middle of the header leaves an unterminated first
+    /// line: the reader keeps nothing, the writer cuts it away and starts
+    /// the day with one whole header, never none.
+    #[test]
+    fn a_torn_header_resumes_with_one_whole_header() {
+        let dir = scratch("torn-header");
+        fs::create_dir_all(dir.join("WINV26")).unwrap();
+        let path = dir.join("WINV26").join("2026-09-03.deals");
+        fs::write(&path, "# quantick-deals v1 symbol=WINV26 day=2026-09-0").unwrap();
+        let (mut recording, existing) =
+            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        assert!(existing.is_empty());
+        recording.append(sample(100, 10), 0).unwrap();
+        recording.flush().unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches(HEADER).count(), 1, "{text}");
+        assert!(
+            text.ends_with(
+                "
+100 10
+"
+            ),
+            "{text}"
+        );
+        assert_eq!(read_file(&path).unwrap().samples, vec![sample(100, 10)]);
         let _ = fs::remove_dir_all(&dir);
     }
 
