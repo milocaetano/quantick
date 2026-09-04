@@ -108,15 +108,15 @@ pub(crate) use declare_hooks;
 pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[
     (
         "QUANTICK_GIT_COMMIT",
-        "build metadata, read through `option_env!` at compile time and reported          in the control plane's system info. Setting it at runtime does nothing.",
+        "build metadata, read through `option_env!` at compile time and \n         reported in the control plane's system info. Setting it at runtime \n         does nothing.",
     ),
     (
         "QUANTICK_FAKE_STORE",
-        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module.          Never read by a release build.",
+        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module. \n         Never read by a release build.",
     ),
     (
         "QUANTICK_TEST_STORE_HOME_ENV",
-        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which          lets a test redirect the store home. Never read by a release build.",
+        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which \n         lets a test redirect the store home. Never read by a release build.",
     ),
 ];
 

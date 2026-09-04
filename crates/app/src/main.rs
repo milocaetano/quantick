@@ -128,16 +128,6 @@ fn init_tracing() {
     }
 }
 
-/// Offline dump paths, served before anything opens a window.
-///
-/// The generated indexes under `docs/` and `.claude/skills/` are produced from
-/// here rather than from a separate tool, because the registries they describe
-/// are private to this binary — `crates/app` has no library target, so no
-/// `examples/` binary and no sibling crate can reach them the way
-/// `crates/control/examples/export_schemas.rs` reaches the wire schemas.
-///
-/// Each writes to stdout and exits 0, so a caller can redirect it over the
-/// committed file and let `git diff` say whether anything moved.
 /// Write a rendered dump, or fail loudly without writing a byte.
 ///
 /// Never a panic and never a partial write. A caller redirects this over a
@@ -169,6 +159,16 @@ fn emit(rendered: Result<String, String>) {
     }
 }
 
+/// Offline dump paths, served before anything opens a window.
+///
+/// The generated indexes under `docs/` and `.claude/skills/` are produced from
+/// here rather than from a separate tool, because the registries they describe
+/// are private to this binary — `crates/app` has no library target, so no
+/// `examples/` binary and no sibling crate can reach them the way
+/// `crates/control/examples/export_schemas.rs` reaches the wire schemas.
+///
+/// Returns whether the argument named a dump, so `main` can exit before
+/// touching a config file or a display.
 fn run_dump_subcommand(argument: &str) -> bool {
     match argument {
         "--dump-capability-inventory" => {

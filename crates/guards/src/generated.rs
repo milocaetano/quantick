@@ -212,7 +212,7 @@ fn check_hooks(root: &Path, findings: &mut Vec<Finding>) {
     if allowed.is_empty() {
         findings.push(Finding::new(
             format!(
-                "{HOOKS_MODULE}: the `NOT_HOOKS` table is missing or unreadable — the guard                  cannot tell a deliberate non-hook from an undeclared one"
+                "{HOOKS_MODULE}: the `NOT_HOOKS` table is missing or unreadable — the \n                 guard cannot tell a deliberate non-hook from an undeclared one"
             ),
             REMEDY_HOOKS,
         ));
