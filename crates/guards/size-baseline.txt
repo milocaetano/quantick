@@ -99,7 +99,8 @@
 # Tightened 3 more to pay for `tab.rs`'s replay stash below; measured 9,263.
 # Tightened 12 more to pay for `tab.rs`'s shared recut path; measured 9,263.
 # Tightened 4 more for `tab.rs`'s recut reason; measured 9,263.
-crates/app/src/app.rs 9288
+# Tightened 6 more for `stream.rs`'s heartbeat flush; measured 9,266.
+crates/app/src/app.rs 9282
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -206,7 +207,9 @@ crates/app/src/footprint_render.rs 2236
 # the `deal_counter` hello field, the one send that forwards a reading ahead
 # of its print and the offset the heartbeat restates. The reduction is
 # `deals.rs`; the loop only forwards.
-crates/feed-mt5/src/stream.rs 2210
+# +6 by the sixteenth bug pass: the heartbeat releases the reading a round
+# was waiting on. Paid by `app.rs`.
+crates/feed-mt5/src/stream.rs 2216
 crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718

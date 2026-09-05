@@ -199,19 +199,20 @@ impl DealBarBuilder {
                 None => {
                     self.next_boundary = self.boundary_above(deals);
                 }
-                // Lower by more than a bar's worth of deals, or by more
-                // than half (a count still below `N` can restart too): the
-                // venue restarted its count, a new session, and the bar
-                // forming under the old count ends here. The rate carries
-                // over — a new session's deals per contract are no different.
-                Some(current)
-                    if deals < current.saturating_sub(self.n)
-                        || deals.saturating_mul(2) < current =>
-                {
+                // Lower by more than half: the venue restarted its count, a
+                // new session, and the bar forming under the old count ends
+                // here. Lower by less is a poll the terminal answered late
+                // — a reading one refresh behind, which at the open is
+                // thousands of deals — and not a restart; a bar's worth
+                // would call every such answer a new session. The rate
+                // carries over — a new session's deals per contract are no
+                // different.
+                Some(current) if deals.saturating_mul(2) < current => {
                     if let Some(bar) = self.current.take() {
                         closed = Some(bar);
                     }
                     self.close_next = false;
+                    self.skip_catch_up = false;
                     self.next_boundary = self.boundary_above(deals);
                 }
                 // A smaller dip is the terminal answering a poll late —
@@ -850,6 +851,33 @@ mod tests {
         assert!(b.push(&trade_of(13, 90_200, "100", "1")).is_none());
     }
 
+    /// A restart clears what a stretch before it left behind: the new
+    /// session's multiples are caught up one per print like any other,
+    /// not skipped because the old session ended on an empty window.
+    #[test]
+    fn a_restart_clears_the_skipped_catch_up() {
+        let mut b = DealBarBuilder::new(100);
+        b.observe_deals(sample(99, 1_000));
+        b.push(&trade_of(1, 100, "100", "10"));
+        b.observe_deals(sample(30_099, 1_050)); // rate 5
+        b.push(&trade_of(2, 30_100, "100", "1")); // forming, total 1 055
+        b.observe_deals(sample(60_099, 1_120)); // an empty window crossed 1 100
+        b.observe_deals(sample(90_099, 3)); // the restart, before any print
+        let ended = b
+            .push(&trade_of(3, 90_100, "100", "1"))
+            .expect("the old bar ends");
+        assert_eq!(ended.trade_count, 1);
+        b.observe_deals(sample(120_099, 400)); // four multiples ahead of the estimate
+        let mut closed = 0;
+        for i in 0..4 {
+            closed += usize::from(
+                b.push(&trade_of(4 + i, 120_100 + i as i64 * 100, "100", "1"))
+                    .is_some(),
+            );
+        }
+        assert_eq!(closed, 4, "each multiple the reading crossed gets its bar");
+    }
+
     /// A reconnect re-emits the reading it finds: an unchanged reading at
     /// a later time is not a window, and sets no rate of zero.
     #[test]
@@ -940,9 +968,10 @@ mod tests {
         );
     }
 
-    /// A reading a little lower than the one in force is the terminal
-    /// answering a poll late, not a session restart: no bar ends, none is
-    /// cut. A drop of more than a bar's worth of deals is the restart.
+    /// A reading lower than the one in force by less than half is the
+    /// terminal answering a poll late — one refresh behind, which is
+    /// thousands of deals at the open — not a session restart: no bar ends,
+    /// none is cut. A drop by more than half is the restart.
     #[test]
     fn a_small_dip_is_a_late_poll_and_a_large_one_a_restart() {
         let mut b = DealBarBuilder::new(1_000);
@@ -955,13 +984,18 @@ mod tests {
             b.push(&trade(3, 31_100, "102")).is_none(),
             "a dip ends nothing"
         );
+        b.observe_deals(sample(32_099, 4_996_000)); // a refresh behind: ignored too
+        assert!(
+            b.push(&trade(30, 32_100, "102")).is_none(),
+            "a late poll thousands behind ends nothing"
+        );
         assert_eq!(b.reading(), Some(5_000_500));
-        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(2));
+        assert_eq!(b.partial().map(|bar| bar.trade_count), Some(3));
         b.observe_deals(sample(60_099, 3)); // the restart
         let ended = b
             .push(&trade(4, 60_100, "103"))
             .expect("the restart ends the bar");
-        assert_eq!(ended.trade_count, 2);
+        assert_eq!(ended.trade_count, 3);
         assert_eq!(b.reading(), Some(3));
         assert_eq!(b.rate(), Some(Decimal::from(100)), "the rate carries over");
     }

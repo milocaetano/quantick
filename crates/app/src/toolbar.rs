@@ -249,6 +249,9 @@ pub struct ToolbarModel<'a> {
     pub deal_recording: Option<crate::deal_recording::RecordingView>,
     /// Open the REC popover this frame — the launch hook's one-shot.
     pub deal_recording_menu: bool,
+    /// `QUANTICK_BARS_MENU`: open the bar-kind combo, cleared once it did —
+    /// the entries a source cannot offer, listed disabled, need no hand then.
+    pub bars_menu: &'a mut bool,
     /// Where the history menu's own button ended up, written back by the draw.
     ///
     /// Published for the same reason the Workspace menu's rect is: a menu is a
@@ -565,16 +568,22 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         .deal_recording
         .as_ref()
         .is_some_and(crate::deal_recording::RecordingView::deal_count_available);
+    if std::mem::take(model.bars_menu) {
+        // The combo's own popup id: the salt *as an `Id`* under this `Ui`, as
+        // `from_id_salt` derives it — a `&str` salt opens nothing.
+        let salt = egui::Id::new("bar_kind");
+        let popup = ui.make_persistent_id(salt).with("popup");
+        ui.memory_mut(|memory| memory.open_popup(popup));
+    }
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for kind in BarKind::ALL {
-                // A rule that counts traded size is offered only where size is
-                // real. On a quote-driven feed it would silently become a tick
-                // bar under another name. The same for a rule that counts the
-                // venue's deals: listed and disabled with its reason, never
-                // hidden — a pane restored on `trades` before the hello lands
-                // is showing a kind the combo must still be able to name.
+                // A rule that counts traded size, or the venue's deals, is
+                // offered only where the source has them; elsewhere it would
+                // silently be a tick bar under another name. Listed disabled
+                // with its reason, never hidden — a pane restored on `trades`
+                // before the hello lands shows a kind the combo must name.
                 let disabled_reason = if kind.needs_traded_volume() && !traded_volume {
                     Some("this source quotes prices but prints no traded volume")
                 } else if kind.needs_deal_counter() && !deal_counter {
@@ -1698,6 +1707,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Tick;
         let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1730,6 +1740,7 @@ mod tests {
                         deals_n: &mut deals_n,
                         deal_recording: None,
                         deal_recording_menu: false,
+                        bars_menu: &mut bars_menu,
                         volume_units: &mut volume_units,
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
@@ -1795,6 +1806,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Time;
         let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1833,6 +1845,7 @@ mod tests {
                     deals_n: &mut deals_n,
                     deal_recording: None,
                     deal_recording_menu: false,
+                    bars_menu: &mut bars_menu,
                     volume_units: &mut volume_units,
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,
@@ -1891,6 +1904,7 @@ mod tests {
         let mut feed_id = "metatrader".to_owned();
         let mut symbol = "US500".to_owned();
         let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1923,6 +1937,7 @@ mod tests {
                         deals_n: &mut deals_n,
                         deal_recording: None,
                         deal_recording_menu: false,
+                        bars_menu: &mut bars_menu,
                         volume_units: &mut volume_units,
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
@@ -1970,6 +1985,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Tick;
         let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -2008,6 +2024,7 @@ mod tests {
                     deals_n: &mut deals_n,
                     deal_recording: None,
                     deal_recording_menu: false,
+                    bars_menu: &mut bars_menu,
                     volume_units: &mut volume_units,
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,

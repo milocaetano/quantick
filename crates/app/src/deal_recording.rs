@@ -92,7 +92,11 @@ pub fn resolve_dir(configured: Option<&str>) -> PathBuf {
         // Never the trader's documents from a test, like every other store.
         return crate::store_home::test_path(DEALS_DIR);
     }
-    if let Some(explicit) = std::env::var_os(DEALS_DIR_ENV) {
+    if let Some(explicit) = std::env::var(DEALS_DIR_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
         return PathBuf::from(explicit);
     }
     if let Some(dir) = configured.map(str::trim).filter(|dir| !dir.is_empty()) {
@@ -576,8 +580,10 @@ impl DealRecorder {
         mut day_cache: DayCache,
     ) -> Self {
         let symbol = symbol.into();
-        // A placeholder has no folder and scans nothing; a real recorder
-        // lists its symbol's days.
+        // A recorder with no folder records nowhere — a placeholder, or an
+        // override that resolved to nothing — and scans nothing; a real
+        // recorder lists its symbol's days.
+        let configured = !dir.as_os_str().is_empty();
         let days = if dir.as_os_str().is_empty() {
             Rc::from(Vec::new())
         } else {
@@ -601,7 +607,7 @@ impl DealRecorder {
             days,
             day_cache,
             loaded_days: Vec::new(),
-            configured: true,
+            configured,
             stash: Vec::new(),
         }
     }

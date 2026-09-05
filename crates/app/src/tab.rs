@@ -3729,7 +3729,6 @@ impl Tab {
             // The configuration changed under us; there is nothing to go back
             // to, so the chart stays as it is rather than dying.
             self.reset_market_state(false);
-            self.restore_deal_readings();
             return;
         };
         // Same ordering rule as open_replay: the flatten of a replay

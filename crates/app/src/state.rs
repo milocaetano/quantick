@@ -492,9 +492,12 @@ impl ChartState {
                 // by time *and* reading, the order the batch path sorts
                 // into. A lower reading at the newest millisecond is fed as
                 // any other: the builder reads a small dip as a late poll.
-                let at = self.deal_samples.partition_point(|held| {
-                    (held.time_ms, held.session_deals) <= (sample.time_ms, sample.session_deals)
-                });
+                // After every reading of its millisecond — the series is
+                // ordered by time alone, and a run of one millisecond keeps
+                // arrival order — unless the run already holds it.
+                let at = self
+                    .deal_samples
+                    .partition_point(|held| held.time_ms <= sample.time_ms);
                 let same_ms = self.deal_samples[..at]
                     .iter()
                     .rev()

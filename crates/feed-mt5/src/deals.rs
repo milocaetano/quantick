@@ -120,6 +120,15 @@ impl DealSampler {
         emitted
     }
 
+    /// The reading still waiting for its round to end, emitted now — on a
+    /// heartbeat, which means no tick has come for a second, so the round
+    /// is over. Without this the last reading of a connection would wait
+    /// for a next round that never comes.
+    pub fn finish(&mut self) -> Option<DealSample> {
+        let pending = self.pending.take()?;
+        Some(self.emit(pending.deals, pending.last_tick_ms))
+    }
+
     /// Turn a reading into the sample the engine joins prints against.
     fn emit(&mut self, deals: u64, taken_ms: i64) -> DealSample {
         if self.last.is_some_and(|last| deals < last) {
@@ -211,6 +220,29 @@ mod tests {
         assert_eq!(sampler.stats.stamped, 6);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));
+    }
+
+    /// A heartbeat ends the round a reading is waiting on: the reading is
+    /// emitted then, dated at the round's last tick.
+    #[test]
+    fn a_heartbeat_releases_the_pending_reading() {
+        let mut sampler = DealSampler::new(0);
+        assert!(
+            sampler
+                .observe(&tick_in_round(1, 1_000, Some(7), Some(1_500)))
+                .is_none()
+        );
+        assert!(
+            sampler
+                .observe(&tick_in_round(2, 1_010, Some(7), Some(1_500)))
+                .is_none()
+        );
+        let released = sampler.finish();
+        assert_eq!(
+            released.map(|s| (s.time_ms, s.session_deals)),
+            Some((1_010, 7))
+        );
+        assert!(sampler.finish().is_none(), "nothing left waiting");
     }
 
     /// An older bridge stamps no round: a reading is dated at its own tick.

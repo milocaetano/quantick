@@ -1337,6 +1337,12 @@ async fn serve_connection(
                     depth.set_server_utc_offset_s(offset);
                     deals.set_server_utc_offset_s(offset);
                 }
+                // A second without a tick ends the round a reading waits on.
+                if let Some(sample) = deals.finish()
+                    && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
                 // The beat a thin tape is measured on: a symbol printing once
                 // a minute never reaches the per-print sampling bound, and
                 // would otherwise never report at all. The figures are still

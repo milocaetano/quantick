@@ -216,11 +216,6 @@ fn set(
     let input: DealRecordingInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    if let Some(on) = input.record_by_default {
-        // The standing choice, before the tab is borrowed: it reaches every
-        // tab's recorder, this one included.
-        app.set_record_deals_default(on);
-    }
     let (tab, _config) = app
         .control_tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
@@ -233,6 +228,16 @@ fn set(
             tab.id
         )));
     }
+    if let Some(on) = input.record_by_default {
+        // The standing choice, after every refusal: a call refused changes
+        // nothing. It reaches every tab's recorder, this one included, so
+        // the tab is let go of and taken again.
+        let _ = tab;
+        app.set_record_deals_default(on);
+    }
+    let (tab, _config) = app
+        .control_tab_with_config(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // Only where a REC control would be drawn: a feed with no counter is
     // reported as such, never started into writing nothing.
     if let Some(view) = tab.deal_recording_view() {

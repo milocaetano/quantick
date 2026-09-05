@@ -76,7 +76,11 @@ CLAUDE.md 10148
 # surface with no row is one nobody can reach, so the rows are part of the
 # feature; kept to two sentences each rather than the paragraph the older
 # rows run to. Measured, 70,167 -> 70,953.
-.claude/skills/ui-harness/references/hook-registry.md 70953
+# +496 for the same branch: the `QUANTICK_BARS_MENU` row, the hook that
+# opens the bar-kind combo so the entries a source cannot offer — the
+# disabled `trades` with its reason — are reachable by a capture. Measured,
+# 70,953 -> 71,449.
+.claude/skills/ui-harness/references/hook-registry.md 71449
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
@@ -147,8 +151,8 @@ AGENTS.md 13179
 # generated file only. Not one `Reaches` cell was shortened -- the long ones
 # say which class of defect is invisible without that hook, which is the most
 # valuable content in the harness and the thing a grep cannot supply.
-# +786 for the trades-bars branch: the two generated hook rows signed on the
+# +915 for the trades-bars branch: the three generated hook rows signed on the
 # registry's entry above, and nothing else. A raise, not a trade — `main` was
 # already 1,433 bytes into the headroom when this branch merged it, so the
-# rows could not fit inside it. Measured, 232,885 -> 233,671.
-!budget 233671
+# rows could not fit inside it. Measured, 232,885 -> 233,800.
+!budget 233800
