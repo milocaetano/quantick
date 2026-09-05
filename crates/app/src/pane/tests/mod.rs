@@ -24,14 +24,14 @@ fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
     assert!(!pane.click_on_tape(0.0));
     assert!(!pane.click_on_tape(999.0));
 
-    pane.last_lane_divider_x = Some(700.0);
+    pane.frame.lane_divider_x = Some(700.0);
     assert!(!pane.click_on_tape(699.9), "the candles' last pixel");
     assert!(pane.click_on_tape(700.0), "the divider belongs to the tape");
     assert!(pane.click_on_tape(880.0), "and so does everything past it");
 
     // A lane that goes away takes its side of the question with it: no
     // click may configure a tape that is no longer drawn.
-    pane.last_lane_divider_x = None;
+    pane.frame.lane_divider_x = None;
     assert!(!pane.click_on_tape(880.0));
 }
 
@@ -440,14 +440,14 @@ fn the_drawing_band_stops_at_the_live_lane() {
     let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
 
-    pane.last_lane_divider_x = None;
+    pane.frame.lane_divider_x = None;
     assert_eq!(
         pane.drawing_area(chart),
         chart,
         "no lane, no carve — the whole chart is the canvas"
     );
 
-    pane.last_lane_divider_x = Some(880.0);
+    pane.frame.lane_divider_x = Some(880.0);
     let band = pane.drawing_area(chart);
     assert_eq!(band.right(), 880.0, "the band ends where the lane begins");
     assert_eq!(band.left(), chart.left());
@@ -455,9 +455,9 @@ fn the_drawing_band_stops_at_the_live_lane() {
 
     // A divider reported outside the chart cannot make the band bigger
     // than the chart or invert it.
-    pane.last_lane_divider_x = Some(5_000.0);
+    pane.frame.lane_divider_x = Some(5_000.0);
     assert_eq!(pane.drawing_area(chart).right(), chart.right());
-    pane.last_lane_divider_x = Some(-40.0);
+    pane.frame.lane_divider_x = Some(-40.0);
     let degenerate = pane.drawing_area(chart);
     assert!(degenerate.right() >= degenerate.left());
 }
@@ -984,10 +984,10 @@ fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
     };
     pane.indicators
         .apply(IndicatorEvent::rebuilt(slot, descriptor, vec![values]));
-    pane.last_chart_area = Some(TEST_PLOT);
-    pane.last_chart_top = TEST_PLOT.top();
-    pane.last_chart_height = TEST_PLOT.height();
-    pane.last_auto_range = Some((0.0, 100.0));
+    pane.frame.chart_area = Some(TEST_PLOT);
+    pane.frame.chart_top = TEST_PLOT.top();
+    pane.frame.chart_height = TEST_PLOT.height();
+    pane.frame.auto_range = Some((0.0, 100.0));
     pane
 }
 
@@ -1020,10 +1020,10 @@ fn pane_with_timed_bars(count: usize) -> ChartPane {
             trade_count: 1,
         })
         .collect();
-    pane.last_chart_area = Some(TEST_PLOT);
-    pane.last_chart_top = TEST_PLOT.top();
-    pane.last_chart_height = TEST_PLOT.height();
-    pane.last_auto_range = Some((0.0, 100.0));
+    pane.frame.chart_area = Some(TEST_PLOT);
+    pane.frame.chart_top = TEST_PLOT.top();
+    pane.frame.chart_height = TEST_PLOT.height();
+    pane.frame.auto_range = Some((0.0, 100.0));
     pane
 }
 
@@ -1100,8 +1100,8 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
     let ctx = egui::Context::default();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
-    pane.last_bands = pane.bands(&areas);
-    let right = pane.last_lane_divider_x.unwrap_or(areas.chart.right());
+    pane.frame.bands = pane.bands(&areas);
+    let right = pane.frame.lane_divider_x.unwrap_or(areas.chart.right());
     let total = pane.slots();
     // Deliberately in the left half of a candle, the half that used to
     // answer with its neighbour.
@@ -1474,8 +1474,8 @@ fn a_tag_wears_the_same_honesty_fade_its_stroke_does() {
 #[test]
 fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
     let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
-    pane.last_chart_area = Some(TEST_PLOT);
-    pane.last_auto_range = Some((0.0, 100.0));
+    pane.frame.chart_area = Some(TEST_PLOT);
+    pane.frame.auto_range = Some((0.0, 100.0));
     let band = DrawingBand::Indicator(
         pane.indicators.pane_key(
             pane.indicators
@@ -1544,7 +1544,7 @@ fn each_axis_offers_the_half_of_the_compass_it_wears() {
         "and not the other axis's half"
     );
 
-    let strip = split_time_strip(areas.time_strip, pane.last_lane_divider_x).0;
+    let strip = split_time_strip(areas.time_strip, pane.frame.lane_divider_x).0;
     right_click_menu(&mut pane, &ctx, strip.center());
     assert!(
         pane.layer_menu_rects
@@ -1902,7 +1902,7 @@ fn hit_testing_never_crosses_bands() {
         .next()
         .expect("one pane")
         .last_auto = Some((-10.0, 10.0));
-    pane.last_auto_range = Some((100.0, 110.0));
+    pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
     let bands = pane.bands(&areas);
     let (price, indicator) = (&bands[0], &bands[1]);
@@ -1944,7 +1944,7 @@ fn a_time_only_object_is_one_item_that_every_band_paints() {
         .next()
         .expect("one pane")
         .last_auto = Some((-10.0, 10.0));
-    pane.last_auto_range = Some((100.0, 110.0));
+    pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
     let bands = pane.bands(&areas);
     let vertical = drawings::DRAWING_TOOLS
@@ -2059,7 +2059,7 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
         .next()
         .expect("one pane")
         .last_auto = Some((-10.0, 10.0));
-    pane.last_auto_range = Some((100.0, 110.0));
+    pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
     let carved = pane.bands(&areas);
     let key = carved[1].key.clone();
@@ -2099,7 +2099,7 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
 #[test]
 fn the_price_band_scale_turns_over_with_the_chart() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
-    pane.last_auto_range = Some((100.0, 110.0));
+    pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
     let upright = pane.bands(&areas)[0].scale.expect("a range is set");
     assert!(!upright.is_inverted());

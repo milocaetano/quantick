@@ -1411,7 +1411,8 @@ fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
     let wide = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the canvas drew")
         .width();
 
@@ -1427,7 +1428,8 @@ fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
     let narrow = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the canvas drew")
         .width();
     assert!(
@@ -1950,7 +1952,8 @@ fn inspector_opens_beside_the_selection_inside_the_chart() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the chart pane was laid out");
     let bbox = egui::Rect::from_min_max(egui::pos2(300.0, 300.0), egui::pos2(400.0, 380.0))
         .expand(DRAWING_ANCHOR_RADIUS_PX);
@@ -1983,7 +1986,8 @@ fn pinning_the_inspector_docks_it_and_frees_the_canvas() {
     let chart_before = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
 
     let pin = app
@@ -2000,7 +2004,8 @@ fn pinning_the_inspector_docks_it_and_frees_the_canvas() {
     let chart_after = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
     assert!(
         chart_after.width() < chart_before.width(),
@@ -2168,11 +2173,12 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
         .drawing_chrome
         .context_bar_rect()
         .expect("the bar is still up");
-    let chart = app.drawing_pane().last_chart_area.expect("the pane drew");
+    let chart = app.drawing_pane().frame.chart_area.expect("the pane drew");
     let expected = drawings::context_bar::place(
         chart,
         app.drawing_pane()
-            .last_lane_divider_x
+            .frame
+            .lane_divider_x
             .unwrap_or(chart.right()),
         app.drawing_bbox_on_screen(chart, profile)
             .expect("the object projects"),
@@ -2316,7 +2322,8 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     assert!(
         app.focused_pane()
-            .last_chart_area
+            .frame
+            .chart_area
             .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
         "this proof needs a chart narrower than the auto-pin threshold"
     );
@@ -2449,7 +2456,7 @@ fn the_object_manager_opens_beside_the_rail() {
     let manager = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
         .expect("the manager is open");
-    let chart = app.focused_pane().last_chart_area.expect("chart laid out");
+    let chart = app.focused_pane().frame.chart_area.expect("chart laid out");
     // Default dock is Left: the manager opens one gap inboard of the
     // rail's inner edge, aligned with its leading (top) end.
     assert!(
@@ -2495,9 +2502,9 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
 
     // Aim at the forming slot: the newest one, at the right edge of the
     // history area.
-    let chart = pane.last_chart_area.expect("chart laid out");
+    let chart = pane.frame.chart_area.expect("chart laid out");
     let width = pane.viewport.candle_width();
-    let right = pane.last_lane_divider_x.unwrap_or(chart.right());
+    let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
@@ -2538,7 +2545,8 @@ fn a_pencil_stroke_ignores_points_outside_its_own_band() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
 
     arm_drawing_from_toolbox(&mut app, &ctx, "brush");
@@ -2572,7 +2580,8 @@ fn a_pencil_stroke_ignores_points_outside_its_own_band() {
     let (lo, hi) = app
         .active_tab()
         .flow_pane
-        .last_auto_range
+        .frame
+        .auto_range
         .expect("the pane has a range");
     let span = hi - lo;
     for point in &stroke.points {
@@ -2694,7 +2703,8 @@ fn the_field_opens_below_a_note_that_has_no_room_above_it() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("a drawn chart");
     click_chart(&mut app, &ctx, egui::pos2(700.0, chart.top() + 2.0));
     let output = run_frame(&mut app, &ctx);
@@ -4025,7 +4035,8 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
     let width = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out")
         .width();
     app.active_tab_mut()

@@ -165,7 +165,7 @@ fn pane_is_auto(app: &QuantickApp, slot: SlotId) -> bool {
 fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
     let pane = &app.active_tab().flow_pane;
     let areas = plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -178,7 +178,7 @@ fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
 fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
     let pane = &app.active_tab().flow_pane;
     let areas = plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -197,7 +197,7 @@ fn right_edge(app: &QuantickApp) -> f32 {
 fn pane_slots(app: &QuantickApp) -> Vec<crate::indicators::PaneSlot> {
     let pane = &app.active_tab().flow_pane;
     plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -937,15 +937,15 @@ fn time_pane_projection(app: &QuantickApp) -> (egui::Rect, PriceScale) {
         .active_tab()
         .time_pane()
         .expect("the split built a time pane");
-    let chart = time_pane.last_chart_area.expect("the time pane drew");
+    let chart = time_pane.frame.chart_area.expect("the time pane drew");
     let (lo, hi) = time_pane
         .price_view
-        .resolve(time_pane.last_auto_range.expect("the pane has a range"));
+        .resolve(time_pane.frame.auto_range.expect("the pane has a range"));
     let scale = PriceScale::from_range(
         lo,
         hi,
-        time_pane.last_chart_top,
-        time_pane.last_chart_top + time_pane.last_chart_height,
+        time_pane.frame.chart_top,
+        time_pane.frame.chart_top + time_pane.frame.chart_height,
     );
     (chart, scale)
 }
@@ -1195,7 +1195,8 @@ fn settle_indicators(app: &mut QuantickApp) {
 fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane reported its rect")
         .center()
 }
@@ -1204,8 +1205,8 @@ fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
 /// frame computes it.
 fn price_y(app: &QuantickApp, side: PaneSide, price: f64) -> f32 {
     let pane = app.active_tab().pane(side);
-    let chart = pane.last_chart_area.expect("the pane reported its rect");
-    let auto = pane.last_auto_range.expect("the pane fitted a range");
+    let chart = pane.frame.chart_area.expect("the pane reported its rect");
+    let auto = pane.frame.auto_range.expect("the pane fitted a range");
     let (lo, hi) = pane.price_view.resolve(auto);
     PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).y(price)
 }
@@ -2148,8 +2149,8 @@ fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
     run_frame(app, ctx);
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
-        let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
+        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,

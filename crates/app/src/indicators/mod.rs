@@ -124,7 +124,7 @@ pub(crate) struct IndicatorView {
     ///
     /// The gesture that zooms the pane runs before the frame that draws it,
     /// so it needs the range the renderer actually used — the same handshake
-    /// `last_auto_range` performs for the candles.
+    /// [`crate::pane::PaneFrame::auto_range`] performs for the candles.
     pub last_auto: Option<(f64, f64)>,
 }
 

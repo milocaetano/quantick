@@ -47,10 +47,10 @@ fn drawing_env<'a>(
     });
     crate::surfaces::DrawingEnv {
         selected,
-        chart_area: pane.last_chart_area,
-        focused_chart_area: tab.focused_pane().last_chart_area,
-        lane_divider_x: pane.last_lane_divider_x,
-        auto_range: pane.last_auto_range,
+        chart_area: pane.frame.chart_area,
+        focused_chart_area: tab.focused_pane().frame.chart_area,
+        lane_divider_x: pane.frame.lane_divider_x,
+        auto_range: pane.frame.auto_range,
         selected_bbox: read.selected_bbox,
         selected_band: read.selected_band,
         tab: tab.id,
@@ -243,7 +243,7 @@ impl QuantickApp {
     fn selected_drawing_bbox(&self) -> Option<egui::Rect> {
         let pane = self.drawing_pane();
         let index = pane.drawings.selected()?;
-        let chart = pane.last_chart_area?;
+        let chart = pane.frame.chart_area?;
         self.drawing_bbox_on_screen(chart, index)
     }
 
@@ -358,7 +358,7 @@ impl QuantickApp {
         let point = {
             let pane = self.drawing_pane();
             let slots = pane.slots();
-            if pane.last_chart_area.is_none() || slots == 0 {
+            if pane.frame.chart_area.is_none() || slots == 0 {
                 // No laid-out pane yet, and nothing to place against. The ask
                 // stands and the next frame tries again.
                 return false;
@@ -368,7 +368,8 @@ impl QuantickApp {
                 .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
                 .unwrap_or(1.0);
             let centre = pane
-                .last_auto_range
+                .frame
+                .auto_range
                 .filter(|(lo, hi)| hi > lo)
                 .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
             let visible = DEMO_VISIBLE_SLOTS.min(slots);
@@ -400,15 +401,16 @@ impl QuantickApp {
         index: usize,
     ) -> Option<egui::Rect> {
         let total = self.drawing_pane().slots();
-        let auto = self.drawing_pane().last_auto_range?;
+        let auto = self.drawing_pane().frame.auto_range?;
         let scale = self.drawing_pane().price_view.scale(
             auto,
-            self.drawing_pane().last_chart_top,
-            self.drawing_pane().last_chart_top + self.drawing_pane().last_chart_height,
+            self.drawing_pane().frame.chart_top,
+            self.drawing_pane().frame.chart_top + self.drawing_pane().frame.chart_height,
         );
         let history_right = self
             .drawing_pane()
-            .last_lane_divider_x
+            .frame
+            .lane_divider_x
             .unwrap_or(chart.right());
         let drawing = self.drawing_pane().drawings.items().get(index)?;
         let points =

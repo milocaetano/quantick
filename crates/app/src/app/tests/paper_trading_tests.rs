@@ -42,7 +42,8 @@ fn an_armed_tool_leaves_the_chart_navigable() {
     let over_candles = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("a frame has been drawn")
         .center();
     run_frame_with_events(
@@ -79,7 +80,8 @@ fn an_armed_two_point_tool_completes_on_a_single_drag() {
         let chart = app
             .active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("a frame has been drawn");
         let start = chart.center() - egui::vec2(120.0, 40.0);
         let end = chart.center() + egui::vec2(120.0, 40.0);
@@ -1150,12 +1152,14 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane laid out");
     let tag_right = app
         .active_tab()
         .flow_pane
-        .last_lane_divider_x
+        .frame
+        .lane_divider_x
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1209,12 +1213,14 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane laid out");
     let tag_right = app
         .active_tab()
         .flow_pane
-        .last_lane_divider_x
+        .frame
+        .lane_divider_x
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1453,7 +1459,8 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
 
     let chart = app
         .drawing_pane()
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane has been laid out");
     let popup = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))

@@ -66,7 +66,7 @@ impl ChartPane {
         if visible == 0 {
             return;
         }
-        let (history_strip, _) = split_time_strip(strip, self.last_lane_divider_x);
+        let (history_strip, _) = split_time_strip(strip, self.frame.lane_divider_x);
 
         // Measured, not counted. One layout per format per frame — monospace,
         // so a format's sample answers for every label written in it — and the
@@ -589,7 +589,7 @@ impl ChartPane {
             pointer_compass::paint_price_mark(painter, axis_x, &compass.readout);
         }
         if compass.time {
-            let (history_strip, _) = split_time_strip(time_strip, self.last_lane_divider_x);
+            let (history_strip, _) = split_time_strip(time_strip, self.frame.lane_divider_x);
             pointer_compass::paint_time_mark(painter, history_strip, &compass.readout, chrome.tz);
         }
     }

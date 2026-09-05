@@ -549,7 +549,7 @@ impl Tab {
     #[must_use]
     pub fn starved_pane(&self) -> Option<(egui::Rect, usize)> {
         self.panes()
-            .filter_map(|(pane, _)| pane.last_area.map(|area| (area, pane.slots())))
+            .filter_map(|(pane, _)| pane.frame.area.map(|area| (area, pane.slots())))
             .min_by(|(left_area, left_slots), (right_area, right_slots)| {
                 left_slots
                     .cmp(right_slots)

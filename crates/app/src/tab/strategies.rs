@@ -218,7 +218,7 @@ impl Tab {
             // Backfilled event replays them (replay seek funnels through here,
             // so seeking inherits correct indicator behavior for free).
             pane.send_indicator_rebuild();
-            pane.last_lane_divider_x = None;
+            pane.frame.lane_divider_x = None;
             // Judgements armed on the old timeline do not carry into the
             // rebuilt one — the same honesty rule the simulator's flatten
             // follows, with the reason on the badge. No cleanup commands

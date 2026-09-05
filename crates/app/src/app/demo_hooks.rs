@@ -254,7 +254,8 @@ impl QuantickApp {
         // photograph as an empty chart, which is the one failure this hook
         // exists to prevent.
         let (centre, band) = pane
-            .last_auto_range
+            .frame
+            .auto_range
             .filter(|(lo, hi)| hi > lo)
             .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
                 ((lo + hi) / 2.0, hi - lo)
@@ -309,7 +310,7 @@ impl QuantickApp {
             // nothing: the handles are on screen or they are not photographed
             // at all. Centre on the object's bar span, the object manager's
             // own "select and centre".
-            if let Some(chart) = pane.last_chart_area {
+            if let Some(chart) = pane.frame.chart_area {
                 let points = &pane.drawings.items()[index].points;
                 if !points.is_empty() {
                     let mid =
@@ -356,7 +357,7 @@ impl QuantickApp {
         // answers only a drawn frame has.
         let pane = &self.active_tab().flow_pane;
         let slots = pane.slots();
-        let (Some(chart), true) = (pane.last_chart_area, slots > 0) else {
+        let (Some(chart), true) = (pane.frame.chart_area, slots > 0) else {
             return;
         };
         self.harness.drawing_draft_staged();
@@ -372,7 +373,8 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let (centre, band) = pane
-            .last_auto_range
+            .frame
+            .auto_range
             .filter(|(lo, hi)| hi > lo)
             .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
                 ((lo + hi) / 2.0, hi - lo)

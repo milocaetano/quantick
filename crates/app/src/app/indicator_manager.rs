@@ -281,7 +281,7 @@ impl QuantickApp {
             let pane = self.active_tab().pane(side);
             // The rect is last frame's, like every anchor the input path
             // reads; a pane not yet drawn has none and draws no legend.
-            let Some(mut rect) = pane.last_chart_area else {
+            let Some(mut rect) = pane.frame.chart_area else {
                 continue;
             };
             // The position HUD owns the very corner of the pane it paints on;

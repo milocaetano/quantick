@@ -113,7 +113,7 @@ impl ChartPane {
             let _ = self.layer_checkbox(ui, layer, chrome);
         }
 
-        let reference_ms = self.last_lane_reference_ms;
+        let reference_ms = self.frame.lane_reference_ms;
         let Some(orderflow) = self.orderflow.as_mut() else {
             return;
         };

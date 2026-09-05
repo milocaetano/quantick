@@ -366,7 +366,7 @@ fn dragging_the_price_gutter_leaves_every_pane_alone() {
     let gutter = {
         let pane = &app.active_tab().flow_pane;
         plot_split(
-            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.frame.plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
@@ -406,7 +406,8 @@ fn dragging_the_price_gutter_through_the_flip_turns_the_chart_over() {
     let gutter = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter");
     assert!(!app.active_tab().flow_pane.price_view.is_inverted());
 
@@ -499,7 +500,8 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let gutter = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter");
     let position = app
         .scripted_context_menu_pos(ContextMenuPane::Axis)
@@ -508,7 +510,8 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_rect
+        .frame
+        .chart_rect
         .expect("the canvas laid out");
     assert!(
         position.x > chart.right(),
@@ -547,7 +550,8 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let strip = app
         .active_tab()
         .flow_pane
-        .last_time_strip
+        .frame
+        .time_strip
         .expect("the draw published the strip");
     let position = app
         .scripted_context_menu_pos(ContextMenuPane::Time)
@@ -556,7 +560,8 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_rect
+        .frame
+        .chart_rect
         .expect("the canvas laid out");
     assert!(
         position.y > chart.bottom(),
@@ -577,7 +582,8 @@ fn right_clicking_the_price_gutter_offers_inverted_chart() {
     let target = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter")
         .center();
     run_frame_with_events(
@@ -754,8 +760,8 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    let flow = tab.flow_pane.last_area.expect("the flow pane painted");
-    let time = tab.time_panes[0].last_area.expect("the time pane painted");
+    let flow = tab.flow_pane.frame.area.expect("the flow pane painted");
+    let time = tab.time_panes[0].frame.area.expect("the time pane painted");
     let (chosen, slots) = tab.starved_pane().expect("a painted pane");
     assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
     assert_eq!(chosen, flow, "the note belongs to the pane that is waiting");
@@ -964,7 +970,8 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
 
     let chart = app
         .drawing_pane()
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane holding the selection drew");
     let bar = app
         .surfaces
@@ -1020,7 +1027,8 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
         .active_tab()
         .time_pane()
         .expect("the split has a time pane")
-        .last_plot_area
+        .frame
+        .plot_area
         .expect("laid out by the frames above");
     // The time pane carries no tape and no indicator panes, so its own
     // layout call reduces to this.
@@ -1096,7 +1104,8 @@ fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         let chart = app
             .active_tab()
             .pane(side)
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("the pane reported its rect");
         let start = egui::pos2(chart.center().x, price_y(&app, side, entry));
         assert!(
@@ -1129,12 +1138,14 @@ fn enabling_the_split_lays_out_two_panes_and_a_divider() {
         .active_tab()
         .time_pane()
         .expect("Time + Flow builds the time pane")
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out");
     let flow = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the flow pane was laid out");
     assert!(
         time.right() <= flow.left(),
@@ -1650,7 +1661,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let flow_before = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     let divider = app
@@ -1669,7 +1681,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     assert!(
         app.active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("laid out")
             .width()
             < flow_before,
@@ -1695,7 +1708,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let flow_width = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     // "Stops at the minimum" is the claim, so the test is that it stops:
@@ -1717,7 +1731,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let after = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     assert!(
@@ -2240,7 +2255,8 @@ fn the_single_layout_still_gives_the_flow_pane_the_whole_canvas() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out");
     // The canvas the pane was given, reconstructed from the rect it kept:
     // wider than half the window, so nothing was carved off for a divider.
@@ -2735,7 +2751,8 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     let point = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out")
         .center();
     click_chart(&mut app, &ctx, point);

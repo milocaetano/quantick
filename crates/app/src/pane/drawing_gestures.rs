@@ -226,7 +226,7 @@ impl ChartPane {
             self.drawing_press_started_empty = false;
             return false;
         };
-        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         // Every band at once: the panes are drawing surfaces now, so hovering
         // one has to read as one rather than as dead space beneath the chart.
         let surface = bands

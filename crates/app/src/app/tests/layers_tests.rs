@@ -790,7 +790,7 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
         "the strip is a flow layer and claims no pixels here"
     );
     assert!(
-        time.last_lane_divider_x.is_none(),
+        time.frame.lane_divider_x.is_none(),
         "and there is no live lane to divide"
     );
     // The toggles still reached the flow pane, which is what owns them.

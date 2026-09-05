@@ -656,7 +656,7 @@ impl Bounds {
 }
 
 fn pane_bounds(pane: &ChartPane) -> Bounds {
-    let Some(rect) = pane.last_chart_area else {
+    let Some(rect) = pane.frame.chart_area else {
         return Bounds::NotDrawn;
     };
     rect_bounds(rect)

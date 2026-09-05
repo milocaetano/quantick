@@ -376,7 +376,8 @@ fn the_canvas_switch_takes_the_tape_off_and_puts_it_back() {
         frame(&mut app, None);
         app.active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("the canvas laid out")
     };
     let chip = crate::pane::tape_switch_rect(chart);

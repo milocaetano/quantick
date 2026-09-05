@@ -266,7 +266,7 @@ impl QuantickApp {
             self.drawing_pane_mut().drawings.select(Some(index));
             // Centre the viewport on the object's bar span.
             let slots = self.drawing_pane().slots();
-            if let Some(chart) = self.drawing_pane().last_chart_area {
+            if let Some(chart) = self.drawing_pane().frame.chart_area {
                 let points = &self.drawing_pane().drawings.items()[index].points;
                 if !points.is_empty() {
                     let mid =

@@ -47,7 +47,7 @@ fn indicator_preview_area(
     tabs.iter()
         .find(|tab| tab.id == target.tab)
         .map(|tab| tab.pane(target.side))
-        .and_then(|pane| pane.last_chart_area)
+        .and_then(|pane| pane.frame.chart_area)
 }
 
 impl QuantickApp {
@@ -246,7 +246,7 @@ impl QuantickApp {
                     indicator_settings.as_ref(),
                     *indicator_settings_target,
                 ),
-                focused_chart_area: focused_pane.last_chart_area,
+                focused_chart_area: focused_pane.frame.chart_area,
                 style,
                 footprint: focused_pane.footprint_config(footprint_config),
                 footprint_customized: focused_pane.footprint_override.is_some(),
@@ -465,7 +465,7 @@ impl QuantickApp {
             match covered {
                 Some((entry, exit)) => {
                     let pane = &mut tab.flow_pane;
-                    if let Some(area) = pane.last_chart_area {
+                    if let Some(area) = pane.frame.chart_area {
                         let slots = pane.slots();
                         let mid = (entry + exit) as f32 / 2.0;
                         pane.viewport.center_on_bar(mid, area.width(), slots);
@@ -606,7 +606,7 @@ impl QuantickApp {
                 // missing one reads as a frozen application.
                 loading::overlay_scoped(
                     ui,
-                    tab.flow_pane.last_area.unwrap_or(area),
+                    tab.flow_pane.frame.area.unwrap_or(area),
                     &tab.loading,
                     LoadingScope::Flow,
                     history_note,
@@ -614,7 +614,7 @@ impl QuantickApp {
                 let time_panes: Vec<egui::Rect> = tab
                     .panes()
                     .filter(|(_, side)| matches!(side, PaneSide::Time(_)))
-                    .filter_map(|(pane, _)| pane.last_area)
+                    .filter_map(|(pane, _)| pane.frame.area)
                     .collect();
                 if time_panes.is_empty() {
                     loading::overlay_scoped(

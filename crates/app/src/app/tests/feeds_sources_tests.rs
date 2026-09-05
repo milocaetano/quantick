@@ -311,7 +311,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let area = app
         .active_tab()
         .flow_pane
-        .last_area
+        .frame
+        .area
         .expect("the pane painted");
     let mut popup = egui::Rect::NOTHING;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {

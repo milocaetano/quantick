@@ -20,7 +20,7 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     );
     run_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane;
-    let candles = pane.drawing_area(pane.last_chart_rect.expect("the canvas laid out"));
+    let candles = pane.drawing_area(pane.frame.chart_rect.expect("the canvas laid out"));
     let position = app.scripted_pointer_pos().expect("one frame published it");
     assert!(candles.contains(position), "{position:?} vs {candles:?}");
     assert!((position.x - candles.center().x).abs() < 0.5);

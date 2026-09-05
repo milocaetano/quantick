@@ -80,15 +80,15 @@ impl QuantickApp {
         // The axis's menu lives on the gutter, off the canvas entirely — the
         // draw publishes that band the same way it publishes the divider.
         if pane == ContextMenuPane::Axis {
-            return Some(flow.last_price_gutter?.center());
+            return Some(flow.frame.price_gutter?.center());
         }
         // The time axis, likewise off the canvas — and its own published band,
         // because the segment past the lane divider is the tape's.
         if pane == ContextMenuPane::Time {
-            return Some(flow.last_time_strip?.center());
+            return Some(flow.frame.time_strip?.center());
         }
-        let rect = flow.last_chart_rect?;
-        let divider = flow.last_lane_divider_x;
+        let rect = flow.frame.chart_rect?;
+        let divider = flow.frame.lane_divider_x;
         let x = match (pane, divider) {
             (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
             (ContextMenuPane::Tape, None) => return None,
@@ -112,7 +112,7 @@ impl QuantickApp {
     pub(super) fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
         let fraction = self.harness.pointer()?;
         let flow = &self.active_tab().flow_pane;
-        let candles = flow.drawing_area(flow.last_chart_rect?);
+        let candles = flow.drawing_area(flow.frame.chart_rect?);
         Some(egui::pos2(
             candles.left() + fraction.x * candles.width(),
             candles.top() + fraction.y * candles.height(),
