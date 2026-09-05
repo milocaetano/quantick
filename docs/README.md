@@ -42,6 +42,12 @@ The generated wire schemas live outside this tree, in
 
 ## Building the project with agents
 
+The [architecture preparation plan](architecture/foundation.md) records the
+audited ownership boundaries, [ordered refactoring tasks](architecture/preparation-tasks.md)
+and [baseline evidence](architecture/baseline.md) for future extensible content,
+external agents and window-independent workspaces. It is a design milestone,
+not a claim that those features have shipped.
+
 | Document | What it covers |
 | --- | --- |
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
