@@ -25,6 +25,7 @@ Issue: https://github.com/milocaetano/quantick/issues/314
 - R11: Prepare runtime indicator authoring and explicit saving/adoption of source.
 - R12: Prepare eventual strategy and voice actions without widening current authority.
 - R13: Preserve deterministic processing and one engine across consumers.
+- R14: Check access to the supplied workspace reference and report the result.
 
 ## Decisions taken by the trader
 
@@ -59,7 +60,7 @@ Issue: https://github.com/milocaetano/quantick/issues/314
   *Evidence:* commands and limitations -> `docs/architecture/baseline.md`. (R5, R8)
 - [x] **A5**: Independent workspace, extension and control audits are integrated;
   open-work overlap and the unavailable reference are explicitly recorded.
-  *Evidence:* audit provenance -> `docs/architecture/foundation.md`. (R4, R6, R7)
+  *Evidence:* audit provenance -> `docs/architecture/foundation.md`. (R4, R6, R7, R14)
 - [x] **A6**: Runtime files, schemas and dependency graph remain unchanged in this
   first milestone; future implementations are explicitly not marked delivered.
   *Evidence:* diff boundary and retained fixtures -> `docs/architecture/baseline.md`. (R1, R5, R13)
