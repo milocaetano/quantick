@@ -112,24 +112,37 @@ impl BarKind {
 }
 
 /// The smallest a `Decimal` bar parameter — volume units, dollar notional —
-/// is allowed to be.
+/// is allowed to be. Bar parameters only: [`dec_from_f64`] carries prices too,
+/// and floors those with its own constant.
 ///
 /// Not zero: a bar rule that closes on no quantity closes on every trade, and
 /// the chart that produces is not what anyone asked for. Small enough that no
 /// parameter a trader would choose is touched by it.
 pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
 
-/// A toolbar's `f64` as a spec's [`Decimal`] parameter.
+/// Any UI `f64` as a positive [`Decimal`].
 ///
-/// The floor is [`DECIMAL_PARAM_FLOOR`], so a drag through zero cannot ask the
-/// engine for a bar that closes on no volume at all; the fallback is
-/// unreachable for any value a `DragValue` range permits.
+/// Two kinds of number pass through here and they are not the same kind: a bar
+/// rule's threshold from the toolbar, and — via `pane::strategy_region` — a
+/// drawing's anchor *prices*. The floor below is its own constant for exactly
+/// that reason: it is the positivity floor this conversion has always applied,
+/// not [`DECIMAL_PARAM_FLOOR`], and tuning the bar-parameter floor must not
+/// silently retune where a strategy region's bounds land.
+///
+/// The price case is why that floor is a wart rather than a guard: a region
+/// drawn on a negative-valued band (a CVD) has both bounds collapsed onto it.
+/// Pre-existing and outside this change; written down here so the next reader
+/// finds it rather than trusting the constant's name.
 #[must_use]
 pub fn dec_from_f64(x: f64) -> Decimal {
     use rust_decimal::prelude::FromPrimitive as _;
+    /// The smallest positive `Decimal` this conversion produces. A separate
+    /// number from [`DECIMAL_PARAM_FLOOR`], which it happens to equal: they
+    /// answer to different callers.
+    const POSITIVE_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
     Decimal::from_f64(x)
         .unwrap_or(Decimal::ONE)
-        .max(DECIMAL_PARAM_FLOOR)
+        .max(POSITIVE_FLOOR)
 }
 
 /// A bar type together with its threshold parameter.
@@ -404,6 +417,11 @@ impl SpecSelector {
 
     /// The spec the selectors currently ask for, parameters clamped to what
     /// the engine will accept.
+    ///
+    /// Because it clamps, a caller reading a parameter off the result needs no
+    /// positivity guard of its own: `spec().time_interval_ms()` is `None` on a
+    /// pane that does not cut by time, and at least 1 ms on one that does.
+    /// Two callers in `pane` rely on exactly that.
     #[must_use]
     pub fn spec(&self) -> BarSpec {
         self.retained(self.kind).clamped()
@@ -419,7 +437,7 @@ impl SpecSelector {
         debug_assert_eq!(
             spec.kind(),
             kind,
-            "the {kind:?} slot holds a {:?} spec: something wrote through              retained_mut with a spec of another kind, and the selector now              paints one kind's parameter under another kind's label",
+            "the {kind:?} slot holds a {:?} spec: retained_mut was given another kind's rule, and the selector now paints one kind's parameter under another kind's label",
             spec.kind()
         );
         spec
@@ -435,7 +453,7 @@ impl SpecSelector {
     /// would then drag a volume threshold under a "tick" label.
     /// [`Self::retained`] asserts it in debug builds; [`Self::retain`] is the
     /// safe way to store a whole spec.
-    pub fn retained_mut(&mut self, kind: BarKind) -> &mut BarSpec {
+    pub(crate) fn retained_mut(&mut self, kind: BarKind) -> &mut BarSpec {
         let slot = Self::slot(kind);
         &mut self.retained[slot]
     }
@@ -990,7 +1008,7 @@ mod tests {
             }
             assert!(
                 BarKind::ALL.contains(&kind),
-                "{kind:?} is a bar kind BarKind::ALL does not list, so SpecSelector                  has no slot to retain its parameter in"
+                "{kind:?} is a bar kind BarKind::ALL does not list, so SpecSelector has no slot to retain its parameter in"
             );
         }
         assert_eq!(

@@ -187,7 +187,7 @@ impl ChartPane {
         // enough trades happen, and no elapsed time can be named for it. That
         // stays `None` — an invented timestamp is worse than a control that
         // says why it is off.
-        let interval = self.spec.spec().time_interval_ms().filter(|ms| *ms > 0)?;
+        let interval = self.spec.spec().time_interval_ms()?;
         let last = slots.checked_sub(1)?;
         let ahead = i64::try_from(slot - last).ok()?;
         self.slot_open_time(last)?

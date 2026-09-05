@@ -5083,7 +5083,7 @@ impl ChartPane {
     /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
     /// answer here.
     fn future_slot_at_time(&self, time: i64) -> Option<f32> {
-        let interval = self.spec.spec().time_interval_ms().filter(|ms| *ms > 0)?;
+        let interval = self.spec.spec().time_interval_ms()?;
         let last = self.slots().checked_sub(1)?;
         let last_open = self.slot_open_time(last)?;
         let ahead = time.checked_sub(last_open)?;
