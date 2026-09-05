@@ -1,12 +1,13 @@
 ---
 name: ai-review
-description: Review a diff the way an AI engineer would - modularity, decoupling, MCP and agent readiness, agent testability and legibility, extensibility, scalability. Use when the user types /ai-review. Reports findings; never edits, builds or posts.
+description: Review a diff the way an AI engineer would - modularity, decoupling, MCP and agent readiness, agent testability and legibility, extensibility, scalability. Use when the user types /ai-review. Posts each finding to a PR as its own resolvable thread; never edits or builds.
 ---
 
 # AI engineer review
 
 Target: `git diff origin/main...HEAD` by default, or the path, branch or PR
-number given as argument. Read the code, not its description. Read-only.
+number given as argument. Read the code, not its description. Never edit or
+build; a PR's threads are the one thing this writes.
 
 Answer six questions. Each gets one verdict and `file:line` evidence, PASS
 included. FAIL: the diff breaks the rule. WEAK: it holds today but the next
@@ -52,4 +53,18 @@ or say why the diff cannot reach the question.
 Top fix: <file> - <change> - flips: <verdicts>
 ```
 
-Findings only. The human decides; do not apply fixes.
+## Where the findings go
+
+With a PR number, post every FAIL and WEAK as its own resolvable thread -
+severity first, anchored at `file:line`, one per finding, body on stdin to
+`sh .claude/hooks/ai_review_threads.sh post <pr> <file> <line>`. With no PR
+target, print the report and post nothing. Never apply a fix either way.
+
+Two rules, both binding. **Round one reviews the whole diff; every later run
+takes its subject from `... list <pr>` and verifies only those open threads,
+plus a narrow check that the fixes introduced no new FAIL. It may not open a
+new WEAK against code it already passed.** And **a thread closes by the fix -
+`... resolve <thread-id>` - or by an acceptance the trader records on it**; a
+WEAK whose breaking variant you cannot name is a PASS. If the open count did
+not fall between two runs, stop: the branch goes to the trader. Reasoning:
+`docs/agentic-development.md`.
