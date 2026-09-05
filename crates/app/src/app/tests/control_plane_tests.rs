@@ -1469,7 +1469,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
     // reports what the pane actually holds.
     assert_eq!(
         footprint["visible"],
-        app.active_tab().flow_pane.footprint_visible,
+        app.active_tab().flow_pane.footprint.visible,
         "the scope reports the pane's own layer state"
     );
     assert_eq!(

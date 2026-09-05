@@ -249,7 +249,7 @@ impl QuantickApp {
                 focused_chart_area: focused_pane.frame.chart_area,
                 style,
                 footprint: focused_pane.footprint_config(footprint_config),
-                footprint_customized: focused_pane.footprint_override.is_some(),
+                footprint_customized: focused_pane.footprint.config.is_some(),
                 focused_side,
                 config,
                 added_symbols,

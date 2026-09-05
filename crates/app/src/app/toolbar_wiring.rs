@@ -253,7 +253,7 @@ impl QuantickApp {
             // layer menu calls — so the button, the menu and the lamp can
             // never disagree about which chart the command described.
             ToolbarAction::SetFootprint(shown) => {
-                self.focused_pane_mut().footprint_visible = shown;
+                self.focused_pane_mut().footprint.visible = shown;
             }
             ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),

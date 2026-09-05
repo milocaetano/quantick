@@ -273,7 +273,7 @@ impl QuantickApp {
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
         if self.harness.footprint() {
-            self.active_tab_mut().flow_pane.footprint_visible = true;
+            self.active_tab_mut().flow_pane.footprint.visible = true;
         }
         if let Some(px) = self.harness.candle_width() {
             self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);

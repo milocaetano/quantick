@@ -443,7 +443,7 @@ fn every_pencil_point_is_anchored_to_the_tape() {
 fn the_footprint_says_how_much_further_to_zoom() {
     let (mut app, _cmd_rx) = app_with_history(4_000);
     let ctx = egui::Context::default();
-    app.active_tab_mut().flow_pane.footprint_visible = true;
+    app.active_tab_mut().flow_pane.footprint.visible = true;
 
     let opening = painted_text(&run_frame(&mut app, &ctx));
     assert!(

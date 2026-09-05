@@ -213,7 +213,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     let (mut app, _commands) = app_with_history(120);
     // The state a shipped default leaves behind: the ladder on, before the
     // second pane exists at all.
-    app.active_tab_mut().flow_pane.footprint_visible = true;
+    app.active_tab_mut().flow_pane.footprint.visible = true;
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     // One frame builds the time pane; that is the frame under test.
     run_frame(&mut app, &ctx);
@@ -222,7 +222,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
         .time_pane()
         .expect("the split is what this proof is about");
     assert!(
-        time.footprint_visible,
+        time.footprint.visible,
         "the time pane opened without the ladder the flow pane beside it is drawing"
     );
 }

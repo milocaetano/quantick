@@ -48,11 +48,13 @@ use quantick_orderflow::reserved_span_ms;
 
 mod axes_and_chrome;
 mod drawing_gestures;
+mod footprint;
 mod frame;
 mod gestures;
 mod menus;
 mod strategy_badges;
 
+pub use footprint::FootprintState;
 pub use frame::PaneFrame;
 pub use gestures::GestureState;
 
@@ -98,7 +100,7 @@ const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
-/// [`ChartPane::parked_hand`]. Never constructed outside the harness hook.
+/// [`GestureState::parked_hand`]. Never constructed outside the harness hook.
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,
@@ -1124,33 +1126,9 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
-    /// Whether the candle footprint layer is on. What a fresh launch opens
-    /// with is `config/chart-layers.toml`, not this initialiser — see
-    /// [`crate::chart_layers`]; the ladder still follows the zoom's LOD, so it
-    /// draws nothing where the candle is too narrow to read.
-    pub footprint_visible: bool,
-    /// This chart's own footprint setup, once it has been configured here.
-    ///
-    /// `None` — the default — means "follow the window's last setup", which
-    /// keeps the common case (one chart, one taste) behaving like a global
-    /// setting. A split layout is two readings of the same market (a 90-day
-    /// context chart beside a 50-tick flow chart) and one set of thresholds
-    /// cannot serve both, so the moment a chart is configured on its own it
-    /// keeps its own.
-    pub footprint_override: Option<crate::footprint_config::FootprintConfig>,
-    /// The footprint's sticky detail level (hysteresis on zoom-out).
-    footprint_lod: crate::footprint_render::FootprintLod,
-    /// The forming bar's ladder as last snapshotted for drawing, with the
-    /// frame time it was taken and the slot it belongs to. Refreshed at
-    /// ~10 Hz, not per print — the eye reads patterns, and a frozen layout
-    /// cannot reflow under the pointer — but *immediately* when the slot
-    /// changes: at a bar close the previous bar's ladder must never linger
-    /// on the new bar, not even for one throttle interval.
-    footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
-    /// Bumped whenever [`Self::footprint_live`] is re-taken or cleared — the
-    /// cache key the range-profile drawings use to notice the live edge
-    /// moved, so they re-fold at the snapshot cadence, never per paint.
-    footprint_live_version: u64,
+    /// The candle footprint layer as this pane has it — see
+    /// [`FootprintState`].
+    pub footprint: FootprintState,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -1349,11 +1327,7 @@ impl ChartPane {
             drawings_saved_revision: 0,
             legend_collapsed: false,
             live_strip_visible: false,
-            footprint_visible: false,
-            footprint_override: None,
-            footprint_lod: crate::footprint_render::FootprintLod::default(),
-            footprint_live: None,
-            footprint_live_version: 0,
+            footprint: FootprintState::default(),
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -1410,12 +1384,12 @@ impl ChartPane {
     }
 
     /// The footprint setup this chart draws with: its own once configured
-    /// here, else the window's last one. See [`Self::footprint_override`].
+    /// here, else the window's last one. See [`FootprintState::config`].
     pub fn footprint_config<'a>(
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint_override.as_ref().unwrap_or(window)
+        self.footprint.config.as_ref().unwrap_or(window)
     }
 
     /// Put this pane on `spec` outright, selectors included.
@@ -1471,7 +1445,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.footprint_override = config;
+        self.footprint.config = config;
     }
 
     /// An egui interaction id scoped to this pane.
@@ -1501,7 +1475,7 @@ impl ChartPane {
             ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
             // Footprint reads the pane's own retained trades, not the tape
             // machinery, so it works on flow and time panes alike.
-            ChartLayer::Footprint => self.footprint_visible,
+            ChartLayer::Footprint => self.footprint.visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
             ChartLayer::FlowLegend => tape.is_some_and(OrderflowView::legend_visible),
@@ -1560,7 +1534,7 @@ impl ChartPane {
                     tape.set_bubbles_enabled(visible);
                 }
             }
-            ChartLayer::Footprint => self.footprint_visible = visible,
+            ChartLayer::Footprint => self.footprint.visible = visible,
             ChartLayer::LiveStrip => self.live_strip_visible = visible,
             ChartLayer::LaneMarks => {
                 if let Some(tape) = self.orderflow.as_mut() {
@@ -3680,7 +3654,7 @@ impl ChartPane {
             .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
             .is_some();
         let footprint_on =
-            (self.footprint_visible || self.wants_range_profile()) && !footprint_blocked;
+            (self.footprint.visible || self.wants_range_profile()) && !footprint_blocked;
         self.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
@@ -3718,20 +3692,21 @@ impl ChartPane {
             match self.state.partial_footprint() {
                 Some(partial_ladder) => {
                     let stale =
-                        self.footprint_live
+                        self.footprint
+                            .live
                             .as_ref()
                             .is_none_or(|(taken, snapshot_slot, _)| {
                                 *snapshot_slot != closed_total
                                     || now - *taken >= LIVE_LADDER_REFRESH_S
                             });
                     if stale {
-                        self.footprint_live = Some((now, closed_total, partial_ladder.clone()));
-                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                        self.footprint.live = Some((now, closed_total, partial_ladder.clone()));
+                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
                     }
                 }
                 None => {
-                    if self.footprint_live.take().is_some() {
-                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                    if self.footprint.live.take().is_some() {
+                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
                     }
                 }
             }
@@ -3861,11 +3836,12 @@ impl ChartPane {
         // laid out for whichever one paints. Asking the requested style put a
         // sidebar lane under a style that draws full width.
         let requested_style = self
-            .footprint_override
+            .footprint
+            .config
             .as_ref()
             .unwrap_or(chrome.footprint)
             .style;
-        let footprint_style = self.footprint_lod.effective_style(requested_style);
+        let footprint_style = self.footprint.lod.effective_style(requested_style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot, and the
         // style the layer leaves the candle in. Both from one function, whose
@@ -3960,8 +3936,8 @@ impl ChartPane {
                 state: &self.state,
                 budget: crate::frvp::fold_budget(),
                 prefix,
-                partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
-                partial_version: self.footprint_live_version,
+                partial_ladder: self.footprint.live.as_ref().map(|(_, _, ladder)| ladder),
+                partial_version: self.footprint.live_version,
                 blocked: footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
@@ -4166,7 +4142,8 @@ impl ChartPane {
                 first_state_slot: prefix.len(),
                 visible: (start, end),
                 partial: self
-                    .footprint_live
+                    .footprint
+                    .live
                     .as_ref()
                     .map(|(_, _, ladder)| ladder)
                     .filter(|_| partial_visible.is_some()),
@@ -4187,10 +4164,10 @@ impl ChartPane {
                 pixels_per_point: painter.ctx().pixels_per_point(),
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
-                // `self.footprint_lod` mutably. Same resolution rule.
-                config: self.footprint_override.as_ref().unwrap_or(chrome.footprint),
+                // `self.footprint.lod` mutably. Same resolution rule.
+                config: self.footprint.config.as_ref().unwrap_or(chrome.footprint),
             };
-            crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
+            crate::footprint_render::draw_layer(&frame, &mut self.footprint.lod);
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same
