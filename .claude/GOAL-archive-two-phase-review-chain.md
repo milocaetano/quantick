@@ -84,6 +84,16 @@ context budget with 753 bytes of headroom. Nothing here is `small` or `medium`.
   proven by `guardrails_test.sh` and the fixture PR, and are never armed against
   this branch. That is R14's resolution.
 
+- **D5** — The context-ratchet target is net-negative against `origin/main` as
+  it actually stands, not against the 237,171 the request names. That figure was
+  measured on a checkout three commits behind; the same command on the
+  `origin/main` this branch is cut from reads 237,465, and the branch reads
+  237,460. Asked and answered: the trader chose to accept the −5 and record both
+  numbers rather than cut the remaining 289 bytes, because the only two places
+  left holding that much are `arch-review`'s and `delivery-review`'s marker
+  mechanics — which this same request put out of scope as their own mission.
+  No rule is deleted to reach a number measured against a different tree.
+
 ## Assumptions
 
 - **S1** — A "resolvable GitHub review thread" is a PR review comment created
