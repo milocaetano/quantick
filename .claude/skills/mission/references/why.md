@@ -89,7 +89,7 @@ They cannot be graded when the grading happens. `delivery-review` reads the
 checklist and grades every `A` and `G` against the shipped branch — but its own
 verdict does not exist while it is being written, and `pr-gate` will not let
 the PR open until that verdict is recorded. Written as criteria, those lines
-come back UNPROVEN on every mission, the fix loop burns three rounds on gaps no
-edit can close, and the gate escalates to the trader every single time. A gate
+come back UNPROVEN on every mission, the fix loop stalls on gaps no edit can
+close, and the gate escalates to the trader every single time. A gate
 that always fails teaches everyone to ignore it, which costs more than not
 having it.

@@ -122,6 +122,53 @@ English check or the correctness pass. The tier decides how hard the ones that
 do apply look — and nothing, at any tier, skips the four checks or the bug
 pass. A cheap review is a real one done briefly; it is never an absent one.
 
+## Two phases, and why the rounds had to go
+
+The chain used to run one loop: review, fix, review again, and a budget of
+three rounds over the whole thing. It did not hold. PR #306 shipped after 28
+commits, among them "fix: round 17 of the review chain" and "the fifteenth bug
+pass" — and a later `ai-review` still returned five of its six dimensions WEAK.
+Every gate the repository owns had passed it.
+
+Two things were wrong, and they are the two halves of the fix.
+
+**A round could not redesign.** Making it work and making it right ran in one
+loop, so a fix commit was always a patch *inside* a design it had no licence to
+change. `DealBarBuilder`'s four coordination booleans were authored in rounds
+12, 12, 12 and 15, and `bar_opened_at` in round 14, while the domain concepts
+they coordinate came in the first feature commit. The late rounds did not
+improve that design; they hung flags on it, which is the only move a round has.
+So the work is two phases now, and phase two is explicitly allowed to change
+signatures. That is not licence to redesign at will — it is the licence a
+finding needs when the honest fix is structural and the alternative is a
+fifth boolean.
+
+**A round was the wrong unit to count.** Three rounds was a real rule that
+nothing enforced, and 17 rounds happened anyway. Worse, counting rounds treats
+independent findings as iterations of one thing: closing six unrelated threads
+is not six attempts at anything. So the count moved to the findings themselves,
+which now live as GitHub review threads — durable across a restart or a
+compaction, addressable by id, anchored at `file:line`, resolvable, and visible
+to the trader without an agent in the room. The number of open ones is the
+convergence trend, recorded for free by the act of reviewing.
+
+What replaces the budget is a stall rule: if the open set does not shrink
+between two runs, the branch goes to the trader. That is the same judgement the
+old budget was trying to buy — findings shrinking is convergence, findings flat
+or climbing into the last run's code is a design problem — with the arbitrary
+number taken out.
+
+**The loop still needs a stop, and two rules give it one.** Round one reviews
+the whole diff; every later run verifies only the open threads plus a narrow
+check that the fixes introduced no new FAIL, and may not open a new WEAK
+against code it already passed. Without that, a reviewer re-reading the same
+file can always find one more thing, the finding set is unbounded and no amount
+of fixing ever empties it. And a thread closes exactly two ways — the fix, or
+an acceptance the trader records on it — so a finding nobody will act on has a
+door out that is not "argue with it again next run". The corollary is the
+sharpest of the rules: a WEAK whose breaking variant the reviewer cannot name
+is not a WEAK, it is a PASS. A worry is not a finding.
+
 ## The hooks that make the gates real
 
 Three of those rules — work in a worktree, run arch-review before the PR, and
