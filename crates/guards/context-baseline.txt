@@ -69,8 +69,25 @@ CLAUDE.md 10148
 # full `crates/feed/src/...` the hooks now live at, and the longer paths are
 # the whole of the difference. Regenerating is the only way to change this
 # file, so the number follows the code rather than the other way round.
-.claude/skills/ui-harness/references/hook-registry.md 70167
-.claude/skills/ui-harness/SKILL.md 13377
+#
+# +650 more, for the same reason and paid for in the same change. The launch
+# hooks left the constructor for `crates/app/src/app/launch_hooks.rs`, and
+# `declare_hooks!` had to follow them, because `hooks::OWNERS` names the file a
+# reader should open and the guard checks the two agree. So fifty rows'
+# *Declared in* went from `app.rs` to `app/launch_hooks.rs` -- thirteen bytes
+# each, and the longer path is the whole of the difference. Generated, so the
+# number follows the code either way.
+#
+# Paid for out of `SKILL.md` below, lowered by the same 650: four histories and
+# two pieces of reasoning left it -- what the file used to say about
+# `harness.rs`, what a misspelt hook used to look like, the field count behind
+# the `Harness` argument (whose own module header carries it, as the sentence
+# said), the four edits the `Surface` port removes, and `ChartLayer`'s variant
+# count. None of them decided an outcome, which is the test `CLAUDE.md` sets
+# for a line in a `SKILL.md`. The trade is even; the tracked total moves by the
+# 90 bytes the new prose costs.
+.claude/skills/ui-harness/references/hook-registry.md 70817
+.claude/skills/ui-harness/SKILL.md 12727
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
 # than a list that costs 54 bytes — an agent reading it would find the step in

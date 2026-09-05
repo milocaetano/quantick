@@ -151,9 +151,28 @@
 # the paper-policy branch was editing in parallel, and moving them would have
 # turned that branch's edits into modify/delete conflicts. It has since landed,
 # so giving the constructor a shape is the next cut's job, not this one's.
-!budget 52139
+#
+# Then lowered by 1,143 -- `app.rs` from 1,932 to 789 -- by that next cut,
+# which took the two regions the paragraph above named. The 721-line launch-
+# hook sequence left `new_with_workspace` for `app/launch_hooks.rs` as
+# `apply_launch_hooks`, split into ten appliers by surface in the order they
+# were read; the paper wiring -- the trades-dir pickers, `persist_*`,
+# `adopt_tab` and `arm_strategy_instance` -- left for `app/paper_wiring.rs` as
+# a pure move. `declare_hooks!` followed the reads, because `hooks::OWNERS`
+# names the file a reader should open and the guard checks the two agree.
+# Same trade, same price: `launch_hooks.rs` (880 production lines) and
+# `paper_wiring.rs` (392) are both under the 1,500-line threshold, so neither
+# takes an entry. They come to 1,272 against a fall of 1,143; the 129
+# difference is two module headers, two import blocks and two
+# `impl QuantickApp` wrappers -- the price of two addresses, paid once.
+# 52,139 - 1,143 = 50,996.
+#
+# What is left in `app.rs` is now the window's definition and nothing else:
+# the struct, `new`, `new_with_workspace`, `attach_surface`, the `eframe::App`
+# impl and `mod tests`. The 56 fields are the next cut's job.
+!budget 50996
 
-crates/app/src/app.rs 1932
+crates/app/src/app.rs 789
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
