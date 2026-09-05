@@ -11,6 +11,9 @@
 //! Tabs multiply markets; the split inside a tab ([`crate::pane`]) multiplies
 //! views of one. The two are orthogonal, and a tab carries its own layout.
 
+/// Only the `#[cfg(test)]` geometry fields below name a `Rect`; the canvas
+/// painter that used to need this here now lives in [`canvas`].
+#[cfg(test)]
 use eframe::egui;
 use smallvec::SmallVec;
 use tokio::sync::{mpsc, watch};
@@ -26,24 +29,17 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{
-    CANVAS_DIVIDER_HANDLE_PX, ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneChrome, PaneIndex,
-    PaneSide, SharedEdit, SharedInteraction, SharedPick, clamp_pane_fraction, split_time_pane,
+    ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick,
+    clamp_pane_fraction,
 };
-use crate::paper_home::shelf_dir;
 use crate::paper_trading::PaperTrading;
-use crate::state::{BarKind, BarSpec};
+use crate::state::BarSpec;
 use crate::style::ChartStyle;
-use crate::theme;
-use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
-use quantick_feed::history_reach::{
-    self, Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, HistoryReach,
-    REQUEST_REFUSED_NOTICE,
-};
-use quantick_feed::stall::{self, Stall, StallInput};
+use quantick_feed::history_reach::{self, Campaign, HistoryReach};
+use quantick_feed::stall::{self};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency, FeedNotice,
-    MAX_REMEMBERED_GAPS, MIN_MARKED_GAP_MS, ReplayLink, past_resume_floor,
+    ReplayLink,
 };
 use std::path::PathBuf;
 

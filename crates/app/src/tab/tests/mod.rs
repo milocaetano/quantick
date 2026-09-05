@@ -4,6 +4,7 @@
 
 use super::canvas::trading_pane;
 use super::*;
+use crate::pane::SharedInteraction;
 
 #[cfg(test)]
 mod shared_routing_tests {

@@ -7,7 +7,21 @@
 //! pointer is over, the marks one pane paints on another's behalf, the focus
 //! rule, the collapsed rail and the divider between the columns.
 
-use super::*;
+use eframe::egui;
+use smallvec::SmallVec;
+
+use super::{FOCUS_RULE_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
+use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
+use crate::config::FeedCapabilities;
+use crate::pane::{
+    CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
+    SharedPick, clamp_pane_fraction, split_time_pane,
+};
+use crate::state::BarKind;
+use crate::style::ChartStyle;
+use crate::theme;
+use crate::timezone::TzOffset;
+use crate::toolrail::ToolRail;
 
 /// The window chrome a tab's canvas borrows for one frame. The tab completes
 /// it with its own symbol to make the [`PaneChrome`] its panes read.

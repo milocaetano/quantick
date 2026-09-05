@@ -8,7 +8,15 @@
 //! same *load older* press, and both are read without any of the drawing,
 //! draining or strategy code the rest of a tab carries.
 
-use super::*;
+use tokio::sync::mpsc;
+
+use super::{HISTORY_NOTE_LINGER, HistoryNote, Tab};
+use crate::config::{AppConfig, FeedCapabilities};
+use crate::loading::LoadingTask;
+use quantick_feed::FeedCommand;
+use quantick_feed::history_reach::{
+    self, Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, REQUEST_REFUSED_NOTICE,
+};
 
 /// Put an older slice of venue candles in front of the ones already held,
 /// keeping the base ascending by `open_time` and free of duplicates.

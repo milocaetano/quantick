@@ -6,7 +6,9 @@
 //! Deliberately cheap when nothing is armed — the common case, and the one a
 //! per-trade path must not start charging for.
 
-use super::*;
+use super::Tab;
+use crate::loading::LoadingTask;
+use crate::metrics;
 
 impl Tab {
     /// Evaluate the armed instances against the bars that just closed and

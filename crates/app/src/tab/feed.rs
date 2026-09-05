@@ -8,8 +8,22 @@
 //! has no print. Written against the `FeedEvent` channel alone, so a replay
 //! and a live venue take the same path through it.
 
-use super::*;
+use eframe::egui;
+use tokio::sync::mpsc;
+
+use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
+use crate::config::AppConfig;
+use crate::loading::LoadingTask;
+use crate::metrics;
+use crate::pane::PaneSide;
+use crate::paper_home::shelf_dir;
+use crate::state::BarSpec;
 use quantick_feed as feed;
+use quantick_feed::stall::{self, Stall, StallInput};
+use quantick_feed::{
+    FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
+    MIN_MARKED_GAP_MS, past_resume_floor,
+};
 
 impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
