@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    net::{Ipv4Addr, Shutdown, TcpStream},
+    net::TcpStream,
     path::PathBuf,
     sync::{
         Arc,
@@ -14,30 +14,16 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use quantick_control::{
-    codec::{BoundedCodec, CodecError, FrameRole},
-    cursor::{EventCursor, resolve_event_read},
-    descriptor::{
-        INSTANCE_DESCRIPTOR_HOST, INSTANCE_DESCRIPTOR_TRANSPORT, INSTANCE_DESCRIPTOR_VERSION,
-        InstanceDescriptor,
-    },
     error::{ControlError, codes},
-    handshake::{
-        BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, ProtocolLimits,
-        ProtocolVersionRange, accept_handshake,
-    },
+    handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
     id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId, RequestId},
     limits::{
         CONTROL_CLIENT_BURST, CONTROL_CLIENT_RATE_PER_SECOND, CONTROL_HANDSHAKE_TIMEOUT_MS,
-        CONTROL_MAX_BUFFERED_RESPONSE_SLOTS, CONTROL_MAX_CONNECTIONS,
-        CONTROL_MAX_IN_FLIGHT_PER_CONNECTION, CONTROL_MAX_PARKED_WAITERS,
-        CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION, CONTROL_REQUEST_QUEUE_CAPACITY,
-        CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES, CONTROL_TOKEN_BYTES,
+        CONTROL_MAX_CONNECTIONS, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION,
+        CONTROL_REQUEST_QUEUE_CAPACITY, CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES,
         CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME,
     },
-    wire::{
-        ActorContext, ActorKind, ModuleRevision, RequestEnvelope, ResponseEnvelope,
-        ResponseOutcome, WireU64,
-    },
+    wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
 };
 use serde_json::Value;
 
@@ -47,11 +33,9 @@ use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
-        DeferredActionResult, EventsReadInvocation, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
-        ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest, UiReadContext,
-        UiReadExecution,
+        DeferredActionResult, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, ObserverContract,
+        PreparedDispatch, PreparedRequest, UiReadContext, UiReadExecution,
     },
-    events::EventsReadInput,
     evidence,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
     journal::{EventJournal, JournalSignal},
@@ -63,10 +47,6 @@ use super::{
     },
     types::known_error,
 };
-
-use quantick_control_local::discovery::publish_descriptor;
-#[cfg(test)]
-use quantick_control_local::discovery::publish_descriptor_in;
 
 mod panel;
 mod screenshot;

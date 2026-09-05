@@ -178,11 +178,12 @@
 # the egui panel for `panel.rs`, and both test modules for `tests/mod.rs`.
 # Every body moved unchanged; the only widenings are the `pub(super)` marks a
 # child module needs to be called by its parent.
-# Same trade, same price: at 1,400, 591, 278 and 278 lines on disk the four
+# Same trade, same price: at 1,445, 591, 278 and 278 lines on disk the four
 # siblings are all under the 1,500-line threshold, so none takes an entry, and
-# the 448 lines of tests are untracked either way. `server.rs` is the one to
-# watch: 100 lines of headroom, and the connection session and the two
-# dispatchers are where a future cut would go rather than a signed raise.
+# the 450 lines of tests are untracked either way. `server.rs` is the one to
+# watch: 55 lines of headroom, spent partly on naming its imports instead of
+# globbing them. The connection session and the two dispatchers are where the
+# next cut goes rather than a signed raise.
 # 48,185 - 2,446 = 45,739.
 #
 # What is left in `gateway.rs` is the UI thread's half and nothing else: the

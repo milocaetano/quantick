@@ -8,18 +8,63 @@
 //! file was cut along, and an auditor asking what a client can put on the wire
 //! reads this file whole.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
-use std::net::TcpListener;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
+use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{TryRecvError, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded};
 
-// The host's scope, in one hop. Everything this file names -- the options and
-// runtime structs, the protocol limits, the codec, the journal -- is already
-// bound there, and a glob keeps the moved bodies byte-identical to what they
-// were when they lived in `gateway.rs`.
-use super::*;
+use quantick_control::codec::{BoundedCodec, CodecError, FrameRole};
+use quantick_control::cursor::{EventCursor, resolve_event_read};
+use quantick_control::descriptor::{
+    INSTANCE_DESCRIPTOR_HOST, INSTANCE_DESCRIPTOR_TRANSPORT, INSTANCE_DESCRIPTOR_VERSION,
+    InstanceDescriptor,
+};
+use quantick_control::error::{ControlError, codes};
+use quantick_control::handshake::{
+    BearerToken, CURRENT_PROTOCOL_VERSION, HandshakeGrant, HandshakeReply, ProtocolLimits,
+    ProtocolVersionRange, accept_handshake,
+};
+use quantick_control::id::{ConnectionId, PermissionId, PrincipalId, ProfileId};
+use quantick_control::limits::{
+    CONTROL_MAX_BUFFERED_RESPONSE_SLOTS, CONTROL_MAX_PARKED_WAITERS,
+    CONTROL_MAX_PARKED_WAITERS_PER_CONNECTION, CONTROL_REQUEST_TIMEOUT_MS,
+    CONTROL_RUNTIME_ID_BYTES, CONTROL_TOKEN_BYTES, CONTROL_UI_BUDGET_US,
+    CONTROL_UI_MAX_REQUESTS_PER_FRAME,
+};
+use quantick_control::wire::{
+    ModuleRevision, RequestEnvelope, ResponseEnvelope, ResponseOutcome, WireU64,
+};
+use quantick_control_local::discovery::publish_descriptor;
+#[cfg(test)]
+use quantick_control_local::discovery::publish_descriptor_in;
+
+use crate::metrics;
+
+use super::super::contract::{
+    EventsReadInvocation, ObserverContract, ParkedWait, PreparedDispatch, PreparedRequest,
+    UiReadExecution,
+};
+use super::super::events::EventsReadInput;
+use super::super::journal::JournalSignal;
+use super::super::types::known_error;
+
+// Everything the gateway thread borrows from the UI-thread host, named rather
+// than globbed. The list is the seam in one place: sixteen items, none of them
+// a window, a painter or a piece of application state -- the options it was
+// started with, the channels and counters it reports through, and the request
+// it hands across.
+use super::{
+    ACCEPT_POLL_MS, ClientRateLimiter, ConnectedClient, ConnectionStatus, DrainObservation,
+    GATEWAY_COMMAND_CAPACITY, GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION,
+    GATEWAY_STATUS_CAPACITY, GatewayCommand, GatewayOptions, GatewayPublicInfo, GatewayRuntime,
+    GatewayStart, LifecycleEvent, ProcessIdentity, RemoteActor, TrackedSocket, UiRequest,
+    WAITER_POLL_MS,
+};
 
 /// Microseconds spent since `started`, saturating.
 ///

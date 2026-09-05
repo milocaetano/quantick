@@ -18,6 +18,8 @@
 
 use std::sync::atomic::AtomicUsize;
 
+use quantick_control::limits::CONTROL_MAX_BUFFERED_RESPONSE_SLOTS;
+
 use super::*;
 // Three server-thread helpers the tests exercise directly. The host does not
 // call all three, so they are named here rather than re-bound in `gateway.rs`
