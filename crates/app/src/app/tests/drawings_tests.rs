@@ -182,7 +182,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
     let labels: Vec<&str> = app
         .active_tab()
         .flow_pane
-        .gestures
+        .context_menu
         .menu_rects
         .iter()
         .map(|(label, _)| *label)
@@ -224,7 +224,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, true);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.gestures.menu_rects.clone();
+    let rects = app.active_tab().flow_pane.context_menu.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert_eq!(
@@ -238,7 +238,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, false);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.gestures.menu_rects.clone();
+    let rects = app.active_tab().flow_pane.context_menu.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert!(

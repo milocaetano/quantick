@@ -188,7 +188,7 @@ impl ChartPane {
         // named, so its section rides above everything — including the
         // trade actions, which answer for a bare price, not an object.
         #[cfg(test)]
-        self.gestures.menu_rects.clear();
+        self.context_menu.menu_rects.clear();
         if let Some(id) = self.context_menu.drawing {
             match self.drawings.index_of(id) {
                 Some(index) => {
@@ -206,7 +206,7 @@ impl ChartPane {
         // opened near a pane's edge extends past it, so a pointer-derived
         // gate dropped the section the moment the hand travelled onto a row
         // outside the originating pane — the menu reflowing under the
-        // cursor mid-reach. `ContextMenu::price` is per pane and stable for
+        // cursor mid-reach. `PaneContextMenu::price` is per pane and stable for
         // the menu's whole life, which is exactly the lifetime wanted.
         if let Some(price) = self.context_menu.price {
             chrome.paper.context_trade_actions(ui, price);
@@ -299,7 +299,7 @@ impl ChartPane {
                 .desired_width(150.0),
         );
         #[cfg(test)]
-        self.gestures.menu_rects.push(("Rename", rename.rect));
+        self.context_menu.menu_rects.push(("Rename", rename.rect));
         if rename.lost_focus() {
             let name = std::mem::take(&mut self.context_menu.rename);
             self.drawings.rename_at(index, &name);
@@ -312,7 +312,7 @@ impl ChartPane {
             .button(if locked { "Unlock" } else { "Lock" })
             .on_hover_text("a locked object rejects geometry edits and plain deletes");
         #[cfg(test)]
-        self.gestures
+        self.context_menu
             .menu_rects
             .push((if locked { "Unlock" } else { "Lock" }, lock.rect));
         if lock.clicked() {
@@ -321,7 +321,7 @@ impl ChartPane {
         }
         let eye = ui.button(if hidden { "Show" } else { "Hide" });
         #[cfg(test)]
-        self.gestures
+        self.context_menu
             .menu_rects
             .push((if hidden { "Show" } else { "Hide" }, eye.rect));
         if eye.clicked() {
@@ -348,7 +348,7 @@ impl ChartPane {
             delete
         };
         #[cfg(test)]
-        self.gestures.menu_rects.push(("Delete", delete.rect));
+        self.context_menu.menu_rects.push(("Delete", delete.rect));
         #[cfg(not(test))]
         let _ = delete;
     }

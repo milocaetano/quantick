@@ -9,7 +9,9 @@
 //! that spans frames without being a measurement: a press resolves what it
 //! landed on, and the frames until the release must not ask again.
 //!
-//! Two things are deliberately *not* here. [`super::ChartPane::drawings`] is
+//! Three things are deliberately *not* here. The drawing menu's test-only
+//! widget trace is one — it shares the menu's lifetime, not a gesture's, and
+//! lives on [`super::PaneContextMenu`] with the rest of the menu's state. [`super::ChartPane::drawings`] is
 //! the objects themselves, which outlive every gesture; and the pointer's
 //! plain hover position is chart chrome, read by the crosshair whether or not
 //! a tool is armed.
@@ -24,7 +26,7 @@ use crate::drawings::ChartPoint;
 ///
 /// See the module docs for what a gesture owns and what it does not.
 #[derive(Default)]
-pub struct GestureState {
+pub struct PaneGestures {
     /// Where the next anchor would land, as the input pass resolved it.
     pub hover: Option<ChartPoint>,
     /// The object whose *content* is being edited off-canvas right now —
@@ -87,8 +89,4 @@ pub struct GestureState {
     pub(super) shared_drag_pending_from: Option<egui::Pos2>,
     /// See [`Self::shared_drag`].
     pub(super) shared_pointer_mark: Option<(i64, f64)>,
-    /// Test-only trace of the drawing section's widgets, the
-    /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
-    #[cfg(test)]
-    pub menu_rects: Vec<(&'static str, egui::Rect)>,
 }

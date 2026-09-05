@@ -406,18 +406,35 @@ impl SpecSelector {
     /// the engine will accept.
     #[must_use]
     pub fn spec(&self) -> BarSpec {
-        self.retained[Self::slot(self.kind)].clamped()
+        self.retained(self.kind).clamped()
     }
 
     /// `kind`'s retained parameter, whether or not it is the selected kind.
+    ///
+    /// Asserts the slot invariant on the way out, which is where a slot
+    /// written through [`Self::retained_mut`] with the wrong variant surfaces.
     #[must_use]
     pub fn retained(&self, kind: BarKind) -> &BarSpec {
-        &self.retained[Self::slot(kind)]
+        let spec = &self.retained[Self::slot(kind)];
+        debug_assert_eq!(
+            spec.kind(),
+            kind,
+            "the {kind:?} slot holds a {:?} spec: something wrote through              retained_mut with a spec of another kind, and the selector now              paints one kind's parameter under another kind's label",
+            spec.kind()
+        );
+        spec
     }
 
     /// `kind`'s retained parameter, to edit in place. The widget that drags a
     /// parameter binds to the variant's own field through this, so a new
     /// kind's editor needs no new state to bind to.
+    ///
+    /// Edit the parameter, never the variant: a slot holds its own kind, and
+    /// assigning another kind's spec through this leaves [`Self::spec`]
+    /// returning one rule while [`Self::kind`] names another — the toolbar
+    /// would then drag a volume threshold under a "tick" label.
+    /// [`Self::retained`] asserts it in debug builds; [`Self::retain`] is the
+    /// safe way to store a whole spec.
     pub fn retained_mut(&mut self, kind: BarKind) -> &mut BarSpec {
         let slot = Self::slot(kind);
         &mut self.retained[slot]
@@ -950,9 +967,6 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
 
-    /// Whatever a chart is showing, a config or a saved workspace can name —
-    /// and naming it gets that chart back. Both halves of the vocabulary live
-    /// in this file, and this is what stops one of them drifting.
     /// The one thing [`SpecSelector`] takes on trust: that `ALL` is the whole
     /// of `BarKind`. The match is exhaustive and unmatchable by a wildcard, so
     /// adding a variant breaks this line at compile time; the assertion then
@@ -976,7 +990,7 @@ mod tests {
             }
             assert!(
                 BarKind::ALL.contains(&kind),
-                "{kind:?} is a bar kind that BarKind::ALL does not list, so                  SpecSelector has no slot to retain its parameter in"
+                "{kind:?} is a bar kind BarKind::ALL does not list, so SpecSelector                  has no slot to retain its parameter in"
             );
         }
         assert_eq!(
@@ -984,6 +998,40 @@ mod tests {
             named.len(),
             "BarKind::ALL and this test disagree about how many kinds there are"
         );
+    }
+
+    /// A zero parameter reaches the selector from outside — a workspace file,
+    /// a config line, a control call — and no kind may pass one on. The
+    /// counted kinds floor at one bar's worth; the two measured in `Decimal`
+    /// floor at [`DECIMAL_PARAM_FLOOR`], which is the floor `dec_from_f64`
+    /// applied on the way in before the parameters moved onto the variants.
+    ///
+    /// Volume is the one that bites: a bar closing on no quantity closes on
+    /// every trade.
+    #[test]
+    fn no_kind_can_be_read_back_with_a_zero_parameter() {
+        let zeroed = [
+            BarSpec::Tick(0),
+            BarSpec::Time(0),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, 0),
+            BarSpec::Volume(Decimal::ZERO),
+            BarSpec::Dollar(Decimal::ZERO),
+        ];
+        for spec in zeroed {
+            let selector = SpecSelector::new(spec.clone());
+            let read_back = selector.spec();
+            let floored = match &read_back {
+                BarSpec::Tick(n) => u64::from(*n > 0),
+                BarSpec::Time(ms) => u64::from(*ms > 0),
+                BarSpec::Imbalance(_, target) => u64::from(*target > 0),
+                BarSpec::Volume(units) => u64::from(*units >= DECIMAL_PARAM_FLOOR),
+                BarSpec::Dollar(notional) => u64::from(*notional >= DECIMAL_PARAM_FLOOR),
+            };
+            assert_eq!(
+                floored, 1,
+                "{spec:?} was read back as {read_back:?}, a rule that closes on nothing"
+            );
+        }
     }
 
     /// Retention is the whole reason the selector keeps an array rather than
@@ -1002,6 +1050,9 @@ mod tests {
         );
     }
 
+    /// Whatever a chart is showing, a config or a saved workspace can name —
+    /// and naming it gets that chart back. Both halves of the vocabulary live
+    /// in this file, and this is what stops one of them drifting.
     #[test]
     fn every_bar_spec_survives_the_config_round_trip() {
         for spec in [

@@ -55,10 +55,12 @@ mod menus;
 mod strategies;
 mod strategy_badges;
 
-pub use context_menu::ContextMenu;
-pub use footprint::FootprintState;
+/// Every sub-struct of a pane is `Pane*`, without exception: prefixing only
+/// where the bare noun clashes is how one ends up beside a `PaneFrame`.
+pub use context_menu::PaneContextMenu;
+pub use footprint::PaneFootprint;
 pub use frame::PaneFrame;
-pub use gestures::GestureState;
+pub use gestures::PaneGestures;
 pub use strategies::PaneStrategies;
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
@@ -103,7 +105,7 @@ const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
-/// [`GestureState::parked_hand`]. Never constructed outside the harness hook.
+/// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook.
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,
@@ -1125,8 +1127,8 @@ pub struct ChartPane {
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
     /// The candle footprint layer as this pane has it — see
-    /// [`FootprintState`].
-    pub footprint: FootprintState,
+    /// [`PaneFootprint`].
+    pub footprint: PaneFootprint,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -1196,8 +1198,8 @@ pub struct ChartPane {
     /// borrow.
     paper_hud_anchor: Option<(egui::Rect, PriceScale)>,
     /// What the right-click that opened the layer menu resolved — see
-    /// [`ContextMenu`].
-    pub context_menu: ContextMenu,
+    /// [`PaneContextMenu`].
+    pub context_menu: PaneContextMenu,
     /// The strategies armed on this pane's drawings — see
     /// [`PaneStrategies`].
     pub strategies: PaneStrategies,
@@ -1205,8 +1207,8 @@ pub struct ChartPane {
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
     pub drawings: Drawings,
-    /// A drawing gesture in flight — see [`GestureState`].
-    pub gestures: GestureState,
+    /// A drawing gesture in flight — see [`PaneGestures`].
+    pub gestures: PaneGestures,
     /// A re-anchor owed to the drawings, holding the slot count of the series
     /// they were last anchored to.
     ///
@@ -1268,7 +1270,7 @@ impl ChartPane {
             drawings_saved_revision: 0,
             legend_collapsed: false,
             live_strip_visible: false,
-            footprint: FootprintState::default(),
+            footprint: PaneFootprint::default(),
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -1287,10 +1289,10 @@ impl ChartPane {
             tape_switch_hovered: false,
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
-            context_menu: ContextMenu::default(),
+            context_menu: PaneContextMenu::default(),
             strategies: PaneStrategies::default(),
             drawings: Drawings::default(),
-            gestures: GestureState::default(),
+            gestures: PaneGestures::default(),
             pending_reanchor: None,
             strip_expanded: None,
             pending_settings: None,
@@ -1311,7 +1313,7 @@ impl ChartPane {
     }
 
     /// The footprint setup this chart draws with: its own once configured
-    /// here, else the window's last one. See [`FootprintState::config`].
+    /// here, else the window's last one. See [`PaneFootprint::config`].
     pub fn footprint_config<'a>(
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,

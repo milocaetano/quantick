@@ -9,7 +9,7 @@
 
 /// The footprint layer as this pane has it. See the module docs.
 #[derive(Default)]
-pub struct FootprintState {
+pub struct PaneFootprint {
     /// Whether the candle footprint layer is on. What a fresh launch opens
     /// with is `config/chart-layers.toml`, not this initialiser — see
     /// [`crate::chart_layers`]; the ladder still follows the zoom's LOD, so it

@@ -10,11 +10,14 @@
 //! The rename buffer is here for the same reason from the other direction: it
 //! is seeded on the press and edited across the frames the menu is open.
 
+#[cfg(test)]
+use eframe::egui;
+
 use crate::drawings::{self, ChartPoint};
 
 /// The last right-click, as the press resolved it. See the module docs.
 #[derive(Default)]
-pub struct ContextMenu {
+pub struct PaneContextMenu {
     /// Whether the right-click that opened the menu landed on the tape rather
     /// than on the candles. The two panes are configured apart, so the menu has
     /// to know which one was asked.
@@ -35,4 +38,11 @@ pub struct ContextMenu {
     /// Rename buffer for the layer menu's drawing section, seeded from the
     /// clicked object's current name on the press that opened the menu.
     pub(super) rename: String,
+    /// Test-only trace of the drawing section's widgets, the
+    /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
+    ///
+    /// Here rather than with the gestures because it is rebuilt and read on
+    /// the menu's clock, not a press's: it is the menu's own drawing, traced.
+    #[cfg(test)]
+    pub menu_rects: Vec<(&'static str, egui::Rect)>,
 }
