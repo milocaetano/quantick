@@ -302,9 +302,6 @@ fn the_report_mode_refuses_extra_arguments() {
     );
 }
 
-/// Run the command and hand back its stdout, failing loudly on a non-zero
-/// exit — `--report` measures the tree and never judges it, so the only way
-/// it can fail is by not working.
 /// `--blast-radius` measures; it never judges, so it exits 0 whatever it is
 /// handed — a table, an empty table, or a complaint about stdin.
 ///
@@ -390,6 +387,9 @@ diff --git a/crates/guards/src/lib.rs b/crates/guards/src/lib.rs
  //! Repository guards for the things the compiler cannot see.
 ";
 
+/// Run the command and hand back its stdout, failing loudly on a non-zero
+/// exit — `--report` measures the tree and never judges it, so the only way
+/// it can fail is by not working.
 fn run_report() -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .arg("--report")
