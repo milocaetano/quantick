@@ -19,6 +19,7 @@ use eframe::egui;
 use crate::canvas_layout::PaneIdAllocator;
 
 mod chart_layers_wiring;
+mod chrome;
 mod control_host;
 mod demo_hooks;
 mod drawing_chrome_wiring;
@@ -56,11 +57,10 @@ use crate::dock::Dock;
 use crate::drawings;
 use crate::feed_notice;
 use crate::harness::{Harness, ScriptedMenu};
-use crate::indicator_panel::SettingsDialog;
 use crate::indicator_worker::SlotId;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
-use crate::indicators::state_file::{self, SavedKind};
+use crate::indicators::state_file;
 use crate::metrics::FrameStats;
 use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
@@ -197,37 +197,8 @@ pub struct QuantickApp {
     /// Handed out to new tabs and never reused, so a closed tab's ids can
     /// never be mistaken for a living one's.
     next_tab_id: u64,
-    /// Where the offline chip was drawn, or `None` when it was not.
-    ///
-    /// Written as part of drawing it, exactly as a pane records its own chart
-    /// area, and for the same two reasons. It says what is *painted* rather
-    /// than what a fresh reading of the clock would have painted a
-    /// millisecond later, so the scene and the screen cannot disagree across
-    /// the edge of a stall budget. And it is the one control on screen with
-    /// no capability behind it — opening a popup is a gesture, not a call —
-    /// so its rectangle is the only way an operator reaches it at all.
-    ///
-    /// A `Rect` per frame, and only while the chart is not being fed. Nothing
-    /// is recorded on a healthy chart, which is every frame of a normal
-    /// session.
-    feed_chip_rect: Option<egui::Rect>,
-    /// The tab whose chip opened the feed's recovery popup, if any.
-    ///
-    /// Opened by clicking the offline chip and by nothing else — the rule the
-    /// trader asked for, after a card that opened itself over the chart every
-    /// morning. It is the *tab's* id rather than a window-wide flag because
-    /// one dead terminal stalls every MT5 tab at once: a bare flag opened on
-    /// one chart and then found the next chart already offline, and drew
-    /// itself there with nobody having clicked anything. The chip is window
-    /// chrome speaking for the active market, and this says which market it
-    /// was speaking for.
-    ///
-    /// Leaving that chart closes it, the way clicking elsewhere does: the
-    /// frame answers for the tab it is drawing, so a switch clears the flag.
-    /// A glance, not a mode — nothing waits on a chart nobody is looking at.
-    feed_popup_tab: Option<u64>,
-    /// Whether the toolbar's layout popover is open.
-    layout_picker_open: bool,
+    /// The window chrome's transient state — see [`chrome::ChromeState`].
+    chrome: chrome::ChromeState,
     /// The window's one source of pane ids. Pane ids namespace egui
     /// interaction state across the whole window rather than within a tab, so
     /// this may not be per-tab state: two panes sharing an id share a drag.
@@ -240,44 +211,11 @@ pub struct QuantickApp {
 
     config: AppConfig,
 
-    /// Explicitly enabled local observer gateway. `None` only while this field
-    /// is temporarily moved out to dispatch a frame without borrowing the app
-    /// through itself.
-    control_access: Option<crate::control::ControlAccess>,
+    /// The observer gateway and its launch hooks — see [`control_host::ControlState`].
+    control: control_host::ControlState,
 
-    /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
-    /// startup. A file-backed script then follows its file: `poll_script_files`
-    /// checks mtimes on a debounce and reloads on a save.
-    script_library: ScriptLibrary,
-    /// The open indicator-settings dialog, if any (one at a time).
-    indicator_settings: Option<SettingsDialog>,
-    /// The slot the open dialog edits. Held apart from the dialog so a tab or
-    /// pane changing under it cannot retarget its Apply.
-    indicator_settings_target: TabSlot,
-    /// File-backed script slots: (slot, library index, last seen mtime) —
-    /// what the hot-reload poll walks.
-    script_files: Vec<(TabSlot, usize, std::time::SystemTime)>,
-    /// How each live slot restores (the persistence identity per slot).
-    ///
-    /// Stays beside the library and the state file rather than moving into the
-    /// panes with the slots themselves: one file records what the window had
-    /// open, so one list records what is in it.
-    slot_kinds: Vec<(TabSlot, SavedKind)>,
-    /// Slots placed hidden by a layout, applied when their Rebuilt lands —
-    /// the view a hide acts on is born from the worker's first answer.
-    pending_hidden: Vec<TabSlot>,
-    /// Per-plot style layers placed by a layout, applied when their Rebuilt
-    /// lands — the same deferral [`Self::pending_hidden`] performs, for the
-    /// same reason.
-    pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
-    /// The layout being renamed in the strip, with the draft name.
-    layout_rename: Option<(crate::layouts::LayoutId, String)>,
-    /// The layout a delete is waiting on: deleting takes its drawings with
-    /// it, on disk too, so it is the one strip action behind a confirmation.
-    layout_delete_confirm: Option<crate::layouts::LayoutId>,
-    /// Last hot-reload poll instant (the poll runs about once a second;
-    /// file metadata every frame would be waste).
-    last_script_poll: Instant,
+    /// The indicator persistence layer — see [`indicator_manager::IndicatorState`].
+    indicators: indicator_manager::IndicatorState,
 
     /// The browser window and, while the active tab replays, the transport.
     replay_view: ReplayView,
@@ -291,55 +229,9 @@ pub struct QuantickApp {
     /// the acknowledgement toast. One field for the whole set, one module
     /// per surface — see [`crate::surfaces::Surfaces`].
     surfaces: crate::surfaces::Surfaces,
-    /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
-    /// first frame, through the panel button's own `enable`.
-    pending_control_access_enable: bool,
-    /// The indicator slots an operator other than the trader attached — the
-    /// only ones the annotate tier may take back off the chart. Keyed by the
-    /// whole [`TabSlot`]: a slot number is allocated per pane and is reused
-    /// by every other pane, so the number alone would mark one tab's slot 0
-    /// as an operator's because another tab's slot 0 was.
-    operator_slots: std::collections::BTreeSet<TabSlot>,
-    /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
-    /// first frame, so every attribution surface can be photographed.
-    pending_control_annotation: Option<String>,
-    /// The `QUANTICK_CONTROL_NOTIFY` hook: `<channel>:<message>`.
-    pending_control_notification: Option<String>,
-    /// The `QUANTICK_CONTROL_EVIDENCE` hook: which scopes to capture, and
-    /// whether to rasterise the window with them.
-    pending_control_evidence: Option<String>,
-    /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
-    /// through the hotkey's own action, with the note the hook carried.
-    pending_control_mark: Option<String>,
-    /// The popup's position changed by hand this frame and the workspace has
-    /// not been told yet.
-    ///
-    /// The position itself is automatic until the user drags the title bar and
-    /// manual from then on (only ever re-clamped), and the chart rectangle it
-    /// is placed against belongs to the focused [`ChartPane`] — so a split
-    /// window places against the pane the selection lives on, not the window.
-    ///
-    /// A flag rather than a write on the spot, for two reasons. A drag reports
-    /// a new position on *every* frame the hand is moving, and writing the file
-    /// sixty times a second for a window that has not landed yet is a lot of
-    /// disk for one decision. And the write itself belongs beside the other
-    /// workspace writes ([`Self::maintain_workspace`]), not inside the closure
-    /// that is painting the window — one place that knows how a workspace
-    /// reaches the disk, not two.
-    ///
-    /// That host runs at the top of a frame, so the file is written on the
-    /// frame *after* the one the hand came off in — sixteen milliseconds, and
-    /// the frame that closes the window flushes this before taking the exit
-    /// save, so nothing can be dropped between the two.
-    inspector_position_dirty: bool,
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
-    /// The window this app is drawing into, kept so the health summary can
-    /// report the client area the platform believes it has — see
-    /// [`crate::window_scale`] for why that number is worth logging, and for
-    /// the defect it was measured chasing.
-    surface: Option<window_scale::SurfaceProbe>,
     /// Where a pane's layer menu leaves the grid switch and the "an indicator
     /// was hidden" flag; drained right after the canvas is drawn.
     layer_actions: chart_layers::LayerActions,
@@ -347,73 +239,18 @@ pub struct QuantickApp {
     /// `config/footprint.toml` preset > saved edits > defaults), edited live
     /// by the layer menu's controls.
     footprint_config: crate::footprint_config::FootprintConfig,
-    // Named input setups per indicator kind, offered by the settings
-    // dialog's preset picker.
-    indicator_presets: preset_file::PresetStore,
-    /// Where the Workspace button was drawn, published by the menu bar so the
-    /// hook can click it rather than guess at a coordinate.
-    workspace_menu_rect: Option<egui::Rect>,
-    /// Where the toolbar's history caret is, published by the draw. `None`
-    /// while the menu is unreachable — a feed that pages nothing has no menu
-    /// to open, and a hook must photograph that rather than force it.
-    history_menu_rect: Option<egui::Rect>,
-    /// Where signal alarms are played. The shipped sink is the platform's
-    /// own sounds; a test swaps in a recorder, which is how "the alarm
-    /// sounded, once, and it was the sound the preset named" is asserted
-    /// without a build machine making noise.
-    alerts: Box<dyn crate::audio::AlertSink>,
-    /// The last reason a sound could not be played, shown once in the
-    /// dialog. A build with no audio backend, or a platform that refused,
-    /// is reported: an alarm the trader never heard is never assumed heard.
-    alert_failure: Option<String>,
+    /// Where a signal alarm is played — see [`replay_and_history::AlertState`].
+    alerts: replay_and_history::AlertState,
 
     /// The chart appearance every renderer reads. The window that edits it
     /// is `surfaces::style_panel`, which hands back a copy rather than
     /// holding a reference to this one.
     style: ChartStyle,
     style_revision: u64,
-    // Whether the status bar shows the perf readings (View → perf readings).
-    show_perf: bool,
-    /// Whether venue candle history is asked for in slices, newest first
-    /// (View → progressive venue history).
-    ///
-    /// On by default. A span of one-minute candles is a run of sequential
-    /// venue round trips — seconds for the opening week, and another such run
-    /// for every span the trader reaches back through — and fetched whole the
-    /// chart shows nothing at all for the whole of it. Off restores exactly
-    /// that: one
-    /// request, one reply, one very late frame — kept because a trader on a
-    /// metered or rate-limited connection may prefer the smaller number of
-    /// requests, and because a setting whose "off" is not the old behaviour is
-    /// not a setting the user can fall back to.
-    progressive_history: bool,
-    /// How far one press of the chart's *load older* button reaches — one
-    /// page of trades, or back past the market's last close with a lead into
-    /// the session before it.
-    ///
-    /// A standing choice of the window rather than of a market: a trader who
-    /// wants to see yesterday wants it in the tab they open next too. Mirrored
-    /// onto every tab each frame, which is where the press is actually served.
-    history_reach: history_reach::HistoryReach,
-    /// Minutes of *traded* time one press of the `by time` reach pulls.
-    ///
-    /// On the window beside the reach it belongs to, and mirrored onto every
-    /// tab by `drain_tabs`, exactly as the reach itself is: the two are one
-    /// choice, and a tab opened after the trader set it must press the way
-    /// they said. Seeded from `[history] reach_span_minutes` and editable
-    /// afterwards, because it is the trader's own answer to "how much more
-    /// tape per press" and that differs between a contract printing a million
-    /// times a day and one printing a thousand.
-    history_reach_span_minutes: u32,
-    /// Whether a chart *not* cut by time may carry the venue's own candles in
-    /// front of its bars.
-    ///
-    /// Off by default: a tick chart has always opened on the prints this
-    /// session saw, and nothing is put in front of them unasked. On, a chart
-    /// cut by trades gets the venue's 1-minute candles as a labelled prefix —
-    /// the only way such a chart can show yesterday at all, since a candle
-    /// cannot be folded into a tick bar and must never pretend to be one.
-    venue_lead_in: bool,
+    /// What the window measures about itself — see [`health::HealthCounters`].
+    health: health::HealthCounters,
+    /// The window-wide history reach — see [`tabs::HistorySettings`].
+    history: tabs::HistorySettings,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -427,19 +264,6 @@ pub struct QuantickApp {
     /// `layouts` or `workspace_bundle` — none of which holds session state —
     /// and for the invariant the layout trio could not carry apart.
     workspace: crate::workspace_store::WorkspaceStore,
-    /// The window's inner size as of the last frame, in points — captured here
-    /// because the size a workspace records is the one the user last saw, and
-    /// by exit time the viewport has already been asked to close.
-    window_size: Option<[f32; 2]>,
-    frames: FrameStats,
-    /// CPU time per frame (update + tessellation + paint, no vsync wait), from
-    /// eframe. Separates "we are slow" from "we are waiting for the display".
-    cpu_frames: FrameStats,
-    last_frame: Option<Instant>,
-    /// Live trades taken in since the last perf summary, across every tab —
-    /// what the window is ingesting, not what one market prints.
-    trades_since_summary: u64,
-    last_summary: Instant,
     /// Every environment hook an agent drives this window by, read once at
     /// launch and named. See [`crate::harness`] for what belongs here and
     /// why the trunk asks it rather than holding its flags: twenty-three of
@@ -591,25 +415,47 @@ impl QuantickApp {
             active_tab: 0,
             harness: Harness::from_env(),
             next_tab_id: FIRST_TAB_ID + 1,
-            layout_picker_open: false,
+            chrome: chrome::ChromeState {
+                layout_picker_open: false,
+                layout_rename: None,
+                layout_delete_confirm: None,
+                inspector_position_dirty: false,
+                surface: None,
+                workspace_menu_rect: None,
+                history_menu_rect: None,
+                feed_chip_rect: None,
+                // The hook stands in for a click on the opening tab's chip, which
+                // is the first tab there is.
+                feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
+                window_size: None,
+            },
             pane_ids,
             added_symbols: symbols_file::load(&symbols_path),
             config,
-            control_access: Some(crate::control::ControlAccess::new()),
-            script_library: ScriptLibrary::scan(),
-            indicator_settings: None,
-            indicator_settings_target: TabSlot {
-                tab: FIRST_TAB_ID,
-                side: PaneSide::Flow,
-                slot: SlotId(0),
+            control: control_host::ControlState {
+                control_access: Some(crate::control::ControlAccess::new()),
+                pending_control_access_enable: false,
+                pending_control_annotation: None,
+                pending_control_notification: None,
+                pending_control_evidence: None,
+                pending_control_mark: None,
             },
-            script_files: Vec::new(),
-            slot_kinds: Vec::new(),
-            pending_hidden: Vec::new(),
-            pending_styles: Vec::new(),
-            layout_rename: None,
-            layout_delete_confirm: None,
-            last_script_poll: Instant::now(),
+            indicators: indicator_manager::IndicatorState {
+                script_library: ScriptLibrary::scan(),
+                indicator_settings: None,
+                indicator_settings_target: TabSlot {
+                    tab: FIRST_TAB_ID,
+                    side: PaneSide::Flow,
+                    slot: SlotId(0),
+                },
+                script_files: Vec::new(),
+                slot_kinds: Vec::new(),
+                pending_hidden: Vec::new(),
+                pending_styles: Vec::new(),
+                last_script_poll: Instant::now(),
+                operator_slots: std::collections::BTreeSet::new(),
+                indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
+            },
             replay_view: ReplayView::new(
                 workspace.replay_folder.as_deref(),
                 workspace.replay_day_before,
@@ -617,35 +463,31 @@ impl QuantickApp {
             dock: Dock::new(),
             toolrail: ToolRail::new(),
             surfaces: crate::surfaces::Surfaces::default(),
-            pending_control_access_enable: false,
-            operator_slots: std::collections::BTreeSet::new(),
-            pending_control_annotation: None,
-            pending_control_notification: None,
-            pending_control_evidence: None,
-            pending_control_mark: None,
-            inspector_position_dirty: false,
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
-            surface: None,
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
-            workspace_menu_rect: None,
-            history_menu_rect: None,
-            alerts: Box::new(crate::audio::Speaker::default()),
-            alert_failure: None,
+            alerts: replay_and_history::AlertState {
+                alerts: Box::new(crate::audio::Speaker::default()),
+                alert_failure: None,
+            },
             style: ChartStyle::default(),
             style_revision: 0,
-            show_perf: true,
-            progressive_history: true,
-            history_reach: history_reach::HistoryReach::default(),
-            history_reach_span_minutes: reach_span_minutes,
-            venue_lead_in: false,
-            feed_chip_rect: None,
-            // The hook stands in for a click on the opening tab's chip, which
-            // is the first tab there is.
-            feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
+            health: health::HealthCounters {
+                show_perf: true,
+                frames: FrameStats::new(120),
+                cpu_frames: FrameStats::new(120),
+                last_frame: None,
+                trades_since_summary: 0,
+                last_summary: Instant::now(),
+            },
+            history: tabs::HistorySettings {
+                progressive_history: true,
+                history_reach: history_reach::HistoryReach::default(),
+                history_reach_span_minutes: reach_span_minutes,
+                venue_lead_in: false,
+            },
             tz: TzOffset::default(),
             workspace: WorkspaceStore::new(
                 StorePaths {
@@ -662,12 +504,6 @@ impl QuantickApp {
                 ),
                 trades_dir,
             ),
-            window_size: None,
-            frames: FrameStats::new(120),
-            cpu_frames: FrameStats::new(120),
-            last_frame: None,
-            trades_since_summary: 0,
-            last_summary: Instant::now(),
         };
         // Recording is not a display choice: it starts with the feed, so
         // hiding the map later never leaves a hole in what was captured.
@@ -722,14 +558,14 @@ impl QuantickApp {
     /// other construction path — every test — wants the `None` this defaults
     /// to, which is also what every non-Windows target gets.
     pub fn attach_surface(&mut self, handle: &impl raw_window_handle::HasWindowHandle) {
-        self.surface = window_scale::SurfaceProbe::new(handle);
+        self.chrome.surface = window_scale::SurfaceProbe::new(handle);
     }
 }
 
 impl eframe::App for QuantickApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(cpu) = frame.info().cpu_usage {
-            self.cpu_frames.record(cpu * 1000.0);
+            self.health.cpu_frames.record(cpu * 1000.0);
         }
         self.draw_frame(ctx, Instant::now());
     }
@@ -738,7 +574,7 @@ impl eframe::App for QuantickApp {
         // Whatever the debounce was still holding: a level drawn a moment
         // before closing is a level the trader expects back.
         self.flush_layouts();
-        if let Some(access) = self.control_access.as_mut() {
+        if let Some(access) = self.control.control_access.as_mut() {
             access.shutdown_for_exit();
         }
     }
@@ -778,8 +614,8 @@ impl eframe::App for QuantickApp {
         }
         if let Some(menu) = self.harness.menu()
             && let Some(position) = match menu {
-                ScriptedMenu::Workspace => self.workspace_menu_rect,
-                ScriptedMenu::History => self.history_menu_rect,
+                ScriptedMenu::Workspace => self.chrome.workspace_menu_rect,
+                ScriptedMenu::History => self.chrome.history_menu_rect,
             }
             .map(|rect| rect.center())
         {

@@ -25,6 +25,39 @@ use quantick_feed::history_reach;
 
 use super::{ControlFrameMetrics, QuantickApp};
 
+/// The local observer gateway, and the five launch hooks that feed it.
+///
+/// Owned by this module. The `pending_*` fields exist only to hand
+/// `control_access` its first frame's work: `launch_hooks` reads each env
+/// var into one and `frame`, `demo_hooks` or this module drains it. They
+/// are grouped with the gateway rather than with the harness because the
+/// gateway is the only thing any of them can act on.
+pub(super) struct ControlState {
+    /// Explicitly enabled local observer gateway. `None` only while this field
+    /// is temporarily moved out to dispatch a frame without borrowing the app
+    /// through itself.
+    pub(super) control_access: Option<crate::control::ControlAccess>,
+
+    /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
+    /// first frame, through the panel button's own `enable`.
+    pub(super) pending_control_access_enable: bool,
+
+    /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
+    /// first frame, so every attribution surface can be photographed.
+    pub(super) pending_control_annotation: Option<String>,
+
+    /// The `QUANTICK_CONTROL_NOTIFY` hook: `<channel>:<message>`.
+    pub(super) pending_control_notification: Option<String>,
+
+    /// The `QUANTICK_CONTROL_EVIDENCE` hook: which scopes to capture, and
+    /// whether to rasterise the window with them.
+    pub(super) pending_control_evidence: Option<String>,
+
+    /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
+    /// through the hotkey's own action, with the note the hook carried.
+    pub(super) pending_control_mark: Option<String>,
+}
+
 impl QuantickApp {
     /// The active tab beside the config it reads.
     ///
@@ -124,6 +157,7 @@ impl QuantickApp {
     /// than letting a client believe it was heard.
     pub(crate) fn sound_agent_alert(&mut self) -> Option<String> {
         self.alerts
+            .alerts
             .play(&[crate::audio::Cue::default()])
             .err()
             .map(ToOwned::to_owned)
@@ -190,13 +224,13 @@ impl QuantickApp {
     /// The projection reads what was drawn rather than re-deciding it, so the
     /// scene and the screen cannot disagree across the edge of a stall budget.
     pub(crate) fn control_feed_chip_rect(&self) -> Option<egui::Rect> {
-        self.feed_chip_rect
+        self.chrome.feed_chip_rect
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
     /// the trader is looking at.
     pub(crate) fn control_feed_popup_open(&self) -> bool {
-        self.feed_popup_tab == Some(self.active_tab().id)
+        self.chrome.feed_popup_tab == Some(self.active_tab().id)
     }
 
     /// The right-hand dock: whether it is shown, and which tab is open.
@@ -211,8 +245,8 @@ impl QuantickApp {
     pub(crate) fn control_workspace_flags(&self) -> (bool, bool, bool) {
         (
             self.workspace.session().save_on_exit(),
-            self.show_perf,
-            self.progressive_history,
+            self.health.show_perf,
+            self.history.progressive_history,
         )
     }
 
@@ -224,7 +258,7 @@ impl QuantickApp {
     /// where a run in flight also reads it: withdrawing the longer reach is
     /// how a trader calls that run off.
     pub(crate) fn set_history_reach(&mut self, reach: history_reach::HistoryReach) {
-        self.history_reach = reach;
+        self.history.history_reach = reach;
     }
 
     /// How far back one press of the `by time` reach pulls, in minutes of
@@ -237,12 +271,12 @@ impl QuantickApp {
     /// budgets forbid.
     pub(crate) fn set_history_reach_span_minutes(&mut self, minutes: u32) {
         let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
-        self.history_reach_span_minutes = minutes.clamp(1, ceiling);
+        self.history.history_reach_span_minutes = minutes.clamp(1, ceiling);
     }
 
     /// What that span is now, for an operator reading back what it set.
     pub(crate) fn control_history_reach_span_minutes(&self) -> u32 {
-        self.history_reach_span_minutes
+        self.history.history_reach_span_minutes
     }
 
     /// How far the window's *load older* press reaches, and whether a chart
@@ -252,7 +286,7 @@ impl QuantickApp {
     /// back after setting them — the reach especially, since it decides
     /// whether one press is one request or a run of them.
     pub(crate) fn control_history_settings(&self) -> (history_reach::HistoryReach, bool) {
-        (self.history_reach, self.venue_lead_in)
+        (self.history.history_reach, self.history.venue_lead_in)
     }
 
     /// Whether a recording opens with the session day before it joined in
@@ -275,14 +309,14 @@ impl QuantickApp {
         origin: crate::control::ActionOrigin,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control_access.take() else {
+        let Some(mut access) = self.control.control_access.take() else {
             return Err(quantick_control::error::ControlError::invalid_request(
                 "control access is not installed",
             ));
         };
         let outcome =
             access.invoke_local_action(self, capability_id, capability_version, input, origin);
-        self.control_access = Some(access);
+        self.control.control_access = Some(access);
         outcome
     }
 
@@ -326,7 +360,7 @@ impl QuantickApp {
     /// actor — the same path the gateway takes for a remote client — so what
     /// a screenshot shows is what a real assistant would have produced.
     pub(super) fn apply_control_annotate_hooks(&mut self) {
-        if let Some(text) = self.pending_control_annotation.take() {
+        if let Some(text) = self.control.pending_control_annotation.take() {
             let anchor = {
                 let pane = self.active_tab().drawing_pane();
                 let slot = pane.slots().saturating_sub(1);
@@ -340,20 +374,20 @@ impl QuantickApp {
                     // No bars yet: put the hook back and take it next frame,
                     // rather than annotating a chart that has nothing on it.
                     _ => {
-                        self.pending_control_annotation = Some(text.clone());
+                        self.control.pending_control_annotation = Some(text.clone());
                         None
                     }
                 }
             };
             if let Some(anchor) = anchor {
-                self.pending_control_annotation = None;
+                self.control.pending_control_annotation = None;
                 self.run_hook_action(
                     "annotate.label.create",
                     serde_json::json!({ "anchors": [anchor], "text": text }),
                 );
             }
         }
-        if let Some(request) = self.pending_control_notification.take() {
+        if let Some(request) = self.control.pending_control_notification.take() {
             let (channel, message) = request
                 .split_once(':')
                 .unwrap_or(("toast", request.as_str()));
@@ -388,7 +422,7 @@ impl QuantickApp {
         capability_id: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control_access.take() else {
+        let Some(mut access) = self.control.control_access.take() else {
             return Err(quantick_control::error::ControlError::invalid_request(
                 "control access is not installed",
             ));
@@ -396,7 +430,7 @@ impl QuantickApp {
         // No identity, no actor to sign with: the same structured refusal an
         // action gets, rather than a panic on the first frame.
         let Some(actor) = access.hook_agent_actor() else {
-            self.control_access = Some(access);
+            self.control.control_access = Some(access);
             return Err(quantick_control::error::ControlError::invalid_request(
                 "this window has no control identity to act with",
             ));
@@ -408,7 +442,7 @@ impl QuantickApp {
             input,
             crate::control::ActionOrigin::Remote(Box::new(actor)),
         );
-        self.control_access = Some(access);
+        self.control.control_access = Some(access);
         outcome
     }
 
@@ -460,11 +494,11 @@ impl QuantickApp {
 
     pub(crate) fn control_frame_metrics(&self) -> ControlFrameMetrics {
         ControlFrameMetrics {
-            wall_average_ms: self.frames.avg_ms(),
-            wall_worst_ms: self.frames.worst_ms(),
-            frames_per_second: self.frames.fps(),
-            cpu_average_ms: self.cpu_frames.avg_ms(),
-            cpu_worst_ms: self.cpu_frames.worst_ms(),
+            wall_average_ms: self.health.frames.avg_ms(),
+            wall_worst_ms: self.health.frames.worst_ms(),
+            frames_per_second: self.health.frames.fps(),
+            cpu_average_ms: self.health.cpu_frames.avg_ms(),
+            cpu_worst_ms: self.health.cpu_frames.worst_ms(),
         }
     }
 

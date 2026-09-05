@@ -493,16 +493,16 @@ impl QuantickApp {
                             }
                         }
                         ui.separator();
-                        ui.checkbox(&mut self.show_perf, "Perf readings")
+                        ui.checkbox(&mut self.health.show_perf, "Perf readings")
                             .on_hover_text("fps, frame time and trade count on the status bar");
-                        ui.checkbox(&mut self.progressive_history, "Progressive venue history")
+                        ui.checkbox(&mut self.history.progressive_history, "Progressive venue history")
                             .on_hover_text(
                                 "Build the venue's candle history from now backwards, a week at \
                                  a time, so the chart fills in while the rest arrives. Off asks \
                                  for the whole span in one request: fewer calls, nothing on \
                                  screen until all of it lands.",
                             );
-                        ui.checkbox(&mut self.venue_lead_in, "Venue candles on charts cut by trades")
+                        ui.checkbox(&mut self.history.venue_lead_in, "Venue candles on charts cut by trades")
                             .on_hover_text(
                                 "A tick, volume, dollar or imbalance chart cannot fold venue \
                                  candles into its own bars, so it opens holding only the prints \
@@ -719,18 +719,18 @@ impl QuantickApp {
                             self.save_workspace("save_on_exit_toggled");
                         }
                     });
-                    self.workspace_menu_rect = Some(workspace_menu.response.rect);
+                    self.chrome.workspace_menu_rect = Some(workspace_menu.response.rect);
                     ui.menu_button("Tools", |ui| {
                         if ui.button("Appearance…").clicked() {
                             self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
-                        let access_label = self
+                        let access_label = self.control
                             .control_access
                             .as_ref()
                             .map_or("Local agent access…", |access| access.menu_label());
                         if ui.button(access_label).clicked() {
-                            if let Some(access) = self.control_access.as_mut() {
+                            if let Some(access) = self.control.control_access.as_mut() {
                                 access.open_panel();
                             }
                             ui.close_menu();
@@ -742,12 +742,12 @@ impl QuantickApp {
                             ui.close_menu();
                         }
                     });
-                    if self
+                    if self.control
                         .control_access
                         .as_ref()
                         .is_some_and(crate::control::ControlAccess::is_enabled)
                         && ui.button("Agent access: on").clicked()
-                        && let Some(access) = self.control_access.as_mut()
+                        && let Some(access) = self.control.control_access.as_mut()
                     {
                         access.open_panel();
                     }

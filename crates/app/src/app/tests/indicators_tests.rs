@@ -102,13 +102,23 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the old set migrated into the first layout"
     );
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         3,
         "a script the library lacks takes an error slot saying so, keeping the layout's positions aligned"
     );
-    assert_eq!(app.slot_kinds[0].1, SavedKind::native("native.ema"));
-    assert_eq!(app.slot_kinds[1].1, SavedKind::native("native.cvd"));
-    assert_eq!(app.pending_hidden.len(), 1, "the hidden flag survived");
+    assert_eq!(
+        app.indicators.slot_kinds[0].1,
+        SavedKind::native("native.ema")
+    );
+    assert_eq!(
+        app.indicators.slot_kinds[1].1,
+        SavedKind::native("native.cvd")
+    );
+    assert_eq!(
+        app.indicators.pending_hidden.len(),
+        1,
+        "the hidden flag survived"
+    );
     assert!(
         !app.workspace.layouts().is_dirty(),
         "restoring is not a user edit and must not rewrite the file"
@@ -132,7 +142,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         "the whole migrated set is written — the script the library lacks stays in the layout, waiting for its file"
     );
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         3,
         "and every entry has its slot on the chart"
     );
@@ -249,12 +259,13 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         "the pane beside the focused one gained the same indicator"
     );
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         2,
         "one registration per pane, each on its own slot"
     );
     assert_eq!(
-        app.slot_kinds
+        app.indicators
+            .slot_kinds
             .iter()
             .filter(|(owner, _)| owner.side == PaneSide::Time(0))
             .count(),
@@ -287,7 +298,11 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
 
     app.active_tab_mut().flow_pane.request_settings(slot);
     app.open_requested_indicator_settings();
-    let dialog = app.indicator_settings.as_ref().expect("the dialog opened");
+    let dialog = app
+        .indicators
+        .indicator_settings
+        .as_ref()
+        .expect("the dialog opened");
     assert_eq!(dialog.slot, slot, "on the indicator the gesture named");
     assert_eq!(
         dialog.draft,
@@ -295,10 +310,10 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
         "holding that indicator's own values"
     );
 
-    app.indicator_settings = None;
+    app.indicators.indicator_settings = None;
     app.open_requested_indicator_settings();
     assert!(
-        app.indicator_settings.is_none(),
+        app.indicators.indicator_settings.is_none(),
         "the request was taken, not left to fire again next frame"
     );
 }
@@ -392,12 +407,13 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     app.open_requested_indicator_settings();
 
     let dialog = app
+        .indicators
         .indicator_settings
         .as_ref()
         .expect("the hook found the indicator on the pane that has one");
     assert_eq!(dialog.slot, slot);
     assert_eq!(
-        app.indicator_settings_target.side,
+        app.indicators.indicator_settings_target.side,
         PaneSide::Time(0),
         "and addressed it on the focused pane, which carries the layout too"
     );
@@ -448,9 +464,9 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         "the time pane's own slot was toggled, focus notwithstanding"
     );
     app.open_indicator_settings_at(target);
-    assert!(app.indicator_settings.is_some());
+    assert!(app.indicators.indicator_settings.is_some());
     assert_eq!(
-        app.indicator_settings_target.side,
+        app.indicators.indicator_settings_target.side,
         PaneSide::Time(0),
         "the dialog's Apply will land on the legend's pane"
     );
@@ -545,7 +561,8 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         "and on the flow pane, through the layout"
     );
     assert!(
-        app.slot_kinds
+        app.indicators
+            .slot_kinds
             .iter()
             .any(|(owner, _)| owner.side == PaneSide::Time(1)),
         "the bottom chart's own registration is the one the command made"
@@ -704,7 +721,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
     settle_indicators(&mut app);
 
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         1,
         "the slot is kept so the layout's positions stay aligned"
     );

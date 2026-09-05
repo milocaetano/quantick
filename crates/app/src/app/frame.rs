@@ -22,6 +22,8 @@ use crate::pane::{self, PaneSide};
 use crate::statusbar;
 use crate::tab::{CanvasChrome, Tab};
 
+use super::indicator_manager::IndicatorState;
+use super::replay_and_history::AlertState;
 use super::{QuantickApp, TabSlot};
 
 /// The chart rectangle a settings dialog is previewing an unapplied draft on,
@@ -59,10 +61,12 @@ impl QuantickApp {
     /// what was painted — the only honest way to assert that a chart is on
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
-        if let Some(last) = self.last_frame {
-            self.frames.record((now - last).as_secs_f32() * 1000.0);
+        if let Some(last) = self.health.last_frame {
+            self.health
+                .frames
+                .record((now - last).as_secs_f32() * 1000.0);
         }
-        self.last_frame = Some(now);
+        self.health.last_frame = Some(now);
 
         self.drain_tabs();
         // A "load older" outcome is a passing remark: it leaves after
@@ -78,9 +82,9 @@ impl QuantickApp {
         // it looked, drawing one frame with an empty lane before the next
         // raise. A shutter timed on the linger catches exactly that frame.
         self.apply_history_note_hook();
-        if self.pending_control_access_enable {
-            self.pending_control_access_enable = false;
-            if let Some(access) = self.control_access.as_mut() {
+        if self.control.pending_control_access_enable {
+            self.control.pending_control_access_enable = false;
+            if let Some(access) = self.control.control_access.as_mut() {
                 access.enable(ctx);
             }
         }
@@ -88,11 +92,11 @@ impl QuantickApp {
         // re-injects its actions at their logical time, connected or not.
         // Before the hook's mark, so a loaded sidecar has seeded the trace
         // sequence the mark will take.
-        if let Some(mut access) = self.control_access.take() {
+        if let Some(mut access) = self.control.control_access.take() {
             access.service_replay_trace(self);
-            self.control_access = Some(access);
+            self.control.control_access = Some(access);
         }
-        if let Some(note) = self.pending_control_mark.take() {
+        if let Some(note) = self.control.pending_control_mark.take() {
             let note = (!note.is_empty()).then_some(note);
             self.take_mark(note);
         }
@@ -103,13 +107,14 @@ impl QuantickApp {
         // run is actually asking about.
         self.apply_control_evidence_hook(ctx);
         if self
+            .control
             .control_access
             .as_ref()
             .is_some_and(crate::control::ControlAccess::needs_frame_service)
-            && let Some(mut access) = self.control_access.take()
+            && let Some(mut access) = self.control.control_access.take()
         {
             access.begin_frame(self, ctx);
-            self.control_access = Some(access);
+            self.control.control_access = Some(access);
         }
         self.apply_scripted_view();
         self.apply_drawing_demo();
@@ -136,7 +141,7 @@ impl QuantickApp {
         // transport directly above it, then the edge-docked drawing rail and
         // the right dock. The chart keeps whatever remains.
         self.draw_menu_bar(ctx);
-        if let Some(access) = self.control_access.as_mut() {
+        if let Some(access) = self.control.control_access.as_mut() {
             access.draw_panel(ctx);
         }
         self.draw_toolbar(ctx);
@@ -217,17 +222,21 @@ impl QuantickApp {
         // working — a surface cannot be handed the trunk it is being kept
         // out of.
         let Self {
+            indicators:
+                IndicatorState {
+                    indicator_settings,
+                    indicator_settings_target,
+                    ..
+                },
+            alerts: AlertState { alert_failure, .. },
             surfaces: registry,
             workspace,
             style,
             footprint_config,
             tabs,
             active_tab,
-            indicator_settings,
-            indicator_settings_target,
             config,
             added_symbols,
-            alert_failure,
             ..
         } = self;
         let focused_tab = &tabs[*active_tab];
@@ -275,7 +284,7 @@ impl QuantickApp {
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
         if let Some(cue) = surfaces.test_alert {
-            let outcome = self.alerts.play(&[cue]);
+            let outcome = self.alerts.alerts.play(&[cue]);
             self.report_alert_attempt(outcome);
         }
         if let Some(request) = surfaces.arm_strategy {
@@ -539,7 +548,7 @@ impl QuantickApp {
         let mut notice_action = feed_notice::NoticeAction::None;
         // Read before the canvas borrows `self`, and answered after it lets go.
         let popup_tab = self.active_tab().id;
-        let popup_open = self.feed_popup_tab == Some(popup_tab);
+        let popup_open = self.chrome.feed_popup_tab == Some(popup_tab);
         let mut chip_clicked = false;
         let mut dismissed = false;
         // Where the corner landed, and so whether there was one at all. A feed
@@ -717,8 +726,8 @@ impl QuantickApp {
                 let _ = tab.reload_feed(config);
             }
         }
-        self.feed_chip_rect = chip_rect;
-        self.feed_popup_tab = feed_notice::popup_still_open(
+        self.chrome.feed_chip_rect = chip_rect;
+        self.chrome.feed_popup_tab = feed_notice::popup_still_open(
             popup_open,
             chip_clicked,
             chip_rect.is_some(),

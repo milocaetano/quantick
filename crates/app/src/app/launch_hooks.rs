@@ -79,7 +79,7 @@ impl QuantickApp {
         // human, the hook and any later operator. Enabling publishes a real
         // descriptor in the private runtime directory, removed on a clean exit.
         if std::env::var("QUANTICK_CONTROL_PANEL").is_ok_and(|value| value == "1")
-            && let Some(access) = self.control_access.as_mut()
+            && let Some(access) = self.control.control_access.as_mut()
         {
             access.open_panel();
         }
@@ -89,7 +89,7 @@ impl QuantickApp {
         // comma-separated list of registered permission IDs is honoured, so a
         // scripted run can reproduce exactly the grant a trader would tick.
         if let Ok(scopes) = std::env::var("QUANTICK_CONTROL_SCOPES")
-            && let Some(access) = self.control_access.as_mut()
+            && let Some(access) = self.control.control_access.as_mut()
             && let Err(error) = access.configure_scopes(&scopes)
         {
             {
@@ -101,11 +101,11 @@ impl QuantickApp {
                 );
             }
         }
-        self.pending_control_access_enable =
+        self.control.pending_control_access_enable =
             std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
         // A mark from a launch: `1` marks with no note, anything else is the
         // note. It goes through the same action the hotkey calls.
-        self.pending_control_mark = std::env::var("QUANTICK_CONTROL_MARK")
+        self.control.pending_control_mark = std::env::var("QUANTICK_CONTROL_MARK")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .map(|value| if value == "1" { String::new() } else { value });
@@ -115,13 +115,13 @@ impl QuantickApp {
         // One evidence bundle from a launch, through the same read a client
         // calls: the capture a validation run asserts against, and the
         // screenshot notice a capture run photographs.
-        self.pending_control_evidence = std::env::var("QUANTICK_CONTROL_EVIDENCE")
+        self.control.pending_control_evidence = std::env::var("QUANTICK_CONTROL_EVIDENCE")
             .ok()
             .filter(|value| !value.trim().is_empty());
-        self.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
+        self.control.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
             .ok()
             .filter(|value| !value.trim().is_empty());
-        self.pending_control_notification = std::env::var("QUANTICK_CONTROL_NOTIFY")
+        self.control.pending_control_notification = std::env::var("QUANTICK_CONTROL_NOTIFY")
             .ok()
             .filter(|value| !value.trim().is_empty());
     }
@@ -233,8 +233,8 @@ impl QuantickApp {
             // the workspace saved, and a capture run would photograph the off
             // state while reporting it as on.
             match value.trim() {
-                "1" => self.venue_lead_in = true,
-                "0" => self.venue_lead_in = false,
+                "1" => self.history.venue_lead_in = true,
+                "0" => self.history.venue_lead_in = false,
                 other => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -247,8 +247,8 @@ impl QuantickApp {
         }
         if let Ok(value) = std::env::var("QUANTICK_PROGRESSIVE_HISTORY") {
             match value.trim() {
-                "1" => self.progressive_history = true,
-                "0" => self.progressive_history = false,
+                "1" => self.history.progressive_history = true,
+                "0" => self.history.progressive_history = false,
                 // Nonsense is refused rather than guessed: a typo leaves the
                 // trader's own setting alone instead of silently flipping it.
                 _ => {}
@@ -472,6 +472,7 @@ impl QuantickApp {
         if let Ok(names) = std::env::var("QUANTICK_INDICATOR_SCRIPTS_AUTOSTART") {
             for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
                 match self
+                    .indicators
                     .script_library
                     .entries()
                     .iter()

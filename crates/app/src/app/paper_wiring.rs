@@ -385,7 +385,7 @@ impl QuantickApp {
         // the sink's own promise that a chart which never arms an alarm
         // never touches a device.
         if let Some(setup) = alarm {
-            self.alerts.warm_up(setup.cue);
+            self.alerts.alerts.warm_up(setup.cue);
         }
         Ok(())
     }

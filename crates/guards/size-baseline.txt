@@ -190,9 +190,22 @@
 # options and identities, the lifecycle, the local actions, and the frame
 # service the screenshot arc is armed against. `invoke_local_action` at 164
 # lines and `service_replay_trace` are the next cut's job.
+# The 56 fields became 24: six owner structs, declared in the sidecar that
+# owns each, replacing 38 flat fields. `app.rs` falls 789 -> 625 production
+# lines, because every moved field took its doc comment with it. Nothing was
+# deleted -- the prose moved to `indicator_manager.rs`, `control_host.rs`, a
+# new `chrome.rs`, `tabs.rs`, `health.rs` and `replay_and_history.rs`, all of
+# them under the 1,500-line threshold, so none takes an entry.
+#
+# `layout_wiring.rs` is raised 1,557 -> 1,577 and `app.rs` lowered 789 -> 769
+# to pay for it, so the budget line does not move. The 20 lines are not new
+# code: `self.pending_styles` became `self.indicators.pending_styles`, and the
+# eleven longest of those reads now wrap where they used to fit. A path that
+# says which module owns a field costs a line where it crosses 100 columns --
+# the one price this regroup charges, paid by the file that shrank.
 !budget 45739
 
-crates/app/src/app.rs 789
+crates/app/src/app.rs 769
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -314,6 +327,6 @@ crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718
 crates/app/src/control/evidence.rs 1708
 crates/pine/src/eval.rs 1669
-crates/app/src/app/layout_wiring.rs 1557
+crates/app/src/app/layout_wiring.rs 1577
 crates/pine/src/compile.rs 1540
 crates/orderflow/src/config.rs 1523

@@ -21,8 +21,9 @@ plot(close)
     )
     .expect("write");
 
-    app.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+    app.indicators.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
     let index = app
+        .indicators
         .script_library
         .entries()
         .iter()
@@ -505,7 +506,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);
     app.toolrail.set_dock(ToolboxDock::Bottom);
-    app.show_perf = false;
+    app.health.show_perf = false;
 
     let workspace = app.capture_workspace();
 
@@ -849,7 +850,8 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     wait_for_queued_gateway_requests(&app, 1);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -974,7 +976,8 @@ fn gateway_request_timeout_is_structured_and_late_ui_work_is_discarded() {
 
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1096,6 +1099,7 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
 
     run_frame(&mut app, &ctx);
     let remaining = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed")
@@ -1103,6 +1107,7 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
     assert!((4..=8).contains(&remaining));
     for _ in 0..10 {
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -1114,7 +1119,8 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
         run_frame(&mut app, &ctx);
     }
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1335,7 +1341,8 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
     run_frame(&mut app, &ctx);
 
     let read = |app: &QuantickApp| {
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -1422,7 +1429,8 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
 
     // The whole journal is held to the wire's rule: presence, never text.
     let encoded = serde_json::to_string(
-        &app.control_access
+        &app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -1945,7 +1953,8 @@ fn gateway_refuses_a_request_before_the_handshake_and_closes() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1967,13 +1976,15 @@ fn gateway_exit_shutdown_removes_discovery() {
     let descriptor: quantick_control::descriptor::InstanceDescriptor =
         serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
 
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .shutdown_for_exit();
     assert!(!descriptor_path.exists(), "exit removes discovery");
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .is_disabled_for_test()
@@ -2000,6 +2011,7 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     for _ in 0..400 {
         run_frame(&mut app, &ctx);
         ids = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2011,13 +2023,15 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     }
     assert_eq!(ids.len(), 1, "the connected client is listed");
 
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .revoke(ids[0].clone());
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .connection_ids_for_test()
@@ -2107,6 +2121,7 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     for iteration in 0..400 {
         run_frame(&mut app, &ctx);
         let queued = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2282,7 +2297,8 @@ fn gateway_wait_for_change_sees_a_human_mark_and_does_not_delay_a_concurrent_rea
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(50));
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -2589,8 +2605,8 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.pending_control_annotation = Some("this absorption".to_owned());
-    app.pending_control_notification = Some("popup:look at 108k".to_owned());
+    app.control.pending_control_annotation = Some("this absorption".to_owned());
+    app.control.pending_control_notification = Some("popup:look at 108k".to_owned());
     run_frame(&mut app, &ctx);
 
     let items = app.active_tab().drawing_pane().drawings.items();
@@ -3342,6 +3358,7 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
         run_frame(&mut app, &ctx);
     }
     let replayed = app
+        .control
         .control_access
         .as_ref()
         .unwrap()
@@ -4259,7 +4276,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     // And the trader's own words in the *journal*, through the hotkey's
     // own action — the page a bundle embeds carries these verbatim, so
     // this is the leak the drawing canary above cannot find.
-    app.pending_control_mark = Some(MARK_CANARY.to_owned());
+    app.control.pending_control_mark = Some(MARK_CANARY.to_owned());
     run_frame(&mut app, &ctx);
 
     let directory = gateway_test_directory("evidence-redaction");
@@ -4389,11 +4406,12 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
-    app.pending_control_evidence = Some("all".to_owned());
+    app.control.pending_control_evidence = Some("all".to_owned());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .retained_evidence_for_test(),
@@ -4401,13 +4419,14 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
         "the hook captured one bundle without a client on the socket"
     );
     assert!(
-        app.pending_control_evidence.is_none(),
+        app.control.pending_control_evidence.is_none(),
         "and it fires once, not on every frame"
     );
 
     // Readable back the same way: the store is one store, and the read is
     // the same registered capability a client would invoke.
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
@@ -4432,7 +4451,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
             serde_json::json!({ "evidence_id": captured["evidence_id"] }),
         )
         .expect("what was captured is readable");
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     assert_eq!(page["content_digest"], captured["content_digest"]);
     assert_eq!(page["page"]["has_more"], false);
 }
@@ -4466,6 +4485,7 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
     for _ in 0..PARK_WAIT_FRAMES {
         run_frame(&mut app, &ctx);
         waited = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -4477,11 +4497,12 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
     assert_eq!(waited, 1, "the capture parked instead of answering blind");
 
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
     access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     for _ in 0..REPLY_WAIT_FRAMES {
         run_frame(&mut app, &ctx);
         if client.reply_pending(std::time::Duration::from_millis(5)) {
@@ -4496,7 +4517,8 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
         "the image that arrived belongs to the capture that waited for it"
     );
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .awaiting_screenshot_for_test(),
@@ -4593,6 +4615,7 @@ fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
     let limit = 4_usize;
     {
         let access = app
+            .control
             .control_access
             .as_mut()
             .expect("control access is installed");
@@ -4604,6 +4627,7 @@ fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
         }
     }
     let newest = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed")
@@ -4665,6 +4689,7 @@ fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
         run_frame(&mut app, &ctx);
     }
     let access = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed");

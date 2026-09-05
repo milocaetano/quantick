@@ -3472,16 +3472,19 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.apply_toolbar_action(ToolbarAction::OpenIndicatorSettings(slot.0));
-    assert!(app.indicator_settings.is_some(), "the dialog opened");
+    assert!(
+        app.indicators.indicator_settings.is_some(),
+        "the dialog opened"
+    );
 
-    if let Some(dialog) = app.indicator_settings.as_mut()
+    if let Some(dialog) = app.indicators.indicator_settings.as_mut()
         && let Some(quantick_indicators::InputValue::Int(len)) = dialog.draft.first_mut()
     {
         *len = 21;
     }
     app.apply_indicator_settings_draft();
     assert!(
-        app.indicator_settings.is_some(),
+        app.indicators.indicator_settings.is_some(),
         "Apply keeps the dialog open for the next nudge"
     );
     settle_indicators(&mut app);
@@ -3781,7 +3784,8 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     );
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
     assert!(
-        app.slot_kinds
+        app.indicators
+            .slot_kinds
             .iter()
             .filter(|(owner, _)| owner.tab == tab_id && owner.side == PaneSide::Time(1))
             .count()
@@ -3950,7 +3954,7 @@ fn withdrawing_the_reach_calls_off_a_run_in_flight() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -3958,7 +3962,7 @@ fn withdrawing_the_reach_calls_off_a_run_in_flight() {
     assert!(app.active_tab().history_reach_running());
 
     // The trader changes their mind and picks "one page" again.
-    app.history_reach = history_reach::HistoryReach::Page;
+    app.history.history_reach = history_reach::HistoryReach::Page;
     app.drain_tabs();
     events
         .try_send(FeedEvent::HistoryPrepended(
@@ -4184,6 +4188,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
         "the mark was recorded beside the recording"
     );
     let first_events = app
+        .control
         .control_access
         .as_ref()
         .unwrap()
@@ -4209,6 +4214,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     let replayed_events = app
+        .control
         .control_access
         .as_ref()
         .unwrap()
@@ -4242,7 +4248,8 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
 
     // Switching away and back neither repeats nor skips the injection.
     let replayed_marks = |app: &QuantickApp| {
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -4346,7 +4353,8 @@ fn a_replayed_mark_without_its_target_is_refused_and_an_unknown_version_is_named
         .unwrap_err();
     assert_eq!(unknown.code.as_str(), codes::CAPABILITY_UNKNOWN);
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -4361,7 +4369,8 @@ fn a_replayed_mark_without_its_target_is_refused_and_an_unknown_version_is_named
     // the trader's own, which is the one claim the annotate tier cannot
     // get wrong.
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .unwrap()
             .recorded_author()

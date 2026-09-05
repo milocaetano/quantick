@@ -1119,7 +1119,7 @@ fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
     app.drain_tabs();
 
     // Forget the answer and ask again with the switch off.
-    app.progressive_history = false;
+    app.history.progressive_history = false;
     app.active_tab_mut().forget_ohlcv_generation_for_test();
     app.drain_tabs();
     assert_eq!(
@@ -1381,7 +1381,7 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     // And with the lead-in on, it reaches the chart cut by trades too —
     // the whole point of a run-up during a replay, where there are no
     // older *trades* to page: the tape in the file is the whole day.
-    app.venue_lead_in = true;
+    app.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().flow_pane.seam_slot(),
@@ -1428,7 +1428,7 @@ fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1489,7 +1489,7 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1572,7 +1572,7 @@ fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1610,7 +1610,7 @@ fn a_run_that_meets_its_reach_says_nothing() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1738,7 +1738,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         .unwrap();
     app.drain_tabs();
     run_frame(&mut app, &ctx);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     drain_load_older(&mut cmd_rx);
 

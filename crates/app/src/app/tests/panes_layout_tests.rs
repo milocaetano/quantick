@@ -1931,7 +1931,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         "and the flow pane still shows layout 1's EMA"
     );
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         1,
         "the time pane's registration went with the layout it left, and              only the flow pane's is left"
     );
@@ -1959,7 +1959,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     );
     assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         2,
         "one registration per pane, and no leak from the switch"
     );
@@ -2000,7 +2000,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     // count but shifts every later edit's layout index by one, so a
     // mirrored remove would take the wrong indicator on the other panes.
     assert_eq!(
-            app.slot_kinds
+            app.indicators.slot_kinds
                 .iter()
                 .filter(|(owner, _)| owner.tab == app.active_tab().id
                     && owner.side == PaneSide::Time(0))
@@ -2125,7 +2125,11 @@ fn a_previewed_input_never_reaches_the_layout() {
         slot,
     };
     app.open_indicator_settings_at(target);
-    app.indicator_settings.as_mut().expect("dialog").draft = vec![
+    app.indicators
+        .indicator_settings
+        .as_mut()
+        .expect("dialog")
+        .draft = vec![
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
     ];
@@ -2151,8 +2155,8 @@ fn deleting_a_layout_waits_for_the_confirmation() {
     let second = app.create_layout(Some("levels")).expect("second");
     app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
     assert_eq!(app.layouts().layouts().len(), 2, "nothing is deleted yet");
-    assert_eq!(app.layout_delete_confirm, Some(second));
-    app.layout_delete_confirm = None;
+    assert_eq!(app.chrome.layout_delete_confirm, Some(second));
+    app.chrome.layout_delete_confirm = None;
     assert_eq!(app.layouts().layouts().len(), 2, "cancelling keeps it");
 
     app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
@@ -2163,7 +2167,7 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         second,
         "and the neighbour is active"
     );
-    assert!(app.layout_delete_confirm.is_none());
+    assert!(app.chrome.layout_delete_confirm.is_none());
 }
 
 /// Going back to Single hides the context chart; it must not throw away
@@ -2592,7 +2596,7 @@ fn the_reach_is_a_standing_choice_mirrored_onto_every_tab() {
         history_reach::HistoryReach::Page,
         "the press the button has always had is what a chart opens on"
     );
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().history_reach,
@@ -2804,7 +2808,7 @@ fn a_background_tab_keeps_ingesting() {
         "a tab off screen still takes in what its feed sent"
     );
     assert_eq!(
-        app.trades_since_summary, 5,
+        app.health.trades_since_summary, 5,
         "and the window counts them as its own ingest"
     );
 }
@@ -2821,14 +2825,22 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     // Register a slot on the tab about to close, so the bookkeeping has
     // something to lose with it.
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
-    assert!(app.slot_kinds.iter().any(|(owner, _)| owner.tab == second));
+    assert!(
+        app.indicators
+            .slot_kinds
+            .iter()
+            .any(|(owner, _)| owner.tab == second)
+    );
 
     app.apply_tab_action(TabAction::Close(1));
 
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.active_tab().id, first, "a neighbour takes over");
     assert!(
-        !app.slot_kinds.iter().any(|(owner, _)| owner.tab == second),
+        !app.indicators
+            .slot_kinds
+            .iter()
+            .any(|(owner, _)| owner.tab == second),
         "its indicator bookkeeping went with it"
     );
     // The last tab stays: a window with no market has nothing to draw.
