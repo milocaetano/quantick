@@ -66,6 +66,11 @@ because no behaviour is designed here — every body moves unchanged.
   limits, scopes, the handshake, the rate limiter or a response's bytes" is
   forbidden; `crates/app/src/control/contract.rs` and the bridge tests must not
   change.
+- **R21** — Out of scope, second entry: do not move the gateway to
+  `quantick-control` — "it drives egui and a thread".
+- **R22** — Out of scope, third entry: leave `invoke_local_action` (164 lines)
+  and `service_replay_trace` where they are — "the host's own, and the next
+  shape question, not this move".
 - **R19** — "Every claim was measured against `origin/main` at `cc4c92f`… each
   carries its `file:line` so the mission re-checks it instead of trusting it."
   Verify evidence-ledger claims #1–#12 before acting; report every correction.
@@ -173,6 +178,13 @@ over; the live doubts are recorded as `S1`–`S4` below.
       stated. No new prose.
       *Evidence:* `grep -rn 'gateway\.rs' docs .claude/skills AGENTS.md` with
       each hit classified. → PR body. *(R10, S2)*
+- [ ] **A16** — Neither out-of-scope move happened: nothing left `crates/app`
+      for `quantick-control`, and `invoke_local_action` and
+      `service_replay_trace` are still in `gateway.rs`, in no sidecar.
+      *Evidence:* `git diff --name-only origin/main...HEAD` touching only
+      `crates/app`, `crates/guards` and `docs/evidence`; `grep -n` finding both
+      functions in the host and `grep -rn` finding neither under `gateway/`.
+      → PR body. *(R21, R22)*
 - [ ] **A15** — The split lands on the thread boundary, not on line count: an
       auditor reading `server.rs` sees the whole wire path and nothing of the
       UI's grants, and reading `gateway.rs` sees the grants and no socket loop.
@@ -241,6 +253,7 @@ Recorded at commit `0b09b86`, branched from `origin/main` at `62c8730`.
 | **A11** tests | `control` 148 before / 148 after; `gateway` 36 / 36; app suite 1,899 passed both on the branch and on `origin/main`. No generated file in the diff |
 | **A12** contract | `git diff --stat origin/main` names neither `contract.rs` nor any bridge test |
 | **A14** docs | every `gateway.rs` reference is archival -- see the corrections below |
+| **A16** out-of-scope moves | `git diff --name-only` touches only `crates/app`, `crates/guards`, `docs/evidence` and the archive -- `crates/control` untouched; `service_replay_trace` at `gateway.rs:678` and `invoke_local_action` at `:835`, and `grep -rn` finds neither under `gateway/` |
 | **G2** four checks | `fmt` 0, `clippy --workspace --all-targets` 0, `build --workspace` 0, `test --workspace` 0 (each run on its own) |
 | **G5** guards / hooks | `cargo test -p quantick-guards` green; `guardrails_test.sh` 111 passed, 0 failed |
 
