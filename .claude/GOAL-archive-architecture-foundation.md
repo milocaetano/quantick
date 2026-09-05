@@ -26,12 +26,17 @@ Issue: https://github.com/milocaetano/quantick/issues/314
 - R12: Prepare eventual strategy and voice actions without widening current authority.
 - R13: Preserve deterministic processing and one engine across consumers.
 - R14: Check access to the supplied workspace reference and report the result.
+- R15: Keep this published delivery entirely in English, including the request record.
+- R16: Verify which Claude skills were used and whether a new import was performed.
 
 ## Decisions taken by the trader
 
 - D1: Architecture preparation takes precedence over feature implementation.
 - D2: The assistant coordinates agents and execution.
 - D3: Chrome-like workspaces are a future behavior reference, not this milestone's UI.
+- D4: The trader objected to the untranslated request in the PR. Use an explicitly
+  labeled English translation instead of the original-language quotation. This
+  user instruction overrides the mission skill's verbatim-in-repository convention.
 
 ## Assumptions
 
@@ -64,7 +69,13 @@ Issue: https://github.com/milocaetano/quantick/issues/314
 - [x] **A6**: Runtime files, schemas and dependency graph remain unchanged in this
   first milestone; future implementations are explicitly not marked delivered.
   *Evidence:* diff boundary and retained fixtures -> `docs/architecture/baseline.md`. (R1, R5, R13)
-- [x] **G1**: All authored repository prose is English except attributed quotations.
+- [x] **A7**: Published prose, including the request record and PR/issue metadata,
+  is English; the translation is labeled and preserves the original scope.
+  *Evidence:* language correction -> `docs/architecture/baseline.md`. (R15)
+- [x] **A8**: Skill provenance distinguishes the existing canonical workflow
+  adapters from a new skill import.
+  *Evidence:* workflow mapping -> `docs/architecture/baseline.md`. (R16)
+- [x] **G1**: All authored prose in this delivery is English, including its request record.
   *Evidence:* guards and manual review -> `docs/architecture/baseline.md`.
 - [x] **G2**: fmt, clippy, build and workspace tests pass before commit.
   *Evidence:* recorded command results -> `docs/architecture/baseline.md`.
@@ -84,41 +95,78 @@ review still apply. Future task specifications name their applicable runtime gat
 - C1: Archive this mission and run independent full delivery review on the final diff.
 - C2: Open the PR with review/verification evidence and observe green CI. Do not merge.
 
-## Request as received
+## Request record - English translation
 
-Attributed quotation from the trader (Portuguese; clarification and authorization
-for this architecture-first milestone, verbatim):
+The trader requested an English-only delivery after seeing the original-language
+transcript in this archive. The text below is an English translation, not a
+verbatim quotation. The original remains in the conversation and outside the
+repository in the review dossier. Reviewers compare that source with this
+translation rather than treating translated text as the trader's exact words.
+Product-name transcription variants are normalized to Quantick. Unclear speech
+fragments remain marked; they do not authorize invented functionality.
 
-> o plano eh primeiro preparar a arquitetura
->
-> Pode começar a preparação da arquitetura e coordenar os agentes.
->
-> https://claude.ai/code/artifact/17195533-7538-456c-8808-759c5289d451
->
-> consegue acessar esse link?
->
-> o objetivo do workspace como chrome seria comoe sse aqui
->
-> igual ao chorme Sangria
->
-> mas primeiro a gnt focar em pareparar a  arquitetarua
+### Clarifications and authorization
 
-The earlier product request, quoted verbatim for traceability:
+- The plan is to prepare the architecture first.
+- You may start preparing the architecture and coordinate the agents.
+- Reference: https://claude.ai/code/artifact/17195533-7538-456c-8808-759c5289d451
+- Can you access this link?
+- The objective for Chrome-like workspaces would be like this reference.
+- Like Chrome [unclear trailing word in the transcript].
+- First, let us focus on preparing the architecture.
+- This started badly because there is Portuguese text there. Did you not import
+  the Claude skills?
 
-> Bom, eu vou falar o meu plano e aí a gente precisa planejar e preparar a arquitetura do Quantic para que o código tenha um kernel, um core pronto para atingir esses meus objetivos.
-> 1. Eu quero que o Antique seja extensivo, ou seja, que permita a criação de plugins e de templates. Se eu quero temas diferentes nesses templates, vai alterar a cor dos principais indicadores, das barras de ferramenta e dos acórdãos que são default do sistema. Hoje temos:
-> - um acórdão de uma linha horizontal default
-> - o acordo da meta mobile
-> - as cores dos desenhos do volume profile
-> - a cor dos candles
-> - a cor do future print
-> - chart
-> - a cor da janela
-> - talvez a fonte da janela, a fonte que está exibida na janela
-> - o tamanho
-> Tudo isso é meio que hard-coded como default. Quero que seja extensível o suficiente para eu instalar templates, para a própria comunidade criar seus próprios templates, para que tenham temas diferentes, parecidos com o Chrome hoje.
-> 2. Eu pretendo colocar dentro desse conceito de plugin, como a gente é um projeto open source. Quero criar um plugin oficial em que eu vou vender serviço, talvez utilizando o Hermes ou alguma coisa desse tipo, para que esse agente de IA conecte com o MCP da plataforma e consiga fazer tudo que o usuário faz. Ele pode analisar o mercado, colocar uma linha, colocar um indicador, criar um indicador no momento em que o cara pedir. A gente usa meio que um conceito de pineScript então a gente poderia criar um indicador on the fly, durante a execução, para que ele veja já o resultado daquele indicador e salve esse indicador. Também, caso ele queira, deixar o Jassal. A gente não tem estratégias ainda mas possivelmente criar estratégias bem parecidas, utilizando o comando de voz. Aí ele consegue ver a estratégia acontecendo, consegue comprar com comando de voz, vender com comando de voz, colocar ordem de stop, pedir para a gente tração, volume profile, enfim tudo via comando de voz. Ele pode simplesmente pedir para colocar um alarme, setar uma estratégia, enfim praticamente tudo que o usuário pode fazer com o mouse e com o teclado, essa a gente pode fazer e eu quero que o quantity seja escalável.
-> 3. A gente vai adicionar funcionalidades novas. No caso eu estou pensando em fazer abas de workspace, como do Chrome, colocar um sistema mais amplo onde eu posso destacar a aba e jogar numa outra tela, como se fosse subdividir o contíguo em dois, igual o Chrome faz quando eu pego uma aba e tiro, ela destaco essa aba do Chrome. Eu consigo ver dois Chrome's. Eu vou chamar isso de workspace.
-> 4. A gente tem que preparar a arquitetura que a gente tem hoje para que ele possa crescer de uma maneira escalável e manter a sua alta performance que a gente tem hoje.
-> 5. Eu quero que a gente traça, dado esse objetivo do que eu quero, onde eu quero chegar, com Camilo. Eu quero que você traça um plano para a gente preparar as tarefas ou não sei, até quando você pode fazer multi-tarefas. Eu não entendo muito bem mas eu quero que você traça um plano para a gente chegar a esse objetivo.
-> 6. Ja comecei uma refatoração pesada no quanti. Você pode olhar aí: a gente está refatorando, está separando o código. Eu quero que o chique seja muito bem avaliado por agentes de IA que olham o quantico e falam: “Essa arquitetura do quantico é feita por um engenheiro sênior de IA.” Esse é o objetivo então quero que você traça, para a gente chegar até esse objetivo, o passo a passo: define que é prioridade, a gente vai atacar essas etapas.
+### Earlier product request
+
+I will explain my plan, and then we need to plan and prepare Quantick's
+architecture so that its kernel or core can support these objectives.
+
+1. I want Quantick to be extensible and allow plugins and templates. Different
+   themes in these templates should change the colors of the main indicators,
+   toolbars and built-in elements [the transcript's term for these is unclear].
+   Today this includes:
+   - The default horizontal-line element.
+   - A default element associated with a moving average [transcription unclear].
+   - Volume-profile drawing colors.
+   - Candle colors.
+   - The color of "future print" [possibly footprint; wording unclear].
+   - The chart.
+   - Window color.
+   - Possibly the window font and the font displayed in the window.
+   - Size.
+   These defaults are largely hardcoded. I want sufficient extensibility to
+   install templates and let the community create templates with different
+   themes, similar to Chrome today.
+
+2. Since this is an open-source project, I want an official plugin through which
+   I can sell a service, perhaps using Hermes or something similar. Its AI agent
+   should connect to the platform's MCP and eventually do everything the user can
+   do: analyze the market, place a line, add an indicator, or create one when
+   asked. With our PineScript-like concept, it could create an indicator on the
+   fly, display its result during execution and save it. The transcript then
+   includes an unclear request involving "Jassal"; its meaning is unresolved.
+   I believe we do not yet have strategies, but possibly we could create similar
+   strategies through voice commands. The user could see the strategy running,
+   buy or sell by voice, place a stop order, request an unclear operation and a
+   volume profile, all by voice. The user could set an alarm or a strategy:
+   essentially everything available through mouse and keyboard. I want Quantick
+   to scale. [The architecture audit separately corrects the assumption about
+   existing strategy support; this translation preserves the original request.]
+
+3. We will add new features. I am considering workspace tabs like Chrome, with
+   a broader system in which a tab can be detached and moved to another screen,
+   effectively splitting Quantick into two windows, as when a Chrome tab is
+   dragged out into another window. I would call this a workspace.
+
+4. Prepare the existing architecture so Quantick can grow while maintaining its
+   current high performance.
+
+5. Given these objectives and where I want to go, with Camilo, define a plan and
+   prepare tasks. I do not fully understand how far multitasking can go, but I
+   want a plan to reach the objective.
+
+6. I have already started substantial refactoring and code separation in
+   Quantick. Inspect that work. I want AI reviewers to assess the architecture
+   and recognize senior AI engineering quality. Define the steps and priorities
+   we should tackle to reach that objective.

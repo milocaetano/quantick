@@ -137,8 +137,9 @@ Commands run sequentially on this branch:
 | `cargo test --workspace` | Exit 0; summed Rust results: 3,439 passed, 0 failed, 12 ignored |
 
 The workspace suite includes the repository guards (including headless, language,
-encoding and ratchets). Authored prose was also read manually; the mission's
-Portuguese request is an attributed quotation. Local Markdown link targets and
+encoding and ratchets). Authored prose was also read manually. At the trader's
+request, the mission now contains a labeled English translation, with the original
+retained outside the repository for source comparison. Local Markdown link targets and
 `git diff --check` were checked successfully. No Rust or test implementation
 changed, so the docs edit does not require new implementation-mirroring tests.
 
@@ -158,3 +159,20 @@ Independent final review verdicts and CI are recorded in the PR body after the
 final commit, so this file does not claim a review of a commit that does not yet
 exist. Issue #314 was created; the Projects update failed because the installed
 token lacks `read:project`. The issue and PR are usable without that board update.
+
+## English-only correction
+
+The original delivery included an attributed original-language transcript in the
+mission archive. The mission skill asks for verbatim requests and `CLAUDE.md`
+permits attributed quotations, which explains why the original language review
+passed. The trader's subsequent instruction takes precedence: this delivery now
+uses an explicitly labeled English translation rather than that exception.
+R15/A7 record the correction. The source request remains in the conversation and
+the external review dossier; translating it does not change the task scope.
+
+The existing Codex wrappers under `.agents/skills/` point to the canonical
+workflows under `.claude/skills/`, using `.agents/references/codex-compatibility.md`.
+Those workflows were used; no new skill import was needed for this correction.
+Final command logs and source/translation review evidence are recorded in the
+session dossier `%TEMP%/quantick-architecture-english-correction/` and summarized
+in the updated PR. Current PR/issue prose is reviewed alongside the changed files.
