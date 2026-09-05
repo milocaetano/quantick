@@ -39,7 +39,7 @@ impl QuantickApp {
         let (tabs, chrome) = self.capture_arrangement();
         ui_state::Workspace::new(
             self.workspace.session().save_on_exit(),
-            self.window_size,
+            self.chrome.window_size,
             self.active_tab,
             tabs,
             Some(chrome),
@@ -96,8 +96,8 @@ impl QuantickApp {
             .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
         self.toolrail.set_dock(chrome.rail_dock.into());
         self.toolrail.set_visible(chrome.rail_visible);
-        self.show_perf = chrome.perf_readings;
-        self.progressive_history = chrome.progressive_history;
+        self.health.show_perf = chrome.perf_readings;
+        self.history.progressive_history = chrome.progressive_history;
         // A token this release does not know keeps the reach it had — the
         // default on startup, whatever the trader picked when a bookmark is
         // opened mid-session. Never a silent fallback to something else: the
@@ -107,14 +107,14 @@ impl QuantickApp {
             .as_deref()
             .and_then(history_reach::HistoryReach::from_token)
         {
-            self.history_reach = reach;
+            self.history.history_reach = reach;
         }
         // Through the setter, so a hand-edited workspace cannot restore a span
         // the campaign could never reach.
         if let Some(minutes) = chrome.history_reach_span_minutes {
             self.set_history_reach_span_minutes(minutes);
         }
-        self.venue_lead_in = chrome.venue_lead_in;
+        self.history.venue_lead_in = chrome.venue_lead_in;
         self.surfaces
             .drawing_chrome
             .restore_inspector_position(chrome.inspector_position);
@@ -168,23 +168,23 @@ impl QuantickApp {
             dock_tab: self.dock.tab().map(Into::into),
             rail_visible: self.toolrail.visible(),
             rail_dock: self.toolrail.dock().into(),
-            perf_readings: self.show_perf,
+            perf_readings: self.health.show_perf,
             // Never written any more: the stars are a standing choice and live
             // at the top of the file. An arrangement that carried a copy would
             // be an arrangement that could overwrite them on open.
             legacy_favorite_tools: Vec::new(),
-            progressive_history: self.progressive_history,
+            progressive_history: self.history.progressive_history,
             // The default writes no key: a workspace that says nothing about
             // the reach restores the press the button has always had, which is
             // exactly what the default is.
             // Written whenever it differs from what the config seeds, so a
             // workspace only carries an opinion its owner actually formed.
-            history_reach_span_minutes: (self.history_reach_span_minutes
+            history_reach_span_minutes: (self.history.history_reach_span_minutes
                 != self.config.history.reach_span_minutes)
-                .then_some(self.history_reach_span_minutes),
-            history_reach: (self.history_reach != history_reach::HistoryReach::default())
-                .then(|| self.history_reach.token().to_owned()),
-            venue_lead_in: self.venue_lead_in,
+                .then_some(self.history.history_reach_span_minutes),
+            history_reach: (self.history.history_reach != history_reach::HistoryReach::default())
+                .then(|| self.history.history_reach.token().to_owned()),
+            venue_lead_in: self.history.venue_lead_in,
             inspector_position: self.surfaces.drawing_chrome.remembered_inspector_position(),
         };
         (tabs, chrome)
@@ -430,7 +430,7 @@ impl QuantickApp {
         self.footprint_config =
             crate::footprint_config::load(self.workspace.footprint_settings_path());
         self.surfaces.footprint_settings.reload_presets();
-        self.indicator_presets =
+        self.indicators.indicator_presets =
             preset_file::PresetStore::load(self.workspace.indicator_presets_path());
 
         // The tab strip first, and *before* the indicators: the restore adds
@@ -488,11 +488,11 @@ impl QuantickApp {
                 strip(pane);
             }
         }
-        self.slot_kinds.clear();
-        self.operator_slots.clear();
-        self.script_files.clear();
-        self.pending_hidden.clear();
-        self.pending_styles.clear();
+        self.indicators.slot_kinds.clear();
+        self.indicators.operator_slots.clear();
+        self.indicators.script_files.clear();
+        self.indicators.pending_hidden.clear();
+        self.indicators.pending_styles.clear();
         self.mark_indicator_state_dirty();
     }
 
@@ -780,7 +780,7 @@ impl QuantickApp {
         let (tabs, chrome) = self.capture_arrangement();
         let entry = ui_state::NamedArrangement {
             name: name.clone(),
-            window: self.window_size,
+            window: self.chrome.window_size,
             active_tab: self.active_tab,
             tabs,
             chrome: Some(chrome),
@@ -1084,7 +1084,7 @@ impl QuantickApp {
             && size[0] > 0.0
             && size[1] > 0.0
         {
-            self.window_size = Some(size);
+            self.chrome.window_size = Some(size);
         }
         // Where the trader parks the properties popup is kept the moment the
         // hand comes off it, without a trip through the Workspace menu: the
@@ -1104,9 +1104,9 @@ impl QuantickApp {
         // window, this position included, so running both would serialise the
         // same file twice on the way out.
         if closing && self.workspace.session().save_on_exit() {
-            self.inspector_position_dirty = false;
+            self.chrome.inspector_position_dirty = false;
             self.save_workspace("exit");
-        } else if std::mem::take(&mut self.inspector_position_dirty)
+        } else if std::mem::take(&mut self.chrome.inspector_position_dirty)
             && self.workspace.session().save_on_exit()
         {
             self.write_inspector_position();

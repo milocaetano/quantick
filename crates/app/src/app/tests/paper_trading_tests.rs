@@ -508,7 +508,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     let recorder = crate::audio::RecordingAlerts::default();
-    app.alerts = Box::new(recorder.clone());
+    app.audio.alerts = Box::new(recorder.clone());
 
     let rectangle = drawings::DRAWING_TOOLS
         .into_iter()
@@ -2006,7 +2006,7 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         4,
         "two indicators, mirrored onto two panes"
     );
@@ -2025,7 +2025,7 @@ fn removing_a_slot_on_one_pane_removes_its_layout_position_everywhere() {
     app.apply_toolbar_action(ToolbarAction::RemoveIndicator(time_cvd.0));
 
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         2,
         "one registration per pane went with it"
     );
@@ -2226,7 +2226,7 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
         "and the tick chart beside it is untouched by default"
     );
 
-    app.venue_lead_in = true;
+    app.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().flow_pane.seam_slot(),
@@ -2239,7 +2239,7 @@ fn a_chart_cut_by_trades_takes_the_venue_lead_in_only_when_asked() {
         "and the time pane is unaffected by a switch that is not about it"
     );
 
-    app.venue_lead_in = false;
+    app.history.venue_lead_in = false;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().flow_pane.seam_slot(),
@@ -2467,6 +2467,7 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
     .expect("the action dispatches");
 
     let events = app
+        .control
         .control_access
         .as_ref()
         .unwrap()

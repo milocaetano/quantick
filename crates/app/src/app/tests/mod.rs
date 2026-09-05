@@ -1702,7 +1702,8 @@ fn annotator_test_options() -> quantick_control_local::client::ConnectOptions {
 /// Grant the annotate tier for the next connection through the panel's
 /// own named call — the door the checkboxes and the hook both use.
 fn grant_annotate_for_test(app: &mut QuantickApp, scopes: &str) {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .configure_scopes(scopes)
@@ -1801,7 +1802,8 @@ fn enable_test_gateway(
     directory: &std::path::Path,
     queue_capacity: usize,
 ) -> std::path::PathBuf {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .enable_for_test(ctx, directory.to_path_buf(), queue_capacity);
@@ -1816,7 +1818,8 @@ fn enable_test_gateway_with_limits(
     request_timeout: std::time::Duration,
     max_connections: usize,
 ) -> std::path::PathBuf {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .enable_for_test_with_limits(
@@ -1836,6 +1839,7 @@ fn wait_for_test_gateway_descriptor(
     for _ in 0..400 {
         run_frame(app, ctx);
         if let Some(path) = app
+            .control
             .control_access
             .as_ref()
             .and_then(crate::control::ControlAccess::descriptor_path_for_test)
@@ -1850,6 +1854,7 @@ fn wait_for_test_gateway_descriptor(
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
     for _ in 0..400 {
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -1864,13 +1869,15 @@ fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
 }
 
 fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .disable_for_test();
     for _ in 0..400 {
         run_frame(app, ctx);
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2298,7 +2305,8 @@ fn capture_with_screenshot(
     // of failing later on a confusing assertion about the manifest.
     let parked = (0..PARK_WAIT_FRAMES).any(|_| {
         run_frame(app, ctx);
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .awaiting_screenshot_for_test()
@@ -2309,11 +2317,12 @@ fn capture_with_screenshot(
         "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
     );
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
     access.publish_screenshot_for_test(app, image);
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     for _ in 0..REPLY_WAIT_FRAMES {
         run_frame(app, ctx);
         if client.reply_pending(std::time::Duration::from_millis(5)) {

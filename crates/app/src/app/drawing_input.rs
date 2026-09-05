@@ -329,7 +329,7 @@ impl QuantickApp {
             self.sync_content_editing();
         }
         if self.surfaces.drawing_chrome.take_inspector_position_dirty() {
-            self.inspector_position_dirty = true;
+            self.chrome.inspector_position_dirty = true;
         }
     }
 }

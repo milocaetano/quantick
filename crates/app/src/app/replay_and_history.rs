@@ -29,6 +29,25 @@ use super::QuantickApp;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 pub(super) const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 
+/// Where a signal alarm is played, and why the last one was not.
+///
+/// Owned by this module, which owns the alert plumbing itself. The two
+/// travel together because a sink that refused is only ever reported
+/// through the failure beside it: an alarm the trader never heard is
+/// never assumed heard.
+pub(super) struct AlertState {
+    /// Where signal alarms are played. The shipped sink is the platform's
+    /// own sounds; a test swaps in a recorder, which is how "the alarm
+    /// sounded, once, and it was the sound the preset named" is asserted
+    /// without a build machine making noise.
+    pub(super) alerts: Box<dyn crate::audio::AlertSink>,
+
+    /// The last reason a sound could not be played, shown once in the
+    /// dialog. A build with no audio backend, or a platform that refused,
+    /// is reported: an alarm the trader never heard is never assumed heard.
+    pub(super) alert_failure: Option<String>,
+}
+
 impl QuantickApp {
     /// Carry out what the replay interface asked for.
     /// Whether the action reached its destination. Only a transport control
@@ -380,7 +399,7 @@ impl QuantickApp {
         if distinct.is_empty() {
             return;
         }
-        let outcome = self.alerts.play(&distinct);
+        let outcome = self.audio.alerts.play(&distinct);
         self.report_alert_attempt(outcome);
     }
 
@@ -394,10 +413,10 @@ impl QuantickApp {
     /// one transient refusal does not leave a permanent red line behind it.
     pub(super) fn report_alert_attempt(&mut self, outcome: Result<(), &'static str>) {
         match outcome {
-            Ok(()) => self.alert_failure = None,
+            Ok(()) => self.audio.alert_failure = None,
             Err(reason) => {
-                let first = self.alert_failure.as_deref() != Some(reason);
-                self.alert_failure = Some(reason.to_owned());
+                let first = self.audio.alert_failure.as_deref() != Some(reason);
+                self.audio.alert_failure = Some(reason.to_owned());
                 if first {
                     self.show_agent_toast(format!("no alarm sound was played: {reason}"));
                 }

@@ -570,9 +570,9 @@ fn a_restored_workspace_puts_the_window_back() {
     assert_eq!(app.dock.tab(), Some(DockTab::Trades));
     assert!(!app.toolrail.visible());
     assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
-    assert!(!app.show_perf);
+    assert!(!app.health.show_perf);
     assert!(
-        !app.progressive_history,
+        !app.history.progressive_history,
         "a trader who chose the single-request fetch reopens on it"
     );
     assert!(

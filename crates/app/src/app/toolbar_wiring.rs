@@ -93,6 +93,7 @@ impl QuantickApp {
             })
             .collect();
         let scripts: Vec<String> = self
+            .indicators
             .script_library
             .entries()
             .iter()
@@ -105,9 +106,9 @@ impl QuantickApp {
         // picked "previous session" once means it in the next tab too — so it
         // is split off and written back the way the layout picker's flags are.
         let history_reach_running = self.active_tab().history_reach_running();
-        let mut history_reach = self.history_reach;
-        let mut history_reach_span_minutes = self.history_reach_span_minutes;
-        let mut history_menu_rect = self.history_menu_rect;
+        let mut history_reach = self.history.history_reach;
+        let mut history_reach_span_minutes = self.history.history_reach_span_minutes;
+        let mut history_menu_rect = self.chrome.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
         // into the *focused pane* — the pane the status bar reads and every
@@ -116,7 +117,7 @@ impl QuantickApp {
         // the Time layout the group governs the chart actually on screen.
         // Split off the picker's flags before the tab borrow: the model wants
         // both, and they live on the same struct.
-        let mut layout_picker_open = self.layout_picker_open;
+        let mut layout_picker_open = self.chrome.layout_picker_open;
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
         let layout_picker_autostart = self.harness.take_layout_picker_autostart();
@@ -174,12 +175,12 @@ impl QuantickApp {
         // The popover's own state, back where it lives. Without this the flag
         // resets every frame and the button never reads as open.
         drop(model);
-        self.layout_picker_open = layout_picker_open;
+        self.chrome.layout_picker_open = layout_picker_open;
         self.set_history_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
         self.set_history_reach_span_minutes(history_reach_span_minutes);
-        self.history_menu_rect = history_menu_rect;
+        self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status

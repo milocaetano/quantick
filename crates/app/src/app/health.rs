@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::metrics;
+use crate::metrics::FrameStats;
 use crate::statusbar;
 use crate::style::CandlePreset;
 use crate::window_scale;
@@ -20,10 +21,31 @@ use super::{QuantickApp, fmt_progress};
 /// How often the perf summary is logged (not every frame).
 const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
 
+/// What the window measures about itself between perf summaries.
+///
+/// Owned by this module, the only place the numbers are read together.
+/// `frame` records into them each pass, `menu_bar` toggles the status-bar
+/// readout and `control_host` publishes them.
+pub(super) struct HealthCounters {
+    pub(super) frames: FrameStats,
+
+    /// CPU time per frame (update + tessellation + paint, no vsync wait), from
+    /// eframe. Separates "we are slow" from "we are waiting for the display".
+    pub(super) cpu_frames: FrameStats,
+    pub(super) last_frame: Option<Instant>,
+
+    /// Live trades taken in since the last perf summary, across every tab —
+    /// what the window is ingesting, not what one market prints.
+    pub(super) trades_since_summary: u64,
+    pub(super) last_summary: Instant,
+    // Whether the status bar shows the perf readings (View → perf readings).
+    pub(super) show_perf: bool,
+}
+
 impl QuantickApp {
     /// Periodically log a perf summary and warn on threshold breaches.
     pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
-        let elapsed = now - self.last_summary;
+        let elapsed = now - self.health.last_summary;
         if elapsed < SUMMARY_INTERVAL {
             return;
         }
@@ -43,6 +65,7 @@ impl QuantickApp {
         // of it, and reaching back into the context from inside deadlocks.
         let zoom = ctx.zoom_factor();
         let client = self
+            .chrome
             .surface
             .as_ref()
             .and_then(window_scale::SurfaceProbe::client_size_px);
@@ -53,12 +76,12 @@ impl QuantickApp {
                 input.viewport().native_pixels_per_point,
             )
         });
-        let rate = self.trades_since_summary as f64 / elapsed.as_secs_f64();
+        let rate = self.health.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = self.active_tab().trade_arrival_ms();
-        let avg = self.frames.avg_ms().unwrap_or(0.0);
-        let cpu_avg = self.cpu_frames.avg_ms().unwrap_or(0.0);
-        let worst = self.frames.worst_ms().unwrap_or(0.0);
-        let fps = self.frames.fps().unwrap_or(0.0);
+        let avg = self.health.frames.avg_ms().unwrap_or(0.0);
+        let cpu_avg = self.health.cpu_frames.avg_ms().unwrap_or(0.0);
+        let worst = self.health.frames.worst_ms().unwrap_or(0.0);
+        let fps = self.health.frames.fps().unwrap_or(0.0);
         let book = self.active_tab_mut().tape_mut().health();
         let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
@@ -261,9 +284,9 @@ impl QuantickApp {
             );
         }
 
-        self.trades_since_summary = 0;
+        self.health.trades_since_summary = 0;
         self.active_tab_mut().tape_mut().reset_summary_counters();
-        self.last_summary = now;
+        self.health.last_summary = now;
     }
 
     /// Everything the status bar reports this frame.
@@ -317,10 +340,10 @@ impl QuantickApp {
             follows_live: pane.viewport.follows_live(),
             price_auto: pane.price_view.is_auto(),
             live_trades: self.active_tab().live_trades,
-            fps: self.frames.fps(),
-            frame_avg_ms: self.frames.avg_ms(),
-            frame_cpu_ms: self.cpu_frames.avg_ms(),
-            show_perf: self.show_perf,
+            fps: self.health.frames.fps(),
+            frame_avg_ms: self.health.frames.avg_ms(),
+            frame_cpu_ms: self.health.cpu_frames.avg_ms(),
+            show_perf: self.health.show_perf,
         }
     }
 }

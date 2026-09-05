@@ -80,15 +80,16 @@ impl QuantickApp {
     /// [`crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
     /// surface that never presents.
     pub(super) fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
-        if self.pending_control_evidence.is_none() {
+        if self.control.pending_control_evidence.is_none() {
             return;
         }
         // Access is taken *before* the request is, so a frame that finds it
         // borrowed leaves the hook pending rather than dropping it silently.
-        let Some(mut access) = self.control_access.take() else {
+        let Some(mut access) = self.control.control_access.take() else {
             return;
         };
         let request = self
+            .control
             .pending_control_evidence
             .take()
             .expect("the hook was pending one line above");
@@ -146,8 +147,8 @@ impl QuantickApp {
                 // repaint, the counter would never advance, and the hook would
                 // neither complete nor give up.
                 ctx.request_repaint();
-                self.pending_control_evidence = Some(request);
-                self.control_access = Some(access);
+                self.control.pending_control_evidence = Some(request);
+                self.control.control_access = Some(access);
                 return;
             }
             tracing::warn!(
@@ -168,7 +169,7 @@ impl QuantickApp {
             "evidence.capture",
             serde_json::json!({ "scopes": scopes, "screenshot": wants_screenshot }),
         );
-        self.control_access = Some(access);
+        self.control.control_access = Some(access);
         match outcome {
             Ok(manifest) => tracing::info!(
                 target: "quantick::control",

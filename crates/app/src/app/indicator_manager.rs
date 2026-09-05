@@ -18,6 +18,8 @@ use crate::indicator_legend;
 use crate::indicator_panel::{self, SettingsDialog, SettingsOutcome};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
 use crate::indicators::IndicatorView;
+use crate::indicators::library::ScriptLibrary;
+use crate::indicators::preset_file;
 use crate::indicators::state_file::{SavedInput, SavedKind};
 use crate::pane::PaneSide;
 use crate::style::CandlePreset;
@@ -26,6 +28,60 @@ use super::{QuantickApp, TabSlot};
 
 /// How often the hot-reload poll checks script files for changes.
 const SCRIPT_RELOAD_POLL_INTERVAL: Duration = Duration::from_millis(1_000);
+
+/// The indicator persistence layer: what may be loaded, what is on screen,
+/// what a layout still owes the slots it placed, and who put each there.
+///
+/// Owned by this module. `layout_wiring` places slots and drains the two
+/// `pending_*` queues, `tabs` mirrors the live set onto a new tab, and
+/// `workspace_save` persists it; nothing else names the group.
+pub(super) struct IndicatorState {
+    /// Loadable `.pine` scripts (embedded + indicators dir), scanned at
+    /// startup. A file-backed script then follows its file: `poll_script_files`
+    /// checks mtimes on a debounce and reloads on a save.
+    pub(super) script_library: ScriptLibrary,
+
+    /// The open indicator-settings dialog, if any (one at a time).
+    pub(super) indicator_settings: Option<SettingsDialog>,
+
+    /// The slot the open dialog edits. Held apart from the dialog so a tab or
+    /// pane changing under it cannot retarget its Apply.
+    pub(super) indicator_settings_target: TabSlot,
+
+    /// File-backed script slots: (slot, library index, last seen mtime) —
+    /// what the hot-reload poll walks.
+    pub(super) script_files: Vec<(TabSlot, usize, std::time::SystemTime)>,
+
+    /// How each live slot restores (the persistence identity per slot).
+    ///
+    /// Stays beside the library and the state file rather than moving into the
+    /// panes with the slots themselves: one file records what the window had
+    /// open, so one list records what is in it.
+    pub(super) slot_kinds: Vec<(TabSlot, SavedKind)>,
+
+    /// Slots placed hidden by a layout, applied when their Rebuilt lands —
+    /// the view a hide acts on is born from the worker's first answer.
+    pub(super) pending_hidden: Vec<TabSlot>,
+
+    /// Per-plot style layers placed by a layout, applied when their Rebuilt
+    /// lands — the same deferral [`Self::pending_hidden`] performs, for the
+    /// same reason.
+    pub(super) pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
+
+    /// Last hot-reload poll instant (the poll runs about once a second;
+    /// file metadata every frame would be waste).
+    pub(super) last_script_poll: Instant,
+    // Named input setups per indicator kind, offered by the settings
+    // dialog's preset picker.
+    pub(super) indicator_presets: preset_file::PresetStore,
+
+    /// The indicator slots an operator other than the trader attached — the
+    /// only ones the annotate tier may take back off the chart. Keyed by the
+    /// whole [`TabSlot`]: a slot number is allocated per pane and is reused
+    /// by every other pane, so the number alone would mark one tab's slot 0
+    /// as an operator's because another tab's slot 0 was.
+    pub(super) operator_slots: std::collections::BTreeSet<TabSlot>,
+}
 
 impl QuantickApp {
     /// Put one Quantick Pine script on the focused pane behind a fresh slot.
@@ -47,14 +103,14 @@ impl QuantickApp {
             });
         let owner = self.target_slot(slot);
         let kind = SavedKind::Script { name };
-        self.slot_kinds.push((owner, kind.clone()));
+        self.indicators.slot_kinds.push((owner, kind.clone()));
         // Whose slot this is decides who may take it away again: the annotate
         // tier removes what it attached, never what the trader put there. An
         // operator's overlay stays on the one pane it was attached to and
         // out of the layout; the trader's script is a layout edit and goes
         // onto every pane.
         if by_operator {
-            self.operator_slots.insert(owner);
+            self.indicators.operator_slots.insert(owner);
         } else {
             self.mirror_add(owner, &kind);
         }
@@ -75,12 +131,12 @@ impl QuantickApp {
         // first — the trader's, as often as not.
         let mut known = false;
         let mut target = None;
-        for (owner, _) in &self.slot_kinds {
+        for (owner, _) in &self.indicators.slot_kinds {
             if owner.slot.0 != slot {
                 continue;
             }
             known = true;
-            if self.operator_slots.contains(owner) {
+            if self.indicators.operator_slots.contains(owner) {
                 target = Some(*owner);
                 break;
             }
@@ -91,7 +147,7 @@ impl QuantickApp {
             return if known { Err(()) } else { Ok(false) };
         };
         self.remove_indicator_at(target);
-        self.operator_slots.remove(&target);
+        self.indicators.operator_slots.remove(&target);
         Ok(true)
     }
 
@@ -132,7 +188,7 @@ impl QuantickApp {
                     side,
                     slot,
                 });
-                if let Some(dialog) = self.indicator_settings.as_mut() {
+                if let Some(dialog) = self.indicators.indicator_settings.as_mut() {
                     dialog.tab = tab;
                 }
             }
@@ -217,11 +273,19 @@ impl QuantickApp {
         pane.indicators.remove(target.slot);
         pane.indicator_worker
             .send(IndicatorCommand::Remove(target.slot));
-        self.slot_kinds.retain(|(owner, _)| *owner != target);
-        self.operator_slots.remove(&target);
-        self.script_files.retain(|(owner, ..)| *owner != target);
-        self.pending_hidden.retain(|owner| *owner != target);
-        self.pending_styles.retain(|(owner, _)| *owner != target);
+        self.indicators
+            .slot_kinds
+            .retain(|(owner, _)| *owner != target);
+        self.indicators.operator_slots.remove(&target);
+        self.indicators
+            .script_files
+            .retain(|(owner, ..)| *owner != target);
+        self.indicators
+            .pending_hidden
+            .retain(|owner| *owner != target);
+        self.indicators
+            .pending_styles
+            .retain(|(owner, _)| *owner != target);
         self.note_indicator_edit_at(target.tab, target.side);
     }
 
@@ -241,7 +305,7 @@ impl QuantickApp {
         else {
             return;
         };
-        self.indicator_settings = Some(SettingsDialog {
+        self.indicators.indicator_settings = Some(SettingsDialog {
             slot: target.slot,
             title: view.label().to_owned(),
             tab: indicator_panel::SettingsTab::default(),
@@ -252,7 +316,7 @@ impl QuantickApp {
             preset_label: None,
             preset_name_draft: String::new(),
         });
-        self.indicator_settings_target = target;
+        self.indicators.indicator_settings_target = target;
     }
 
     /// Draw each visible pane's indicator legend and run what its rows asked
@@ -298,12 +362,13 @@ impl QuantickApp {
             // The slot being live-previewed by the settings dialog, if it
             // lives on this pane: its legend row wears a "preview" chip.
             let preview_slot = self
+                .indicators
                 .indicator_settings
                 .as_ref()
                 .filter(|dialog| dialog.previewed)
                 .filter(|_| {
-                    self.indicator_settings_target.tab == tab_id
-                        && self.indicator_settings_target.side == side
+                    self.indicators.indicator_settings_target.tab == tab_id
+                        && self.indicators.indicator_settings_target.side == side
                 })
                 .map(|dialog| dialog.slot);
             for action in indicator_legend::draw(
@@ -346,7 +411,9 @@ impl QuantickApp {
     pub(super) fn draw_indicator_settings(&mut self, ctx: &egui::Context) {
         // The boot hook's deferred half: fire once a slot can actually show
         // a dialog (see `harness::Harness::wants_indicator_settings_dialog`).
-        if self.harness.wants_indicator_settings_dialog() && self.indicator_settings.is_none() {
+        if self.harness.wants_indicator_settings_dialog()
+            && self.indicators.indicator_settings.is_none()
+        {
             let tab_id = self.active_tab().id;
             if let Some(slot) = self
                 .active_tab()
@@ -365,23 +432,28 @@ impl QuantickApp {
                 self.harness.indicator_settings_dialog_opened();
             }
         }
-        let target = self.indicator_settings_target;
+        let target = self.indicators.indicator_settings_target;
         // The preset shelf for this slot's kind. A slot with no registered
         // kind (the natives autostart hook deliberately registers none) has
         // nowhere to save to, and the dialog hides the picker.
         let preset_names: Option<Vec<String>> = self
+            .indicators
             .slot_kinds
             .iter()
             .find(|(owner, _)| *owner == target)
             .map(|(_, kind)| {
-                self.indicator_presets
+                self.indicators
+                    .indicator_presets
                     .names_for(kind)
                     .map(str::to_owned)
                     .collect()
             });
         let outcome = {
             let Self {
-                indicator_settings,
+                indicators:
+                    IndicatorState {
+                        indicator_settings, ..
+                    },
                 tabs,
                 ..
             } = self;
@@ -422,7 +494,7 @@ impl QuantickApp {
             SettingsOutcome::Open => {}
             SettingsOutcome::Close => {
                 self.revert_indicator_settings_preview();
-                self.indicator_settings = None;
+                self.indicators.indicator_settings = None;
             }
             SettingsOutcome::Apply => self.apply_indicator_settings_draft(),
             SettingsOutcome::Preview => self.preview_indicator_settings_draft(),
@@ -435,7 +507,7 @@ impl QuantickApp {
             // replay, and it follows the legend's eye, which is also instant
             // and also persisted without an Apply.
             SettingsOutcome::StyleChanged => {
-                let target = self.indicator_settings_target;
+                let target = self.indicators.indicator_settings_target;
                 self.mirror_style(target);
                 self.note_indicator_edit_at(target.tab, target.side);
             }
@@ -448,7 +520,7 @@ impl QuantickApp {
     /// longer matches its input (the script evolved under the preset) falls
     /// back to that input's default rather than being silently coerced.
     fn load_indicator_preset(&mut self, name: Option<String>) {
-        let target = self.indicator_settings_target;
+        let target = self.indicators.indicator_settings_target;
         let Some(specs) = self
             .tabs
             .iter()
@@ -468,6 +540,7 @@ impl QuantickApp {
             None => Some(Vec::new()),
             Some(name) => {
                 let Some(kind) = self
+                    .indicators
                     .slot_kinds
                     .iter()
                     .find(|(owner, _)| *owner == target)
@@ -475,7 +548,8 @@ impl QuantickApp {
                 else {
                     return;
                 };
-                self.indicator_presets
+                self.indicators
+                    .indicator_presets
                     .get(kind, name)
                     // `map`, not `filter_map`: a stored cell that no longer
                     // reads (a source whose name the dialect dropped, say)
@@ -509,7 +583,7 @@ impl QuantickApp {
         }
         let draft = bound.values;
         let label = name.unwrap_or_else(|| indicator_panel::DEFAULT_PRESET.to_owned());
-        if let Some(dialog) = self.indicator_settings.as_mut() {
+        if let Some(dialog) = self.indicators.indicator_settings.as_mut() {
             dialog.draft = draft;
             dialog.preset_label = Some(label);
         }
@@ -520,8 +594,9 @@ impl QuantickApp {
     /// Saving is a file write, never a chart change — the draft on screen
     /// stays exactly as it was.
     fn save_indicator_preset(&mut self, name: &str) {
-        let target = self.indicator_settings_target;
+        let target = self.indicators.indicator_settings_target;
         let Some(kind) = self
+            .indicators
             .slot_kinds
             .iter()
             .find(|(owner, _)| *owner == target)
@@ -529,12 +604,17 @@ impl QuantickApp {
         else {
             return;
         };
-        let Some(dialog) = self.indicator_settings.as_mut() else {
+        let Some(dialog) = self.indicators.indicator_settings.as_mut() else {
             return;
         };
         let inputs: Vec<SavedInput> = dialog.draft.iter().map(SavedInput::from_value).collect();
-        if self.indicator_presets.insert(&kind, name, inputs) {
-            self.indicator_presets
+        if self
+            .indicators
+            .indicator_presets
+            .insert(&kind, name, inputs)
+        {
+            self.indicators
+                .indicator_presets
                 .save(self.workspace.indicator_presets_path());
             dialog.preset_label = Some(name.trim().to_owned());
             dialog.preset_name_draft.clear();
@@ -544,8 +624,9 @@ impl QuantickApp {
     /// Forget a preset of this slot's kind. The values on screen stay —
     /// deleting a name never touches the chart.
     fn delete_indicator_preset(&mut self, name: &str) {
-        let target = self.indicator_settings_target;
+        let target = self.indicators.indicator_settings_target;
         let Some(kind) = self
+            .indicators
             .slot_kinds
             .iter()
             .find(|(owner, _)| *owner == target)
@@ -553,10 +634,11 @@ impl QuantickApp {
         else {
             return;
         };
-        if self.indicator_presets.remove(&kind, name) {
-            self.indicator_presets
+        if self.indicators.indicator_presets.remove(&kind, name) {
+            self.indicators
+                .indicator_presets
                 .save(self.workspace.indicator_presets_path());
-            if let Some(dialog) = self.indicator_settings.as_mut()
+            if let Some(dialog) = self.indicators.indicator_settings.as_mut()
                 && dialog.preset_label.as_deref() == Some(name)
             {
                 dialog.preset_label = None;
@@ -570,8 +652,8 @@ impl QuantickApp {
     /// the dialog was opened on, not whatever has focus now — clicking
     /// Apply must not retarget the edit.
     pub(super) fn apply_indicator_settings_draft(&mut self) {
-        let target = self.indicator_settings_target;
-        let Some(dialog) = self.indicator_settings.as_mut() else {
+        let target = self.indicators.indicator_settings_target;
+        let Some(dialog) = self.indicators.indicator_settings.as_mut() else {
             return;
         };
         dialog.committed = dialog.draft.clone();
@@ -594,8 +676,8 @@ impl QuantickApp {
     /// restart is always the last Apply, never a slider mid-drag. The worker
     /// coalesces a burst of these to its own cadence.
     pub(super) fn preview_indicator_settings_draft(&mut self) {
-        let target = self.indicator_settings_target;
-        let Some(dialog) = self.indicator_settings.as_mut() else {
+        let target = self.indicators.indicator_settings_target;
+        let Some(dialog) = self.indicators.indicator_settings.as_mut() else {
             return;
         };
         dialog.previewed = true;
@@ -610,8 +692,8 @@ impl QuantickApp {
     /// Put the last committed values back on the chart. Close's half of the
     /// preview contract: a dialog dismissed mid-tuning leaves no trace.
     fn revert_indicator_settings_preview(&mut self) {
-        let target = self.indicator_settings_target;
-        let Some(dialog) = self.indicator_settings.as_ref() else {
+        let target = self.indicators.indicator_settings_target;
+        let Some(dialog) = self.indicators.indicator_settings.as_ref() else {
             return;
         };
         if !dialog.previewed {
@@ -633,16 +715,16 @@ impl QuantickApp {
     /// indicator (restoring saved inputs, say) does not have to guess which
     /// one it is.
     pub(super) fn add_script_indicator(&mut self, index: usize) -> Option<SlotId> {
-        let entry = self.script_library.entries().get(index)?;
+        let entry = self.indicators.script_library.entries().get(index)?;
         let name = entry.name.clone();
-        match self.script_library.read(index) {
+        match self.indicators.script_library.read(index) {
             Some(Ok(text)) => {
                 let (_, _, slot) = self.attach_script_indicator(name, text, false);
                 let owner = self.target_slot(slot);
                 // Watch the file so a save reloads it. Registered here, with
                 // the add, so the two cannot drift apart.
-                if let Some((_, mtime)) = self.script_library.file_info(index) {
-                    self.script_files.push((owner, index, mtime));
+                if let Some((_, mtime)) = self.indicators.script_library.file_info(index) {
+                    self.indicators.script_files.push((owner, index, mtime));
                 }
                 Some(slot)
             }
@@ -726,15 +808,15 @@ impl QuantickApp {
     /// keeps running) on errors. The mtime updates even when the compile
     /// fails, so a broken save does not re-fire every second.
     pub(super) fn poll_script_files(&mut self) {
-        if self.script_files.is_empty()
-            || self.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
+        if self.indicators.script_files.is_empty()
+            || self.indicators.last_script_poll.elapsed() < SCRIPT_RELOAD_POLL_INTERVAL
         {
             return;
         }
-        self.last_script_poll = Instant::now();
+        self.indicators.last_script_poll = Instant::now();
         let mut reloads: Vec<(TabSlot, String, String)> = Vec::new();
-        for (owner, index, seen_mtime) in &mut self.script_files {
-            let Some((path, mtime)) = self.script_library.file_info(*index) else {
+        for (owner, index, seen_mtime) in &mut self.indicators.script_files {
+            let Some((path, mtime)) = self.indicators.script_library.file_info(*index) else {
                 continue;
             };
             if mtime == *seen_mtime {
@@ -800,7 +882,7 @@ impl QuantickApp {
         };
         let slot = self.focused_pane_mut().add_indicator(source);
         let owner = self.target_slot(slot);
-        self.slot_kinds.push((owner, kind.clone()));
+        self.indicators.slot_kinds.push((owner, kind.clone()));
         // Every other pane of every tab gets the same indicator now; the
         // settled reconciliation binds the layout's copy of it.
         self.mirror_add(owner, &kind);
@@ -822,7 +904,7 @@ impl QuantickApp {
     /// for rather than the user. The slot still exists and still works; it
     /// simply does not enter the persisted set.
     pub(super) fn forget_last_indicator_state_change(&mut self) {
-        self.slot_kinds.pop();
+        self.indicators.slot_kinds.pop();
     }
 
     /// Apply layout-placed hide flags and styles once their views exist.

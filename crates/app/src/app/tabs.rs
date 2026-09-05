@@ -15,6 +15,7 @@ use crate::indicator_worker::SlotId;
 use crate::state::BarSpec;
 use crate::symbols_file;
 use crate::tabstrip::TabAction;
+use quantick_feed::history_reach;
 
 use quantick_feed as feed;
 
@@ -46,6 +47,59 @@ pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) 
             saved_time_interval(Some(text)).unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS)
         })
         .collect()
+}
+
+/// How much tape one press of *load older* reaches for, and how it is
+/// fetched — a standing choice of the window, mirrored onto every tab by
+/// [`QuantickApp::drain_tabs`], which is where a press is actually served.
+///
+/// Owned here because that mirroring is this module's job. The toolbar
+/// edits it, the menu bar toggles two of it, `launch_hooks` seeds it from
+/// the environment and `workspace_save` persists it.
+pub(super) struct HistorySettings {
+    /// Whether venue candle history is asked for in slices, newest first
+    /// (View → progressive venue history).
+    ///
+    /// On by default. A span of one-minute candles is a run of sequential
+    /// venue round trips — seconds for the opening week, and another such run
+    /// for every span the trader reaches back through — and fetched whole the
+    /// chart shows nothing at all for the whole of it. Off restores exactly
+    /// that: one
+    /// request, one reply, one very late frame — kept because a trader on a
+    /// metered or rate-limited connection may prefer the smaller number of
+    /// requests, and because a setting whose "off" is not the old behaviour is
+    /// not a setting the user can fall back to.
+    pub(super) progressive_history: bool,
+
+    /// How far one press of the chart's *load older* button reaches — one
+    /// page of trades, or back past the market's last close with a lead into
+    /// the session before it.
+    ///
+    /// A standing choice of the window rather than of a market: a trader who
+    /// wants to see yesterday wants it in the tab they open next too. Mirrored
+    /// onto every tab each frame, which is where the press is actually served.
+    pub(super) history_reach: history_reach::HistoryReach,
+
+    /// Minutes of *traded* time one press of the `by time` reach pulls.
+    ///
+    /// On the window beside the reach it belongs to, and mirrored onto every
+    /// tab by `drain_tabs`, exactly as the reach itself is: the two are one
+    /// choice, and a tab opened after the trader set it must press the way
+    /// they said. Seeded from `[history] reach_span_minutes` and editable
+    /// afterwards, because it is the trader's own answer to "how much more
+    /// tape per press" and that differs between a contract printing a million
+    /// times a day and one printing a thousand.
+    pub(super) history_reach_span_minutes: u32,
+
+    /// Whether a chart *not* cut by time may carry the venue's own candles in
+    /// front of its bars.
+    ///
+    /// Off by default: a tick chart has always opened on the prints this
+    /// session saw, and nothing is put in front of them unasked. On, a chart
+    /// cut by trades gets the venue's 1-minute candles as a labelled prefix —
+    /// the only way such a chart can show yesterday at all, since a candle
+    /// cannot be folded into a tick bar and must never pretend to be one.
+    pub(super) venue_lead_in: bool,
 }
 
 impl QuantickApp {
@@ -125,12 +179,20 @@ impl QuantickApp {
         );
         // Its slots are gone with its panes; the bookkeeping must not outlive
         // them or a later tab reusing a slot number would inherit its kind.
-        self.slot_kinds.retain(|(owner, _)| owner.tab != closed.id);
-        self.operator_slots.retain(|owner| owner.tab != closed.id);
-        self.script_files
+        self.indicators
+            .slot_kinds
+            .retain(|(owner, _)| owner.tab != closed.id);
+        self.indicators
+            .operator_slots
+            .retain(|owner| owner.tab != closed.id);
+        self.indicators
+            .script_files
             .retain(|(owner, ..)| owner.tab != closed.id);
-        self.pending_hidden.retain(|owner| owner.tab != closed.id);
-        self.pending_styles
+        self.indicators
+            .pending_hidden
+            .retain(|owner| owner.tab != closed.id);
+        self.indicators
+            .pending_styles
             .retain(|(owner, _)| owner.tab != closed.id);
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
@@ -188,10 +250,10 @@ impl QuantickApp {
     /// already current rather than rebuilding on the frame it appears.
     pub(super) fn drain_tabs(&mut self) {
         let config = &self.config;
-        let progressive_history = self.progressive_history;
-        let history_reach = self.history_reach;
-        let history_reach_span_minutes = self.history_reach_span_minutes;
-        let venue_lead_in = self.venue_lead_in;
+        let progressive_history = self.history.progressive_history;
+        let history_reach = self.history.history_reach;
+        let history_reach_span_minutes = self.history.history_reach_span_minutes;
+        let venue_lead_in = self.history.venue_lead_in;
         let mut trades = 0_u64;
         for tab in &mut self.tabs {
             let before = tab.live_trades;
@@ -227,7 +289,7 @@ impl QuantickApp {
             trades += tab.live_trades - before;
         }
         // What the window ingested, across every market it is holding.
-        self.trades_since_summary += trades;
+        self.health.trades_since_summary += trades;
     }
 
     /// Tab shortcuts (§10): `Ctrl+T` new, `Ctrl+W` close, `Ctrl+Tab` cycle.

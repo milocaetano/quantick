@@ -50,6 +50,7 @@ use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, Saved
 use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, Loaded, SavedDrawing};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
+use super::chrome::ChromeState;
 use super::{QuantickApp, TabSlot};
 use crate::workspace_store::LayoutSave;
 
@@ -522,27 +523,28 @@ impl QuantickApp {
             }
         };
         let reside = |side: PaneSide| PaneSide::from_index(rekey(side.index()));
-        for (owner, _) in &mut self.slot_kinds {
+        for (owner, _) in &mut self.indicators.slot_kinds {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);
             }
         }
-        for (owner, _) in &mut self.pending_styles {
+        for (owner, _) in &mut self.indicators.pending_styles {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);
             }
         }
-        for owner in &mut self.pending_hidden {
+        for owner in &mut self.indicators.pending_hidden {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);
             }
         }
-        for (owner, ..) in &mut self.script_files {
+        for (owner, ..) in &mut self.indicators.script_files {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);
             }
         }
         let operator: Vec<TabSlot> = self
+            .indicators
             .operator_slots
             .iter()
             .copied()
@@ -553,9 +555,10 @@ impl QuantickApp {
                 owner
             })
             .collect();
-        self.operator_slots = operator.into_iter().collect();
-        if self.indicator_settings_target.tab == tab_id {
-            self.indicator_settings_target.side = reside(self.indicator_settings_target.side);
+        self.indicators.operator_slots = operator.into_iter().collect();
+        if self.indicators.indicator_settings_target.tab == tab_id {
+            self.indicators.indicator_settings_target.side =
+                reside(self.indicators.indicator_settings_target.side);
         }
         // The drawings travel with the pane; their key follows its address.
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
@@ -606,11 +609,12 @@ impl QuantickApp {
     /// The layout's slots on one pane, in layout order: every slot the
     /// bookkeeping knows for the pane, minus the operator's overlays.
     fn layout_slots_at(&self, tab: u64, side: PaneSide) -> Vec<SlotId> {
-        self.slot_kinds
+        self.indicators
+            .slot_kinds
             .iter()
             .map(|(owner, _)| *owner)
             .filter(|owner| owner.tab == tab && owner.side == side)
-            .filter(|owner| !self.operator_slots.contains(owner))
+            .filter(|owner| !self.indicators.operator_slots.contains(owner))
             .map(|owner| owner.slot)
             .collect()
     }
@@ -640,6 +644,7 @@ impl QuantickApp {
             },
             SavedKind::Script { name } => {
                 let index = self
+                    .indicators
                     .script_library
                     .entries()
                     .iter()
@@ -651,7 +656,7 @@ impl QuantickApp {
                 // entry off; and a row that says "not in the library" is the
                 // honest picture of a set the trader cannot see whole.
                 let read = match index {
-                    Some(index) => self.script_library.read(index),
+                    Some(index) => self.indicators.script_library.read(index),
                     None => {
                         tracing::warn!(
                             target: "quantick::app",
@@ -664,7 +669,8 @@ impl QuantickApp {
                         Some(Err(format!("{name} is not in the script library")))
                     }
                 };
-                let file_info = index.and_then(|index| self.script_library.file_info(index));
+                let file_info =
+                    index.and_then(|index| self.indicators.script_library.file_info(index));
                 let slot = match read {
                     Some(Ok(text)) => {
                         let pane = self.pane_mut_at(tab, side)?;
@@ -717,15 +723,16 @@ impl QuantickApp {
                     None => return None,
                 };
                 let owner = TabSlot { tab, side, slot };
-                self.slot_kinds.push((owner, kind.clone()));
+                self.indicators.slot_kinds.push((owner, kind.clone()));
                 if let (Some(index), Some((_, mtime))) = (index, file_info) {
-                    self.script_files.push((owner, index, mtime));
+                    self.indicators.script_files.push((owner, index, mtime));
                 }
                 return Some(slot);
             }
         };
         let slot = self.pane_mut_at(tab, side)?.add_indicator(source);
-        self.slot_kinds
+        self.indicators
+            .slot_kinds
             .push((TabSlot { tab, side, slot }, kind.clone()));
         Some(slot)
     }
@@ -744,11 +751,19 @@ impl QuantickApp {
             pane.indicator_worker
                 .send(IndicatorCommand::Remove(target.slot));
         }
-        self.slot_kinds.retain(|(owner, _)| *owner != target);
-        self.operator_slots.remove(&target);
-        self.script_files.retain(|(owner, ..)| *owner != target);
-        self.pending_hidden.retain(|owner| *owner != target);
-        self.pending_styles.retain(|(owner, _)| *owner != target);
+        self.indicators
+            .slot_kinds
+            .retain(|(owner, _)| *owner != target);
+        self.indicators.operator_slots.remove(&target);
+        self.indicators
+            .script_files
+            .retain(|(owner, ..)| *owner != target);
+        self.indicators
+            .pending_hidden
+            .retain(|owner| *owner != target);
+        self.indicators
+            .pending_styles
+            .retain(|(owner, _)| *owner != target);
     }
 
     /// Put a whole saved set on one pane: add, bind inputs, queue the hide
@@ -795,10 +810,10 @@ impl QuantickApp {
             );
         }
         if entry.hidden {
-            self.pending_hidden.push(owner);
+            self.indicators.pending_hidden.push(owner);
         }
         if !entry.plot_styles.is_empty() {
-            self.pending_styles.push((
+            self.indicators.pending_styles.push((
                 owner,
                 StyleOverride::from_plots(
                     entry
@@ -818,8 +833,8 @@ impl QuantickApp {
     /// visible, so applying it is a toggle. Whoever queues one dequeues it
     /// again on the matching unhide ([`Self::mirror_hidden`]).
     pub(super) fn apply_pending_indicator_state(&mut self) {
-        if !self.pending_hidden.is_empty() {
-            let pending = std::mem::take(&mut self.pending_hidden);
+        if !self.indicators.pending_hidden.is_empty() {
+            let pending = std::mem::take(&mut self.indicators.pending_hidden);
             for owner in pending {
                 let applied = self
                     .pane_mut_at(owner.tab, owner.side)
@@ -833,18 +848,20 @@ impl QuantickApp {
                     .is_some();
                 if !applied
                     && self
+                        .indicators
                         .slot_kinds
                         .iter()
                         .any(|(candidate, _)| *candidate == owner)
                 {
-                    self.pending_hidden.push(owner);
+                    self.indicators.pending_hidden.push(owner);
                 }
             }
         }
-        if !self.pending_styles.is_empty() {
-            let pending = std::mem::take(&mut self.pending_styles);
+        if !self.indicators.pending_styles.is_empty() {
+            let pending = std::mem::take(&mut self.indicators.pending_styles);
             for (owner, style) in pending {
                 let known = self
+                    .indicators
                     .slot_kinds
                     .iter()
                     .any(|(candidate, _)| *candidate == owner);
@@ -853,7 +870,7 @@ impl QuantickApp {
                     .and_then(|pane| pane.indicators.view_mut(owner.slot))
                 {
                     Some(view) => view.style = style,
-                    None if known => self.pending_styles.push((owner, style)),
+                    None if known => self.indicators.pending_styles.push((owner, style)),
                     None => {}
                 }
             }
@@ -974,9 +991,11 @@ impl QuantickApp {
                     // Unborn: the queue says what its first frame should
                     // be. An unhide takes a queued hide back out, or the
                     // view would be born and hidden a moment later.
-                    self.pending_hidden.retain(|candidate| *candidate != owner);
+                    self.indicators
+                        .pending_hidden
+                        .retain(|candidate| *candidate != owner);
                     if hidden {
-                        self.pending_hidden.push(owner);
+                        self.indicators.pending_hidden.push(owner);
                     }
                 }
             }
@@ -1052,9 +1071,10 @@ impl QuantickApp {
             {
                 Some(view) => view.style = style.clone(),
                 None => {
-                    self.pending_styles
+                    self.indicators
+                        .pending_styles
                         .retain(|(candidate, _)| *candidate != owner);
-                    self.pending_styles.push((owner, style.clone()));
+                    self.indicators.pending_styles.push((owner, style.clone()));
                 }
             }
         }
@@ -1387,8 +1407,8 @@ impl QuantickApp {
         };
         self.workspace.layouts_mut().set_book(book);
         self.workspace.layouts_mut().set_blocked(blocked);
-        self.layout_rename = None;
-        self.layout_delete_confirm = None;
+        self.chrome.layout_rename = None;
+        self.chrome.layout_delete_confirm = None;
         // A pane whose named layout is not in the new book opens on the
         // default, exactly as a pane with no name would.
         for tab in &mut self.tabs {
@@ -1409,7 +1429,7 @@ impl QuantickApp {
     /// Open the rename box on `id`, seeded with its current name.
     pub(crate) fn begin_layout_rename(&mut self, id: LayoutId) {
         if let Some(layout) = self.layouts().get(id) {
-            self.layout_rename = Some((id, layout.name.clone()));
+            self.chrome.layout_rename = Some((id, layout.name.clone()));
         }
     }
 
@@ -1421,8 +1441,8 @@ impl QuantickApp {
             let active = self.focused_pane_layout();
             let owner = self.active_tab().focused_side().title();
             let Self {
+                chrome: ChromeState { layout_rename, .. },
                 workspace,
-                layout_rename,
                 ..
             } = self;
             crate::layout_strip::draw(
@@ -1453,7 +1473,7 @@ impl QuantickApp {
                 Ok(())
             }
             StripAction::CommitRename(id, name) => {
-                self.layout_rename = None;
+                self.chrome.layout_rename = None;
                 // An empty box is a cancelled rename, not an error to show.
                 match layouts::clean_name(&name) {
                     Some(_) => self.rename_layout(id, &name).map(|_| ()),
@@ -1461,14 +1481,14 @@ impl QuantickApp {
                 }
             }
             StripAction::CancelRename => {
-                self.layout_rename = None;
+                self.chrome.layout_rename = None;
                 Ok(())
             }
             // Deleting takes the layout's drawings with it, on disk as well
             // as on screen: the one strip action that asks first.
             StripAction::Delete(id) => {
                 if self.layouts().get(id).is_some() {
-                    self.layout_delete_confirm = Some(id);
+                    self.chrome.layout_delete_confirm = Some(id);
                 }
                 Ok(())
             }
@@ -1486,11 +1506,11 @@ impl QuantickApp {
     /// and nothing else on the window is touched while it is up.
     pub(super) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
         use eframe::egui;
-        let Some(id) = self.layout_delete_confirm else {
+        let Some(id) = self.chrome.layout_delete_confirm else {
             return;
         };
         let Some(layout) = self.layouts().get(id) else {
-            self.layout_delete_confirm = None;
+            self.chrome.layout_delete_confirm = None;
             return;
         };
         let name = layout.name.clone();
@@ -1540,14 +1560,14 @@ impl QuantickApp {
         }
         match decision {
             Some(true) => self.confirm_layout_delete(),
-            Some(false) => self.layout_delete_confirm = None,
+            Some(false) => self.chrome.layout_delete_confirm = None,
             None => {}
         }
     }
 
     /// The confirmed half of a delete: what the dialog's Delete button does.
     pub(crate) fn confirm_layout_delete(&mut self) {
-        let Some(id) = self.layout_delete_confirm.take() else {
+        let Some(id) = self.chrome.layout_delete_confirm.take() else {
             return;
         };
         if let Err(error) = self.delete_layout(id) {
