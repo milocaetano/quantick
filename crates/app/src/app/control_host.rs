@@ -156,7 +156,7 @@ impl QuantickApp {
     /// alarms use, and report honestly when it could not be made rather
     /// than letting a client believe it was heard.
     pub(crate) fn sound_agent_alert(&mut self) -> Option<String> {
-        self.alerts
+        self.audio
             .alerts
             .play(&[crate::audio::Cue::default()])
             .err()

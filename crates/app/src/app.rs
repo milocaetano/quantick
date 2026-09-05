@@ -240,7 +240,7 @@ pub struct QuantickApp {
     /// by the layer menu's controls.
     footprint_config: crate::footprint_config::FootprintConfig,
     /// Where a signal alarm is played — see [`replay_and_history::AlertState`].
-    alerts: replay_and_history::AlertState,
+    audio: replay_and_history::AlertState,
 
     /// The chart appearance every renderer reads. The window that edits it
     /// is `surfaces::style_panel`, which hands back a copy rather than
@@ -468,7 +468,7 @@ impl QuantickApp {
             ),
             layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
-            alerts: replay_and_history::AlertState {
+            audio: replay_and_history::AlertState {
                 alerts: Box::new(crate::audio::Speaker::default()),
                 alert_failure: None,
             },

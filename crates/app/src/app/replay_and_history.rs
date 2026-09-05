@@ -399,7 +399,7 @@ impl QuantickApp {
         if distinct.is_empty() {
             return;
         }
-        let outcome = self.alerts.alerts.play(&distinct);
+        let outcome = self.audio.alerts.play(&distinct);
         self.report_alert_attempt(outcome);
     }
 
@@ -413,10 +413,10 @@ impl QuantickApp {
     /// one transient refusal does not leave a permanent red line behind it.
     pub(super) fn report_alert_attempt(&mut self, outcome: Result<(), &'static str>) {
         match outcome {
-            Ok(()) => self.alerts.alert_failure = None,
+            Ok(()) => self.audio.alert_failure = None,
             Err(reason) => {
-                let first = self.alerts.alert_failure.as_deref() != Some(reason);
-                self.alerts.alert_failure = Some(reason.to_owned());
+                let first = self.audio.alert_failure.as_deref() != Some(reason);
+                self.audio.alert_failure = Some(reason.to_owned());
                 if first {
                     self.show_agent_toast(format!("no alarm sound was played: {reason}"));
                 }

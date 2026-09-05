@@ -228,7 +228,7 @@ impl QuantickApp {
                     indicator_settings_target,
                     ..
                 },
-            alerts: AlertState { alert_failure, .. },
+            audio: AlertState { alert_failure, .. },
             surfaces: registry,
             workspace,
             style,
@@ -284,7 +284,7 @@ impl QuantickApp {
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
         if let Some(cue) = surfaces.test_alert {
-            let outcome = self.alerts.alerts.play(&[cue]);
+            let outcome = self.audio.alerts.play(&[cue]);
             self.report_alert_attempt(outcome);
         }
         if let Some(request) = surfaces.arm_strategy {

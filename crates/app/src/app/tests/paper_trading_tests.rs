@@ -508,7 +508,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     let recorder = crate::audio::RecordingAlerts::default();
-    app.alerts.alerts = Box::new(recorder.clone());
+    app.audio.alerts = Box::new(recorder.clone());
 
     let rectangle = drawings::DRAWING_TOOLS
         .into_iter()
