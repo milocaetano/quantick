@@ -514,13 +514,36 @@ unquoted_arguments() {
 }
 
 # True when the statement asks for a draft PR, as a whole argument word.
+#
+# Every uncertainty here resolves to *not a draft*, because the two mistakes
+# are not the same size: reading a draft as a real PR costs a permission
+# prompt, while reading a real PR as a draft opens it with no review at all.
 draft_flag() {
+    # An odd count of either quote character means a span this cannot pair
+    # off, so `unquoted_arguments` cannot be trusted to have blanked the right
+    # text. Refuse rather than guess.
+    for draft_quote in '"' "'"; do
+        draft_quotes=$(printf '%s' "$1" | tr -cd "$draft_quote" | wc -c)
+        [ $((draft_quotes % 2)) -eq 0 ] || return 1
+    done
+
     draft_words=$(unquoted_arguments "$1")
+
+    # `--draft=<value>` is a draft only when gh would read the value as true.
+    # gh parses it with Go's ParseBool, whose true spellings are exactly these
+    # six — so `--draft=f`, `--draft=F` and `--draft=False` are all *false*,
+    # and a gate that reads them as a draft opens a real, un-reviewed PR. Only
+    # `false` and `0` were excluded before, which left the other four spellings
+    # of the same instruction wide open.
     case " $draft_words " in
-        *' --draft=false '* | *' --draft=0 '*) return 1 ;;
+        *' --draft=1 '* | *' --draft=t '* | *' --draft=T '* | \
+        *' --draft=true '* | *' --draft=TRUE '* | *' --draft=True '*) return 0 ;;
+        # Any other explicit value: not a draft, whatever it says.
+        *' --draft='*) return 1 ;;
     esac
+
     case " $draft_words " in
-        *' --draft '* | *' --draft='* | *' -d '*) return 0 ;;
+        *' --draft '* | *' -d '*) return 0 ;;
     esac
     return 1
 }
@@ -558,7 +581,13 @@ pr_number() {
 # decision in this gate reads the effective worktree; this one has to as well,
 # or a session sitting in another clone counts that repository's PR #42.
 open_ai_review_threads() {
-    threads_script="$1/ai_review_threads.sh"
+    # Resolved to an absolute path *before* the `cd` below, and by the same
+    # step that checks it exists. A relative `$1` otherwise passed the `-f`
+    # test here and then failed to be found from inside the worktree, which
+    # reported "gh could not answer" for a file that was simply somewhere else
+    # — the exact confusion these two exit statuses exist to remove.
+    threads_dir=$(cd "$1" 2>/dev/null && pwd) || return 3
+    threads_script="$threads_dir/ai_review_threads.sh"
     [ -f "$threads_script" ] || return 3
     threads_count=$(cd "$3" && sh "$threads_script" count "$2" 2>/dev/null) || return 1
     case "$threads_count" in

@@ -552,6 +552,24 @@ run "a --draft inside a quoted title is not a draft flag" \
 run "a -d inside a quoted body is not a draft flag either" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --body \"pass -d to open a draft\" --fill")" deny "arch-review-ok"
 
+# `--draft=f` is what gh's own flag parser calls false, and so are `F`,
+# `False` and `FALSE`. Excluding only `false` and `0` left four spellings of
+# "not a draft" opening a real PR with no review.
+for draft_false in f F False FALSE 0 false; do
+    run "--draft=$draft_false opens a real PR and is gated" \
+        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_false --fill")" deny "arch-review-ok"
+done
+
+for draft_true in 1 t T true TRUE True; do
+    run "--draft=$draft_true is a draft" \
+        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_true --fill")" silent
+done
+
+# A quote this cannot pair off means the blanking cannot be trusted, so the
+# exemption is refused rather than guessed at.
+run "an unbalanced quote is never a draft" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"unclosed --draft --fill")" deny "arch-review-ok"
+
 # The flag has to come from the statement the gate matched. A `--draft`
 # anywhere else on the line is somebody else's argument.
 run "a draft flag in a neighbouring statement is not this PR's" \
@@ -613,6 +631,7 @@ cp "$GUARDRAILS" "$root/lonely/guardrails.sh"
 GUARDRAILS_UNDER_TEST="$root/lonely/guardrails.sh"
 run "a missing counting script is named as such, not blamed on gh" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "is not beside the hook"
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
 
 # `gh pr create` is never held on the thread count, draft or not: the PR is
 # where the findings live, so they cannot be a precondition for opening it.
