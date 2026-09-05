@@ -494,13 +494,19 @@ gh_statement() {
         head -n 1
 }
 
-# The PR number the statement names, or nothing. Only a bare run of digits
-# counts. Nothing is a legitimate answer — `gh pr merge` with no number means
-# "the one for this branch" — and the caller treats it as undetermined rather
-# than guessing, because a wrong guess counts another PR's threads.
+# The PR number the statement names, or nothing.
+#
+# A *whole word* of digits, never a digit run pulled out of one. Splitting on
+# every non-digit read `--body-file notes2.md 42` as PR 2, and a gate that
+# counts the wrong PR's threads is worse than one that counts none: it reports
+# a clean number for a branch nobody reviewed.
+#
+# Nothing is a legitimate answer — `gh pr merge` with no number means "the one
+# for this branch" — and the caller treats it as undetermined rather than
+# guessing.
 pr_number() {
     printf '%s' "$1" |
-        tr -cs '0-9' '\n' |
+        tr -s ' \t' '\n\n' |
         grep -E '^[0-9]+$' |
         head -n 1
 }
@@ -529,12 +535,18 @@ pr_gate() {
     # Which of the three the command is, because they are gated differently:
     # `create` opens the PR that carries the findings, while `ready` and
     # `merge` are the two ways work leaves the branch.
-    if runs_command "$command" "gh pr create"; then
-        gate_action=create
+    #
+    # Tested most-restrictive first, and that order is the rule rather than a
+    # preference. A line may run more than one of them — `gh pr create --draft
+    # && gh pr ready` is the natural way to end phase one and open phase two —
+    # and matching `create` first would hand that line the draft exemption and
+    # let the `gh pr ready` beside it through with no review at all.
+    if runs_command "$command" "gh pr merge"; then
+        gate_action=merge
     elif runs_command "$command" "gh pr ready"; then
         gate_action=ready
-    elif runs_command "$command" "gh pr merge"; then
-        gate_action=merge
+    elif runs_command "$command" "gh pr create"; then
+        gate_action=create
     else
         exit 0
     fi

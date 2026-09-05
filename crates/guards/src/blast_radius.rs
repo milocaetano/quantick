@@ -56,6 +56,12 @@ pub struct Deposit {
 }
 
 /// What a diff did, in the shape the report renders.
+///
+/// The three file counts do not partition [`BlastRadius::files_touched`], and
+/// that is deliberate rather than an oversight: a pre-existing tracked file
+/// the tree holds, which gained nothing, is neither a deposit nor a file this
+/// mode failed to measure. It is simply a file that took no deposit, and the
+/// table says so by not naming it.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct BlastRadius {
     /// Deposits, largest first, ties broken by path so two runs over one diff

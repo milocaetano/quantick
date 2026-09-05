@@ -593,7 +593,57 @@ set_threads 9
 run "an open thread never blocks opening the PR that carries it" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
 
+# A compound line runs two of the gated commands. The draft exemption belongs
+# to the `create` half only, and taking it for the whole line would let the
+# `gh pr ready` beside it ship with no review -- the natural spelling for
+# ending phase one and starting phase two, and the one that must not slip.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+run "a draft create beside a ready is judged as the ready" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill && gh pr ready")" deny "arch-review-ok"
+
+# The PR number is a whole word. Reading a digit run out of a filename made
+# `--body-file notes2.md 42` count PR 2's threads, which reports a clean number
+# for a branch nobody reviewed -- worse than reporting no number at all.
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_threads 7
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+run "a digit inside a filename is not the PR number" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge --body-file notes2.md 42")" deny "PR #42 has 7"
 GUARDRAILS_UNDER_TEST="$GUARDRAILS"
+
+# --- ai_review_threads.sh: the contract the gate reads ----------------------
+#
+# The gate treats "no count" and "a count of zero" as different answers, and
+# the whole of that distinction rests on this script's exit status. Neither
+# case here reaches GitHub: one asks for nothing, the other runs with a PATH
+# that has no `gh` on it.
+threads_script="$script_dir/ai_review_threads.sh"
+
+threads_out=$(sh "$threads_script" 2>&1)
+threads_status=$?
+if [ "$threads_status" -eq 64 ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL ai_review_threads.sh with no subcommand: exited %s, wanted 64\n  output: %s\n' \
+        "$threads_status" "$threads_out"
+    failed=$((failed + 1))
+fi
+
+# An absolute interpreter, because the emptied PATH would otherwise stop the
+# shell being found before the script ever runs -- 127, not the 2 under test.
+# Every command the script reaches on this path is a builtin.
+threads_sh=$(command -v sh)
+threads_out=$(PATH=/nonexistent "$threads_sh" "$threads_script" count 1 2>/dev/null)
+threads_status=$?
+if [ "$threads_status" -eq 2 ] && [ -z "$threads_out" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL ai_review_threads.sh count without gh: exited %s printing "%s", wanted 2 and nothing\n' \
+        "$threads_status" "$threads_out"
+    failed=$((failed + 1))
+fi
 
 # --- pr-gate: the small tier ------------------------------------------------
 #
