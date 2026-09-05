@@ -170,7 +170,26 @@
 # What is left in `app.rs` is now the window's definition and nothing else:
 # the struct, `new`, `new_with_workspace`, `attach_surface`, the `eframe::App`
 # impl and `mod tests`. The 56 fields are the next cut's job.
-!budget 48185
+#
+# Then lowered by 2,446 -- `control/gateway.rs` from 4,142 to 1,696 -- by
+# splitting it along the thread boundary it already had. The gateway thread's
+# free functions left for `control/gateway/server.rs`, the frame emitter and
+# its keys for `semantic.rs`, the parked screenshot arc for `screenshot.rs`,
+# the egui panel for `panel.rs`, and both test modules for `tests/mod.rs`.
+# Every body moved unchanged; the only widenings are the `pub(super)` marks a
+# child module needs to be called by its parent.
+# Same trade, same price: at 1,400, 591, 278 and 278 lines on disk the four
+# siblings are all under the 1,500-line threshold, so none takes an entry, and
+# the 448 lines of tests are untracked either way. `server.rs` is the one to
+# watch: 100 lines of headroom, and the connection session and the two
+# dispatchers are where a future cut would go rather than a signed raise.
+# 48,185 - 2,446 = 45,739.
+#
+# What is left in `gateway.rs` is the UI thread's half and nothing else: the
+# options and identities, the lifecycle, the local actions, and the frame
+# service the screenshot arc is armed against. `invoke_local_action` at 164
+# lines and `service_replay_trace` are the next cut's job.
+!budget 45739
 
 crates/app/src/app.rs 789
 
@@ -278,7 +297,7 @@ crates/app/src/pane.rs 5618
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
 crates/app/src/tab.rs 1661
-crates/app/src/control/gateway.rs 4142
+crates/app/src/control/gateway.rs 1696
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
 crates/app/src/drawings/mod.rs 2283
