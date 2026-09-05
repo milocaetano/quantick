@@ -228,39 +228,64 @@ pub fn production_lines(source: &str) -> usize {
 /// would be a cycle guard that fires on a test import — the false positive
 /// that gets a guard switched off.
 pub fn production_source(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .zip(production_flags(source))
+        .filter_map(|(line, production)| production.then_some(line))
+        .collect()
+}
+
+/// One flag per line of `source`: true where the line ships in the binary.
+///
+/// The law itself, now that two callers need two views of it. This one is for
+/// [`crate::blast_radius`], which holds a line *number* out of a diff and must
+/// ask whether that position is production — a question a filtered list of
+/// lines cannot answer, because filtering is exactly what destroys the
+/// numbering. Splitting the flags out rather than writing the walk a second
+/// time is the same argument [`production_source`] itself was split out under:
+/// two copies of "where does the test code start?" drift, and the drift is
+/// invisible until a guard fires on the wrong line.
+pub fn production_flags(source: &str) -> Vec<bool> {
     let lines: Vec<&str> = source.lines().collect();
-    let mut production = Vec::new();
+    let mut flags = vec![true; lines.len()];
     let mut index = 0;
     while index < lines.len() {
         if lines[index] != "#[cfg(test)]" {
-            production.push(lines[index]);
             index += 1;
             continue;
         }
         // Step over the attribute, then any further attributes or doc lines,
         // to reach the item itself.
+        flags[index] = false;
         index += 1;
         while index < lines.len()
             && (lines[index].starts_with("#[")
                 || lines[index].starts_with("//")
                 || lines[index].is_empty())
         {
+            flags[index] = false;
             index += 1;
         }
         let Some(item) = lines.get(index) else { break };
-        // `use …;` and `mod tests;` end on their own line; everything else
+        // A `use` or a `mod tests;` ends on its own line; everything else
         // opens a block that closes on a brace back in column 0.
         if item.ends_with(';') {
+            flags[index] = false;
             index += 1;
             continue;
         }
+        flags[index] = false;
         index += 1;
         while index < lines.len() && lines[index] != "}" && lines[index] != "};" {
+            flags[index] = false;
             index += 1;
+        }
+        if index < lines.len() {
+            flags[index] = false;
         }
         index += 1;
     }
-    production
+    flags
 }
 
 /// Whether a workspace-relative path is one this guard tracks.
@@ -273,7 +298,7 @@ pub fn production_source(source: &str) -> Vec<&str> {
 /// the ratchet is how a guard becomes noise. The sibling guards skip
 /// `target/` too — this one did not, until a review pointed at the
 /// divergence.
-fn tracked(relative: &str) -> bool {
+pub fn tracked(relative: &str) -> bool {
     relative.starts_with("crates/")
         && relative.ends_with(".rs")
         && !relative

@@ -39,7 +39,10 @@
 //! repository files against its own code. Those files still appear in the
 //! three totals, and in `blast.files_unmeasured`.
 
+use std::fs;
 use std::path::Path;
+
+use crate::size;
 
 /// One pre-existing tracked file and the production lines it gained.
 #[derive(Debug, PartialEq, Eq)]
@@ -78,19 +81,196 @@ pub struct BlastRadius {
 ///
 /// Never fails and never panics: a diff this cannot parse yields zeroes, which
 /// is a report-only mode's correct answer to input it does not understand.
-pub fn measure(_root: &Path, _diff: &str) -> BlastRadius {
-    BlastRadius::default()
+pub fn measure(root: &Path, diff: &str) -> BlastRadius {
+    let mut radius = BlastRadius::default();
+
+    for file in parse(diff) {
+        radius.files_touched += 1;
+        radius.insertions += file.added.len();
+        if !file.new_file {
+            radius.pre_existing_files_touched += 1;
+        }
+
+        if file.new_file || file.deleted || !size::tracked(&file.path) {
+            radius.files_unmeasured += 1;
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(root.join(&file.path)) else {
+            radius.files_unreadable += 1;
+            continue;
+        };
+
+        let flags = size::production_flags(&source);
+        let production = |line: usize| flags.get(line.saturating_sub(1)).copied().unwrap_or(false);
+        let added = file.added.iter().filter(|line| production(**line)).count() as i64;
+        // A removed line has no post-image number of its own; it sat where the
+        // cursor stood when the diff walked past it, so that is the position
+        // whose flag governs it. Clamped, because a line removed from the end
+        // of a file leaves the cursor one past it.
+        let removed = file
+            .removed
+            .iter()
+            .filter(|line| production((**line).clamp(1, flags.len().max(1))))
+            .count() as i64;
+
+        if added - removed > 0 {
+            radius.deposits.push(Deposit {
+                path: file.path,
+                production_added: added - removed,
+            });
+        }
+    }
+
+    // Descending by size, then by path. The second key is not decoration: two
+    // files that gained the same number of lines would otherwise print in
+    // whatever order the diff happened to list them, and a report whose rows
+    // move without the tree moving cannot be diffed against yesterday's.
+    radius.deposits.sort_by(|left, right| {
+        right
+            .production_added
+            .cmp(&left.production_added)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    radius
 }
 
 /// The report's `label<TAB>value` table, deposits first.
-pub fn render(_radius: &BlastRadius) -> String {
-    String::new()
+pub fn render(radius: &BlastRadius) -> String {
+    let mut out = String::new();
+    for deposit in &radius.deposits {
+        out.push_str(&format!(
+            "blast.file.{}\t{}\n",
+            deposit.path, deposit.production_added
+        ));
+    }
+    out.push_str(&format!("blast.files_touched\t{}\n", radius.files_touched));
+    out.push_str(&format!(
+        "blast.pre_existing_files_touched\t{}\n",
+        radius.pre_existing_files_touched
+    ));
+    out.push_str(&format!("blast.insertions\t{}\n", radius.insertions));
+    out.push_str(&format!(
+        "blast.files_unmeasured\t{}\n",
+        radius.files_unmeasured
+    ));
+    out.push_str(&format!(
+        "blast.files_unreadable\t{}\n",
+        radius.files_unreadable
+    ));
+    out
+}
+
+/// One file's section of the diff, reduced to what a deposit needs.
+struct FileDiff {
+    path: String,
+    new_file: bool,
+    deleted: bool,
+    /// Post-image line numbers of the added lines.
+    added: Vec<usize>,
+    /// Post-image cursor position at each removed line.
+    removed: Vec<usize>,
+}
+
+/// Split a unified diff into its files.
+///
+/// Deliberately a small reader rather than a parser. It follows `diff --git`
+/// for the section boundary and `+++`/`---` for the path and the new-file
+/// flag, and inside a hunk it trusts the first character of the line. The one
+/// thing it must not get wrong is mistaking a `+++` of file content for a
+/// header, so header lines are only read before the section's first `@@`.
+fn parse(diff: &str) -> Vec<FileDiff> {
+    let mut files: Vec<FileDiff> = Vec::new();
+    let mut in_hunk = false;
+    let mut cursor = 0usize;
+
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            files.push(FileDiff {
+                // The `+++` line below is the authority on the path; this is
+                // the fallback for a section that has none, which is what a
+                // pure mode change looks like.
+                path: git_path(rest.split(" b/").last().unwrap_or_default()),
+                new_file: false,
+                deleted: false,
+                added: Vec::new(),
+                removed: Vec::new(),
+            });
+            in_hunk = false;
+            continue;
+        }
+
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
+
+        if let Some(range) = line.strip_prefix("@@ ") {
+            in_hunk = true;
+            cursor = post_image_start(range);
+            continue;
+        }
+
+        if !in_hunk {
+            if line.starts_with("new file mode") {
+                file.new_file = true;
+            } else if line.starts_with("deleted file mode") {
+                file.deleted = true;
+            } else if let Some(path) = line.strip_prefix("--- ") {
+                if path == "/dev/null" {
+                    file.new_file = true;
+                }
+            } else if let Some(path) = line.strip_prefix("+++ ") {
+                if path == "/dev/null" {
+                    file.deleted = true;
+                } else {
+                    file.path = git_path(path.trim_start_matches("b/"));
+                }
+            }
+            continue;
+        }
+
+        match line.as_bytes().first() {
+            Some(b'+') => {
+                file.added.push(cursor);
+                cursor += 1;
+            }
+            Some(b'-') => file.removed.push(cursor),
+            // `\ No newline at end of file` annotates the line above and
+            // occupies no position of its own.
+            Some(b'\\') => {}
+            // A context line, including the empty one git writes for a blank
+            // line of context.
+            _ => cursor += 1,
+        }
+    }
+
+    files
+}
+
+/// The `+<start>` of an `@@ -a,b +c,d @@` range, 1-based, or 1 when the header
+/// does not read as one.
+fn post_image_start(range: &str) -> usize {
+    range
+        .split('+')
+        .nth(1)
+        .and_then(|plus| plus.split([',', ' ']).next())
+        .and_then(|start| start.parse().ok())
+        .unwrap_or(1)
+}
+
+/// A path as the size guard spells it: forward slashes, no surrounding quotes.
+///
+/// git quotes a path holding a byte outside the printable ASCII range and
+/// escapes what is inside. Unquoting that properly is a parser; what this does
+/// instead is leave such a path alone, so it fails to match a file on disk and
+/// is counted under `blast.files_unreadable` rather than silently attributed
+/// to the wrong file.
+fn git_path(raw: &str) -> String {
+    raw.trim().replace('\\', "/")
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
     use crate::scratch_dir::ScratchDir;
 
