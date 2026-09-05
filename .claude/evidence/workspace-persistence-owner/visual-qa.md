@@ -1,5 +1,10 @@
 # visual-qa — workspace persistence has one owner
 
+> The screenshots this document names were **captured locally, not
+> tracked**: `.gitignore` keeps `.claude/evidence/**/*.png` out of the
+> tree, so the reading written here beside each filename is the evidence,
+> and the pixels are the local proof of it.
+
 Two builds, driven through the same hooks against the same live Binance feed:
 
 - **control** — `origin/main` at `dc6396e`, the commit this branch is based on.

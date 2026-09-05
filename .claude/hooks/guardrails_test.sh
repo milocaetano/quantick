@@ -303,6 +303,24 @@ set_tier() {
 
 json_path() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
 json_bash() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
+json_patch() {
+    printf '%s%s%s%s%s' \
+        '{"tool_name":"apply_patch","cwd":"' "$1" \
+        '","tool_input":{"command":"*** Begin Patch\n*** Update File: ' "$2" \
+        '\n*** End Patch"}}'
+}
+json_patch_two() {
+    printf '%s%s%s%s%s%s%s' \
+        '{"tool_name":"apply_patch","cwd":"' "$1" \
+        '","tool_input":{"command":"*** Begin Patch\n*** Update File: ' "$2" \
+        '\n*** Update File: ' "$3" '\n*** End Patch"}}'
+}
+json_patch_move() {
+    printf '%s%s%s%s%s' \
+        '{"tool_name":"apply_patch","cwd":"' "$1" \
+        '","tool_input":{"command":"*** Begin Patch\n*** Update File: ' "$2" \
+        '\n*** Move to: ' "$3" '\n*** End Patch"}}'
+}
 
 # --- worktree-guard ---------------------------------------------------------
 
@@ -317,6 +335,18 @@ run "agent working files under .claude are allowed" \
 
 run "write into a linked worktree is allowed" \
     worktree-guard "$(json_path "$root/wt/src/a.txt")" silent
+
+run "a Codex patch into the main checkout is denied" \
+    worktree-guard "$(json_patch "$root/mainco" "src/a.txt")" deny
+
+run "a Codex patch into a linked worktree is allowed" \
+    worktree-guard "$(json_patch "$root/wt" "src/a.txt")" silent
+
+run "every file in a multi-file Codex patch is guarded" \
+    worktree-guard "$(json_patch_two "$root/wt" "$root/wt/src/a.txt" "$root/mainco/src/a.txt")" deny
+
+run "a Codex patch move destination is guarded" \
+    worktree-guard "$(json_patch_move "$root/wt" "$root/wt/src/a.txt" "$root/mainco/src/a.txt")" deny
 
 run "a payload without file_path fails open" \
     worktree-guard '{"tool_name":"Bash","tool_input":{"command":"ls"}}' silent
@@ -726,6 +756,9 @@ run "guard-watch: reports what the binary found" \
 run "guard-watch: passes a workspace-relative path" \
     guard-watch "$(json_path "$root/wt/src/a.rs")" context "src/a.rs"
 
+run "guard-watch: reads the edited path from a Codex patch" \
+    guard-watch "$(json_patch "$root/wt" "src/a.rs")" context "src/a.rs"
+
 # A quotation mark in the report has to survive into the JSON string. The
 # harness already rejects a payload that is not a parseable one-line object,
 # so this case fails loudly if the escaping regresses — which it did once,
@@ -762,6 +795,9 @@ run "guard-watch: reports when the binary exits non-zero" \
 # not because the stub is silent for everything.
 run "guard-watch: silent for a file no guard reads" \
     guard-watch "$(json_path "$root/wt/src/a.txt")" silent
+
+run "guard-watch: reaches a later file in a multi-file Codex patch" \
+    guard-watch "$(json_patch_two "$root/wt" "src/a.txt" "src/a.rs")" context "src/a.rs"
 
 # A relative `file_path` would make `dirname` answer `.`, and the git queries
 # would then resolve against the hook's own working directory — reporting on
@@ -825,6 +861,120 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
+
+# --- Claude and Codex must expose the same repository workflows ------------
+
+skill_parity() {
+    parity_root=$1
+    [ -d "$parity_root/.claude/skills" ] || return 1
+    [ -d "$parity_root/.agents/skills" ] || return 1
+
+    claude_skills=$(
+        for skill_file in "$parity_root"/.claude/skills/*/SKILL.md; do
+            [ -f "$skill_file" ] || continue
+            basename "$(dirname "$skill_file")"
+        done | sort
+    )
+    codex_skills=$(
+        for skill_file in "$parity_root"/.agents/skills/*/SKILL.md; do
+            [ -f "$skill_file" ] || continue
+            basename "$(dirname "$skill_file")"
+        done | sort
+    )
+    [ "$claude_skills" = "$codex_skills" ] || return 1
+
+    for skill in $claude_skills; do
+        adapter="$parity_root/.agents/skills/$skill/SKILL.md"
+        grep -qF -- "../../../.claude/skills/$skill/SKILL.md" "$adapter" || return 1
+        grep -qF -- "../../references/codex-compatibility.md" "$adapter" || return 1
+        grep -qE -- "^name:[[:space:]]*$skill$" "$adapter" || return 1
+    done
+}
+
+if skill_parity "$repo_root"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL .claude/skills and .agents/skills do not expose the same canonical workflows\n'
+    failed=$((failed + 1))
+fi
+
+# Pin the failure direction too. A comparison that accidentally ignored one
+# tree would report the real repository green and this deliberately incomplete
+# fixture green as well.
+parity_fixture="$root/parity"
+mkdir -p "$parity_fixture/.claude/skills/one" \
+    "$parity_fixture/.agents/skills/one" \
+    "$parity_fixture/.agents/references"
+printf '%s\n' '---' 'name: one' 'description: fixture' '---' \
+    > "$parity_fixture/.claude/skills/one/SKILL.md"
+printf '%s\n' '---' 'name: one' 'description: fixture' '---' \
+    '../../../.claude/skills/one/SKILL.md' \
+    '../../references/codex-compatibility.md' \
+    > "$parity_fixture/.agents/skills/one/SKILL.md"
+if skill_parity "$parity_fixture"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the complete skill-parity fixture was rejected\n'
+    failed=$((failed + 1))
+fi
+mkdir -p "$parity_fixture/.claude/skills/two"
+printf '%s\n' '---' 'name: two' 'description: missing from Codex' '---' \
+    > "$parity_fixture/.claude/skills/two/SKILL.md"
+if skill_parity "$parity_fixture"; then
+    printf 'FAIL skill parity accepted a Claude workflow with no Codex adapter\n'
+    failed=$((failed + 1))
+else
+    passed=$((passed + 1))
+fi
+
+# The lifecycle configuration must keep delegating every mode to the one
+# canonical script. The hook runner validates the JSON when the project layer
+# is trusted; this test owns the repository-specific agreement.
+codex_hooks="$repo_root/.codex/hooks.json"
+if [ ! -f "$codex_hooks" ]; then
+    printf 'FAIL .codex/hooks.json does not exist\n'
+    failed=$((failed + 1))
+else
+    validate_json() {
+        if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
+            python3 -m json.tool "$1" >/dev/null
+        elif command -v python >/dev/null 2>&1 && python --version >/dev/null 2>&1; then
+            python -m json.tool "$1" >/dev/null
+        elif command -v py >/dev/null 2>&1 && py -3 --version >/dev/null 2>&1; then
+            py -3 -m json.tool "$1" >/dev/null
+        else
+            return 2
+        fi
+    }
+    validate_json "$codex_hooks"
+    json_status=$?
+    case "$json_status" in
+        0) passed=$((passed + 1)) ;;
+        2) ;;
+        *)
+            printf 'FAIL .codex/hooks.json is not valid JSON\n'
+            failed=$((failed + 1))
+            ;;
+    esac
+
+    windows_commands=$(grep -c -- '"commandWindows"' "$codex_hooks")
+    if [ "$windows_commands" -eq 4 ]; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL Codex hooks define %s Windows commands, expected 4\n' "$windows_commands"
+        failed=$((failed + 1))
+    fi
+
+    for mode in worktree-guard pr-gate commit-reminder guard-watch; do
+        if grep -qF -- '.claude/hooks/guardrails.sh' "$codex_hooks" &&
+            grep -qF -- "$mode" "$codex_hooks"; then
+            passed=$((passed + 1))
+        else
+            printf 'FAIL Codex hooks do not delegate %s to guardrails.sh\n' "$mode"
+            failed=$((failed + 1))
+        fi
+    done
+fi
 
 # Every file the gate reads out of a worktree's git dir, not only the review
 # markers: the tier file is written by the same kind of prose snippet and read

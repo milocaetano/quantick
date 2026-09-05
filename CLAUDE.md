@@ -25,9 +25,9 @@ CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_t
 
 Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the graph. The invariants:
 
-- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local` → `control`. Inside a crate too: cargo cannot see a module cycle, so `guards/src/cycle.rs` fails the build on a new one.
+- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local` → `control`; the table is `guards/src/graph.rs`. Inside a crate too: cargo cannot see a module cycle, so `guards/src/cycle.rs` fails the build on a new one.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
-- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `indicators`, `pine`, `replay`, `sim` and `strategy`, and it binds third-party crates too: an async runtime or a `SystemTime` read in `sim` breaks determinism as surely as one in `engine`. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is the stopwatch in its `main.rs`, whose numbers reach stderr and never a report.
+- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `indicators`, `pine`, `replay`, `sim` and `strategy`, and it binds third-party crates too; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is the stopwatch in its `main.rs`, whose numbers reach stderr and never a report.
 - **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
@@ -53,7 +53,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 
 ## Keeping the instructions small
 
-The same ratchet over the other tree — `crates/guards/src/context.rs`, ceilings in `context-baseline.txt`, mechanism shared with `size` in `ratchet.rs`. It counts **bytes** of what a session loads: this file, `AGENTS.md`, every `.md` under `.claude/skills/`. Goal files are out of scope on purpose.
+The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/` or `.agents/`; goal files are excluded. Its ceilings are in `context-baseline.txt`, using the mechanism shared with `size` in `ratchet.rs`.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
 - **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.
@@ -71,7 +71,7 @@ The same ratchet over the other tree — `crates/guards/src/context.rs`, ceiling
   ```
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
-- **One mission, one tier** — `/mission` takes `small` (the default), `medium`, `high` or `max`, scaling the ceremony and whether `delivery-review` runs. `small` is the only tier the hooks see; the skill owns the table.
+- **One mission, one tier** — `/mission` in Claude Code or `$mission` in Codex takes `small` (the default), `medium`, `high` or `max`, scaling the ceremony and whether `delivery-review` runs. `small` is the only tier the hooks see; the skill owns the table.
 - **Arch-review before PR** — over `git diff origin/main...HEAD`. Its step 0 runs `code-review` on the same diff. Resolve every Blocker and Should-fix; note deferrals in the PR body. A docs/skills change waives shape dimensions 1–7 and 9, never 8 and never step 0.
 - **Delivery-review before PR** — arch-review asks whether the branch is well built, never whether it is what was asked for. Runs last, over the branch as shipped, grading every ask in the goal file (`.claude/GOAL.md` or its `GOAL-archive-<slug>.md`, committed before either review) and every criterion as DELIVERED / PARTIAL / MISSING / UNPROVEN, from a fresh-context subagent. Passes only when nothing is unmet. A `small` mission is exempt, bounded by a diff-size ceiling that revokes the exemption if the branch grows. A branch not from `/mission` is graded against its issue's criteria, and the verdict says so.
 - **The review chain has a budget: three rounds per branch**, then the remainder ships as recorded PR follow-ups. A round is one pass by everything that owes the branch a review — arch-review's bug pass and shape pass, then delivery-review — plus the commit answering them; not three per skill, since a fix commit stales both markers and re-runs both. Nothing is discarded to fit: findings defer into the PR body with their severity. An open Blocker never defers, and if it runs the budget out the branch goes to the trader. On reaching it, say the shape — findings shrinking is convergence, findings flat or climbing into the last round's code is a design problem.

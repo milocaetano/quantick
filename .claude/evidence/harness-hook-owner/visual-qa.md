@@ -1,5 +1,10 @@
 # Visual QA — the harness hook owner
 
+> The screenshots this document names were **captured locally, not
+> tracked**: `.gitignore` keeps `.claude/evidence/**/*.png` out of the
+> tree, so the reading written here beside each filename is the evidence,
+> and the pixels are the local proof of it.
+
 **Branch:** `refactor/harness-hook-owner` · **Control:** `origin/main` (`d721997`)
 **Date:** 2026-09-02 · **Verdict: PASS**, with one leg reported BLOCKED and one
 incident recorded below.

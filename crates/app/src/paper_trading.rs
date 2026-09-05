@@ -18,18 +18,27 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::{Side, Trade};
 use quantick_sim::{
-    Bracket, BracketTarget, CloseAmount, ClosedTrade, Command, EntryKind, OcoId, OrderId,
-    OrderIntent, OrderRole, Position, Simulator, TradingVenue, VenueEvent, history, signed_points,
+    Bracket, BracketTarget, ClosedTrade, Command, EntryKind, OrderId, OrderIntent, OrderRole,
+    Position, VenueEvent, signed_points,
 };
+// The journal's own format is named only by the tests that read one back;
+// the writing moved to `paper_account`.
+#[cfg(test)]
+use quantick_sim::history;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
-use crate::paper_calendar::{DaySelection, civil_utc};
+pub(crate) use crate::paper_account::{
+    ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings, Leg, PaperControl, side_word,
+};
+// The report's anchor date is formatted only under test.
+#[cfg(test)]
+use crate::paper_calendar::civil_utc;
 use crate::paper_chrome::{
     PositionSummary, caption, fmt_decimal, fmt_points, fmt_signed_points, pill_toggle,
-    points_color, position_word, sanitize_symbol,
+    points_color, position_word,
 };
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -38,35 +47,8 @@ use crate::timezone::TzOffset;
 // The control plane, the dock and the harness hooks all reach them through
 // this module, and a type that changed address because its code did would
 // make every one of those callers pay for a move they did not ask for.
-pub(crate) use crate::paper_report::{HistoryRow, LedgerAction, LedgerScope};
+pub(crate) use crate::paper_report::{LedgerAction, LedgerScope};
 
-/// The `ReportEnv` for this host, built where it is used.
-///
-/// A macro and not a method, and the reason is the borrow checker rather
-/// than taste: a `fn report_env(&self)` returns a value whose lifetime is
-/// tied to a borrow of the *whole* host, which then collides with the
-/// `&mut self.report` every draw call needs. Expanded inline, each field
-/// is borrowed on its own, and `self.report` is not among them - so the
-/// two borrows are disjoint and the compiler can see that they are.
-macro_rules! report_env {
-    ($host:ident) => {
-        crate::paper_report::ReportEnv {
-            symbol: &$host.symbol,
-            dir: &$host.dir,
-            session_journal_paths: &$host.session_journal_paths,
-            session_trades: $host.venue.closed_trades(),
-            open: $host.open_row(),
-        }
-    };
-}
-
-/// `=1` runs a fixed sequence of ordinary sim commands driven by print
-/// count, so a screenshot or demo run shows every trading surface without
-/// a click — the autostart family's member for paper trading. The trades
-/// are as real as any simulated trade (journaled, listed, painted); point
-/// `QUANTICK_TRADES_DIR` somewhere scratch to keep a demo out of your
-/// journal.
-const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
 /// `=<rungs>` rests entry orders around the mark as soon as the tape has
 /// one, so the in-plot order tag can be photographed at all. The scripted
 /// demo's own order is 220 prints away and sits 0.4 % out — far enough to
@@ -101,9 +83,6 @@ const LINE_GRAB_RADIUS_PX: f32 = 10.0;
 const ORDER_DASH_PX: f32 = 4.0;
 /// Gap between dashes of a pending order's line.
 const ORDER_GAP_PX: f32 = 4.0;
-/// Price precision for snapped drags before any print reveals the
-/// instrument's own (two decimals, the crypto-major default).
-const SNAP_FALLBACK_DECIMALS: u32 = 2;
 
 /// How far the axis notch reaches back into the plot, in pixels.
 ///
@@ -139,16 +118,6 @@ const NEW_RUNG_TICKS: u32 = 20;
 /// wrist's worth of wheel in either direction, whatever the step is worth.
 const RULER_MAX_NOTCHES: u32 = 200;
 
-/// The step a notch walks when the trader has named none, as a fraction of
-/// the mark.
-///
-/// Half a basis point: volatility scales with price, so one fraction serves
-/// an instrument quoted at 78,000 and one quoted at 5. It is rounded up the
-/// 1-2-5 ladder to a whole number of ticks, which lands on 5 points for
-/// BTCUSDT near 78,000 and 10 for the mini index near 138,000 — in both
-/// cases a twenty-to-forty point read is four to eight rolls away.
-const RULER_DEFAULT_STEP_FRACTION: Decimal = Decimal::from_parts(5, 0, 0, false, 5);
-
 /// What the strategy selector calls "no strategy" - the bare order.
 const STRATEGY_NONE: &str = "<None>";
 
@@ -162,15 +131,6 @@ const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
 /// `1:1` it reads are unreachable from a capture. Pair with
 /// `QUANTICK_CMD_PREVIEW`, which supplies the aim the ruler measures from.
 const RULER_TICKS_ENV: &str = "QUANTICK_PAPER_RULER_TICKS";
-/// Stands the risk per trade up on launch, with the instrument's money.
-///
-/// The risk block is settings a trader fills in by hand, and a scripted run
-/// has no hands - so without this the derived size, the discreet line and
-/// the refusal the lock produces are all unreachable from a capture. Pair
-/// with `QUANTICK_PAPER_RULER_TICKS`, which walks the stop the size is
-/// measured from, and `QUANTICK_CMD_PREVIEW`, which supplies the aim. See
-/// `crate::risk_sizing::parse_hook` for the grammar.
-const PAPER_RISK_ENV: &str = "QUANTICK_PAPER_RISK";
 /// The position's entry line leads the paper lines: it is the one that is
 /// history rather than an order, and it matches the drawings' default width.
 const POSITION_LINE_WIDTH_PX: f32 = 1.5;
@@ -211,9 +171,6 @@ const HANDLE_CLEAR_PX: f32 = 12.0;
 /// commits to creating one bracket leg — the drawings' drag threshold.
 const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
 
-/// How many `.rerun-N` session names one venue-time stamp may try — far
-/// beyond any real journal, a backstop against a pathological folder.
-const MAX_SESSION_RERUNS: usize = 999;
 /// `=buy`/`=sell` forces the cmd-trading preview for a capture run, and an
 /// optional `@<fraction>` parks the virtual pointer at that fraction of the
 /// band's width (`buy@0.15` aims near the left edge). The held modifier and
@@ -243,23 +200,12 @@ const CMD_LABEL_WIDTH_PX: f32 = 116.0;
 /// the candle beneath it stay readable — while staying close enough to
 /// read as one statement with the aim.
 const CMD_LABEL_CURSOR_GAP_PX: f32 = 14.0;
-/// Longest export path a toast prints whole; past it the folder elides
-/// and the file name stays.
-const EXPORT_PATH_ELIDE_CHARS: usize = 64;
 /// Vertical clearance between a paper chip's centre and the last-price
 /// chip's, in pixels — just over one chip height, so the two can never
 /// overprint. At the instant a market order fills, the entry price *is* the
 /// last price, and without this the one persistent "you are long" statement
 /// is born unreadable.
 const CHIP_CLEAR_PX: f32 = 16.0;
-
-/// The next chart click places this entry (`Limit` or `Stop` only — a
-/// market order needs no price and fires straight from its button).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArmedPlacement {
-    side: Side,
-    kind: EntryKind,
-}
 
 /// Which simulated line the pointer is dragging.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -299,110 +245,6 @@ enum PaperDrag {
         index: usize,
         leg: Leg,
     },
-}
-
-/// Which side of a bracket a gesture is about.
-///
-/// The two legs are not symmetric — one caps the loss and one takes the
-/// win — but every gesture that touches either does the same thing to it,
-/// so they travel as one value rather than as a `bool` nobody can read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Leg {
-    StopLoss,
-    TakeProfit,
-}
-
-impl Leg {
-    /// The two-letter word on the line's tag and on its handle.
-    fn word(self) -> &'static str {
-        match self {
-            Self::StopLoss => "SL",
-            Self::TakeProfit => "TP",
-        }
-    }
-
-    /// The leg's colour: a stop is an exit at a loss, a target an exit at a
-    /// gain, whatever side the trade is.
-    fn color(self) -> egui::Color32 {
-        match self {
-            Self::StopLoss => theme::SELL,
-            Self::TakeProfit => theme::BUY,
-        }
-    }
-
-    /// The *other* leg's level within a bracket — the one the R:R read is
-    /// measured against while this one is being dragged.
-    fn other(self, bracket: Bracket) -> Option<Decimal> {
-        match self {
-            Self::StopLoss => bracket.take_profit(),
-            Self::TakeProfit => bracket.stop_loss(),
-        }
-    }
-
-    /// This leg's level within a bracket.
-    fn level(self, bracket: Bracket) -> Option<Decimal> {
-        match self {
-            Self::StopLoss => bracket.stop_loss(),
-            Self::TakeProfit => bracket.take_profit(),
-        }
-    }
-
-    /// The bracket with this leg set to `level` (`None` clears it) and the
-    /// other leg untouched — every amendment in this module goes through
-    /// here, so "replace wholesale" can never accidentally drop the leg
-    /// nobody was touching.
-    fn applied(self, bracket: Bracket, level: Option<Decimal>) -> Bracket {
-        match self {
-            Self::StopLoss => Bracket::whole(level, bracket.take_profit()),
-            Self::TakeProfit => Bracket::whole(bracket.stop_loss(), level),
-        }
-    }
-
-    /// Whether this leg's price sits **above** the entry, for `side`.
-    ///
-    /// Named for the geometry and not for the meaning, because the two part
-    /// company on a short: a short's stop is above its entry *and* on the
-    /// losing side. The callers want the geometry — it is what decides
-    /// which side of the line a handle is drawn on — so calling this
-    /// "profit side" would be an invitation to fold
-    /// `decide_pending_leg`'s own profit-side test into it and swap stop
-    /// for target on every short.
-    fn sits_above_entry(self, side: Side) -> bool {
-        matches!(
-            (self, side),
-            (Self::TakeProfit, Side::Buy) | (Self::StopLoss, Side::Sell)
-        )
-    }
-}
-
-/// A painted overlay control from the last paint pass: a tag's ✕ or a
-/// bracket handle. Hit rects are cached one frame behind the paint — the
-/// input pass runs before the draw, and an immediate-mode overlay control is
-/// pressed against where it was actually painted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PaperControl {
-    /// ✕ on the position tag: exit at the next print.
-    ClosePosition,
-    /// ✕ on a protective leg's tag: clear that leg, keeping the other.
-    ClearLeg { owner: BracketTarget, leg: Leg },
-    /// ✕ on a working order's tag: cancel it.
-    CancelOrder(OrderId),
-    /// Labelled `SL`/`TP` handle beside a line that owns brackets: the
-    /// press starts a create-drag for that leg.
-    Handle { owner: BracketTarget, leg: Leg },
-    /// ✕ on one rung of a resting entry's ladder: clear that rung's leg and
-    /// leave every other rung alone. A rung with neither leg left is dropped
-    /// — a part that protects nothing is not a part.
-    ClearRung {
-        order: OrderId,
-        index: usize,
-        leg: Leg,
-    },
-}
-
-/// The scripted demo's only state: how many prints it has seen.
-struct PaperDemo {
-    prints: u64,
 }
 
 /// What the Trading tab asked of its host.
@@ -461,125 +303,6 @@ pub struct ChartInput<'a> {
     pub layer_visible: bool,
 }
 
-/// A modifier key the cmd-trading gesture can bind to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmdModifier {
-    Shift,
-    Ctrl,
-    Alt,
-}
-
-impl CmdModifier {
-    /// Every binding the selectors offer.
-    pub const ALL: [Self; 3] = [Self::Shift, Self::Ctrl, Self::Alt];
-
-    /// Stable token for the state file.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Shift => "shift",
-            Self::Ctrl => "ctrl",
-            Self::Alt => "alt",
-        }
-    }
-
-    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
-    #[must_use]
-    pub fn parse(token: &str) -> Option<Self> {
-        match token {
-            "shift" => Some(Self::Shift),
-            "ctrl" => Some(Self::Ctrl),
-            "alt" => Some(Self::Alt),
-            _ => None,
-        }
-    }
-
-    /// Display label for the selector.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Shift => "Shift",
-            Self::Ctrl => "Ctrl",
-            Self::Alt => "Alt",
-        }
-    }
-
-    /// Whether the key is held. `Ctrl` reads the platform command key, so
-    /// the binding keeps meaning "the control-ish key" on every OS.
-    fn is_down(self, modifiers: egui::Modifiers) -> bool {
-        match self {
-            Self::Shift => modifiers.shift,
-            Self::Ctrl => modifiers.command,
-            Self::Alt => modifiers.alt,
-        }
-    }
-}
-
-/// Which entry kind the aim places.
-///
-/// The fill model leaves exactly one *resting* kind valid at any price: a
-/// buy above the market can only stop in (a buy limit there would fill at
-/// once), and below it can only wait at a limit. So this is not a way to
-/// place a stop where a limit belongs — no venue would take it. It is a way
-/// to state **which order you came to place**, so the aim shows nothing
-/// rather than quietly handing you the other kind when the market is on the
-/// wrong side of your level.
-///
-/// That case is not hypothetical: the mark moves. A level a hand's breadth
-/// above the last price is a buy stop now and a buy limit after two ticks
-/// up, and under [`Self::Auto`] the same click at the same level places a
-/// different order depending on when it lands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CmdEntryKind {
-    /// Whichever kind can rest at the aimed price — the mark decides.
-    #[default]
-    Auto,
-    /// Only a limit. Where a limit cannot rest, the aim stands down.
-    Limit,
-    /// Only a stop. Where a stop cannot arm, the aim stands down.
-    Stop,
-}
-
-impl CmdEntryKind {
-    /// Every choice the selector offers.
-    pub const ALL: [Self; 3] = [Self::Auto, Self::Limit, Self::Stop];
-
-    /// Stable token for the state file.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Limit => "limit",
-            Self::Stop => "stop",
-        }
-    }
-
-    /// The inverse of [`Self::as_str`]; unknown tokens are refused.
-    #[must_use]
-    pub fn parse(token: &str) -> Option<Self> {
-        match token {
-            "auto" => Some(Self::Auto),
-            "limit" => Some(Self::Limit),
-            "stop" => Some(Self::Stop),
-            _ => None,
-        }
-    }
-
-    /// Display label for the selector.
-    ///
-    /// The same words as [`Self::as_str`] today, and delegating rather than
-    /// repeating them so it stays that way by accident only where it is
-    /// harmless: written out twice, renaming the selector's "stop" would
-    /// silently change the on-disk token and every remembered choice would
-    /// fall back to `Auto` on the next launch. Give this its own `match`
-    /// the day the label and the token should differ, which is what
-    /// [`CmdModifier`] already does.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        self.as_str()
-    }
-}
-
 /// The kind the aim places at `price`, or `None` where nothing may rest
 /// there.
 ///
@@ -609,59 +332,6 @@ fn resolve_cmd_kind(
         CmdEntryKind::Auto => Some(available),
         CmdEntryKind::Limit => (available == EntryKind::Limit).then_some(EntryKind::Limit),
         CmdEntryKind::Stop => (available == EntryKind::Stop).then_some(EntryKind::Stop),
-    }
-}
-
-/// Cmd trading: hold a key over the chart and a dashed line shows exactly
-/// where the order will rest, with a label riding beside the cursor; the
-/// click places it. Safer than the right-click menu because the price is
-/// visible before anything commits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CmdTradingSettings {
-    pub enabled: bool,
-    pub buy: CmdModifier,
-    pub sell: CmdModifier,
-    /// Which entry kind the aim places; see [`CmdEntryKind`].
-    pub kind: CmdEntryKind,
-}
-
-impl Default for CmdTradingSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            buy: CmdModifier::Shift,
-            sell: CmdModifier::Ctrl,
-            // Auto is right at almost every price, and it is what shipped;
-            // the choice exists for the trader who wants to be sure.
-            kind: CmdEntryKind::Auto,
-        }
-    }
-}
-
-impl CmdTradingSettings {
-    /// The settings the sidecar remembers, with the defaults wherever it
-    /// never spoke — or spoke a token this build does not know.
-    #[must_use]
-    pub(crate) fn from_state(state: &crate::paper_state::PaperState) -> Self {
-        let defaults = Self::default();
-        Self {
-            enabled: state.cmd_trading_enabled.unwrap_or(defaults.enabled),
-            buy: state
-                .cmd_buy_modifier
-                .as_deref()
-                .and_then(CmdModifier::parse)
-                .unwrap_or(defaults.buy),
-            sell: state
-                .cmd_sell_modifier
-                .as_deref()
-                .and_then(CmdModifier::parse)
-                .unwrap_or(defaults.sell),
-            kind: state
-                .cmd_entry_kind
-                .as_deref()
-                .and_then(CmdEntryKind::parse)
-                .unwrap_or(defaults.kind),
-        }
     }
 }
 
@@ -757,38 +427,9 @@ impl CmdPreviewForce {
 /// The app-side trading host: the venue, order-entry form state,
 /// chart-layer interaction, journal and report.
 pub struct PaperTrading {
-    /// Where orders actually go. A [`TradingVenue`] rather than a
-    /// `Simulator`, so the chart's gestures, the ticket and the
-    /// control-plane actions are all written against the port a real
-    /// broker will one day implement — see `quantick-trading`. Today the
-    /// only venue constructed here is the deterministic paper simulator,
-    /// and every surface still says `SIM`.
-    venue: Box<dyn TradingVenue>,
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
     order_bracket_demo: bool,
-    /// Symbol the journal writes under; follows the app's active symbol.
-    symbol: String,
-    dir: PathBuf,
-    /// Current session file, named after the first closed trade.
-    journal_path: Option<PathBuf>,
-    /// Every file this host has journaled to. The ledger excludes them
-    /// all — their trades are still in the simulator, which keeps closed
-    /// trades across every retarget; excluding only the current file
-    /// double-counted after a symbol or source switch.
-    session_journal_paths: Vec<PathBuf>,
-    /// The session source each of the simulator's closed trades closed
-    /// under, index-aligned with `sim.closed_trades()` — the export must
-    /// not stamp a pre-switch trade with the current source.
-    session_trade_sources: Vec<history::SessionSource>,
-    /// A failed journal write warns once, not once per trade.
-    journal_warned: bool,
-    /// Where this session's trades come from — the tab's feed sets it,
-    /// the journal header records it.
-    session_source: history::SessionSource,
-    /// Cmd trading: the toggle and its two key bindings (app-wide; the
-    /// app persists and fans out changes).
-    cmd_trading: CmdTradingSettings,
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
     cmd_preview: Option<CmdPreview>,
@@ -814,12 +455,6 @@ pub struct PaperTrading {
     order_type: EntryKind,
     stop_offset_text: String,
     profit_offset_text: String,
-    armed: Option<ArmedPlacement>,
-    /// The named exit strategies the trader keeps, in their own order.
-    strategies: Vec<crate::order_strategies::OrderStrategy>,
-    /// Which strategy the ticket is set to; `None` is the bare order the
-    /// trader brackets by hand.
-    selected_strategy: Option<usize>,
     /// Whether the strategy editor window is up.
     strategy_editor_open: bool,
     /// An edit inside the editor that has not been saved yet.
@@ -833,18 +468,6 @@ pub struct PaperTrading {
     strategy_dirty: bool,
     /// Which strategy the editor has open; `None` while the list is empty.
     strategy_editing: Option<usize>,
-    /// The finest precision this instrument's prints have actually shown,
-    /// as a number of decimal places.
-    ///
-    /// One tick is `10^-tick_scale`, and it has to come from the tape rather
-    /// than from any single print: a venue may quote `78112.57000000`, whose
-    /// raw scale is eight and whose real step is two, and the very next print
-    /// may land on `78100` and normalize to zero. Reading one print gives a
-    /// tick that changes under the trader's hand — 80 of them a whole point
-    /// one second and a hundred-millionth the next. Taking the finest scale
-    /// the prints have *ever* shown is stable, monotonic and costs one
-    /// comparison per trade.
-    tick_scale: u32,
     /// How many *notches* the wheel has walked the projected bracket out
     /// from the aim. Sticky across aims within a session: a trader who
     /// decided their distance should not have to re-roll it for the next
@@ -860,17 +483,6 @@ pub struct PaperTrading {
     /// recorded session must not make a trader relearn their wheel. The
     /// journal is already keyed this way.
     ruler_steps: BTreeMap<String, Decimal>,
-    /// What one trade may lose, and whether an entry over it is refused.
-    ///
-    /// The policy half of risk sizing; the arithmetic belongs to the kernel.
-    /// See [`crate::risk_sizing`].
-    risk: crate::risk_sizing::RiskSettings,
-    /// The practice capital, one amount per currency. Never summed across
-    /// currencies and never converted between them.
-    capital: crate::risk_sizing::Capital,
-    /// What one point of each instrument is worth, by bare symbol. Declared
-    /// by the trader; nothing here derives it from the tape.
-    instrument_money: crate::risk_sizing::InstrumentBook,
     /// What the trader typed for the fixed risk per trade.
     risk_amount_text: String,
     /// What the trader typed for the percentage of capital.
@@ -881,16 +493,6 @@ pub struct PaperTrading {
     size_step_text: String,
     /// What the trader typed for this instrument's currency code.
     currency_text: String,
-    /// Money a launch hook asked for, waiting for the tab to learn which
-    /// symbol it opens on. Spent once, on the first symbol.
-    hook_money: Option<quantick_sim::InstrumentMoney>,
-    /// Whether a launch hook set the risk per trade for this run.
-    ///
-    /// An environment variable is an explicit request for one run, so it
-    /// outranks the sidecar - and the sidecar fan-out that follows
-    /// construction has to be told, or it silently restores the stored
-    /// settings over the ones the run asked for.
-    risk_from_hook: bool,
     /// What the trader typed for the capital in this instrument's currency.
     capital_text: String,
     /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
@@ -921,37 +523,40 @@ pub struct PaperTrading {
     /// lifts, so one hover reads on both surfaces. Cleared after the chart
     /// consumed it ([`PaperTrading::settle`] runs last in the frame).
     hovered_order: Option<OrderId>,
-    /// The in-flight export, if any; resolved by [`PaperTrading::settle`]'s
-    /// poll.
-    export_rx: Option<std::sync::mpsc::Receiver<Result<(PathBuf, usize), String>>>,
-    /// The in-flight history-folder import, if any; resolved by
-    /// [`PaperTrading::settle`]'s poll. Imports copy — the picked folder
-    /// keeps its files.
-    import_rx: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
     /// The acknowledgement waiting to be handed to the window's one toast —
-    /// an outbox, not a toast. See [`PaperTrading::take_toast`].
-    pending_toast: Option<String>,
-    /// The performance report and the trades ledger - the reading half of
-    /// paper trading, which owns its own state (`paper_report`). One field
-    /// here in place of the twenty-one that used to spread across this
-    /// struct, none of which an order, a bracket or a fill ever read.
-    report: crate::paper_report::ReportState,
-    /// The scripted demo (`QUANTICK_PAPER_DEMO=1`), for screenshot and
-    /// validation runs; `None` in normal use.
-    demo: Option<PaperDemo>,
-    /// Whether anything is listening for per-print simulator events (armed
-    /// strategy instances). Off, `on_trade` buffers nothing — the hot path
-    /// pays for the bot only while a bot exists.
-    bot_listening: bool,
-    /// Per-print events buffered for the strategy instances since the last
-    /// drain. Only ever non-empty while `bot_listening`, and prints with
-    /// nothing to report push nothing.
-    bot_events: Vec<VenueEvent>,
+    /// The policy half: the venue, the journal, the risk, the
+    /// strategies and the events. Reached by the control plane
+    /// through [`Self::account`]; this module only draws it.
+    account: crate::paper_account::PaperAccount,
 }
 
 impl Default for PaperTrading {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The leg's colour: a stop is an exit at a loss, a target an exit at a gain,
+/// whatever side the trade is.
+///
+/// A free function here rather than a method on `Leg`, because `Leg` moved to
+/// the account and a colour is a pixel. The account decides which leg a
+/// gesture is about; this decides what that leg looks like.
+fn leg_color(leg: Leg) -> egui::Color32 {
+    match leg {
+        Leg::StopLoss => theme::SELL,
+        Leg::TakeProfit => theme::BUY,
+    }
+}
+
+/// Whether the modifier is held. `Ctrl` reads the platform command key, so the
+/// binding keeps meaning "the control-ish key" on every OS. A pixel-side read
+/// for the same reason as [`leg_color`]: the key state is the window's.
+fn modifier_is_down(modifier: CmdModifier, modifiers: egui::Modifiers) -> bool {
+    match modifier {
+        CmdModifier::Shift => modifiers.shift,
+        CmdModifier::Ctrl => modifiers.command,
+        CmdModifier::Alt => modifiers.alt,
     }
 }
 
@@ -966,54 +571,23 @@ impl PaperTrading {
             // same scratch discipline `paper_state::default_path` applies.
             return Self::with_trades_dir(test_scratch_dir());
         }
-        Self::with_trades_dir(Self::resolve_trades_dir(None, None))
-    }
-
-    /// The journal folder for this run: the environment override wins (an
-    /// env var is an explicit request for one run, like every autostart
-    /// hook), then `stored` — the folder the user last picked with the
-    /// panel's button — then `configured`, the `[paper] trades_dir` key
-    /// when the config carries one, and finally the documents home
-    /// ([`crate::paper_home::default_trades_dir`]).
-    #[must_use]
-    pub fn resolve_trades_dir(configured: Option<&str>, stored: Option<&str>) -> PathBuf {
-        crate::paper_home::resolve(configured, stored)
+        Self::with_trades_dir(crate::paper_account::PaperAccount::resolve_trades_dir(
+            None, None,
+        ))
     }
 
     /// A host journaling to `dir`, already resolved from config and
     /// environment.
+    ///
+    /// The policy half builds itself: the venue, the journal, the risk hook,
+    /// the strategies and the scripted demo are the account's, and this
+    /// constructor no longer knows how any of them are made.
     #[must_use]
     pub fn with_trades_dir(dir: PathBuf) -> Self {
-        // A spec that does not parse is reported and ignored, never
-        // defaulted: a capture run that silently got a different risk than
-        // it asked for photographs the wrong thing and says nothing about
-        // it. The rule `QUANTICK_PAPER_ORDERS` already follows.
-        let hook = std::env::var(PAPER_RISK_ENV).ok().and_then(|value| {
-            crate::risk_sizing::parse_hook(&value).or_else(|| {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "PAPER_RISK_HOOK_REJECTED",
-                    value = %value,
-                    action = "risk_left_off",
-                    "QUANTICK_PAPER_RISK wants `<amount>` or `<percent>%@<capital>`, optionally \
-                     `:<point value>:<size step>:<currency>` and `:unlocked`"
-                );
-                None
-            })
-        });
         Self {
-            venue: Box::new(Simulator::new()),
+            account: crate::paper_account::PaperAccount::with_trades_dir(dir),
             order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
                 .is_ok_and(|value| value == "1"),
-            symbol: String::new(),
-            dir,
-            journal_path: None,
-            session_journal_paths: Vec::new(),
-            session_trade_sources: Vec::new(),
-            journal_warned: false,
-            session_source: history::SessionSource::Live,
-            cmd_trading: CmdTradingSettings::default(),
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
@@ -1055,39 +629,22 @@ impl PaperTrading {
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
             profit_offset_text: String::new(),
-            armed: None,
-            strategies: Vec::new(),
-            selected_strategy: None,
             strategy_editor_open: std::env::var(STRATEGY_EDITOR_ENV)
                 .is_ok_and(|value| value == "1"),
             strategy_dirty: false,
             strategy_editing: None,
-            tick_scale: 0,
             ruler_notches: std::env::var(RULER_TICKS_ENV)
                 .ok()
                 .and_then(|value| value.trim().parse::<u32>().ok())
                 .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES)),
             ruler_step_text: String::new(),
             ruler_steps: BTreeMap::new(),
-            risk: hook
-                .as_ref()
-                .map_or_else(crate::risk_sizing::RiskSettings::default, |hook| {
-                    hook.settings.clone()
-                }),
-            capital: hook
-                .as_ref()
-                .map_or_else(crate::risk_sizing::Capital::new, |hook| {
-                    hook.capital.clone()
-                }),
-            instrument_money: crate::risk_sizing::InstrumentBook::new(),
             risk_amount_text: String::new(),
             risk_percent_text: String::new(),
             point_value_text: String::new(),
             size_step_text: String::new(),
             currency_text: String::new(),
             capital_text: String::new(),
-            risk_from_hook: hook.is_some(),
-            hook_money: hook.and_then(|hook| hook.money),
             ruler_travel_px: 0.0,
             ruler_rolled: false,
             ruler_notch_px: f32::INFINITY,
@@ -1095,65 +652,219 @@ impl PaperTrading {
             drag: PaperDrag::None,
             drag_price: None,
             hovered_order: None,
-            export_rx: None,
-            import_rx: None,
-            pending_toast: None,
-            report: crate::paper_report::ReportState::default(),
-            demo: std::env::var(PAPER_DEMO_ENV)
-                .is_ok_and(|value| value == "1")
-                .then_some(PaperDemo { prints: 0 }),
-            bot_listening: false,
-            bot_events: Vec::new(),
         }
+    }
+
+    /// Everything the account needs from the ticket for one call.
+    ///
+    /// Built per call and never kept: a stored copy would answer for the form
+    /// the trader used to have typed, which is `ReportEnv`'s reason too.
+    /// The reading half of [`Self::parse_bracket`]: the same arithmetic with
+    /// no toast, so the projection can ask what the ticket says without
+    /// putting a message on screen every frame.
+    fn ticket_bracket(&self, side: Side, reference: Decimal) -> Bracket {
+        self.ticket_form().bracket(side, reference)
+    }
+
+    fn account_env(&self, side: Side, price: Decimal) -> crate::paper_account::AccountEnv {
+        crate::paper_account::AccountEnv {
+            ruler_levels: match self.ruler_levels(side, price) {
+                (Some(stop), Some(target)) => Some((stop, target)),
+                _ => None,
+            },
+            form: self.ticket_form(),
+        }
+    }
+
+    /// The three typed boxes, read. The quantity carries its own complaint so
+    /// that the account can raise it only if it ever reaches the box.
+    fn ticket_form(&self) -> crate::paper_account::TicketForm {
+        crate::paper_account::TicketForm {
+            quantity: match self.qty_text.trim().parse::<Decimal>() {
+                Ok(quantity) if quantity > Decimal::ZERO => Ok(quantity),
+                _ => Err(format!(
+                    "SIM: quantity must be a positive number - got `{}`",
+                    self.qty_text.trim(),
+                )),
+            },
+            // Both boxes or neither: one that does not parse fails the pair,
+            // which is what `ticket_bracket`'s `?` did.
+            offsets: match (
+                parse_offset(&self.stop_offset_text),
+                parse_offset(&self.profit_offset_text),
+            ) {
+                (Ok(stop), Ok(profit)) => Some((stop, profit)),
+                _ => None,
+            },
+        }
+    }
+
+    /// The bracket the ticket's offsets describe, or the complaint about the
+    /// text that does not parse - which is toasted here, beside the box.
+    fn parse_bracket(&mut self, side: Side, reference: Decimal) -> Option<Bracket> {
+        let stop_offset = match parse_offset(&self.stop_offset_text) {
+            Ok(value) => value,
+            Err(got) => {
+                self.show_toast(format!(
+                    "SIM: the stop offset must be a positive number of points - got `{got}`"
+                ));
+                return None;
+            }
+        };
+        let profit_offset = match parse_offset(&self.profit_offset_text) {
+            Ok(value) => value,
+            Err(got) => {
+                self.show_toast(format!(
+                    "SIM: the profit offset must be a positive number of points - got `{got}`"
+                ));
+                return None;
+            }
+        };
+        let form = crate::paper_account::TicketForm {
+            quantity: Ok(Decimal::ONE),
+            offsets: Some((stop_offset, profit_offset)),
+        };
+        Some(form.bracket(side, reference))
+    }
+
+    /// What the risk per trade says about the entry the aim is holding.
+    pub(crate) fn risk_state(
+        &self,
+        side: Side,
+        reference: Decimal,
+    ) -> crate::risk_sizing::RiskState {
+        self.account
+            .risk_state(side, reference, &self.account_env(side, reference))
+    }
+
+    /// The risk read the control plane and the ticket's own line share.
+    pub(crate) fn risk_report(&self) -> (crate::risk_sizing::RiskState, bool) {
+        let reference = self.account.mark_price().unwrap_or_default();
+        self.account
+            .risk_report(&self.account_env(Side::Buy, reference))
+    }
+
+    /// The bracket an armed entry would carry, at this size.
+    pub(crate) fn armed_bracket(
+        &self,
+        side: Side,
+        reference: Decimal,
+        quantity: Decimal,
+    ) -> Bracket {
+        self.account.armed_bracket(
+            side,
+            reference,
+            quantity,
+            &self.account_env(side, reference),
+        )
+    }
+
+    /// The report's state, as its own surfaces read it. Test-only, like the
+    /// account's own pair: the drawing code reaches the report through
+    /// `report_parts`.
+    #[cfg(test)]
+    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
+        self.account().report_state()
+    }
+
+    /// The report's state, mutably. Test-only, as above.
+    #[cfg(test)]
+    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
+        self.account_mut().report_state_mut()
     }
 
     /// Point the journal at a scratch folder (tests only).
     #[cfg(test)]
     pub(crate) fn redirect_history_dir(&mut self, dir: PathBuf) {
-        self.dir = dir;
+        self.account_mut().redirect_history_dir(dir);
     }
 
-    /// Where trades save right now.
-    #[must_use]
-    pub fn trades_dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// Point the journal somewhere new, in-session — the panel's folder
-    /// picker. Files already written stay exactly where they are; the next
-    /// close opens a new session file under the new folder, and the ledger
-    /// and report re-read from the new home.
-    pub fn set_trades_dir(&mut self, dir: PathBuf) {
-        if self.dir == dir {
-            return;
-        }
-        self.dir = dir;
-        self.journal_path = None;
-        self.journal_warned = false;
-        let env = report_env!(self);
-        self.report.trades_dir_changed(&env);
-        self.show_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
-    }
-
-    /// Apply a raw simulator command through the normal event funnel
-    /// (tests only) — for arranging sim state the UI would need gestures
-    /// to reach.
+    /// Run one simulator command straight at the venue (tests only).
     #[cfg(test)]
     pub(crate) fn apply_sim_command_for_tests(&mut self, command: Command) {
-        let events = self.dispatch(command);
-        self.handle_events(events);
+        self.account_mut().apply_sim_command_for_tests(command);
     }
 
-    /// The cmd-trading settings, for the app to persist.
-    #[must_use]
-    pub fn cmd_trading(&self) -> CmdTradingSettings {
-        self.cmd_trading
+    /// The policy half, for readers that want it and not the pixels.
+    ///
+    /// The control plane goes through here: `control::{trade, session,
+    /// interaction}` ask the account, so the second operator reads the money
+    /// path rather than the ticket that draws it.
+    pub(crate) fn account(&self) -> &crate::paper_account::PaperAccount {
+        &self.account
+    }
+
+    /// The policy half, mutably.
+    ///
+    /// Nothing drains the outbox per call, and nothing needs to: the account
+    /// holds the one toast slot the ticket used to hold, and the per-frame
+    /// `settle` loop takes it the same way it always did. A caller here posts
+    /// an acknowledgement by acting, not by remembering to hand one on.
+    pub(crate) fn account_mut(&mut self) -> &mut crate::paper_account::PaperAccount {
+        &mut self.account
+    }
+
+    // ------------------------------------------------------------------
+    // The account, reached by name
+    //
+    // Every one of these moved to `paper_account`; the names stayed here so
+    // that `app`, `tab`, `dock` and `toolbar` did not pay for a move they
+    // did not ask for. The control plane does not come through these - it
+    // asks `account()` directly, so a reader of `control::trade` sees the
+    // money path and not the ticket that draws it.
+    // ------------------------------------------------------------------
+
+    pub(crate) fn close_button_label(&self) -> Option<String> {
+        self.account().close_button_label()
+    }
+
+    /// Close everything, now. Named here as well as on the account because
+    /// `Iterator::flatten` otherwise wins method resolution on a bare
+    /// `.flatten()` and the shortcut stops closing the position.
+    pub(crate) fn flatten(&mut self) {
+        self.account_mut().flatten();
+    }
+
+    pub(crate) fn close_position(&mut self) {
+        self.account_mut().close_position()
+    }
+
+    pub(crate) fn is_flat(&self) -> bool {
+        self.account().is_flat()
+    }
+
+    pub(crate) fn mark_price(&self) -> Option<Decimal> {
+        self.account().mark_price()
+    }
+
+    pub(crate) fn position_summary(&self) -> Option<PositionSummary> {
+        self.account().position_summary()
+    }
+
+    pub(crate) fn ready(&self) -> bool {
+        self.account().ready()
+    }
+
+    pub(crate) fn seed(&mut self, trade: &Trade) {
+        self.account_mut().seed(trade)
+    }
+
+    pub(crate) fn session_trades(&self) -> &[ClosedTrade] {
+        self.account().session_trades()
+    }
+
+    pub(crate) fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
+        self.account().status_cell()
+    }
+
+    pub(crate) fn working_orders(&self) -> &[quantick_sim::Order] {
+        self.account().working_orders()
     }
 
     /// Install cmd-trading settings — the app's fan-out on boot and on a
     /// change made in any tab (one gesture, one meaning, everywhere).
     pub fn set_cmd_trading(&mut self, settings: CmdTradingSettings) {
-        self.cmd_trading = settings;
+        self.account.cmd_trading = settings;
         if !settings.enabled {
             self.cmd_preview = None;
         }
@@ -1165,91 +876,32 @@ impl PaperTrading {
         self.cmd_preview = None;
     }
 
-    /// Follow the tab's feed: a session is wholly live or wholly a
-    /// replay, and the journal's header records which. A change retargets
-    /// the journal so the next close opens a file honest about its
-    /// source.
-    pub fn set_session_source(&mut self, source: history::SessionSource) {
-        if self.session_source != source {
-            self.session_source = source;
-            self.journal_path = None;
-        }
-    }
-
     /// Follow the app's active symbol. A change retargets the journal; the
     /// simulator itself was already flattened by the timeline reset that
     /// every switch performs.
     pub fn set_symbol(&mut self, symbol: &str) {
-        if self.symbol != symbol {
-            // Leaving an instrument is what forgets its geometry; *arriving*
-            // at the first one is not a switch. The app names the opening
-            // symbol a frame after construction, so treating that as a
-            // departure wiped a ruler the launch had just been asked for -
-            // which is also why the harness hook below could never paint a
-            // stop and target.
-            let arriving = self.symbol.is_empty();
-            self.symbol = symbol.to_owned();
-            // Money a launch hook asked for lands on the symbol the tab
-            // opens with, for the same reason the ruler does: the app names
-            // that symbol a frame after construction, so there is nothing to
-            // key it by until now. Spent once - a later switch is a real
-            // switch, and the trader's own book answers for it.
-            if let Some(money) = self.hook_money.take() {
-                self.instrument_money.insert(symbol.to_owned(), money);
-            }
-            // The tick is the *instrument's*, and it only ever ratchets
-            // finer: carried across a switch it would price the next
-            // market's ruler and ladders in a precision that market has
-            // never printed. The standing ruler goes with it — a distance
-            // chosen on one instrument means nothing on the next, and it
-            // would silently arm the first order placed there.
-            self.tick_scale = 0;
-            if !arriving {
-                self.ruler_notches = 0;
-            }
-            self.ruler_travel_px = 0.0;
-            self.ruler_step_text = self
-                .ruler_steps
-                .get(symbol)
-                .map(|step| fmt_decimal(*step))
-                .unwrap_or_default();
-            self.journal_path = None;
-            self.report.symbol_changed();
-            // The revealed page is deliberately left alone. Every tab
-            // syncs its journal to its symbol on every drain, so this
-            // runs on the frame — resetting here retired the
-            // `QUANTICK_LEDGER_PAGES` hook before the first row was
-            // painted, and would retire a trader's scroll-back just as
-            // silently. `LedgerPage::of` already clamps a page count the
-            // new history cannot back.
+        let Some(arriving) = self.account.set_symbol(symbol) else {
+            return;
+        };
+        // The ruler goes with the instrument for the reason the tick does -
+        // see `PaperAccount::set_symbol`. Arriving is not a switch.
+        if !arriving {
+            self.ruler_notches = 0;
         }
-    }
-
-    /// Seed the mark from backfilled history — never fills (look-ahead).
-    pub fn seed(&mut self, trade: &Trade) {
-        self.observe_precision(trade);
-        self.venue.seed(trade);
-    }
-
-    /// Fold one print's own precision into the instrument's, so the tick the
-    /// ruler and the strategies step in is the smallest move the tape has
-    /// shown rather than whatever the last print happened to look like.
-    ///
-    /// Per-trade path: one `normalize`, one comparison, no allocation.
-    fn observe_precision(&mut self, trade: &Trade) {
-        self.tick_scale = self.tick_scale.max(trade.price.normalize().scale());
+        self.ruler_travel_px = 0.0;
+        self.ruler_step_text = self
+            .ruler_steps
+            .get(symbol)
+            .map(|step| fmt_decimal(*step))
+            .unwrap_or_default();
     }
 
     /// Feed one live print through the simulator and act on what it did.
     pub fn on_trade(&mut self, trade: &Trade) {
-        self.observe_precision(trade);
-        let events = self.venue.on_trade(trade);
-        self.handle_events(events);
+        self.account.on_trade(trade);
+        // `orders_demo` is a harness field, so its orders rest from here.
         if self.orders_demo.is_some() {
             self.rest_capture_orders();
-        }
-        if self.demo.is_some() {
-            self.run_demo_step();
         }
     }
 
@@ -1268,7 +920,7 @@ impl PaperTrading {
         let Some(rungs) = self.orders_demo else {
             return;
         };
-        let Some(mark) = self.venue.mark_price() else {
+        let Some(mark) = self.account.venue.mark_price() else {
             return;
         };
         let tick = Decimal::ONE
@@ -1293,11 +945,13 @@ impl PaperTrading {
                 // and the ladder photographs as the trader wrote it rather
                 // than collapsing into a single rounded part.
                 let quantity = self
+                    .account()
                     .selected_order_strategy()
                     .map_or(Decimal::ONE, |strategy| {
                         Decimal::from(strategy.rows.len().max(1))
                     });
                 let armed = self
+                    .account()
                     .selected_order_strategy()
                     .and_then(|strategy| strategy.resolve(side, price, quantity, tick).ok())
                     .filter(quantick_sim::Bracket::is_laddered);
@@ -1328,12 +982,13 @@ impl PaperTrading {
                     Bracket::none()
                 };
                 let events = self
+                    .account
                     .venue
                     .submit(OrderIntent::limit(side, quantity, price).with_bracket(bracket));
-                self.handle_events(events);
+                self.account.handle_events(events);
             }
         }
-        if self.venue.working_orders().is_empty() {
+        if self.account.venue.working_orders().is_empty() {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -1347,204 +1002,31 @@ impl PaperTrading {
         self.orders_demo = None;
     }
 
-    /// Turn per-print event buffering for the strategy instances on or off.
-    /// The tab flips it from whether any instance exists, so an idle chart
-    /// never accumulates events nobody will drain.
-    pub fn set_bot_listening(&mut self, listening: bool) {
-        self.bot_listening = listening;
-        if !listening {
-            self.bot_events.clear();
-        }
-    }
-
-    /// Everything the simulator reported on prints since the last drain,
-    /// for the strategy instances to attribute by order id.
-    #[must_use]
-    pub fn drain_bot_events(&mut self) -> Vec<VenueEvent> {
-        std::mem::take(&mut self.bot_events)
-    }
-
-    /// Whether the account is *clean* — the gate an armed strategy checks
-    /// before firing. Not just "no position": a queued market entry or a
-    /// resting order is a position about to exist, and two instances
-    /// co-triggered by one bar must not both pass this gate and stack.
-    /// A bot fires only into an account with no position, no resting
-    /// orders and nothing queued — the human's included.
-    #[must_use]
-    pub fn is_flat(&self) -> bool {
-        self.venue.position().is_none()
-            && self.venue.working_orders().is_empty()
-            && self.venue.in_flight() == 0
-    }
-
-    /// Apply a strategy-issued command through the same funnel manual
-    /// orders use — journal, toasts, everything — and hand the simulator's
-    /// immediate answer back for the instance to attribute.
-    pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
-        let events = self.dispatch(command);
-        self.handle_events(events.clone());
-        events
-    }
-
-    /// The last price the venue was shown, or `None` before the first
-    /// print — what a caller with no chart in front of it needs before it
-    /// can name a price at all.
-    #[must_use]
-    pub fn mark_price(&self) -> Option<Decimal> {
-        self.venue.mark_price()
-    }
-
-    /// Place one order, stated in full — the control plane's entry point,
-    /// and the shape a hotkey or a hook uses too.
-    ///
-    /// Unlike the chart's aim this takes the kind rather than inferring it:
-    /// a caller with no pointer has no "where I am relative to the mark" to
-    /// infer from, and an action whose meaning depends on the market at the
-    /// instant it lands is an action nobody can replay.
-    pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
-        // The risk per trade is a ceiling on the account, not on the mouse.
-        // A named call is exactly the operator `CLAUDE.md` treats as
-        // first-class, so a lock the ticket enforces and this path does not
-        // would be a ceiling that holds only while a human is clicking.
-        if let Some(refusal) = self.risk_refusal_for(&intent) {
-            // Nothing is fabricated onto the venue's own event stream: the
-            // lock is this application's policy, not a fact the venue
-            // reported, and a `RejectReason` variant for it would put that
-            // policy inside the domain crate. The trader gets the toast; a
-            // named caller gets the same sentence as an error, because
-            // `control::trade` asks this same function first.
-            self.show_toast(format!("SIM: {refusal}"));
-            return Vec::new();
-        }
-        let events = self.venue.submit(intent);
-        self.handle_events(events.clone());
-        events
-    }
-
-    /// Why the lock refuses this intent, when it does.
-    ///
-    /// Reads the intent's *own* protection and quantity rather than the
-    /// ticket's: a named call states what it wants, and the ceiling has to
-    /// be measured against what was actually asked for.
-    pub(crate) fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
-        if !self.risk.lock || self.risk.basis == crate::risk_sizing::RiskBasis::Off {
-            return None;
-        }
-        let reference = intent
-            .price
-            .or_else(|| self.venue.mark_price())
-            .unwrap_or_default();
-        let risk = crate::risk_sizing::risk_of(
-            &self.instrument_money,
-            &self.symbol,
-            intent.side,
-            reference,
-            &intent.bracket,
-            intent.quantity,
-        )?;
-        let budget = crate::risk_sizing::budget_for(
-            &self.risk,
-            &self.capital,
-            &self.instrument_money.get(&self.symbol)?.currency,
-        )
-        .ok()?;
-        (risk.amount > budget.amount).then(|| {
-            format!(
-                "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
-                risk.amount.normalize(),
-                risk.currency.code(),
-                budget.amount.normalize(),
-                budget.currency.code(),
-            )
-        })
-    }
-
-    /// Replace a working order's protective prices — the chart's drag, said
-    /// in words.
-    pub fn set_order_bracket(&mut self, id: OrderId, bracket: Bracket) -> Vec<VenueEvent> {
-        let events = self.venue.amend_bracket(BracketTarget::Order(id), bracket);
-        self.handle_events(events.clone());
-        events
-    }
-
-    /// Remove one working order without trading.
-    pub fn cancel_order(&mut self, id: OrderId) -> Vec<VenueEvent> {
-        let events = self.venue.cancel(id);
-        self.handle_events(events.clone());
-        events
-    }
-
-    /// One step of the scripted demo: a fixed command sequence by print
-    /// count — an entry, brackets, a partial, a flatten, a resting order,
-    /// a short round trip — so every surface has something honest to show.
-    fn run_demo_step(&mut self) {
-        let Some(demo) = &mut self.demo else { return };
-        demo.prints += 1;
-        let prints = demo.prints;
-        let Some(mark) = self.venue.mark_price() else {
-            return;
-        };
-        // Scale-free distance: 0.2% of the mark, snapped to its precision.
-        let offset = (mark * Decimal::new(2, 3)).round_dp(mark.scale());
-        let has_position = self.venue.position().is_some();
-        let command = match prints {
-            5 => Command::PlaceMarket {
-                side: Side::Buy,
-                quantity: Decimal::ONE,
-                bracket: Bracket::none(),
-            },
-            12 => Command::SetBracket {
-                stop_loss: Some(mark.saturating_sub(offset)),
-                take_profit: Some(mark.saturating_add(offset.saturating_add(offset))),
-            },
-            80 if has_position => Command::ClosePartial {
-                quantity: Decimal::new(5, 1),
-            },
-            160 => Command::Flatten,
-            220 => Command::PlaceLimit {
-                side: Side::Buy,
-                quantity: Decimal::ONE,
-                price: mark.saturating_sub(offset.saturating_add(offset)),
-                bracket: Bracket::none(),
-                cancel_at: None,
-                flat_only: false,
-            },
-            260 => Command::PlaceMarket {
-                side: Side::Sell,
-                quantity: Decimal::ONE,
-                bracket: Bracket::none(),
-            },
-            340 if has_position => Command::ClosePosition,
-            _ => return,
-        };
-        let events = self.dispatch(command);
-        self.handle_events(events);
-    }
-
     /// The source rebuilt its timeline (replay seek, feed/symbol switch,
     /// restart): pending orders are swept and the position flattens at the
     /// last mark, labeled `reset` — never silently.
     pub fn on_timeline_reset(&mut self) {
-        let had_position = self.venue.position().is_some();
-        let had_orders = !self.venue.working_orders().is_empty() || self.venue.in_flight() > 0;
-        let events = self.venue.reset();
+        let had_position = self.account.venue.position().is_some();
+        let had_orders =
+            !self.account.venue.working_orders().is_empty() || self.account.venue.in_flight() > 0;
+        let events = self.account.venue.reset();
         let mut all_saved = true;
         for event in &events {
             if let VenueEvent::Closed(trade) = event {
-                all_saved &= self.journal(&trade.clone());
+                all_saved &= self.account.journal(&trade.clone());
             }
         }
         // A reset ends the tape session, so it ends the file session too:
         // the next close opens a fresh file (same venue stamp lands as
         // `.rerun-N`). Without this, replaying the same recording again
         // without leaving replay appended run 2 into run 1's file.
-        self.journal_path = None;
-        self.armed = None;
+        self.account.journal_path = None;
+        self.account.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
         // The instances disarm on the same reset; events from the torn-down
         // timeline must not leak into their next life.
-        self.bot_events.clear();
+        self.account.bot_events.clear();
         if had_position && all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
@@ -1556,95 +1038,15 @@ impl PaperTrading {
         }
     }
 
-    /// Whether the simulator has a price to trade against — the toolbar
-    /// buttons disable themselves (with the reason) until this is true.
-    #[must_use]
-    pub fn ready(&self) -> bool {
-        self.venue.mark_price().is_some()
-    }
-
     /// A toolbar/panel market order using the form's quantity and offsets.
     pub fn market(&mut self, side: Side) {
-        let reference = self.venue.mark_price().unwrap_or_default();
+        let reference = self.account.mark_price().unwrap_or_default();
+        // The offsets are the ticket's text; the rest is placement.
         let Some(ticket) = self.parse_bracket(side, reference) else {
             return;
         };
-        // The same three sources the aim reads, in the same order. A button
-        // sitting directly under the Strategy row must not place a bare
-        // order while that row says a ladder is armed. The size comes from
-        // the same call, so the risk per trade governs a toolbar press as
-        // much as it governs the aim.
-        let Some((quantity, bracket)) = self.entry_size(side, reference, ticket) else {
-            return;
-        };
-        let events = self
-            .venue
-            .submit(OrderIntent::market(side, quantity).with_bracket(bracket));
-        self.handle_events(events);
-    }
-
-    /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
-    /// +2 pts` while a position is open (side, size and its open profit),
-    /// `SIM +7 pts · flat` otherwise (the session's realized points). `None`
-    /// while the simulator has never been touched.
-    #[must_use]
-    pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
-        if let Some(position) = self.venue.position() {
-            let open = self
-                .venue
-                .mark_price()
-                .map(|mark| position.open_points(mark))
-                .unwrap_or_default();
-            return Some((
-                format!(
-                    "SIM {} {} · {} pts",
-                    position_word(position.side),
-                    fmt_decimal(position.quantity),
-                    fmt_signed_points(open),
-                ),
-                open.cmp(&Decimal::ZERO),
-            ));
-        }
-        let untouched = self.venue.closed_trades().is_empty()
-            && self.venue.working_orders().is_empty()
-            && self.venue.in_flight() == 0;
-        if untouched {
-            return None;
-        }
-        let realized = self.venue.realized_points();
-        Some((
-            format!("SIM {} pts · flat", fmt_signed_points(realized)),
-            realized.cmp(&Decimal::ZERO),
-        ))
-    }
-
-    /// The open position as the chrome reports it: side, size, entry, and
-    /// the open profit at the current mark. `None` while flat.
-    #[must_use]
-    pub fn position_summary(&self) -> Option<PositionSummary> {
-        let position = self.venue.position()?;
-        Some(PositionSummary {
-            side: position.side,
-            quantity: position.quantity,
-            avg_price: position.avg_price,
-            open_points: self
-                .venue
-                .mark_price()
-                .map(|mark| position.open_points(mark)),
-        })
-    }
-
-    /// Exit the open position at the next print — the toolbar's close
-    /// button, the HUD's, and the Trading tab's all funnel here.
-    pub fn close_position(&mut self) {
-        let events = self.venue.close(CloseAmount::All);
-        self.handle_events(events);
-    }
-
-    /// Close the position and cancel every pending order.
-    pub fn flatten(&mut self) {
-        let events = self.venue.flatten();
-        self.handle_events(events);
+        let env = self.account_env(side, reference);
+        self.account.market(side, reference, ticket, &env);
     }
 
     /// Flip the open position: one market order for twice its size, which
@@ -1652,22 +1054,15 @@ impl PaperTrading {
     /// form's protective offsets apply to the new entry, exactly as they do
     /// to any market order.
     pub fn reverse_position(&mut self) {
-        let Some(position) = self.venue.position().cloned() else {
+        // The account says which way and at what mark; the ticket resolves
+        // the protection for that side, because the offsets are its text.
+        let Some((side, reference)) = self.account.reverse_aim() else {
             return;
         };
-        let side = match position.side {
-            Side::Buy => Side::Sell,
-            Side::Sell => Side::Buy,
-        };
-        let reference = self.venue.mark_price().unwrap_or_default();
         let Some(bracket) = self.parse_bracket(side, reference) else {
             return;
         };
-        let events = self.venue.submit(
-            OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
-                .with_bracket(bracket),
-        );
-        self.handle_events(events);
+        self.account.reverse_position(bracket);
     }
 
     /// The form quantity, parsed without side effects — the label builders
@@ -1698,7 +1093,7 @@ impl PaperTrading {
             return word.to_owned();
         };
         let qty_text = fmt_decimal(qty);
-        let Some(position) = self.venue.position() else {
+        let Some(position) = self.account.venue.position() else {
             return format!("{word} {qty_text}");
         };
         if position.side == side {
@@ -1760,18 +1155,6 @@ impl PaperTrading {
         )
     }
 
-    /// `Close 1 LONG` while a position is open — the toolbar's exit button
-    /// label. `None` while flat, which is what removes the button.
-    #[must_use]
-    pub fn close_button_label(&self) -> Option<String> {
-        let position = self.venue.position()?;
-        Some(format!(
-            "Close {} {}",
-            fmt_decimal(position.quantity),
-            position_word(position.side),
-        ))
-    }
-
     // ------------------------------------------------------------------
     // Chart layer
     // ------------------------------------------------------------------
@@ -1811,7 +1194,7 @@ impl PaperTrading {
             pointer,
         };
 
-        for order in self.venue.working_orders() {
+        for order in self.account.venue.working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -1844,7 +1227,11 @@ impl PaperTrading {
             // chart edge over a different one, which is why the two
             // questions stayed separate.
             let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
-            let shown = if dragged { self.snap(price) } else { level };
+            let shown = if dragged {
+                self.account.snap(price)
+            } else {
+                level
+            };
             // A protective leg is a working order like any other, but it
             // is not an entry and must never read as one: it takes its
             // role's colour and says what it does rather than which way it
@@ -1901,7 +1288,7 @@ impl PaperTrading {
         // written inside the block below, read by the bracket paint after
         // it, because the tag's rect is only known once it is drawn.
         let mut position_reveal = false;
-        if let Some(position) = self.venue.position().cloned() {
+        if let Some(position) = self.account.venue.position().cloned() {
             let color = theme::side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
@@ -1913,6 +1300,7 @@ impl PaperTrading {
                     fmt_decimal(position.quantity),
                 );
                 let points = self
+                    .account
                     .venue
                     .mark_price()
                     .map(|mark| position.open_points(mark))
@@ -1938,7 +1326,7 @@ impl PaperTrading {
             self.draw_bracket_of(&ctx, BracketTarget::Position, false, position_reveal);
         }
 
-        if let Some(armed) = self.armed {
+        if let Some(armed) = self.account.armed {
             let hint = format!(
                 "click a price to place your {} {} - Esc cancels",
                 side_word(armed.side),
@@ -2150,11 +1538,11 @@ impl PaperTrading {
         let dragging = amending || creating;
         let hovered = ctx.hovers_line(y);
         let shown = if dragging {
-            self.snap(price)
+            self.account.snap(price)
         } else {
-            paint.level.unwrap_or_else(|| self.snap(price))
+            paint.level.unwrap_or_else(|| self.account.snap(price))
         };
-        let color = paint.leg.color();
+        let color = leg_color(paint.leg);
         // Dashed while it is being created (it is not placed yet) and while
         // it rides an unfilled order (it is a promise that arms on the
         // fill). Solid only once it is a live exit on an open position.
@@ -2227,7 +1615,7 @@ impl PaperTrading {
                 (part.take_profit, Leg::TakeProfit),
             ] {
                 let Some(level) = level else { continue };
-                let color = leg.color();
+                let color = leg_color(leg);
                 // The rung being hauled follows the pointer, exactly as a
                 // whole bracket's leg does: what the trader sees moving is
                 // what the release will submit.
@@ -2240,7 +1628,8 @@ impl PaperTrading {
                         }
                 });
                 let shown = if dragging {
-                    self.drag_price.map_or(level, |price| self.snap(price))
+                    self.drag_price
+                        .map_or(level, |price| self.account.snap(price))
                 } else {
                     level
                 };
@@ -2288,7 +1677,7 @@ impl PaperTrading {
         pending: bool,
         reveal: bool,
     ) {
-        let Some((side, reference, bracket, quantity)) = self.bracket_owner(owner) else {
+        let Some((side, reference, bracket, quantity)) = self.account.bracket_owner(owner) else {
             return;
         };
         // A ladder's rungs are several prices and none of them is amendable
@@ -2344,7 +1733,7 @@ impl PaperTrading {
         for leg in missing {
             let rect =
                 bracket_handle_rect(ctx.tag_right, center, leg.sits_above_entry(side) != flip);
-            ctx.bracket_handle(rect, leg.word(), leg.color());
+            ctx.bracket_handle(rect, leg.word(), leg_color(leg));
         }
     }
 
@@ -2378,7 +1767,8 @@ impl PaperTrading {
         // hand parked on a line that is off-range here would be a hand on
         // nothing — the handles would stay unreachable on exactly the pane
         // the capture was pointed at.
-        self.venue
+        self.account
+            .venue
             .working_orders()
             .iter()
             .filter_map(|order| order.price)
@@ -2404,7 +1794,7 @@ impl PaperTrading {
     /// escape stack; returns true when there was something to cancel, so
     /// the stack spends exactly one layer on it.
     pub fn cancel_interaction(&mut self) -> bool {
-        if self.armed.take().is_some() {
+        if self.account.armed.take().is_some() {
             return true;
         }
         if self.drag != PaperDrag::None {
@@ -2412,7 +1802,7 @@ impl PaperTrading {
             self.drag_price = None;
             return true;
         }
-        if self.report.clear_selected_trade() {
+        if self.account.report.clear_selected_trade() {
             return true;
         }
         // The ruler is the *last* layer, not the first. It is a standing
@@ -2421,40 +1811,6 @@ impl PaperTrading {
         // trader with an order armed presses Escape to disarm it, and must
         // not lose their distance instead.
         self.clear_ruler()
-    }
-
-    /// This session's closed round trips, oldest first — the trades whose
-    /// fills the current tape can prove, and so the only ones the chart
-    /// paints marks for.
-    #[must_use]
-    pub fn session_trades(&self) -> &[ClosedTrade] {
-        self.venue.closed_trades()
-    }
-
-    /// The resting entry orders, in placement order — the simulator's own
-    /// view, read-only.
-    #[must_use]
-    pub fn working_orders(&self) -> &[quantick_sim::Order] {
-        self.venue.working_orders()
-    }
-
-    /// Index (into [`Self::session_trades`]) of the ledger's selected
-    /// trade, for the chart to emphasize; `None` while nothing is selected.
-    #[must_use]
-    pub fn selected_trade_index(&self) -> Option<usize> {
-        self.report
-            .selected_trade()
-            .filter(|index| *index < self.venue.closed_trades().len())
-    }
-
-    /// Hand one [`Command`] to the attached venue.
-    ///
-    /// The chart's own gestures build [`OrderIntent`]s and call the port
-    /// directly; this exists for the callers that already speak `Command`
-    /// — the strategy kernel, the scripted demo, and the tests that drive
-    /// this host the way the kernel does.
-    fn dispatch(&mut self, command: Command) -> Vec<VenueEvent> {
-        command.dispatch(self.venue.as_mut())
     }
 
     pub fn handle_chart_input(&mut self, input: &ChartInput<'_>) -> bool {
@@ -2516,14 +1872,14 @@ impl PaperTrading {
             && let Some(control) = self.control_at(pointer, input.chart, scale)
         {
             match control {
-                PaperControl::ClosePosition => self.close_position(),
-                PaperControl::ClearLeg { owner, leg } => self.amend_leg(owner, leg, None),
+                PaperControl::ClosePosition => self.account.close_position(),
+                PaperControl::ClearLeg { owner, leg } => self.account.amend_leg(owner, leg, None),
                 PaperControl::ClearRung { order, index, leg } => {
-                    self.amend_rung(order, index, leg, None);
+                    self.account.amend_rung(order, index, leg, None);
                 }
                 PaperControl::CancelOrder(id) => {
-                    let events = self.venue.cancel(id);
-                    self.handle_events(events);
+                    let events = self.account.venue.cancel(id);
+                    self.account.handle_events(events);
                 }
                 PaperControl::Handle { owner, leg } => {
                     self.drag = PaperDrag::CreateLeg { owner, leg };
@@ -2553,7 +1909,7 @@ impl PaperTrading {
         }
 
         // An armed placement takes the next chart click.
-        if let Some(armed) = self.armed
+        if let Some(armed) = self.account.armed
             && input.primary_pressed
             && let Some(pointer) = input.pointer
             && input.chart.contains(pointer)
@@ -2599,17 +1955,17 @@ impl PaperTrading {
         if input.primary_released && self.drag != PaperDrag::None {
             let drag = std::mem::take(&mut self.drag);
             if let Some(price) = self.drag_price.take() {
-                let price = self.snap(price);
+                let price = self.account.snap(price);
                 match drag {
                     PaperDrag::Leg { owner, leg } | PaperDrag::CreateLeg { owner, leg } => {
-                        self.amend_leg(owner, leg, Some(price));
+                        self.account.amend_leg(owner, leg, Some(price));
                     }
                     PaperDrag::Order(id) => {
-                        let events = self.venue.amend_price(id, price);
-                        self.handle_events(events);
+                        let events = self.account.venue.amend_price(id, price);
+                        self.account.handle_events(events);
                     }
                     PaperDrag::Rung { order, index, leg } => {
-                        self.amend_rung(order, index, leg, Some(price));
+                        self.account.amend_rung(order, index, leg, Some(price));
                     }
                     PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => {}
                 }
@@ -2618,49 +1974,6 @@ impl PaperTrading {
         }
 
         self.drag != PaperDrag::None
-    }
-
-    /// What a bracket owner looks like to every gesture in this module:
-    /// the side it trades, the price its legs are judged against, the
-    /// bracket it carries today, and the size that turns a level into
-    /// points.
-    ///
-    /// The position's reference is its average entry; a working order's is
-    /// its own resting price. That is the same reference the venue
-    /// validates against, so a leg the chart lets you drop is a leg the
-    /// venue accepts — the two never disagree about which side of the
-    /// entry is protective.
-    fn bracket_owner(&self, owner: BracketTarget) -> Option<(Side, Decimal, Bracket, Decimal)> {
-        match owner {
-            BracketTarget::Position => self.venue.position().map(|position| {
-                (
-                    position.side,
-                    position.avg_price,
-                    self.position_bracket(position),
-                    position.quantity,
-                )
-            }),
-            BracketTarget::Order(id) => self
-                .venue
-                .working_orders()
-                .iter()
-                .find(|order| order.id == id)
-                .and_then(|order| {
-                    order
-                        .price
-                        .map(|price| (order.side, price, order.bracket, order.quantity))
-                }),
-        }
-    }
-
-    /// Set or clear one protective leg, keeping the other — the tag cross's
-    /// command and the drop of a leg drag, which are the same amendment.
-    fn amend_leg(&mut self, owner: BracketTarget, leg: Leg, level: Option<Decimal>) {
-        let Some((.., bracket, _)) = self.bracket_owner(owner) else {
-            return;
-        };
-        let events = self.venue.amend_bracket(owner, leg.applied(bracket, level));
-        self.handle_events(events);
     }
 
     /// The overlay control under the pointer, computed from this frame's
@@ -2683,7 +1996,7 @@ impl PaperTrading {
             (y >= chart.top() && y <= chart.bottom())
                 .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
         };
-        for order in self.venue.working_orders().iter().rev() {
+        for order in self.account.venue.working_orders().iter().rev() {
             // A tag that paints no ✕ offers none: the press reads the very
             // value the paint read, rather than recomputing a predicate
             // from a different pointer and a different rect.
@@ -2699,8 +2012,8 @@ impl PaperTrading {
         // first and newest-first, matching the draw stack above; the
         // position last, because its legs are the ones a trader reaches for
         // least often while an entry is still resting on top of them.
-        for owner in self.bracket_owners() {
-            let Some((side, reference, bracket, _)) = self.bracket_owner(owner) else {
+        for owner in self.account.bracket_owners() {
+            let Some((side, reference, bracket, _)) = self.account.bracket_owner(owner) else {
                 continue;
             };
             // A ladder offers no *whole-bracket* handle: one drag there
@@ -2746,82 +2059,12 @@ impl PaperTrading {
                 }
             }
         }
-        let position = self.venue.position()?;
+        let position = self.account.venue.position()?;
         let entry_center = visible_center(position.avg_price)?;
         if close_button_rect(tag_right, entry_center).contains(pointer) {
             return Some(PaperControl::ClosePosition);
         }
         None
-    }
-
-    /// Everything that can carry a bracket right now, in the order a press
-    /// should consider it — which is **the reverse of the paint**, topmost
-    /// first.
-    ///
-    /// `draw_layer` paints the working orders and then the position, so the
-    /// position's lines and tag sit on top of them. A press has to resolve
-    /// the same way or the two disagree wherever they overlap: a position
-    /// stopped at 90 and a resting entry whose own stop is also 90 show the
-    /// position's solid leg, and a hit-test that reached the order first
-    /// would clear the entry's protection while the trader was looking at
-    /// the position's.
-    ///
-    /// An iterator and not a `Vec`, because both callers run **per frame**,
-    /// not per press: `hover_cursor` asks `control_at` and `line_at` what is
-    /// under the pointer on every frame the hand is over the chart, and
-    /// `compute_cmd_preview` asks both again. A vector here was four small
-    /// allocations a frame for a list that is usually empty. Everything it
-    /// borrows is borrowed immutably, so a caller can walk it while asking
-    /// `self` about each entry.
-    fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
-        self.venue
-            .position()
-            .is_some()
-            .then_some(BracketTarget::Position)
-            .into_iter()
-            .chain(
-                self.venue
-                    .working_orders()
-                    .iter()
-                    .rev()
-                    // A protective leg is not an entry: it *is* protection,
-                    // and offering it a bracket of its own would put SL/TP
-                    // handles beside a rung the trader is already using as
-                    // one. The venue refuses such an amendment anyway; the
-                    // chart must not offer the gesture that earns a refusal.
-                    .filter(|order| !order.is_protective())
-                    .map(|order| BracketTarget::Order(order.id)),
-            )
-    }
-
-    /// The preview the pointer and the held key describe this frame;
-    /// `None` hides the overlay. Both keys down at once is ambiguous and
-    /// shows nothing — so a shared binding degrades to "off", never to a
-    /// wrong side.
-    ///
-    /// **The aim is the last claimant on the canvas.** Its target is the
-    /// whole plot, so anything already holding the pixel outranks it: an
-    /// annotation or the canvas chrome (the pane says so), an armed
-    /// placement the trader is in the middle of, an overlay ✕ or bracket
-    /// handle, and this module's own draggable lines. Standing the aim
-    /// *down* rather than merely refusing its press is what keeps the
-    /// promise: no preview means nothing paints, no hand cursor, no place
-    /// — the label can never advertise an order the press will not make.
-    /// One tick of the instrument: the smallest price move its own prints
-    /// can express. Read from the mark the same way [`Self::snap`] reads it,
-    /// so the ruler steps in exactly the units a drag would land on.
-    #[must_use]
-    pub(crate) fn tick_size(&self) -> Decimal {
-        self.tick()
-    }
-
-    fn tick(&self) -> Decimal {
-        let places = if self.venue.mark_price().is_some() {
-            self.tick_scale
-        } else {
-            SNAP_FALLBACK_DECIMALS
-        };
-        Decimal::new(1, places)
     }
 
     /// Spend this frame's wheel travel on the ruler, one tick per notch.
@@ -2870,45 +2113,12 @@ impl PaperTrading {
     /// beside it is where a bad one is refused.
     #[must_use]
     pub(crate) fn ruler_step(&self) -> Decimal {
-        if let Some(step) = self.ruler_steps.get(&self.symbol)
+        if let Some(step) = self.ruler_steps.get(&self.account.symbol)
             && *step > Decimal::ZERO
         {
             return *step;
         }
-        self.derived_ruler_step()
-    }
-
-    /// The step an instrument gets before anyone names one.
-    ///
-    /// Half a basis point of the mark, rounded *up* the 1-2-5 ladder to a
-    /// whole number of ticks and never below one. Volatility scales with
-    /// price, so the same fraction gives a wheel that feels the same on an
-    /// instrument quoted at 78,000 and one quoted at 5.
-    #[must_use]
-    pub(crate) fn derived_ruler_step(&self) -> Decimal {
-        let tick = self.tick();
-        let Some(mark) = self.venue.mark_price() else {
-            return tick;
-        };
-        let wanted = mark.saturating_mul(RULER_DEFAULT_STEP_FRACTION);
-        if wanted <= tick {
-            return tick;
-        }
-        // Climb the 1-2-5 ladder in units of a tick until it covers `wanted`,
-        // so the step is always a whole number of ticks a price can land on.
-        let mut multiple = Decimal::ONE;
-        loop {
-            for rung in [Decimal::ONE, Decimal::TWO, Decimal::from(5)] {
-                let step = tick.saturating_mul(multiple).saturating_mul(rung);
-                if step >= wanted {
-                    return step;
-                }
-            }
-            multiple = multiple.saturating_mul(Decimal::TEN);
-            if multiple > Decimal::from(1_000_000) {
-                return wanted.round_dp(tick.scale());
-            }
-        }
+        self.account.derived_ruler_step()
     }
 
     /// Name this instrument's step, in points. A value that is not positive
@@ -2916,10 +2126,10 @@ impl PaperTrading {
     pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
         match step.filter(|value| *value > Decimal::ZERO) {
             Some(value) => {
-                self.ruler_steps.insert(self.symbol.clone(), value);
+                self.ruler_steps.insert(self.account.symbol.clone(), value);
             }
             None => {
-                self.ruler_steps.remove(&self.symbol);
+                self.ruler_steps.remove(&self.account.symbol);
             }
         }
     }
@@ -2934,7 +2144,7 @@ impl PaperTrading {
         self.ruler_steps = steps;
         self.ruler_step_text = self
             .ruler_steps
-            .get(&self.symbol)
+            .get(&self.account.symbol)
             .map(|step| fmt_decimal(*step))
             .unwrap_or_default();
     }
@@ -3011,58 +2221,6 @@ impl PaperTrading {
         (Some(stop), Some(target))
     }
 
-    /// What actually guards the open position, whatever shape it is in.
-    ///
-    /// The position's own `stop_loss`/`take_profit` answer only the plain
-    /// pair; under a ladder they are `None` and the working legs carry the
-    /// truth. Reading the pair alone left a laddered position drawn as if it
-    /// had no protection at all *and* offering the create-handles of an
-    /// unprotected one - and one drag on those replaces the whole ladder
-    /// with a single level. Folding the legs back into a bracket here means
-    /// every surface downstream sees the same shape for a position that it
-    /// already sees for an order.
-    ///
-    /// Grouped by OCO id, which is what a rung *is*, and walked in placement
-    /// order so the rungs read in the order the trader wrote them.
-    fn position_bracket(&self, position: &Position) -> Bracket {
-        let mut parts: Vec<(OcoId, quantick_sim::ExitPart)> = Vec::new();
-        for leg in self
-            .venue
-            .working_orders()
-            .iter()
-            .filter(|order| order.is_protective())
-        {
-            let (Some(level), Some(oco)) = (leg.price, leg.oco) else {
-                continue;
-            };
-            let part = match parts.iter_mut().find(|(id, _)| *id == oco) {
-                Some((_, part)) => part,
-                None => {
-                    parts.push((
-                        oco,
-                        quantick_sim::ExitPart {
-                            quantity: Some(leg.quantity),
-                            stop_loss: None,
-                            take_profit: None,
-                        },
-                    ));
-                    &mut parts.last_mut().expect("just pushed").1
-                }
-            };
-            match leg.role {
-                OrderRole::StopLoss => part.stop_loss = Some(level),
-                OrderRole::TakeProfit => part.take_profit = Some(level),
-                OrderRole::Entry => {}
-            }
-        }
-        if parts.is_empty() {
-            return Bracket::whole(position.stop_loss, position.take_profit);
-        }
-        let rungs: Vec<quantick_sim::ExitPart> = parts.into_iter().map(|(_, part)| part).collect();
-        Bracket::ladder(&rungs)
-            .unwrap_or_else(|_| Bracket::whole(position.stop_loss, position.take_profit))
-    }
-
     /// The ✕ of whichever rung the pointer is over, if any.
     ///
     /// Separate from the whole-bracket controls because a rung is addressed
@@ -3092,251 +2250,8 @@ impl PaperTrading {
         None
     }
 
-    /// Set one rung's leg on a resting entry, or clear it with `None`.
-    ///
-    /// Every other rung is carried through untouched, and the named
-    /// strategy is never written to: an order on the chart is the trader's,
-    /// and the ladder that shaped it is a template they can still reuse.
-    /// A rung left protecting nothing is dropped rather than rested empty.
-    fn amend_rung(&mut self, order: OrderId, index: usize, leg: Leg, level: Option<Decimal>) {
-        let Some(entry) = self
-            .venue
-            .working_orders()
-            .iter()
-            .find(|working| working.id == order)
-        else {
-            return;
-        };
-        let mut parts: Vec<quantick_sim::ExitPart> = entry.bracket.parts().copied().collect();
-        let Some(part) = parts.get_mut(index) else {
-            return;
-        };
-        match leg {
-            Leg::StopLoss => part.stop_loss = level,
-            Leg::TakeProfit => part.take_profit = level,
-        }
-        parts.retain(|part| !part.is_empty());
-        let Ok(bracket) = Bracket::ladder(&parts) else {
-            return;
-        };
-        let events = self
-            .venue
-            .amend_bracket(BracketTarget::Order(order), bracket);
-        self.handle_events(events);
-    }
-
-    /// The protection an entry would carry right now: the ticket's armed
-    /// ladder, its ruler, or its typed offsets.
-    ///
-    /// The reading half of what a click resolves, exposed so a named call
-    /// arrives at the same answer instead of re-deriving one beside it.
-    #[must_use]
-    pub(crate) fn armed_bracket(
-        &self,
-        side: Side,
-        reference: Decimal,
-        quantity: Decimal,
-    ) -> Bracket {
-        let ticket = self
-            .ticket_bracket(side, reference)
-            .unwrap_or_else(|_| Bracket::none());
-        self.aim_bracket(side, reference, quantity, ticket)
-    }
-
-    /// The size the risk per trade gives this entry, and the protection it
-    /// was sized against.
-    ///
-    /// The two-pass resolution lives in
-    /// [`crate::risk_sizing::sized_for_aim`]; what this supplies is the
-    /// ticket's own bracket funnel, so the wheel, the saved ladder and the
-    /// typed offsets all size by one road.
-    pub(crate) fn risk_sized(
-        &self,
-        side: Side,
-        reference: Decimal,
-        ticket: Bracket,
-    ) -> (crate::risk_sizing::RiskState, Bracket) {
-        crate::risk_sizing::sized_for_aim(
-            &crate::risk_sizing::RiskContext {
-                settings: &self.risk,
-                capital: &self.capital,
-                book: &self.instrument_money,
-                symbol: &self.symbol,
-            },
-            side,
-            reference,
-            &|quantity| self.aim_bracket(side, reference, quantity, ticket),
-        )
-    }
-
-    /// What the risk per trade says about the entry the aim is holding.
-    ///
-    /// The reading half: no toast, no side effect, so the ticket's line, the
-    /// chart's chip and the control plane's snapshot all ask the same
-    /// question and get the same answer.
-    #[must_use]
-    pub(crate) fn risk_state(
-        &self,
-        side: Side,
-        reference: Decimal,
-    ) -> crate::risk_sizing::RiskState {
-        let ticket = self
-            .ticket_bracket(side, reference)
-            .unwrap_or_else(|_| Bracket::none());
-        self.risk_sized(side, reference, ticket).0
-    }
-
-    /// What the risk per trade makes of the entry the ticket is holding,
-    /// and whether the lock is refusing it — the pair the session snapshot
-    /// publishes.
-    ///
-    /// Reads at the mark, and for `Side::Buy`, which stands for both: every
-    /// stop the ticket can hold is symmetric in *distance*, so the risk is
-    /// the side-independent half of the answer.
-    #[must_use]
-    pub(crate) fn risk_report(&self) -> (crate::risk_sizing::RiskState, bool) {
-        let reference = self.venue.mark_price().unwrap_or_default();
-        let state = self.risk_state(Side::Buy, reference);
-        let blocks = state.blocks_entry(self.risk.lock);
-        (state, blocks)
-    }
-
-    /// The quantity and protection a click should send, or `None` when it
-    /// must not go out at all.
-    ///
-    /// With the risk per trade off this is the typed quantity and the aim's
-    /// bracket, exactly as it has always been. With it on the quantity is
-    /// derived — and this is the one place the trader's ceiling is
-    /// *enforced* rather than merely reported: an entry over the budget is
-    /// refused while the lock stands, and the toast carries the same
-    /// sentence the ticket is already showing.
-    fn entry_size(
-        &mut self,
-        side: Side,
-        reference: Decimal,
-        ticket: Bracket,
-    ) -> Option<(Decimal, Bracket)> {
-        let (state, resting) = self.risk_sized(side, reference, ticket);
-        if state.blocks_entry(self.risk.lock) {
-            self.show_toast(format!("SIM: {}", state.sentence()));
-            return None;
-        }
-        if let Some(quantity) = state.derived_quantity() {
-            return Some((quantity, resting));
-        }
-        // Off, or nothing to size against: the typed quantity still rules,
-        // and a quantity that does not parse toasts as it always did.
-        let quantity = self.parse_quantity()?;
-        Some((
-            quantity,
-            self.aim_bracket(side, reference, quantity, ticket),
-        ))
-    }
-
-    /// The instrument this ticket is aimed at. Empty before the app names
-    /// the opening symbol.
-    #[must_use]
-    pub(crate) fn symbol(&self) -> &str {
-        &self.symbol
-    }
-
-    /// Whether a launch hook owns the risk per trade for this run, in which
-    /// case the stored settings must not be fanned back over it.
-    #[must_use]
-    pub(crate) fn risk_from_hook(&self) -> bool {
-        self.risk_from_hook
-    }
-
-    /// What one trade may lose, and whether the lock stands.
-    pub(crate) fn risk_settings(&self) -> &crate::risk_sizing::RiskSettings {
-        &self.risk
-    }
-
-    /// Replace the risk per trade. App-wide, like the ticket's other
-    /// settings: a ceiling a trader sets in one tab is one they mean in all.
-    pub(crate) fn set_risk_settings(&mut self, risk: crate::risk_sizing::RiskSettings) {
-        self.risk = risk;
-    }
-
-    /// The declared practice capital, one amount per currency.
-    pub(crate) fn capital(&self) -> &crate::risk_sizing::Capital {
-        &self.capital
-    }
-
-    /// Replace the declared capital.
-    pub(crate) fn set_capital(&mut self, capital: crate::risk_sizing::Capital) {
-        self.capital = capital;
-    }
-
-    /// What one point of each instrument is worth, by bare symbol.
-    pub(crate) fn instrument_money(&self) -> &crate::risk_sizing::InstrumentBook {
-        &self.instrument_money
-    }
-
-    /// Replace the declared instrument money.
-    pub(crate) fn set_instrument_money(&mut self, book: crate::risk_sizing::InstrumentBook) {
-        self.instrument_money = book;
-    }
-
-    /// The strategies the trader keeps, in their own order.
-    pub(crate) fn order_strategies(&self) -> &[crate::order_strategies::OrderStrategy] {
-        &self.strategies
-    }
-
-    /// The strategy the ticket is set to, if any.
-    pub(crate) fn selected_order_strategy(
-        &self,
-    ) -> Option<&crate::order_strategies::OrderStrategy> {
-        self.strategies.get(self.selected_strategy?)
-    }
-
-    /// Replace the kept strategies and the selection, by name.
-    ///
-    /// A name this build no longer knows selects nothing: telling the trader
-    /// their strategy is gone beats silently arming a different one.
-    pub(crate) fn set_order_strategies(
-        &mut self,
-        strategies: Vec<crate::order_strategies::OrderStrategy>,
-        selected: Option<&str>,
-    ) {
-        self.selected_strategy =
-            selected.and_then(|name| strategies.iter().position(|item| item.name == name));
-        self.strategies = strategies;
-    }
-
-    /// The protection an aimed entry would carry, in priority order: the
-    /// selected strategy's ladder, then the ruler's symmetric pair, then the
-    /// ticket's typed offsets.
-    ///
-    /// One function, called by the projection *and* by the placement, so the
-    /// two can never disagree about what the click is about to do.
-    fn aim_bracket(
-        &self,
-        side: Side,
-        price: Decimal,
-        quantity: Decimal,
-        ticket: Bracket,
-    ) -> Bracket {
-        // The ruler first, because rolling it is the most recent thing the
-        // trader did and it is the answer they are looking at. Rolling back
-        // to zero puts the armed ladder in front again, so neither gesture
-        // costs the other.
-        if let (Some(stop), Some(target)) = self.ruler_levels(side, price) {
-            return Bracket::whole(Some(stop), Some(target));
-        }
-        if let Some(strategy) = self.selected_order_strategy() {
-            // A strategy edited into an invalid state falls through to the
-            // plainer sources rather than blocking the trade; the ticket
-            // names the reason beside the selector.
-            if let Ok(bracket) = strategy.resolve(side, price, quantity, self.tick()) {
-                return bracket;
-            }
-        }
-        ticket
-    }
-
     fn compute_cmd_preview(&self, input: &ChartInput<'_>) -> Option<CmdPreview> {
-        if !self.cmd_trading.enabled || !input.layer_visible {
+        if !self.account.cmd_trading.enabled || !input.layer_visible {
             return None;
         }
         // A drawing a press would grab, or the canvas's own chrome. The
@@ -3350,7 +2265,7 @@ impl PaperTrading {
         // An armed limit/stop is an intent already stated, with its own
         // hint on screen; a modifier resting under the hand must not turn
         // that click into a different order and leave the ticket armed.
-        if self.armed.is_some() {
+        if self.account.armed.is_some() {
             return None;
         }
         let scale = input.scale?;
@@ -3373,8 +2288,8 @@ impl PaperTrading {
             }
             None => {
                 let pointer = input.pointer?;
-                let buy = self.cmd_trading.buy.is_down(input.modifiers);
-                let sell = self.cmd_trading.sell.is_down(input.modifiers);
+                let buy = modifier_is_down(self.account.cmd_trading.buy, input.modifiers);
+                let sell = modifier_is_down(self.account.cmd_trading.sell, input.modifiers);
                 let side = match (buy, sell) {
                     (true, false) => Side::Buy,
                     (false, true) => Side::Sell,
@@ -3396,17 +2311,15 @@ impl PaperTrading {
         {
             return None;
         }
-        let mark = self.venue.mark_price()?;
+        let mark = self.account.venue.mark_price()?;
         let raw_price = scale.price_at(pointer.y);
-        let price = self.snap(raw_price);
+        let price = self.account.snap(raw_price);
         // The context menu's own validity table, plus the trader's stated
         // kind. `None` stands the aim down rather than substituting the
         // other kind — see `resolve_cmd_kind`.
-        let kind = resolve_cmd_kind(self.cmd_trading.kind, side, price, mark)?;
+        let kind = resolve_cmd_kind(self.account.cmd_trading.kind, side, price, mark)?;
         let quantity = self.quantity_preview().unwrap_or(Decimal::ONE);
-        let ticket = self
-            .ticket_bracket(side, price)
-            .unwrap_or_else(|_| Bracket::none());
+        let ticket = self.ticket_bracket(side, price);
         Some(CmdPreview {
             side,
             kind,
@@ -3414,7 +2327,13 @@ impl PaperTrading {
             raw_price,
             pointer,
             forced,
-            bracket: self.aim_bracket(side, price, quantity, ticket),
+            bracket: self.account.aim_bracket(
+                side,
+                price,
+                quantity,
+                ticket,
+                &self.account_env(side, price),
+            ),
             ruler_ticks: self.ruler_notches,
         })
     }
@@ -3447,7 +2366,7 @@ impl PaperTrading {
         let Some(scale) = input.scale else {
             return;
         };
-        for order in self.venue.working_orders() {
+        for order in self.account.venue.working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -3480,7 +2399,7 @@ impl PaperTrading {
     /// Turn a pending entry-line press into the leg the pull chose, once it
     /// travelled far enough to mean it.
     fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
-        let Some(position) = self.venue.position() else {
+        let Some(position) = self.account.venue.position() else {
             self.drag = PaperDrag::Blocked;
             return;
         };
@@ -3562,7 +2481,7 @@ impl PaperTrading {
             let y = scale.y(price.to_f64().unwrap_or_default());
             (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
         };
-        for order in self.venue.working_orders().iter().rev() {
+        for order in self.account.venue.working_orders().iter().rev() {
             if let Some(level) = order.price
                 && near(level)
             {
@@ -3573,6 +2492,7 @@ impl PaperTrading {
         // stack. They are the trader's to move: the strategy was the
         // template and this order carries a copy of it.
         for entry in self
+            .account
             .venue
             .working_orders()
             .iter()
@@ -3597,8 +2517,8 @@ impl PaperTrading {
                 }
             }
         }
-        for owner in self.bracket_owners() {
-            let Some((.., bracket, _)) = self.bracket_owner(owner) else {
+        for owner in self.account.bracket_owners() {
+            let Some((.., bracket, _)) = self.account.bracket_owner(owner) else {
                 continue;
             };
             for leg in [Leg::TakeProfit, Leg::StopLoss] {
@@ -3609,7 +2529,7 @@ impl PaperTrading {
                 }
             }
         }
-        let position = self.venue.position()?;
+        let position = self.account.venue.position()?;
         if near(position.avg_price) {
             let creatable = position.stop_loss.is_none() || position.take_profit.is_none();
             return Some(if creatable {
@@ -3626,44 +2546,21 @@ impl PaperTrading {
     /// sit, and the user clicks again.
     fn place_armed(&mut self, armed: ArmedPlacement, raw_price: f64) {
         if self.place_resting(armed.side, armed.kind, raw_price) {
-            self.armed = None;
+            self.account.armed = None;
         }
     }
 
     /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
     /// and offsets; returns whether the simulator accepted it.
     fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        let price = self.snap(raw_price);
+        let price = self.account.snap(raw_price);
+        // The offsets are read here because an unreadable one is a message
+        // beside the box the trader typed in. Everything after is placement.
         let Some(ticket) = self.parse_bracket(side, price) else {
             return false;
         };
-        let Some((quantity, bracket)) = self.entry_size(side, price, ticket) else {
-            return false;
-        };
-        let command = match kind {
-            EntryKind::Limit => Command::PlaceLimit {
-                side,
-                quantity,
-                price,
-                bracket,
-                cancel_at: None,
-                flat_only: false,
-            },
-            EntryKind::Stop => Command::PlaceStop {
-                side,
-                quantity,
-                trigger: price,
-                bracket,
-            },
-            // Market never rests; the buttons fire it directly.
-            EntryKind::Market => return false,
-        };
-        let events = self.dispatch(command);
-        let placed = events
-            .iter()
-            .any(|event| matches!(event, VenueEvent::Placed(_)));
-        self.handle_events(events);
-        placed
+        let env = self.account_env(side, price);
+        self.account.place_resting(side, kind, price, ticket, &env)
     }
 
     /// The chart context menu's trade section, anchored at the clicked
@@ -3677,7 +2574,7 @@ impl PaperTrading {
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
-        let Some(mark) = self.venue.mark_price() else {
+        let Some(mark) = self.account.venue.mark_price() else {
             ui.label(
                 egui::RichText::new("no print yet - there is no market to trade against")
                     .color(theme::TEXT_MUTED)
@@ -3699,7 +2596,7 @@ impl PaperTrading {
             }
         }
         ui.separator();
-        let price = self.snap(raw_price);
+        let price = self.account.snap(raw_price);
         let entries = [
             (Side::Buy, EntryKind::Limit, price < mark),
             (Side::Buy, EntryKind::Stop, price > mark),
@@ -3725,28 +2622,6 @@ impl PaperTrading {
                 ui.close_menu();
             }
         }
-    }
-
-    /// Round a pointer price to the precision the tape itself uses (the
-    /// mark's decimal places), so a dragged line lands on a price the
-    /// instrument can actually print.
-    fn snap(&self, price: f64) -> Decimal {
-        // The instrument's own precision, learned from the tape - not the
-        // raw scale of the last print. A venue that quotes
-        // `79172.37000000` has a raw scale of eight, and snapping to it put
-        // eight decimals on every level this layer draws: `SL 79026.38465256`
-        // where the instrument trades in cents. The tick is the same one the
-        // ruler and the ladders step in, so every number on this surface
-        // rounds the same way.
-        let places = if self.venue.mark_price().is_some() {
-            self.tick_scale
-        } else {
-            SNAP_FALLBACK_DECIMALS
-        };
-        Decimal::from_f64_retain(price)
-            .unwrap_or_default()
-            .round_dp(places)
-            .normalize()
     }
 
     // ------------------------------------------------------------------
@@ -3812,7 +2687,7 @@ impl PaperTrading {
     /// session's realized points), the full card while a position is open —
     /// identity, brackets with their P&L, the R:R read, and the actions.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
-        let Some(position) = self.venue.position().cloned() else {
+        let Some(position) = self.account.venue.position().cloned() else {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("FLAT")
@@ -3820,7 +2695,7 @@ impl PaperTrading {
                         .color(theme::TEXT_MUTED),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let realized = self.venue.realized_points();
+                    let realized = self.account.venue.realized_points();
                     ui.label(
                         egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                             .monospace()
@@ -3830,18 +2705,19 @@ impl PaperTrading {
                     .on_hover_text("this session's realized points");
                 });
             });
-            if !self.venue.working_orders().is_empty()
+            if !self.account.venue.working_orders().is_empty()
                 && ui
                     .button("Cancel all orders")
                     .on_hover_text("remove every working order without trading (Shift+X)")
                     .clicked()
             {
-                self.cancel_all_orders();
+                self.account.cancel_all_orders();
             }
             return;
         };
         let color = theme::side_color(position.side);
         let open = self
+            .account
             .venue
             .mark_price()
             .map(|mark| position.open_points(mark));
@@ -3993,8 +2869,8 @@ impl PaperTrading {
             }
         }
         if let Some(command) = bracket_change {
-            let events = self.dispatch(command);
-            self.handle_events(events);
+            let events = self.account.dispatch(command);
+            self.account.handle_events(events);
         }
 
         // Actions, two per row at equal width; consequential ones stay
@@ -4009,7 +2885,7 @@ impl PaperTrading {
                 .on_hover_text(format!("exit the {word} {qty} at the next print (market)"))
                 .clicked()
             {
-                self.close_position();
+                self.account.close_position();
             }
             if ui
                 .add(Self::quiet_action(
@@ -4039,11 +2915,11 @@ impl PaperTrading {
                 )
                 .clicked()
             {
-                let events = self.dispatch(Command::SetBracket {
+                let events = self.account.dispatch(Command::SetBracket {
                     stop_loss: Some(position.avg_price),
                     take_profit: position.take_profit,
                 });
-                self.handle_events(events);
+                self.account.handle_events(events);
             }
             if ui
                 .add(Self::quiet_action("Close 50%", half))
@@ -4053,10 +2929,10 @@ impl PaperTrading {
                 )
                 .clicked()
             {
-                let events = self.dispatch(Command::ClosePartial {
+                let events = self.account.dispatch(Command::ClosePartial {
                     quantity: (position.quantity / Decimal::TWO).normalize(),
                 });
-                self.handle_events(events);
+                self.account.handle_events(events);
             }
         });
         let full = ui.available_width();
@@ -4065,7 +2941,7 @@ impl PaperTrading {
             .on_hover_text("close the position and cancel every working order (Shift+F)")
             .clicked()
         {
-            self.flatten();
+            self.account.flatten();
         }
     }
 
@@ -4079,10 +2955,10 @@ impl PaperTrading {
         // distance - the ruler walks both legs the same number of points,
         // and a typed offset is a distance rather than a price - so the risk
         // is the side-independent half of the answer.
-        let risk_reference = self.venue.mark_price().unwrap_or_default();
+        let risk_reference = self.account.venue.mark_price().unwrap_or_default();
         let risk_state = self.risk_state(Side::Buy, risk_reference);
         let derived_quantity = risk_state.derived_quantity();
-        let risk_blocks = risk_state.blocks_entry(self.risk.lock);
+        let risk_blocks = risk_state.blocks_entry(self.account.risk.lock);
         if let Some(quantity) = derived_quantity {
             // The mode writes into the field the whole form already reads,
             // rather than adding a second number beside it: one quantity on
@@ -4103,7 +2979,7 @@ impl PaperTrading {
                 Decimal::ONE
             };
             let typed = derived_quantity.is_none();
-            let hint = self.quantity_step_hint(step);
+            let hint = self.account.quantity_step_hint(step);
             ui.add_enabled_ui(typed, |ui| {
                 if ui
                     .small_button("−")
@@ -4148,7 +3024,7 @@ impl PaperTrading {
                     && !on
                 {
                     self.order_type = kind;
-                    self.armed = None;
+                    self.account.armed = None;
                 }
             }
         });
@@ -4178,10 +3054,10 @@ impl PaperTrading {
         let risk_changed = crate::risk_sizing::draw_risk_block(
             ui,
             crate::risk_sizing::RiskBlock {
-                symbol: &self.symbol,
-                settings: &mut self.risk,
-                capital: &mut self.capital,
-                book: &mut self.instrument_money,
+                symbol: &self.account.symbol,
+                settings: &mut self.account.risk,
+                capital: &mut self.account.capital,
+                book: &mut self.account.instrument_money,
                 amount_text: &mut self.risk_amount_text,
                 percent_text: &mut self.risk_percent_text,
                 capital_text: &mut self.capital_text,
@@ -4199,7 +3075,7 @@ impl PaperTrading {
         // The lock, enforced on the surface as well as at the click: a
         // ceiling the trader can still press through is one they will press
         // through by accident on a fast tape.
-        let ready = self.ready() && !risk_blocks;
+        let ready = self.account.ready() && !risk_blocks;
         let mut fire: Option<Side> = None;
         let mut arm: Option<Side> = None;
         let mut disarm = false;
@@ -4207,8 +3083,8 @@ impl PaperTrading {
             ui.spacing_mut().item_spacing.x = 6.0;
             for side in [Side::Buy, Side::Sell] {
                 let color = theme::side_color(side);
-                let armed_here = self.armed.is_some_and(|armed| armed.side == side);
-                let armed_other = self.armed.is_some_and(|armed| armed.side != side);
+                let armed_here = self.account.armed.is_some_and(|armed| armed.side == side);
+                let armed_other = self.account.armed.is_some_and(|armed| armed.side != side);
                 let label = match (self.order_type, armed_here) {
                     (_, true) => "Click a price…".to_owned(),
                     (EntryKind::Market, _) => self.entry_label(side),
@@ -4249,19 +3125,19 @@ impl PaperTrading {
             }
         });
         if disarm {
-            self.armed = None;
+            self.account.armed = None;
         }
         if let Some(side) = fire {
             self.market(side);
         }
         if let Some(side) = arm {
-            self.armed = Some(ArmedPlacement {
+            self.account.armed = Some(ArmedPlacement {
                 side,
                 kind: self.order_type,
             });
         }
         ui.label(
-            egui::RichText::new(if self.armed.is_some() {
+            egui::RichText::new(if self.account.armed.is_some() {
                 "Click the chart at your price. Esc cancels."
             } else if self.order_type == EntryKind::Market {
                 "Market orders fill at the next print."
@@ -4289,21 +3165,21 @@ impl PaperTrading {
             if pill_toggle(
                 ui,
                 "Enabled",
-                self.cmd_trading.enabled,
+                self.account.cmd_trading.enabled,
                 "hold a key over the chart: a dashed line shows exactly where the order \
                  will rest, and the click places it",
             )
             .clicked()
             {
-                self.cmd_trading.enabled = !self.cmd_trading.enabled;
+                self.account.cmd_trading.enabled = !self.account.cmd_trading.enabled;
                 changed = true;
             }
             for (word, slot) in [("Buy", true), ("Sell", false)] {
                 ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
                 let current = if slot {
-                    self.cmd_trading.buy
+                    self.account.cmd_trading.buy
                 } else {
-                    self.cmd_trading.sell
+                    self.account.cmd_trading.sell
                 };
                 egui::ComboBox::from_id_salt(("cmd_trading_modifier", word))
                     .width(64.0)
@@ -4316,9 +3192,9 @@ impl PaperTrading {
                                 && current != modifier
                             {
                                 if slot {
-                                    self.cmd_trading.buy = modifier;
+                                    self.account.cmd_trading.buy = modifier;
                                 } else {
-                                    self.cmd_trading.sell = modifier;
+                                    self.account.cmd_trading.sell = modifier;
                                 }
                                 changed = true;
                             }
@@ -4332,7 +3208,7 @@ impl PaperTrading {
                     .color(theme::TEXT_MUTED)
                     .small(),
             );
-            let current = self.cmd_trading.kind;
+            let current = self.account.cmd_trading.kind;
             egui::ComboBox::from_id_salt("cmd_trading_entry_kind")
                 .width(64.0)
                 .selected_text(current.label())
@@ -4341,7 +3217,7 @@ impl PaperTrading {
                         if ui.selectable_label(current == kind, kind.label()).clicked()
                             && current != kind
                         {
-                            self.cmd_trading.kind = kind;
+                            self.account.cmd_trading.kind = kind;
                             changed = true;
                         }
                     }
@@ -4357,8 +3233,8 @@ impl PaperTrading {
             // so blank reads as "follows the instrument" rather than as
             // nothing. A tick is what the ladder speaks, and saying what one
             // is worth here is the only place the ticket ever does.
-            let derived = self.derived_ruler_step();
-            let tick = self.tick();
+            let derived = self.account.derived_ruler_step();
+            let tick = self.account.tick();
             let response = ui.add(
                 egui::TextEdit::singleline(&mut self.ruler_step_text)
                     .desired_width(52.0)
@@ -4383,15 +3259,15 @@ impl PaperTrading {
             ));
             ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
-        if self.cmd_trading.enabled && self.cmd_trading.kind != CmdEntryKind::Auto {
+        if self.account.cmd_trading.enabled && self.account.cmd_trading.kind != CmdEntryKind::Auto {
             // A stated kind is valid on one side of the market only, so the
             // aim is silent on the other half of the chart. Said here, or a
             // trader spends a minute wondering why the gesture died.
             ui.label(
                 egui::RichText::new(format!(
                     "the aim shows only where a {} can rest: {} the market",
-                    self.cmd_trading.kind.label(),
-                    if self.cmd_trading.kind == CmdEntryKind::Limit {
+                    self.account.cmd_trading.kind.label(),
+                    if self.account.cmd_trading.kind == CmdEntryKind::Limit {
                         "below it to buy, above it to sell"
                     } else {
                         "above it to buy, below it to sell"
@@ -4401,7 +3277,9 @@ impl PaperTrading {
                 .small(),
             );
         }
-        if self.cmd_trading.enabled && self.cmd_trading.buy == self.cmd_trading.sell {
+        if self.account.cmd_trading.enabled
+            && self.account.cmd_trading.buy == self.account.cmd_trading.sell
+        {
             // A shared key is ambiguous, so the gesture shows nothing —
             // said here rather than discovered over the chart.
             ui.label(
@@ -4411,7 +3289,7 @@ impl PaperTrading {
                 .color(theme::AMBER)
                 .small(),
             );
-        } else if self.cmd_trading.enabled {
+        } else if self.account.cmd_trading.enabled {
             // The gesture is invisible until a key is held; its one line
             // of instructions lives where the toggle does, not in a
             // tooltip a newcomer never hovers.
@@ -4421,8 +3299,8 @@ impl PaperTrading {
                      where, and the click places it. Roll the wheel while holding to walk \
                      a stop and target out from the aim; roll back to zero, or press the \
                      wheel, to leave the aim as it was",
-                    self.cmd_trading.buy.label(),
-                    self.cmd_trading.sell.label(),
+                    self.account.cmd_trading.buy.label(),
+                    self.account.cmd_trading.sell.label(),
                 ))
                 .color(theme::TEXT_SUPPORT)
                 .small(),
@@ -4447,22 +3325,22 @@ impl PaperTrading {
                 "a named exit ladder: the order rests with its parts already drawn on \
                  the chart. <None> rests a bare order you bracket by hand",
             );
-            let selected = self.selected_order_strategy().map_or_else(
+            let selected = self.account.selected_order_strategy().map_or_else(
                 || STRATEGY_NONE.to_owned(),
                 |strategy| strategy.name.clone(),
             );
-            let mut choice = self.selected_strategy;
+            let mut choice = self.account.selected_strategy;
             egui::ComboBox::from_id_salt("paper_order_strategy")
                 .width(140.0)
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut choice, None, STRATEGY_NONE);
-                    for (index, strategy) in self.strategies.iter().enumerate() {
+                    for (index, strategy) in self.account.strategies.iter().enumerate() {
                         ui.selectable_value(&mut choice, Some(index), &strategy.name);
                     }
                 });
-            if choice != self.selected_strategy {
-                self.selected_strategy = choice;
+            if choice != self.account.selected_strategy {
+                self.account.selected_strategy = choice;
                 changed = true;
             }
             if ui
@@ -4471,16 +3349,19 @@ impl PaperTrading {
                 .clicked()
             {
                 self.strategy_editor_open = true;
-                self.strategy_editing = self.selected_strategy.or(if self.strategies.is_empty() {
-                    None
-                } else {
-                    Some(0)
-                });
+                self.strategy_editing =
+                    self.account
+                        .selected_strategy
+                        .or(if self.account.strategies.is_empty() {
+                            None
+                        } else {
+                            Some(0)
+                        });
             }
         });
         // The selected ladder, said in words: a trader must be able to read
         // what the next click will place without aiming it first.
-        if let Some(strategy) = self.selected_order_strategy() {
+        if let Some(strategy) = self.account.selected_order_strategy() {
             ui.label(
                 egui::RichText::new(summarise_strategy(strategy))
                     .color(theme::TEXT_SUPPORT)
@@ -4521,8 +3402,8 @@ impl PaperTrading {
         // ticket's button, or the launch hook, which has no click to carry a
         // choice - it opens on the one the ticket is armed with, else the
         // first.
-        if self.strategy_editing.is_none() && !self.strategies.is_empty() {
-            self.strategy_editing = Some(self.selected_strategy.unwrap_or(0));
+        if self.strategy_editing.is_none() && !self.account.strategies.is_empty() {
+            self.strategy_editing = Some(self.account.selected_strategy.unwrap_or(0));
         }
         let mut changed = false;
         let mut open = true;
@@ -4540,9 +3421,9 @@ impl PaperTrading {
                     ui.vertical(|ui| {
                         ui.set_min_width(150.0);
                         ui.label(caption("STRATEGIES"));
-                        for index in 0..self.strategies.len() {
+                        for index in 0..self.account.strategies.len() {
                             let selected = self.strategy_editing == Some(index);
-                            let name = self.strategies[index].name.clone();
+                            let name = self.account.strategies[index].name.clone();
                             if ui.selectable_label(selected, name).clicked() {
                                 self.strategy_editing = Some(index);
                             }
@@ -4553,8 +3434,10 @@ impl PaperTrading {
                             .on_hover_text("start a ladder from one whole-position rung")
                             .clicked()
                         {
-                            self.strategies.push(new_strategy(self.strategies.len()));
-                            self.strategy_editing = Some(self.strategies.len() - 1);
+                            self.account
+                                .strategies
+                                .push(new_strategy(self.account.strategies.len()));
+                            self.strategy_editing = Some(self.account.strategies.len() - 1);
                             self.strategy_dirty = true;
                         }
                         if let Some(index) = self.strategy_editing
@@ -4569,19 +3452,21 @@ impl PaperTrading {
                             // the ticket would silently arm the neighbour of
                             // the one that was deleted.
                             let selected = self
+                                .account()
                                 .selected_order_strategy()
                                 .map(|strategy| strategy.name.clone());
-                            let removed = self.strategies.remove(index).name;
-                            self.selected_strategy =
+                            let removed = self.account.strategies.remove(index).name;
+                            self.account.selected_strategy =
                                 selected.filter(|name| *name != removed).and_then(|name| {
-                                    self.strategies
+                                    self.account
+                                        .strategies
                                         .iter()
                                         .position(|strategy| strategy.name == name)
                                 });
-                            self.strategy_editing = if self.strategies.is_empty() {
+                            self.strategy_editing = if self.account.strategies.is_empty() {
                                 None
                             } else {
-                                Some(index.min(self.strategies.len() - 1))
+                                Some(index.min(self.account.strategies.len() - 1))
                             };
                             self.strategy_dirty = true;
                         }
@@ -4613,7 +3498,7 @@ impl PaperTrading {
             );
             return false;
         };
-        let Some(strategy) = self.strategies.get_mut(index) else {
+        let Some(strategy) = self.account.strategies.get_mut(index) else {
             return false;
         };
         let mut changed = false;
@@ -4737,8 +3622,9 @@ impl PaperTrading {
     /// steppers can only ever land on a size the venue would take.
     fn step_quantity(&mut self, notches: Decimal) {
         let (unit, floor) = self
+            .account
             .instrument_money
-            .get(&self.symbol)
+            .get(&self.account.symbol)
             .map_or((Decimal::ONE, Decimal::ONE), |money| {
                 (money.size_step, money.min_size)
             });
@@ -4755,39 +3641,19 @@ impl PaperTrading {
         }
     }
 
-    /// The size one stepper press moves, for the hover that promises it.
-    fn quantity_step_hint(&self, notches: Decimal) -> String {
-        let unit = self
-            .instrument_money
-            .get(&self.symbol)
-            .map_or(Decimal::ONE, |money| money.size_step);
-        fmt_decimal(notches.saturating_mul(unit))
-    }
-
-    /// Cancel every working order (resting and queued), trading nothing.
-    pub fn cancel_all_orders(&mut self) {
-        let mut ids: Vec<OrderId> = self
-            .venue
-            .working_orders()
-            .iter()
-            .map(|order| order.id)
-            .collect();
-        self.venue.in_flight_entries(&mut ids);
-        for id in ids {
-            let events = self.venue.cancel(id);
-            self.handle_events(events);
-        }
-    }
-
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
         let mut in_flight = Vec::new();
-        self.venue.in_flight_entries(&mut in_flight);
+        self.account.venue.in_flight_entries(&mut in_flight);
         let queued_entries = in_flight.len();
         // Saturating, because the two reads cross a trait boundary and are
         // documented independently: a venue whose `in_flight_entries` says
         // more than its `in_flight` counts must not panic the render loop.
-        let queued_closes = self.venue.in_flight().saturating_sub(queued_entries);
-        let orders: Vec<_> = self.working_orders().to_vec();
+        let queued_closes = self
+            .account
+            .venue
+            .in_flight()
+            .saturating_sub(queued_entries);
+        let orders: Vec<_> = self.account.working_orders().to_vec();
         ui.label(caption(&format!("WORKING ORDERS · {}", orders.len())));
         if queued_entries > 0 {
             ui.label(
@@ -4858,8 +3724,8 @@ impl PaperTrading {
                         .on_hover_text("cancel this order")
                         .clicked()
                     {
-                        let events = self.dispatch(Command::CancelOrder { id: order.id });
-                        self.handle_events(events);
+                        let events = self.account.dispatch(Command::CancelOrder { id: order.id });
+                        self.account.handle_events(events);
                     }
                 });
             });
@@ -4873,7 +3739,7 @@ impl PaperTrading {
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let mut action = None;
         ui.horizontal(|ui| {
-            let realized = self.venue.realized_points();
+            let realized = self.account.venue.realized_points();
             ui.label(
                 egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                     .monospace()
@@ -4883,7 +3749,7 @@ impl PaperTrading {
             ui.label(
                 egui::RichText::new(format!(
                     "realized · {} trades",
-                    self.venue.closed_trades().len()
+                    self.account.venue.closed_trades().len()
                 ))
                 .color(theme::TEXT_MUTED)
                 .small(),
@@ -4894,8 +3760,8 @@ impl PaperTrading {
                     .on_hover_text("performance metrics computed from the saved history")
                     .clicked()
                 {
-                    let env = report_env!(self);
-                    self.report.open(&env);
+                    let env = crate::paper_account::account_env!(self.account);
+                    self.account.report.open(&env);
                 }
             });
         });
@@ -4913,9 +3779,12 @@ impl PaperTrading {
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new(format!("trades saved to: {}", self.dir.display()))
-                            .color(theme::TEXT_MUTED)
-                            .small(),
+                        egui::RichText::new(format!(
+                            "trades saved to: {}",
+                            self.account.dir.display()
+                        ))
+                        .color(theme::TEXT_MUTED)
+                        .small(),
                     )
                     .fill(theme::CONTROL)
                     .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
@@ -4928,13 +3797,13 @@ impl PaperTrading {
                      QUANTICK_TRADES_DIR overrides it for one run. Anything writing the \
                      quantick-trades format here (a future bot included) shows up in the \
                      ledger, the report and the export.",
-                    std::path::absolute(&self.dir)
-                        .unwrap_or_else(|_| self.dir.clone())
+                    std::path::absolute(&self.account.dir)
+                        .unwrap_or_else(|_| self.account.dir.clone())
                         .display()
                 ))
                 .clicked()
             {
-                reveal_folder(&self.dir);
+                reveal_folder(&self.account.dir);
             }
         });
         action
@@ -4952,33 +3821,9 @@ impl PaperTrading {
     // already knows must not move because the code behind it did.
     // ------------------------------------------------------------------
 
-    /// Test-only: the report state this host holds.
+    /// The report's state and its environment, together.
     ///
-    /// The report's own tests moved out with the report, and a handful of
-    /// them still need a host that journals to a real folder, because they
-    /// are about the journal rather than the arithmetic. Reading, not
-    /// reaching: the state's fields stay private to its own module, so a
-    /// test in `paper_report` gets at them exactly the way that module
-    /// does.
-    #[cfg(test)]
-    pub(crate) fn report_state(&self) -> &crate::paper_report::ReportState {
-        &self.report
-    }
-
-    /// Test-only: the report state, mutably.
-    #[cfg(test)]
-    pub(crate) fn report_state_mut(&mut self) -> &mut crate::paper_report::ReportState {
-        &mut self.report
-    }
-
-    /// Test-only: the report state *and* the environment this host would
-    /// hand it, together.
-    ///
-    /// Together deliberately. Every method on the state that reads the
-    /// session takes the env, so a test needs both at once - and asking
-    /// for them one at a time is exactly the borrow conflict `report_env!`
-    /// exists to avoid. Destructuring is what makes the two borrows
-    /// visibly disjoint.
+    /// Test-only, and a delegation: the parts are the account's now.
     #[cfg(test)]
     pub(crate) fn report_parts(
         &mut self,
@@ -4986,58 +3831,23 @@ impl PaperTrading {
         &mut crate::paper_report::ReportState,
         crate::paper_report::ReportEnv<'_>,
     ) {
-        let open = self.open_row();
-        let Self {
-            report,
-            symbol,
-            dir,
-            session_journal_paths,
-            venue,
-            ..
-        } = self;
-        (
-            report,
-            crate::paper_report::ReportEnv {
-                symbol,
-                dir,
-                session_journal_paths,
-                session_trades: venue.closed_trades(),
-                open,
-            },
-        )
-    }
-
-    /// The open position as the ledger's top row needs it, or `None` while
-    /// flat. Three venue reads gathered into one value so the reader can
-    /// never be handed two of the three.
-    fn open_row(&self) -> Option<crate::paper_report::OpenRow> {
-        let summary = self.position_summary()?;
-        let held_ms = self
-            .venue
-            .mark_timestamp_ms()
-            .zip(self.venue.position().map(|position| position.opened_ms))
-            .map(|(mark, opened)| mark.saturating_sub(opened));
-        Some(crate::paper_report::OpenRow {
-            summary,
-            mark_price: self.venue.mark_price(),
-            held_ms,
-        })
+        self.account.report_parts()
     }
 
     /// The trades ledger tab. Returns what the ledger asked of the host.
     pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
-        let env = report_env!(self);
-        self.report.draw_trades_tab(ui, tz, &env)
+        let env = crate::paper_account::account_env!(self.account);
+        self.account.report.draw_trades_tab(ui, tz, &env)
     }
 
     /// The performance report window, computed from what is on disk.
     pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
-        let env = report_env!(self);
-        let asked = self.report.draw_window(ctx, tz, &env);
+        let env = crate::paper_account::account_env!(self.account);
+        let asked = self.account.report.draw_window(ctx, tz, &env);
         // The report can decide a folder picker should open; opening one is
         // this host's job, because the import copies into *its* journal.
         if asked.start_import {
-            self.start_import();
+            self.account.start_import();
         }
         // And it can refuse a typed period. That message goes to the one
         // outbox every paper acknowledgement uses - dropping it here would
@@ -5046,39 +3856,6 @@ impl PaperTrading {
         if let Some(message) = asked.toast {
             self.show_toast(message);
         }
-    }
-
-    /// Open the report window (`QUANTICK_PAPER_REPORT_AUTOSTART`).
-    pub(crate) fn autostart_report(&mut self) {
-        let env = report_env!(self);
-        self.report.autostart_report(&env);
-    }
-
-    /// Open the report with its month grid expanded (`QUANTICK_PAPER_CALENDAR`).
-    pub(crate) fn autostart_calendar(&mut self, selection: DaySelection) {
-        let env = report_env!(self);
-        self.report.autostart_calendar(selection, &env);
-    }
-
-    /// Point the ledger at one instrument's saved history, or all of them.
-    pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
-        self.report.set_ledger_scope(scope);
-    }
-
-    /// Fold every day in the ledger shut (`QUANTICK_LEDGER_FOLD`).
-    pub(crate) fn autostart_folded_days(&mut self, tz: TzOffset) {
-        let env = report_env!(self);
-        self.report.autostart_folded_days(tz, &env);
-    }
-
-    /// Reveal `pages` pages of saved history (`QUANTICK_LEDGER_PAGES`).
-    pub(crate) fn autostart_ledger_pages(&mut self, pages: usize) {
-        self.report.autostart_ledger_pages(pages);
-    }
-
-    /// Open or collapse the report's trade list (`QUANTICK_PAPER_REPORT_LIST`).
-    pub(crate) fn set_report_list_open(&mut self, open: bool) {
-        self.report.set_report_list_open(open);
     }
 
     // ------------------------------------------------------------------
@@ -5099,8 +3876,7 @@ impl PaperTrading {
     /// window's one toast, through [`Self::take_toast`].
     pub fn settle(&mut self) {
         self.hovered_order = None;
-        self.poll_export();
-        self.poll_import();
+        self.account.settle();
     }
 
     /// Take the acknowledgement waiting to be shown, if there is one.
@@ -5117,7 +3893,7 @@ impl PaperTrading {
     /// behind it is worse than missing the stale one. Taking rather than
     /// reading, so one message is handed over once however many frames pass.
     pub(crate) fn take_toast(&mut self) -> Option<String> {
-        self.pending_toast.take()
+        self.account.take_toast()
     }
 
     /// Post an acknowledgement for the window to show. Newest wins.
@@ -5126,366 +3902,20 @@ impl PaperTrading {
     /// told the frame's `Instant` by the host, which is what makes an
     /// acknowledgement's lifetime as testable as the engine's arithmetic.
     pub(crate) fn show_toast(&mut self, message: String) {
-        self.pending_toast = Some(message);
+        self.account.set_toast(message);
     }
 
     // ------------------------------------------------------------------
     // Import
     // ------------------------------------------------------------------
 
-    /// Ask for a folder whose trades should be copied into the journal
-    /// home, off the UI thread — the manual way in for legacy folders the
-    /// startup consolidation cannot reach (an old working directory, a
-    /// backup). One dialog at a time.
-    fn start_import(&mut self) {
-        if self.import_rx.is_some() {
-            self.show_toast("SIM: an import is already running.".to_owned());
-            return;
-        }
-        let (sender, receiver) = std::sync::mpsc::channel();
-        let start = self.dir.clone();
-        std::thread::Builder::new()
-            .name("quantick-trades-import-picker".into())
-            .spawn(move || {
-                let mut dialog =
-                    rfd::FileDialog::new().set_title("Import trades from a folder (copies)");
-                if start.is_dir() {
-                    dialog = dialog.set_directory(&start);
-                }
-                let _ = sender.send(dialog.pick_folder());
-            })
-            .expect("spawn trades-import picker thread");
-        self.import_rx = Some(receiver);
-    }
-
-    /// Land the picked folder: copy its history into the journal home and
-    /// re-read, so the report answers with the merged truth.
-    fn poll_import(&mut self) {
-        let Some(receiver) = &self.import_rx else {
-            return;
-        };
-        let Ok(choice) = receiver.try_recv() else {
-            return;
-        };
-        self.import_rx = None;
-        let Some(source) = choice else { return };
-        let summary = crate::paper_home::consolidate_into(&self.dir, &[source]);
-        self.show_toast(crate::paper_home::import_toast(&summary));
-        let env = report_env!(self);
-        self.report.history_imported(&env);
-    }
-
     // ------------------------------------------------------------------
     // Export
     // ------------------------------------------------------------------
 
-    /// Write everything the ledger lists (this session plus the saved
-    /// history, in the ledger's scope) to one CSV, off the UI thread. The
-    /// toast answers with the path or the failure.
-    pub fn start_export(&mut self) {
-        if self.export_rx.is_some() {
-            self.show_toast("SIM: an export is already running.".to_owned());
-            return;
-        }
-        // The saved half of the export, loaded if the ledger has not been
-        // drawn yet: an export that silently skipped it because nobody had
-        // opened the tab would write a history that is missing most of
-        // itself. Cloned out before the session's own rows are appended,
-        // since gathering those borrows this host again.
-        let mut rows: Vec<HistoryRow> = {
-            let env = report_env!(self);
-            self.report.saved_rows(&env).to_vec()
-        };
-        rows.extend(
-            self.venue
-                .closed_trades()
-                .iter()
-                .enumerate()
-                .map(|(index, trade)| HistoryRow {
-                    symbol: self.symbol.clone(),
-                    // The source the trade actually closed under — the
-                    // session may have flipped live/replay since.
-                    source: Some(
-                        self.session_trade_sources
-                            .get(index)
-                            .copied()
-                            .unwrap_or(self.session_source),
-                    ),
-                    trade: trade.clone(),
-                }),
-        );
-        rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
-        if rows.is_empty() {
-            self.show_toast("SIM: nothing to export yet - close a trade first.".to_owned());
-            return;
-        }
-        let text = export_csv(&rows);
-        let count = rows.len();
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
-            .unwrap_or(0);
-        let dir = self.dir.clone();
-        let path = dir.join(format!("export-{}.csv", utc_compact(stamp)));
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let result = std::fs::create_dir_all(&dir)
-                .and_then(|()| std::fs::write(&path, text))
-                .map(|()| (path, count))
-                .map_err(|error| error.to_string());
-            let _ = sender.send(result);
-        });
-        self.export_rx = Some(receiver);
-    }
-
-    /// Land the export's result, if it arrived.
-    fn poll_export(&mut self) {
-        let Some(receiver) = &self.export_rx else {
-            return;
-        };
-        let Ok(result) = receiver.try_recv() else {
-            return;
-        };
-        self.export_rx = None;
-        match result {
-            Ok((path, count)) => {
-                tracing::info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "PAPER_TRADES_EXPORTED",
-                    path = %path.display(),
-                    trades = count,
-                    "exported the simulated trade history"
-                );
-                self.show_toast(format!("Exported {count} trades to {}", elide_path(&path)));
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "PAPER_TRADES_EXPORT_FAILED",
-                    %error,
-                    action = "export_not_saved",
-                    "could not write the trade export"
-                );
-                self.show_toast(
-                    "SIM: could not write the export - see the log for the path.".to_owned(),
-                );
-            }
-        }
-    }
-
     // ------------------------------------------------------------------
     // Events, journal, parsing
     // ------------------------------------------------------------------
-
-    /// One funnel for everything the simulator reports: closures are
-    /// journaled, fills and closures toast, rejections teach — and while a
-    /// bot is listening, every batch is buffered for the armed instances
-    /// too. Buffering *here* is what lets a manual flatten's `Cancelled`
-    /// reach the instance whose pending entry it swept: manual commands
-    /// and prints flow through this one funnel alike. The strategy-issued
-    /// command path (`apply_strategy_command`) also lands here, so its
-    /// instance sees its own acknowledgement twice — once directly, once
-    /// via the buffer — which the state machine tolerates by design (every
-    /// transition consumes its trigger, so a replayed event finds no match).
-    fn handle_events(&mut self, events: Vec<VenueEvent>) {
-        if self.bot_listening && !events.is_empty() {
-            self.bot_events.extend(events.iter().cloned());
-        }
-        for event in events {
-            match event {
-                VenueEvent::Rejected(reason) => self.show_toast(format!("SIM: {reason}")),
-                VenueEvent::BracketDropped { reason } => {
-                    self.show_toast(format!("SIM: dropped at the fill - {reason}"));
-                }
-                VenueEvent::Filled(fill) => {
-                    if matches!(fill.role, quantick_sim::FillRole::Entry(_)) {
-                        self.show_toast(format!(
-                            "SIM fill: {} {} @ {}",
-                            side_word(fill.side),
-                            fmt_decimal(fill.quantity),
-                            fmt_decimal(fill.price),
-                        ));
-                    }
-                }
-                VenueEvent::Closed(trade) => {
-                    let saved = self.journal(&trade);
-                    // The report reads from disk and the close just wrote
-                    // to disk; re-read now or the window shows yesterday
-                    // until the manual refresh - the "my trade is missing"
-                    // report.
-                    //
-                    // Guarded rather than always gathered: this is the
-                    // per-trade path, and building a `ReportEnv` for a
-                    // window nobody has open is work a dense tape pays on
-                    // every single close.
-                    if self.report.is_open() {
-                        let env = report_env!(self);
-                        self.report.journal_changed(&env);
-                    }
-                    // The toast slot holds one message: a healthy "closed"
-                    // must not paint over the could-not-save warning.
-                    if saved {
-                        self.show_toast(format!(
-                            // Same reason as the hover card above: the
-                            // toast is a proportional-font label.
-                            "SIM closed: {} {} for {} pts ({})",
-                            position_word(trade.side),
-                            fmt_decimal(trade.quantity),
-                            fmt_signed_points(trade.pnl_points),
-                            trade.exit_reason.as_str().replace('_', " "),
-                        ));
-                    }
-                }
-                // The two cancels the *tape* performs, not a hand: a
-                // working-order chip vanishing with no narration reads as
-                // a glitch, so these toast like every other simulator act
-                // the trader did not click.
-                VenueEvent::Cancelled {
-                    order,
-                    reason: quantick_sim::CancelReason::PriceTouched,
-                } => {
-                    self.show_toast(format!("SIM cancelled {}: target traded first", order.id));
-                }
-                VenueEvent::Cancelled {
-                    order,
-                    reason: quantick_sim::CancelReason::AccountOccupied,
-                } => {
-                    self.show_toast(format!(
-                        "SIM stood down {}: account busy at its price",
-                        order.id
-                    ));
-                }
-                // A ladder's own bookkeeping, for the same reason: up to
-                // eight chips can vanish at once when a part closes or the
-                // position ends, and a trader watching them go needs the
-                // sentence more than they needed it for a single leg.
-                VenueEvent::Cancelled {
-                    order,
-                    reason: quantick_sim::CancelReason::OcoFilled,
-                } => {
-                    self.show_toast(format!("SIM cancelled {}: its pair filled", order.id));
-                }
-                VenueEvent::Cancelled {
-                    order,
-                    reason: quantick_sim::CancelReason::PositionClosed,
-                } => {
-                    self.show_toast(format!(
-                        "SIM cancelled {}: the position it protected is closed",
-                        order.id
-                    ));
-                }
-                VenueEvent::Cancelled {
-                    order,
-                    reason: quantick_sim::CancelReason::BracketReplaced,
-                } => {
-                    self.show_toast(format!("SIM cancelled {}: protection replaced", order.id));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Append one closed trade to the session's history file, creating the
-    /// file (with its header) on the first close. Also records the source
-    /// the trade closed under, for the export. Returns whether the write
-    /// landed — a failed write warns once and never crashes a trading
-    /// session, but its caller must not paint a healthy toast over the
-    /// warning.
-    fn journal(&mut self, trade: &ClosedTrade) -> bool {
-        self.session_trade_sources.push(self.session_source);
-        if self.symbol.is_empty() {
-            return false;
-        }
-        let folder = self.dir.join(sanitize_symbol(&self.symbol));
-        let path = self
-            .journal_path
-            .get_or_insert_with(|| free_session_path(&folder, &utc_compact(trade.closed_ms)));
-        if self.session_journal_paths.last() != Some(path) {
-            self.session_journal_paths.push(path.clone());
-        }
-        let mut text = String::new();
-        if !path.exists() {
-            text.push_str(&history::write_header(&self.symbol, self.session_source));
-        }
-        text.push_str(&history::write_trade(trade));
-        let written = std::fs::create_dir_all(&folder).and_then(|()| {
-            use std::io::Write;
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&*path)
-                .and_then(|mut file| file.write_all(text.as_bytes()))
-        });
-        if let Err(error) = &written
-            && !self.journal_warned
-        {
-            self.journal_warned = true;
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "PAPER_TRADE_JOURNAL_FAILED",
-                path = %path.display(),
-                %error,
-                action = "trade_not_saved",
-                "could not append to the paper-trading history"
-            );
-            self.show_toast(
-                "SIM: could not save the trade history - see the log for the path.".to_owned(),
-            );
-        }
-        written.is_ok()
-    }
-
-    fn parse_quantity(&mut self) -> Option<Decimal> {
-        match self.qty_text.trim().parse::<Decimal>() {
-            Ok(quantity) if quantity > Decimal::ZERO => Some(quantity),
-            _ => {
-                self.show_toast(format!(
-                    "SIM: quantity must be a positive number - got `{}`",
-                    self.qty_text.trim(),
-                ));
-                None
-            }
-        }
-    }
-
-    /// Turn the optional offset fields into absolute protective prices
-    /// around `reference` (the entry's own price, or the mark for market
-    /// orders). `None` means a field failed to parse and was toasted.
-    fn parse_bracket(&mut self, side: Side, reference: Decimal) -> Option<Bracket> {
-        match self.ticket_bracket(side, reference) {
-            Ok(bracket) => Some(bracket),
-            Err(message) => {
-                self.show_toast(message);
-                None
-            }
-        }
-    }
-
-    /// The reading half of [`Self::parse_bracket`]: the same arithmetic with
-    /// no toast, so the projection can ask what the ticket says without
-    /// putting a message on screen every frame.
-    fn ticket_bracket(&self, side: Side, reference: Decimal) -> Result<Bracket, String> {
-        let stop_offset = parse_offset(&self.stop_offset_text).map_err(|got| {
-            format!("SIM: the stop offset must be a positive number of points - got `{got}`")
-        })?;
-        let profit_offset = parse_offset(&self.profit_offset_text).map_err(|got| {
-            format!("SIM: the profit offset must be a positive number of points - got `{got}`")
-        })?;
-        let (stop_loss, take_profit) = match side {
-            Side::Buy => (
-                stop_offset.map(|offset| reference.saturating_sub(offset)),
-                profit_offset.map(|offset| reference.saturating_add(offset)),
-            ),
-            Side::Sell => (
-                stop_offset.map(|offset| reference.saturating_add(offset)),
-                profit_offset.map(|offset| reference.saturating_sub(offset)),
-            ),
-        };
-        Ok(Bracket::whole(stop_loss, take_profit))
-    }
 }
 
 /// What the order form changed this frame; both are app-wide settings the
@@ -6011,13 +4441,6 @@ fn parse_offset(text: &str) -> Result<Option<Decimal>, String> {
     }
 }
 
-fn side_word(side: Side) -> &'static str {
-    match side {
-        Side::Buy => "buy",
-        Side::Sell => "sell",
-    }
-}
-
 fn side_word_upper(side: Side) -> &'static str {
     match side {
         Side::Buy => "BUY",
@@ -6031,13 +4454,6 @@ fn kind_word(kind: EntryKind) -> &'static str {
         EntryKind::Limit => "limit",
         EntryKind::Stop => "stop",
     }
-}
-
-/// `YYYYMMDD-HHMMSS` in UTC from epoch milliseconds — session file names
-/// derive from venue time, so the same replay run names the same file.
-fn utc_compact(timestamp_ms: i64) -> String {
-    let (year, month, day, hour, minute, second) = civil_utc(timestamp_ms);
-    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
 }
 
 /// `YYYY-MM-DD` in UTC — the report's anchor date.
@@ -6080,70 +4496,6 @@ pub(crate) fn reveal_folder(path: &Path) {
             "could not open a folder in the file manager"
         );
     }
-}
-
-/// The export CSV: one merged, Excel-facing artifact — the journal stays
-/// the machine-readable source of truth. Human-readable UTC stamps ride
-/// beside the venue epoch, decimals always use `.`, and the running
-/// equity is a column so a spreadsheet shows it without a formula.
-fn export_csv(rows: &[HistoryRow]) -> String {
-    let mut text = String::from(
-        "symbol,side,quantity,opened_ms,opened_utc,entry_price,closed_ms,closed_utc,\
-         exit_price,pnl_points,cum_pnl_points,duration_ms,exit_reason,entry_agg_id,\
-         exit_agg_id,mae_points,mfe_points,source\n",
-    );
-    let mut cumulative = Decimal::ZERO;
-    let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
-    let opt_points = |value: Option<Decimal>| value.map(fmt_decimal).unwrap_or_default();
-    for row in rows {
-        let trade = &row.trade;
-        cumulative = cumulative.saturating_add(trade.pnl_points);
-        let side = match trade.side {
-            Side::Buy => "long",
-            Side::Sell => "short",
-        };
-        text.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
-            row.symbol.replace(',', "_"),
-            side,
-            fmt_decimal(trade.quantity),
-            trade.opened_ms,
-            fmt_utc_iso(trade.opened_ms),
-            fmt_decimal(trade.entry_price),
-            trade.closed_ms,
-            fmt_utc_iso(trade.closed_ms),
-            fmt_decimal(trade.exit_price),
-            fmt_decimal(trade.pnl_points),
-            fmt_decimal(cumulative),
-            trade.closed_ms.saturating_sub(trade.opened_ms).max(0),
-            trade.exit_reason.as_str(),
-            opt_u64(trade.entry_agg_id),
-            opt_u64(trade.exit_agg_id),
-            opt_points(trade.mae_points),
-            opt_points(trade.mfe_points),
-            // Empty when the file never recorded one — unknown, not live.
-            row.source.map(history::SessionSource::as_str).unwrap_or(""),
-        ));
-    }
-    text
-}
-
-/// `YYYY-MM-DDTHH:MM:SSZ` in UTC — the export's human-readable stamp.
-fn fmt_utc_iso(timestamp_ms: i64) -> String {
-    let (year, month, day, hour, minute, second) = civil_utc(timestamp_ms);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// A toast-sized path: printed whole when short, elided to `…/file.csv`
-/// past the limit — the file name always stays whole.
-fn elide_path(path: &Path) -> String {
-    let text = path.display().to_string();
-    if text.chars().count() <= EXPORT_PATH_ELIDE_CHARS {
-        return text;
-    }
-    path.file_name().map_or(text, |name| {
-        format!("…{}{}", std::path::MAIN_SEPARATOR, name.to_string_lossy())
-    })
 }
 
 /// The cmd preview's geometry from the interactive band and the pointer:
@@ -6223,28 +4575,6 @@ fn tag_row_hit(pointer: egui::Pos2, y: f32, chart: egui::Rect) -> bool {
         || (pointer.y - center).abs() <= TAG_HEIGHT_PX / 2.0 + TAG_HOVER_SLACK_PX
 }
 
-/// The session file for `stamp` under `folder`: the plain name when free,
-/// else `stamp.rerun-N` — file names derive from venue time, so replaying
-/// the same recording twice reproduces the same stamp, and the second run
-/// must land beside the first instead of appending duplicate trades into
-/// it.
-fn free_session_path(folder: &Path, stamp: &str) -> PathBuf {
-    let plain = folder.join(format!("{stamp}.{}", history::FILE_EXTENSION));
-    if !plain.exists() {
-        return plain;
-    }
-    for rerun in 1..=MAX_SESSION_RERUNS {
-        let candidate = folder.join(format!("{stamp}.rerun-{rerun}.{}", history::FILE_EXTENSION));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    // A folder with a thousand same-stamp sessions is not a real journal;
-    // appending to the plain file keeps the trades at the cost of
-    // duplicates, which beats losing them.
-    plain
-}
-
 /// A journal folder of its own per host under test — tests must never
 /// touch a real documents folder, nor see one another's files.
 fn test_scratch_dir() -> PathBuf {
@@ -6259,3423 +4589,12 @@ fn test_scratch_dir() -> PathBuf {
 
 crate::hooks::declare_hooks![
     "QUANTICK_CMD_PREVIEW",
-    "QUANTICK_PAPER_DEMO",
     "QUANTICK_PAPER_ORDERS",
     "QUANTICK_PAPER_ORDER_BRACKET",
     "QUANTICK_PAPER_ORDER_HOVER",
-    "QUANTICK_PAPER_RISK",
     "QUANTICK_PAPER_RULER_TICKS",
     "QUANTICK_PAPER_STRATEGY_EDITOR"
 ];
-#[cfg(test)]
-mod risk_tests {
-    use super::*;
-
-    fn win_money() -> quantick_sim::InstrumentMoney {
-        quantick_sim::InstrumentMoney {
-            point_value: Decimal::new(20, 2),
-            size_step: Decimal::ONE,
-            min_size: Decimal::ONE,
-            max_size: None,
-            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
-            source: quantick_sim::MoneySource::Declared,
-        }
-    }
-
-    fn book(money: quantick_sim::InstrumentMoney) -> crate::risk_sizing::InstrumentBook {
-        [("WIN$N".to_owned(), money)].into_iter().collect()
-    }
-
-    /// A ticket on WIN$N with the money declared and a fixed risk set.
-    fn armed_ticket(price: i64) -> PaperTrading {
-        let mut paper = PaperTrading::new();
-        paper.set_symbol("WIN$N");
-        paper.seed(&Trade {
-            agg_id: 0,
-            timestamp_ms: 0,
-            price: Decimal::from(price),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        paper.set_instrument_money(book(win_money()));
-        paper.set_risk_settings(crate::risk_sizing::RiskSettings {
-            basis: crate::risk_sizing::RiskBasis::Amount,
-            amount: Decimal::from(100),
-            amount_currency: None,
-            percent: Decimal::ZERO,
-            lock: true,
-        });
-        paper.set_ruler_step(Some(Decimal::ONE));
-        paper
-    }
-
-    /// The wheel and a saved strategy are two ways of saying where the stop
-    /// is, and the size must not depend on which the trader used - that is
-    /// the whole reason both go through `aim_bracket`. Proven by sizing one
-    /// entry each way and comparing, not by reading the funnel.
-    #[test]
-    fn the_wheel_and_a_saved_strategy_size_one_entry_identically() {
-        let stop_points = 10_u32;
-
-        let mut wheel = armed_ticket(140_000);
-        wheel.set_ruler_ticks(stop_points);
-        let by_wheel = wheel.risk_state(Side::Buy, Decimal::from(140_000));
-
-        let mut ladder = armed_ticket(140_000);
-        ladder.set_order_strategies(
-            vec![crate::order_strategies::OrderStrategy {
-                name: "one rung".to_owned(),
-                rows: vec![crate::order_strategies::StrategyRow {
-                    share_percent: Decimal::ONE_HUNDRED,
-                    gain_ticks: Some(stop_points),
-                    loss_ticks: Some(stop_points),
-                }],
-            }],
-            Some("one rung"),
-        );
-        let by_ladder = ladder.risk_state(Side::Buy, Decimal::from(140_000));
-
-        assert_eq!(
-            by_wheel.derived_quantity(),
-            by_ladder.derived_quantity(),
-            "wheel {by_wheel:?} vs ladder {by_ladder:?}"
-        );
-        assert_eq!(by_wheel.code(), by_ladder.code());
-        // 10 points x 0.20 = 2.00 a contract; 100 / 2 = 50.
-        assert_eq!(by_wheel.derived_quantity(), Some(Decimal::from(50)));
-    }
-
-    /// The lock, at the surface. With a risk per trade set there is no entry
-    /// that exceeds it, and the refusal names the number rather than leaving
-    /// a wheel that quietly stopped turning.
-    #[test]
-    fn a_stop_too_wide_for_the_budget_refuses_the_entry_and_says_why() {
-        let mut paper = armed_ticket(140_000);
-        // 4000 points x 0.20 = 800 for one contract, against a budget of 100.
-        // Reached with a coarse step rather than more notches: the ruler
-        // itself stops at `RULER_MAX_NOTCHES`.
-        paper.set_ruler_step(Some(Decimal::from(20)));
-        paper.set_ruler_ticks(200);
-        let (state, blocks) = paper.risk_report();
-        assert_eq!(state.code(), "clamped_at_minimum", "{state:?}");
-        assert!(blocks, "the lock stands");
-        let sentence = state.sentence();
-        assert!(sentence.contains("800 BRL"), "{sentence}");
-        assert!(sentence.contains("raise the risk"), "{sentence}");
-
-        // And it is the *placement* that is refused, not merely the label.
-        paper.market(Side::Buy);
-        assert!(
-            paper.is_flat(),
-            "the lock refused the order rather than only colouring the ticket"
-        );
-    }
-
-    /// The ceiling holds on the named path too. A lock the ticket enforces
-    /// and `place_intent` does not would be a ceiling that stands only while
-    /// a human is clicking - and `CLAUDE.md` makes the other operator
-    /// first-class.
-    #[test]
-    fn the_lock_refuses_a_named_order_the_same_as_a_clicked_one() {
-        let mut paper = armed_ticket(140_000);
-        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
-            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
-        // 4000 points x 0.20 x 10 = 8,000 BRL against a budget of 100.
-        let refusal = paper
-            .risk_refusal_for(&intent)
-            .expect("the ceiling names it");
-        assert!(refusal.contains("8000 BRL"), "{refusal}");
-        assert!(refusal.contains("turn the lock off"), "{refusal}");
-        assert!(
-            paper.place_intent(intent).is_empty(),
-            "a named call must not slip past the ceiling the ticket enforces"
-        );
-        assert!(paper.is_flat(), "nothing was placed");
-    }
-
-    /// With the lock down the same named order goes out - the refusal is the
-    /// trader's setting, not a rule the platform invented.
-    #[test]
-    fn a_named_order_over_budget_goes_out_once_the_lock_is_down() {
-        let mut paper = armed_ticket(140_000);
-        let mut risk = paper.risk_settings().clone();
-        risk.lock = false;
-        paper.set_risk_settings(risk);
-        let intent = quantick_sim::OrderIntent::market(Side::Buy, Decimal::from(10))
-            .with_bracket(Bracket::whole(Some(Decimal::from(136_000)), None));
-        assert!(paper.risk_refusal_for(&intent).is_none());
-    }
-
-    /// Taking the lock down is how a trader takes that entry anyway - a
-    /// deliberate act, never a silent one.
-    #[test]
-    fn taking_the_lock_down_lets_the_over_budget_entry_through() {
-        let mut paper = armed_ticket(140_000);
-        paper.set_ruler_step(Some(Decimal::from(20)));
-        paper.set_ruler_ticks(200);
-        let mut risk = paper.risk_settings().clone();
-        risk.lock = false;
-        paper.set_risk_settings(risk);
-        let (state, blocks) = paper.risk_report();
-        assert_eq!(state.code(), "clamped_at_minimum", "still over budget");
-        assert!(!blocks, "but no longer refused");
-    }
-
-    /// An instrument with no declared money never guesses a size. In
-    /// particular it must not borrow this file's `tick_size`, which is
-    /// derived from the decimal places the tape has printed and says 1 for
-    /// WIN$N where the real step is 5.
-    #[test]
-    fn an_undeclared_instrument_sizes_nothing_and_says_so() {
-        let mut paper = armed_ticket(140_000);
-        paper.set_instrument_money(crate::risk_sizing::InstrumentBook::new());
-        paper.set_ruler_ticks(10);
-        let (state, blocks) = paper.risk_report();
-        assert_eq!(state.code(), "instrument_unknown");
-        assert_eq!(state.derived_quantity(), None);
-        assert!(!blocks, "an unknown instrument is not an over-budget one");
-        assert!(state.sentence().contains("WIN$N"), "{}", state.sentence());
-    }
-
-    /// The steppers walk the instrument's own size step. A hard-coded 1 is
-    /// already wrong on any fractional lot - it moved a crypto size by a
-    /// hundred thousand steps.
-    #[test]
-    fn the_quantity_steppers_walk_the_instruments_own_size_step() {
-        let mut paper = armed_ticket(140_000);
-        paper.set_instrument_money(book(quantick_sim::InstrumentMoney {
-            size_step: Decimal::new(1, 5),
-            min_size: Decimal::new(1, 5),
-            ..win_money()
-        }));
-        paper.qty_text = "0.00002".to_owned();
-        paper.step_quantity(Decimal::ONE);
-        assert_eq!(paper.qty_text, "0.00003");
-        paper.step_quantity(-Decimal::ONE);
-        assert_eq!(paper.qty_text, "0.00002");
-    }
-}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // Journalling tests read back the folders the writer created; the
-    // helper that lists them lives with the rest of the shared chrome.
-    use crate::paper_chrome::list_symbol_folders;
-    use crate::paper_report::{load_history, report_from_history};
-
-    /// One journal row: the trade, the folder it came from, the source its
-    /// file recorded.
-    fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
-        HistoryRow {
-            symbol: symbol.to_owned(),
-            source,
-            trade,
-        }
-    }
-
-    fn print(agg_id: u64, price: i64) -> Trade {
-        Trade {
-            agg_id,
-            timestamp_ms: i64::try_from(agg_id).expect("small test ids") * 1000,
-            price: Decimal::from(price),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        }
-    }
-
-    #[test]
-    fn utc_compact_matches_known_timestamps() {
-        // 2026-03-16 13:01:08 UTC.
-        assert_eq!(utc_compact(1_773_666_068_000), "20260316-130108");
-        // The epoch itself.
-        assert_eq!(utc_compact(0), "19700101-000000");
-    }
-
-    #[test]
-    fn an_in_session_rerun_opens_its_own_file() {
-        // Seek-to-start / reopen-same-recording is a timeline reset with
-        // the source unchanged: run 2 must not append into run 1's file.
-        let mut paper = PaperTrading::new();
-        paper.set_symbol("RESEEK");
-        paper.set_session_source(history::SessionSource::Replay);
-        for _ in 0..2 {
-            paper.seed(&print(0, 100));
-            paper.market(Side::Buy);
-            paper.on_trade(&print(1, 100));
-            let events = paper.dispatch(Command::ClosePosition);
-            paper.handle_events(events);
-            paper.on_trade(&print(2, 103));
-            paper.on_timeline_reset();
-        }
-        let folder = paper.dir.join("RESEEK");
-        let mut names: Vec<String> = std::fs::read_dir(&folder)
-            .expect("the symbol folder exists")
-            .flatten()
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-            .collect();
-        names.sort();
-        assert_eq!(names.len(), 2, "each run has its own file: {names:?}");
-        assert!(names[1].contains(".rerun-1."), "{names:?}");
-    }
-
-    #[test]
-    fn export_rows_remember_the_source_each_trade_closed_under() {
-        let mut paper = PaperTrading::new();
-        paper.set_symbol("SRCX");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 105));
-        paper.set_session_source(history::SessionSource::Replay);
-        assert_eq!(
-            paper.session_trade_sources,
-            vec![history::SessionSource::Live],
-            "a trade keeps the source it closed under, not the current one"
-        );
-    }
-
-    #[test]
-    fn the_export_csv_carries_readable_stamps_and_running_equity() {
-        let trade = |closed_ms: i64, pnl: i64, mae: Option<i64>| ClosedTrade {
-            side: Side::Buy,
-            quantity: Decimal::ONE,
-            entry_price: Decimal::from(100),
-            exit_price: Decimal::from(100 + pnl),
-            opened_ms: closed_ms - 60_000,
-            closed_ms,
-            pnl_points: Decimal::from(pnl),
-            exit_reason: quantick_sim::ExitReason::Manual,
-            entry_agg_id: mae.map(|_| 1),
-            exit_agg_id: mae.map(|_| 2),
-            mae_points: mae.map(Decimal::from),
-            mfe_points: mae.map(Decimal::from),
-        };
-        let rows = vec![
-            row(
-                "BTCUSDT",
-                Some(history::SessionSource::Live),
-                trade(1_773_666_068_000, 5, Some(2)),
-            ),
-            row("WINQ26", None, trade(1_773_666_368_000, -2, None)),
-        ];
-        let text = export_csv(&rows);
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 3, "header plus two rows");
-        assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
-        assert!(lines[0].ends_with(",source"), "{}", lines[0]);
-        assert!(
-            lines[1].contains("2026-03-16T13:01:08Z"),
-            "human-readable UTC beside the epoch: {}",
-            lines[1]
-        );
-        assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
-        assert!(
-            lines[2].contains(",3,"),
-            "running equity 5 + (-2): {}",
-            lines[2]
-        );
-        assert!(
-            lines[2].ends_with(",manual,,,,,"),
-            "unknown v1 fields and an unrecorded source stay empty: {}",
-            lines[2]
-        );
-    }
-
-    #[test]
-    fn long_export_paths_elide_to_the_file_name() {
-        let short = Path::new("paper-trades/export-1.csv");
-        assert_eq!(elide_path(short), short.display().to_string());
-        let long = Path::new(
-            "C:/some/extremely/long/path/that/never/ends/and/keeps/going/paper-trades/export-20260805-141233.csv",
-        );
-        let elided = elide_path(long);
-        assert!(elided.starts_with('…'), "{elided}");
-        assert!(elided.ends_with("export-20260805-141233.csv"), "{elided}");
-    }
-
-    #[test]
-    fn utc_dates_format_from_the_same_civil_math() {
-        assert_eq!(fmt_utc_date(1_773_666_068_000), "2026-03-16");
-    }
-
-    #[test]
-    fn market_offsets_become_a_bracket_around_the_reference() {
-        let mut paper = PaperTrading::new();
-        paper.stop_offset_text = "5".to_owned();
-        paper.profit_offset_text = "10".to_owned();
-        let bracket = paper
-            .parse_bracket(Side::Buy, Decimal::from(100))
-            .expect("both parse");
-        assert_eq!(bracket.stop_loss(), Some(Decimal::from(95)));
-        assert_eq!(bracket.take_profit(), Some(Decimal::from(110)));
-        let bracket = paper
-            .parse_bracket(Side::Sell, Decimal::from(100))
-            .expect("both parse");
-        assert_eq!(bracket.stop_loss(), Some(Decimal::from(105)));
-        assert_eq!(bracket.take_profit(), Some(Decimal::from(90)));
-    }
-
-    #[test]
-    fn a_bad_offset_toasts_and_blocks_the_order() {
-        let mut paper = PaperTrading::new();
-        paper.stop_offset_text = "abc".to_owned();
-        assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
-        assert!(
-            paper.pending_toast.is_some(),
-            "the refusal teaches, never silent"
-        );
-    }
-
-    /// The headline gesture: a working order, hovered, offers labelled
-    /// SL/TP handles; pressing one and dragging sets that leg; the tape
-    /// then fills the order and the position opens already protected.
-    ///
-    /// This is the whole promise in one test — the handle the trader
-    /// presses, the venue call it produces, and the fill that arms it.
-    #[test]
-    fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
-        let mut paper = PaperTrading::new();
-        paper.venue.seed(&print(0, 100));
-        // A buy limit at 95, below the market: the kind the tape can fill.
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
-        let id = paper.working_orders()[0].id;
-
-        // 80..120 over 400 px, price falling with y: 95 is y 250, 90 is y 300.
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
-        // The SL handle sits on the losing side of a buy — below it.
-        let handle = bracket_handle_rect(chart.right(), order_center, false);
-        assert_eq!(
-            paper.control_at(handle.center(), chart, &scale),
-            Some(PaperControl::Handle {
-                owner: BracketTarget::Order(id),
-                leg: Leg::StopLoss,
-            }),
-            "a working order offers the same handles the position does"
-        );
-
-        // Press the handle, drag down to 90, release.
-        paper.handle_chart_input(&frame_at(chart, &scale, handle.center(), true, true, false));
-        assert_eq!(
-            paper.drag,
-            PaperDrag::CreateLeg {
-                owner: BracketTarget::Order(id),
-                leg: Leg::StopLoss,
-            },
-            "the press started a create-drag on the order, not the position"
-        );
-        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false));
-        paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true));
-
-        assert_eq!(
-            paper.working_orders()[0].bracket.stop_loss(),
-            Some(Decimal::from(90)),
-            "the drag set the order's own stop, before it ever filled"
-        );
-        assert!(
-            paper.venue.position().is_none(),
-            "and opened no position doing it"
-        );
-
-        // The tape reaches the limit: the position arrives protected.
-        paper.on_trade(&print(1, 95));
-        let position = paper.venue.position().expect("the limit filled");
-        assert_eq!(
-            position.stop_loss,
-            Some(Decimal::from(90)),
-            "the leg armed itself on the fill - no window without a stop"
-        );
-    }
-
-    /// A pane that is not feeding paper input paints the order and its
-    /// lines — an order is a fact about the account, true on whichever
-    /// chart you are looking at — but **not** its bracket handles.
-    ///
-    /// The tag opens on every pane at once by design (one hover, two
-    /// surfaces), so `reveal` is true over there too. Without the pointer
-    /// gate the other pane drew a pressable-looking `SL`/`TP` beside an
-    /// order whose presses it does not take.
-    #[test]
-    fn a_pane_without_the_pointer_paints_no_bracket_handles() {
-        let mut paper = PaperTrading::new();
-        paper.venue.seed(&print(0, 100));
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
-
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let order_center = clamp_tag_center(250.0, chart.top(), chart.bottom());
-        let handle = bracket_handle_rect(chart.right(), order_center, false);
-
-        // The pane with the pointer offers the handle...
-        assert!(
-            paper
-                .control_at(handle.center(), chart, &scale)
-                .is_some_and(|control| matches!(control, PaperControl::Handle { .. })),
-            "the input pane can be pressed there"
-        );
-
-        // ...and the paint asks one predicate whether to draw them, so the
-        // rule is readable in one place rather than inferred from a paint
-        // this test would have to reproduce to check.
-        assert!(
-            !handles_visible(None, true, false),
-            "revealed, but no hand on this pane: nothing is drawn"
-        );
-        assert!(
-            handles_visible(Some(handle.center()), true, false),
-            "with the hand here, a revealed owner shows its handles"
-        );
-        assert!(
-            handles_visible(Some(handle.center()), false, true),
-            "and reaching straight for a handle keeps it up"
-        );
-    }
-
-    /// A leg that exists is its own handle: its line is grabbable, and its
-    /// tag cross clears it without touching the other leg.
-    #[test]
-    fn a_working_orders_legs_are_draggable_and_clearable() {
-        let mut paper = PaperTrading::new();
-        paper.venue.seed(&print(0, 100));
-        paper.stop_offset_text = "5".to_owned();
-        paper.profit_offset_text = "15".to_owned();
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
-        let id = paper.working_orders()[0].id;
-        assert_eq!(
-            paper.working_orders()[0].bracket,
-            Bracket::whole(Some(Decimal::from(90)), Some(Decimal::from(110)),),
-            "the ticket offsets rode along on the resting order"
-        );
-
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // Price 90 is y 300: the order's stop line.
-        assert_eq!(
-            paper.line_at(egui::pos2(400.0, 300.0), &scale),
-            Some(PaperDrag::Leg {
-                owner: BracketTarget::Order(id),
-                leg: Leg::StopLoss,
-            }),
-            "the order's stop line is grabbable like the position's"
-        );
-
-        // Its tag cross clears that leg and leaves the target alone.
-        let stop_center = clamp_tag_center(300.0, chart.top(), chart.bottom());
-        let cross = close_button_rect(chart.right(), stop_center);
-        assert_eq!(
-            paper.control_at(cross.center(), chart, &scale),
-            Some(PaperControl::ClearLeg {
-                owner: BracketTarget::Order(id),
-                leg: Leg::StopLoss,
-            })
-        );
-        paper.amend_leg(BracketTarget::Order(id), Leg::StopLoss, None);
-        assert_eq!(
-            paper.working_orders()[0].bracket,
-            Bracket::whole(None, Some(Decimal::from(110)),),
-            "clearing one leg never drops the other"
-        );
-    }
-
-    /// A leg the venue refuses snaps back and says why — the order's own
-    /// price is the reference, so a buy limit at 95 cannot take a stop at
-    /// 96 even though 96 is below the market at 100.
-    #[test]
-    fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
-        let mut paper = PaperTrading::new();
-        paper.venue.seed(&print(0, 100));
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
-        let id = paper.working_orders()[0].id;
-
-        paper.amend_leg(
-            BracketTarget::Order(id),
-            Leg::StopLoss,
-            Some(Decimal::from(96)),
-        );
-        assert_eq!(
-            paper.working_orders()[0].bracket.stop_loss(),
-            None,
-            "the refusal left the order as it was"
-        );
-        let toast = paper.pending_toast.as_ref().expect("the refusal teaches");
-        assert!(
-            toast.contains("stop loss"),
-            "and says which leg was wrong: {}",
-            toast
-        );
-    }
-
-    /// The stated kind wins where both are conceivable to a trader but only
-    /// one can rest — which is every price except the mark.
-    ///
-    /// The pairing to read here is the second and third assertion: at 95,
-    /// with the market at 100, `Auto` yields a limit. Ask for a stop at that
-    /// same price and the aim stands down instead of handing you the limit.
-    /// That is the whole feature: the click that lands is the order you came
-    /// to place, or no click at all.
-    #[test]
-    fn a_stated_entry_kind_is_honoured_or_the_aim_stands_down() {
-        let mark = Decimal::from(100);
-        let below = Decimal::from(95);
-        let above = Decimal::from(105);
-
-        // Auto reads the market, exactly as it always has.
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, below, mark),
-            Some(EntryKind::Limit),
-            "a buy below the market waits at a limit"
-        );
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, above, mark),
-            Some(EntryKind::Stop),
-            "and above it stops in"
-        );
-
-        // A stated kind takes the price where it is valid...
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, below, mark),
-            Some(EntryKind::Limit)
-        );
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, above, mark),
-            Some(EntryKind::Stop)
-        );
-
-        // ...and stands the aim down where it is not, rather than silently
-        // placing the other kind. A trader who came to buy a pullback must
-        // never be handed a breakout stop.
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, below, mark),
-            None,
-            "a buy stop cannot arm below the market, so nothing is offered"
-        );
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, above, mark),
-            None,
-            "and a buy limit above it would fill at once"
-        );
-
-        // A sell mirrors, on every choice.
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, above, mark),
-            Some(EntryKind::Limit)
-        );
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Stop, Side::Sell, below, mark),
-            Some(EntryKind::Stop)
-        );
-        assert_eq!(
-            resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, below, mark),
-            None
-        );
-
-        // On the mark nothing rests, whatever was asked for: a resting order
-        // there fills on the next print, which is a market order wearing the
-        // wrong name.
-        for choice in CmdEntryKind::ALL {
-            assert_eq!(
-                resolve_cmd_kind(choice, Side::Buy, mark, mark),
-                None,
-                "{choice:?} rests nothing on the mark"
-            );
-        }
-    }
-
-    /// The choice survives a restart, and an unknown token in a
-    /// hand-edited sidecar falls back rather than refusing to open.
-    #[test]
-    fn the_entry_kind_choice_is_remembered_and_unknown_tokens_fall_back() {
-        let state = crate::paper_state::PaperState {
-            cmd_entry_kind: Some("stop".to_owned()),
-            ..Default::default()
-        };
-        assert_eq!(
-            CmdTradingSettings::from_state(&state).kind,
-            CmdEntryKind::Stop
-        );
-
-        let state = crate::paper_state::PaperState {
-            cmd_entry_kind: Some("teleport".to_owned()),
-            ..Default::default()
-        };
-        assert_eq!(
-            CmdTradingSettings::from_state(&state).kind,
-            CmdEntryKind::Auto,
-            "a token this build does not know is the default, not a crash"
-        );
-    }
-
-    /// The aim itself obeys the choice: same pointer, same market, one
-    /// preview and one silence.
-    #[test]
-    fn the_aim_obeys_the_stated_kind() {
-        let mut paper = PaperTrading::new();
-        paper.venue.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        // y 250 is price 95 — below the market, where a buy limit rests.
-        let aim = egui::pos2(400.0, 250.0);
-
-        paper.cmd_trading.kind = CmdEntryKind::Auto;
-        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
-        assert_eq!(
-            paper.cmd_preview.map(|preview| preview.kind),
-            Some(EntryKind::Limit),
-            "auto offers the kind that can rest there"
-        );
-
-        paper.cmd_trading.kind = CmdEntryKind::Stop;
-        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
-        assert!(
-            paper.cmd_preview.is_none(),
-            "a trader who asked for a stop is shown no limit"
-        );
-
-        // And the press places nothing where the aim shows nothing.
-        assert!(!paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)));
-        assert!(paper.working_orders().is_empty());
-    }
-
-    /// A 800×400 chart over the given price range, plus the input for one
-    /// pointer frame at `(x, y)`.
-    /// The strategy from the trader's own editor, halved.
-    fn halves() -> crate::order_strategies::OrderStrategy {
-        use crate::order_strategies::{OrderStrategy, StrategyRow};
-        OrderStrategy {
-            name: "halves".to_owned(),
-            rows: vec![
-                StrategyRow {
-                    share_percent: Decimal::from(50),
-                    gain_ticks: Some(8),
-                    loss_ticks: Some(4),
-                },
-                StrategyRow {
-                    share_percent: Decimal::from(50),
-                    gain_ticks: Some(2),
-                    loss_ticks: Some(5),
-                },
-            ],
-        }
-    }
-
-    /// The projection and the placement go through one function, so what the
-    /// aim showed is exactly what rested. Proven by comparing the two
-    /// brackets rather than by reading the code that builds them.
-    #[test]
-    fn the_strategys_ladder_is_both_projected_and_placed() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.qty_text = "2".to_owned();
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // y = 250 is 95: below the mark, so a buy rests as a limit there.
-        let aim = egui::pos2(400.0, 250.0);
-
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        let projected = paper.cmd_preview.expect("the aim is up").bracket;
-        let parts: Vec<_> = projected.parts().copied().collect();
-        assert_eq!(parts.len(), 2, "both rungs are projected: {parts:?}");
-        assert_eq!(parts[0].quantity, Some(Decimal::ONE));
-        assert_eq!(parts[0].take_profit, Some(Decimal::from(103)));
-        assert_eq!(parts[0].stop_loss, Some(Decimal::from(91)));
-        assert_eq!(parts[1].take_profit, Some(Decimal::from(97)));
-        assert_eq!(parts[1].stop_loss, Some(Decimal::from(90)));
-
-        let mut press = ruler_frame(chart, &scale, aim, 0.0);
-        press.primary_pressed = true;
-        press.primary_down = true;
-        assert!(paper.handle_chart_input(&press), "the aim placed");
-
-        assert_eq!(
-            paper.working_orders()[0].bracket,
-            projected,
-            "the order carries the very bracket the aim projected"
-        );
-    }
-
-    /// The ruler is a compass, and a trader wants it most when they already
-    /// have a ladder in mind: rolling the wheel works with a strategy armed,
-    /// and rolling back to zero hands the ladder its projection again.
-    ///
-    /// This module used to stand the ruler down under a strategy. That was a
-    /// rule it invented and the trader never asked for, and it made the
-    /// wheel look broken in the configuration they actually use.
-    #[test]
-    fn the_ruler_works_with_a_strategy_armed_and_yields_when_it_is_put_away() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.qty_text = "2".to_owned();
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-
-        // With the ruler at zero the armed ladder is what the aim projects.
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        assert_eq!(
-            paper.cmd_preview.expect("aim up").bracket.parts().count(),
-            2,
-            "the ladder projects while the ruler is put away"
-        );
-
-        // Three notches: the wheel is the ruler's, strategy or no strategy.
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
-        assert_eq!(paper.ruler_notches, 3);
-        let preview = paper.cmd_preview.expect("aim up");
-        assert_eq!(
-            preview.bracket.stop_loss(),
-            Some(Decimal::from(92)),
-            "and the ruler's symmetric pair is what it now shows"
-        );
-        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(98)));
-
-        // Roll it back to zero and the ladder returns; neither gesture costs
-        // the other.
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -40.0));
-        }
-        assert_eq!(paper.ruler_notches, 0);
-        assert_eq!(
-            paper.cmd_preview.expect("aim up").bracket.parts().count(),
-            2,
-            "the armed ladder is back"
-        );
-    }
-
-    /// A name the strategies no longer carry selects nothing rather than
-    /// quietly arming a different ladder.
-    #[test]
-    fn a_selection_naming_a_missing_strategy_selects_nothing() {
-        let mut paper = PaperTrading::new();
-        paper.set_order_strategies(vec![halves()], Some("a strategy that was deleted"));
-        assert!(paper.selected_order_strategy().is_none());
-        assert_eq!(paper.order_strategies().len(), 1, "the list is intact");
-    }
-
-    /// The named call and the wheel leave the ruler in the same place, and
-    /// neither can put it somewhere the other cannot reach.
-    #[test]
-    fn setting_the_ruler_by_name_lands_where_the_wheel_would() {
-        let mut by_name = PaperTrading::new();
-        by_name.seed(&print(0, 100));
-        assert_eq!(by_name.set_ruler_ticks(3), 3);
-
-        let mut by_wheel = PaperTrading::new();
-        by_wheel.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-        for _ in 0..3 {
-            by_wheel.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-
-        assert_eq!(by_name.ruler_notches, by_wheel.ruler_notches);
-        // And the bound is the same bound: a caller cannot reach past what
-        // the wheel itself clamps to.
-        assert_eq!(by_name.set_ruler_ticks(u32::MAX), RULER_MAX_NOTCHES);
-    }
-
-    /// The ticket's own buttons honour the ticket's own strategy.
-    ///
-    /// The Strategy row sits directly above BUY/SELL and prints what is
-    /// armed; a button under it that placed a bare order would be two
-    /// surfaces disagreeing about the very next order.
-    #[test]
-    fn the_market_buttons_honour_the_selected_strategy() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.qty_text = "2".to_owned();
-
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-
-        let legs: Vec<_> = paper
-            .working_orders()
-            .iter()
-            .filter(|order| order.is_protective())
-            .collect();
-        assert_eq!(
-            legs.len(),
-            4,
-            "both rungs armed from the button, not a bare order: {legs:?}"
-        );
-    }
-
-    /// The tick is the finest move the tape has shown, not the last print's
-    /// own decoration.
-    ///
-    /// A venue that quotes `78112.57000000` has a raw scale of eight and a
-    /// real step of two; the next print at `78100` normalizes to zero. Both
-    /// readings would make the ruler step by a different amount under the
-    /// trader's hand.
-    #[test]
-    fn the_tick_is_the_finest_step_the_tape_has_shown() {
-        let mut paper = PaperTrading::new();
-        // Trailing zeros are decoration, not precision.
-        paper.seed(&Trade {
-            agg_id: 0,
-            timestamp_ms: 0,
-            price: Decimal::new(7_811_257_000_000, 8),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        assert_eq!(paper.tick(), Decimal::new(1, 2), "two places, not eight");
-
-        // A rounder print does not coarsen an instrument already seen finer.
-        paper.on_trade(&print(1, 78_100));
-        assert_eq!(
-            paper.tick(),
-            Decimal::new(1, 2),
-            "the tick never grows back under a round print"
-        );
-
-        // A genuinely finer print does refine it.
-        paper.on_trade(&Trade {
-            agg_id: 2,
-            timestamp_ms: 2_000,
-            price: Decimal::new(78_100_123, 3),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        assert_eq!(paper.tick(), Decimal::new(1, 3));
-    }
-
-    /// A laddered position shows its rungs and offers no create-handle.
-    ///
-    /// Its own `stop_loss`/`take_profit` are `None` under a ladder, and a
-    /// surface reading only those drew the position as unprotected *and*
-    /// offered the handles of an unprotected one - where a single drag
-    /// replaces every rung with one level.
-    #[test]
-    fn a_laddered_position_reads_as_protected_and_offers_no_handle() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.qty_text = "2".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-
-        let position = paper.venue.position().expect("long").clone();
-        let bracket = paper.position_bracket(&position);
-        assert!(
-            bracket.is_laddered(),
-            "the legs fold back into the ladder that armed them: {bracket:?}"
-        );
-        assert_eq!(bracket.parts().count(), 2, "one rung per OCO pair");
-        assert_eq!(
-            bracket.stop_loss(),
-            None,
-            "and it still refuses to name one stop for two"
-        );
-
-        // The handles are what a drag would destroy the ladder through.
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let entry_y = 200.0;
-        for above in [true, false] {
-            let handle = bracket_handle_rect(chart.right(), entry_y, above).center();
-            assert_eq!(
-                paper.control_at(handle, chart, &scale),
-                None,
-                "a laddered position offers no create-handle (above: {above})"
-            );
-        }
-    }
-
-    /// A rung of a resting order can be hauled, and hauling it edits *that
-    /// order* - never the named ladder that shaped it.
-    ///
-    /// The strategy is a template. Once an order is on the chart it is the
-    /// trader's, and a stop they cannot move is not a stop.
-    #[test]
-    fn a_rung_of_a_resting_order_moves_and_leaves_the_strategy_alone() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.qty_text = "2".to_owned();
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // y = 250 is 95: below the mark, so a buy rests as a limit there.
-        let aim = egui::pos2(400.0, 250.0);
-        let mut press = ruler_frame(chart, &scale, aim, 0.0);
-        press.primary_pressed = true;
-        press.primary_down = true;
-        assert!(paper.handle_chart_input(&press), "the aim placed");
-
-        let id = paper.working_orders()[0].id;
-        let before: Vec<_> = paper.working_orders()[0].bracket.parts().copied().collect();
-        assert_eq!(before.len(), 2, "a two-rung ladder rests: {before:?}");
-        // The first rung's stop is 91 (95 - 4 ticks), at y = 290.
-        let stop = before[0].stop_loss.expect("the first rung is stopped");
-        assert_eq!(stop, Decimal::from(91));
-
-        let stop_y = scale.y(91.0);
-        assert_eq!(
-            paper.line_at(egui::pos2(400.0, stop_y), &scale),
-            Some(PaperDrag::Rung {
-                order: id,
-                index: 0,
-                leg: Leg::StopLoss
-            }),
-            "the rung is a line the trader can grab"
-        );
-        assert!(paper.handle_chart_input(&frame(chart, &scale, stop_y, true, true, false)));
-        // Pull it down to 88 (y = 320) and let go.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 320.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 320.0, false, false, true)));
-
-        let after: Vec<_> = paper.working_orders()[0].bracket.parts().copied().collect();
-        assert_eq!(
-            after[0].stop_loss,
-            Some(Decimal::from(88)),
-            "the rung moved where it was dropped"
-        );
-        assert_eq!(
-            after[0].take_profit, before[0].take_profit,
-            "its own target is untouched"
-        );
-        assert_eq!(after[1], before[1], "and the other rung never moved");
-
-        // The template is exactly as the trader saved it.
-        let strategy = paper.selected_order_strategy().expect("still armed");
-        assert_eq!(strategy.rows[0].loss_ticks, Some(4));
-        assert_eq!(strategy.rows[0].gain_ticks, Some(8));
-    }
-
-    /// The state the editor's own `+ Row` used to create: a third rung at
-    /// 0%, which fails `ShareNotPositive` and silently stopped the chart
-    /// projecting a ladder the ticket still said was armed.
-    ///
-    /// The trader hit `+ Row`, held the modifier and saw nothing, with no
-    /// word anywhere saying why. A row that arrives broken is the bug.
-    #[test]
-    fn adding_a_row_never_breaks_the_strategy_that_was_working() {
-        use crate::order_strategies::StrategyRow;
-
-        let mut strategy = halves();
-        assert!(strategy.validate().is_ok(), "50/50 is usable");
-
-        // What `+ Row` does, as the button does it.
-        let assigned: Decimal = strategy.rows.iter().map(|row| row.share_percent).sum();
-        assert_eq!(assigned, Decimal::ONE_HUNDRED, "nothing is left over");
-        let last = strategy.rows.last_mut().expect("has rows");
-        let half = (last.share_percent / Decimal::TWO).round_dp(2);
-        last.share_percent -= half;
-        strategy.rows.push(StrategyRow {
-            share_percent: half,
-            gain_ticks: Some(NEW_RUNG_TICKS),
-            loss_ticks: Some(NEW_RUNG_TICKS),
-        });
-
-        assert_eq!(strategy.rows.len(), 3);
-        assert!(
-            strategy.validate().is_ok(),
-            "the third rung splits the last one instead of arriving at zero: {:?}",
-            strategy.rows
-        );
-        let shares: Decimal = strategy.rows.iter().map(|row| row.share_percent).sum();
-        assert_eq!(shares, Decimal::ONE_HUNDRED, "and they still add up");
-    }
-
-    /// An armed ladder that cannot resolve must say so where it is armed.
-    #[test]
-    fn an_unusable_strategy_is_named_in_the_ticket_not_left_silent() {
-        use crate::order_strategies::StrategyRow;
-
-        let mut broken = halves();
-        broken.rows.push(StrategyRow {
-            share_percent: Decimal::ZERO,
-            gain_ticks: Some(20),
-            loss_ticks: Some(20),
-        });
-        let error = broken.validate().expect_err("a zero share is not a share");
-        assert!(
-            !error.advice().is_empty(),
-            "and the reason is a sentence the ticket can print"
-        );
-
-        // The chart is silent by design in this state - that is exactly why
-        // the ticket has to speak.
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![broken], Some("halves"));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 0.0));
-        let preview = paper.cmd_preview.expect("the aim is still up");
-        assert!(
-            preview.bracket.is_empty(),
-            "an unusable ladder projects nothing - which is why it must be named"
-        );
-    }
-
-    /// Reproduction: the ticket at its default quantity of one, with a
-    /// two-rung 50/50 ladder armed. This is what the trader actually had.
-    #[test]
-    fn repro_the_aim_projects_a_ladder_at_quantity_one() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        // qty_text is left at its default.
-        assert_eq!(paper.qty_text, "1");
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-
-        let preview = paper.cmd_preview.expect("the aim is up");
-        let parts: Vec<_> = preview.bracket.parts().copied().collect();
-        println!("quantity one -> parts: {parts:?}");
-        assert!(
-            !preview.bracket.is_empty(),
-            "the aim must project the armed ladder, not nothing"
-        );
-    }
-
-    /// A wheel that reports 40 px a notch must move the ruler, and so must
-    /// one that reports 50, or 120, or 13.
-    ///
-    /// This build assumed 50 and met a mouse that reports 40: every roll
-    /// computed zero ticks and the ruler silently refused to move, which is
-    /// indistinguishable from the feature not existing. The notch is the
-    /// device's to declare, not ours to assume.
-    #[test]
-    fn the_first_roll_moves_the_ruler_whatever_the_wheel_reports() {
-        for notch in [13.0_f32, 40.0, 50.0, 120.0] {
-            let mut paper = PaperTrading::new();
-            paper.seed(&print(0, 100));
-            let (chart, scale) = chart_and_scale(80.0, 120.0);
-            let aim = egui::pos2(400.0, 250.0);
-
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch));
-            assert_eq!(
-                paper.ruler_notches, 1,
-                "one notch of {notch} px is one tick"
-            );
-
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch * 3.0));
-            assert_eq!(paper.ruler_notches, 4, "three more notches at {notch} px");
-
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -notch * 2.0));
-            assert_eq!(paper.ruler_notches, 2, "and it walks back");
-        }
-    }
-
-    /// Esc puts the ruler away - but only once the gestures it was already
-    /// for have nothing to cancel. A standing distance must not shadow
-    /// disarming an order.
-    #[test]
-    fn escape_clears_the_ruler_but_only_after_an_armed_placement() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 40.0));
-        assert_eq!(paper.ruler_notches, 1, "the ruler stands");
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-
-        assert!(paper.cancel_interaction(), "the first press has work to do");
-        assert!(paper.armed.is_none(), "and it disarmed the placement");
-        assert_eq!(
-            paper.ruler_notches, 1,
-            "the distance survives - it was not what the trader was cancelling"
-        );
-
-        assert!(
-            paper.cancel_interaction(),
-            "the second press reaches the ruler"
-        );
-        assert_eq!(paper.ruler_notches, 0);
-        assert!(
-            !paper.cancel_interaction(),
-            "and then there is nothing left"
-        );
-    }
-
-    /// The old, narrower guarantee, kept: with nothing else in flight the
-    /// first press is the ruler's.
-    #[test]
-    fn escape_clears_the_ruler() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 200.0));
-        assert!(paper.ruler_notches > 0, "the ruler is standing");
-        assert!(paper.cancel_interaction(), "escape had something to cancel");
-        assert_eq!(paper.ruler_notches, 0, "and it put the ruler away");
-    }
-
-    /// The gesture the ruler is made of is the one Windows reports sideways.
-    ///
-    /// Holding a modifier turns a vertical wheel into horizontal scroll, so
-    /// `raw_scroll_delta` arrives as `x = 40, y = 0` for exactly the roll the
-    /// ruler exists to serve. Reading only `y` meant the ruler saw nothing
-    /// whenever the trader was actually holding the key - the one case that
-    /// matters. The pane hands over whichever axis carried it; this proves
-    /// the ruler steps on what it is handed.
-    #[test]
-    fn the_ruler_steps_on_the_travel_the_pane_hands_it() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-        // 40 px is what this machine's wheel reports, on whichever axis.
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        assert_eq!(paper.ruler_notches, 3);
-        let preview = paper.cmd_preview.expect("the aim is up");
-        assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(92)));
-        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(98)));
-    }
-
-    /// Rolling back to zero takes the stop and the target off the chart.
-    ///
-    /// Zero is not "a very small bracket": it is the bare order the trader
-    /// started with, and the aim has to look like one. Anything still drawn
-    /// there is a level they did not ask for and would carry into the click.
-    #[test]
-    fn rolling_back_to_zero_leaves_no_stop_and_no_target() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-
-        for _ in 0..4 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        assert_eq!(paper.ruler_notches, 4);
-        assert!(
-            !paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "the ruler is drawing a pair"
-        );
-
-        // All the way back down, and one notch past it for good measure.
-        for _ in 0..5 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -40.0));
-        }
-        assert_eq!(paper.ruler_notches, 0, "it reaches zero and stops there");
-        assert!(
-            paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "and nothing is left on the chart to place"
-        );
-
-        // Esc is the other way home, and lands in the same place.
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        assert!(paper.cancel_interaction());
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        assert!(
-            paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "escape leaves the aim as bare as rolling back does"
-        );
-    }
-
-    /// Selecting a strategy must change what the aim draws, and choosing
-    /// `<None>` must take it away again. The trader reported "selecting a
-    /// strategy changes nothing"; this is the contract that claim is about.
-    #[test]
-    fn the_strategy_combo_changes_what_the_aim_draws() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.qty_text = "2".to_owned();
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-
-        // `<None>`: the modifier alone draws nothing.
-        paper.set_order_strategies(vec![halves()], None);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        assert!(
-            paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "with no strategy the aim is bare until the wheel is rolled"
-        );
-
-        // Selected: the ladder is there on the modifier alone.
-        paper.set_order_strategies(vec![halves()], Some("halves"));
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        assert_eq!(
-            paper.cmd_preview.expect("aim up").bracket.parts().count(),
-            2,
-            "selecting a strategy puts its rungs on the aim"
-        );
-
-        // Back to `<None>`: gone again.
-        paper.set_order_strategies(vec![halves()], None);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        assert!(
-            paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "and choosing none takes it away"
-        );
-    }
-
-    /// A notch is worth what the instrument's step says, and the default is
-    /// derived so the very first roll feels right without configuration.
-    #[test]
-    fn the_default_step_scales_with_the_instrument() {
-        // A one-cent instrument near 78,000: half a basis point is 3.9,
-        // which the 1-2-5 ladder rounds up to 5 points.
-        let mut btc = PaperTrading::new();
-        btc.seed(&Trade {
-            agg_id: 0,
-            timestamp_ms: 0,
-            price: Decimal::new(7_800_057, 2),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        assert_eq!(btc.tick(), Decimal::new(1, 2));
-        assert_eq!(
-            btc.ruler_step(),
-            Decimal::from(5),
-            "twenty to forty points is four to eight rolls away"
-        );
-
-        // The mini index near 138,000 prints in whole five-point steps.
-        let mut win = PaperTrading::new();
-        win.seed(&print(0, 138_000));
-        win.on_trade(&print(1, 138_005));
-        assert_eq!(win.ruler_step(), Decimal::from(10), "two ticks a notch");
-    }
-
-    /// A typed step is the trader's, saved per instrument, and switching
-    /// away and back keeps it.
-    #[test]
-    fn a_typed_step_is_kept_per_symbol() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 78_000));
-        paper.set_symbol("BTCUSDT");
-        paper.set_ruler_step(Some(Decimal::from(25)));
-        assert_eq!(paper.ruler_step(), Decimal::from(25));
-
-        paper.set_symbol("WIN$N");
-        assert_ne!(
-            paper.ruler_step(),
-            Decimal::from(25),
-            "another instrument does not inherit it"
-        );
-
-        paper.set_symbol("BTCUSDT");
-        assert_eq!(paper.ruler_step(), Decimal::from(25), "and it comes back");
-
-        // Clearing puts the instrument back on its derived default.
-        paper.set_ruler_step(None);
-        assert_eq!(paper.ruler_step(), paper.derived_ruler_step());
-    }
-
-    /// Switching instrument drops the standing ruler and the tick it was
-    /// measured in. A distance chosen on one market means nothing on the
-    /// next, and would otherwise arm the first order placed there.
-    #[test]
-    fn a_symbol_switch_forgets_the_ruler_and_the_tick() {
-        let mut paper = PaperTrading::new();
-        // The symbol first: switching to it is what clears the tick, and a
-        // tape seeded before the switch would be cleared with it.
-        paper.set_symbol("BTCUSDT");
-        paper.seed(&Trade {
-            agg_id: 0,
-            timestamp_ms: 0,
-            price: Decimal::new(7_800_057, 2),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        let (chart, scale) = chart_and_scale(77_000.0, 79_000.0);
-        paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 40.0));
-        assert!(paper.ruler_notches > 0);
-        assert_eq!(paper.tick(), Decimal::new(1, 2));
-
-        paper.set_symbol("WIN$N");
-        assert_eq!(paper.ruler_notches, 0, "the distance does not travel");
-        // The tick falls back to the coarsest until the new tape prints:
-        // erring coarse means a wider step, never a phantom precision the
-        // new market has not shown.
-        assert_eq!(
-            paper.tick(),
-            Decimal::ONE,
-            "the old market's precision does not travel either"
-        );
-        // And the first print of the new one refines it honestly.
-        paper.on_trade(&Trade {
-            agg_id: 9,
-            timestamp_ms: 9_000,
-            price: Decimal::new(1_380_055, 1),
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        assert_eq!(paper.tick(), Decimal::new(1, 1));
-    }
-
-    /// The opening instrument is arrival, not departure. The app names the
-    /// symbol a frame after construction, so a ruler standing before that
-    /// first call — the launch hook's, or a session restored into a fresh
-    /// simulator — must survive it. Only leaving an instrument forgets.
-    #[test]
-    fn the_first_symbol_of_a_session_keeps_a_standing_ruler() {
-        let mut paper = PaperTrading::new();
-        paper.ruler_notches = 6;
-        paper.set_symbol("BTCUSDT");
-        assert_eq!(
-            paper.ruler_notches, 6,
-            "arriving at the opening instrument is not a switch"
-        );
-        paper.set_symbol("WIN$N");
-        assert_eq!(paper.ruler_notches, 0, "leaving one still forgets");
-    }
-
-    /// Pressing the wheel puts the ruler away, and only while an aim is up.
-    #[test]
-    fn pressing_the_wheel_puts_the_ruler_away() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        assert_eq!(paper.ruler_notches, 3);
-
-        let mut press = ruler_frame(chart, &scale, aim, 0.0);
-        press.middle_pressed = true;
-        paper.handle_chart_input(&press);
-        assert_eq!(
-            paper.ruler_notches, 0,
-            "the wheel that walked it out puts it away"
-        );
-        assert!(
-            paper.cmd_preview.expect("aim up").bracket.is_empty(),
-            "and the aim is bare again"
-        );
-
-        // With no aim up the press is nobody's business here.
-        for _ in 0..2 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
-        }
-        let mut bare = ruler_frame(chart, &scale, aim, 0.0);
-        bare.modifiers = egui::Modifiers::default();
-        bare.middle_pressed = true;
-        paper.handle_chart_input(&bare);
-        assert_eq!(paper.ruler_notches, 2, "no aim, no claim on the press");
-    }
-
-    /// A frame with the aim's modifier held and wheel travel to spend.
-    fn ruler_frame<'a>(
-        chart: egui::Rect,
-        scale: &'a PriceScale,
-        pointer: egui::Pos2,
-        scroll_y: f32,
-    ) -> ChartInput<'a> {
-        ChartInput {
-            chart,
-            scale: Some(scale),
-            pointer: Some(pointer),
-            primary_pressed: false,
-            primary_down: false,
-            primary_released: false,
-            modifiers: egui::Modifiers {
-                shift: true,
-                ..Default::default()
-            },
-            canvas_claimed: false,
-            scroll_y,
-            middle_pressed: false,
-            layer_visible: true,
-        }
-    }
-
-    /// The ruler walks both legs out together, one tick per notch, and says
-    /// how far in the units the trader reads.
-    #[test]
-    fn the_wheel_walks_the_projected_bracket_out_symmetrically() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // y = 250 is 95: below the mark, so a buy rests as a limit there.
-        let aim = egui::pos2(400.0, 250.0);
-
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-        let preview = paper.cmd_preview.expect("the aim is up");
-        assert_eq!(preview.kind, EntryKind::Limit);
-        assert_eq!(preview.ruler_ticks, 0, "the ruler starts off");
-        assert_eq!(preview.bracket.stop_loss(), None, "and projects nothing");
-
-        // Three notches up, one roll each - which is what a wheel does.
-        for _ in 0..3 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
-        }
-        assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
-        assert_eq!(paper.ruler_notches, 3);
-        let preview = paper.cmd_preview.expect("the aim is still up");
-        assert_eq!(
-            preview.bracket.stop_loss(),
-            Some(Decimal::from(92)),
-            "three ticks below the aim"
-        );
-        assert_eq!(
-            preview.bracket.take_profit(),
-            Some(Decimal::from(98)),
-            "and three ticks above it - the same distance, which is the 1:1"
-        );
-
-        // One notch back down.
-        paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -50.0));
-        assert_eq!(paper.ruler_notches, 2);
-        let preview = paper.cmd_preview.expect("still aiming");
-        assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(93)));
-        assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(97)));
-    }
-
-    /// A short's ruler mirrors: the stop goes above the aim, the target
-    /// below, and both stay the same distance from it.
-    #[test]
-    fn the_ruler_mirrors_for_a_sell() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // y = 250 is 95: below the mark, so a sell arms as a stop there.
-        let aim = egui::pos2(400.0, 250.0);
-        let mut frame = ruler_frame(chart, &scale, aim, 50.0);
-        frame.modifiers = egui::Modifiers {
-            ctrl: true,
-            command: true,
-            ..Default::default()
-        };
-        // Four notches, one roll each.
-        for _ in 0..4 {
-            paper.handle_chart_input(&frame);
-        }
-
-        let preview = paper.cmd_preview.expect("the sell aim is up");
-        assert_eq!(preview.side, Side::Sell);
-        assert_eq!(
-            preview.bracket.stop_loss(),
-            Some(Decimal::from(99)),
-            "above a short"
-        );
-        assert_eq!(
-            preview.bracket.take_profit(),
-            Some(Decimal::from(91)),
-            "below it"
-        );
-    }
-
-    /// The wheel with no aim up is the chart's, not the ruler's.
-    #[test]
-    fn without_an_aim_the_wheel_is_left_to_the_chart() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let mut frame = ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 150.0);
-        frame.modifiers = egui::Modifiers::default();
-        paper.handle_chart_input(&frame);
-        assert!(paper.cmd_preview.is_none(), "no modifier, no aim");
-        assert!(!paper.consumed_scroll(), "so the wheel is not the ruler's");
-        assert_eq!(paper.ruler_notches, 0);
-    }
-
-    /// What the ruler shows is what the click places.
-    #[test]
-    fn the_order_the_click_places_carries_the_rulers_bracket() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 250.0);
-        for _ in 0..5 {
-            paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
-        }
-        assert_eq!(paper.ruler_notches, 5);
-
-        let mut press = ruler_frame(chart, &scale, aim, 0.0);
-        press.primary_pressed = true;
-        press.primary_down = true;
-        assert!(paper.handle_chart_input(&press), "the aim placed");
-
-        let order = &paper.working_orders()[0];
-        assert_eq!(order.price, Some(Decimal::from(95)));
-        assert_eq!(
-            order.bracket.stop_loss(),
-            Some(Decimal::from(90)),
-            "the stop the ruler was showing"
-        );
-        assert_eq!(
-            order.bracket.take_profit(),
-            Some(Decimal::from(100)),
-            "and the target beside it"
-        );
-    }
-
-    fn chart_and_scale(lo: f64, hi: f64) -> (egui::Rect, PriceScale) {
-        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        (chart, PriceScale::from_range(lo, hi, 0.0, 400.0))
-    }
-
-    /// One pointer frame mid-chart, where nothing right-anchored lives.
-    fn frame<'a>(
-        chart: egui::Rect,
-        scale: &'a PriceScale,
-        y: f32,
-        pressed: bool,
-        down: bool,
-        released: bool,
-    ) -> ChartInput<'a> {
-        frame_at(chart, scale, egui::pos2(400.0, y), pressed, down, released)
-    }
-
-    /// One pointer frame at an exact position — for the controls that live
-    /// against the plot's right edge, which `frame`'s mid-chart x misses.
-    fn frame_at<'a>(
-        chart: egui::Rect,
-        scale: &'a PriceScale,
-        pointer: egui::Pos2,
-        pressed: bool,
-        down: bool,
-        released: bool,
-    ) -> ChartInput<'a> {
-        ChartInput {
-            chart,
-            scale: Some(scale),
-            pointer: Some(pointer),
-            primary_pressed: pressed,
-            primary_down: down,
-            primary_released: released,
-            modifiers: egui::Modifiers::default(),
-            canvas_claimed: false,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: true,
-        }
-    }
-
-    /// A `frame` with held modifiers and a free pointer — the cmd-trading
-    /// gesture's shape of input.
-    fn cmd_frame<'a>(
-        chart: egui::Rect,
-        scale: &'a PriceScale,
-        pointer: egui::Pos2,
-        modifiers: egui::Modifiers,
-        pressed: bool,
-    ) -> ChartInput<'a> {
-        ChartInput {
-            chart,
-            scale: Some(scale),
-            pointer: Some(pointer),
-            primary_pressed: pressed,
-            primary_down: pressed,
-            primary_released: false,
-            modifiers,
-            canvas_claimed: false,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: true,
-        }
-    }
-
-    /// Escape (routed through the app's escape stack) cancels exactly one
-    /// paper interaction per press, and a cancelled drag submits nothing.
-    #[test]
-    fn escape_cancels_the_armed_placement_then_the_grabbed_line() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-        assert!(paper.cancel_interaction(), "the armed placement dies first");
-        assert!(paper.armed.is_none());
-        assert!(!paper.cancel_interaction(), "nothing left to cancel");
-
-        paper.stop_offset_text = "10".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // Grab the stop at 90 (y = 300), cancel, then let go: no submit.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false)));
-        assert!(paper.cancel_interaction(), "the grabbed line is released");
-        assert!(!paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
-        assert_eq!(
-            paper.venue.position().expect("still long").stop_loss,
-            Some(Decimal::from(90)),
-            "a cancelled drag never moves the stop"
-        );
-    }
-
-    #[test]
-    fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-        let (chart, scale) = chart_and_scale(90.0, 110.0);
-        // y = 300 sits at price 95 on this scale.
-        let consumed = paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false));
-        assert!(consumed, "the armed click never reaches the chart pan");
-        assert!(paper.armed.is_none(), "a successful placement disarms");
-        assert_eq!(paper.venue.working_orders().len(), 1);
-        assert_eq!(
-            paper.venue.working_orders()[0].price,
-            Some(Decimal::from(95))
-        );
-    }
-
-    #[test]
-    fn a_rejected_armed_click_stays_armed_and_teaches() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-        let (chart, scale) = chart_and_scale(90.0, 110.0);
-        // y = 100 sits at price 105 — a buy limit above the market.
-        let consumed = paper.handle_chart_input(&frame(chart, &scale, 100.0, true, true, false));
-        assert!(consumed);
-        assert!(
-            paper.armed.is_some(),
-            "the user clicks again after the toast"
-        );
-        assert!(paper.venue.working_orders().is_empty());
-        assert!(paper.pending_toast.is_some(), "the refusal explains itself");
-    }
-
-    /// The lines say what a press would do before it happens (audit M3/M4):
-    /// draggable levels wear the resize cursor, an entry line with a
-    /// missing leg offers the create-drag, and empty tape asks nothing.
-    #[test]
-    fn hover_cursors_announce_draggable_and_creatable_lines() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.stop_offset_text = "10".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 300.0), chart, &scale),
-            Some(egui::CursorIcon::ResizeVertical),
-            "the stop at 90 sits at y 300 and drags"
-        );
-        assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
-            Some(egui::CursorIcon::ResizeVertical),
-            "the entry at 100 offers the missing take profit by drag"
-        );
-        assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 40.0), chart, &scale),
-            None,
-            "empty tape belongs to the chart"
-        );
-    }
-
-    #[test]
-    fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let ctrl = egui::Modifiers {
-            command: true,
-            ..Default::default()
-        };
-        let both = egui::Modifiers {
-            shift: true,
-            command: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-
-        // Hold buy above the mark: a stop. Below: a limit.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 100.0),
-            shift,
-            false,
-        ));
-        let preview = paper.cmd_preview.expect("preview above the mark");
-        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Stop));
-        assert_eq!(preview.price, Decimal::from(110));
-        assert_eq!(
-            preview.pointer,
-            egui::pos2(400.0, 100.0),
-            "the aim is the hand"
-        );
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 300.0),
-            shift,
-            false,
-        ));
-        let preview = paper.cmd_preview.expect("preview below the mark");
-        assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Limit));
-
-        // The sell key mirrors the table.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 100.0),
-            ctrl,
-            false,
-        ));
-        let preview = paper.cmd_preview.expect("sell above the mark");
-        assert_eq!((preview.side, preview.kind), (Side::Sell, EntryKind::Limit));
-
-        // Both keys is ambiguous, no key is no gesture.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 100.0),
-            both,
-            false,
-        ));
-        assert!(paper.cmd_preview.is_none(), "ambiguity shows nothing");
-        paper.handle_chart_input(&frame(chart, &scale, 100.0, false, false, false));
-        assert!(paper.cmd_preview.is_none(), "no key, no line");
-
-        // The click places exactly what the preview said, wherever in the
-        // plot it lands, through the same path as the right-click menu —
-        // a label that rides the pointer can never be landed on, so the
-        // held modifier is the deliberate act.
-        let aim = egui::pos2(120.0, 300.0);
-        assert!(
-            paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)),
-            "the click is the gesture's"
-        );
-        let orders = paper.working_orders();
-        assert_eq!(orders.len(), 1, "the click rested the order");
-        assert_eq!(orders[0].side, Side::Buy);
-        assert_eq!(orders[0].price, Some(Decimal::from(90)));
-
-        // No modifier, no preview, no order: an unmodified click on empty
-        // canvas belongs to the chart.
-        assert!(
-            !paper.handle_chart_input(&frame(chart, &scale, 100.0, true, true, false)),
-            "a bare click is nobody's order"
-        );
-        assert_eq!(paper.working_orders().len(), 1, "still just the one");
-
-        // Disabled means invisible.
-        paper.set_cmd_trading(CmdTradingSettings {
-            enabled: false,
-            ..Default::default()
-        });
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 100.0),
-            shift,
-            false,
-        ));
-        assert!(paper.cmd_preview.is_none(), "the toggle hides the gesture");
-    }
-
-    /// Off-screen render proof (for environments where no window can
-    /// present): the preview paints a dashed line, a label carrying
-    /// side+kind+qty, and the gutter chip with the snapped price.
-    #[test]
-    fn the_cmd_preview_paints_line_label_and_price_chip() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 300.0),
-            shift,
-            false,
-        ));
-        assert!(paper.cmd_preview.is_some(), "the held key builds a preview");
-
-        let ctx = egui::Context::default();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            let paint = PaintCtx {
-                painter: &painter,
-                chart_rect: chart,
-                tag_right: chart.right(),
-                axis_x: chart.right(),
-                scale: &scale,
-                reserved_chip_y: None,
-                pointer: Some(egui::pos2(400.0, 300.0)),
-            };
-            paper.draw_cmd_preview(&paint);
-        });
-        let shapes = format!("{:?}", output.shapes);
-        assert!(shapes.contains("BUY"), "the label names the side: {shapes}");
-        assert!(
-            shapes.contains("90"),
-            "the gutter chip carries the snapped price"
-        );
-        let segments = shapes.matches("LineSegment").count();
-        assert!(
-            segments >= 8,
-            "a dashed line paints as many short segments, got {segments}"
-        );
-    }
-
-    /// The aim label rides the pointer instead of parking at the right
-    /// edge — the whole point of the change — while the dashed line still
-    /// reaches the axis, so label and price chip stay one statement.
-    #[test]
-    fn the_cmd_label_follows_the_pointer_and_the_line_reaches_the_axis() {
-        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        let mut previous: Option<f32> = None;
-        for x in [200.0_f32, 400.0, 600.0] {
-            let (start, end, label) = cmd_preview_layout(band, band.right(), egui::pos2(x, 250.0));
-            assert_eq!(end.x, 800.0, "the line always reaches the axis");
-            assert_eq!(start.x, x, "the line starts under the cursor");
-            assert_eq!(
-                label.right(),
-                x - CMD_LABEL_CURSOR_GAP_PX,
-                "the label rides a fixed gap off the pointer"
-            );
-            assert_eq!(label.width(), CMD_LABEL_WIDTH_PX);
-            assert_eq!(label.center().y, 250.0);
-            assert!(
-                !label.contains(egui::pos2(x, 250.0)),
-                "never under the cursor it belongs to"
-            );
-            if let Some(previous) = previous {
-                assert!(label.left() > previous, "moving right moves the label");
-            }
-            previous = Some(label.left());
-        }
-    }
-
-    /// The tape lane is not a wall. Its divider ends the *band* — where a
-    /// press can still land — and the label stops there with it, but the
-    /// line carries on to the axis, because a gap across the widest lane on
-    /// the chart is exactly where a trader loses the order.
-    #[test]
-    fn the_aim_line_crosses_the_live_lane_to_the_axis() {
-        // A chart 1000 wide whose live tape lane opens at 700: the band the
-        // aim lays out against stops at the divider, the gutter does not.
-        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(700.0, 400.0));
-        let axis_x = 1000.0;
-        let (start, end, label) = cmd_preview_layout(band, axis_x, egui::pos2(400.0, 250.0));
-        assert_eq!(
-            end.x, axis_x,
-            "the line spans the lane instead of stopping at its divider"
-        );
-        assert!(
-            end.x > band.right(),
-            "and it is the lane it crosses, not the plot it started in"
-        );
-        assert_eq!(start.x, 400.0, "it still starts under the cursor");
-        assert!(
-            label.right() <= band.right(),
-            "the label stays inside the band a press can reach: {label:?}"
-        );
-    }
-
-    /// A pane with no live lane hands the same x twice, and the line must
-    /// not double back on itself.
-    #[test]
-    fn the_aim_line_ends_at_the_axis_with_no_lane_open() {
-        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-        let (_, end, _) = cmd_preview_layout(band, 800.0, egui::pos2(400.0, 250.0));
-        assert_eq!(end.x, 800.0, "band right and axis coincide");
-        // A gutter reported left of the plot (a pane mid-resize) must never
-        // shorten the line to a stub pointing the wrong way.
-        let (start, end, _) = cmd_preview_layout(band, 10.0, egui::pos2(400.0, 250.0));
-        assert!(end.x >= start.x, "never a line running backwards");
-    }
-
-    /// The two edges: near the left one the label flips to the pointer's
-    /// right rather than leaving the band, and near the right one the line
-    /// starts further left so there is still a line to read.
-    #[test]
-    fn the_cmd_layout_clamps_at_both_edges_of_the_band() {
-        let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-
-        let pointer = egui::pos2(20.0, 250.0);
-        let (_, _, label) = cmd_preview_layout(band, band.right(), pointer);
-        assert!(label.left() >= band.left(), "never off the left edge");
-        assert_eq!(
-            label.left(),
-            pointer.x + CMD_LABEL_CURSOR_GAP_PX,
-            "no room on the left, so it flips right"
-        );
-        assert!(!label.contains(pointer), "still clear of the cursor");
-
-        let pointer = egui::pos2(780.0, 250.0);
-        let (start, end, label) = cmd_preview_layout(band, band.right(), pointer);
-        assert!(label.right() <= band.right(), "never off the right edge");
-        assert_eq!(
-            end.x - start.x,
-            CMD_LINE_MIN_PX,
-            "close to the axis the line starts further left"
-        );
-        assert!(!label.contains(pointer), "still clear of the cursor");
-
-        // A band narrower than the label plus its gap cannot hold both; it
-        // parks at the left edge rather than running off-plot to the left.
-        let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 400.0));
-        let (start, _, label) = cmd_preview_layout(sliver, sliver.right(), egui::pos2(50.0, 250.0));
-        assert_eq!(label.left(), sliver.left(), "a sliver parks at its edge");
-        assert_eq!(start.x, sliver.left(), "and the line spans what there is");
-    }
-
-    /// Paint and press read one geometry: the label the layout hands the
-    /// painter is the label the pointer that produced it was measured
-    /// against (the overlay-controls rule), and the preview carries that
-    /// exact pointer rather than re-deriving it.
-    #[test]
-    fn the_cmd_preview_carries_the_pointer_the_paint_lays_out_from() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(180.0, 300.0);
-        paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
-        let preview = paper.cmd_preview.expect("the held key builds a preview");
-        assert_eq!(preview.pointer, aim, "the aim is the pointer, whole");
-        let (_, _, label) = cmd_preview_layout(chart, chart.right(), preview.pointer);
-        assert_eq!(
-            label.right(),
-            aim.x - CMD_LABEL_CURSOR_GAP_PX,
-            "the paint lays out from that same pointer"
-        );
-    }
-
-    /// An annotation under the pointer keeps its pixel: no aim paints and
-    /// no click places there, so Shift+drag on a channel corner still
-    /// levels it. One gate governs paint, cursor and press together — the
-    /// label can never promise an order the press will not make.
-    #[test]
-    fn the_aim_yields_the_pixel_to_a_drawing_already_under_it() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let aim = egui::pos2(400.0, 300.0);
-
-        let over_drawing = ChartInput {
-            chart,
-            scale: Some(&scale),
-            pointer: Some(aim),
-            primary_pressed: true,
-            primary_down: true,
-            primary_released: false,
-            modifiers: shift,
-            canvas_claimed: true,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: true,
-        };
-        assert!(
-            !paper.handle_chart_input(&over_drawing),
-            "the press belongs to the drawing"
-        );
-        assert!(paper.cmd_preview.is_none(), "and nothing aims over it");
-        assert!(paper.working_orders().is_empty(), "so nothing was placed");
-        assert_eq!(
-            paper.hover_cursor(aim, chart, &scale),
-            None,
-            "no hand promising a click that will not happen"
-        );
-
-        // The very same pixel, one step off the line: the aim is back.
-        assert!(paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, true)));
-        assert_eq!(paper.working_orders().len(), 1, "clear canvas, order rests");
-    }
-
-    /// A pointer from another pane's band paints nothing here: the label
-    /// rides an x, so laying it out against a band that does not hold that
-    /// x would put a click target off the end of the plot.
-    #[test]
-    fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(700.0, 300.0),
-            shift,
-            false,
-        ));
-        assert!(paper.cmd_preview.is_some(), "aimed on this band");
-
-        // The same simulator drawn against a narrower band — the other
-        // pane of a split, whose right edge stops short of that x.
-        let other = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 400.0));
-        let ctx = egui::Context::default();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            paper.draw_cmd_preview(&PaintCtx {
-                painter: &painter,
-                chart_rect: other,
-                tag_right: other.right(),
-                axis_x: other.right(),
-                scale: &scale,
-                reserved_chip_y: None,
-                pointer: Some(egui::pos2(700.0, 300.0)),
-            });
-        });
-        let shapes = format!("{:?}", output.shapes);
-        assert!(
-            !shapes.contains("BUY"),
-            "a foreign pointer paints no label: {shapes}"
-        );
-    }
-
-    /// The capture hook: a side, and optionally where along the band to
-    /// park the hand the run does not have.
-    #[test]
-    fn the_cmd_preview_hook_parses_a_side_and_an_optional_x() {
-        assert_eq!(
-            CmdPreviewForce::parse("buy"),
-            Some(CmdPreviewForce {
-                side: Side::Buy,
-                x_fraction: None
-            })
-        );
-        assert_eq!(
-            CmdPreviewForce::parse("SELL@0.15"),
-            Some(CmdPreviewForce {
-                side: Side::Sell,
-                x_fraction: Some(0.15)
-            })
-        );
-        assert_eq!(
-            CmdPreviewForce::parse("buy@9"),
-            Some(CmdPreviewForce {
-                side: Side::Buy,
-                x_fraction: Some(1.0)
-            }),
-            "out of range clamps into the band"
-        );
-        for bad in [
-            "buy@left", "buy@nan", "buy@NaN", "buy@inf", "buy@", "buy@0,15",
-        ] {
-            assert_eq!(
-                CmdPreviewForce::parse(bad),
-                Some(CmdPreviewForce {
-                    side: Side::Buy,
-                    x_fraction: None
-                }),
-                "a bad fraction still paints, mid-band: {bad}"
-            );
-        }
-        assert_eq!(CmdPreviewForce::parse("hold"), None);
-    }
-
-    /// The parked x is what a capture run states, so it wins over a real
-    /// pointer that in such a run is nobody's aim — and without it the
-    /// hook keeps its old mid-band park.
-    #[test]
-    fn the_forced_preview_aims_where_the_hook_says() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.cmd_preview_force = Some(CmdPreviewForce {
-            side: Side::Sell,
-            x_fraction: Some(0.25),
-        });
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(700.0, 100.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        let preview = paper.cmd_preview.expect("the hook forces a preview");
-        assert_eq!(preview.side, Side::Sell);
-        assert_eq!(preview.pointer.x, 200.0, "a quarter into an 800px band");
-        assert_eq!(preview.pointer.y, 100.0, "the real hand still sets price");
-
-        paper.cmd_preview_force = Some(CmdPreviewForce {
-            side: Side::Sell,
-            x_fraction: None,
-        });
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(700.0, 100.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        assert_eq!(
-            paper.cmd_preview.expect("still forced").pointer.x,
-            700.0,
-            "with no stated x the real pointer is left alone"
-        );
-    }
-
-    /// Paint one frame of the paper layer and return its shape dump — the
-    /// off-screen render proof the tag tests read.
-    fn layer_shapes(
-        paper: &PaperTrading,
-        chart: egui::Rect,
-        scale: &PriceScale,
-        pointer: Option<egui::Pos2>,
-    ) -> String {
-        let ctx = egui::Context::default();
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            paper.draw_layer(
-                &painter,
-                chart,
-                chart.right(),
-                chart.right(),
-                scale,
-                None,
-                pointer,
-            );
-        });
-        format!("{:?}", output.shapes)
-    }
-
-    /// A resting order rests as a pill and opens under the pointer: the
-    /// full tag used to sit over the candles at the live price all
-    /// session. The pill still names side, kind and size — an order line
-    /// is accent-coloured whatever its side, so dropping the word would
-    /// leave the chart unable to say what waits there. Off-screen render
-    /// proof.
-    #[test]
-    fn a_resting_order_tag_is_a_pill_until_the_pointer_reaches_it() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // A buy limit at 90 — y 300 on this scale.
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let id = paper.working_orders()[0].id.0;
-
-        // The frame the pointer arrives in is the frame that decides; the
-        // paint reads that decision rather than re-asking its own pointer.
-        let frame_at = |paper: &mut PaperTrading, y: f32| {
-            paper.handle_chart_input(&cmd_frame(
-                chart,
-                &scale,
-                egui::pos2(400.0, y),
-                egui::Modifiers::default(),
-                false,
-            ));
-            layer_shapes(paper, chart, &scale, Some(egui::pos2(400.0, y)))
-        };
-
-        let resting = frame_at(&mut paper, 60.0);
-        assert!(
-            resting.contains("BUY LMT 1"),
-            "the pill still names side, kind and size: {resting}"
-        );
-        assert!(
-            !resting.contains(&format!("#{id}")),
-            "the id waits until you mean to act on it: {resting}"
-        );
-        assert!(
-            !resting.contains("@ 90"),
-            "the price is the gutter chip's job: {resting}"
-        );
-        assert!(!resting.contains('×'), "and no ✕ over the candles");
-
-        let opened = frame_at(&mut paper, 300.0);
-        assert!(
-            opened.contains(&format!("#{id} BUY LMT 1 @ 90")),
-            "reaching for it states the order whole: {opened}"
-        );
-        assert!(opened.contains('×'), "…and offers the cancel: {opened}");
-    }
-
-    /// The ✕ and its press are one thing, checked the only way that means
-    /// anything: sweep a pointer down the ✕ column, and for every stop ask
-    /// **the painter** whether a ✕ came out and **`control_at`** whether a
-    /// cancel is offered. Both sides run off one `handle_chart_input`, so
-    /// this fails the moment they are handed different pointers, different
-    /// rects, or different `dragged` terms again.
-    #[test]
-    fn a_tag_offers_its_cancel_exactly_while_it_paints_one() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // Two orders: one near the top edge, where `clamp_tag_center`
-        // pushes the tag off its own line and the two rows part company,
-        // and one mid-plot where they coincide. Above the mark a buy rests
-        // as a stop, below it as a limit.
-        assert!(paper.place_resting(Side::Buy, EntryKind::Stop, 119.5));
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let x = chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0;
-        let mut painted_anywhere = false;
-        for step in -4_i16..=84 {
-            let pointer = egui::pos2(x, f32::from(step) * 5.0);
-            paper.handle_chart_input(&cmd_frame(
-                chart,
-                &scale,
-                pointer,
-                egui::Modifiers::default(),
-                false,
-            ));
-            let painted = layer_shapes(&paper, chart, &scale, Some(pointer)).contains('×');
-            let pressable = matches!(
-                paper.control_at(pointer, chart, &scale),
-                Some(PaperControl::CancelOrder(_))
-            );
-            assert_eq!(painted, pressable, "at y {}", pointer.y);
-            painted_anywhere |= painted;
-        }
-        assert!(painted_anywhere, "the sweep crossed a ✕ at all");
-    }
-
-    /// The press side is fed a pointer the paint side never sees — the
-    /// pane nulls `hover_pos` over its own chrome while `latest_pos`
-    /// survives — so the ✕'s offer must come from the frame's *input*, not
-    /// from whatever pointer each side happens to hold.
-    #[test]
-    fn a_cancel_offered_this_frame_survives_a_paint_with_no_pointer() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let on_row = egui::pos2(chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0, 300.0);
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            on_row,
-            egui::Modifiers::default(),
-            false,
-        ));
-        assert!(
-            layer_shapes(&paper, chart, &scale, None).contains('×'),
-            "the paint follows the frame's decision, not its own pointer"
-        );
-        assert!(matches!(
-            paper.control_at(on_row, chart, &scale),
-            Some(PaperControl::CancelOrder(_))
-        ));
-
-        // Pointer off the row: neither side offers anything.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(on_row.x, 60.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        assert!(!layer_shapes(&paper, chart, &scale, Some(on_row)).contains('×'));
-        assert!(paper.control_at(on_row, chart, &scale).is_none());
-    }
-
-    /// Switched off, the layer is unpainted — so it is also untouchable:
-    /// the aim's target is the whole plot, and an invisible plot-sized
-    /// order button is the worst kind of hidden control.
-    #[test]
-    fn a_hidden_layer_paints_nothing_and_takes_no_press() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let hidden = ChartInput {
-            chart,
-            scale: Some(&scale),
-            pointer: Some(egui::pos2(400.0, 200.0)),
-            primary_pressed: true,
-            primary_down: true,
-            primary_released: false,
-            modifiers: shift,
-            canvas_claimed: false,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: false,
-        };
-        assert!(
-            !paper.handle_chart_input(&hidden),
-            "the press is the chart's"
-        );
-        assert!(paper.cmd_preview.is_none(), "and nothing is aimed");
-        assert_eq!(
-            paper.working_orders().len(),
-            1,
-            "no order rested through a hidden layer"
-        );
-        assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 300.0), chart, &scale),
-            None,
-            "and no cursor promises an invisible control"
-        );
-    }
-
-    /// The aim stands down wherever something concrete already holds the
-    /// pixel — this module's own lines and ✕s included. Otherwise holding
-    /// the modifier while reaching for a stop rests a new order on top of
-    /// it, and the hand cursor promises exactly that.
-    #[test]
-    fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
-        let shift = egui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.stop_offset_text = "10".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-
-        // y 300 is the stop at 90 — a line a press would grab.
-        let on_stop = egui::pos2(400.0, 300.0);
-        paper.handle_chart_input(&cmd_frame(chart, &scale, on_stop, shift, false));
-        assert!(paper.cmd_preview.is_none(), "the stop line keeps its pixel");
-        assert_eq!(
-            paper.hover_cursor(on_stop, chart, &scale),
-            Some(egui::CursorIcon::ResizeVertical),
-            "and the cursor still says so"
-        );
-        assert!(
-            paper.handle_chart_input(&cmd_frame(chart, &scale, on_stop, shift, true)),
-            "the press is paper's"
-        );
-        assert_eq!(
-            paper.drag,
-            PaperDrag::Leg {
-                owner: BracketTarget::Position,
-                leg: Leg::StopLoss,
-            },
-            "it grabbed the stop instead of resting an order"
-        );
-        assert!(paper.working_orders().is_empty());
-        paper.cancel_interaction();
-
-        // An armed placement is an intent already stated.
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 100.0),
-            shift,
-            false,
-        ));
-        assert!(
-            paper.cmd_preview.is_none(),
-            "the armed ticket keeps the click"
-        );
-        assert!(paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 320.0),
-            shift,
-            true
-        )));
-        assert!(
-            paper.armed.is_none(),
-            "the armed placement fired and disarmed"
-        );
-        let orders = paper.working_orders();
-        assert_eq!(orders.len(), 1);
-        assert_eq!(
-            orders[0].kind,
-            EntryKind::Limit,
-            "the kind the ticket armed"
-        );
-    }
-
-    /// A forced aim is a capture fixture: it paints so a screenshot has
-    /// something to show, and it never places — a run with nobody at the
-    /// keyboard is holding no modifier, and its stray clicks must not
-    /// write orders into a journal.
-    #[test]
-    fn a_forced_aim_paints_but_never_places() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        paper.cmd_preview_force = Some(CmdPreviewForce {
-            side: Side::Buy,
-            x_fraction: Some(0.5),
-        });
-        let aim = egui::pos2(400.0, 300.0);
-        assert!(!paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            aim,
-            egui::Modifiers::default(),
-            true
-        )));
-        assert!(paper.cmd_preview.is_some(), "it still paints");
-        assert!(paper.working_orders().is_empty(), "and never places");
-        assert_eq!(
-            paper.hover_cursor(aim, chart, &scale),
-            None,
-            "no hand promising a click that does nothing"
-        );
-    }
-
-    /// A dragged order keeps every field: a trader repricing one is
-    /// reading the number they are moving, and the pointer is on the line
-    /// they grabbed, not on the tag.
-    #[test]
-    fn a_dragged_order_keeps_its_full_statement() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let id = paper.working_orders()[0].id;
-        paper.drag = PaperDrag::Order(id);
-        paper.drag_price = Some(88.0);
-        // The frame decides; the paint reads. A button-free frame leaves
-        // the drag exactly where it was.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 60.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        let shapes = layer_shapes(&paper, chart, &scale, None);
-        assert!(
-            shapes.contains(&format!("#{} BUY LMT 1 @ 88", id.0)),
-            "the drag reads the price it is moving: {shapes}"
-        );
-        assert!(
-            !shapes.contains('×'),
-            "a moving order offers no cancel, as before: {shapes}"
-        );
-    }
-
-    /// The capture hook rests a rung around the mark on the first print:
-    /// one order each side, so whichever way the tape moves a tag is still
-    /// on screen for the shutter, and it happens at once rather than 220
-    /// prints in.
-    #[test]
-    fn the_orders_hook_rests_a_rung_either_side_of_the_mark() {
-        let mut paper = PaperTrading::new();
-        paper.orders_demo = Some(2);
-        paper.on_trade(&print(1, 100_000));
-        assert!(paper.orders_demo.is_none(), "placed once, never again");
-        let prices: Vec<_> = paper
-            .working_orders()
-            .iter()
-            .map(|order| (order.side, order.price.expect("a limit has a price")))
-            .collect();
-        assert_eq!(
-            prices,
-            vec![
-                (Side::Buy, Decimal::from(99_940)),
-                (Side::Sell, Decimal::from(100_060)),
-                (Side::Buy, Decimal::from(99_880)),
-                (Side::Sell, Decimal::from(100_120)),
-            ],
-            "two rungs, each side, stepping out from the mark"
-        );
-        paper.on_trade(&print(2, 100_000));
-        assert_eq!(paper.working_orders().len(), 4, "a second print adds none");
-    }
-
-    /// The bracket hook dresses those same rungs, so a working order's two
-    /// dashed legs are photographable without a hand to drag them into
-    /// being. Each leg lands on the correct side of the *order's own*
-    /// price, which is what the venue validates against — a hook that
-    /// placed one the venue refuses would photograph an empty chart.
-    #[test]
-    fn the_bracket_hook_dresses_every_rung_it_rests() {
-        let mut paper = PaperTrading::new();
-        paper.orders_demo = Some(1);
-        paper.order_bracket_demo = true;
-        paper.on_trade(&print(1, 100_000));
-
-        let orders = paper.working_orders();
-        assert_eq!(orders.len(), 2, "one rung, both sides");
-        for order in orders {
-            let price = order.price.expect("a limit has a price");
-            let stop = order.bracket.stop_loss().expect("a stop rides along");
-            let target = order.bracket.take_profit().expect("and a target");
-            match order.side {
-                Side::Buy => {
-                    assert!(stop < price, "a long's stop sits below its entry");
-                    assert!(target > price, "and its target above");
-                }
-                Side::Sell => {
-                    assert!(stop > price, "a short's stop sits above its entry");
-                    assert!(target < price, "and its target below");
-                }
-            }
-        }
-    }
-
-    /// A coarsely quoted mark rounds 6 bp to nothing: both legs would
-    /// price *at* the mark, the simulator would refuse every one of them,
-    /// and the run would photograph an empty chart with nothing to explain
-    /// it. The step floors at one unit of the instrument's own precision.
-    #[test]
-    fn the_orders_hook_still_rests_on_an_integer_quoted_mark() {
-        let mut paper = PaperTrading::new();
-        paper.orders_demo = Some(2);
-        // 620 * 0.0006 = 0.372, which rounds to zero at scale 0.
-        paper.on_trade(&print(1, 620));
-        let prices: Vec<_> = paper
-            .working_orders()
-            .iter()
-            .map(|order| (order.side, order.price.expect("a limit has a price")))
-            .collect();
-        assert_eq!(
-            prices,
-            vec![
-                (Side::Buy, Decimal::from(619)),
-                (Side::Sell, Decimal::from(621)),
-                (Side::Buy, Decimal::from(618)),
-                (Side::Sell, Decimal::from(622)),
-            ],
-            "one tick per rung, and the rungs stay apart"
-        );
-        assert!(paper.orders_demo.is_none(), "orders rested, hook disarmed");
-    }
-
-    /// Nothing rested means the hook stays armed: disarming before the
-    /// simulator has accepted anything is exactly how a silent empty
-    /// capture happens.
-    #[test]
-    fn the_orders_hook_stays_armed_until_something_rests() {
-        let mut paper = PaperTrading::new();
-        paper.orders_demo = Some(1);
-        // No mark yet: nothing to place around, nothing consumed.
-        paper.rest_capture_orders();
-        assert_eq!(paper.orders_demo, Some(1), "no mark, still armed");
-        paper.on_trade(&print(1, 100_000));
-        assert_eq!(paper.working_orders().len(), 2);
-        assert!(paper.orders_demo.is_none());
-    }
-
-    /// The capture hook opens every tag with nobody at the mouse — the
-    /// pill's open form is otherwise unreachable from a scripted run.
-    #[test]
-    fn the_order_hover_hook_opens_the_tag_with_no_pointer() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let id = paper.working_orders()[0].id.0;
-        assert!(
-            !layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id}")),
-            "no hand, no open tag"
-        );
-        paper.order_hover_force = true;
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 60.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        assert!(
-            layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id} BUY LMT 1 @ 90")),
-            "the hook supplies the hand"
-        );
-    }
-
-    /// One hover, two surfaces: the dock row already lifted the chart
-    /// line, and now it opens the tag too.
-    #[test]
-    fn hovering_the_dock_row_opens_the_chart_tag() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let id = paper.working_orders()[0].id;
-        paper.hovered_order = Some(id);
-        // The dock draws before the canvas, so the frame that carries the
-        // row's hover is the frame the chart reads.
-        paper.handle_chart_input(&cmd_frame(
-            chart,
-            &scale,
-            egui::pos2(400.0, 60.0),
-            egui::Modifiers::default(),
-            false,
-        ));
-        assert!(
-            layer_shapes(&paper, chart, &scale, None)
-                .contains(&format!("#{} BUY LMT 1 @ 90", id.0)),
-            "the row's hover reaches the chart"
-        );
-    }
-
-    /// A band too short to hold a tag is reachable — `split_panes` carves
-    /// the indicator strips out of the plot with no floor of its own — and
-    /// `f32::clamp` panics rather than saturating once its bounds cross.
-    /// Every tag, every ✕ hit-test and the aim's own layout run through
-    /// this, so the panic would take a live session down.
-    #[test]
-    fn a_band_too_short_for_a_tag_centres_it_instead_of_panicking() {
-        // Shorter than a tag, and flat: the two cases that cross the bounds.
-        assert_eq!(clamp_tag_center(5.0, 0.0, 10.0), 5.0);
-        assert_eq!(clamp_tag_center(99.0, 40.0, 40.0), 40.0);
-        assert_eq!(clamp_tag_center(-99.0, 0.0, TAG_HEIGHT_PX), 10.0);
-        // And with room, it still clamps exactly as before.
-        assert_eq!(clamp_tag_center(0.0, 0.0, 400.0), 10.0);
-        assert_eq!(clamp_tag_center(400.0, 0.0, 400.0), 390.0);
-        assert_eq!(clamp_tag_center(200.0, 0.0, 400.0), 200.0);
-
-        // The paint and the press both survive it end to end.
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 12.0));
-        let scale = PriceScale::from_range(80.0, 120.0, 0.0, 12.0);
-        assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
-        let pointer = egui::pos2(400.0, 6.0);
-        paper.handle_chart_input(&cmd_frame(
-            sliver,
-            &scale,
-            pointer,
-            egui::Modifiers::default(),
-            false,
-        ));
-        let _ = layer_shapes(&paper, sliver, &scale, Some(pointer));
-        let _ = paper.control_at(pointer, sliver, &scale);
-        let _ = cmd_preview_layout(sliver, sliver.right(), pointer);
-    }
-
-    #[test]
-    fn cmd_modifier_tokens_round_trip_and_state_defaults_fill_gaps() {
-        for modifier in CmdModifier::ALL {
-            assert_eq!(CmdModifier::parse(modifier.as_str()), Some(modifier));
-        }
-        assert_eq!(CmdModifier::parse("hyper"), None);
-        let state = crate::paper_state::PaperState {
-            cmd_trading_enabled: Some(false),
-            cmd_buy_modifier: Some("alt".to_owned()),
-            cmd_sell_modifier: Some("hyper".to_owned()),
-            ..Default::default()
-        };
-        let settings = CmdTradingSettings::from_state(&state);
-        assert!(!settings.enabled);
-        assert_eq!(settings.buy, CmdModifier::Alt);
-        assert_eq!(
-            settings.sell,
-            CmdModifier::Ctrl,
-            "an unknown token falls back to the default"
-        );
-    }
-
-    #[test]
-    fn dragging_the_stop_loss_reprices_it_on_release() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.stop_offset_text = "10".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        assert_eq!(
-            paper.venue.position().expect("long").stop_loss,
-            Some(Decimal::from(90)),
-        );
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // The stop at 90 sits at y = 300; grab it, pull to 95 (y = 250), drop.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 250.0, false, false, true)));
-        assert_eq!(
-            paper.venue.position().expect("still long").stop_loss,
-            Some(Decimal::from(95)),
-            "the drop resubmitted the bracket at the dragged price"
-        );
-    }
-
-    /// The TradingView gesture: pull away from the entry line and the
-    /// missing bracket leg is born on release — the profit side makes a
-    /// take profit, the losing side a stop.
-    #[test]
-    fn dragging_from_the_entry_line_creates_the_missing_leg() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // Grab the entry at 100 (y = 200), pull up to 105 (y = 150), drop.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-        let position = paper.venue.position().expect("still long");
-        assert_eq!(
-            position.take_profit,
-            Some(Decimal::from(105)),
-            "above a long is the profit side"
-        );
-        assert_eq!(
-            position.avg_price,
-            Decimal::from(100),
-            "the entry itself never moves"
-        );
-        // The same pull downward births the stop.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
-        let position = paper.venue.position().expect("still long");
-        assert_eq!(position.stop_loss, Some(Decimal::from(90)));
-        assert_eq!(position.take_profit, Some(Decimal::from(105)), "untouched");
-    }
-
-    #[test]
-    fn a_fully_bracketed_entry_line_blocks_the_gesture_but_never_moves() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.stop_offset_text = "10".to_owned();
-        paper.profit_offset_text = "10".to_owned();
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        assert_eq!(
-            paper.hover_cursor(egui::pos2(400.0, 200.0), chart, &scale),
-            Some(egui::CursorIcon::NotAllowed),
-            "both legs exist, so their own lines are the handles"
-        );
-        // Grabbing the entry still consumes the gesture (the chart must not
-        // pan under it) but repositions nothing.
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-        let position = paper.venue.position().expect("long");
-        assert_eq!(position.avg_price, Decimal::from(100));
-        assert_eq!(position.stop_loss, Some(Decimal::from(90)), "untouched");
-        assert_eq!(position.take_profit, Some(Decimal::from(110)), "untouched");
-        // Empty space is not ours: the press falls through to the chart.
-        assert!(
-            !paper.handle_chart_input(&frame(chart, &scale, 40.0, true, true, false)),
-            "a press far from every line belongs to the pan"
-        );
-    }
-
-    /// The ✕ on a working order's chart tag: the hit is pure geometry from
-    /// the live scale — no hover, no prior paint, no cached rect that goes
-    /// stale while a live chart autoscales — it wins over the armed click
-    /// (which used to eat it), and it never reads as a drag on the line.
-    #[test]
-    fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        let events = paper.dispatch(Command::PlaceLimit {
-            side: Side::Buy,
-            quantity: Decimal::ONE,
-            price: Decimal::from(95),
-            bracket: Bracket::none(),
-            cancel_at: None,
-            flat_only: false,
-        });
-        paper.handle_events(events);
-        // The trap that used to swallow every chart click.
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Sell,
-            kind: EntryKind::Stop,
-        });
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        let close = close_button_rect(
-            chart.right(),
-            clamp_tag_center(scale.y(95.0), chart.top(), chart.bottom()),
-        );
-        let press = ChartInput {
-            chart,
-            scale: Some(&scale),
-            pointer: Some(close.center()),
-            primary_pressed: true,
-            primary_down: true,
-            primary_released: false,
-            modifiers: egui::Modifiers::default(),
-            canvas_claimed: false,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: true,
-        };
-        assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
-        assert!(
-            paper.venue.working_orders().is_empty(),
-            "the order is gone and the armed click placed nothing"
-        );
-        assert!(
-            paper.armed.is_some(),
-            "the armed placement neither fired nor died"
-        );
-        assert_eq!(paper.drag, PaperDrag::None, "and nothing started dragging");
-    }
-
-    /// A bracket handle press starts the create-drag — its rect is the
-    /// hit-test's own geometry beside the entry tag, above the line for
-    /// the profit side and below it for the losing side.
-    #[test]
-    fn a_bracket_handle_press_starts_the_create_drag() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (chart, scale) = chart_and_scale(80.0, 120.0);
-        // A long's SL handle sits below the entry line (above = false).
-        let entry_center = clamp_tag_center(scale.y(100.0), chart.top(), chart.bottom());
-        let handle = bracket_handle_rect(chart.right(), entry_center, false);
-        let press = ChartInput {
-            chart,
-            scale: Some(&scale),
-            pointer: Some(handle.center()),
-            primary_pressed: true,
-            primary_down: true,
-            primary_released: false,
-            modifiers: egui::Modifiers::default(),
-            canvas_claimed: false,
-            scroll_y: 0.0,
-            middle_pressed: false,
-            layer_visible: true,
-        };
-        assert!(
-            paper.handle_chart_input(&press),
-            "the handle owns the press"
-        );
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
-        assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
-        assert_eq!(
-            paper.venue.position().expect("long").stop_loss,
-            Some(Decimal::from(90)),
-            "the handle drag placed the stop"
-        );
-    }
-
-    /// One long, then every label the entry buttons can wear: the button
-    /// must disclose close-or-reverse, because the quantity deciding it
-    /// lives in a tab the toolbar never shows.
-    #[test]
-    fn entry_labels_disclose_what_the_press_would_do() {
-        let mut paper = PaperTrading::new();
-        assert_eq!(
-            paper.entry_label(Side::Buy),
-            "BUY 1",
-            "flat is a plain entry"
-        );
-        paper.qty_text = "x".to_owned();
-        assert_eq!(
-            paper.entry_label(Side::Sell),
-            "SELL",
-            "an unparseable quantity promises nothing"
-        );
-        paper.qty_text = "2".to_owned();
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-
-        paper.qty_text = "1".to_owned();
-        assert_eq!(paper.entry_label(Side::Buy), "BUY 1 (adds to 3)");
-        assert_eq!(paper.entry_label(Side::Sell), "SELL 1 (closes 1 of 2)");
-        paper.qty_text = "2".to_owned();
-        assert_eq!(paper.entry_label(Side::Sell), "SELL 2 (closes)");
-        paper.qty_text = "5".to_owned();
-        assert_eq!(
-            paper.entry_label(Side::Sell),
-            "SELL 5 (reverses to short 3)"
-        );
-    }
-
-    /// The status cell answers the reported question — "am I in a trade?" —
-    /// not just "how many points".
-    #[test]
-    fn the_status_cell_distinguishes_open_from_flat() {
-        let mut paper = PaperTrading::new();
-        assert!(paper.status_cell().is_none(), "untouched owes no line");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let (text, _) = paper.status_cell().expect("a position is state");
-        assert_eq!(text, "SIM LONG 1 · 0 pts");
-        paper.on_trade(&print(2, 105));
-        let (text, sign) = paper.status_cell().expect("still open");
-        assert_eq!(text, "SIM LONG 1 · +5 pts");
-        assert_eq!(sign, std::cmp::Ordering::Greater);
-
-        paper.close_position();
-        paper.on_trade(&print(3, 107));
-        let (text, sign) = paper.status_cell().expect("history keeps the cell");
-        assert_eq!(text, "SIM +7 pts · flat");
-        assert_eq!(sign, std::cmp::Ordering::Greater);
-        assert!(paper.close_button_label().is_none(), "flat has no close");
-    }
-
-    #[test]
-    fn the_close_button_names_the_position_it_exits() {
-        let mut paper = PaperTrading::new();
-        paper.qty_text = "3".to_owned();
-        paper.seed(&print(0, 100));
-        paper.market(Side::Sell);
-        paper.on_trade(&print(1, 100));
-        assert_eq!(paper.close_button_label().as_deref(), Some("Close 3 SHORT"));
-        let summary = paper.position_summary().expect("open");
-        assert_eq!(summary.side, Side::Sell);
-        assert_eq!(summary.quantity, Decimal::from(3));
-        assert_eq!(summary.avg_price, Decimal::from(100));
-    }
-
-    /// Reverse flips side and size in one market order, and the form's
-    /// protective offsets ride along to the new entry.
-    #[test]
-    fn reverse_flips_the_position_with_the_forms_bracket() {
-        let mut paper = PaperTrading::new();
-        paper.qty_text = "2".to_owned();
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        paper.stop_offset_text = "5".to_owned();
-        paper.reverse_position();
-        paper.on_trade(&print(2, 100));
-        let position = paper.venue.position().expect("reversed, not flat");
-        assert_eq!(position.side, Side::Sell);
-        assert_eq!(position.quantity, Decimal::from(2));
-        assert_eq!(
-            position.stop_loss,
-            Some(Decimal::from(105)),
-            "the new short is protected by the form's offset"
-        );
-    }
-
-    /// The chip dodge: lines keep their price, chips clear the last-price
-    /// row by the minimum, and the fill-moment tie steps down.
-    #[test]
-    fn paper_chips_dodge_the_last_price_chip_never_the_line() {
-        // No reservation, or far enough away: the chip stays at its line.
-        assert_eq!(dodged_chip_y(100.0, None, 0.0, 400.0), 100.0);
-        assert_eq!(dodged_chip_y(100.0, Some(200.0), 0.0, 400.0), 100.0);
-        // Inside the band: pushed just clear, towards its own side.
-        assert_eq!(
-            dodged_chip_y(210.0, Some(200.0), 0.0, 400.0),
-            200.0 + CHIP_CLEAR_PX
-        );
-        assert_eq!(
-            dodged_chip_y(190.0, Some(200.0), 0.0, 400.0),
-            200.0 - CHIP_CLEAR_PX
-        );
-        // The fill moment: entry == last price, and the chip steps down.
-        assert_eq!(
-            dodged_chip_y(200.0, Some(200.0), 0.0, 400.0),
-            200.0 + CHIP_CLEAR_PX
-        );
-        // Never dodged out of the pane.
-        assert_eq!(dodged_chip_y(398.0, Some(399.0), 0.0, 400.0), 383.0);
-    }
-
-    #[test]
-    fn snapping_uses_the_instruments_learned_precision() {
-        let mut paper = PaperTrading::new();
-        paper.seed(&Trade {
-            agg_id: 1,
-            timestamp_ms: 1000,
-            price: Decimal::new(10325, 2), // 103.25 → two decimal places
-            quantity: Decimal::ONE,
-            side: Side::Buy,
-        });
-        assert_eq!(paper.snap(101.23456), Decimal::new(10123, 2));
-        // A cent-printing instrument keeps cents, whatever round numbers
-        // come after: precision the tape has shown does not go away because
-        // the next print happened to land on a whole one.
-        paper.on_trade(&print(2, 103));
-        assert_eq!(paper.snap(101.23456), Decimal::new(10123, 2));
-
-        // An instrument that only ever prints whole points snaps to them -
-        // its own instance, because a tick belongs to one market.
-        let mut whole = PaperTrading::new();
-        whole.seed(&print(1, 182_035));
-        assert_eq!(whole.snap(182_036.7), Decimal::from(182_037));
-    }
-
-    #[test]
-    fn closed_trades_journal_to_one_session_file_and_reload() {
-        let dir = crate::scratch::ScratchDir::new("paper-journal-test");
-        let mut paper = PaperTrading::new();
-        paper.dir = dir.path().to_path_buf();
-        paper.set_symbol("TESTUSDT");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 105));
-        // A second round trip appends to the same session file.
-        paper.market(Side::Sell);
-        paper.on_trade(&print(3, 105));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(4, 103));
-
-        let folder = dir.join("TESTUSDT");
-        let files: Vec<_> = std::fs::read_dir(&folder)
-            .expect("the symbol folder exists")
-            .flatten()
-            .collect();
-        assert_eq!(files.len(), 1, "one session, one file");
-        let text = std::fs::read_to_string(files[0].path()).expect("readable");
-        let parsed = history::parse(&text).expect("valid history");
-        assert_eq!(parsed.symbol.as_deref(), Some("TESTUSDT"));
-        assert_eq!(parsed.trades.len(), 2);
-        assert!(parsed.problems.is_empty());
-        assert_eq!(parsed.trades[0].pnl_points, Decimal::from(5));
-        assert_eq!(parsed.trades[1].pnl_points, Decimal::from(2));
-
-        let history = load_history(&dir, Some("TESTUSDT"), &[]);
-        assert_eq!(history.rows.len(), 2);
-        assert_eq!(report_from_history(&history).net_points, Decimal::from(7));
-        assert_eq!(history.files, 1);
-        assert_eq!(history.unreadable_files, 0);
-    }
-
-    #[test]
-    fn a_second_session_adds_a_file_and_never_touches_the_first() {
-        let dir = crate::scratch::ScratchDir::new("paper-accumulate-test");
-        // Session one: a round trip closing at t=2s.
-        let mut first = PaperTrading::new();
-        first.dir = dir.path().to_path_buf();
-        first.set_symbol("ACCUM");
-        first.seed(&print(0, 100));
-        first.market(Side::Buy);
-        first.on_trade(&print(1, 100));
-        let events = first.dispatch(Command::ClosePosition);
-        first.handle_events(events);
-        first.on_trade(&print(2, 103));
-        let folder = dir.join("ACCUM");
-        let first_file = std::fs::read_dir(&folder)
-            .expect("the symbol folder exists")
-            .flatten()
-            .next()
-            .expect("one session file")
-            .path();
-        let first_bytes = std::fs::read(&first_file).expect("readable");
-
-        // Session two: a fresh host — a restart — closing hours later.
-        let mut second = PaperTrading::new();
-        second.dir = dir.path().to_path_buf();
-        second.set_symbol("ACCUM");
-        second.seed(&print(10_000, 200));
-        second.market(Side::Sell);
-        second.on_trade(&print(10_001, 200));
-        let events = second.dispatch(Command::ClosePosition);
-        second.handle_events(events);
-        second.on_trade(&print(10_002, 190));
-
-        let files: Vec<_> = std::fs::read_dir(&folder)
-            .expect("the symbol folder exists")
-            .flatten()
-            .collect();
-        assert_eq!(files.len(), 2, "each session opens its own file");
-        assert_eq!(
-            std::fs::read(&first_file).expect("still readable"),
-            first_bytes,
-            "the earlier session's file is byte-for-byte untouched"
-        );
-        let history = load_history(&dir, Some("ACCUM"), &[]);
-        assert_eq!(history.files, 2);
-        assert_eq!(history.rows.len(), 2, "both sessions' trades load");
-    }
-
-    #[test]
-    fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
-        let dir = crate::scratch::ScratchDir::new("paper-reset-test");
-        let mut paper = PaperTrading::new();
-        paper.dir = dir.path().to_path_buf();
-        paper.set_symbol("RESETX");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        paper.armed = Some(ArmedPlacement {
-            side: Side::Buy,
-            kind: EntryKind::Limit,
-        });
-        paper.on_timeline_reset();
-        assert!(paper.venue.position().is_none());
-        assert!(
-            paper.armed.is_none(),
-            "an armed click dies with the timeline"
-        );
-        assert!(paper.pending_toast.is_some(), "the flatten is never silent");
-        let history = load_history(&dir, Some("RESETX"), &[]);
-        assert_eq!(history.rows.len(), 1);
-        assert_eq!(
-            report_from_history(&history).trades,
-            1,
-            "the reset exit is a real, journaled trade"
-        );
-    }
-
-    // The stored-pick-vs-configured-base precedence now lives in
-    // `paper_home::chosen`, tested there beside the documents default.
-
-    /// The panel's folder picker retargets everything downstream: the next
-    /// close opens a new session file under the new home, and the ledger
-    /// and report re-read from it. Files already written stay put.
-    #[test]
-    fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
-        let dir_a = crate::scratch::ScratchDir::new("paper-dir-a");
-        let dir_b = crate::scratch::ScratchDir::new("paper-dir-b");
-        let mut paper = PaperTrading::new();
-        paper.dir = dir_a.path().to_path_buf();
-        paper.set_symbol("SWITCHX");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 103));
-        assert!(paper.journal_path.is_some(), "the close journaled under A");
-        {
-            let (state, env) = paper.report_parts();
-            state.reload_ledger(&env)
-        };
-        assert!(paper.report_state().saved_rows_loaded().is_some());
-
-        paper.set_trades_dir(dir_b.path().to_path_buf());
-        assert_eq!(paper.trades_dir(), dir_b.path());
-        assert!(
-            paper.journal_path.is_none(),
-            "the next close opens a new session file under B"
-        );
-        assert!(
-            paper.report_state().saved_rows_loaded().is_none(),
-            "the ledger re-reads from the new home"
-        );
-        assert!(paper.pending_toast.is_some(), "the switch is never silent");
-        assert!(
-            dir_a.join("SWITCHX").exists(),
-            "files already written stay where they are"
-        );
-    }
-
-    /// The ledger's cache reads every saved file except the live session's
-    /// own (its trades are already in the simulator), and remembers which
-    /// symbol each row came from.
-    #[test]
-    fn the_ledger_cache_excludes_the_live_session_file() {
-        let dir = crate::scratch::ScratchDir::new("paper-ledger-test");
-        let mut paper = PaperTrading::new();
-        paper.dir = dir.path().to_path_buf();
-        paper.set_symbol("LEDGX");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 105));
-        assert!(paper.journal_path.is_some(), "the close journaled");
-
-        // An earlier session's file, written by hand beside the live one.
-        let trade = ClosedTrade {
-            side: Side::Sell,
-            quantity: Decimal::ONE,
-            entry_price: Decimal::from(200),
-            exit_price: Decimal::from(195),
-            opened_ms: 10,
-            closed_ms: 20,
-            pnl_points: Decimal::from(5),
-            exit_reason: quantick_sim::ExitReason::Manual,
-            entry_agg_id: Some(1),
-            exit_agg_id: Some(2),
-            mae_points: Some(Decimal::ZERO),
-            mfe_points: Some(Decimal::from(5)),
-        };
-        let mut text = history::write_header("LEDGX", history::SessionSource::Live);
-        text.push_str(&history::write_trade(&trade));
-        std::fs::write(dir.join("LEDGX").join("20200101-000000.csv"), text)
-            .expect("the earlier session file writes");
-
-        {
-            let (state, env) = paper.report_parts();
-            state.reload_ledger(&env)
-        };
-        let cache = paper.report_state().saved_rows_loaded().expect("loaded");
-        assert_eq!(
-            cache.len(),
-            1,
-            "the live session's file is excluded, the earlier one loads"
-        );
-        assert_eq!(cache[0].symbol, "LEDGX");
-        assert_eq!(cache[0].trade, trade);
-        assert_eq!(cache[0].source, Some(history::SessionSource::Live));
-    }
-
-    #[test]
-    fn a_replay_rerun_lands_beside_its_first_run_never_inside_it() {
-        let dir = crate::scratch::ScratchDir::new("paper-rerun-test");
-        // The same recording replayed twice: identical prints, identical
-        // venue times, so both sessions derive the same file stamp.
-        for _ in 0..2 {
-            let mut paper = PaperTrading::new();
-            paper.dir = dir.path().to_path_buf();
-            paper.set_symbol("RERUN");
-            paper.set_session_source(history::SessionSource::Replay);
-            paper.seed(&print(0, 100));
-            paper.market(Side::Buy);
-            paper.on_trade(&print(1, 100));
-            let events = paper.dispatch(Command::ClosePosition);
-            paper.handle_events(events);
-            paper.on_trade(&print(2, 103));
-        }
-
-        let folder = dir.join("RERUN");
-        let mut names: Vec<String> = std::fs::read_dir(&folder)
-            .expect("the symbol folder exists")
-            .flatten()
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-            .collect();
-        names.sort();
-        assert_eq!(
-            names.len(),
-            2,
-            "the second run opened its own file instead of appending duplicates"
-        );
-        assert!(names[1].contains(".rerun-1."), "{names:?}");
-        let history = load_history(&dir, Some("RERUN"), &[]);
-        assert_eq!(history.rows.len(), 2);
-        assert!(
-            history
-                .rows
-                .iter()
-                .all(|row| row.source == Some(history::SessionSource::Replay)),
-            "both files carry the replay source"
-        );
-    }
-
-    #[test]
-    fn the_ledger_never_lists_this_sessions_trades_twice_after_a_retarget() {
-        // Hunt-confirmed: close live, flip to replay (what a same-symbol
-        // replay open does), reload the ledger — the live session's file
-        // must stay excluded, or every trade counts twice in the totals
-        // and the export.
-        let mut paper = PaperTrading::new();
-        paper.set_symbol("DUPX");
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 105));
-        assert_eq!(paper.venue.closed_trades().len(), 1);
-
-        paper.set_session_source(history::SessionSource::Replay);
-        paper.on_timeline_reset();
-        {
-            let (state, env) = paper.report_parts();
-            state.reload_ledger(&env)
-        };
-        let cache = paper.report_state().saved_rows_loaded().expect("loaded");
-        assert_eq!(
-            cache.len(),
-            0,
-            "the session's own files stay excluded across the retarget"
-        );
-    }
-
-    /// A revealed page must survive the ledger's own lazy first load.
-    /// `QUANTICK_LEDGER_PAGES` sets the page count during construction,
-    /// long before the Trades tab is first drawn; the load that tab
-    /// triggers used to reset it, so the hook reached page one and the
-    /// state it exists to photograph was unreachable.
-    #[test]
-    fn a_revealed_page_survives_the_ledgers_lazy_first_load() {
-        let dir = crate::scratch::ScratchDir::new("paper-pages-test");
-        let mut paper = PaperTrading::new();
-        paper.dir = dir.path().to_path_buf();
-        paper.set_symbol("PAGEX");
-
-        paper.report_state_mut().autostart_ledger_pages(3);
-        assert_eq!(paper.report_state().revealed_pages(), 3);
-        // What the first `draw_trades_tab` does before painting a row.
-        assert!(paper.report_state().saved_rows_loaded().is_none());
-        {
-            let (state, env) = paper.report_parts();
-            state.reload_ledger(&env)
-        };
-        assert_eq!(
-            paper.report_state().revealed_pages(),
-            3,
-            "the lazy load must not retire the hook's page count"
-        );
-        // And what every tab does on every drain: sync the journal to its
-        // symbol. This runs on the frame, so it must not retire the page
-        // either — the hook set it before the feed had a symbol at all.
-        paper.set_symbol("PAGEY");
-        assert_eq!(
-            paper.report_state().revealed_pages(),
-            3,
-            "the per-frame symbol sync must not retire the page"
-        );
-
-        // A *scope* change is the one thing that does reset it: a deep
-        // page cannot survive a list it was never counted against.
-        {
-            let (state, env) = paper.report_parts();
-            state.rescope_ledger(&env)
-        };
-        assert_eq!(paper.report_state().revealed_pages(), 1);
-    }
-
-    #[test]
-    fn the_report_scopes_by_symbol_folder_on_disk() {
-        let dir = crate::scratch::ScratchDir::new("paper-symbols-test");
-        for (symbol, id0, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
-            let mut paper = PaperTrading::new();
-            paper.dir = dir.path().to_path_buf();
-            paper.set_symbol(symbol);
-            paper.seed(&print(id0, price));
-            paper.market(Side::Buy);
-            paper.on_trade(&print(id0 + 1, price));
-            let events = paper.dispatch(Command::ClosePosition);
-            paper.handle_events(events);
-            paper.on_trade(&print(id0 + 2, price + 5));
-        }
-
-        assert_eq!(
-            list_symbol_folders(&dir),
-            vec!["AAAUSDT".to_owned(), "BBBUSDT".to_owned()],
-            "the combo lists every traded asset"
-        );
-        let all = load_history(&dir, None, &[]);
-        assert_eq!(all.rows.len(), 2, "All symbols reads both journals");
-        let symbols: Vec<&str> = all.rows.iter().map(|row| row.symbol.as_str()).collect();
-        assert_eq!(symbols, vec!["AAAUSDT", "BBBUSDT"]);
-        let one = load_history(&dir, Some("BBBUSDT"), &[]);
-        assert_eq!(one.rows.len(), 1, "a symbol scope reads only its folder");
-        assert_eq!(one.rows[0].symbol, "BBBUSDT");
-    }
-
-    #[test]
-    fn a_close_refreshes_an_open_report_by_itself() {
-        let utc = TzOffset::new(0);
-        let mut paper = PaperTrading::new();
-        paper.set_symbol("FRESH");
-        {
-            let (state, env) = paper.report_parts();
-            state.open(&env)
-        };
-        paper.report_state_mut().ensure_report_view(utc);
-        assert!(
-            paper.report_state().view_rows().expect("view").is_empty(),
-            "nothing saved yet"
-        );
-
-        paper.seed(&print(0, 100));
-        paper.market(Side::Buy);
-        paper.on_trade(&print(1, 100));
-        let events = paper.dispatch(Command::ClosePosition);
-        paper.handle_events(events);
-        paper.on_trade(&print(2, 105));
-
-        paper.report_state_mut().ensure_report_view(utc);
-        let view = paper.report_state().view_rows().expect("refreshed");
-        assert_eq!(
-            view.len(),
-            1,
-            "the close re-read the journal without a manual refresh"
-        );
-    }
-}
+mod tests;

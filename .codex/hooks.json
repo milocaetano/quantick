@@ -1,0 +1,57 @@
+{
+  "description": "Quantick repository guardrails shared with Claude Code.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" worktree-guard'",
+            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') worktree-guard\"",
+            "timeout": 10,
+            "statusMessage": "Checking the Quantick worktree policy"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" pr-gate'",
+            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') pr-gate\"",
+            "timeout": 10,
+            "statusMessage": "Checking the Quantick PR gate"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" commit-reminder'",
+            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') commit-reminder\"",
+            "timeout": 10,
+            "statusMessage": "Checking Quantick delivery state"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -lc 'root=$(git rev-parse --show-toplevel) || exit 0; exec sh \"$root/.claude/hooks/guardrails.sh\" guard-watch'",
+            "commandWindows": "powershell.exe -NoProfile -Command \"$root = git rev-parse --show-toplevel; $gitRoot = Split-Path (Split-Path (Get-Command git).Source); $sh = Join-Path $gitRoot 'bin\\sh.exe'; [Console]::In.ReadToEnd() | & $sh (Join-Path $root '.claude/hooks/guardrails.sh') guard-watch\"",
+            "timeout": 10,
+            "statusMessage": "Running Quantick repository guards"
+          }
+        ]
+      }
+    ]
+  }
+}

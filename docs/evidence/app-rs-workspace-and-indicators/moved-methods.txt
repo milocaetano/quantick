@@ -1,0 +1,83 @@
+# Where each moved method lives now
+
+One definition each, in the new sibling module, none left in app.rs.
+Every method name the mission brief listed is checked.
+
+## workspace_save.rs
+
+  capture_workspace                      in workspace_save.rs: 1   still in app.rs: 0
+  starred_tool_ids                       in workspace_save.rs: 1   still in app.rs: 0
+  restore_chrome                         in workspace_save.rs: 1   still in app.rs: 0
+  capture_arrangement                    in workspace_save.rs: 1   still in app.rs: 0
+  open_workspace_export_picker           in workspace_save.rs: 1   still in app.rs: 0
+  open_workspace_import_picker           in workspace_save.rs: 1   still in app.rs: 0
+  poll_workspace_picker                  in workspace_save.rs: 1   still in app.rs: 0
+  suggested_workspace_name               in workspace_save.rs: 1   still in app.rs: 0
+  flush_cockpit_stores                   in workspace_save.rs: 1   still in app.rs: 0
+  export_workspace_to                    in workspace_save.rs: 1   still in app.rs: 0
+  import_workspace_from                  in workspace_save.rs: 1   still in app.rs: 0
+  reload_cockpit_stores                  in workspace_save.rs: 1   still in app.rs: 0
+  refresh_recent_workspaces              in workspace_save.rs: 1   still in app.rs: 0
+  clear_indicators                       in workspace_save.rs: 1   still in app.rs: 0
+  reveal_cockpit_home                    in workspace_save.rs: 1   still in app.rs: 0
+  save_workspace                         in workspace_save.rs: 1   still in app.rs: 0
+  write_inspector_position               in workspace_save.rs: 1   still in app.rs: 0
+  write_bookmarks                        in workspace_save.rs: 1   still in app.rs: 0
+  edit_workspace_file                    in workspace_save.rs: 1   still in app.rs: 0
+  write_replay_folder                    in workspace_save.rs: 1   still in app.rs: 0
+  write_replay_day_before                in workspace_save.rs: 1   still in app.rs: 0
+  write_favorites                        in workspace_save.rs: 1   still in app.rs: 0
+  save_named_workspace                   in workspace_save.rs: 1   still in app.rs: 0
+  open_named_workspace                   in workspace_save.rs: 1   still in app.rs: 0
+  delete_named_workspace                 in workspace_save.rs: 1   still in app.rs: 0
+  forget_workspace                       in workspace_save.rs: 1   still in app.rs: 0
+  apply_maximize_hook                    in workspace_save.rs: 1   still in app.rs: 0
+  maintain_workspace                     in workspace_save.rs: 1   still in app.rs: 0
+  note_workspace                         in workspace_save.rs: 1   still in app.rs: 0
+
+## indicator_manager.rs
+
+  attach_script_indicator                in indicator_manager.rs: 1   still in app.rs: 0
+  detach_script_indicator                in indicator_manager.rs: 1   still in app.rs: 0
+  open_requested_indicator_settings      in indicator_manager.rs: 1   still in app.rs: 0
+  set_legend_collapsed                   in indicator_manager.rs: 1   still in app.rs: 0
+  focused_legend_collapsed               in indicator_manager.rs: 1   still in app.rs: 0
+  set_focused_legend_collapsed           in indicator_manager.rs: 1   still in app.rs: 0
+  toggle_indicator_hidden_at             in indicator_manager.rs: 1   still in app.rs: 0
+  remove_indicator_at                    in indicator_manager.rs: 1   still in app.rs: 0
+  open_indicator_settings_at             in indicator_manager.rs: 1   still in app.rs: 0
+  draw_indicator_legends                 in indicator_manager.rs: 1   still in app.rs: 0
+  draw_indicator_settings                in indicator_manager.rs: 1   still in app.rs: 0
+  load_indicator_preset                  in indicator_manager.rs: 1   still in app.rs: 0
+  save_indicator_preset                  in indicator_manager.rs: 1   still in app.rs: 0
+  delete_indicator_preset                in indicator_manager.rs: 1   still in app.rs: 0
+  apply_indicator_settings_draft         in indicator_manager.rs: 1   still in app.rs: 0
+  preview_indicator_settings_draft       in indicator_manager.rs: 1   still in app.rs: 0
+  revert_indicator_settings_preview      in indicator_manager.rs: 1   still in app.rs: 0
+  add_script_indicator                   in indicator_manager.rs: 1   still in app.rs: 0
+  emit_style_changed                     in indicator_manager.rs: 1   still in app.rs: 0
+  poll_script_files                      in indicator_manager.rs: 1   still in app.rs: 0
+  add_native_indicator                   in indicator_manager.rs: 1   still in app.rs: 0
+  mark_indicator_state_dirty             in indicator_manager.rs: 1   still in app.rs: 0
+  forget_last_indicator_state_change     in indicator_manager.rs: 1   still in app.rs: 0
+  maintain_indicator_state               in indicator_manager.rs: 1   still in app.rs: 0
+
+## chart_layers_wiring.rs
+
+  apply_layer_actions                    in chart_layers_wiring.rs: 1   still in app.rs: 0
+  settle_paper_panels                    in chart_layers_wiring.rs: 1   still in app.rs: 0
+  apply_footprint_change                 in chart_layers_wiring.rs: 1   still in app.rs: 0
+  layer_mask                             in chart_layers_wiring.rs: 1   still in app.rs: 0
+  maintain_chart_layers                  in chart_layers_wiring.rs: 1   still in app.rs: 0
+  restore_chart_layers                   in chart_layers_wiring.rs: 1   still in app.rs: 0
+  apply_layer_defaults                   in chart_layers_wiring.rs: 1   still in app.rs: 0
+
+## The one method the brief listed that deliberately stayed
+
+  attach_surface                         in workspace_save.rs: 0   in app.rs: 1
+
+  The brief's ledger #3 listed attach_surface at :4663 with the workspace
+  store, because it sits inside that line range. It is a two-line setter for
+  the window handle, called once from main, and has nothing to do with
+  saving a workspace. The pre-PR review left it in app.rs rather than let
+  workspace_save.rs's name lie about its contents. See the PR body.

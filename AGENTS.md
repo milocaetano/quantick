@@ -101,7 +101,7 @@ they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.m
 ## The map
 
 A Cargo workspace under `crates/`. The dependency direction is one-way,
-enforced by `crates/pine/tests/workspace_deps.rs`; never add a reverse edge.
+enforced by `crates/guards/src/graph.rs`; never add a reverse edge.
 An arrow reads *depends on*.
 
 ```mermaid

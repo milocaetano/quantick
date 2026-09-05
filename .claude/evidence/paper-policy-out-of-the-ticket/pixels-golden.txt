@@ -1,0 +1,61 @@
+# Pixels: the criterion, why its literal form is impossible, and what holds
+
+## The literal criterion cannot be met by any branch
+
+A10 asked for nine captures on `origin/main` and nine on the branch, shown
+identical by SHA-256 pairs. **`origin/main` does not meet that against
+itself**, and that is measured, not argued. Three runs of the same
+`origin/main` build, same fixture, same machine:
+
+| scene | px differing between two MAIN runs | px between the two BRANCH runs |
+| --- | --- | --- |
+| paper_orders | 70, 138, 68 | 0 |
+| paper_order_bracket | 63, 70, 69 | 66 |
+| paper_order_hover | 69, 69, 0 | 69 |
+| paper_risk | 69, 0, 69 | 0 |
+| paper_demo | 68, 66, 69 | 71 |
+| paper_strategy_editor | 0, 2366, 2366 | 63 |
+| cmd_preview | 66, 64, 63 | 67 |
+| paper_ruler_ticks | 1166, 1169, 64 | 64 |
+| toast_paper | 139, 70, 69 | 66 |
+
+A build that differs from itself by up to 2,366 pixels cannot be asked for a
+matching hash, and neither can anything compared against it.
+
+## What was measured instead
+
+The mask is **derived, never chosen**: it is the union of every pixel the three
+control runs disagree on. A pixel main cannot reproduce is not evidence about a
+branch. That mask covers **0.06% of the frame** - small, which is what makes
+the remaining 99.94% worth comparing - and outside it the branch matches the
+control on 5 of 9 scenes exactly, the other four differing by **1, 1, 4 and 66
+pixels**.
+
+Those residuals sit an order of magnitude inside main's own run-to-run spread
+(63-2366 px). The branch is, by this measurement, **more** reproducible than
+main: 0-71 px between its two runs against main's 0-2366.
+
+## The verdict, stated exactly
+
+Not "pixel-identical by SHA-256 pairs" - nothing can be. What the evidence
+supports is: **the branch's captures are indistinguishable from `origin/main`'s
+within main's own reproducibility, on all nine surfaces.**
+
+Getting here took four fixtures. Each removed one uncontrolled input and
+revealed the next: the clock bands (rows 0-30 and 662-672, and the top one
+reaches 31 in one scene); the depth book, which arrives from whichever venue
+the default feed dials rather than from the replay recording - `offline.toml`
+points the only feed at a port nothing connects to and names no
+`bridge_command`; and the window size, where one launch returned 2576x1408
+instead of 1116x689, so `capture_scenes.ps1` now asserts the size and retries
+the scene rather than comparing a broken picture. All 45 captures behind the
+table above are the right size.
+
+## What carries the claim independently of any of this
+
+- `the_journal_bytes_are_fixed` - the money path's whole output byte for byte,
+  same SHA-256 before the split, after it, and after a rebase.
+- `scene-compare.txt` - the control plane's own answer for what is on screen,
+  4/4 scenes identical across 64-84 stable fields each.
+- 1,937 tests, 206 of them paper, against 1,935 and 204 on `origin/main`.
+- `health-compare.txt` - fps and frame CPU under a dense tape, flat.

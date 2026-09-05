@@ -1,0 +1,67 @@
+# Recorded command output for each criterion that names one.
+# Head: 06d3349, rebased onto origin/main e0ae2ac.
+
+### A2 / R19: grep -nE 'egui|eframe|Painter|Color32|Pos2' crates/app/src/paper_account.rs
+exit=1 (1 = no match)
+
+### A6 / R20: ticket-side items named in control/{trade,session,interaction}.rs, code lines only
+exit=1 (1 = none)
+  (ruler_ticks is present and is the one declared exception: set_ruler is a
+   registered control-plane capability, so the ruler must stay reachable.)
+
+### A6: account()/account_mut() call sites in the control plane
+crates/app/src/control/trade.rs:17
+crates/app/src/control/session.rs:10
+crates/app/src/control/interaction.rs:2
+
+### A8: tests in paper_account.rs that build no ticket
+3
+
+### A1: which side each named function is on
+  place_intent           account=1 ticket=0
+  market                 account=1 ticket=1
+  place_resting          account=1 ticket=1
+  amend_rung             account=1 ticket=0
+  reverse_position       account=1 ticket=1
+  settle                 account=1 ticket=1
+  on_trade               account=1 ticket=1
+  handle_events          account=1 ticket=0
+  rest_capture_orders    account=0 ticket=1
+  decide_pending_leg     account=0 ticket=1
+  position_bracket       account=1 ticket=0
+  bracket_owners         account=1 ticket=0
+  with_trades_dir        account=1 ticket=1
+  set_trades_dir         account=1 ticket=0
+  set_symbol             account=1 ticket=1
+  journal                account=1 ticket=0
+  start_export           account=1 ticket=0
+  poll_export            account=1 ticket=0
+  start_import           account=1 ticket=0
+  poll_import            account=1 ticket=0
+  run_demo_step          account=1 ticket=0
+
+### G2: the four checks, run separately on this head
+-- cargo fmt --all -- --check
+exit=0
+-- cargo clippy --workspace --all-targets
+    Finished `dev` profile [optimized + debuginfo] target(s) in 8.18s
+exit=0
+-- cargo build --workspace
+    Finished `dev` profile [optimized + debuginfo] target(s) in 10.35s
+exit=0
+-- cargo test --workspace
+test result: ok. 1899 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 4.52s
+exit=0
+
+### G3: cargo test -p quantick-guards
+test result: ok. 138 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+### A12: cargo test -p quantick-app paper
+  branch:      209 passed; 0 failed
+  origin/main: 204 passed; 0 failed
+  = the five tests this branch adds (the journal golden, the offset
+    regression, and the account's own three), and none lost.

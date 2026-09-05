@@ -1,0 +1,24 @@
+=== G1: guards has no dependencies, and still answers in about a second ===
+
+$ sed -n "/\[dependencies\]/,/^\[/p" crates/guards/Cargo.toml
+[dependencies]
+
+[lints]
+workspace = true
+
+$ time cargo test -p quantick-guards   (warm target/)
+test result: ok. 134 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+real	0m1.151s
+user	0m0.000s
+sys	0m0.030s
+
+$ time target/debug/quantick-guards.exe   (the whole-repo run the hook shares)
+
+real	0m0.695s
+user	0m0.000s
+sys	0m0.016s

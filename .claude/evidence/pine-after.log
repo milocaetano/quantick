@@ -1,0 +1,35 @@
+=== A2: the pine test file is gone, and pine is still green ===
+
+$ git diff --stat origin/main...HEAD -- crates/pine/
+ crates/pine/tests/workspace_deps.rs | 351 ------------------------------------
+ 1 file changed, 351 deletions(-)
+
+$ ls crates/pine/tests/
+barcolor_semantics.rs
+compile_passes.rs
+copilot_semantics.rs
+corpus
+corpus.rs
+dialect_doc.rs
+exhaustion_reversal_semantics.rs
+force_bar_semantics.rs
+preview_cost.rs
+script_semantics.rs
+
+$ cargo test -p quantick-pine
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+cargo test -p quantick-pine exit=0
+
+=== A10: no crate's dependency set changed ===
+$ git diff origin/main -- "**/Cargo.toml" Cargo.toml Cargo.lock
+(no output above means not one manifest or lockfile line moved)

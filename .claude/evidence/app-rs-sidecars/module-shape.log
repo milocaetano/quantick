@@ -1,0 +1,49 @@
+A1 -- the four sibling modules.
+
+crates/app/src/app/ now holds:
+  crates/app/src/app/demo_hooks.rs
+  crates/app/src/app/drawing_input.rs
+  crates/app/src/app/health.rs
+  crates/app/src/app/layout_wiring.rs
+  crates/app/src/app/workspace_restore.rs
+
+The mod lines in app.rs, beside the precedent's:
+  app.rs:21:mod demo_hooks;
+  app.rs:22:mod drawing_input;
+  app.rs:23:mod health;
+  app.rs:24:mod layout_wiring;
+  app.rs:25:mod workspace_restore;
+  app.rs:7501:mod tests;
+
+Each module's first import line and its impl block, the shape
+app/layout_wiring.rs:53,64 already has:
+
+  crates/app/src/app/demo_hooks.rs
+    28:use super::{DEMO_VISIBLE_SLOTS, QuantickApp};
+    71:impl QuantickApp {
+
+  crates/app/src/app/drawing_input.rs
+    17:use super::QuantickApp;
+    19:impl QuantickApp {
+
+  crates/app/src/app/health.rs
+    19:use super::{QuantickApp, fmt_progress};
+    24:impl QuantickApp {
+
+  crates/app/src/app/workspace_restore.rs
+    15:use super::{FIRST_TAB_ID, QuantickApp, saved_context_intervals};
+    17:impl QuantickApp {
+
+Sizes (wc -l), all four under the ratchet's 1,500-line threshold:
+    1010 crates/app/src/app/demo_hooks.rs
+     335 crates/app/src/app/drawing_input.rs
+     327 crates/app/src/app/health.rs
+    1557 crates/app/src/app/layout_wiring.rs
+     157 crates/app/src/app/workspace_restore.rs
+    3386 total
+
+What each module holds:
+  demo_hooks.rs         11 methods and the 9 DEMO_* constants only they read
+  drawing_input.rs      handle_drawing_keys, apply_drawing_chrome
+  health.rs             maybe_emit_summary, status_model, SUMMARY_INTERVAL
+  workspace_restore.rs  restore_workspace

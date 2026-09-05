@@ -1,0 +1,47 @@
+1c1
+< crate.lines.app	108105
+---
+> crate.lines.app	108194
+20c20
+< crate.lines.total	172168
+---
+> crate.lines.total	172257
+22c22
+< file.largest.crates/app/src/app.rs	9239
+---
+> file.largest.crates/app/src/app.rs	7499
+41,43c41,43
+< ratchet.size.budget	61410
+< ratchet.size.recorded	61410
+< ratchet.size.measured	172168
+---
+> ratchet.size.budget	59547
+> ratchet.size.recorded	59547
+> ratchet.size.measured	172257
+53c53
+< app.lines.without_egui	104415
+---
+> app.lines.without_egui	104501
+
+--- reading (A4) ---
+
+Nine numbers moved, and every one of them is app.rs's move:
+
+  file.largest.crates/app/src/app.rs   9239 -> 7499   the cut itself
+  ratchet.size.budget / .recorded     61410 -> 59547   --tighten, -1863
+
+  crate.lines.app                    108105 -> 108194   +89
+  crate.lines.total                  172168 -> 172257   +89
+  ratchet.size.measured              172168 -> 172257   +89
+  app.lines.without_egui             104415 -> 104501   +86
+
+The +89 is the scaffolding four new files cost: per file a module doc
+comment, an import block, an 'impl QuantickApp {' and its brace. It is
+stated rather than smoothed over -- a move does not delete lines, it
+moves them, and four new files have four new headers. What the mission
+was measured on is the first line: the file the ratchet exists for is
+1,740 lines smaller, and the budget 1,863 lower, for 89 lines of header.
+
+No other line of the report differs: no crate but app changed size, no
+struct got wider, no other file entered or left the largest-files list,
+and neither the context ratchet nor the cycle ratchet moved.

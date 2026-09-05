@@ -133,6 +133,39 @@ normalize_path() {
     printf '%s' "$1" | sed 's|\\\\|/|g; s|\\|/|g'
 }
 
+# Every file an edit tool targets. Claude's Write/Edit payloads carry one
+# `file_path`; Codex's apply_patch payload carries the patch in `command`.
+# Keep the translation here so both hosts reach the same policy functions.
+edit_paths() {
+    edit_file=$(json_string_field file_path)
+    if [ -n "$edit_file" ]; then
+        printf '%s\n' "$edit_file"
+        return 0
+    fi
+
+    edit_patch=$(json_string_field command)
+    [ -n "$edit_patch" ] || return 0
+    printf '%s' "$edit_patch" |
+        sed 's/\\r\\n/\
+/g; s/\\n/\
+/g' |
+        sed -n 's/^\*\*\* \(Add\|Update\|Delete\) File: //p; s/^\*\*\* Move to: //p'
+}
+
+# Codex patch headers may be relative to the hook's cwd; Claude normally sends
+# absolute file paths. Resolve both into the spelling the existing checks use.
+absolute_edit_path() {
+    edit_path=$(normalize_path "$1")
+    case "$edit_path" in
+        /* | ?:/*) printf '%s' "$edit_path" ;;
+        *)
+            edit_cwd=$(normalize_path "$(json_string_field cwd)")
+            [ -d "$edit_cwd" ] || edit_cwd=$(normalize_path "$(pwd -P)")
+            printf '%s/%s' "${edit_cwd%/}" "$edit_path"
+            ;;
+    esac
+}
+
 # Walk up to the first directory that exists: a Write targets a file that does
 # not exist yet, and may create its parents too.
 nearest_existing_dir() {
@@ -391,30 +424,37 @@ worktree_guard() {
         exit 0
     fi
 
-    raw=$(json_string_field file_path)
-    [ -n "$raw" ] || exit 0
-    path=$(normalize_path "$raw")
+    paths=$(edit_paths)
+    [ -n "$paths" ] || exit 0
+    old_ifs=$IFS
+    IFS='
+'
+    for raw in $paths; do
+        path=$(absolute_edit_path "$raw")
 
-    # Agent working files live in the main checkout by design: the goal file,
-    # its archives, the skills, these hooks. Blocking them would break the
-    # very workflow this guard protects.
-    case "$path" in
-        */.claude/*) exit 0 ;;
-    esac
+        # The live goal is agent working state and is deliberately written
+        # before the branch artifact exists. Tracked skills and hooks are not
+        # exempt: they belong in the worktree like every other repository edit.
+        case "$path" in
+            */.claude/GOAL.md) continue ;;
+        esac
 
-    dir=$(nearest_existing_dir "$path") || exit 0
+        dir=$(nearest_existing_dir "$path") || continue
 
-    git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || exit 0
-    common_dir=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+        git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null) || continue
+        common_dir=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
 
-    # In a linked worktree these differ (<common>/worktrees/<name> vs
-    # <common>). Equal means the write lands in the main checkout.
-    [ "$git_dir" = "$common_dir" ] || exit 0
+        # In a linked worktree these differ (<common>/worktrees/<name> vs
+        # <common>). Equal means the write lands in the main checkout.
+        [ "$git_dir" = "$common_dir" ] || continue
 
-    branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
-    [ "$branch" = "$MAIN_BRANCH" ] || exit 0
+        branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || continue
+        [ "$branch" = "$MAIN_BRANCH" ] || continue
 
-    deny "\"CLAUDE.md: one goal, one worktree. This write lands in the main checkout while it is on \`$MAIN_BRANCH\`. Create the worktree first:\n\n  git fetch origin\n  git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/$MAIN_BRANCH\n\nthen work inside that directory. Set QUANTICK_ALLOW_MAIN_WRITES=1 to override deliberately.\""
+        deny "\"CLAUDE.md: one goal, one worktree. This write lands in the main checkout while it is on \`$MAIN_BRANCH\`. Create the worktree first:\n\n  git fetch origin\n  git worktree add -b <prefix>/<slug> ../quantick-worktrees/<prefix>-<slug> origin/$MAIN_BRANCH\n\nthen work inside that directory. Set QUANTICK_ALLOW_MAIN_WRITES=1 to override deliberately.\""
+    done
+    IFS=$old_ifs
+    exit 0
 }
 
 # --- pr-gate ----------------------------------------------------------------
@@ -543,10 +583,8 @@ commit_reminder() {
 #   It reads one file. `--file` checks that path against the baseline instead
 #   of walking the repo, which is milliseconds rather than the seconds a full
 #   scan costs.
-guard_watch() {
-    file=$(normalize_path "$(json_string_field file_path)")
-    [ -n "$file" ] || exit 0
-
+guard_watch_one() {
+    file=$(absolute_edit_path "$1")
     # No extension filter here on purpose. One lived here and was a third
     # hand-kept copy of a list the two Rust guards already own; adding an
     # extension there while forgetting it here would have left the suite
@@ -561,18 +599,18 @@ guard_watch() {
     # while the file they did edit went unchecked.
     case "$file" in
         /* | ?:/*) ;;
-        *) exit 0 ;;
+        *) return 0 ;;
     esac
 
     dir=$(dirname "$file")
-    [ -d "$dir" ] || exit 0
+    [ -d "$dir" ] || return 0
 
     # Both answers from one process. `--show-toplevel` and `--show-prefix`
     # were two spawns for what one call prints on two lines, and on Windows a
     # spawn costs tens of milliseconds — against a binary that answers in 27.
     # This mode fires on every write in the session, so the shell plumbing had
     # become the dominant cost of the thing built to be cheap.
-    location=$(git -C "$dir" rev-parse --show-toplevel --show-prefix 2>/dev/null) || exit 0
+    location=$(git -C "$dir" rev-parse --show-toplevel --show-prefix 2>/dev/null) || return 0
     root=$(normalize_path "$(printf '%s\n' "$location" | sed -n '1p')")
     prefix=$(printf '%s\n' "$location" | sed -n '2p')
 
@@ -581,7 +619,7 @@ guard_watch() {
     # is the correct answer to it.
     binary="$root/target/debug/quantick-guards"
     [ -x "$binary" ] || binary="$binary.exe"
-    [ -x "$binary" ] || exit 0
+    [ -x "$binary" ] || return 0
 
     # Workspace-relative, forward slashes: the spelling the baseline uses.
     # `$prefix` above comes from git rather than from subtracting the root out
@@ -595,8 +633,8 @@ guard_watch() {
 
     # The binary is told which root to read, because the one compiled into it
     # is whichever worktree happened to build it.
-    findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && exit 0
-    [ -n "$findings" ] || exit 0
+    findings=$(QUANTICK_GUARDS_ROOT="$root" "$binary" --file "$relative" 2>&1) && return 0
+    [ -n "$findings" ] || return 0
 
     # JSON-escape by hand, because there is no jq here. Separate `-e` scripts
     # and a `|` delimiter: a `;`-joined script with a `/` delimiter is what
@@ -614,6 +652,19 @@ guard_watch() {
     # path.
     escaped_path=$(printf '%s' "$relative" | sed -e 's|\\|\\\\|g' -e 's|"|\\"|g')
     context "\"Repository guards on \`$escaped_path\`:\n$escaped\n\nThis is advisory and blocks nothing; \`cargo test --workspace\` is still the gate. Fix it now while the edit is in hand, or run \`cargo run -p quantick-guards -- --tighten\` if a baseline entry only needs lowering.\""
+}
+
+guard_watch() {
+    paths=$(edit_paths)
+    [ -n "$paths" ] || exit 0
+    old_ifs=$IFS
+    IFS='
+'
+    for file in $paths; do
+        guard_watch_one "$file"
+    done
+    IFS=$old_ifs
+    exit 0
 }
 
 case "$mode" in

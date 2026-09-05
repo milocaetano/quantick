@@ -1,0 +1,75 @@
+Overlap proof, taken before the first move, against origin/main = 7dc2e15.
+
+Open branches editing crates/app/src/app.rs:
+  refactor/paper-policy-out-of-the-ticket   -- open, 26 hunks in app.rs
+  refactor/native-indicator-docking         -- already merged into main (PR #293,
+                                               merge d3cf317); no longer parallel work.
+  refactor/reach-and-download-into-feed     -- already merged into main (PR #294,
+                                               merge 7dc2e15).
+
+Every hunk of the open paper branch, in origin/main line numbers, against the
+ranges this branch moves:
+
+  app.rs    52-58     clear
+  app.rs   473-479    clear
+  app.rs   615-621    clear
+  app.rs   638-645    clear
+  app.rs   648-658    clear
+  app.rs   715-721    clear
+  app.rs   896-902    clear
+  app.rs  1339-1351   clear
+  app.rs  1365-1371   clear
+  app.rs  1381-1387   clear
+  app.rs  1397-1409   clear
+  app.rs  1501-1507   clear
+  app.rs  1534-1539   clear
+  app.rs  1541-1547   clear
+  app.rs  1572-1584   clear
+  app.rs  1605-1618   clear
+  app.rs  1895-1901   clear
+  app.rs  1908-1914   clear
+  app.rs  1923-1929   clear
+  app.rs  2380-2390   clear
+  app.rs  2399-2407   clear
+  app.rs  2415-2428   clear
+  app.rs  3895-3901   clear
+  app.rs  3972-3978   clear
+  app.rs  5552-5558   clear
+  app.rs  7727-7735   clear
+
+Result: no hunk of the open branch falls inside any moved range.
+
+Nearest approach: the paper branch's 3972-3978 hunk (restore_chrome /
+capture_arrangement) ends five lines above restore_workspace's 3983.
+
+Named out of scope by the brief, and untouched by this branch:
+  draw_menu_bar
+  draw_toolbar
+  apply_toolbar_action
+  draw_frame
+  new_with_workspace
+  adopt_tab
+  arm_strategy_instance
+
+The paper branch's two hunks inside that out-of-scope set -- 5552-5558 in
+draw_menu_bar and 7727-7735 in arm_strategy_instance -- are exactly the
+regions this mission leaves alone.
+
+=== Second check, run before the PR ===
+
+The first check above compared line ranges. This one asks the only
+question that matters to the open branch: can it still merge?
+
+  git merge-tree --write-tree HEAD refactor/paper-policy-out-of-the-ticket
+
+  Auto-merging crates/app/src/app.rs        <- clean
+  Auto-merging crates/app/src/main.rs       <- clean
+  Auto-merging crates/app/src/tab.rs        <- clean
+  CONFLICT (content): crates/guards/size-baseline.txt
+
+app.rs merges with no conflict, which is the claim the mission made
+when it chose these four groups. The one conflict is the size baseline,
+where both branches rewrite the !budget line and the comment above it.
+It is not a code conflict and it has a mechanical resolution: whichever
+branch lands second re-runs 'cargo run -p quantick-guards -- --tighten'
+and keeps both comments. Stated in the PR body as blast radius.

@@ -1,5 +1,5 @@
 # The recorded ceiling, in bytes, for every context file over the threshold —
-# the files a Claude session loads before it reads any code. One
+# the files a Claude Code or Codex session loads before it reads any code. One
 # `path ceiling` pair per line; `#` starts a comment.
 #
 # These are costs, not targets. Every byte here is paid on every turn of every
@@ -18,7 +18,7 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 22007
+.claude/skills/mission/SKILL.md 18664
 .claude/skills/arch-review/SKILL.md 19573
 .claude/skills/delivery-review/SKILL.md 18087
 
@@ -151,8 +151,16 @@ AGENTS.md 13179
 # generated file only. Not one `Reaches` cell was shortened -- the long ones
 # say which class of defect is invisible without that hook, which is the most
 # valuable content in the harness and the thing a grep cannot supply.
-# +915 for the trades-bars branch: the three generated hook rows signed on the
-# registry's entry above, and nothing else. A raise, not a trade — `main` was
-# already 1,433 bytes into the headroom when this branch merged it, so the
-# rows could not fit inside it. Measured, 232,885 -> 233,800.
-!budget 233800
+# +3,039 for `ai-review`, a new skill: 2,753 for the six-question checklist a
+# session loads on `/ai-review`, 286 for its Codex adapter. A raise, not a
+# trade: nothing left the tree. The skill is one screen by design - each
+# question names the rule and the evidence that decides it - so there was no
+# reference file to extract and no sibling prose this branch owned to cut.
+# The first cut was 1,949; ten independent reviews found none of its six
+# verdicts falsifiable, and the 804 bytes added are the falsifiers.
+# +2,927 for the trades-bars branch: 1,282 of it the three generated hook
+# rows signed on the registry's entry above; the other 1,645 was already on
+# `main`, inside the headroom, when this branch merged it, so the rows could
+# not fit under the budget as it stood. A raise, not a trade. Measured,
+# 235,924 -> 238,851.
+!budget 238851
