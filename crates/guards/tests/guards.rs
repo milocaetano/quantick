@@ -121,7 +121,8 @@ fn no_test_mints_a_temporary_path_outside_its_scratch_module() {
 // fields, and a site that survives into production source — count what the
 // mission said they should.
 
-use std::process::Command;
+use std::io::Write as _;
+use std::process::{Command, Stdio};
 
 use quantick_guards::{report, size};
 
@@ -304,6 +305,91 @@ fn the_report_mode_refuses_extra_arguments() {
 /// Run the command and hand back its stdout, failing loudly on a non-zero
 /// exit — `--report` measures the tree and never judges it, so the only way
 /// it can fail is by not working.
+/// `--blast-radius` measures; it never judges, so it exits 0 whatever it is
+/// handed — a table, an empty table, or a complaint about stdin.
+///
+/// Graded through the compiled binary rather than through [`blast_radius::measure`],
+/// because the exit code is the one property the unit tests structurally cannot
+/// see: they call a function that returns a report, and the mode's promise is
+/// about the process. A report-only mode that exits non-zero is a mode that
+/// fails a build, which is the whole thing it is not allowed to do.
+#[test]
+fn the_blast_radius_mode_measures_and_never_judges() {
+    for (name, input) in [
+        ("a real diff", REAL_DIFF),
+        ("an empty diff", ""),
+        ("input that is not a diff", "this is not a diff at all\n"),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+            .arg("--blast-radius")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the guards binary runs");
+        child
+            .stdin
+            .take()
+            .expect("stdin is piped")
+            .write_all(input.as_bytes())
+            .expect("the diff is writable to stdin");
+        let output = child.wait_with_output().expect("the binary finishes");
+
+        assert!(
+            output.status.success(),
+            "--blast-radius exited {:?} on {name}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // The totals are printed for every input, so an empty table is still a
+        // table and never an empty answer.
+        let table = String::from_utf8(output.stdout).expect("the table is UTF-8");
+        for label in [
+            "blast.files_touched\t",
+            "blast.pre_existing_files_touched\t",
+            "blast.insertions\t",
+            "blast.files_unmeasured\t",
+            "blast.files_unreadable\t",
+            "blast.files_stale\t",
+        ] {
+            assert!(
+                table.contains(label),
+                "{name} produced no `{label}` row:\n{table}"
+            );
+        }
+    }
+}
+
+/// The mode consumes nothing beside itself, like `--report`.
+#[test]
+fn the_blast_radius_mode_refuses_extra_arguments() {
+    let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .args(["--blast-radius", "--report"])
+        .output()
+        .expect("the guards binary runs");
+    assert!(
+        !output.status.success(),
+        "an extra argument must not exit 0"
+    );
+    let complaint = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        complaint.contains("--report"),
+        "the refusal names the unconsumed argument: {complaint}"
+    );
+}
+
+/// A diff over a file this repository really holds, so the mode has something
+/// to read from the working tree rather than only totals to print.
+const REAL_DIFF: &str = "\
+diff --git a/crates/guards/src/lib.rs b/crates/guards/src/lib.rs
+--- a/crates/guards/src/lib.rs
++++ b/crates/guards/src/lib.rs
+@@ -1,1 +1,2 @@
++//! An added line that is not in the file.
+ //! Repository guards for the things the compiler cannot see.
+";
+
 fn run_report() -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .arg("--report")
