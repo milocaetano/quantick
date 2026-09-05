@@ -577,6 +577,7 @@ fn a_capability_that_rises_later_is_asked_again() {
         book_capture: false,
         history_paging: true,
         traded_volume: true,
+        deal_counter: false,
         ohlcv_history: false,
         ohlcv_generation: 0,
     });
@@ -659,6 +660,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         book_capture: false,
         history_paging: true,
         traded_volume: true,
+        deal_counter: false,
         ohlcv_history: true,
         ohlcv_generation: 1,
     });
@@ -4858,5 +4860,137 @@ fn control_idle_dense_replay_benchmark() {
     println!(
         "CONTROL_IDLE_DENSE_REPLAY {{\"frame_cpu_ms\":{average:.6},\"frame_p99_ms\":{p99:.6},\"frame_worst_ms\":{worst:.6},\"feed_arrival_ms\":{:?},\"trades_per_s\":{trades_per_second:.3},\"frames\":{MEASURED_FRAMES},\"trades_per_frame\":{TRADES_PER_FRAME}}}",
         app.active_tab().trade_arrival_ms()
+    );
+}
+
+/// A tab on a feed with a deal counter: the recorder is readable in
+/// `feed.status` and drivable through the same act the REC control makes,
+/// so a script sees and moves exactly what the trader does.
+#[test]
+fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
+    use quantick_engine::DealSample;
+
+    crate::store_home::next_test_home();
+    let (evt_tx, evt_rx) = mpsc::channel(64);
+    let (_book_tx, book_rx) = mpsc::channel(64);
+    let (cmd_tx, _cmd_rx) = mpsc::channel(16);
+    let mut app = QuantickApp::new(
+        test_config(),
+        "binance",
+        "TESTUSDT",
+        BarSpec::Tick(50),
+        FeedHandle {
+            events: evt_rx,
+            book_events: book_rx,
+            notices: feed::silent_notices(),
+            // The capability, never the provider name, is what offers REC.
+            capabilities: feed::fixed_capabilities(FeedCapabilities {
+                deal_counter: true,
+                ..ProviderKind::Binance.capabilities()
+            }),
+            latency: feed::unsplit_latency(),
+            commands: cmd_tx,
+            replay: None,
+        },
+    );
+    let ctx = egui::Context::default();
+    fn recorder(app: &QuantickApp) -> serde_json::Value {
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [observer_scope("feed.status")];
+        let capture = registry
+            .capture(app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        capture.scopes[&observer_scope("feed.status")].value["tabs"][0]["deal_recording"].clone()
+    }
+
+    // The test config records nothing by default: the feed can count, the
+    // recorder is off, and the wire says so rather than omitting it.
+    run_frame(&mut app, &ctx);
+    let off = recorder(&app);
+    assert_eq!(off["state"], "off", "{off}");
+    assert_eq!(off["deal_count_available"], false);
+
+    // A reading arrives; the recorder holds it whether or not it writes.
+    evt_tx
+        .try_send(FeedEvent::DealCounter(DealSample {
+            time_ms: 1_000,
+            session_deals: 2_301_455,
+        }))
+        .unwrap();
+    app.active_tab_mut().drain_feed();
+    let seen = recorder(&app);
+    assert_eq!(seen["state"], "off");
+    assert_eq!(seen["session_deals"], "2301455");
+    assert_eq!(seen["deal_count_available"], true);
+
+    // The act: the same path the REC control and `feed.deal_recording.set`
+    // take (the catalog test holds the registration).
+    app.active_tab_mut()
+        .apply_deal_recording(crate::deal_recording::DealRecordingAction::Start);
+    let on = recorder(&app);
+    assert_eq!(on["state"], "recording", "{on}");
+    assert!(
+        on["file"]
+            .as_str()
+            .is_some_and(|file| file.ends_with(".deals")),
+        "{on}"
+    );
+    app.active_tab_mut()
+        .apply_deal_recording(crate::deal_recording::DealRecordingAction::Stop);
+    assert_eq!(recorder(&app)["state"], "off");
+
+    // And by capability, through the one path every action takes.
+    let call = |app: &mut QuantickApp, input: serde_json::Value| {
+        app.control_action(
+            "feed.deal_recording.set",
+            1,
+            crate::control::ActionOrigin::Human,
+            input,
+        )
+    };
+    let started = call(&mut app, serde_json::json!({ "enabled": true })).unwrap();
+    assert_eq!(started["recording"]["state"], "recording", "{started}");
+    assert_eq!(recorder(&app)["state"], "recording");
+
+    // A day recorded earlier, found by the rescan a stop performs, loads by
+    // name and reaches the pane's retained readings.
+    let dir = app.active_tab().deal_recording_view().unwrap().dir;
+    let folder = dir.join("TESTUSDT");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("2026-09-02.deals"),
+        "# quantick-deals v1 symbol=TESTUSDT day=2026-09-02 tz_minutes=0
+500 12
++20 +988
+",
+    )
+    .unwrap();
+    let stopped = call(&mut app, serde_json::json!({ "enabled": false })).unwrap();
+    assert_eq!(stopped["recording"]["state"], "off", "{stopped}");
+    let days = stopped["recording"]["recorded_days"].as_array().unwrap();
+    assert!(
+        days.iter().any(|day| day["day"] == "2026-09-02"),
+        "the stop rescanned the folder: {stopped}"
+    );
+    let missing = call(&mut app, serde_json::json!({ "load_day": "1999-01-01" }))
+        .expect_err("a day nobody recorded is refused by name");
+    assert!(
+        missing.message.contains("1999-01-01"),
+        "{}",
+        missing.message
+    );
+    let loaded = call(&mut app, serde_json::json!({ "load_day": "2026-09-02" })).unwrap();
+    assert_eq!(
+        loaded["recording"]["loaded_days"],
+        serde_json::json!(["2026-09-02"]),
+        "{loaded}"
+    );
+    assert_eq!(loaded["recording"]["state"], "recorded", "{loaded}");
+    assert_eq!(
+        app.active_tab().flow_pane.state.deal_samples().len(),
+        3,
+        "the live reading and the file's two"
     );
 }

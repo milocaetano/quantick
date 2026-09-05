@@ -305,6 +305,7 @@ impl QuantickApp {
                 .state
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
+            deal_recording: self.active_tab().deal_status_cell(),
             venue_bars,
             backfilled_bars: backfilled,
             live_bars: live,

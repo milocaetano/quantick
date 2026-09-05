@@ -90,6 +90,70 @@ fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
 }
 
 #[test]
+fn a_deal_count_change_recuts_the_bars() {
+    use quantick_engine::{DealSample, Side, Trade};
+
+    let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
+    {
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.kind = crate::state::BarKind::Trades;
+        pane.deals_n = 20;
+    }
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec(),
+        &BarSpec::Trades(20)
+    );
+
+    // A reading every four prints of one contract, forty deals apart: a
+    // rate of ten deals per contract from the second reading on.
+    let tab = app.active_tab_mut();
+    let mut readings = [(999, 100_u64), (1_399, 140), (1_799, 180), (2_199, 220)]
+        .into_iter()
+        .peekable();
+    for i in 0..11_u64 {
+        let at = 1_000 + i as i64 * 100;
+        while let Some(&(time_ms, session_deals)) = readings.peek() {
+            if time_ms > at {
+                break;
+            }
+            tab.observe_deal_counter(DealSample {
+                time_ms,
+                session_deals,
+            });
+            readings.next();
+        }
+        tab.flow_pane.state.ingest_live(&Trade {
+            agg_id: i + 1,
+            timestamp_ms: at,
+            price: rust_decimal::Decimal::from(100),
+            quantity: rust_decimal::Decimal::ONE,
+            side: Side::Buy,
+        });
+    }
+    assert_eq!(
+        tab.flow_pane.state.bars().len(),
+        3,
+        "every 20 deals: 160, 180 and 200"
+    );
+
+    // The trader types a new count: the selector settles, the bars re-cut.
+    app.active_tab_mut().flow_pane.deals_n = 40;
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec(),
+        &BarSpec::Trades(40)
+    );
+    assert_eq!(
+        app.active_tab().flow_pane.state.bars().len(),
+        2,
+        "every 40 deals: 160 and 200"
+    );
+}
+
+#[test]
 fn a_still_moving_selector_keeps_deferring_the_rebuild() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().flow_pane.tick_n = 100;

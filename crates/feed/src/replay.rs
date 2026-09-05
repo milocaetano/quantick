@@ -376,6 +376,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             // returns no older print under any reach.
             history_paging: false,
             traded_volume: true,
+            deal_counter: false,
             // The candles are the record it *can* page, and only when one was
             // downloaded beside it — which the chart marks as broker candles
             // wherever it draws them, so the trader reads what they got.

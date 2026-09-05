@@ -4421,6 +4421,244 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Starts or stops writing the session deal counter a MetaTrader B3 bridge stamps on its live ticks, so the tab's trades bars cover the day and a recorded day reopens as the same chart, and loads a recorded day's readings into the tab's panes. Starting resumes today's file when there is one; stopping keeps what was written. The same calls the REC control beside the symbol makes. A tab whose feed has no deal counter answers with no recording and changes nothing, unless a day recorded earlier is on disk: then it lists it (state `unsupported`) and `load_day` opens it. `record_by_default` sets the standing choice the Tools menu's checkbox sets, saved with the workspace, and every answer reports it.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.deal_recording.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab, and whether to record. Omitted tab means the one the trader is\nlooking at — the same default every other cockpit call takes.",
+        "properties": {
+          "enabled": {
+            "description": "`true` starts recording (resuming today's file if there is one),\n`false` stops it and keeps what was written. Omitted leaves the\nrecorder as it is — for a call that only loads a day.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "load_day": {
+            "description": "A recorded day to load into the tab's panes, `YYYY-MM-DD` as\n`feed.status` lists it under `recorded_days` — the popover's own\nclick, as a call. A day that is not recorded is refused by name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "record_by_default": {
+            "description": "The standing choice — record by default on every tab whose feed\ncarries a counter — the Tools menu's checkbox, as a call. Saved with\nthe workspace. Omitted leaves it as it is.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.feed.status` reports it."
+          }
+        },
+        "title": "DealRecordingInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "DealRecordingSnapshot": {
+            "description": "The recorder as the chrome reads it, on the wire.",
+            "properties": {
+              "counter_stale": {
+                "description": "The counter has not moved for the stale span while prints kept\ncoming — REC on (state `stale`) or off, where the chart's chip says\n`counter stale` or `counter stuck at 0` (`session_deals` 0).",
+                "type": "boolean"
+              },
+              "deal_count_available": {
+                "description": "Whether a `trades` pane has a count to cut on right now.",
+                "type": "boolean"
+              },
+              "error": {
+                "description": "The last write or read error, if the recorder hit one.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "file": {
+                "description": "The file being written, while recording.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "first_reading_unix_ms": {
+                "description": "When the first reading of this run arrived, written to a file or not.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "loaded_days": {
+                "description": "Days whose readings were loaded into the panes this session.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "record_by_default": {
+                "description": "The standing choice: record by default wherever a feed carries a\ncounter — what the Tools menu's checkbox reads, saved with the\nworkspace.",
+                "type": "boolean"
+              },
+              "recorded_days": {
+                "description": "Days recorded under this symbol, oldest first.",
+                "items": {
+                  "$ref": "#/$defs/RecordedDaySnapshot"
+                },
+                "type": "array"
+              },
+              "samples_written": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Lines written to that file this run."
+              },
+              "session_deals": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The newest reading of the venue's session deal counter."
+              },
+              "since_unix_ms": {
+                "description": "Where the open file starts, on the tape's clock — the recording's own\n\"since\", resumed or written this run. What the REC button shows.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not),\n`recorded` (the readings on screen came from a file) or `unsupported`\n(the feed declares no counter; a day recorded earlier may still be\nlisted and loaded).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "record_by_default",
+              "counter_stale",
+              "samples_written",
+              "deal_count_available",
+              "recorded_days",
+              "loaded_days"
+            ],
+            "type": "object"
+          },
+          "RecordedDaySnapshot": {
+            "properties": {
+              "day": {
+                "description": "`YYYY-MM-DD` in the display timezone.",
+                "type": "string"
+              },
+              "first_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "from_open": {
+                "description": "Whether the recording started with the counter barely begun.",
+                "type": "boolean"
+              },
+              "last_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "samples": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "session_deals": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The counter's last reading that day."
+              }
+            },
+            "required": [
+              "day",
+              "first_unix_ms",
+              "last_unix_ms",
+              "session_deals",
+              "samples",
+              "from_open"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What the call did: the tab, and the recorder as it stands afterwards.",
+        "properties": {
+          "recording": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DealRecordingSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`None` when the tab's feed has no deal counter — the call changed\nnothing, and says so rather than failing."
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "symbol"
+        ],
+        "title": "DealRecordingResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stale caller can only set a state the recorder is already in, or start a recording a hand just stopped — which the next call undoes. The result names the tab and the recorder's state afterwards, so a caller that guessed wrong can see it did.",
+      "title": "Record the venue's deal counter",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
       "destructive": false,
       "dry_run_supported": false,
@@ -9055,6 +9293,10 @@
               "timeline_revision": {
                 "$ref": "#/$defs/WireU64"
               },
+              "uncounted_prints": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Prints the pane's rule could place in no bar — a deal bar's prints\nbefore its first counter reading. Zero for every other rule. The\nnumber the chart-corner chip shows, as data."
+              },
               "venue_history_bar_count": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -9078,6 +9320,7 @@
               "timeline_revision",
               "pagination_revision",
               "closed_bar_count",
+              "uncounted_prints",
               "venue_history_bar_count",
               "has_in_progress_bar",
               "viewport",
@@ -9202,9 +9445,102 @@
       ],
       "schema": {
         "$defs": {
+          "DealRecordingSnapshot": {
+            "description": "The recorder as the chrome reads it, on the wire.",
+            "properties": {
+              "counter_stale": {
+                "description": "The counter has not moved for the stale span while prints kept\ncoming — REC on (state `stale`) or off, where the chart's chip says\n`counter stale` or `counter stuck at 0` (`session_deals` 0).",
+                "type": "boolean"
+              },
+              "deal_count_available": {
+                "description": "Whether a `trades` pane has a count to cut on right now.",
+                "type": "boolean"
+              },
+              "error": {
+                "description": "The last write or read error, if the recorder hit one.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "file": {
+                "description": "The file being written, while recording.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "first_reading_unix_ms": {
+                "description": "When the first reading of this run arrived, written to a file or not.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "loaded_days": {
+                "description": "Days whose readings were loaded into the panes this session.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "record_by_default": {
+                "description": "The standing choice: record by default wherever a feed carries a\ncounter — what the Tools menu's checkbox reads, saved with the\nworkspace.",
+                "type": "boolean"
+              },
+              "recorded_days": {
+                "description": "Days recorded under this symbol, oldest first.",
+                "items": {
+                  "$ref": "#/$defs/RecordedDaySnapshot"
+                },
+                "type": "array"
+              },
+              "samples_written": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Lines written to that file this run."
+              },
+              "session_deals": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The newest reading of the venue's session deal counter."
+              },
+              "since_unix_ms": {
+                "description": "Where the open file starts, on the tape's clock — the recording's own\n\"since\", resumed or written this run. What the REC button shows.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "description": "`off`, `recording`, `stale` (the tape flows, the counter does not),\n`recorded` (the readings on screen came from a file) or `unsupported`\n(the feed declares no counter; a day recorded earlier may still be\nlisted and loaded).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "record_by_default",
+              "counter_stale",
+              "samples_written",
+              "deal_count_available",
+              "recorded_days",
+              "loaded_days"
+            ],
+            "type": "object"
+          },
           "FeedCapabilitiesSnapshot": {
             "properties": {
               "book_capture": {
+                "type": "boolean"
+              },
+              "deal_counter": {
                 "type": "boolean"
               },
               "history_paging": {
@@ -9224,6 +9560,7 @@
               "book_capture",
               "history_paging",
               "traded_volume",
+              "deal_counter",
               "venue_ohlcv_history",
               "venue_ohlcv_generation"
             ],
@@ -9317,6 +9654,17 @@
               },
               "connection_state": {
                 "type": "string"
+              },
+              "deal_recording": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DealRecordingSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The deal recorder, where the feed carries a deal counter; absent on\na feed without one. The same view the REC control draws."
               },
               "feed_display_name": {
                 "type": "string"
@@ -9448,6 +9796,42 @@
               "volume",
               "aggressor_side",
               "replay"
+            ],
+            "type": "object"
+          },
+          "RecordedDaySnapshot": {
+            "properties": {
+              "day": {
+                "description": "`YYYY-MM-DD` in the display timezone.",
+                "type": "string"
+              },
+              "first_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "from_open": {
+                "description": "Whether the recording started with the counter barely begun.",
+                "type": "boolean"
+              },
+              "last_unix_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "samples": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "session_deals": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The counter's last reading that day."
+              }
+            },
+            "required": [
+              "day",
+              "first_unix_ms",
+              "last_unix_ms",
+              "session_deals",
+              "samples",
+              "from_open"
             ],
             "type": "object"
           },

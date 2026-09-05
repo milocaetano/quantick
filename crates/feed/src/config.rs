@@ -25,6 +25,20 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    /// Whether a session of this provider *may* carry the venue's deal
+    /// counter — the static half, narrowed at hello the way
+    /// [`capabilities`](Self::capabilities) is: a MetaTrader session on a
+    /// quoted CFD declares none. What a config validator asks before a
+    /// chart opens on `trades:N` or records; the interface still asks the
+    /// session.
+    #[must_use]
+    pub fn may_count_deals(self) -> bool {
+        match self {
+            ProviderKind::Binance | ProviderKind::Hyperliquid => false,
+            ProviderKind::MetaTrader => true,
+        }
+    }
+
     /// Whether this provider actually streams data today. Future providers
     /// land as config-visible placeholders first, labelled "(soon)" in the UI.
     #[must_use]
@@ -51,6 +65,7 @@ impl ProviderKind {
                 book_capture: true,
                 history_paging: true,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             },
@@ -66,6 +81,7 @@ impl ProviderKind {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             },
@@ -85,6 +101,7 @@ impl ProviderKind {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
             },
@@ -137,6 +154,16 @@ pub struct FeedCapabilities {
     /// a tick bar with a misleading name, and a bubble layer would draw one
     /// identical circle per print.
     pub traded_volume: bool,
+    /// Its live prints come with the venue's own count of exchange deals.
+    ///
+    /// MetaTrader folds several deals into one tick and publishes only the
+    /// session's running total, which the bridge stamps on every live tick
+    /// (`deals` in `bridge/mt5/PROTOCOL.md`). A deal bar — the chart's
+    /// `trades` kind — can be cut only where that count exists, so the kind
+    /// is offered only here. Per session, learned at hello; never true of a
+    /// quoted CFD, of a bridge older than the stamp, or of a feed that has
+    /// not said so.
+    pub deal_counter: bool,
     /// Can serve venue-native candle history for the time pane.
     ///
     /// Deliberately not folded into
@@ -174,6 +201,7 @@ impl FeedCapabilities {
             book_capture: false,
             history_paging: false,
             traded_volume: false,
+            deal_counter: false,
             ohlcv_history: false,
             ohlcv_generation: 0,
         }

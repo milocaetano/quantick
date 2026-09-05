@@ -151,9 +151,17 @@
 # the paper-policy branch was editing in parallel, and moving them would have
 # turned that branch's edits into modify/delete conflicts. It has since landed,
 # so giving the constructor a shape is the next cut's job, not this one's.
-!budget 52139
+# +86 for the trades-bars branch (`feat/trades-bars-b3`), the four raises
+# signed on their entries below: app.rs 7, pane.rs 37, tab.rs 26, stream.rs
+# 24 (+94 in all). Nothing left the trunk to pay for them -- the branch's own tightening
+# of app.rs was overtaken by the sidecar cuts that took app.rs from 9,282 to
+# 1,932 -- so this is a raise. Measured, 52,139 -> 52,233.
+!budget 52233
 
-crates/app/src/app.rs 1932
+# +7 for the trades-bars branch: the `record_deals` field and its
+# constructor line, and the `mod deal_recording_wiring;` registration. The
+# behaviour is the sidecar; the trunk carries the docking lines only.
+crates/app/src/app.rs 1939
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -253,12 +261,22 @@ crates/app/src/paper_trading.rs 4589
 # badge's repair to `badge_text_for` -- is not undone: those lines moved to
 # `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
 # simply not here.
-crates/app/src/pane.rs 5618
+# +37 for the trades-bars branch: the `deals_n` parameter beside its five
+# siblings and the `BarSpec::Trades` arm in the matches that enumerate every
+# kind (13); `reset_series` split in two, the plain reset for a new market
+# and a keeping variant for the same market restarting (17); `rebuild_bars`,
+# the pane-level rebuild for readings put under bars already folded (7).
+crates/app/src/pane.rs 5655
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-crates/app/src/tab.rs 4472
+# +26 for the trades-bars branch: the `deal_recorder` field, one event arm,
+# one per-drain call and the readings handed to a seeded pane (8); the
+# readings put aside for a replay and restored after it (3); the one recut
+# path a spec switch and readings under folded bars share (12); the reason
+# a recut disarms with is the caller's (4). Measured 4,498.
+crates/app/src/tab.rs 4498
 crates/app/src/control/gateway.rs 4142
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
@@ -269,7 +287,15 @@ crates/app/src/footprint_render.rs 2236
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
-crates/feed-mt5/src/stream.rs 2200
+# Raised 10 for the trades-bars branch: an `Mt5Event::DealCounter` variant,
+# the `deal_counter` hello field, the one send that forwards a reading ahead
+# of its print and the offset the heartbeat restates. The reduction is
+# `deals.rs`; the loop only forwards.
+# +6 by the sixteenth bug pass: the heartbeat releases the reading a round
+# was waiting on. Signed in the budget note above.
+# +8 by the seventeenth: the reading a round was still waiting on is flushed
+# when the connection ends, not only on a heartbeat.
+crates/feed-mt5/src/stream.rs 2224
 crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718

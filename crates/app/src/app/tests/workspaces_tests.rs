@@ -414,6 +414,7 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
         symbol_bubble_presets: Default::default(),
         default_layout: None,
         default_bars: None,
+        record_deals: false,
     });
     let mut app = app_on(config, "binance", "TESTUSDT");
     let opened_with = app.active_tab().tape().active_preset_for_test().to_string();
@@ -538,6 +539,7 @@ fn a_restored_workspace_puts_the_window_back() {
             history_reach: None,
             history_reach_span_minutes: None,
             venue_lead_in: false,
+            record_deals: None,
             inspector_position: Some([260.0, 480.0]),
         }),
     ));

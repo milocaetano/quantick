@@ -1171,6 +1171,8 @@ pub struct ChartPane {
     pub time_interval_ms: i64,
     pub imbalance_target: u64,
     pub imbalance_unit: ImbalanceUnit,
+    /// Deals per bar for [`BarKind::Trades`] (ProfitChart's `2000T`).
+    pub deals_n: u64,
 
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
@@ -1421,8 +1423,10 @@ impl ChartPane {
         let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
         let mut imbalance_target = 100;
         let mut imbalance_unit = ImbalanceUnit::Trades;
+        let mut deals_n = 2_000;
         match &spec {
             BarSpec::Tick(n) => tick_n = *n,
+            BarSpec::Trades(n) => deals_n = *n,
             BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
             BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
             BarSpec::Time(ms) => time_interval_ms = *ms,
@@ -1467,6 +1471,7 @@ impl ChartPane {
             time_interval_ms,
             imbalance_target,
             imbalance_unit,
+            deals_n,
             viewport: Viewport::new(),
             last_lane_divider_x: None,
             last_chart_rect: None,
@@ -1559,6 +1564,7 @@ impl ChartPane {
         self.kind = spec.kind();
         match &spec {
             BarSpec::Tick(n) => self.tick_n = *n,
+            BarSpec::Trades(n) => self.deals_n = *n,
             BarSpec::Volume(units) => {
                 self.volume_units = units.to_f64().unwrap_or(self.volume_units);
             }
@@ -1575,6 +1581,17 @@ impl ChartPane {
         if changed {
             self.bump_pagination_revision();
         }
+    }
+
+    /// Cut every bar again from the retained prints and readings — after a
+    /// resumed file or a loaded day put readings under prints already
+    /// folded. The closed-bar prefix is rewritten, so the pagination
+    /// revision moves; the rest of a rewrite's bookkeeping — the view, the
+    /// marks, the indicators, the strategies — is the tab's, through
+    /// `Tab::recut_pane_with`, which is how every caller reaches this.
+    pub fn rebuild_bars(&mut self) {
+        self.state.rebuild_bars();
+        self.bump_pagination_revision();
     }
 
     /// Revision protecting the closed-bar prefix exposed through paginated
@@ -2041,6 +2058,7 @@ impl ChartPane {
             BarKind::Imbalance => {
                 BarSpec::Imbalance(self.imbalance_unit, self.imbalance_target.max(1))
             }
+            BarKind::Trades => BarSpec::Trades(self.deals_n.max(1)),
         }
     }
 
@@ -2484,6 +2502,15 @@ impl ChartPane {
     /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
     /// exist, because an empty series can answer nothing.
     pub fn reset_series(&mut self) {
+        self.reset_series_with(false);
+    }
+
+    /// [`Self::reset_series`], keeping the counter readings when the source
+    /// restarts the *same* market — a feed reload, a replay seek — since the
+    /// prints replayed afterwards join to them as the first pass did. A
+    /// symbol switch or a replay opening passes `false`, or the old market's
+    /// readings would cut the new one's prints.
+    pub fn reset_series_with(&mut self, keep_readings: bool) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
@@ -2492,7 +2519,11 @@ impl ChartPane {
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
-        self.state = ChartState::new(self.current_spec());
+        if keep_readings {
+            self.state.reset_series(self.current_spec());
+        } else {
+            self.state = ChartState::new(self.current_spec());
+        }
         self.bump_pagination_revision();
         self.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing
@@ -2512,10 +2543,16 @@ impl ChartPane {
     /// market already holds, keeping the backfill/live boundary where it was:
     /// a trade that was streamed live must not become "history" just because
     /// this view was opened late.
-    pub fn seed_from(&mut self, trades: &[quantick_engine::Trade], backfill_count: usize) {
+    pub fn seed_from(
+        &mut self,
+        trades: &[quantick_engine::Trade],
+        backfill_count: usize,
+        deal_samples: &[quantick_engine::DealSample],
+    ) {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
+        self.state.observe_deals_batch(deal_samples);
         let split = backfill_count.min(trades.len());
         self.state.ingest_backfill(&trades[..split]);
         for trade in &trades[split..] {

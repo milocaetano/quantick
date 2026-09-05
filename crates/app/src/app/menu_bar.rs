@@ -725,6 +725,7 @@ impl QuantickApp {
                             self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
+                        self.draw_record_deals_toggle(ui);
                         let access_label = self
                             .control_access
                             .as_ref()

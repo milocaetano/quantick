@@ -640,6 +640,8 @@ impl QuantickApp {
                 // history block already have the loading overlay above, and a
                 // second badge beside it would be the interface talking about
                 // itself twice.
+                // The deal-recording chip, left of the offline chip's corner.
+                crate::deal_recording_ui::draw_corner(ui, area, tab, stall.as_ref());
                 if let Some(report) = feed_notice::report(&tab.notice, stall.as_ref())
                     && report.is_offline()
                 {

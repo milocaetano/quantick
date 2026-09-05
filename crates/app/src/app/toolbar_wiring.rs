@@ -120,6 +120,12 @@ impl QuantickApp {
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
         let layout_picker_autostart = self.harness.take_layout_picker_autostart();
+        let deal_recording = self.active_tab().deal_recording_view();
+        let deal_recording_menu =
+            deal_recording.is_some() && self.harness.take_deal_recording_menu();
+        // Sticky until the combo consumed it: the first frames may draw no
+        // toolbar yet, and a hook taken then would open nothing.
+        let mut bars_menu = self.harness.bars_menu_pending();
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -138,6 +144,10 @@ impl QuantickApp {
             replay,
             kind: &mut pane.kind,
             tick_n: &mut pane.tick_n,
+            deals_n: &mut pane.deals_n,
+            deal_recording,
+            deal_recording_menu,
+            bars_menu: &mut bars_menu,
             volume_units: &mut pane.volume_units,
             dollar_notional: &mut pane.dollar_notional,
             time_interval_ms: &mut pane.time_interval_ms,
@@ -175,6 +185,9 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.layout_picker_open = layout_picker_open;
+        if !bars_menu {
+            self.harness.clear_bars_menu();
+        }
         self.set_history_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
@@ -229,6 +242,9 @@ impl QuantickApp {
             ToolbarAction::LoadOlder => {
                 let (tab, config) = self.active_with_config();
                 tab.request_older_history(config);
+            }
+            ToolbarAction::DealRecording(action) => {
+                self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => {
                 // Read before the tab is borrowed mutably — and the capability

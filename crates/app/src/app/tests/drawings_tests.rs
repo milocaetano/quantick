@@ -22,6 +22,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 book_capture: false,
                 history_paging: false,
                 traded_volume: false,
+                deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
             }),
@@ -515,7 +516,7 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
 
     // The seek: the bars go, the round trip stays, and the tape refills
     // from a print older than both of its fills.
-    app.active_tab_mut().reset_market_state();
+    app.active_tab_mut().reset_market_state(true);
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(0)]))
         .unwrap();

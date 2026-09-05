@@ -236,9 +236,11 @@ fn test_config() -> AppConfig {
             symbol_bubble_presets: Default::default(),
             default_layout: None,
             default_bars: None,
+            record_deals: false,
         }],
         metatrader: Default::default(),
         paper: Default::default(),
+        deals: Default::default(),
         history: Default::default(),
     }
 }
@@ -986,6 +988,7 @@ fn chrome_with_popup_at(position: Option<[f32; 2]>) -> ui_state::SavedChrome {
         history_reach: None,
         history_reach_span_minutes: None,
         venue_lead_in: false,
+        record_deals: None,
         inspector_position: position,
     }
 }
@@ -1498,6 +1501,7 @@ fn app_backfilled_with(
                 book_capture: false,
                 history_paging: true,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             }),
@@ -1621,6 +1625,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
             FeedConfig {
                 id: "b3".to_string(),
@@ -1631,6 +1636,7 @@ fn two_metatrader_feeds() -> AppConfig {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
         ],
         metatrader: crate::config::MetaTraderSettings {
@@ -1638,6 +1644,7 @@ fn two_metatrader_feeds() -> AppConfig {
             ..Default::default()
         },
         paper: Default::default(),
+        deals: Default::default(),
         history: Default::default(),
     }
 }

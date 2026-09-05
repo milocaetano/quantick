@@ -242,6 +242,16 @@ pub struct ToolbarModel<'a> {
     /// What θ accumulates for [`BarKind::Imbalance`]: trades, volume or
     /// dollar (López de Prado's TIB/VIB/DIB).
     pub imbalance_unit: &'a mut ImbalanceUnit,
+    /// Parameter for [`BarKind::Trades`].
+    pub deals_n: &'a mut u64,
+    /// The deal recorder as the REC control draws it; `None` on a feed with
+    /// no counter, where no REC control is drawn.
+    pub deal_recording: Option<crate::deal_recording::RecordingView>,
+    /// Open the REC popover this frame — the launch hook's one-shot.
+    pub deal_recording_menu: bool,
+    /// `QUANTICK_BARS_MENU`: open the bar-kind combo, cleared once it did —
+    /// the entries a source cannot offer, listed disabled, need no hand then.
+    pub bars_menu: &'a mut bool,
     /// Where the history menu's own button ended up, written back by the draw.
     ///
     /// Published for the same reason the Workspace menu's rect is: a menu is a
@@ -357,6 +367,8 @@ pub enum ToolbarAction {
     SetLayout(&'static crate::canvas_layout::LayoutPreset),
     /// Fetch and prepend one page of older trades.
     LoadOlder,
+    /// What the REC control beside the symbol asked for.
+    DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
     ///
     /// The trade twin above and this one are two different records — a page of
@@ -421,14 +433,21 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
+            // REC never folds, so its width comes off the top before the
+            // plan decides what does.
+            let rec_width = if model.deal_recording.is_some() {
+                crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + ui.spacing().item_spacing.x
+            } else {
+                0.0
+            };
             let plan = collapse_plan(
-                ui.available_width(),
+                ui.available_width() - rec_width,
                 trade_width(&model.paper),
                 param_width(*model.kind),
             );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                draw_source(ui, model, plan);
+                draw_source(ui, model, plan, &mut actions);
                 ui.separator();
                 draw_bars(ui, model, plan);
                 if plan.history_inline {
@@ -480,7 +499,12 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
 }
 
 /// SOURCE: feed + symbol combos, or the amber session label during replay.
-fn draw_source(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
+fn draw_source(
+    ui: &mut egui::Ui,
+    model: &mut ToolbarModel,
+    plan: CollapsePlan,
+    actions: &mut Vec<ToolbarAction>,
+) {
     if let Some(replay) = &model.replay {
         ui.label(egui::RichText::new("source:").color(theme::TEXT_MUTED));
         ui.label(
@@ -518,6 +542,14 @@ fn draw_source(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) 
                 ui.selectable_value(model.symbol, symbol.clone(), symbol);
             }
         });
+    // REC sits with the symbol, not with the bar kind: recording is a fact
+    // about the asset, and switching the pane to tick leaves it untouched.
+    if let Some(view) = &model.deal_recording
+        && let Some(action) =
+            crate::deal_recording_ui::draw_button(ui, view, *model.kind, model.deal_recording_menu)
+    {
+        actions.push(ToolbarAction::DealRecording(action));
+    }
 }
 
 /// BARS: the kind combo, with the parameter beside it or merged into its
@@ -530,20 +562,38 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         format!("{} · {}", model.kind.label(), param_summary(model))
     };
     let traded_volume = model.capabilities.traded_volume;
+    let deal_counter = model.capabilities.deal_counter;
+    // Usable once a count exists — REC has run, or a recorded day is loaded.
+    let deal_count_available = model
+        .deal_recording
+        .as_ref()
+        .is_some_and(crate::deal_recording::RecordingView::deal_count_available);
+    if std::mem::take(model.bars_menu) {
+        // The combo's own popup id: the salt *as an `Id`* under this `Ui`, as
+        // `from_id_salt` derives it — a `&str` salt opens nothing.
+        let salt = egui::Id::new("bar_kind");
+        let popup = ui.make_persistent_id(salt).with("popup");
+        ui.memory_mut(|memory| memory.open_popup(popup));
+    }
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
             for kind in BarKind::ALL {
-                // A rule that counts traded size is offered only where size is
-                // real. On a quote-driven feed it would silently become a tick
-                // bar under another name.
-                let usable = traded_volume || !kind.needs_traded_volume();
-                ui.add_enabled_ui(usable, |ui| {
+                // A rule that counts traded size, or the venue's deals, is
+                // offered only where the source has them; elsewhere it would
+                // silently be a tick bar under another name. Listed disabled
+                // with its reason, never hidden — a pane restored on `trades`
+                // before the hello lands shows a kind the combo must name.
+                let disabled_reason = crate::bar_kind_reason::disabled_reason(
+                    kind,
+                    traded_volume,
+                    deal_counter,
+                    deal_count_available,
+                );
+                ui.add_enabled_ui(disabled_reason.is_none(), |ui| {
                     let item = ui.selectable_value(model.kind, kind, kind.label());
-                    if !usable {
-                        item.on_disabled_hover_text(
-                            "this source quotes prices but prints no traded volume",
-                        );
+                    if let Some(reason) = disabled_reason {
+                        item.on_disabled_hover_text(reason);
                     }
                 });
             }
@@ -558,8 +608,20 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
 fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     match model.kind {
         BarKind::Tick => {
-            ui.label("N trades");
+            // "ticks", as the status bar counts them: beside a kind that
+            // counts the venue's deals, "trades" would claim the two agree.
+            ui.label("N ticks");
             ui.add(egui::DragValue::new(model.tick_n).range(1.0..=5000.0));
+        }
+        BarKind::Trades => {
+            // ProfitChart's Trades chart accepts up to 100 000 per candle,
+            // and a mini-index trader arrives with 2 000 to 8 000 in mind.
+            ui.label("N deals");
+            ui.add(
+                egui::DragValue::new(model.deals_n)
+                    .range(1.0..=100_000.0)
+                    .speed(50.0),
+            );
         }
         BarKind::Volume => {
             ui.label("units");
@@ -669,6 +731,7 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 fn param_summary(model: &ToolbarModel) -> String {
     match model.kind {
         BarKind::Tick => model.tick_n.to_string(),
+        BarKind::Trades => model.deals_n.to_string(),
         BarKind::Volume => format!("{:.1}", model.volume_units),
         BarKind::Dollar => format!("{:.0}", model.dollar_notional),
         BarKind::Time => crate::state::fmt_time_interval(*model.time_interval_ms),
@@ -996,6 +1059,19 @@ fn draw_history_menu(
             "{} 1-minute venue candles held",
             model.history_candles
         ));
+    }
+    // The recorded days, beside the controls that page the tape back to
+    // them: readings and prints for the same day are found in one place.
+    if let Some(view) = &model.deal_recording
+        && !view.days.is_empty()
+    {
+        ui.separator();
+        ui.label("recorded deals");
+        let mut action = None;
+        crate::deal_recording_ui::draw_days(ui, view, &mut action);
+        if let Some(action) = action {
+            actions.push(ToolbarAction::DealRecording(action));
+        }
     }
 }
 
@@ -1627,6 +1703,8 @@ mod tests {
         let mut feed_id = "binance".to_owned();
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Tick;
+        let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1656,6 +1734,10 @@ mod tests {
                         }),
                         kind: &mut kind,
                         tick_n: &mut tick_n,
+                        deals_n: &mut deals_n,
+                        deal_recording: None,
+                        deal_recording_menu: false,
+                        bars_menu: &mut bars_menu,
                         volume_units: &mut volume_units,
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
@@ -1673,6 +1755,7 @@ mod tests {
                             book_capture: !replaying,
                             history_paging: !replaying,
                             traded_volume: true,
+                            deal_counter: false,
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
                         },
@@ -1719,6 +1802,8 @@ mod tests {
         let mut feed_id = "binance".to_owned();
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Time;
+        let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1754,6 +1839,10 @@ mod tests {
                     replay: None,
                     kind: &mut kind,
                     tick_n: &mut tick_n,
+                    deals_n: &mut deals_n,
+                    deal_recording: None,
+                    deal_recording_menu: false,
+                    bars_menu: &mut bars_menu,
                     volume_units: &mut volume_units,
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,
@@ -1771,6 +1860,7 @@ mod tests {
                         book_capture: true,
                         history_paging: true,
                         traded_volume: true,
+                        deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
@@ -1810,6 +1900,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut feed_id = "metatrader".to_owned();
         let mut symbol = "US500".to_owned();
+        let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1839,6 +1931,10 @@ mod tests {
                         replay: None,
                         kind: &mut kind,
                         tick_n: &mut tick_n,
+                        deals_n: &mut deals_n,
+                        deal_recording: None,
+                        deal_recording_menu: false,
+                        bars_menu: &mut bars_menu,
                         volume_units: &mut volume_units,
                         dollar_notional: &mut dollar_notional,
                         time_interval_ms: &mut time_interval_ms,
@@ -1856,6 +1952,7 @@ mod tests {
                             book_capture: false,
                             history_paging: false,
                             traded_volume: false,
+                            deal_counter: false,
                             ohlcv_history: false,
                             ohlcv_generation: 0,
                         },
@@ -1884,6 +1981,8 @@ mod tests {
         let mut feed_id = "binance".to_owned();
         let mut symbol = "BTCUSDT".to_owned();
         let mut kind = BarKind::Tick;
+        let mut deals_n = 2_000_u64;
+        let mut bars_menu = false;
         let mut tick_n = 50_u64;
         let mut volume_units = 5.0_f64;
         let mut dollar_notional = 500_000.0_f64;
@@ -1919,6 +2018,10 @@ mod tests {
                     replay: None,
                     kind: &mut kind,
                     tick_n: &mut tick_n,
+                    deals_n: &mut deals_n,
+                    deal_recording: None,
+                    deal_recording_menu: false,
+                    bars_menu: &mut bars_menu,
                     volume_units: &mut volume_units,
                     dollar_notional: &mut dollar_notional,
                     time_interval_ms: &mut time_interval_ms,
@@ -1936,6 +2039,7 @@ mod tests {
                         book_capture: true,
                         history_paging: true,
                         traded_volume: true,
+                        deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },

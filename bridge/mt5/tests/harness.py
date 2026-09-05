@@ -52,6 +52,13 @@ class FakeTerminal:
         self.from_calls: list[tuple[int, int, int]] = []
         # Ranges answered with a failure, by 1-based call index.
         self.tick_fail_on: set[int] = set()
+        # The venue's session deal counter, as `symbol_info` reports it.
+        # `None` is a terminal that has no such field.
+        self.session_deals: int | None = None
+
+    def symbol_info(self, _symbol):
+        """The one field of `symbol_info` the deal stamp reads."""
+        return types.SimpleNamespace(session_deals=self.session_deals)
 
     def copy_ticks_range(self, _symbol, from_s, to_s, flags):
         self.tick_calls.append((int(from_s), int(to_s), int(flags)))
@@ -114,6 +121,7 @@ def load_bridge(terminal: FakeTerminal):
     module.copy_rates_from = terminal.copy_rates_from
     module.copy_ticks_range = terminal.copy_ticks_range
     module.copy_ticks_from = terminal.copy_ticks_from
+    module.symbol_info = terminal.symbol_info
     module.COPY_TICKS_ALL = COPY_TICKS_ALL
     module.COPY_TICKS_TRADE = COPY_TICKS_TRADE
     module.last_error = terminal.last_error
@@ -149,6 +157,7 @@ def session_for(bridge, terminal, **args):
     session.offset_s = 0
     session.digits = 0
     session.tape = "trades"
+    session.deal_counter = False
     session.sent: list[dict] = []
     session.send = session.sent.append
     # The tick half's own state, which `__init__` would have set.

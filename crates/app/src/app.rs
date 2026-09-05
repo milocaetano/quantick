@@ -20,6 +20,7 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod chart_layers_wiring;
 mod control_host;
+mod deal_recording_wiring;
 mod demo_hooks;
 mod drawing_chrome_wiring;
 mod drawing_input;
@@ -405,6 +406,11 @@ pub struct QuantickApp {
     /// the only way such a chart can show yesterday at all, since a candle
     /// cannot be folded into a tick bar and must never pretend to be one.
     venue_lead_in: bool,
+    /// Whether a MetaTrader tab starts recording the venue's deal counter
+    /// on its own: the workspace's saved choice, or `None` to follow the
+    /// feed's `record_deals` in the config. Owned by
+    /// `app/deal_recording_wiring.rs`.
+    record_deals: Option<bool>,
 
     // Fixed UTC offset the time axis is displayed in (default UTC−03:00).
     tz: TzOffset,
@@ -633,6 +639,7 @@ impl QuantickApp {
             history_reach: history_reach::HistoryReach::default(),
             history_reach_span_minutes: reach_span_minutes,
             venue_lead_in: false,
+            record_deals: None,
             feed_chip_rect: None,
             // The hook stands in for a click on the opening tab's chip, which
             // is the first tab there is.

@@ -14,8 +14,8 @@
 /// unit next to [`BarSpec`], not off in the engine.
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::{
-    Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, PriceGrid,
-    TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
+    Bar, BarBuilder, BarFootprint, BarProgress, DealBarBuilder, DealSample, DollarBarBuilder,
+    ImbalanceBarBuilder, PriceGrid, TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
 };
 use rust_decimal::Decimal;
 
@@ -35,16 +35,21 @@ pub enum BarKind {
     /// Close when aggressor imbalance beats an adaptive threshold
     /// (López de Prado tick imbalance bars).
     Imbalance,
+    /// Close every N exchange deals, as the venue counts them — ProfitChart's
+    /// *Trades* periodicity. Distinct from [`Tick`](Self::Tick) wherever a
+    /// print folds several deals, which on MetaTrader is every print.
+    Trades,
 }
 
 impl BarKind {
     /// All bar kinds, for building a selector.
-    pub const ALL: [BarKind; 5] = [
+    pub const ALL: [BarKind; 6] = [
         BarKind::Tick,
         BarKind::Volume,
         BarKind::Dollar,
         BarKind::Time,
         BarKind::Imbalance,
+        BarKind::Trades,
     ];
 
     /// A short display label.
@@ -56,7 +61,20 @@ impl BarKind {
             BarKind::Dollar => "dollar",
             BarKind::Time => "time",
             BarKind::Imbalance => "imbalance",
+            BarKind::Trades => "trades",
         }
+    }
+
+    /// Whether this rule counts the venue's deals, and so needs a feed whose
+    /// prints come with that count ([`crate::config::FeedCapabilities::deal_counter`]).
+    ///
+    /// Not offered elsewhere rather than greyed out: without a counter the
+    /// rule has nothing to cut on, and a selector entry that can never work
+    /// would only invite the reading "tick is the same thing", which is the
+    /// misunderstanding this kind exists to correct.
+    #[must_use]
+    pub fn needs_deal_counter(self) -> bool {
+        matches!(self, BarKind::Trades)
     }
 
     /// Whether this rule measures traded size, and so needs a venue that
@@ -74,7 +92,7 @@ impl BarKind {
     pub fn needs_traded_volume(self) -> bool {
         match self {
             BarKind::Volume | BarKind::Dollar => true,
-            BarKind::Tick | BarKind::Time | BarKind::Imbalance => false,
+            BarKind::Tick | BarKind::Time | BarKind::Imbalance | BarKind::Trades => false,
         }
     }
 
@@ -86,6 +104,7 @@ impl BarKind {
             BarKind::Volume => "vol",
             BarKind::Dollar => "notional",
             BarKind::Time => "ms",
+            BarKind::Trades => "deals",
         }
     }
 }
@@ -106,6 +125,9 @@ pub enum BarSpec {
     /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
     /// bar, which counts trades in every unit.
     Imbalance(ImbalanceUnit, u64),
+    /// N exchange deals per bar, joined to prints through the venue's session
+    /// counter ([`ChartState::observe_deals`]).
+    Trades(u64),
 }
 
 impl BarSpec {
@@ -118,6 +140,7 @@ impl BarSpec {
             BarSpec::Dollar(_) => BarKind::Dollar,
             BarSpec::Time(_) => BarKind::Time,
             BarSpec::Imbalance(..) => BarKind::Imbalance,
+            BarSpec::Trades(_) => BarKind::Trades,
         }
     }
 
@@ -133,6 +156,7 @@ impl BarSpec {
             BarSpec::Imbalance(unit, target) => {
                 Box::new(ImbalanceBarBuilder::with_unit(*target, *unit))
             }
+            BarSpec::Trades(n) => Box::new(DealBarBuilder::new(*n)),
         }
     }
 
@@ -159,6 +183,7 @@ impl BarSpec {
             BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
             BarSpec::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
+            BarSpec::Trades(n) => format!("trades({n})"),
         }
     }
 
@@ -182,6 +207,7 @@ impl BarSpec {
             // same chart.
             BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
             BarSpec::Imbalance(unit, target) => format!("imbalance:{}:{target}", unit.as_str()),
+            BarSpec::Trades(n) => format!("trades:{n}"),
         }
     }
 
@@ -221,6 +247,7 @@ impl BarSpec {
         };
         match kind {
             "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
+            "trades" => Ok(BarSpec::Trades(positive_count("trades")?)),
             "imbalance" => {
                 // The parameter is `target` or `unit:target`. The unit picks
                 // what θ accumulates; the target counts trades in every unit.
@@ -259,7 +286,7 @@ impl BarSpec {
                 Ok(BarSpec::Time(ms))
             }
             _ => Err(format!(
-                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance"
+                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
             )),
         }
     }
@@ -376,6 +403,42 @@ pub struct ChartState {
     /// nobody asked for must not tax every ingest. Enabling refolds the
     /// retained trades, so nothing is lost by having been off.
     footprint_enabled: bool,
+    /// Every reading of the venue's deal counter this chart has seen,
+    /// ascending by time, retained beside the trades for the same reason
+    /// they are: a rebuild replays both through a fresh builder. Empty on
+    /// every feed without a counter, so it costs nothing there.
+    deal_samples: Vec<DealSample>,
+    /// Readings that landed in the series behind the newest without
+    /// reaching the live builder: the bars were cut without them until the
+    /// next rebuild, so anything replaying the series meanwhile — the
+    /// footprint refold — leaves them out too, and cuts where the bars are.
+    readings_held: bool,
+}
+
+/// Push one print through `builder` and, with the footprint layer on, fold
+/// it into the ladders — unless the builder left it *uncounted*. A deal bar
+/// counts nothing before its first reading: such a print belongs to no bar,
+/// so it belongs to no ladder either, or the ladders drift off the bars they
+/// index by and the footprint series asserts on the first close.
+fn fold_print<B: BarBuilder + ?Sized>(
+    builder: &mut B,
+    footprints: &mut FootprintSeries,
+    footprint_enabled: bool,
+    trade: &Trade,
+) -> Option<Bar> {
+    let uncounted_before = builder.uncounted_trades();
+    let closed = builder.push(trade);
+    if footprint_enabled {
+        let uncounted = builder.uncounted_trades() != uncounted_before;
+        match (&closed, uncounted) {
+            (_, false) => footprints.observe(trade, closed.as_ref()),
+            // A rollover ended the bar and this print counts for nothing:
+            // the ladder closes on what it held, the print folds nowhere.
+            (Some(bar), true) => footprints.close_without(bar),
+            (None, true) => {}
+        }
+    }
+    closed
 }
 
 impl ChartState {
@@ -398,7 +461,135 @@ impl ChartState {
             price_grid: PriceGrid::new(),
             tape_reference_price: None,
             footprint_enabled: false,
+            deal_samples: Vec::new(),
+            readings_held: false,
         }
+    }
+
+    /// Hand the chart one reading of the venue's deal counter.
+    ///
+    /// Retained and fed to the builder in one motion: a deal builder joins
+    /// the prints that follow to it, every other builder ignores it, and a
+    /// later rebuild — a spec switch, a page of history — replays the
+    /// retained series ahead of the trades so the join is the same one.
+    /// The live feed delivers samples in time order and they append; a
+    /// recorded day loaded behind the live tape is older, and lands at its
+    /// place in the series instead — the next rebuild replays the whole
+    /// series in order, which is how those readings reach the bars. A
+    /// reading already held is not held twice.
+    pub fn observe_deals(&mut self, sample: DealSample) {
+        match self.deal_samples.last() {
+            Some(last) if sample.time_ms < last.time_ms => {
+                // Older than the newest held — a bridge that restarted with
+                // another clock offset. The live builder does not place it
+                // (the engine drops a sample going back in time), and the
+                // live edge is not re-cut for it either: a clock that went
+                // backwards can deliver one such reading per poll for an
+                // hour, and a rebuild per reading would freeze the chart.
+                // It lands at its place in the series, which the next
+                // rebuild replays in order — held once, whichever of the
+                // readings sharing its millisecond it equals. Its place is
+                // by time *and* reading, the order the batch path sorts
+                // into. A lower reading at the newest millisecond is fed as
+                // any other: the builder reads a small dip as a late poll.
+                // After every reading of its millisecond — the series is
+                // ordered by time alone, and a run of one millisecond keeps
+                // arrival order — unless the run already holds it.
+                let at = self
+                    .deal_samples
+                    .partition_point(|held| held.time_ms <= sample.time_ms);
+                let same_ms = self.deal_samples[..at]
+                    .iter()
+                    .rev()
+                    .take_while(|held| held.time_ms == sample.time_ms);
+                if !same_ms.into_iter().any(|held| *held == sample) {
+                    self.deal_samples.insert(at, sample);
+                    self.readings_held = true;
+                }
+            }
+            Some(last) if *last == sample => {}
+            _ => {
+                self.deal_samples.push(sample);
+                self.builder.observe_deals(sample);
+            }
+        }
+    }
+
+    /// Hand the chart a whole series of readings at once — a recorded day,
+    /// a resumed file. One sort and one dedup over the union, never an
+    /// insert per reading: a morning's file against an afternoon's live
+    /// readings is half a million inserts into a hundred thousand, each
+    /// shifting the rest.
+    ///
+    /// The builder is not fed here. A pane cutting by deals is rebuilt by
+    /// the caller straight after, and every other rule replays the retained
+    /// series on its next switch.
+    pub fn observe_deals_batch(&mut self, samples: &[DealSample]) {
+        if samples.is_empty() {
+            return;
+        }
+        self.deal_samples.extend_from_slice(samples);
+        // By time, and stable: two readings can share a millisecond (ticks
+        // do, across poll rounds), and the live builder saw them in arrival
+        // order — a lower one after a higher one is a late poll it ignored.
+        // Sorted by reading as well, a rebuild would replay the lower first
+        // and read the higher as a window, cutting where the live edge did
+        // not. A pair the union holds twice is harmless the same way: the
+        // repeat is a dip or an unchanged reading, and neither is a window.
+        self.deal_samples.sort_by_key(|sample| sample.time_ms);
+        // A reading the union holds twice — the file batched over a live
+        // series that already has it — is held once, wherever inside its
+        // millisecond's run the repeat landed; the order of the run stays.
+        let mut kept: Vec<DealSample> = Vec::with_capacity(self.deal_samples.len());
+        for sample in self.deal_samples.drain(..) {
+            let repeat = kept
+                .iter()
+                .rev()
+                .take_while(|held| held.time_ms == sample.time_ms)
+                .any(|held| *held == sample);
+            if !repeat {
+                kept.push(sample);
+            }
+        }
+        self.deal_samples = kept;
+    }
+
+    /// Start the series over under `spec`, keeping the counter readings.
+    ///
+    /// They are the venue's history, not this series': a feed reload or a
+    /// replay seek replays prints that join to the same readings the first
+    /// pass joined to, and dropping them would leave the morning uncounted
+    /// wherever nothing on disk holds them — REC off, or a day not yet
+    /// flushed.
+    pub fn reset_series(&mut self, spec: BarSpec) {
+        let readings = std::mem::take(&mut self.deal_samples);
+        *self = Self::new(spec);
+        // Into the fresh builder too, ahead of the prints that will come:
+        // the retained series is what a rebuild replays, and the live path
+        // feeds the builder as each reading arrives.
+        for sample in &readings {
+            self.builder.observe_deals(*sample);
+        }
+        self.deal_samples = readings;
+    }
+
+    /// Cut the bars again from the retained prints and readings — after a
+    /// recorded day's readings were loaded under prints already folded.
+    pub fn rebuild_bars(&mut self) {
+        self.rebuild();
+    }
+
+    /// The counter readings this chart holds, ascending by time.
+    #[must_use]
+    pub fn deal_samples(&self) -> &[DealSample] {
+        &self.deal_samples
+    }
+
+    /// Prints the current rule could place in no bar — a deal bar's prints
+    /// before its first counter reading. Zero for every other rule.
+    #[must_use]
+    pub fn uncounted_trades(&self) -> u64 {
+        self.builder.uncounted_trades()
     }
 
     /// Ingest the backfilled history as one batch (call once, before any live
@@ -411,10 +602,12 @@ impl ChartState {
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
         for trade in trades {
-            let closed = self.builder.push(trade);
-            if self.footprint_enabled {
-                self.footprints.observe(trade, closed.as_ref());
-            }
+            let closed = fold_print(
+                &mut *self.builder,
+                &mut self.footprints,
+                self.footprint_enabled,
+                trade,
+            );
             if let Some(bar) = closed {
                 self.bars.push(bar);
             }
@@ -460,10 +653,12 @@ impl ChartState {
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
         self.observe_price(trade.price);
-        let closed = self.builder.push(trade);
-        if self.footprint_enabled {
-            self.footprints.observe(trade, closed.as_ref());
-        }
+        let closed = fold_print(
+            &mut *self.builder,
+            &mut self.footprints,
+            self.footprint_enabled,
+            trade,
+        );
         if let Some(bar) = closed {
             self.bars.push(bar);
         }
@@ -501,7 +696,14 @@ impl ChartState {
     /// Replay every retained trade through a fresh builder for the current spec,
     /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
+        self.readings_held = false;
         let mut builder = self.spec.build();
+        // Readings first, prints after: the builder joins each print to the
+        // newest reading strictly before it, so the order between the two
+        // streams is immaterial as long as every reading is in hand.
+        for sample in &self.deal_samples {
+            builder.observe_deals(*sample);
+        }
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
@@ -509,10 +711,12 @@ impl ChartState {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            let closed = builder.push(trade);
-            if self.footprint_enabled {
-                self.footprints.observe(trade, closed.as_ref());
-            }
+            let closed = fold_print(
+                &mut *builder,
+                &mut self.footprints,
+                self.footprint_enabled,
+                trade,
+            );
             if let Some(bar) = closed {
                 bars.push(bar);
             }
@@ -687,10 +891,22 @@ impl ChartState {
         // reading different inputs from this point on.
         self.bump_series_revision();
         self.footprints.reset(group);
+        // Readings held for the next rebuild: this is one. The ladders must
+        // close where the bars are, and a bar cut without a reading the
+        // series now holds is a bar the next rebuild would move anyway.
+        if self.readings_held {
+            self.rebuild();
+            return;
+        }
         let mut builder = self.spec.build();
+        // Readings first, as `rebuild` does: a deal bar with no readings
+        // counts every print as uncounted, and the ladders would be empty
+        // under bars that are not.
+        for sample in &self.deal_samples {
+            builder.observe_deals(*sample);
+        }
         for trade in &self.trades {
-            let closed = builder.push(trade);
-            self.footprints.observe(trade, closed.as_ref());
+            fold_print(&mut *builder, &mut self.footprints, true, trade);
         }
     }
 
@@ -780,6 +996,7 @@ mod tests {
     fn every_bar_spec_survives_the_config_round_trip() {
         for spec in [
             BarSpec::Tick(50),
+            BarSpec::Trades(2000),
             BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
             BarSpec::Imbalance(ImbalanceUnit::Volume, 500),
             BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500),
@@ -1044,6 +1261,7 @@ mod tests {
             BarSpec::Imbalance(ImbalanceUnit::Trades, 1),
             BarSpec::Imbalance(ImbalanceUnit::Volume, 1),
             BarSpec::Imbalance(ImbalanceUnit::Dollar, 1),
+            BarSpec::Trades(1),
         ] {
             let kind = spec.kind();
             let mut builder = spec.build();
@@ -1052,6 +1270,333 @@ mod tests {
                 assert!(closed.is_some(), "{kind:?}(1) closes immediately");
             }
         }
+    }
+
+    /// A recorded day loaded behind the live tape is older than the live
+    /// readings: it lands in order and the rebuild cuts from the whole
+    /// series, while a reading delivered twice is held once.
+    /// A reading older than the newest held is kept for the next rebuild,
+    /// not cut in at once — the live edge is never re-cut per reading —
+    /// and is held once however many readings share its millisecond.
+    /// A reading at the newest held millisecond with a *lower* count is a
+    /// regression the sampler forwards — a late poll. The builder reads a
+    /// small dip as exactly that, live and rebuilt alike: no bar ends.
+    #[test]
+    fn a_lower_reading_at_the_same_millisecond_is_a_late_poll_live_and_rebuilt() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_099, 5));
+        s.observe_deals(at(1_099, 4));
+        s.ingest_live(&trade(1));
+        assert!(s.bars().is_empty(), "no rollover bar: {:?}", s.bars());
+        assert_eq!(
+            s.deal_samples().len(),
+            2,
+            "held, for the file and the rebuild"
+        );
+        s.rebuild_bars();
+        assert!(s.bars().is_empty(), "the rebuild agrees: {:?}", s.bars());
+    }
+
+    /// A rollover that ends the bar on a print the builder leaves uncounted
+    /// — last night's bar, this morning's first print — closes the ladder
+    /// on what it held and folds the print nowhere, so ladders and bars
+    /// keep the same indices.
+    #[test]
+    fn a_rollover_on_an_uncounted_print_keeps_the_ladders_aligned() {
+        let mut s = ChartState::new(BarSpec::Trades(1_000));
+        s.set_footprint_enabled(true);
+        // Two readings around the first print give the rate (100 per
+        // contract); the second print is credited it and forms a bar.
+        s.observe_deals(DealSample {
+            time_ms: 999,
+            session_deals: 5_000_300,
+        });
+        s.ingest_live(&trade(1));
+        s.observe_deals(DealSample {
+            time_ms: 1_199,
+            session_deals: 5_000_400,
+        });
+        s.ingest_live(&trade(2));
+        assert_eq!(
+            s.partial_footprint().map(|_| ()),
+            Some(()),
+            "a ladder is forming"
+        );
+        // The session restarts, and the next print is far behind the
+        // reading that ended it — beyond what a reading holds for.
+        s.observe_deals(DealSample {
+            time_ms: 1_299,
+            session_deals: 3,
+        });
+        s.ingest_live(&Trade {
+            agg_id: 3,
+            timestamp_ms: 1_300 + 11 * 60_000,
+            price: dec("100"),
+            quantity: dec("1.0"),
+            side: Side::Buy,
+        });
+        assert_eq!(s.bars().len(), 1, "last night's bar ended");
+        assert_eq!(s.bar_footprints().len(), 1, "and its ladder with it");
+        assert_eq!(s.uncounted_trades(), 2, "the first print, and this one");
+        assert!(s.partial_footprint().is_none(), "nothing opened the next");
+    }
+
+    /// A lower reading at the same millisecond, batched in behind a live
+    /// series that already saw the higher one, is replayed in arrival order:
+    /// the rebuild ignores the dip as the live edge did.
+    #[test]
+    fn a_same_millisecond_dip_batched_in_cuts_as_the_live_edge_did() {
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        // Prints at 1100..1400; a reading between each pair, and at 1 299
+        // the higher reading first, the dip after it.
+        let mut live = ChartState::new(BarSpec::Trades(1_000));
+        live.observe_deals(at(999, 1_000));
+        live.ingest_live(&trade(1));
+        live.observe_deals(at(1_199, 1_500));
+        live.ingest_live(&trade(2));
+        live.observe_deals(at(1_299, 2_600));
+        live.observe_deals(at(1_299, 1_700));
+        live.ingest_live(&trade(3));
+        live.ingest_live(&trade(4));
+        assert_eq!(live.bars().len(), 3, "{:?}", live.bars());
+
+        let mut rebuilt = ChartState::new(BarSpec::Trades(1_000));
+        rebuilt.observe_deals_batch(live.deal_samples());
+        rebuilt.ingest_backfill(&[trade(1), trade(2), trade(3), trade(4)]);
+        rebuilt.rebuild_bars();
+        assert_eq!(rebuilt.bars(), live.bars());
+        assert_eq!(rebuilt.uncounted_trades(), live.uncounted_trades());
+    }
+
+    /// A reading held for the next rebuild reaches the ladders only with
+    /// the bars: a refold meanwhile leaves it out, and the ladders close
+    /// where the bars are.
+    #[test]
+    fn a_refold_with_a_held_reading_rebuilds_the_bars_too() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        s.set_footprint_enabled(true);
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_099, 1));
+        s.observe_deals(at(1_299, 6));
+        for id in 1..=3 {
+            s.ingest_live(&trade(id));
+        }
+        s.observe_deals(at(1_199, 4)); // held
+        s.set_footprint_group(dec("2"));
+        assert_eq!(s.bar_footprints().len(), s.bars().len());
+    }
+
+    #[test]
+    fn an_out_of_order_reading_is_held_for_the_next_rebuild() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_099, 1));
+        s.observe_deals(at(1_299, 6));
+        for id in 1..=3 {
+            s.ingest_live(&trade(id));
+        }
+        assert_eq!(s.bars().len(), 1, "the print at 1 300 sees 6 and closes 2");
+        // The reading the bridge had missed: 1 199, at 4. Held, not cut in.
+        s.observe_deals(at(1_199, 4));
+        assert_eq!(s.bars().len(), 1, "the live edge is not re-cut");
+        assert_eq!(s.deal_samples().len(), 3);
+        // A reading re-delivered is held once, whatever else shares its
+        // millisecond.
+        s.observe_deals(at(1_099, 1));
+        s.observe_deals(at(1_099, 1));
+        assert_eq!(s.deal_samples().len(), 3);
+        // The next rebuild: the print at 1 200 crosses 4 and closes 2, the
+        // one at 1 300 crosses 6.
+        s.rebuild_bars();
+        assert_eq!(s.bars().len(), 2, "{:?}", s.bars());
+    }
+
+    #[test]
+    fn older_readings_land_in_order_and_duplicates_are_held_once() {
+        let mut s = ChartState::new(BarSpec::Trades(2));
+        let at = |time_ms: i64, session_deals: u64| DealSample {
+            time_ms,
+            session_deals,
+        };
+        s.observe_deals(at(1_500, 10));
+        s.observe_deals(at(1_500, 10));
+        s.observe_deals(at(1_100, 3));
+        s.observe_deals(at(1_300, 6));
+        s.observe_deals(at(1_100, 3));
+        let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
+        assert_eq!(times, [1_100, 1_300, 1_500]);
+        // A whole file behind the live readings: one sort, the same series.
+        s.observe_deals_batch(&[at(1_300, 6), at(1_000, 1), at(1_200, 4)]);
+        let times: Vec<i64> = s.deal_samples().iter().map(|d| d.time_ms).collect();
+        assert_eq!(times, [1_000, 1_100, 1_200, 1_300, 1_500]);
+        // Two readings at one millisecond, held live and batched again from
+        // the file: each pair folds onto itself, in reading order, so the
+        // rebuild never sees the lower one return.
+        s.observe_deals(at(1_600, 12));
+        s.observe_deals(at(1_600, 14));
+        s.observe_deals_batch(&[at(1_600, 12), at(1_600, 14)]);
+        let tail: Vec<(i64, u64)> = s
+            .deal_samples()
+            .iter()
+            .skip(5)
+            .map(|d| (d.time_ms, d.session_deals))
+            .collect();
+        assert_eq!(tail, [(1_600, 12), (1_600, 14)]);
+        // Prints at 1100..1500 (see `trade`): after a rebuild the first —
+        // under the first window, no rate yet — is uncounted, and the
+        // readings cut three bars from the rest.
+        for id in 1..=5 {
+            s.ingest_live(&trade(id));
+        }
+        s.rebuild_bars();
+        assert_eq!(s.uncounted_trades(), 1);
+        assert_eq!(s.bars().len(), 3, "{:?}", s.bars());
+    }
+
+    /// Recording belongs to the asset: the readings a tab retains survive
+    /// every switch of the bar rule, so `tick → trades → tick → trades`
+    /// cuts the same deal bars each time, and the prints before the first
+    /// reading are counted rather than folded into a bar nobody cut.
+    /// A series reset — a feed reload, a replay seek — keeps the readings:
+    /// the prints replayed afterwards join to them as the first pass did.
+    /// A print a deal bar leaves uncounted belongs to no bar, so it belongs
+    /// to no ladder either: the footprint series stays aligned with the bars
+    /// instead of drifting — and asserting — on the first print before a
+    /// reading. Found by the trader's own workspace, footprint on.
+    #[test]
+    fn uncounted_prints_form_no_footprint_ladder() {
+        let mut s = ChartState::new(BarSpec::Trades(2_000));
+        s.set_footprint_enabled(true);
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        assert_eq!(s.uncounted_trades(), 2);
+        assert!(
+            s.partial_footprint().is_none(),
+            "nothing folds before a reading"
+        );
+        s.observe_deals(DealSample {
+            time_ms: 1_299,
+            session_deals: 3_990,
+        });
+        s.ingest_live(&trade(3));
+        // The window completes at 9 deals over one contract: the next
+        // print is credited 9 and crosses 4 000.
+        s.observe_deals(DealSample {
+            time_ms: 1_399,
+            session_deals: 3_999,
+        });
+        s.ingest_live(&trade(4));
+        assert_eq!(s.bars().len(), 1);
+        assert_eq!(s.bars()[0].trade_count, 1);
+        assert_eq!(
+            s.uncounted_trades(),
+            3,
+            "two before any reading, one before a rate"
+        );
+        assert_eq!(s.bar_footprints().len(), 1);
+        // A refold and a rebuild keep the alignment too.
+        s.set_footprint_group(dec("2"));
+        assert_eq!(s.bar_footprints().len(), 1);
+        s.set_spec(BarSpec::Tick(2));
+        s.set_spec(BarSpec::Trades(2_000));
+        assert_eq!(s.bar_footprints().len(), s.bars().len());
+    }
+
+    #[test]
+    fn a_series_reset_keeps_the_readings() {
+        let mut s = ChartState::new(BarSpec::Trades(2_000));
+        s.observe_deals(DealSample {
+            time_ms: 1_000,
+            session_deals: 3_990,
+        });
+        s.observe_deals(DealSample {
+            time_ms: 1_150,
+            session_deals: 3_999,
+        });
+        s.ingest_live(&trade(1));
+        s.ingest_live(&trade(2));
+        assert_eq!(
+            s.bars().len(),
+            1,
+            "the print at 1 200 is credited the window's 9 and crosses 4 000"
+        );
+
+        s.reset_series(BarSpec::Trades(2_000));
+        assert!(s.bars().is_empty(), "the series is gone");
+        assert_eq!(s.deal_samples().len(), 2, "the readings are not");
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        assert_eq!(s.bars().len(), 1, "the replayed prints cut the same bar");
+    }
+
+    #[test]
+    fn deal_readings_survive_a_switch_of_the_bar_rule() {
+        let mut s = ChartState::new(BarSpec::Tick(2));
+        // Prints at 1100, 1200, ... (see `trade`); readings just ahead of
+        // the prints at 1300 and 1500, as the feed sends them.
+        s.ingest_backfill(&[trade(1), trade(2)]);
+        s.observe_deals(DealSample {
+            time_ms: 1299,
+            session_deals: 3_990,
+        });
+        s.ingest_live(&trade(3));
+        s.ingest_live(&trade(4));
+        s.observe_deals(DealSample {
+            time_ms: 1499,
+            session_deals: 4_003,
+        });
+        s.ingest_live(&trade(5));
+        assert_eq!(s.bars().len(), 2, "two tick bars of two prints");
+        assert_eq!(
+            s.uncounted_trades(),
+            0,
+            "a tick rule counts nothing as uncounted"
+        );
+
+        s.set_spec(BarSpec::Trades(2_000));
+        assert!(
+            s.bars().is_empty(),
+            "4 003 plus one print's estimate reaches no multiple"
+        );
+        assert_eq!(
+            s.partial().map(|bar| bar.trade_count),
+            Some(1),
+            "the print at 1500, credited the first window's rate"
+        );
+        assert_eq!(
+            s.uncounted_trades(),
+            4,
+            "two before the first reading, two before the first rate"
+        );
+        assert_eq!(s.deal_samples().len(), 2);
+
+        s.set_spec(BarSpec::Tick(2));
+        assert_eq!(s.bars().len(), 2);
+        s.set_spec(BarSpec::Trades(2_000));
+        assert_eq!(
+            s.uncounted_trades(),
+            4,
+            "the readings were retained across both switches"
+        );
+        // Prints with a rate advance the countdown in estimated deals, not
+        // prints: the window's 13 deals over two contracts credit the print
+        // at 1500 six and a half, past the re-anchored 4 003.
+        let (progress, unit) = s.progress().expect("a deal bar runs toward a fixed count");
+        assert_eq!(unit, "deals");
+        // From where the forming bar opened — the re-anchored 4 003 — not
+        // from the previous multiple.
+        assert_eq!(progress.done, dec("6.5"));
     }
 
     #[test]

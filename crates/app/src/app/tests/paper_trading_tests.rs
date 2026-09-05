@@ -1095,7 +1095,7 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
     app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test".to_owned())
         .expect("arms");
 
-    app.active_tab_mut().reset_market_state();
+    app.active_tab_mut().reset_market_state(true);
 
     let pane = &app.active_tab().flow_pane;
     let instance = pane

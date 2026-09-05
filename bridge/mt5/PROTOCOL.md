@@ -113,6 +113,11 @@ this as an ordinary disconnect and retries on its own schedule; the feed logs
   block below. **Absent means no candles**: an older bridge, the Expert Advisor
   (which does not implement them), or `--rates-months 0`. The feed reports the
   absence instead of leaving a time pane waiting for a block that is not coming.
+- `deal_counter` — *optional*, `true` when this session stamps its **live**
+  ticks with the venue's session deal counter (`deals` below). Only a
+  `"trades"` tape whose terminal reports `SYMBOL_SESSION_DEALS`; a quoted CFD
+  prints no deals and never declares it. **Absent means no**, which is what
+  every bridge written before the field says.
 
 Depth and candle fields are all additive within schema 1: a bridge that predates
 any of them still connects and still streams ticks.
@@ -162,6 +167,20 @@ any of them still connects and still streams ticks.
   delay is invisible in the depth map and fully visible in the bubbles, which
   drift left of the tape's edge until they fall off it. On a `"quotes"` tape
   every tick still travels: there the quotes *are* the data.
+- `deals` — *optional*, the venue's **session deal counter**
+  (`SYMBOL_SESSION_DEALS`) as the bridge read it for the pump round that
+  fetched this tick. MetaTrader folds every fill an aggressor took at one
+  price into a single tick and keeps no count per tick — on B3's mini index,
+  2026-09-03, 5 821 205 session deals arrived as 1 774 869 ticks, volume
+  matching to within 61 contracts — so this running total is the only deal
+  count there is. **Read once per round, after the round's ticks were
+  fetched**, so it is at or past every print it stamps; every tick of a round
+  carries the same number and the feed keeps one sample per change. **Live
+  ticks only**: a history or paged tick has no reading of its own, and
+  stamping today's total on yesterday's print would attach a fact to a tick
+  it is not about. **Absent means no reading** (history, an older bridge, a
+  session whose hello said `deal_counter: false`), never zero. Consumers cut
+  deal bars from it — see `crates/engine/src/deals.rs` for the join.
 - `flags` — raw `MqlTick.flags`: BID=2 ASK=4 LAST=8 VOLUME=16 BUY=32 SELL=64.
   Real feeds set undocumented extra bits (B3 sets 1024); consumers must mask,
   not reject. **Known pathology**: some B3 brokers set BUY on every tick —

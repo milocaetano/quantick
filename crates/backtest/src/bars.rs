@@ -104,8 +104,16 @@ impl BarSpec {
             "volume" => Ok(Self::Volume(positive_decimal("volume")?)),
             "dollar" => Ok(Self::Dollar(positive_decimal("dollar")?)),
             "time" => Ok(Self::Time(parse_interval(param)?)),
+            // The chart's sixth kind. It counts the venue's deal counter, which
+            // no exported session or replay tape carries yet — refused for that
+            // reason, not as a kind this runner never heard of.
+            "trades" => Err(
+                "trades bars count the venue's deal counter, which no exported session carries \
+                 yet; the chart cuts them live and from its own recording"
+                    .to_owned(),
+            ),
             _ => Err(format!(
-                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance"
+                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
             )),
         }
     }
@@ -160,6 +168,13 @@ fn fmt_interval(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trades_is_refused_for_the_reading_it_lacks_not_as_unknown() {
+        let refusal = BarSpec::parse("trades:2000").unwrap_err();
+        assert!(refusal.contains("deal counter"), "{refusal}");
+        assert!(!refusal.contains("unknown"), "{refusal}");
+    }
 
     #[test]
     fn every_kind_round_trips_through_its_summary() {

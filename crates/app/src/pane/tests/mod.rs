@@ -2697,3 +2697,28 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
         "the ruler's number is the one a trader would act on: {badge}"
     );
 }
+
+/// A plain reset is a new market: the counter readings go with the series.
+/// The keeping reset is the same market restarting — a reload, a seek — and
+/// the readings stay for the prints about to be replayed.
+#[test]
+fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
+    let reading = quantick_engine::DealSample {
+        time_ms: 1_000,
+        session_deals: 5_000_400,
+    };
+    let mut pane = pane_of_prints(4, 2);
+    pane.state.observe_deals(reading);
+    pane.reset_series_with(true);
+    assert_eq!(
+        pane.state.deal_samples(),
+        &[reading],
+        "the same market keeps them"
+    );
+    assert!(pane.state.bars().is_empty(), "the series itself is gone");
+    pane.reset_series();
+    assert!(
+        pane.state.deal_samples().is_empty(),
+        "a new market starts clean"
+    );
+}

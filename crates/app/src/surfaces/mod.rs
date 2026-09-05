@@ -160,6 +160,7 @@ impl SurfaceEnv<'static> {
                 feeds: Vec::new(),
                 metatrader: Default::default(),
                 paper: Default::default(),
+                deals: Default::default(),
                 history: Default::default(),
             });
         /// No hand-added symbols, likewise.

@@ -69,7 +69,18 @@ CLAUDE.md 10148
 # full `crates/feed/src/...` the hooks now live at, and the longer paths are
 # the whole of the difference. Regenerating is the only way to change this
 # file, so the number follows the code rather than the other way round.
-.claude/skills/ui-harness/references/hook-registry.md 70167
+#
+# +786 for the trades-bars branch. Generated, not written: two rows,
+# `QUANTICK_DEAL_RECORDING` and `QUANTICK_DEALS_DIR`, for the REC control and
+# the recording folder a capture must point away from the trader's home. A
+# surface with no row is one nobody can reach, so the rows are part of the
+# feature; kept to two sentences each rather than the paragraph the older
+# rows run to. Measured, 70,167 -> 70,953.
+# +496 for the same branch: the `QUANTICK_BARS_MENU` row, the hook that
+# opens the bar-kind combo so the entries a source cannot offer — the
+# disabled `trades` with its reason — are reachable by a capture. Measured,
+# 70,953 -> 71,449.
+.claude/skills/ui-harness/references/hook-registry.md 71449
 .claude/skills/ui-harness/SKILL.md 13377
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
@@ -147,4 +158,9 @@ AGENTS.md 13179
 # reference file to extract and no sibling prose this branch owned to cut.
 # The first cut was 1,949; ten independent reviews found none of its six
 # verdicts falsifiable, and the 804 bytes added are the falsifiers.
-!budget 235924
+# +2,927 for the trades-bars branch: 1,282 of it the three generated hook
+# rows signed on the registry's entry above; the other 1,645 was already on
+# `main`, inside the headroom, when this branch merged it, so the rows could
+# not fit under the budget as it stood. A raise, not a trade. Measured,
+# 235,924 -> 238,851.
+!budget 238851

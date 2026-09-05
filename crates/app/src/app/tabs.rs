@@ -187,6 +187,9 @@ impl QuantickApp {
     /// indicator workers are fed on the same pass, so a tab brought forward is
     /// already current rather than rebuilding on the frame it appears.
     pub(super) fn drain_tabs(&mut self) {
+        // Before the drain: a reading that arrives this frame lands on a
+        // recorder built for the market it belongs to.
+        self.ensure_deal_recorders();
         let config = &self.config;
         let progressive_history = self.progressive_history;
         let history_reach = self.history_reach;

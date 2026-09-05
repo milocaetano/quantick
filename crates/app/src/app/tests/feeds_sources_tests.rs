@@ -434,7 +434,7 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
         to_ms: 1_000_000,
     });
 
-    app.active_tab_mut().reset_market_state();
+    app.active_tab_mut().reset_market_state(true);
     assert_eq!(app.active_tab().resume_floor_ms, None);
     assert!(app.active_tab().feed_gaps.is_empty());
 }
@@ -619,6 +619,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
             FeedConfig {
                 id: "b".to_string(),
@@ -629,10 +630,12 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             },
         ],
         metatrader: Default::default(),
         paper: Default::default(),
+        deals: Default::default(),
         history: Default::default(),
     };
     let mut app = QuantickApp::new(
@@ -1715,6 +1718,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         book_capture: false,
         history_paging: true,
         traded_volume: true,
+        deal_counter: false,
         ohlcv_history: false,
         ohlcv_generation: 0,
     });
