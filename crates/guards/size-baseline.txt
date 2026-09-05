@@ -153,10 +153,10 @@
 # so giving the constructor a shape is the next cut's job, not this one's.
 # +86 for the trades-bars branch (`feat/trades-bars-b3`), the four raises
 # signed on their entries below: app.rs 7, pane.rs 37, tab.rs 26, stream.rs
-# 16. Nothing left the trunk to pay for them -- the branch's own tightening
+# 24 (+94 in all). Nothing left the trunk to pay for them -- the branch's own tightening
 # of app.rs was overtaken by the sidecar cuts that took app.rs from 9,282 to
-# 1,932 -- so this is a raise. Measured, 52,139 -> 52,225.
-!budget 52225
+# 1,932 -- so this is a raise. Measured, 52,139 -> 52,233.
+!budget 52233
 
 # +7 for the trades-bars branch: the `record_deals` field and its
 # constructor line, and the `mod deal_recording_wiring;` registration. The
@@ -293,7 +293,9 @@ crates/app/src/footprint_render.rs 2236
 # `deals.rs`; the loop only forwards.
 # +6 by the sixteenth bug pass: the heartbeat releases the reading a round
 # was waiting on. Signed in the budget note above.
-crates/feed-mt5/src/stream.rs 2216
+# +8 by the seventeenth: the reading a round was still waiting on is flushed
+# when the connection ends, not only on a heartbeat.
+crates/feed-mt5/src/stream.rs 2224
 crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718

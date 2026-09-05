@@ -43,6 +43,10 @@ struct PendingReading {
     round_sent_ms: i64,
     /// The newest tick of the round so far, on the bridge's clock.
     last_tick_ms: i64,
+    /// The offset the round's ticks were mapped under. A heartbeat that
+    /// restates the offset must not re-date a reading over ticks already
+    /// sent under the old one.
+    offset_ms: i64,
 }
 
 /// Counters for the health view: how the stamps reduced.
@@ -95,14 +99,17 @@ impl DealSampler {
         self.stats.stamped += 1;
         let mut emitted = None;
         if let Some(pending) = self.pending {
-            if tick.sent_ms == Some(pending.round_sent_ms) {
+            // A new stamp is a new round too: an in-process bridge can send
+            // two rounds inside one millisecond, and keying on the send time
+            // alone would fold the second reading into the first.
+            if tick.sent_ms == Some(pending.round_sent_ms) && deals == pending.deals {
                 self.pending = Some(PendingReading {
                     last_tick_ms: tick.time_ms,
                     ..pending
                 });
             } else {
                 self.pending = None;
-                emitted = Some(self.emit(pending.deals, pending.last_tick_ms));
+                emitted = Some(self.emit(pending.deals, pending.last_tick_ms, pending.offset_ms));
             }
         }
         if self.pending.is_none() && self.last != Some(deals) {
@@ -112,9 +119,10 @@ impl DealSampler {
                         deals,
                         round_sent_ms,
                         last_tick_ms: tick.time_ms,
+                        offset_ms: self.offset_ms,
                     });
                 }
-                None => emitted = Some(self.emit(deals, tick.time_ms)),
+                None => emitted = Some(self.emit(deals, tick.time_ms, self.offset_ms)),
             }
         }
         emitted
@@ -126,18 +134,19 @@ impl DealSampler {
     /// for a next round that never comes.
     pub fn finish(&mut self) -> Option<DealSample> {
         let pending = self.pending.take()?;
-        Some(self.emit(pending.deals, pending.last_tick_ms))
+        Some(self.emit(pending.deals, pending.last_tick_ms, pending.offset_ms))
     }
 
-    /// Turn a reading into the sample the engine joins prints against.
-    fn emit(&mut self, deals: u64, taken_ms: i64) -> DealSample {
+    /// Turn a reading into the sample the engine joins prints against, on
+    /// the clock its ticks were mapped under.
+    fn emit(&mut self, deals: u64, taken_ms: i64, offset_ms: i64) -> DealSample {
         if self.last.is_some_and(|last| deals < last) {
             self.stats.regressions += 1;
         }
         self.last = Some(deals);
         self.stats.samples += 1;
         DealSample {
-            time_ms: taken_ms.saturating_sub(self.offset_ms),
+            time_ms: taken_ms.saturating_sub(offset_ms),
             session_deals: deals,
         }
     }
@@ -220,6 +229,47 @@ mod tests {
         assert_eq!(sampler.stats.stamped, 6);
         assert_eq!(sampler.stats.samples, 2);
         assert_eq!(sampler.reading(), Some(2_000_007));
+    }
+
+    /// Two rounds inside one millisecond carry two stamps: the second stamp
+    /// ends the first round, so the first reading is dated at its own last
+    /// tick and the second is not lost.
+    #[test]
+    fn two_rounds_in_one_millisecond_are_two_readings() {
+        let mut sampler = DealSampler::new(0);
+        assert!(
+            sampler
+                .observe(&tick_in_round(1, 1_000, Some(5), Some(1_500)))
+                .is_none()
+        );
+        let first = sampler.observe(&tick_in_round(2, 1_010, Some(7), Some(1_500)));
+        assert_eq!(
+            first.map(|s| (s.time_ms, s.session_deals)),
+            Some((1_000, 5))
+        );
+        let second = sampler.observe(&tick_in_round(3, 1_020, Some(7), Some(1_520)));
+        assert_eq!(
+            second.map(|s| (s.time_ms, s.session_deals)),
+            Some((1_010, 7))
+        );
+    }
+
+    /// A heartbeat restating the offset dates the reading it releases under
+    /// the offset the round's ticks were mapped under, not the new one.
+    #[test]
+    fn a_pending_reading_keeps_the_offset_its_ticks_were_mapped_under() {
+        let mut sampler = DealSampler::new(0);
+        assert!(
+            sampler
+                .observe(&tick_in_round(1, 10_000, Some(7), Some(1_500)))
+                .is_none()
+        );
+        sampler.set_server_utc_offset_s(3_600);
+        let released = sampler.finish();
+        assert_eq!(
+            released.map(|s| (s.time_ms, s.session_deals)),
+            Some((10_000, 7))
+        );
     }
 
     /// A heartbeat ends the round a reading is waiting on: the reading is

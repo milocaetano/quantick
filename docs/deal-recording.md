@@ -126,6 +126,10 @@ encoded; see `crates/app/src/deal_recording.rs`). The directory is
 ## Follow-ups recorded
 
 - Replay and `tools/mt5/export_session.py` neither read nor write the
-  `.deals` file yet.
+  `.deals` file yet — so `quantick-backtest --bars trades:N` refuses the
+  kind, saying why, until a headless reader of the recording exists.
+- A control-plane call that sets the flow pane's bar spec (`trades:N` as
+  much as `tick:N`) does not exist; the toolbar is the only runtime path,
+  for every kind.
 - Binance's exact per-print deal ids are not used yet.
 - The MQL5 bridge carries the same `deals` stamp but was not run here.

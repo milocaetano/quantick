@@ -1332,16 +1332,18 @@ async fn serve_connection(
                 }
             }
             Ok(BridgeMsg::Heartbeat(hb)) => {
-                if let Some(offset) = hb.server_utc_offset_s {
-                    mapper.set_server_utc_offset_s(offset);
-                    depth.set_server_utc_offset_s(offset);
-                    deals.set_server_utc_offset_s(offset);
-                }
-                // A second without a tick ends the round a reading waits on.
+                // A second without a tick ends the round a reading waits on
+                // — before the clock moves, so the reading is dated with the
+                // ticks it covered.
                 if let Some(sample) = deals.finish()
                     && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
                 {
                     break ConnEnd::UiGone;
+                }
+                if let Some(offset) = hb.server_utc_offset_s {
+                    mapper.set_server_utc_offset_s(offset);
+                    depth.set_server_utc_offset_s(offset);
+                    deals.set_server_utc_offset_s(offset);
                 }
                 // The beat a thin tape is measured on: a symbol printing once
                 // a minute never reaches the per-print sampling bound, and
@@ -1690,6 +1692,12 @@ async fn serve_connection(
         );
     }
     mapper.stats.log_summary(&config.symbol);
+    // The reading a round was still waiting on, dated at the last tick it
+    // covered. Dropped, the next session would re-emit its value at its own
+    // first round, and the recording would carry the wrong time.
+    if let Some(sample) = deals.finish() {
+        let _ = tx.send(Mt5Event::DealCounter(sample)).await;
+    }
     // A consumer that was capturing depth must hear that this generation ended,
     // so it renders the discontinuity instead of connecting liquidity across it.
     depth.close(tx).await;

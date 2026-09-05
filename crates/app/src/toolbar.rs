@@ -584,15 +584,12 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
                 // silently be a tick bar under another name. Listed disabled
                 // with its reason, never hidden — a pane restored on `trades`
                 // before the hello lands shows a kind the combo must name.
-                let disabled_reason = if kind.needs_traded_volume() && !traded_volume {
-                    Some("this source quotes prices but prints no traded volume")
-                } else if kind.needs_deal_counter() && !deal_counter {
-                    Some("this source has no deal counter — MetaTrader B3 only")
-                } else if kind.needs_deal_counter() && !deal_count_available {
-                    Some("no deal count yet — press REC to count from now, or load a recorded day")
-                } else {
-                    None
-                };
+                let disabled_reason = crate::bar_kind_reason::disabled_reason(
+                    kind,
+                    traded_volume,
+                    deal_counter,
+                    deal_count_available,
+                );
                 ui.add_enabled_ui(disabled_reason.is_none(), |ui| {
                     let item = ui.selectable_value(model.kind, kind, kind.label());
                     if let Some(reason) = disabled_reason {

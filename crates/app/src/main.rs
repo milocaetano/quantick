@@ -17,6 +17,7 @@ mod app;
 mod audio;
 mod avwap;
 mod bands;
+mod bar_kind_reason;
 mod bubble_presets;
 mod candle_view;
 mod canvas_layout;

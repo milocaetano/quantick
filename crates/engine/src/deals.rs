@@ -49,10 +49,11 @@
 //!
 //! # Session rollover
 //!
-//! A reading lower than the one in force by more than a bar's worth of deals
-//! closes the forming bar — the exchange restarted its count, which is a
-//! real end — and counts on from the new reading. A smaller dip is the
-//! terminal answering a poll late and changes nothing. Samples that merely
+//! A reading lower than the one in force by more than half closes the
+//! forming bar — the exchange restarted its count, which is a real end —
+//! and counts on from the new reading. A smaller dip is the terminal
+//! answering a poll late (a reading one refresh behind, which at the open is
+//! thousands of deals) and changes nothing. Samples that merely
 //! go backwards in time are ignored: the feed promises monotonic samples and
 //! a late one carries no information the builder can place.
 

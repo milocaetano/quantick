@@ -412,7 +412,7 @@ pub struct ChartState {
     /// reaching the live builder: the bars were cut without them until the
     /// next rebuild, so anything replaying the series meanwhile — the
     /// footprint refold — leaves them out too, and cuts where the bars are.
-    held_readings: Vec<DealSample>,
+    readings_held: bool,
 }
 
 /// Push one print through `builder` and, with the footprint layer on, fold
@@ -462,7 +462,7 @@ impl ChartState {
             tape_reference_price: None,
             footprint_enabled: false,
             deal_samples: Vec::new(),
-            held_readings: Vec::new(),
+            readings_held: false,
         }
     }
 
@@ -504,7 +504,7 @@ impl ChartState {
                     .take_while(|held| held.time_ms == sample.time_ms);
                 if !same_ms.into_iter().any(|held| *held == sample) {
                     self.deal_samples.insert(at, sample);
-                    self.held_readings.push(sample);
+                    self.readings_held = true;
                 }
             }
             Some(last) if *last == sample => {}
@@ -696,7 +696,7 @@ impl ChartState {
     /// Replay every retained trade through a fresh builder for the current spec,
     /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
-        self.held_readings.clear();
+        self.readings_held = false;
         let mut builder = self.spec.build();
         // Readings first, prints after: the builder joins each print to the
         // newest reading strictly before it, so the order between the two
@@ -891,16 +891,19 @@ impl ChartState {
         // reading different inputs from this point on.
         self.bump_series_revision();
         self.footprints.reset(group);
+        // Readings held for the next rebuild: this is one. The ladders must
+        // close where the bars are, and a bar cut without a reading the
+        // series now holds is a bar the next rebuild would move anyway.
+        if self.readings_held {
+            self.rebuild();
+            return;
+        }
         let mut builder = self.spec.build();
         // Readings first, as `rebuild` does: a deal bar with no readings
         // counts every print as uncounted, and the ladders would be empty
-        // under bars that are not. The readings held for the next rebuild
-        // stay out: the bars were cut without them, and the ladders must
-        // close where the bars are.
+        // under bars that are not.
         for sample in &self.deal_samples {
-            if !self.held_readings.contains(sample) {
-                builder.observe_deals(*sample);
-            }
+            builder.observe_deals(*sample);
         }
         for trade in &self.trades {
             fold_print(&mut *builder, &mut self.footprints, true, trade);
