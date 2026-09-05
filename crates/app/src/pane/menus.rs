@@ -189,7 +189,7 @@ impl ChartPane {
         // trade actions, which answer for a bare price, not an object.
         #[cfg(test)]
         self.gestures.menu_rects.clear();
-        if let Some(id) = self.context_menu_drawing {
+        if let Some(id) = self.context_menu.drawing {
             match self.drawings.index_of(id) {
                 Some(index) => {
                     self.draw_drawing_menu_section(ui, index);
@@ -197,7 +197,7 @@ impl ChartPane {
                 }
                 // Deleted while the menu was open (undo, another surface):
                 // the section vanishes instead of acting on a ghost.
-                None => self.context_menu_drawing = None,
+                None => self.context_menu.drawing = None,
             }
         }
         // The trade section rides on top, anchored at the price the
@@ -206,9 +206,9 @@ impl ChartPane {
         // opened near a pane's edge extends past it, so a pointer-derived
         // gate dropped the section the moment the hand travelled onto a row
         // outside the originating pane — the menu reflowing under the
-        // cursor mid-reach. `context_menu_price` is per pane and stable for
+        // cursor mid-reach. `ContextMenu::price` is per pane and stable for
         // the menu's whole life, which is exactly the lifetime wanted.
-        if let Some(price) = self.context_menu_price {
+        if let Some(price) = self.context_menu.price {
             chrome.paper.context_trade_actions(ui, price);
             ui.separator();
         }
@@ -216,8 +216,8 @@ impl ChartPane {
         // VWAP's TradingView gesture) declare their entry on the registry;
         // the click was already resolved per tool, snap rules included, so
         // the menu only offers what the capture could honestly anchor.
-        if !self.context_menu_places.is_empty() {
-            let places = std::mem::take(&mut self.context_menu_places);
+        if !self.context_menu.places.is_empty() {
+            let places = std::mem::take(&mut self.context_menu.places);
             for &(tool, point) in &places {
                 let label = tool
                     .context_menu_label()
@@ -227,7 +227,7 @@ impl ChartPane {
                     ui.close_menu();
                 }
             }
-            self.context_menu_places = places;
+            self.context_menu.places = places;
             ui.separator();
         }
         #[cfg(test)]
@@ -236,7 +236,7 @@ impl ChartPane {
         // on it answers for it, and the candles' own layers stay one submenu
         // away rather than disappearing. A click on the candles sees exactly
         // the menu it always saw.
-        if self.context_menu_on_tape {
+        if self.context_menu.on_tape {
             self.draw_tape_menu_section(ui, chrome);
             ui.separator();
             ui.menu_button("chart layers", |ui| {
@@ -294,16 +294,16 @@ impl ChartPane {
         // undo step, not one per keystroke. Whitespace clears back to the
         // derived label; the store normalises it.
         let rename = ui.add(
-            egui::TextEdit::singleline(&mut self.context_menu_rename)
+            egui::TextEdit::singleline(&mut self.context_menu.rename)
                 .hint_text("name this object")
                 .desired_width(150.0),
         );
         #[cfg(test)]
         self.gestures.menu_rects.push(("Rename", rename.rect));
         if rename.lost_focus() {
-            let name = std::mem::take(&mut self.context_menu_rename);
+            let name = std::mem::take(&mut self.context_menu.rename);
             self.drawings.rename_at(index, &name);
-            self.context_menu_rename = name;
+            self.context_menu.rename = name;
         }
         self.draw_strategy_menu_entries(ui, index);
         let locked = self.drawings.items()[index].locked;
@@ -342,7 +342,7 @@ impl ChartPane {
                     // bring.
                     self.remove_strategy_for_drawing(doomed);
                 }
-                self.context_menu_drawing = None;
+                self.context_menu.drawing = None;
                 ui.close_menu();
             }
             delete

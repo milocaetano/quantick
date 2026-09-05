@@ -160,7 +160,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         let id = pane.drawings.items()[0].id;
         // The press half of the gesture, staged: the click resolved the
         // object and seeded the rename buffer, like the canvas path does.
-        pane.context_menu_drawing = Some(id);
+        pane.context_menu.drawing = Some(id);
     }
 
     let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
@@ -246,7 +246,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         "unlocked, the menu's delete removes the object"
     );
     assert_eq!(
-        app.active_tab().flow_pane.context_menu_drawing,
+        app.active_tab().flow_pane.context_menu.drawing,
         None,
         "the section lets go of the object it deleted"
     );
