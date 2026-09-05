@@ -494,21 +494,49 @@ gh_statement() {
         head -n 1
 }
 
+# The statement with its quoted spans blanked out, so a flag can be read from
+# what the command *does* rather than from what a title or a body says.
+#
+# This exists because the first version of the draft exemption globbed the
+# whole statement, and `gh pr create --title "Make --draft PRs ungated"` then
+# opened a real, un-reviewed PR. The file already carries that lesson one
+# function up: `runs_command` splits into statements precisely so a commit
+# message naming a gated command cannot trip the gate. Reading a *flag* needs
+# the same care, and more of it — there the mistake blocks something that
+# should pass, here it passes something that should be blocked.
+#
+# A title with a space in it has to be quoted, so blanking quoted spans covers
+# the reachable spellings. It is deliberately not a shell parser: what it
+# cannot understand it leaves in place, and anything left in place is read as
+# an argument, which errs towards gating.
+unquoted_arguments() {
+    printf '%s' "$1" | sed 's/"[^"]*"/ /g; s/'"'"'[^'"'"']*'"'"'/ /g'
+}
+
+# True when the statement asks for a draft PR, as a whole argument word.
+draft_flag() {
+    draft_words=$(unquoted_arguments "$1")
+    case " $draft_words " in
+        *' --draft=false '* | *' --draft=0 '*) return 1 ;;
+    esac
+    case " $draft_words " in
+        *' --draft '* | *' --draft='* | *' -d '*) return 0 ;;
+    esac
+    return 1
+}
+
 # The PR number the statement names, or nothing.
 #
-# A *whole word* of digits, never a digit run pulled out of one. Splitting on
-# every non-digit read `--body-file notes2.md 42` as PR 2, and a gate that
-# counts the wrong PR's threads is worse than one that counts none: it reports
-# a clean number for a branch nobody reviewed.
-#
-# Nothing is a legitimate answer — `gh pr merge` with no number means "the one
-# for this branch" — and the caller treats it as undetermined rather than
-# guessing.
+# A *whole word* of digits, never a digit run pulled out of one: splitting on
+# every non-digit read `--body-file notes2.md 42` as PR 2. And exactly one such
+# word, or none — two bare numbers mean the operand cannot be told from a
+# flag's value, and a gate that counts the wrong PR's threads is worse than one
+# that counts none, because it reports a clean number for a branch nobody
+# reviewed. The caller turns "none" into a question rather than a pass.
 pr_number() {
-    printf '%s' "$1" |
-        tr -s ' \t' '\n\n' |
-        grep -E '^[0-9]+$' |
-        head -n 1
+    number_words=$(unquoted_arguments "$1" | tr -s ' \t' '\n\n' | grep -E '^[0-9]+$')
+    [ "$(printf '%s\n' "$number_words" | grep -c '[0-9]')" -eq 1 ] || return 0
+    printf '%s' "$number_words"
 }
 
 # How many ai-review threads are open on PR `$2`, printed on stdout. Empty when
@@ -519,10 +547,20 @@ pr_number() {
 # writes the marker when it posts one and reads the same marker when it counts.
 # A second definition here would drift, and the first symptom would be a merge
 # gate that either ignores real findings or blocks on a human's question.
+# Two failures, told apart by exit status, because their remedies are nothing
+# alike: 3 means the counting script is not beside this one, 1 means it ran and
+# could not answer. Reporting the second for the first sent an agent to check
+# its GitHub authentication over a missing file.
+#
+# `$3` is the worktree being shipped, and the count runs there. The script asks
+# `gh repo view` which repository it is in, and the hook's own cwd is the
+# session's — the main checkout, or wherever the agent last stood. Every other
+# decision in this gate reads the effective worktree; this one has to as well,
+# or a session sitting in another clone counts that repository's PR #42.
 open_ai_review_threads() {
     threads_script="$1/ai_review_threads.sh"
-    [ -f "$threads_script" ] || return 1
-    threads_count=$(sh "$threads_script" count "$2" 2>/dev/null) || return 1
+    [ -f "$threads_script" ] || return 3
+    threads_count=$(cd "$3" && sh "$threads_script" count "$2" 2>/dev/null) || return 1
     case "$threads_count" in
         '' | *[!0-9]*) return 1 ;;
     esac
@@ -556,15 +594,14 @@ pr_gate() {
     # it would order the chain backwards — the reviews would have to run before
     # `ai-review` could post its findings onto a PR that does not exist yet.
     #
-    # `--draft=false` is spelled out rather than left to the substring match.
-    # It is the one spelling that contains the flag and means the opposite of
-    # it, and a gate that reads it as a draft opens an ungated real PR.
+    # `--draft=false` is spelled out rather than left to the match. It is the
+    # one spelling that contains the flag and means the opposite of it, and a
+    # gate that reads it as a draft opens an ungated real PR.
     if [ "$gate_action" = create ]; then
         gate_statement=$(gh_statement "$command" "gh pr create")
-        case "$gate_statement" in
-            *--draft=false* | *--draft=0*) ;;
-            *' --draft'* | *' -d '* | *' -d') exit 0 ;;
-        esac
+        if draft_flag "$gate_statement"; then
+            exit 0
+        fi
     fi
 
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
@@ -629,9 +666,17 @@ pr_gate() {
         ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
     fi
 
-    gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr")
+    gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
+    gate_status=$?
+    if [ "$gate_status" -eq 3 ]; then
+        # The hook runs from the main checkout, always: `$0` is the path
+        # `.claude/settings.json` registered. So a branch that adds or fixes
+        # the counting script is judged by whatever `main` holds, and before
+        # that script has merged there is nothing beside this one to ask.
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. \`ai_review_threads.sh\` is not beside the hook in $(dirname "$0") — this hook runs from the main checkout, so a branch that has not merged the script yet cannot be counted from here. This is not a count of zero. Read the PR's unresolved threads before continuing.\""
+    fi
     if [ -z "$gate_open" ]; then
-        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted here — \`gh\` missing, unauthenticated or unreachable — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted — \`gh\` missing, unauthenticated, unreachable, or more threads on the PR than one page holds — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
     fi
 
     if [ "$gate_open" -gt 0 ]; then

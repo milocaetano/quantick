@@ -65,6 +65,5 @@ takes its subject from `... list <pr>` and verifies only those open threads,
 plus a narrow check that the fixes introduced no new FAIL. It may not open a
 new WEAK against code it already passed.** And **a thread closes by the fix -
 `... resolve <thread-id>` - or by an acceptance the trader records on it**; a
-WEAK whose breaking variant you cannot name is a PASS. If the open count did
-not fall between two runs, stop: the branch goes to the trader. Reasoning:
-`docs/agentic-development.md`.
+WEAK whose breaking variant you cannot name is a PASS. `CLAUDE.md`'s stall rule
+owns when to stop; the reasoning is `docs/agentic-development.md`.

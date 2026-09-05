@@ -62,7 +62,7 @@
 # recorded as one. The alternative was a `CLAUDE.md` whose architecture list
 # does not contain a workspace crate, which `claude_md_lists_every_crate`
 # fails on and which is the drift this whole tree exists to prevent.
-CLAUDE.md 9635
+CLAUDE.md 9527
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the

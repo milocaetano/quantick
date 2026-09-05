@@ -67,9 +67,14 @@ repository() {
 # Every review thread on a PR that carries the marker and is not resolved, one
 # per line: `<thread id><TAB><path>:<line><TAB><first line of the finding>`.
 #
-# `first: 100` is the page and there is no second one. A branch with more than
-# a hundred open findings has a problem no pagination fixes, and the stall rule
-# in CLAUDE.md is the thing that should have caught it long before.
+# One page of 100, and the page bounds *every* thread on the PR rather than the
+# open marked ones — the filter runs after the fetch. So the count refuses
+# rather than truncates: `totalCount` above the page means the answer cannot be
+# trusted, and a PR with a hundred resolved threads and one open finding would
+# otherwise report a clean zero and merge. A branch with more than a hundred
+# threads has a problem no pagination fixes, and the stall rule in CLAUDE.md
+# should have caught it long before; what matters here is that the failure is
+# loud instead of silent.
 open_threads() {
     pr=$1
     repo=$(repository) || return 1
@@ -84,6 +89,7 @@ open_threads() {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $pr) {
                 reviewThreads(first: 100) {
+                  totalCount
                   nodes {
                     id
                     isResolved
@@ -96,7 +102,10 @@ open_threads() {
             }
           }' \
         --jq '
-          .data.repository.pullRequest.reviewThreads.nodes[]
+          if (.data.repository.pullRequest.reviewThreads.totalCount > 100)
+          then ("more threads than one page holds" | halt_error(1))
+          else . end
+          | .data.repository.pullRequest.reviewThreads.nodes[]
           | select(.isResolved | not)
           | select((.comments.nodes[0].body // "") | startswith("'"$MARKER"'"))
           | [

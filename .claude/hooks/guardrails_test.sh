@@ -542,6 +542,16 @@ run "the short spelling of draft is a draft too" \
 run "--draft=false is not a draft" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --draft=false --fill")" deny "arch-review-ok"
 
+# The flag is read from what the command *does*, never from what it says. The
+# first version globbed the whole statement, so this exact spelling opened a
+# real, un-reviewed PR -- and the PR that introduced the draft exemption is
+# itself the PR whose title is about `--draft`.
+run "a --draft inside a quoted title is not a draft flag" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"Make --draft PRs ungated\" --fill")" deny "arch-review-ok"
+
+run "a -d inside a quoted body is not a draft flag either" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --body \"pass -d to open a draft\" --fill")" deny "arch-review-ok"
+
 # The flag has to come from the statement the gate matched. A `--draft`
 # anywhere else on the line is somebody else's argument.
 run "a draft flag in a neighbouring statement is not this PR's" \
@@ -586,6 +596,23 @@ run "a count that cannot be taken asks rather than passing in silence" \
 set_threads 0
 run "a command naming no PR asks rather than guessing which PR to count" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready")" ask "names no PR number"
+
+# Two bare numbers and the operand cannot be told from a flag's value. Guessing
+# would count another PR's threads and report a clean number for a branch
+# nobody reviewed, so the gate asks instead.
+run "two bare numbers are an ambiguous PR, not a guess" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 306 42 --squash")" ask "names no PR number"
+
+# The hook always runs from the main checkout, so a branch that has not merged
+# the counting script yet cannot be counted from there. That is a different
+# failure from `gh` refusing to answer, and it gets a different message: an
+# agent told to check its GitHub authentication over a missing file goes
+# looking in the wrong place.
+mkdir -p "$root/lonely"
+cp "$GUARDRAILS" "$root/lonely/guardrails.sh"
+GUARDRAILS_UNDER_TEST="$root/lonely/guardrails.sh"
+run "a missing counting script is named as such, not blamed on gh" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "is not beside the hook"
 
 # `gh pr create` is never held on the thread count, draft or not: the PR is
 # where the findings live, so they cannot be a precondition for opening it.

@@ -81,6 +81,16 @@ pub struct BlastRadius {
     /// Pre-existing tracked files the diff names that the working tree does
     /// not hold, or does not decode as UTF-8. Same reason as the field above.
     pub files_unreadable: usize,
+    /// Pre-existing tracked files whose diff does not describe the file on
+    /// disk: the tree has moved on, or the diff came from somewhere else.
+    ///
+    /// Without this the mode answered anyway. A branch diff piped in from
+    /// another worktree, or a tree with uncommitted edits, put every hunk's
+    /// line numbers over unrelated lines and produced a deposit figure that
+    /// was simply wrong, with nothing saying so — inferred data presented as
+    /// measured, which is the one thing this repository's rules forbid
+    /// outright.
+    pub files_stale: usize,
 }
 
 /// Measure a unified diff against the working tree at `root`.
@@ -106,6 +116,22 @@ pub fn measure(root: &Path, diff: &str) -> BlastRadius {
             radius.files_unreadable += 1;
             continue;
         };
+
+        // The diff's own context lines are the check that this file is the
+        // post-image the diff describes. They are free — the diff carries them
+        // already — and every one of them has to sit where the diff says it
+        // does, because a single displaced line means every number below it is
+        // measured against the wrong content.
+        let lines: Vec<&str> = source.lines().collect();
+        let agrees = file.context.iter().all(|(line, text)| {
+            lines
+                .get(line.saturating_sub(1))
+                .is_some_and(|actual| actual == text)
+        });
+        if !agrees {
+            radius.files_stale += 1;
+            continue;
+        }
 
         let flags = size::production_flags(&source);
         let production = |line: usize| flags.get(line.saturating_sub(1)).copied().unwrap_or(false);
@@ -164,6 +190,7 @@ pub fn render(radius: &BlastRadius) -> String {
         "blast.files_unreadable\t{}\n",
         radius.files_unreadable
     ));
+    out.push_str(&format!("blast.files_stale\t{}\n", radius.files_stale));
     out
 }
 
@@ -176,6 +203,10 @@ struct FileDiff {
     added: Vec<usize>,
     /// Post-image cursor position at each removed line.
     removed: Vec<usize>,
+    /// Unchanged lines, by post-image number, with the text the diff shows
+    /// for them. The evidence that the file on disk is the one the diff
+    /// describes.
+    context: Vec<(usize, String)>,
 }
 
 /// Split a unified diff into its files.
@@ -201,6 +232,7 @@ fn parse(diff: &str) -> Vec<FileDiff> {
                 deleted: false,
                 added: Vec::new(),
                 removed: Vec::new(),
+                context: Vec::new(),
             });
             in_hunk = false;
             continue;
@@ -229,7 +261,11 @@ fn parse(diff: &str) -> Vec<FileDiff> {
                 if path == "/dev/null" {
                     file.deleted = true;
                 } else {
-                    file.path = git_path(path.trim_start_matches("b/"));
+                    // `strip_prefix`, never `trim_start_matches`: the latter
+                    // removes *every* leading occurrence, so a file whose repo
+                    // path really is `b/thing.rs` arrives as `+++ b/b/thing.rs`
+                    // and would be recorded as `thing.rs` — a different file.
+                    file.path = git_path(path.strip_prefix("b/").unwrap_or(path));
                 }
             }
             continue;
@@ -245,8 +281,13 @@ fn parse(diff: &str) -> Vec<FileDiff> {
             // occupies no position of its own.
             Some(b'\\') => {}
             // A context line, including the empty one git writes for a blank
-            // line of context.
-            _ => cursor += 1,
+            // line of context. `line` carries the leading space that marks it
+            // as context; the file's own text is what follows.
+            _ => {
+                file.context
+                    .push((cursor, line.strip_prefix(' ').unwrap_or(line).to_owned()));
+                cursor += 1;
+            }
         }
     }
 
@@ -323,7 +364,7 @@ diff --git a/crates/example/src/thing.rs b/crates/example/src/thing.rs
  const PRODUCTION_3: usize = 3;
  const PRODUCTION_4: usize = 4;
  const PRODUCTION_5: usize = 5;
-@@ -12,3 +15,6 @@
+@@ -10,1 +13,4 @@
 +    const TEST_0: usize = 0;
 +    const TEST_1: usize = 1;
 +    const TEST_2: usize = 2;
@@ -487,6 +528,7 @@ diff --git a/crates/example/src/absent.rs b/crates/example/src/absent.rs
             insertions: 2_318,
             files_unmeasured: 40,
             files_unreadable: 0,
+            files_stale: 0,
         };
         assert_eq!(
             render(&radius),
@@ -495,7 +537,68 @@ diff --git a/crates/example/src/absent.rs b/crates/example/src/absent.rs
              blast.pre_existing_files_touched\t61\n\
              blast.insertions\t2318\n\
              blast.files_unmeasured\t40\n\
-             blast.files_unreadable\t0\n"
+             blast.files_unreadable\t0\n\
+             blast.files_stale\t0\n"
+        );
+    }
+
+    #[test]
+    fn a_diff_that_does_not_describe_the_file_on_disk_is_reported_not_answered() {
+        // The same diff as the first case, against a tree that has moved on by
+        // one line. Every hunk below the insertion now sits over different
+        // content, so the deposit figure would be wrong in a way nothing on
+        // the surface would show.
+        let mut moved = String::from("const INSERTED_ABOVE: usize = 0;\n");
+        moved.push_str(&file_with_a_test_module(10, 5));
+        let root = root_with("crates/example/src/thing.rs", &moved);
+        let diff = "\
+diff --git a/crates/example/src/thing.rs b/crates/example/src/thing.rs
+--- a/crates/example/src/thing.rs
++++ b/crates/example/src/thing.rs
+@@ -1,3 +1,6 @@
++const PRODUCTION_0: usize = 0;
++const PRODUCTION_1: usize = 1;
++const PRODUCTION_2: usize = 2;
+ const PRODUCTION_3: usize = 3;
+ const PRODUCTION_4: usize = 4;
+ const PRODUCTION_5: usize = 5;
+";
+        let radius = measure(&root, diff);
+        assert!(
+            radius.deposits.is_empty(),
+            "a number measured against the wrong lines is not a number"
+        );
+        assert_eq!(radius.files_stale, 1);
+        assert_eq!(
+            radius.files_unreadable, 0,
+            "the file was read; it disagreed"
+        );
+    }
+
+    #[test]
+    fn a_diff_with_no_context_at_all_is_still_measured() {
+        // A file created wholly by insertion above existing content carries no
+        // context line, so there is nothing to disagree with. Refusing here
+        // would make the staleness check reject the ordinary case of a hunk
+        // whose every line is new.
+        let root = root_with(
+            "crates/example/src/thing.rs",
+            &file_with_a_test_module(10, 0),
+        );
+        let diff = "\
+diff --git a/crates/example/src/thing.rs b/crates/example/src/thing.rs
+--- a/crates/example/src/thing.rs
++++ b/crates/example/src/thing.rs
+@@ -0,0 +1,2 @@
++const PRODUCTION_0: usize = 0;
++const PRODUCTION_1: usize = 1;
+";
+        assert_eq!(
+            measure(&root, diff).deposits,
+            vec![Deposit {
+                path: "crates/example/src/thing.rs".to_owned(),
+                production_added: 2,
+            }]
         );
     }
 
