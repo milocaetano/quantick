@@ -859,10 +859,10 @@ impl Tab {
     /// holding pixel coordinates of bars that no longer exist there.
     fn drop_overlay_gestures(&mut self) {
         for pane in self.panes_mut() {
-            pane.drawing_hover = None;
-            pane.drawing_press_position = None;
-            pane.drawing_press_started_empty = false;
-            pane.drawing_drag = DrawingDrag::None;
+            pane.gestures.hover = None;
+            pane.gestures.press_position = None;
+            pane.gestures.press_started_empty = false;
+            pane.gestures.drag = DrawingDrag::None;
         }
     }
 
@@ -1074,11 +1074,11 @@ impl Tab {
     /// whether a time pane exists at all, which is why the loop lives here
     /// rather than in the host.
     pub fn set_content_editing(&mut self, target: Option<(PaneSide, usize)>) {
-        self.flow_pane.content_editing = target
+        self.flow_pane.gestures.content_editing = target
             .filter(|(side, _)| *side == PaneSide::Flow)
             .map(|(_, index)| index);
         for (slot, time) in self.time_panes.iter_mut().enumerate() {
-            time.content_editing = target
+            time.gestures.content_editing = target
                 .filter(|(side, _)| *side == PaneSide::Time(slot))
                 .map(|(_, index)| index);
         }

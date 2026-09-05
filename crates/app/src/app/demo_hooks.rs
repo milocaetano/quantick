@@ -420,7 +420,7 @@ impl QuantickApp {
                     chart.height() * DEMO_DRAFT_POINTER_OFFSET.y,
                 )
         };
-        pane.parked_hand = Some(pane::ParkedHand {
+        pane.gestures.parked_hand = Some(pane::ParkedHand {
             position: parked,
             constrain: if constrain {
                 drawings::Constrain::Level

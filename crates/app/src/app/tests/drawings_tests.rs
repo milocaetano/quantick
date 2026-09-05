@@ -182,7 +182,8 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
     let labels: Vec<&str> = app
         .active_tab()
         .flow_pane
-        .drawing_menu_rects
+        .gestures
+        .menu_rects
         .iter()
         .map(|(label, _)| *label)
         .collect();
@@ -223,7 +224,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, true);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+    let rects = app.active_tab().flow_pane.gestures.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert_eq!(
@@ -237,7 +238,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, false);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+    let rects = app.active_tab().flow_pane.gestures.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert!(
@@ -1098,7 +1099,7 @@ fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
         "only the trend line the anchors themselves make"
     );
 
-    app.active_tab_mut().flow_pane.parked_hand = Some(pane::ParkedHand {
+    app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
         position: release,
         constrain: drawings::Constrain::Free,
     });
@@ -1813,7 +1814,7 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
         "moving a drawing must not pan the market underneath it"
     );
     assert_eq!(
-        app.active_tab().flow_pane.drawing_drag,
+        app.active_tab().flow_pane.gestures.drag,
         DrawingDrag::None,
         "release ends the move gesture"
     );
@@ -1865,7 +1866,7 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
         "a press on the inspector must never fall through to the chart"
     );
     assert_eq!(
-        app.active_tab().flow_pane.drawing_drag,
+        app.active_tab().flow_pane.gestures.drag,
         DrawingDrag::None,
         "no drawing drag may start from a press on the inspector"
     );
@@ -2831,7 +2832,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         "the words stayed with the note"
     );
     assert_eq!(
-        owner.flow_pane.content_editing, None,
+        owner.flow_pane.gestures.content_editing, None,
         "and the pane holding it stopped suppressing it, so it paints again"
     );
 }
@@ -3131,7 +3132,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
         viewport_before,
         "resizing a drawing must not pan the chart"
     );
-    assert_eq!(app.active_tab().flow_pane.drawing_drag, DrawingDrag::None);
+    assert_eq!(app.active_tab().flow_pane.gestures.drag, DrawingDrag::None);
     assert!(
         painted_text(&run_frame(&mut app, &ctx))
             .iter()

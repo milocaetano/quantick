@@ -188,7 +188,7 @@ impl ChartPane {
         // named, so its section rides above everything — including the
         // trade actions, which answer for a bare price, not an object.
         #[cfg(test)]
-        self.drawing_menu_rects.clear();
+        self.gestures.menu_rects.clear();
         if let Some(id) = self.context_menu_drawing {
             match self.drawings.index_of(id) {
                 Some(index) => {
@@ -299,7 +299,7 @@ impl ChartPane {
                 .desired_width(150.0),
         );
         #[cfg(test)]
-        self.drawing_menu_rects.push(("Rename", rename.rect));
+        self.gestures.menu_rects.push(("Rename", rename.rect));
         if rename.lost_focus() {
             let name = std::mem::take(&mut self.context_menu_rename);
             self.drawings.rename_at(index, &name);
@@ -312,7 +312,8 @@ impl ChartPane {
             .button(if locked { "Unlock" } else { "Lock" })
             .on_hover_text("a locked object rejects geometry edits and plain deletes");
         #[cfg(test)]
-        self.drawing_menu_rects
+        self.gestures
+            .menu_rects
             .push((if locked { "Unlock" } else { "Lock" }, lock.rect));
         if lock.clicked() {
             self.drawings.set_locked_at(index, !locked);
@@ -320,7 +321,8 @@ impl ChartPane {
         }
         let eye = ui.button(if hidden { "Show" } else { "Hide" });
         #[cfg(test)]
-        self.drawing_menu_rects
+        self.gestures
+            .menu_rects
             .push((if hidden { "Show" } else { "Hide" }, eye.rect));
         if eye.clicked() {
             self.drawings.set_hidden_at(index, !hidden);
@@ -346,7 +348,7 @@ impl ChartPane {
             delete
         };
         #[cfg(test)]
-        self.drawing_menu_rects.push(("Delete", delete.rect));
+        self.gestures.menu_rects.push(("Delete", delete.rect));
         #[cfg(not(test))]
         let _ = delete;
     }

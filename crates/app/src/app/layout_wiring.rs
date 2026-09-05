@@ -231,7 +231,7 @@ impl QuantickApp {
         }
         if pane.drawings.in_gesture()
             || pane.drawings.draft().is_some()
-            || !matches!(pane.drawing_drag, DrawingDrag::None)
+            || !matches!(pane.gestures.drag, DrawingDrag::None)
         {
             return Some(LayoutError::GestureInFlight);
         }

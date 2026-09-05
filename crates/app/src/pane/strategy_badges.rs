@@ -183,7 +183,7 @@ impl ChartPane {
                 "arm a strategy on this region: it fires on the trigger bar, in paper trading",
             );
             #[cfg(test)]
-            self.drawing_menu_rects.push(("Add strategy", add.rect));
+            self.gestures.menu_rects.push(("Add strategy", add.rect));
             if add.clicked() {
                 self.strategy_popup_request = Some(id);
                 ui.close_menu();
@@ -210,7 +210,7 @@ impl ChartPane {
                 };
                 let disarm = ui.button("Disarm").on_hover_text(hover);
                 #[cfg(test)]
-                self.drawing_menu_rects.push(("Disarm", disarm.rect));
+                self.gestures.menu_rects.push(("Disarm", disarm.rect));
                 if disarm.clicked()
                     && let Some(instance) = self.strategies.for_drawing_mut(id)
                 {
@@ -241,7 +241,7 @@ impl ChartPane {
                          region here first"
                     });
                 #[cfg(test)]
-                self.drawing_menu_rects.push(("Re-arm", rearm.rect));
+                self.gestures.menu_rects.push(("Re-arm", rearm.rect));
                 if rearm.clicked() {
                     self.rearm_strategy_for_drawing(id);
                     ui.close_menu();
@@ -254,7 +254,8 @@ impl ChartPane {
             "detach the bot from this drawing; an open operation keeps its position and bracket",
         );
         #[cfg(test)]
-        self.drawing_menu_rects
+        self.gestures
+            .menu_rects
             .push(("Remove strategy", remove.rect));
         if remove.clicked() {
             self.remove_strategy_for_drawing(id);

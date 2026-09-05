@@ -49,10 +49,12 @@ use quantick_orderflow::reserved_span_ms;
 mod axes_and_chrome;
 mod drawing_gestures;
 mod frame;
+mod gestures;
 mod menus;
 mod strategy_badges;
 
 pub use frame::PaneFrame;
+pub use gestures::GestureState;
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
 const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
@@ -1246,10 +1248,6 @@ pub struct ChartPane {
     /// Rename buffer for the layer menu's drawing section, seeded from the
     /// clicked object's current name on the press that opened the menu.
     context_menu_rename: String,
-    /// Test-only trace of the drawing section's widgets, the
-    /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
-    #[cfg(test)]
-    pub drawing_menu_rects: Vec<(&'static str, egui::Rect)>,
     /// Armed strategy instances riding this pane's drawings. The kernel
     /// (`quantick-strategy`) judges; this pane only anchors and paints.
     pub strategies: crate::strategy_anchors::StrategyAnchors,
@@ -1271,64 +1269,8 @@ pub struct ChartPane {
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
     pub drawings: Drawings,
-    // Drawing placement/movement state. Anchors are chart coordinates; only
-    // the current hover and press position are transient pixels.
-    pub drawing_hover: Option<ChartPoint>,
-    /// The object whose *content* is being edited off-canvas right now —
-    /// the on-chart note editor's subject. Told to the pane by the host each
-    /// frame, because the editor is chrome and lives above the canvas; the
-    /// object it holds the words for must not paint them twice.
-    pub content_editing: Option<usize>,
-    /// The band the next anchor would land in, as the input pass resolved it.
-    /// The draw pass puts the accent hairline on its top edge — one band at a
-    /// time, and none at all when no tool is armed.
-    drawing_band_hint: Option<egui::Rect>,
-    pub drawing_press_position: Option<egui::Pos2>,
-    pub drawing_press_started_empty: bool,
-    /// The hand a run has when nobody is at the mouse — the
-    /// `QUANTICK_DRAWING_DRAFT` harness hook. `None` for every real session.
-    ///
-    /// The live preview of a half-placed object is the whole feedback of a
-    /// multi-anchor gesture, and it is the one surface a click-free launch
-    /// could not reach: it exists only between two clicks, and only while a
-    /// pointer is over the chart. Both halves are read exactly where the real
-    /// pointer and the real modifier are read and nowhere else, so everything
-    /// downstream — the tool's shaping, the hint chip, the rubber band — runs
-    /// the same code a hand runs.
-    pub parked_hand: Option<ParkedHand>,
-    /// The last screen position a freehand stroke actually recorded, so the
-    /// capture decimates as it goes rather than storing every mouse event.
-    freehand_last_position: Option<egui::Pos2>,
-    /// What the press resolved under the Pointer tool, held until the click
-    /// it belongs to completes. `Some(None)` is a real answer — a press on
-    /// empty canvas, the one that deselects.
-    ///
-    /// It exists because the canvas is not the same shape before and after a
-    /// selection: the pinned inspector is a side panel laid out *before* the
-    /// central panel, so the frame a selection appears is the frame the chart
-    /// narrows by the panel's width and every drawing slides left with it.
-    /// Re-hit-testing on the release would be asking a different chart.
-    pub drawing_press_pick: Option<Option<usize>>,
-    /// Where a move/resize gesture pressed, while it is still under the drag
-    /// threshold. `None` once the threshold is passed — from then on the
-    /// object follows the pointer for the rest of the gesture.
-    ///
-    /// Without it, one pixel of hand tremor during a *click* re-angles a
-    /// channel or shifts a level the trader placed deliberately, and records
-    /// it as an undo step. Placement already refused to turn a twitch into a
-    /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
-    pub drawing_drag_pending_from: Option<egui::Pos2>,
-    pub drawing_drag: DrawingDrag,
-    /// A gesture this pane is running on a mark the other pane holds, and the
-    /// two pieces of pointer state it needs: where the press landed while the
-    /// drag threshold is still unmet, and the market instant and price the
-    /// pointer was last over — what a body drag sends its deltas against.
-    shared_drag: SharedDrag,
-    /// The pane whose mark [`Self::shared_drag`] is moving, for as long as it
-    /// is moving it.
-    shared_drag_owner: Option<PaneIndex>,
-    shared_drag_pending_from: Option<egui::Pos2>,
-    shared_pointer_mark: Option<(i64, f64)>,
+    /// A drawing gesture in flight — see [`GestureState`].
+    pub gestures: GestureState,
     /// A re-anchor owed to the drawings, holding the slot count of the series
     /// they were last anchored to.
     ///
@@ -1442,27 +1384,12 @@ impl ChartPane {
             context_menu_places: Vec::new(),
             context_menu_drawing: None,
             context_menu_rename: String::new(),
-            #[cfg(test)]
-            drawing_menu_rects: Vec::new(),
             strategies: crate::strategy_anchors::StrategyAnchors::default(),
             strategy_pending: Vec::new(),
             strategy_popup_request: None,
             strategy_cleanup: Vec::new(),
             drawings: Drawings::default(),
-            drawing_hover: None,
-            content_editing: None,
-            drawing_band_hint: None,
-            drawing_press_position: None,
-            drawing_press_started_empty: false,
-            parked_hand: None,
-            freehand_last_position: None,
-            drawing_press_pick: None,
-            drawing_drag_pending_from: None,
-            drawing_drag: DrawingDrag::None,
-            shared_drag: SharedDrag::None,
-            shared_drag_owner: None,
-            shared_drag_pending_from: None,
-            shared_pointer_mark: None,
+            gestures: GestureState::default(),
             pending_reanchor: None,
             strip_expanded: None,
             pending_settings: None,
@@ -2642,10 +2569,10 @@ impl ChartPane {
             // whether or not the drag that may follow is allowed.
             chrome.shared.owner = Some(pick.owner);
             chrome.shared.edit = Some(SharedEdit::Select(pick.index));
-            self.shared_drag_owner = Some(pick.owner);
-            self.shared_drag_pending_from = Some(position);
-            self.shared_pointer_mark = mark(self, position);
-            self.shared_drag = if pick.locked {
+            self.gestures.shared_drag_owner = Some(pick.owner);
+            self.gestures.shared_drag_pending_from = Some(position);
+            self.gestures.shared_pointer_mark = mark(self, position);
+            self.gestures.shared_drag = if pick.locked {
                 SharedDrag::Blocked
             } else {
                 chrome.shared.begin_gesture = true;
@@ -2660,7 +2587,7 @@ impl ChartPane {
             return;
         }
 
-        if !self.shared_drag.is_active() {
+        if !self.gestures.shared_drag.is_active() {
             // Hover feedback, so a mirrored mark does not feel deader than the
             // object it is: the same three cursors its own pane shows.
             if !pointer.over_chrome
@@ -2679,12 +2606,12 @@ impl ChartPane {
         }
 
         if pointer.released {
-            chrome.shared.owner = self.shared_drag_owner;
+            chrome.shared.owner = self.gestures.shared_drag_owner;
             chrome.shared.commit_gesture = true;
-            self.shared_drag = SharedDrag::None;
-            self.shared_drag_owner = None;
-            self.shared_drag_pending_from = None;
-            self.shared_pointer_mark = None;
+            self.gestures.shared_drag = SharedDrag::None;
+            self.gestures.shared_drag_owner = None;
+            self.gestures.shared_drag_pending_from = None;
+            self.gestures.shared_pointer_mark = None;
             return;
         }
         if !pointer.down {
@@ -2692,14 +2619,14 @@ impl ChartPane {
         }
         // Under the threshold the object does not move at all, so a click on
         // the mirror stays a click.
-        if let Some(origin) = self.shared_drag_pending_from {
+        if let Some(origin) = self.gestures.shared_drag_pending_from {
             let travelled = pointer
                 .position
                 .is_some_and(|position| (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX);
             if !travelled {
                 return;
             }
-            self.shared_drag_pending_from = None;
+            self.gestures.shared_drag_pending_from = None;
         }
         // Clamped, not filtered: the gesture is already ours, and it keeps
         // working while the pointer travels off the pane — over the inspector
@@ -2720,8 +2647,8 @@ impl ChartPane {
         };
         // Every edit this gesture emits belongs to the pane the gesture took
         // hold of, whatever the pointer is over now.
-        chrome.shared.owner = self.shared_drag_owner;
-        match self.shared_drag {
+        chrome.shared.owner = self.gestures.shared_drag_owner;
+        match self.gestures.shared_drag {
             SharedDrag::Anchor { index, anchor } => {
                 chrome.shared.edit = Some(SharedEdit::MoveAnchor {
                     index,
@@ -2732,7 +2659,7 @@ impl ChartPane {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
             }
             SharedDrag::Body { index } => {
-                if let Some((last_time, last_price)) = self.shared_pointer_mark {
+                if let Some((last_time, last_price)) = self.gestures.shared_pointer_mark {
                     chrome.shared.edit = Some(SharedEdit::Translate {
                         index,
                         delta_ms: time_ms - last_time,
@@ -2744,7 +2671,7 @@ impl ChartPane {
             SharedDrag::Blocked => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
             SharedDrag::None => {}
         }
-        self.shared_pointer_mark = Some((time_ms, price));
+        self.gestures.shared_pointer_mark = Some((time_ms, price));
     }
 
     /// Handle mouse navigation, TradingView-style:
@@ -3072,7 +2999,7 @@ impl ChartPane {
             // honoured at press time, so a press on a panel leaves no pending
             // origin here and no selection can be stolen through one.
             if primary_released
-                && self.drawing_drag_pending_from.is_some()
+                && self.gestures.drag_pending_from.is_some()
                 && let Some(position) = pointer_position
             {
                 // Alt+click walks down the z-order through overlapping
@@ -3094,7 +3021,7 @@ impl ChartPane {
                         self.drawing_below_selection(position, band, history_right, total)
                     })
                 } else {
-                    self.drawing_press_pick.take().unwrap_or_else(|| {
+                    self.gestures.press_pick.take().unwrap_or_else(|| {
                         // No press was recorded (it landed on chrome, or off
                         // any band): fall back to asking now.
                         pointer_band.and_then(|band| {
@@ -3120,7 +3047,7 @@ impl ChartPane {
                         .get(index)
                         .is_some_and(|drawing| drawing.tool.holds_text() && !drawing.locked)
                 {
-                    self.content_editing = Some(index);
+                    self.gestures.content_editing = Some(index);
                     *chrome.begin_text_edit = true;
                 }
             }
@@ -3135,14 +3062,14 @@ impl ChartPane {
             {
                 // One question, asked once, on the geometry the user was
                 // actually looking at when they pressed.
-                self.drawing_press_pick =
+                self.gestures.press_pick =
                     Some(self.drawing_pick_at(position, band, history_right, total));
-                self.drawing_drag_pending_from = Some(position);
+                self.gestures.drag_pending_from = Some(position);
                 if let Some((drawing_index, handle)) =
                     self.drawing_handle_at(position, band, history_right, total)
                 {
                     self.drawings.select(Some(drawing_index));
-                    self.drawing_drag = if self.drawings.items()[drawing_index].locked {
+                    self.gestures.drag = if self.drawings.items()[drawing_index].locked {
                         DrawingDrag::Blocked
                     } else {
                         self.drawings.begin_gesture();
@@ -3153,7 +3080,7 @@ impl ChartPane {
                     };
                 } else if let Some(index) = self.drawing_at(position, band, history_right, total) {
                     self.drawings.select(Some(index));
-                    self.drawing_drag = if self.drawings.items()[index].locked {
+                    self.gestures.drag = if self.drawings.items()[index].locked {
                         DrawingDrag::Blocked
                     } else {
                         self.drawings.begin_gesture();
@@ -3164,7 +3091,7 @@ impl ChartPane {
                 // belongs to whatever egui routed it to (inspector, manager,
                 // chart pan). Deselection happens through the egui-routed
                 // click above, which already respects floating windows.
-                drawing_drag_started = self.drawing_drag.is_active();
+                drawing_drag_started = self.gestures.drag.is_active();
             }
             // A held button is not yet a drag. Until the pointer has left the
             // threshold the object does not move at all, so a click stays a
@@ -3175,13 +3102,13 @@ impl ChartPane {
             // `travel` is measured from the press, not accumulated per frame,
             // so crossing the threshold hands the gesture the *whole* movement
             // and the object does not trail the cursor by 4 px forever.
-            let travel = match (self.drawing_drag_pending_from, pointer_position) {
+            let travel = match (self.gestures.drag_pending_from, pointer_position) {
                 (Some(origin), Some(position)) => {
                     let travel = position - origin;
                     if travel.length() < DRAWING_DRAG_THRESHOLD_PX {
                         None
                     } else {
-                        self.drawing_drag_pending_from = None;
+                        self.gestures.drag_pending_from = None;
                         Some(travel)
                     }
                 }
@@ -3194,7 +3121,7 @@ impl ChartPane {
                 && !drawing_drag_started
                 && let Some(travel) = travel
             {
-                match self.drawing_drag {
+                match self.gestures.drag {
                     DrawingDrag::Handle {
                         drawing_index,
                         handle,
@@ -3294,7 +3221,7 @@ impl ChartPane {
             // Everything below is said in market time and price, and the tab
             // hands it to the pane that holds the object. Nothing is written
             // to a copy.
-            if !self.drawing_drag.is_active() {
+            if !self.gestures.drag.is_active() {
                 self.interact_shared(
                     ui,
                     chrome,
@@ -3312,25 +3239,25 @@ impl ChartPane {
                 );
             }
             drawing_drag_consumes_gesture =
-                self.drawing_drag.is_active() || self.shared_drag.is_active();
+                self.gestures.drag.is_active() || self.gestures.shared_drag.is_active();
             if primary_released {
                 // One gesture, one undo entry — recorded only if it moved.
                 self.drawings.commit_gesture();
-                self.drawing_drag = DrawingDrag::None;
+                self.gestures.drag = DrawingDrag::None;
                 // A press that ended in a drag rather than a click leaves its
                 // answer unconsumed; it must not survive to decide the *next*
                 // click, which may be somewhere else entirely. The click path
                 // above already ran this frame and took it if it was a click.
-                self.drawing_press_pick = None;
-                self.drawing_drag_pending_from = None;
+                self.gestures.press_pick = None;
+                self.gestures.drag_pending_from = None;
             }
         } else {
-            self.drawing_drag = DrawingDrag::None;
-            self.drawing_press_pick = None;
-            self.drawing_drag_pending_from = None;
-            self.shared_drag = SharedDrag::None;
-            self.shared_drag_pending_from = None;
-            self.shared_pointer_mark = None;
+            self.gestures.drag = DrawingDrag::None;
+            self.gestures.press_pick = None;
+            self.gestures.drag_pending_from = None;
+            self.gestures.shared_drag = SharedDrag::None;
+            self.gestures.shared_drag_pending_from = None;
+            self.gestures.shared_pointer_mark = None;
         }
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
@@ -4038,7 +3965,7 @@ impl ChartPane {
                 blocked: footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
-                draft_hover_bar: self.drawing_hover.map(|point| point.bar),
+                draft_hover_bar: self.gestures.hover.map(|point| point.bar),
                 partial_bucket_slot,
             },
         );
@@ -4470,7 +4397,7 @@ impl ChartPane {
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top
         // edge. Painted after the drawings so a dense band cannot bury it.
-        if let Some(hint) = self.drawing_band_hint {
+        if let Some(hint) = self.gestures.band_hint {
             painter.line_segment(
                 [
                     egui::pos2(hint.left(), hint.top() + 0.5),
@@ -5236,7 +5163,7 @@ impl ChartPane {
                     // hardcoded, a shared note being typed kept painting its
                     // old words on the companion chart — the same double
                     // render the editor stands the original down to avoid.
-                    content_editing: source.content_editing == Some(index),
+                    content_editing: source.gestures.content_editing == Some(index),
                 };
                 // Both halves, so a shared object is the same object on both
                 // charts. A tool whose body lives in the background pass —
@@ -5389,7 +5316,7 @@ impl ChartPane {
                 style,
                 selected,
                 halo: false,
-                content_editing: self.content_editing == Some(index),
+                content_editing: self.gestures.content_editing == Some(index),
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
@@ -5448,7 +5375,7 @@ impl ChartPane {
             // their real shape while placing.
             let mut anchors: SmallVec<[ChartPoint; 4]> = SmallVec::from_slice(&draft.points);
             if points.len() < draft.tool.required_points()
-                && let Some(hover) = self.drawing_hover
+                && let Some(hover) = self.gestures.hover
             {
                 points.push(self.drawing_screen_point(hover, history_right, total, scale));
                 anchors.push(hover);
