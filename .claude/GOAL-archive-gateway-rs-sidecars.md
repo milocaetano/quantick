@@ -225,18 +225,18 @@ over; the live doubts are recorded as `S1`–`S4` below.
 
 ## Evidence as measured
 
-Recorded at commit `4429552`, branched from `origin/main` at `62c8730`.
+Recorded at commit `0b09b86`, branched from `origin/main` at `62c8730`.
 
 | | Result |
 | --- | --- |
-| **A1-A5** files | `server.rs` 1,400 / `semantic.rs` 591 / `screenshot.rs` 278 / `panel.rs` 278 / `tests/mod.rs` 448 lines |
-| **A1-A5, A7** bodies unchanged | line-multiset comparison of the original file against all six: nothing lost but the two `mod tests {` wrappers, one re-added as `#[cfg(test)] mod tests;`. Every added line is a module header, an import or an `impl` wrapper |
-| **A6** host size | `wc -l crates/app/src/control/gateway.rs` = **1,700** (1,696 production); keeps options, identities, lifecycle, local actions and the frame service |
+| **A1-A5** files | `server.rs` 1,445 / `semantic.rs` 591 / `screenshot.rs` 278 / `panel.rs` 278 / `tests/mod.rs` 450 lines |
+| **A1-A5, A7** bodies unchanged | line-multiset comparison of the original file against all six: every difference is an import line, a module header, an `impl` wrapper, or one of exactly **14 widenings** (13 `pub(super) fn` plus `pub(super) struct SemanticBaseline`), each enumerated. No body line lost |
+| **A6** host size | `wc -l crates/app/src/control/gateway.rs` = **1,680** (1,676 production), 20 under the ceiling; keeps options, identities, lifecycle, local actions and the frame service |
 | **A3** the open question | `execute_on_ui` and `begin_frame` **stayed in `gateway.rs`** (S1): both run every request, not only the ones that want pixels |
 | **A7** seam grep 1 | `grep -nE 'egui\|eframe' control/gateway/server.rs` -> **no match** (exit 1) |
 | **A7** seam grep 2 | `grep -nE 'TcpStream\|TcpListener' control/gateway.rs` -> exactly two lines: the `net::` import and `TrackedSocket.stream`, the type handed across. No `TcpListener` |
 | **A8** re-export | `pub(crate) use server::runtime_id_bytes;`; the six cross-file paths of ledger #7 re-measured at 7/1/2/2/3/1 and all resolve |
-| **A9** ratchet | ceiling 4,142 -> 1,696; `!budget` 50,996 -> 48,550, a fall of **2,446** (asked: >= 2,300). No new baseline entry, no raise signed; every sibling under the 1,500 threshold |
+| **A9** ratchet | ceiling 4,142 -> 1,696; `!budget` 50,996 -> 48,550, a fall of **2,446** (asked: >= 2,300). No new baseline entry, no raise signed; every sibling under the 1,500 threshold (`server.rs` closest, at 1,445) |
 | **A10** report | only `gateway.rs`-related lines moved -- see the deviation below |
 | **A11** tests | `control` 148 before / 148 after; `gateway` 36 / 36; app suite 1,899 passed both on the branch and on `origin/main`. No generated file in the diff |
 | **A12** contract | `git diff --stat origin/main` names neither `contract.rs` nor any bridge test |
@@ -276,11 +276,13 @@ Claims #1-#11 all re-measured true. Two corrections:
   branch and sits at its existing baseline. No file this branch created or
   grew entered the list -- the four siblings are far below it -- so A10 holds
   in substance, and the extra line is reported rather than glossed.
-- **`gateway.rs` lands at exactly 1,700**, the ceiling A6 sets, with no
-  headroom. The two candidates for further shrinking, `invoke_local_action`
-  and `service_replay_trace`, are out of scope by the brief's own list, so the
-  file is left at the limit rather than cut into territory this mission was
-  told not to touch.
+- **`server.rs` names its imports rather than globbing them**, found by this
+  mission's own shape pass: every other column-0 `use super::*` in the
+  workspace is in a `tests/` path, and a glob would have made the seam claim
+  unprovable by reading. Naming them moved 21 host imports that only the
+  gateway thread used out of `gateway.rs`, which is why the host lands at
+  1,680 with headroom rather than exactly on its ceiling, and why `server.rs`
+  grew from 1,400 to 1,445.
 
 ### One test failure, diagnosed
 
