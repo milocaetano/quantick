@@ -43,6 +43,7 @@
 //! is [`encoding`], which now sees every crate rather than only the one it
 //! was born inside.
 
+pub mod blast_radius;
 pub mod context;
 pub mod cycle;
 pub mod encoding;
