@@ -311,7 +311,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let area = app
         .active_tab()
         .flow_pane
-        .last_area
+        .frame
+        .area
         .expect("the pane painted");
     let mut popup = egui::Rect::NOTHING;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -530,7 +531,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .expect("a bar under the edge");
 
     // Coarsen: 400 trades become 10 bars, so index 200 no longer exists.
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 10);
@@ -566,7 +570,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
 #[test]
 fn a_finer_spec_follows_the_same_market_time_forward() {
     let (mut app, _cmd_rx) = app_with_history(400);
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let slots = app.active_tab().flow_pane.slots();
@@ -580,7 +587,10 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .right_edge_time()
         .expect("a bar under the edge");
 
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 400);
@@ -1166,7 +1176,10 @@ fn a_timeframe_change_refolds_locally_without_asking_again() {
     // 1m → 5m: the same history, folded five ways.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+        .spec
+        .retain(crate::state::BarSpec::Time(
+            5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        ));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1203,7 +1216,8 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     // candles adds up to.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 90_000;
+        .spec
+        .retain(crate::state::BarSpec::Time(90_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1221,7 +1235,10 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     // Back to a foldable one, and the history returns from the same base.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+        .spec
+        .retain(crate::state::BarSpec::Time(
+            5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        ));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 24);

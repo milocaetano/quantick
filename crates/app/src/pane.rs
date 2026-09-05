@@ -16,8 +16,7 @@
 use std::collections::BTreeSet;
 
 use eframe::egui;
-use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
 use crate::bands::{self, Band, BandLabel, Bands};
@@ -38,7 +37,7 @@ use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::plot_area::{self, PlotAreas, plot_split, split_time_strip};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
-use crate::state::{BarKind, BarSpec, ChartState, ImbalanceUnit};
+use crate::state::{BarSpec, ChartState, SpecSelector, dec_from_f64};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -47,9 +46,22 @@ use crate::viewport::Viewport;
 use quantick_orderflow::reserved_span_ms;
 
 mod axes_and_chrome;
+mod context_menu;
 mod drawing_gestures;
+mod footprint;
+mod frame;
+mod gestures;
 mod menus;
+mod strategies;
 mod strategy_badges;
+
+/// Every sub-struct of a pane is `Pane*`, without exception: prefixing only
+/// where the bare noun clashes is how one ends up beside a `PaneFrame`.
+pub use context_menu::PaneContextMenu;
+pub use footprint::PaneFootprint;
+pub use frame::PaneFrame;
+pub use gestures::PaneGestures;
+pub use strategies::PaneStrategies;
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
 const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
@@ -93,7 +105,7 @@ const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
-/// [`ChartPane::parked_hand`]. Never constructed outside the harness hook.
+/// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook.
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,
@@ -702,11 +714,6 @@ fn region_pause(drawing: &drawings::Drawing, all_hidden: bool) -> Option<&'stati
     None
 }
 
-/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
-fn dec_from_f64(x: f64) -> Decimal {
-    Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
-}
-
 /// What the pointer is currently doing to a drawing, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DrawingDrag {
@@ -1119,33 +1126,9 @@ pub struct ChartPane {
     /// Whether the user wants the live strip shown. The pixels it actually
     /// gets are still capability-gated — see [`Self::live_strip_width`].
     pub live_strip_visible: bool,
-    /// Whether the candle footprint layer is on. What a fresh launch opens
-    /// with is `config/chart-layers.toml`, not this initialiser — see
-    /// [`crate::chart_layers`]; the ladder still follows the zoom's LOD, so it
-    /// draws nothing where the candle is too narrow to read.
-    pub footprint_visible: bool,
-    /// This chart's own footprint setup, once it has been configured here.
-    ///
-    /// `None` — the default — means "follow the window's last setup", which
-    /// keeps the common case (one chart, one taste) behaving like a global
-    /// setting. A split layout is two readings of the same market (a 90-day
-    /// context chart beside a 50-tick flow chart) and one set of thresholds
-    /// cannot serve both, so the moment a chart is configured on its own it
-    /// keeps its own.
-    pub footprint_override: Option<crate::footprint_config::FootprintConfig>,
-    /// The footprint's sticky detail level (hysteresis on zoom-out).
-    footprint_lod: crate::footprint_render::FootprintLod,
-    /// The forming bar's ladder as last snapshotted for drawing, with the
-    /// frame time it was taken and the slot it belongs to. Refreshed at
-    /// ~10 Hz, not per print — the eye reads patterns, and a frozen layout
-    /// cannot reflow under the pointer — but *immediately* when the slot
-    /// changes: at a bar close the previous bar's ladder must never linger
-    /// on the new bar, not even for one throttle interval.
-    footprint_live: Option<(f64, usize, quantick_engine::BarFootprint)>,
-    /// Bumped whenever [`Self::footprint_live`] is re-taken or cleared — the
-    /// cache key the range-profile drawings use to notice the live edge
-    /// moved, so they re-fold at the snapshot cadence, never per paint.
-    footprint_live_version: u64,
+    /// The candle footprint layer as this pane has it — see
+    /// [`PaneFootprint`].
+    pub footprint: PaneFootprint,
 
     /// Layers switched off that nothing else on this pane owns.
     ///
@@ -1159,60 +1142,22 @@ pub struct ChartPane {
     #[cfg(test)]
     pub layer_menu_rects: Vec<(ChartLayer, egui::Rect)>,
 
-    // Bar-type selector state (one parameter retained per kind).
-    pub kind: BarKind,
-    // The spec the selectors ask for, applied one frame after they settle so
-    // the frame carrying the change paints the loading overlay before the
-    // synchronous rebuild holds this thread. See QuantickApp::apply_spec_change.
-    pub pending_spec: Option<BarSpec>,
-    pub tick_n: u64,
-    pub volume_units: f64,
-    pub dollar_notional: f64,
-    pub time_interval_ms: i64,
-    pub imbalance_target: u64,
-    pub imbalance_unit: ImbalanceUnit,
+    /// The bar rule this pane is on, and the parameter every other kind is
+    /// holding for the trader — see [`SpecSelector`].
+    pub spec: SpecSelector,
 
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
     // it does.
     pub viewport: Viewport,
-    // Where the history pane ended last frame — the lane's divider, and the
-    // handle that resizes it. The input pass runs before the draw computes it.
-    pub last_lane_divider_x: Option<f32>,
-    // The canvas the last draw used. Published for the same reason the divider
-    // is: something outside the draw needs a point on this pane — the scripted
-    // right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
-    // second time is how two answers start to disagree.
-    pub last_chart_rect: Option<egui::Rect>,
-    // The whole rect this pane was last painted into, gutters and time strip
-    // included — and set whether or not the pane had anything to draw, which
-    // is what separates it from `last_chart_rect`. The feed's one-line
-    // offline note is placed against it: an explanation belongs on the pane
-    // with nothing in it, which is precisely the pane that has room for one.
-    pub last_area: Option<egui::Rect>,
-    // The price gutter of the last draw, published for the same reason: the
-    // scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
-    // is really on the axis, not a guess about where the gutter probably is.
-    pub last_price_gutter: Option<egui::Rect>,
-    // The candles' segment of the bottom time strip, published for the same
-    // reason again: `QUANTICK_CONTEXT_MENU=time` needs a point that is really
-    // on the time axis, and past the lane divider the strip belongs to the
-    // tape's own window rather than to this menu.
-    pub last_time_strip: Option<egui::Rect>,
+    /// What the last draw measured, for the passes that are not the draw — see
+    /// [`PaneFrame`].
+    pub frame: PaneFrame,
     // The price-axis levels this frame's drawings declare. Per-frame by
     // nature, reused as a container for the same reason the band carve is —
     // and gathered before the axis labels itself, because the axis stands
     // aside where one of these is going to land.
     price_axis_levels: Vec<PriceAxisLevel>,
-    // The automatic tape window at the last draw — the recent bars' typical
-    // duration. Only the menu reads it, and only to state what "follows the
-    // bars" currently amounts to; the drawing itself is handed the resolved
-    // window, never this.
-    last_lane_reference_ms: Option<i64>,
-    // Whether the right-click that opened the menu landed on the tape rather
-    // than on the candles. The two panes are configured apart, so the menu has
-    // to know which one was asked.
-    context_menu_on_tape: bool,
     // How many rungs the lane was wide enough for at the last draw, and so
     // how finely the next publish samples the forming bar across it. `0` when
     // there is no lane: the worker then walks no ladder and the panes draw
@@ -1221,26 +1166,8 @@ pub struct ChartPane {
     lane_rungs: usize,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     pub price_view: PriceView,
-    // Last frame's auto-fit price range and chart height, for pixel↔price maths
-    // in the input handler (which runs before the draw computes them).
-    pub last_auto_range: Option<(f64, f64)>,
-    pub last_chart_height: f32,
-    pub last_chart_top: f32,
-    // The chart pane from the last frame (excludes axes and the live lane),
-    // for inspector placement and manager centring.
-    pub last_chart_area: Option<egui::Rect>,
-    /// The bands the last [`Self::draw_chart`] painted, kept for the passes
-    /// that run outside it: the tab's shared-drawing projection and the
-    /// inspector's "which band is this on". Reused every frame rather than
-    /// rebuilt, so the draw pass allocates no container.
-    last_bands: Bands,
     /// The price band's label, shared into every carve instead of cloned.
     price_band_label: std::sync::Arc<str>,
-    // The raw canvas area the last frame split into chart, panes and gutters.
-    // Kept so a caller that needs a band it does not otherwise see — the pane
-    // axis tests aiming a drag at a pane's own gutter — asks `plot_split` for
-    // it rather than re-deriving the layout and drifting from it.
-    pub last_plot_area: Option<egui::Rect>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
     /// Whether the pointer is over the tape switch in the canvas's top-right
@@ -1270,105 +1197,18 @@ pub struct ChartPane {
     /// the paper host is mutably reachable outside the chrome's shared
     /// borrow.
     paper_hud_anchor: Option<(egui::Rect, PriceScale)>,
-    /// Price under the right-click that opened the layer menu — the trade
-    /// section's anchor. Refreshed by every secondary click on the canvas.
-    context_menu_price: Option<f64>,
-    /// The placing entries of the last right-click: each registry tool that
-    /// declares a `context_menu_label`, with the chart point *its own*
-    /// `anchor_snap` resolved for that click — so the menu never re-derives
-    /// a projection and a new tool's snap rule needs no edit here.
-    context_menu_places: Vec<(drawings::DrawingTool, ChartPoint)>,
-    /// The drawing under the last right-click, resolved at press time like
-    /// the price and the tape flag. Held as an id, not an index: the menu
-    /// stays open across frames, and an index can go stale under it.
-    /// `pub(crate)` so the menu tests can stage the click's outcome.
-    pub(crate) context_menu_drawing: Option<drawings::DrawingId>,
-    /// Rename buffer for the layer menu's drawing section, seeded from the
-    /// clicked object's current name on the press that opened the menu.
-    context_menu_rename: String,
-    /// Test-only trace of the drawing section's widgets, the
-    /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
-    #[cfg(test)]
-    pub drawing_menu_rects: Vec<(&'static str, egui::Rect)>,
-    /// Armed strategy instances riding this pane's drawings. The kernel
-    /// (`quantick-strategy`) judges; this pane only anchors and paints.
-    pub strategies: crate::strategy_anchors::StrategyAnchors,
-    /// Closed bars awaiting strategy evaluation, each with the slot it
-    /// closed at. Pushed by `ingest_live_trade` only while instances
-    /// exist, drained by the tab in the same ingestion sweep — the slot
-    /// and the drawings' anchors are therefore read against one cut of
-    /// the series.
-    strategy_pending: Vec<(quantick_engine::Bar, usize)>,
-    /// The drawing whose "Add strategy…" was clicked; the app drains it
-    /// and opens the arming dialog over this pane.
-    pub(crate) strategy_popup_request: Option<drawings::DrawingId>,
-    /// Simulator commands the drawing menu owes the paper host — cancelling
-    /// a resting retest limit on disarm/removal. The pane cannot reach the
-    /// tab's simulator from inside the menu, so the tab drains this on the
-    /// same frame ([`crate::tab::TabState::apply_strategy_cleanup`]).
-    strategy_cleanup: Vec<quantick_sim::Command>,
+    /// What the right-click that opened the layer menu resolved — see
+    /// [`PaneContextMenu`].
+    pub context_menu: PaneContextMenu,
+    /// The strategies armed on this pane's drawings — see
+    /// [`PaneStrategies`].
+    pub strategies: PaneStrategies,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
     pub drawings: Drawings,
-    // Drawing placement/movement state. Anchors are chart coordinates; only
-    // the current hover and press position are transient pixels.
-    pub drawing_hover: Option<ChartPoint>,
-    /// The object whose *content* is being edited off-canvas right now —
-    /// the on-chart note editor's subject. Told to the pane by the host each
-    /// frame, because the editor is chrome and lives above the canvas; the
-    /// object it holds the words for must not paint them twice.
-    pub content_editing: Option<usize>,
-    /// The band the next anchor would land in, as the input pass resolved it.
-    /// The draw pass puts the accent hairline on its top edge — one band at a
-    /// time, and none at all when no tool is armed.
-    drawing_band_hint: Option<egui::Rect>,
-    pub drawing_press_position: Option<egui::Pos2>,
-    pub drawing_press_started_empty: bool,
-    /// The hand a run has when nobody is at the mouse — the
-    /// `QUANTICK_DRAWING_DRAFT` harness hook. `None` for every real session.
-    ///
-    /// The live preview of a half-placed object is the whole feedback of a
-    /// multi-anchor gesture, and it is the one surface a click-free launch
-    /// could not reach: it exists only between two clicks, and only while a
-    /// pointer is over the chart. Both halves are read exactly where the real
-    /// pointer and the real modifier are read and nowhere else, so everything
-    /// downstream — the tool's shaping, the hint chip, the rubber band — runs
-    /// the same code a hand runs.
-    pub parked_hand: Option<ParkedHand>,
-    /// The last screen position a freehand stroke actually recorded, so the
-    /// capture decimates as it goes rather than storing every mouse event.
-    freehand_last_position: Option<egui::Pos2>,
-    /// What the press resolved under the Pointer tool, held until the click
-    /// it belongs to completes. `Some(None)` is a real answer — a press on
-    /// empty canvas, the one that deselects.
-    ///
-    /// It exists because the canvas is not the same shape before and after a
-    /// selection: the pinned inspector is a side panel laid out *before* the
-    /// central panel, so the frame a selection appears is the frame the chart
-    /// narrows by the panel's width and every drawing slides left with it.
-    /// Re-hit-testing on the release would be asking a different chart.
-    pub drawing_press_pick: Option<Option<usize>>,
-    /// Where a move/resize gesture pressed, while it is still under the drag
-    /// threshold. `None` once the threshold is passed — from then on the
-    /// object follows the pointer for the rest of the gesture.
-    ///
-    /// Without it, one pixel of hand tremor during a *click* re-angles a
-    /// channel or shifts a level the trader placed deliberately, and records
-    /// it as an undo step. Placement already refused to turn a twitch into a
-    /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
-    pub drawing_drag_pending_from: Option<egui::Pos2>,
-    pub drawing_drag: DrawingDrag,
-    /// A gesture this pane is running on a mark the other pane holds, and the
-    /// two pieces of pointer state it needs: where the press landed while the
-    /// drag threshold is still unmet, and the market instant and price the
-    /// pointer was last over — what a body drag sends its deltas against.
-    shared_drag: SharedDrag,
-    /// The pane whose mark [`Self::shared_drag`] is moving, for as long as it
-    /// is moving it.
-    shared_drag_owner: Option<PaneIndex>,
-    shared_drag_pending_from: Option<egui::Pos2>,
-    shared_pointer_mark: Option<(i64, f64)>,
+    /// A drawing gesture in flight — see [`PaneGestures`].
+    pub gestures: PaneGestures,
     /// A re-anchor owed to the drawings, holding the slot count of the series
     /// they were last anchored to.
     ///
@@ -1390,7 +1230,7 @@ pub struct ChartPane {
     /// Parked rather than acted on: the dialog is the app's — one dialog for
     /// the whole window — and the gestures that ask for it are read deep inside
     /// this pane's input pass, holding borrows the app's state cannot cross.
-    /// The same shape `pending_spec` uses for the other direction.
+    /// The same shape [`SpecSelector::pending`] uses for the other direction.
     pending_settings: Option<SlotId>,
 }
 
@@ -1413,28 +1253,11 @@ impl ChartPane {
     /// among the panes on screen.
     fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
-        let mut tick_n = 50;
-        let mut volume_units = 5.0;
-        let mut dollar_notional = 500_000.0;
-        // `bars → time` opens on a real timeframe, not a one-second chart
-        // (audit QW2): the same 1m the split's time pane opens on.
-        let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
-        let mut imbalance_target = 100;
-        let mut imbalance_unit = ImbalanceUnit::Trades;
-        match &spec {
-            BarSpec::Tick(n) => tick_n = *n,
-            BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
-            BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
-            BarSpec::Time(ms) => time_interval_ms = *ms,
-            BarSpec::Imbalance(unit, target) => {
-                imbalance_unit = *unit;
-                imbalance_target = *target;
-            }
-        }
+        let selector = SpecSelector::new(spec.clone());
 
         Self {
             id,
-            kind: spec.kind(),
+            spec: selector,
             state: ChartState::new(spec),
             pagination_revision: 0,
             orderflow,
@@ -1447,11 +1270,7 @@ impl ChartPane {
             drawings_saved_revision: 0,
             legend_collapsed: false,
             live_strip_visible: false,
-            footprint_visible: false,
-            footprint_override: None,
-            footprint_lod: crate::footprint_render::FootprintLod::default(),
-            footprint_live: None,
-            footprint_live_version: 0,
+            footprint: PaneFootprint::default(),
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
@@ -1460,60 +1279,20 @@ impl ChartPane {
             hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
             #[cfg(test)]
             layer_menu_rects: Vec::new(),
-            pending_spec: None,
-            tick_n,
-            volume_units,
-            dollar_notional,
-            time_interval_ms,
-            imbalance_target,
-            imbalance_unit,
             viewport: Viewport::new(),
-            last_lane_divider_x: None,
-            last_chart_rect: None,
-            last_area: None,
-            last_price_gutter: None,
-            last_time_strip: None,
+            frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
-            last_lane_reference_ms: None,
-            context_menu_on_tape: false,
             lane_rungs: 0,
             price_view: PriceView::new(),
-            last_auto_range: None,
-            last_chart_height: 1.0,
-            last_chart_top: 0.0,
-            last_chart_area: None,
-            last_bands: Bands::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
-            last_plot_area: None,
             hover_pos: None,
             tape_switch_hovered: false,
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
-            context_menu_price: None,
-            context_menu_places: Vec::new(),
-            context_menu_drawing: None,
-            context_menu_rename: String::new(),
-            #[cfg(test)]
-            drawing_menu_rects: Vec::new(),
-            strategies: crate::strategy_anchors::StrategyAnchors::default(),
-            strategy_pending: Vec::new(),
-            strategy_popup_request: None,
-            strategy_cleanup: Vec::new(),
+            context_menu: PaneContextMenu::default(),
+            strategies: PaneStrategies::default(),
             drawings: Drawings::default(),
-            drawing_hover: None,
-            content_editing: None,
-            drawing_band_hint: None,
-            drawing_press_position: None,
-            drawing_press_started_empty: false,
-            parked_hand: None,
-            freehand_last_position: None,
-            drawing_press_pick: None,
-            drawing_drag_pending_from: None,
-            drawing_drag: DrawingDrag::None,
-            shared_drag: SharedDrag::None,
-            shared_drag_owner: None,
-            shared_drag_pending_from: None,
-            shared_pointer_mark: None,
+            gestures: PaneGestures::default(),
             pending_reanchor: None,
             strip_expanded: None,
             pending_settings: None,
@@ -1534,19 +1313,19 @@ impl ChartPane {
     }
 
     /// The footprint setup this chart draws with: its own once configured
-    /// here, else the window's last one. See [`Self::footprint_override`].
+    /// here, else the window's last one. See [`PaneFootprint::config`].
     pub fn footprint_config<'a>(
         &'a self,
         window: &'a crate::footprint_config::FootprintConfig,
     ) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint_override.as_ref().unwrap_or(window)
+        self.footprint.config.as_ref().unwrap_or(window)
     }
 
     /// Put this pane on `spec` outright, selectors included.
     ///
     /// Startup-scoped: the caller is a workspace restoring the bar rule this
     /// pane was last read on, into a pane that has not drawn a frame yet. A
-    /// live change goes through `pending_spec` instead, so the frame carrying
+    /// live change goes through [`SpecSelector::pending`] instead, so the frame carrying
     /// it paints the loading overlay before the rebuild replays the tape —
     /// there is no tape to replay here, and nothing to paint over.
     ///
@@ -1556,21 +1335,7 @@ impl ChartPane {
     /// snap the chart back to a rule they never chose.
     pub fn set_spec(&mut self, spec: BarSpec) {
         let changed = self.state.spec() != &spec;
-        self.kind = spec.kind();
-        match &spec {
-            BarSpec::Tick(n) => self.tick_n = *n,
-            BarSpec::Volume(units) => {
-                self.volume_units = units.to_f64().unwrap_or(self.volume_units);
-            }
-            BarSpec::Dollar(notional) => {
-                self.dollar_notional = notional.to_f64().unwrap_or(self.dollar_notional);
-            }
-            BarSpec::Time(ms) => self.time_interval_ms = *ms,
-            BarSpec::Imbalance(unit, target) => {
-                self.imbalance_unit = *unit;
-                self.imbalance_target = *target;
-            }
-        }
+        self.spec.set(spec.clone());
         self.state.set_spec(spec);
         if changed {
             self.bump_pagination_revision();
@@ -1595,7 +1360,7 @@ impl ChartPane {
         &mut self,
         config: Option<crate::footprint_config::FootprintConfig>,
     ) {
-        self.footprint_override = config;
+        self.footprint.config = config;
     }
 
     /// An egui interaction id scoped to this pane.
@@ -1625,7 +1390,7 @@ impl ChartPane {
             ChartLayer::Bubbles => tape.is_some_and(OrderflowView::bubbles_enabled),
             // Footprint reads the pane's own retained trades, not the tape
             // machinery, so it works on flow and time panes alike.
-            ChartLayer::Footprint => self.footprint_visible,
+            ChartLayer::Footprint => self.footprint.visible,
             ChartLayer::LiveStrip => self.orderflow.is_some() && self.live_strip_visible,
             ChartLayer::LaneMarks => tape.is_some_and(OrderflowView::lane_marks_visible),
             ChartLayer::FlowLegend => tape.is_some_and(OrderflowView::legend_visible),
@@ -1684,7 +1449,7 @@ impl ChartPane {
                     tape.set_bubbles_enabled(visible);
                 }
             }
-            ChartLayer::Footprint => self.footprint_visible = visible,
+            ChartLayer::Footprint => self.footprint.visible = visible,
             ChartLayer::LiveStrip => self.live_strip_visible = visible,
             ChartLayer::LaneMarks => {
                 if let Some(tape) = self.orderflow.as_mut() {
@@ -1916,7 +1681,7 @@ impl ChartPane {
     /// Aim the next menu at one pane or the other, as a right-click would.
     #[cfg(test)]
     pub(crate) fn aim_context_menu_at_tape(&mut self, on_tape: bool) {
-        self.context_menu_on_tape = on_tape;
+        self.context_menu.on_tape = on_tape;
     }
 
     /// Whether a click at this x belongs to the tape rather than the candles.
@@ -1927,7 +1692,9 @@ impl ChartPane {
     /// divider, and every click on it is the candles'.
     #[must_use]
     fn click_on_tape(&self, x: f32) -> bool {
-        self.last_lane_divider_x.is_some_and(|divider| x >= divider)
+        self.frame
+            .lane_divider_x
+            .is_some_and(|divider| x >= divider)
     }
 
     /// The tape switch's click, in the input pass.
@@ -2033,15 +1800,7 @@ impl ChartPane {
 
     /// The bar spec implied by the current selector state.
     pub fn current_spec(&self) -> BarSpec {
-        match self.kind {
-            BarKind::Tick => BarSpec::Tick(self.tick_n.max(1)),
-            BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
-            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
-            BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
-            BarKind::Imbalance => {
-                BarSpec::Imbalance(self.imbalance_unit, self.imbalance_target.max(1))
-            }
-        }
+        self.spec.spec()
     }
 
     /// How many bar slots the chart draws: the venue prefix, the closed bars
@@ -2501,11 +2260,11 @@ impl ChartPane {
         let inverted = self.price_view.is_inverted();
         self.price_view = PriceView::new();
         self.price_view.set_inverted(inverted);
-        self.last_auto_range = None;
+        self.frame.auto_range = None;
         self.hover_pos = None;
         // Bars queued for the strategies belong to the series that just
         // died; the tab disarms the instances with the reset's own reason.
-        self.strategy_pending.clear();
+        self.strategies.pending.clear();
     }
 
     /// Fill a pane opened mid-session from the trades another pane of the same
@@ -2555,9 +2314,9 @@ impl ChartPane {
             // *composed* one (venue history prefix + live bars) — the same
             // space the drawings' anchors live in, or the region's time
             // window would be off by the prefix length.
-            if !self.strategies.is_empty() {
+            if !self.strategies.anchors.is_empty() {
                 let slot = self.history_prefix.len() + bars_after - 1;
-                self.strategy_pending.push((closed, slot));
+                self.strategies.pending.push((closed, slot));
             }
         }
     }
@@ -2566,7 +2325,7 @@ impl ChartPane {
     /// the tab right after the ingestion sweep that queued them.
     #[must_use]
     pub fn take_strategy_bars(&mut self) -> Vec<(quantick_engine::Bar, usize)> {
-        std::mem::take(&mut self.strategy_pending)
+        std::mem::take(&mut self.strategies.pending)
     }
 
     /// Resolve the drawing an instance is anchored to into the kernel's
@@ -2668,7 +2427,7 @@ impl ChartPane {
         // band whose axis its value belongs to. Reading the candles' scale for
         // a CVD mark would send a price back to the pane that owns it.
         let mark = |pane: &Self, position: egui::Pos2| {
-            let band = bands::band_at(&pane.last_bands, position)?;
+            let band = bands::band_at(&pane.frame.bands, position)?;
             pane.drawing_point_at(
                 position,
                 pointer.history_right,
@@ -2691,10 +2450,10 @@ impl ChartPane {
             // whether or not the drag that may follow is allowed.
             chrome.shared.owner = Some(pick.owner);
             chrome.shared.edit = Some(SharedEdit::Select(pick.index));
-            self.shared_drag_owner = Some(pick.owner);
-            self.shared_drag_pending_from = Some(position);
-            self.shared_pointer_mark = mark(self, position);
-            self.shared_drag = if pick.locked {
+            self.gestures.shared_drag_owner = Some(pick.owner);
+            self.gestures.shared_drag_pending_from = Some(position);
+            self.gestures.shared_pointer_mark = mark(self, position);
+            self.gestures.shared_drag = if pick.locked {
                 SharedDrag::Blocked
             } else {
                 chrome.shared.begin_gesture = true;
@@ -2709,7 +2468,7 @@ impl ChartPane {
             return;
         }
 
-        if !self.shared_drag.is_active() {
+        if !self.gestures.shared_drag.is_active() {
             // Hover feedback, so a mirrored mark does not feel deader than the
             // object it is: the same three cursors its own pane shows.
             if !pointer.over_chrome
@@ -2728,12 +2487,12 @@ impl ChartPane {
         }
 
         if pointer.released {
-            chrome.shared.owner = self.shared_drag_owner;
+            chrome.shared.owner = self.gestures.shared_drag_owner;
             chrome.shared.commit_gesture = true;
-            self.shared_drag = SharedDrag::None;
-            self.shared_drag_owner = None;
-            self.shared_drag_pending_from = None;
-            self.shared_pointer_mark = None;
+            self.gestures.shared_drag = SharedDrag::None;
+            self.gestures.shared_drag_owner = None;
+            self.gestures.shared_drag_pending_from = None;
+            self.gestures.shared_pointer_mark = None;
             return;
         }
         if !pointer.down {
@@ -2741,14 +2500,14 @@ impl ChartPane {
         }
         // Under the threshold the object does not move at all, so a click on
         // the mirror stays a click.
-        if let Some(origin) = self.shared_drag_pending_from {
+        if let Some(origin) = self.gestures.shared_drag_pending_from {
             let travelled = pointer
                 .position
                 .is_some_and(|position| (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX);
             if !travelled {
                 return;
             }
-            self.shared_drag_pending_from = None;
+            self.gestures.shared_drag_pending_from = None;
         }
         // Clamped, not filtered: the gesture is already ours, and it keeps
         // working while the pointer travels off the pane — over the inspector
@@ -2769,8 +2528,8 @@ impl ChartPane {
         };
         // Every edit this gesture emits belongs to the pane the gesture took
         // hold of, whatever the pointer is over now.
-        chrome.shared.owner = self.shared_drag_owner;
-        match self.shared_drag {
+        chrome.shared.owner = self.gestures.shared_drag_owner;
+        match self.gestures.shared_drag {
             SharedDrag::Anchor { index, anchor } => {
                 chrome.shared.edit = Some(SharedEdit::MoveAnchor {
                     index,
@@ -2781,7 +2540,7 @@ impl ChartPane {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
             }
             SharedDrag::Body { index } => {
-                if let Some((last_time, last_price)) = self.shared_pointer_mark {
+                if let Some((last_time, last_price)) = self.gestures.shared_pointer_mark {
                     chrome.shared.edit = Some(SharedEdit::Translate {
                         index,
                         delta_ms: time_ms - last_time,
@@ -2793,7 +2552,7 @@ impl ChartPane {
             SharedDrag::Blocked => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
             SharedDrag::None => {}
         }
-        self.shared_pointer_mark = Some((time_ms, price));
+        self.gestures.shared_pointer_mark = Some((time_ms, price));
     }
 
     /// Handle mouse navigation, TradingView-style:
@@ -2820,9 +2579,9 @@ impl ChartPane {
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.
-        self.last_plot_area = Some(area);
+        self.frame.plot_area = Some(area);
         let areas = self.plot_areas(area, chrome.capabilities);
-        self.last_chart_area = Some(areas.chart);
+        self.frame.chart_area = Some(areas.chart);
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
         let bands = self.bands(&areas);
@@ -2832,10 +2591,10 @@ impl ChartPane {
         // here, which left the trader unable to move the chart they were
         // annotating (audit S2).
         let tool_armed = self.handle_drawing_placement(ui, &areas, &bands, chrome);
-        let auto = self.last_auto_range;
-        let height = self.last_chart_height;
+        let auto = self.frame.auto_range;
+        let height = self.frame.chart_height;
         let total = self.slots();
-        let divider = self.last_lane_divider_x;
+        let divider = self.frame.lane_divider_x;
         // Only the divider's own handle is off limits to the pan, not the whole
         // band: the resize gesture and the pan must never both fire on one
         // pixel, which is what `gesture_hits_lane` was written for — but
@@ -2874,12 +2633,12 @@ impl ChartPane {
             && areas.chart.contains(position)
             && let Some(scale) = drawing_scale.as_ref()
         {
-            self.context_menu_price = Some(scale.price_at(position.y));
+            self.context_menu.price = Some(scale.price_at(position.y));
             // The same click, resolved once per placing tool through the
             // projection `drawing_point_at` owns, each with the tool's own
             // snap — the anchored VWAP's candle magnet included.
-            let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
-            self.context_menu_on_tape = self.click_on_tape(position.x);
+            let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+            self.context_menu.on_tape = self.click_on_tape(position.x);
             // The most specific thing under the click: a drawing, resolved
             // on the band the click actually landed in (a CVD line and a
             // price line can share the pixel). Right-click selects like the
@@ -2888,13 +2647,13 @@ impl ChartPane {
             let clicked = bands::band_at(&bands, position)
                 .filter(|band| band.drawable())
                 .and_then(|band| self.drawing_at(position, band, history_right, total));
-            self.context_menu_drawing = clicked.map(|index| {
+            self.context_menu.drawing = clicked.map(|index| {
                 self.drawings.select(Some(index));
                 let drawing = &self.drawings.items()[index];
-                self.context_menu_rename = drawing.name.clone().unwrap_or_default();
+                self.context_menu.rename = drawing.name.clone().unwrap_or_default();
                 drawing.id
             });
-            self.context_menu_places.clear();
+            self.context_menu.places.clear();
             for tool in drawings::DRAWING_TOOLS {
                 if tool.context_menu_label().is_none() {
                     continue;
@@ -2907,7 +2666,7 @@ impl ChartPane {
                     tool.anchor_snap(),
                     price_band,
                 ) {
-                    self.context_menu_places.push((tool, point));
+                    self.context_menu.places.push((tool, point));
                 }
             }
         }
@@ -2919,7 +2678,7 @@ impl ChartPane {
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {
             self.hover_pos = None;
-        } else if let Some(id) = self.context_menu_drawing.take() {
+        } else if let Some(id) = self.context_menu.drawing.take() {
             // The menu just closed. An in-flight rename commits here too:
             // dismissing the menu with an outside click is the natural
             // blur-to-commit gesture, and the TextEdit's own lost_focus
@@ -2929,13 +2688,13 @@ impl ChartPane {
                     .name
                     .clone()
                     .unwrap_or_default();
-                if self.context_menu_rename.trim() != current {
-                    let name = std::mem::take(&mut self.context_menu_rename);
+                if self.context_menu.rename.trim() != current {
+                    let name = std::mem::take(&mut self.context_menu.rename);
                     self.drawings.rename_at(index, &name);
                 }
             }
         }
-        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = price_band.rect;
         let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
             .input(|input| {
@@ -3121,7 +2880,7 @@ impl ChartPane {
             // honoured at press time, so a press on a panel leaves no pending
             // origin here and no selection can be stolen through one.
             if primary_released
-                && self.drawing_drag_pending_from.is_some()
+                && self.gestures.drag_pending_from.is_some()
                 && let Some(position) = pointer_position
             {
                 // Alt+click walks down the z-order through overlapping
@@ -3143,7 +2902,7 @@ impl ChartPane {
                         self.drawing_below_selection(position, band, history_right, total)
                     })
                 } else {
-                    self.drawing_press_pick.take().unwrap_or_else(|| {
+                    self.gestures.press_pick.take().unwrap_or_else(|| {
                         // No press was recorded (it landed on chrome, or off
                         // any band): fall back to asking now.
                         pointer_band.and_then(|band| {
@@ -3169,7 +2928,7 @@ impl ChartPane {
                         .get(index)
                         .is_some_and(|drawing| drawing.tool.holds_text() && !drawing.locked)
                 {
-                    self.content_editing = Some(index);
+                    self.gestures.content_editing = Some(index);
                     *chrome.begin_text_edit = true;
                 }
             }
@@ -3184,14 +2943,14 @@ impl ChartPane {
             {
                 // One question, asked once, on the geometry the user was
                 // actually looking at when they pressed.
-                self.drawing_press_pick =
+                self.gestures.press_pick =
                     Some(self.drawing_pick_at(position, band, history_right, total));
-                self.drawing_drag_pending_from = Some(position);
+                self.gestures.drag_pending_from = Some(position);
                 if let Some((drawing_index, handle)) =
                     self.drawing_handle_at(position, band, history_right, total)
                 {
                     self.drawings.select(Some(drawing_index));
-                    self.drawing_drag = if self.drawings.items()[drawing_index].locked {
+                    self.gestures.drag = if self.drawings.items()[drawing_index].locked {
                         DrawingDrag::Blocked
                     } else {
                         self.drawings.begin_gesture();
@@ -3202,7 +2961,7 @@ impl ChartPane {
                     };
                 } else if let Some(index) = self.drawing_at(position, band, history_right, total) {
                     self.drawings.select(Some(index));
-                    self.drawing_drag = if self.drawings.items()[index].locked {
+                    self.gestures.drag = if self.drawings.items()[index].locked {
                         DrawingDrag::Blocked
                     } else {
                         self.drawings.begin_gesture();
@@ -3213,7 +2972,7 @@ impl ChartPane {
                 // belongs to whatever egui routed it to (inspector, manager,
                 // chart pan). Deselection happens through the egui-routed
                 // click above, which already respects floating windows.
-                drawing_drag_started = self.drawing_drag.is_active();
+                drawing_drag_started = self.gestures.drag.is_active();
             }
             // A held button is not yet a drag. Until the pointer has left the
             // threshold the object does not move at all, so a click stays a
@@ -3224,13 +2983,13 @@ impl ChartPane {
             // `travel` is measured from the press, not accumulated per frame,
             // so crossing the threshold hands the gesture the *whole* movement
             // and the object does not trail the cursor by 4 px forever.
-            let travel = match (self.drawing_drag_pending_from, pointer_position) {
+            let travel = match (self.gestures.drag_pending_from, pointer_position) {
                 (Some(origin), Some(position)) => {
                     let travel = position - origin;
                     if travel.length() < DRAWING_DRAG_THRESHOLD_PX {
                         None
                     } else {
-                        self.drawing_drag_pending_from = None;
+                        self.gestures.drag_pending_from = None;
                         Some(travel)
                     }
                 }
@@ -3243,7 +3002,7 @@ impl ChartPane {
                 && !drawing_drag_started
                 && let Some(travel) = travel
             {
-                match self.drawing_drag {
+                match self.gestures.drag {
                     DrawingDrag::Handle {
                         drawing_index,
                         handle,
@@ -3343,7 +3102,7 @@ impl ChartPane {
             // Everything below is said in market time and price, and the tab
             // hands it to the pane that holds the object. Nothing is written
             // to a copy.
-            if !self.drawing_drag.is_active() {
+            if !self.gestures.drag.is_active() {
                 self.interact_shared(
                     ui,
                     chrome,
@@ -3361,25 +3120,25 @@ impl ChartPane {
                 );
             }
             drawing_drag_consumes_gesture =
-                self.drawing_drag.is_active() || self.shared_drag.is_active();
+                self.gestures.drag.is_active() || self.gestures.shared_drag.is_active();
             if primary_released {
                 // One gesture, one undo entry — recorded only if it moved.
                 self.drawings.commit_gesture();
-                self.drawing_drag = DrawingDrag::None;
+                self.gestures.drag = DrawingDrag::None;
                 // A press that ended in a drag rather than a click leaves its
                 // answer unconsumed; it must not survive to decide the *next*
                 // click, which may be somewhere else entirely. The click path
                 // above already ran this frame and took it if it was a click.
-                self.drawing_press_pick = None;
-                self.drawing_drag_pending_from = None;
+                self.gestures.press_pick = None;
+                self.gestures.drag_pending_from = None;
             }
         } else {
-            self.drawing_drag = DrawingDrag::None;
-            self.drawing_press_pick = None;
-            self.drawing_drag_pending_from = None;
-            self.shared_drag = SharedDrag::None;
-            self.shared_drag_pending_from = None;
-            self.shared_pointer_mark = None;
+            self.gestures.drag = DrawingDrag::None;
+            self.gestures.press_pick = None;
+            self.gestures.drag_pending_from = None;
+            self.gestures.shared_drag = SharedDrag::None;
+            self.gestures.shared_drag_pending_from = None;
+            self.gestures.shared_pointer_mark = None;
         }
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
@@ -3491,7 +3250,7 @@ impl ChartPane {
         // body so it takes the drag that would otherwise pan the candles
         // behind it, and it is the only place the pointer changes shape: the
         // line stays a hairline, the cursor is what says it can be moved.
-        let divider = self.last_lane_divider_x.map(|x| {
+        let divider = self.frame.lane_divider_x.map(|x| {
             ui.interact(
                 egui::Rect::from_min_max(
                     egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),
@@ -3517,7 +3276,7 @@ impl ChartPane {
         // lane zooms the lane's window, the rest zooms the candle spacing —
         // each pane's own time axis, under the pane it belongs to.
         let (history_strip, lane_strip) =
-            split_time_strip(areas.time_strip, self.last_lane_divider_x);
+            split_time_strip(areas.time_strip, self.frame.lane_divider_x);
         let time = ui.interact(
             history_strip,
             self.interaction_id("time_nav"),
@@ -3785,7 +3544,7 @@ impl ChartPane {
         self.paper_hud_anchor = None;
         // Published before anything can return early, so an empty pane still
         // says where it is.
-        self.last_area = Some(area);
+        self.frame.area = Some(area);
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 
@@ -3802,7 +3561,7 @@ impl ChartPane {
             .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
             .is_some();
         let footprint_on =
-            (self.footprint_visible || self.wants_range_profile()) && !footprint_blocked;
+            (self.footprint.visible || self.wants_range_profile()) && !footprint_blocked;
         self.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
@@ -3840,20 +3599,21 @@ impl ChartPane {
             match self.state.partial_footprint() {
                 Some(partial_ladder) => {
                     let stale =
-                        self.footprint_live
+                        self.footprint
+                            .live
                             .as_ref()
                             .is_none_or(|(taken, snapshot_slot, _)| {
                                 *snapshot_slot != closed_total
                                     || now - *taken >= LIVE_LADDER_REFRESH_S
                             });
                     if stale {
-                        self.footprint_live = Some((now, closed_total, partial_ladder.clone()));
-                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                        self.footprint.live = Some((now, closed_total, partial_ladder.clone()));
+                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
                     }
                 }
                 None => {
-                    if self.footprint_live.take().is_some() {
-                        self.footprint_live_version = self.footprint_live_version.wrapping_add(1);
+                    if self.footprint.live.take().is_some() {
+                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
                     }
                 }
             }
@@ -3862,8 +3622,9 @@ impl ChartPane {
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
-        self.last_price_gutter = Some(areas.price_gutter);
-        self.last_time_strip = Some(split_time_strip(areas.time_strip, self.last_lane_divider_x).0);
+        self.frame.price_gutter = Some(areas.price_gutter);
+        self.frame.time_strip =
+            Some(split_time_strip(areas.time_strip, self.frame.lane_divider_x).0);
         let pane_rects = areas.indicator_panes.clone();
         if total == 0 {
             painter.text(
@@ -3903,17 +3664,19 @@ impl ChartPane {
         let lane_width_px = live_lane.map_or(0.0, |lane| lane.width_px);
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
-        self.last_lane_divider_x =
+        self.frame.lane_divider_x =
             crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
-        self.last_chart_rect = Some(chart_rect);
+        self.frame.chart_rect = Some(chart_rect);
         self.lane_rungs = lane_rungs(
-            self.last_lane_divider_x
+            self.frame
+                .lane_divider_x
                 .map_or(0.0, |divider| chart_rect.right() - divider),
         );
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
             egui::pos2(
-                self.last_lane_divider_x
+                self.frame
+                    .lane_divider_x
                     .unwrap_or_else(|| chart_rect.right()),
                 chart_rect.bottom(),
             ),
@@ -3954,7 +3717,7 @@ impl ChartPane {
         let Some(auto_scale) = chart::price_window(
             visible_closed(),
             partial_visible,
-            self.last_auto_range,
+            self.frame.auto_range,
             partial.or_else(|| closed.last()),
             chart_rect.top(),
             chart_rect.bottom(),
@@ -3980,11 +3743,12 @@ impl ChartPane {
         // laid out for whichever one paints. Asking the requested style put a
         // sidebar lane under a style that draws full width.
         let requested_style = self
-            .footprint_override
+            .footprint
+            .config
             .as_ref()
             .unwrap_or(chrome.footprint)
             .style;
-        let footprint_style = self.footprint_lod.effective_style(requested_style);
+        let footprint_style = self.footprint.lod.effective_style(requested_style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot, and the
         // style the layer leaves the candle in. Both from one function, whose
@@ -4079,12 +3843,12 @@ impl ChartPane {
                 state: &self.state,
                 budget: crate::frvp::fold_budget(),
                 prefix,
-                partial_ladder: self.footprint_live.as_ref().map(|(_, _, ladder)| ladder),
-                partial_version: self.footprint_live_version,
+                partial_ladder: self.footprint.live.as_ref().map(|(_, _, ladder)| ladder),
+                partial_version: self.footprint.live_version,
                 blocked: footprint_blocked,
                 side_inferred: chrome.side_inferred,
                 heat_first_slot,
-                draft_hover_bar: self.drawing_hover.map(|point| point.bar),
+                draft_hover_bar: self.gestures.hover.map(|point| point.bar),
                 partial_bucket_slot,
             },
         );
@@ -4111,7 +3875,7 @@ impl ChartPane {
         let compass = self.pointer_compass(chart_rect, right, total, &scale, chrome);
         // The candles' own segment of the time axis: past the lane divider the
         // strip is the tape's rolling window, which labels itself.
-        let (history_strip, _) = split_time_strip(areas.time_strip, self.last_lane_divider_x);
+        let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
         // Every claim below is a height a chip will *really* occupy. A claim
         // for a chip that is not drawn is a round number silently missing from
         // the axis — the mirror of the defect this mechanism exists for, and
@@ -4232,7 +3996,7 @@ impl ChartPane {
         // pass on an indicator band would need its own carve after that pane
         // draws; there is none, and inventing a stale one for it would be
         // worse than not offering it.
-        let mut carved = std::mem::take(&mut self.last_bands);
+        let mut carved = std::mem::take(&mut self.frame.bands);
         self.carve_bands(&areas, &mut carved);
         if let Some(price_band) = carved.iter().next() {
             self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
@@ -4285,7 +4049,8 @@ impl ChartPane {
                 first_state_slot: prefix.len(),
                 visible: (start, end),
                 partial: self
-                    .footprint_live
+                    .footprint
+                    .live
                     .as_ref()
                     .map(|(_, _, ladder)| ladder)
                     .filter(|_| partial_visible.is_some()),
@@ -4306,10 +4071,10 @@ impl ChartPane {
                 pixels_per_point: painter.ctx().pixels_per_point(),
                 // Field access, not `self.footprint_config(..)`: the method
                 // borrows all of `self` and the draw below needs
-                // `self.footprint_lod` mutably. Same resolution rule.
-                config: self.footprint_override.as_ref().unwrap_or(chrome.footprint),
+                // `self.footprint.lod` mutably. Same resolution rule.
+                config: self.footprint.config.as_ref().unwrap_or(chrome.footprint),
             };
-            crate::footprint_render::draw_layer(&frame, &mut self.footprint_lod);
+            crate::footprint_render::draw_layer(&frame, &mut self.footprint.lod);
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same
@@ -4367,7 +4132,8 @@ impl ChartPane {
         // per pane — and both come from the tape's own numbers, so a pane's
         // curve lands under the prints it was computed from.
         let lane_window = self
-            .last_lane_divider_x
+            .frame
+            .lane_divider_x
             .zip(live_lane)
             .and_then(|(divider, lane)| {
                 let orderflow = self.orderflow.as_ref()?;
@@ -4511,11 +4277,11 @@ impl ChartPane {
         for (index, band) in carved.iter().enumerate() {
             self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
-        self.last_bands = carved;
+        self.frame.bands = carved;
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top
         // edge. Painted after the drawings so a dense band cannot bury it.
-        if let Some(hint) = self.drawing_band_hint {
+        if let Some(hint) = self.gestures.band_hint {
             painter.line_segment(
                 [
                     egui::pos2(hint.left(), hint.top() + 0.5),
@@ -4586,7 +4352,7 @@ impl ChartPane {
             // lane when one is up) — the same right edge the input pass
             // hands to `handle_chart_input`, so a painted ✕ and its press
             // agree about where it is.
-            let tag_right = self.last_lane_divider_x.unwrap_or(chart_rect.right());
+            let tag_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
             // Hover affordances paint only on the pane whose pointer feeds
             // the paper input; the others keep display-only tags. Every pane
             // still paints the lines themselves — an order is a fact about
@@ -4658,7 +4424,7 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_ref() {
             self.draw_lane_time_axis(
                 painter,
-                split_time_strip(areas.time_strip, self.last_lane_divider_x).1,
+                split_time_strip(areas.time_strip, self.frame.lane_divider_x).1,
                 orderflow.live_lane_window_ms(closed),
                 orderflow.tape_age(),
             );
@@ -4667,12 +4433,12 @@ impl ChartPane {
             // what that works out to, and the menu is drawn without the bars
             // in reach. Recorded from the same bars the axis was just drawn
             // from, so the label and the axis can never disagree.
-            self.last_lane_reference_ms = Some(reserved_span_ms(closed));
+            self.frame.lane_reference_ms = Some(reserved_span_ms(closed));
         }
         // The way back from history (audit F6), painted over the strip's
         // labels on the same geometry the input path registered.
         if !self.viewport.follows_live() {
-            let (history_strip, _) = split_time_strip(areas.time_strip, self.last_lane_divider_x);
+            let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
             draw_live_chip(painter, live_chip_rect(history_strip));
         }
         // Panned off the data (or a rebuild re-cut the series under the
@@ -4711,9 +4477,9 @@ impl ChartPane {
 
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
-        self.last_auto_range = Some(auto_range);
-        self.last_chart_height = chart_rect.height();
-        self.last_chart_top = chart_rect.top();
+        self.frame.auto_range = Some(auto_range);
+        self.frame.chart_height = chart_rect.height();
+        self.frame.chart_top = chart_rect.top();
     }
 
     fn drawing_screen_point(
@@ -4767,7 +4533,8 @@ impl ChartPane {
             &bands::PriceBand {
                 rect: history,
                 range: self
-                    .last_auto_range
+                    .frame
+                    .auto_range
                     .map(|auto| self.price_view.resolve(auto)),
                 top: areas.chart.top(),
                 bottom: areas.chart.bottom(),
@@ -4883,7 +4650,7 @@ impl ChartPane {
     #[must_use]
     pub fn selected_value_per_px(&self) -> Option<f64> {
         let drawing = self.drawings.items().get(self.drawings.selected()?)?;
-        let band = bands::band_of(&self.last_bands, drawing)?;
+        let band = bands::band_of(&self.frame.bands, drawing)?;
         let scale = band.scale?;
         let (lo, hi) = scale.range();
         let per_px = (hi - lo) / f64::from(band.rect.height().max(1.0));
@@ -4902,7 +4669,8 @@ impl ChartPane {
     /// also keeps a line's painted end and its grabbable end the same pixel.
     pub(crate) fn drawing_area(&self, chart: egui::Rect) -> egui::Rect {
         let right = self
-            .last_lane_divider_x
+            .frame
+            .lane_divider_x
             .unwrap_or(chart.right())
             .clamp(chart.left(), chart.right());
         egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
@@ -4912,14 +4680,14 @@ impl ChartPane {
     /// [`Self::draw_chart`] cached. `None` before the pane has drawn once, or
     /// while it has no price range to project against.
     fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
-        let chart = self.last_chart_area?;
-        let auto = self.last_auto_range?;
+        let chart = self.frame.chart_area?;
+        let auto = self.frame.auto_range?;
         let scale = self.price_view.scale(
             auto,
-            self.last_chart_top,
-            self.last_chart_top + self.last_chart_height,
+            self.frame.chart_top,
+            self.frame.chart_top + self.frame.chart_height,
         );
-        let history_right = self.last_lane_divider_x.unwrap_or(chart.right());
+        let history_right = self.frame.lane_divider_x.unwrap_or(chart.right());
         Some((self.drawing_area(chart), history_right, self.slots(), scale))
     }
 
@@ -4932,12 +4700,12 @@ impl ChartPane {
     #[must_use]
     pub(crate) fn control_pointer_hit(&self) -> Option<ControlPointerHit> {
         let position = self.hover_pos?;
-        let chart = self.last_chart_area?;
+        let chart = self.frame.chart_area?;
         if !chart.contains(position) {
             return None;
         }
-        let band = bands::band_at(&self.last_bands, position)?;
-        let history_right = self.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let band = bands::band_at(&self.frame.bands, position)?;
+        let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.slots();
 
         // The same question the axis compass paints the answer to, asked
@@ -5075,7 +4843,7 @@ impl ChartPane {
         // Only the band the pointer is in: a mirrored CVD level and a
         // mirrored price level can be one pixel apart on screen and mean
         // unrelated things, exactly as they can on the pane that owns them.
-        let band = bands::band_at(&self.last_bands, pos)?;
+        let band = bands::band_at(&self.frame.bands, pos)?;
         let scale = band.scale?;
         let mut body = None;
         for (index, drawing) in source.drawings.items().iter().enumerate().rev() {
@@ -5245,7 +5013,7 @@ impl ChartPane {
             //
             // A time-only object is the case where sharing is most obviously
             // right: one instant, marked through every band of both charts.
-            for (band_index, band) in self.last_bands.iter().enumerate() {
+            for (band_index, band) in self.frame.bands.iter().enumerate() {
                 if !bands::drawing_in_band(drawing, band) {
                     continue;
                 }
@@ -5279,7 +5047,7 @@ impl ChartPane {
                     // hardcoded, a shared note being typed kept painting its
                     // old words on the companion chart — the same double
                     // render the editor stands the original down to avoid.
-                    content_editing: source.content_editing == Some(index),
+                    content_editing: source.gestures.content_editing == Some(index),
                 };
                 // Both halves, so a shared object is the same object on both
                 // charts. A tool whose body lives in the background pass —
@@ -5315,17 +5083,15 @@ impl ChartPane {
     /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
     /// answer here.
     fn future_slot_at_time(&self, time: i64) -> Option<f32> {
-        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
-            return None;
-        }
+        let interval = self.spec.spec().time_interval_ms()?;
         let last = self.slots().checked_sub(1)?;
         let last_open = self.slot_open_time(last)?;
         let ahead = time.checked_sub(last_open)?;
-        if ahead < self.time_interval_ms {
+        if ahead < interval {
             return None;
         }
         #[allow(clippy::cast_precision_loss)]
-        Some(last as f32 + ahead as f32 / self.time_interval_ms as f32)
+        Some(last as f32 + ahead as f32 / interval as f32)
     }
 
     /// Re-express a foreign drawing's anchors in this pane's bar space.
@@ -5432,7 +5198,7 @@ impl ChartPane {
                 style,
                 selected,
                 halo: false,
-                content_editing: self.content_editing == Some(index),
+                content_editing: self.gestures.content_editing == Some(index),
             };
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
@@ -5462,7 +5228,7 @@ impl ChartPane {
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
         // allow. O(armed instances), zero when none.
-        for instance in &self.strategies.instances {
+        for instance in &self.strategies.anchors.instances {
             let Some(index) = self.drawings.index_of(instance.drawing) else {
                 continue;
             };
@@ -5491,7 +5257,7 @@ impl ChartPane {
             // their real shape while placing.
             let mut anchors: SmallVec<[ChartPoint; 4]> = SmallVec::from_slice(&draft.points);
             if points.len() < draft.tool.required_points()
-                && let Some(hover) = self.drawing_hover
+                && let Some(hover) = self.gestures.hover
             {
                 points.push(self.drawing_screen_point(hover, history_right, total, scale));
                 anchors.push(hover);

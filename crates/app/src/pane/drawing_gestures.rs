@@ -22,7 +22,6 @@ use crate::bands::{self, Band};
 use crate::chart::PriceScale;
 use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand};
 use crate::plot_area::PlotAreas;
-use crate::state::BarKind;
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
@@ -188,13 +187,11 @@ impl ChartPane {
         // enough trades happen, and no elapsed time can be named for it. That
         // stays `None` — an invented timestamp is worse than a control that
         // says why it is off.
-        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
-            return None;
-        }
+        let interval = self.spec.spec().time_interval_ms()?;
         let last = slots.checked_sub(1)?;
         let ahead = i64::try_from(slot - last).ok()?;
         self.slot_open_time(last)?
-            .checked_add(ahead.checked_mul(self.time_interval_ms)?)
+            .checked_add(ahead.checked_mul(interval)?)
     }
 
     /// Placement consumes clicks while a drawing tool is armed, preventing a
@@ -215,18 +212,19 @@ impl ChartPane {
         let constrain = if ui.input(|input| input.modifiers.shift) {
             drawings::Constrain::Level
         } else {
-            self.parked_hand
+            self.gestures
+                .parked_hand
                 .map_or(drawings::Constrain::Free, |hand| hand.constrain)
         };
         let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
-            self.drawing_hover = None;
-            self.drawing_band_hint = None;
-            self.drawing_press_position = None;
-            self.drawing_press_started_empty = false;
+            self.gestures.hover = None;
+            self.gestures.band_hint = None;
+            self.gestures.press_position = None;
+            self.gestures.press_started_empty = false;
             return false;
         };
-        let history_right = self.last_lane_divider_x.unwrap_or(areas.chart.right());
+        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         // Every band at once: the panes are drawing surfaces now, so hovering
         // one has to read as one rather than as dead space beneath the chart.
         let surface = bands
@@ -256,7 +254,7 @@ impl ChartPane {
         let over_pane_chrome = response
             .hover_pos()
             .is_some_and(|position| Self::pane_chrome_hit(areas, position));
-        self.drawing_band_hint = hovered
+        self.gestures.band_hint = hovered
             .filter(|band| band.drawable() && !over_pane_chrome)
             .map(|band| band.rect);
         // The raw pointer, never the widget's hover.
@@ -280,8 +278,8 @@ impl ChartPane {
         let preview_pos = ui
             .input(|input| input.pointer.latest_pos())
             .filter(|position| surface.contains(*position))
-            .or_else(|| self.parked_hand.map(|hand| hand.position));
-        self.drawing_hover = preview_pos
+            .or_else(|| self.gestures.parked_hand.map(|hand| hand.position));
+        self.gestures.hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {
                 let (_, point) = self.shaped_placement(
@@ -327,13 +325,13 @@ impl ChartPane {
             )
         {
             let band = band.key.clone();
-            self.drawing_press_started_empty = self.drawings.draft_len() == 0;
-            self.drawing_press_position = Some(position);
+            self.gestures.press_started_empty = self.drawings.draft_len() == 0;
+            self.gestures.press_position = Some(position);
             // The first anchor of a stroke also seeds its decimation, or the
             // very next frame records a second point on the same pixel and a
             // stationary click becomes a two-point "drawing".
             if tool.freehand() {
-                self.freehand_last_position = Some(position);
+                self.gestures.freehand_last_position = Some(position);
             }
             self.place_drawing_point(tool, &band, point, chrome);
         }
@@ -378,31 +376,31 @@ impl ChartPane {
                 // on every later frame — for a shape whose whole value is
                 // roughly where it is.
                 && self
-                    .freehand_last_position
+                    .gestures.freehand_last_position
                     .is_none_or(|last| last.distance(position) >= FREEHAND_MIN_STEP_PX)
                 && self.drawings.draft_len() < FREEHAND_MAX_POINTS
             {
-                self.freehand_last_position = Some(position);
+                self.gestures.freehand_last_position = Some(position);
                 let band = band.key.clone();
                 self.place_drawing_point(tool, &band, point, chrome);
             }
             if released_position.is_some() {
-                self.freehand_last_position = None;
+                self.gestures.freehand_last_position = None;
                 if self.drawings.finish_draft() {
                     // Same one-shot rule the clicked tools follow.
                     if !chrome.toolrail.repeat() {
                         chrome.toolrail.arm(Tool::Pointer);
                     }
-                    self.drawing_hover = None;
+                    self.gestures.hover = None;
                 }
-                self.drawing_press_position = None;
-                self.drawing_press_started_empty = false;
+                self.gestures.press_position = None;
+                self.gestures.press_started_empty = false;
             }
             return true;
         }
         if tool.required_points() > 1
-            && self.drawing_press_started_empty
-            && let Some(start) = self.drawing_press_position
+            && self.gestures.press_started_empty
+            && let Some(start) = self.gestures.press_position
             && let Some(position) = released_position
             && surface.contains(position)
             && start.distance(position) >= DRAWING_DRAG_COMPLETES_PX
@@ -420,8 +418,8 @@ impl ChartPane {
             self.place_drawing_point(tool, &band, point, chrome);
         }
         if released_position.is_some() {
-            self.drawing_press_position = None;
-            self.drawing_press_started_empty = false;
+            self.gestures.press_position = None;
+            self.gestures.press_started_empty = false;
         }
         true
     }
@@ -556,10 +554,10 @@ impl ChartPane {
             // placeholder under the field that opens over it, for the one
             // frame between the two.
             if tool.holds_text() {
-                self.content_editing = self.drawings.selected();
+                self.gestures.content_editing = self.drawings.selected();
                 *chrome.begin_text_edit = true;
             }
-            self.drawing_hover = None;
+            self.gestures.hover = None;
         }
     }
 

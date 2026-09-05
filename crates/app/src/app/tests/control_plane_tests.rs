@@ -151,8 +151,8 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     {
         let pane = &mut app.active_tab_mut().flow_pane;
-        pane.last_chart_rect = Some(rect);
-        pane.last_lane_divider_x = Some(700.0);
+        pane.frame.chart_rect = Some(rect);
+        pane.frame.lane_divider_x = Some(700.0);
     }
     let tape = app
         .scripted_context_menu_pos(ContextMenuPane::Tape)
@@ -165,7 +165,7 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
     assert!(rect.contains(tape) && rect.contains(chart));
 
     // No lane: the candles still answer, the tape has nothing to open.
-    app.active_tab_mut().flow_pane.last_lane_divider_x = None;
+    app.active_tab_mut().flow_pane.frame.lane_divider_x = None;
     assert_eq!(app.scripted_context_menu_pos(ContextMenuPane::Tape), None);
     assert!(
         app.scripted_context_menu_pos(ContextMenuPane::Chart)
@@ -1477,7 +1477,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
     // reports what the pane actually holds.
     assert_eq!(
         footprint["visible"],
-        app.active_tab().flow_pane.footprint_visible,
+        app.active_tab().flow_pane.footprint.visible,
         "the scope reports the pane's own layer state"
     );
     assert_eq!(
@@ -3458,8 +3458,8 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
     let expected_slot = 20usize;
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
-        let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
+        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.viewport.x_center(expected_slot, right, pane.slots()),
             chart.center().y,
@@ -3538,7 +3538,7 @@ fn the_control_the_cursor_resolves_to_is_one_the_scene_names() {
     run_frame(&mut app, &ctx);
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
         chart.center()
     };
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
@@ -3735,7 +3735,8 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
     let time_chart = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("time pane reported its rect");
     let position = egui::pos2(
         time_chart.center().x,
@@ -4839,7 +4840,10 @@ fn control_idle_dense_replay_benchmark() {
 
     let ctx = egui::Context::default();
     let (mut app, events, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 16;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(16));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     events

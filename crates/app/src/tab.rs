@@ -859,10 +859,10 @@ impl Tab {
     /// holding pixel coordinates of bars that no longer exist there.
     fn drop_overlay_gestures(&mut self) {
         for pane in self.panes_mut() {
-            pane.drawing_hover = None;
-            pane.drawing_press_position = None;
-            pane.drawing_press_started_empty = false;
-            pane.drawing_drag = DrawingDrag::None;
+            pane.gestures.hover = None;
+            pane.gestures.press_position = None;
+            pane.gestures.press_started_empty = false;
+            pane.gestures.drag = DrawingDrag::None;
         }
     }
 
@@ -1074,11 +1074,11 @@ impl Tab {
     /// whether a time pane exists at all, which is why the loop lives here
     /// rather than in the host.
     pub fn set_content_editing(&mut self, target: Option<(PaneSide, usize)>) {
-        self.flow_pane.content_editing = target
+        self.flow_pane.gestures.content_editing = target
             .filter(|(side, _)| *side == PaneSide::Flow)
             .map(|(_, index)| index);
         for (slot, time) in self.time_panes.iter_mut().enumerate() {
-            time.content_editing = target
+            time.gestures.content_editing = target
                 .filter(|(side, _)| *side == PaneSide::Time(slot))
                 .map(|(_, index)| index);
         }
@@ -1560,7 +1560,7 @@ impl Tab {
         }
         let rebuilding = self
             .panes()
-            .any(|(pane, _side)| pane.pending_spec.is_some());
+            .any(|(pane, _side)| pane.spec.pending.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -1588,14 +1588,14 @@ impl Tab {
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
-            pane.pending_spec = None;
+            pane.spec.pending = None;
             return;
         }
-        match pane.pending_spec.take() {
+        match pane.spec.pending.take() {
             // The frame that changed the selector: arm the indicator, paint.
-            None => pane.pending_spec = Some(desired),
+            None => pane.spec.pending = Some(desired),
             // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => pane.pending_spec = Some(desired),
+            Some(pending) if pending != desired => pane.spec.pending = Some(desired),
             // Settled since last frame: do the rebuild.
             Some(_) => {
                 // Where the user is looking, in market time — the one thing a
@@ -1642,6 +1642,7 @@ impl Tab {
                 // and now — through the same funnel manual orders use.
                 let cleanup = pane
                     .strategies
+                    .anchors
                     .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
                 let _ = pane.take_strategy_bars();
                 for command in cleanup {

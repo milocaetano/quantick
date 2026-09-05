@@ -543,9 +543,13 @@ mod collapse_path_tests {
         tab.apply_pending_layout(&config, &style, &mut ids);
         tab.apply_pending_layout(&config, &style, &mut ids);
         assert_eq!(tab.time_panes.len(), 2, "both charts were built");
-        assert_eq!(tab.time_panes[0].time_interval_ms, 60_000);
         assert_eq!(
-            tab.time_panes[1].time_interval_ms, 900_000,
+            tab.time_panes[0].spec.retained(crate::state::BarKind::Time),
+            &crate::state::BarSpec::Time(60_000)
+        );
+        assert_eq!(
+            tab.time_panes[1].spec.retained(crate::state::BarKind::Time),
+            &crate::state::BarSpec::Time(900_000),
             "the bottom chart opened on the interval the file kept for it"
         );
         assert_eq!(

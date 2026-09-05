@@ -118,7 +118,7 @@ impl QuantickApp {
         let side = self.active_tab().focused_side();
         match change {
             crate::surfaces::FootprintChange::Applied(edited) => {
-                self.active_tab_mut().pane_mut(side).footprint_override = Some((*edited).clone());
+                self.active_tab_mut().pane_mut(side).footprint.config = Some((*edited).clone());
                 self.footprint_config = *edited;
                 crate::footprint_config::save(
                     self.workspace.footprint_settings_path(),
@@ -126,7 +126,7 @@ impl QuantickApp {
                 );
             }
             crate::surfaces::FootprintChange::ResetToDefault => {
-                self.active_tab_mut().pane_mut(side).footprint_override = None;
+                self.active_tab_mut().pane_mut(side).footprint.config = None;
             }
         }
     }

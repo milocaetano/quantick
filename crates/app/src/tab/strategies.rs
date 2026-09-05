@@ -40,6 +40,7 @@ impl Tab {
     fn any_alarm_armed(&self) -> bool {
         self.panes().any(|(pane, _side)| {
             pane.strategies
+                .anchors
                 .instances
                 .iter()
                 .any(|instance| instance.alarm.is_some())
@@ -68,7 +69,7 @@ impl Tab {
         // Both are wanted: a strategy armed on the second stacked chart has to
         // ring like one armed on the first.
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
-            if pane.strategies.is_empty() {
+            if pane.strategies.anchors.is_empty() {
                 continue;
             }
             // The batch to each instance, applying what it answers with —
@@ -76,13 +77,13 @@ impl Tab {
             // a returned command emits no events of its own (kernel
             // contract), so one echo settles it.
             if !print_events.is_empty() {
-                for index in 0..pane.strategies.instances.len() {
-                    let responses = pane.strategies.instances[index]
+                for index in 0..pane.strategies.anchors.instances.len() {
+                    let responses = pane.strategies.anchors.instances[index]
                         .armed
                         .on_sim_events(&print_events);
                     for command in responses {
                         let events = paper.account_mut().apply_strategy_command(command);
-                        let _ = pane.strategies.instances[index]
+                        let _ = pane.strategies.anchors.instances[index]
                             .armed
                             .on_sim_events(&events);
                     }
@@ -94,12 +95,16 @@ impl Tab {
                 // could not remove it directly dies here, in the sweep.
                 let alive: Vec<crate::drawings::DrawingId> = pane
                     .strategies
+                    .anchors
                     .instances
                     .iter()
                     .map(|instance| instance.drawing)
                     .filter(|id| pane.drawings.index_of(*id).is_some())
                     .collect();
-                let orphan_cleanup = pane.strategies.drop_orphans(|id| alive.contains(&id));
+                let orphan_cleanup = pane
+                    .strategies
+                    .anchors
+                    .drop_orphans(|id| alive.contains(&id));
                 for command in orphan_cleanup {
                     // A dead drawing's bot must not leave its entry resting
                     // with no badge over it; swept through the same funnel.
@@ -107,8 +112,8 @@ impl Tab {
                 }
             }
             for (bar, slot) in &bars {
-                for index in 0..pane.strategies.instances.len() {
-                    let drawing = pane.strategies.instances[index].drawing;
+                for index in 0..pane.strategies.anchors.instances.len() {
+                    let drawing = pane.strategies.anchors.instances[index].drawing;
                     // A region that cannot honestly be tested (hidden, off
                     // its series, another market) holds fire but never
                     // starves the ruler: the trigger's contract is every
@@ -121,7 +126,7 @@ impl Tab {
                         false,
                     ));
                     let flat = paper.is_flat();
-                    let commands = pane.strategies.instances[index]
+                    let commands = pane.strategies.anchors.instances[index]
                         .armed
                         .on_closed_bar(bar, &region, active, flat);
                     // The alarm judges the same bar, from the kernel's own
@@ -130,10 +135,12 @@ impl Tab {
                     // order, never the signal. Every closed bar is offered,
                     // qualifying or not: a preview that failed to hold is
                     // reported here, and this bar's repeat budget resets.
-                    sounds.extend(pane.strategies.instances[index].alarm_on_closed_bar(now_ms));
+                    sounds.extend(
+                        pane.strategies.anchors.instances[index].alarm_on_closed_bar(now_ms),
+                    );
                     for command in commands {
                         let events = paper.account_mut().apply_strategy_command(command);
-                        let _ = pane.strategies.instances[index]
+                        let _ = pane.strategies.anchors.instances[index]
                             .armed
                             .on_sim_events(&events);
                     }
@@ -151,24 +158,25 @@ impl Tab {
             // progress read.
             let any_alarm = pane
                 .strategies
+                .anchors
                 .instances
                 .iter()
                 .any(|instance| instance.alarm.is_some());
             if let Some(partial) = any_alarm.then(|| pane.state.partial().cloned()).flatten() {
                 let progress = pane.state.progress().map(|(progress, _unit)| progress);
                 let slot = pane.closed_slots();
-                for index in 0..pane.strategies.instances.len() {
+                for index in 0..pane.strategies.anchors.instances.len() {
                     // Cheapest gate next, before the region is resolved: on
                     // all but a handful of prints the alarm answers "not
                     // yet" and this costs one comparison.
-                    let wants = pane.strategies.instances[index]
+                    let wants = pane.strategies.anchors.instances[index]
                         .alarm
                         .as_ref()
                         .is_some_and(|alarm| alarm.wants_forming_check(progress, now_ms));
                     if !wants {
                         continue;
                     }
-                    let drawing = pane.strategies.instances[index].drawing;
+                    let drawing = pane.strategies.anchors.instances[index].drawing;
                     let (region, active) = pane.strategy_region(drawing, slot).unwrap_or((
                         quantick_strategy::Region::new(
                             rust_decimal::Decimal::ZERO,
@@ -177,12 +185,12 @@ impl Tab {
                         false,
                     ));
                     sounds.extend(
-                        pane.strategies.instances[index]
+                        pane.strategies.anchors.instances[index]
                             .alarm_on_forming_bar(&partial, &region, active, progress, now_ms),
                     );
                 }
             }
-            watching += pane.strategies.watching();
+            watching += pane.strategies.anchors.watching();
         }
         paper.account_mut().set_bot_listening(watching > 0);
         self.pending_alarm_sounds.extend(sounds);
@@ -218,7 +226,7 @@ impl Tab {
             // Backfilled event replays them (replay seek funnels through here,
             // so seeking inherits correct indicator behavior for free).
             pane.send_indicator_rebuild();
-            pane.last_lane_divider_x = None;
+            pane.frame.lane_divider_x = None;
             // Judgements armed on the old timeline do not carry into the
             // rebuilt one — the same honesty rule the simulator's flatten
             // follows, with the reason on the badge. No cleanup commands
@@ -226,6 +234,7 @@ impl Tab {
             // sweeps every order with the honest `reset` label.
             let _ = pane
                 .strategies
+                .anchors
                 .disarm_all(quantick_strategy::DisarmReason::TimelineReset);
         }
         self.drop_overlay_gestures();

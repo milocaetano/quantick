@@ -227,12 +227,12 @@ impl QuantickApp {
     /// object. Both are the trader's to finish first, and the refusal says so.
     fn pane_swap_refusal(&self, tab: u64, side: PaneSide) -> Option<LayoutError> {
         let pane = self.pane_at(tab, side)?;
-        if !pane.strategies.is_empty() {
+        if !pane.strategies.anchors.is_empty() {
             return Some(LayoutError::StrategyArmed);
         }
         if pane.drawings.in_gesture()
             || pane.drawings.draft().is_some()
-            || !matches!(pane.drawing_drag, DrawingDrag::None)
+            || !matches!(pane.gestures.drag, DrawingDrag::None)
         {
             return Some(LayoutError::GestureInFlight);
         }

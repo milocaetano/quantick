@@ -160,7 +160,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         let id = pane.drawings.items()[0].id;
         // The press half of the gesture, staged: the click resolved the
         // object and seeded the rename buffer, like the canvas path does.
-        pane.context_menu_drawing = Some(id);
+        pane.context_menu.drawing = Some(id);
     }
 
     let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
@@ -182,7 +182,8 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
     let labels: Vec<&str> = app
         .active_tab()
         .flow_pane
-        .drawing_menu_rects
+        .context_menu
+        .menu_rects
         .iter()
         .map(|(label, _)| *label)
         .collect();
@@ -223,7 +224,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, true);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+    let rects = app.active_tab().flow_pane.context_menu.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert_eq!(
@@ -237,7 +238,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         .drawings
         .set_locked_at(0, false);
     menu_frame(&mut app, Vec::new());
-    let rects = app.active_tab().flow_pane.drawing_menu_rects.clone();
+    let rects = app.active_tab().flow_pane.context_menu.menu_rects.clone();
     let events = click(&rects, "Delete");
     menu_frame(&mut app, events);
     assert!(
@@ -245,7 +246,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         "unlocked, the menu's delete removes the object"
     );
     assert_eq!(
-        app.active_tab().flow_pane.context_menu_drawing,
+        app.active_tab().flow_pane.context_menu.drawing,
         None,
         "the section lets go of the object it deleted"
     );
@@ -280,6 +281,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         app.active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -316,6 +318,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         let pane = &mut app.active_tab_mut().flow_pane;
         let _ = pane
             .strategies
+            .anchors
             .for_drawing_mut(drawing)
             .expect("instance")
             .armed
@@ -398,6 +401,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
             .active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert_eq!(
@@ -439,6 +443,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
             app.active_tab()
                 .flow_pane
                 .strategies
+                .anchors
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
@@ -1098,7 +1103,7 @@ fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
         "only the trend line the anchors themselves make"
     );
 
-    app.active_tab_mut().flow_pane.parked_hand = Some(pane::ParkedHand {
+    app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
         position: release,
         constrain: drawings::Constrain::Free,
     });
@@ -1411,7 +1416,8 @@ fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
     let wide = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the canvas drew")
         .width();
 
@@ -1427,7 +1433,8 @@ fn a_pinned_inspector_cannot_wipe_the_selection_that_opened_it() {
     let narrow = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the canvas drew")
         .width();
     assert!(
@@ -1811,7 +1818,7 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
         "moving a drawing must not pan the market underneath it"
     );
     assert_eq!(
-        app.active_tab().flow_pane.drawing_drag,
+        app.active_tab().flow_pane.gestures.drag,
         DrawingDrag::None,
         "release ends the move gesture"
     );
@@ -1863,7 +1870,7 @@ fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
         "a press on the inspector must never fall through to the chart"
     );
     assert_eq!(
-        app.active_tab().flow_pane.drawing_drag,
+        app.active_tab().flow_pane.gestures.drag,
         DrawingDrag::None,
         "no drawing drag may start from a press on the inspector"
     );
@@ -1950,7 +1957,8 @@ fn inspector_opens_beside_the_selection_inside_the_chart() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the chart pane was laid out");
     let bbox = egui::Rect::from_min_max(egui::pos2(300.0, 300.0), egui::pos2(400.0, 380.0))
         .expand(DRAWING_ANCHOR_RADIUS_PX);
@@ -1983,7 +1991,8 @@ fn pinning_the_inspector_docks_it_and_frees_the_canvas() {
     let chart_before = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
 
     let pin = app
@@ -2000,7 +2009,8 @@ fn pinning_the_inspector_docks_it_and_frees_the_canvas() {
     let chart_after = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
     assert!(
         chart_after.width() < chart_before.width(),
@@ -2168,11 +2178,12 @@ fn a_parked_context_bar_greets_the_next_drawing_too() {
         .drawing_chrome
         .context_bar_rect()
         .expect("the bar is still up");
-    let chart = app.drawing_pane().last_chart_area.expect("the pane drew");
+    let chart = app.drawing_pane().frame.chart_area.expect("the pane drew");
     let expected = drawings::context_bar::place(
         chart,
         app.drawing_pane()
-            .last_lane_divider_x
+            .frame
+            .lane_divider_x
             .unwrap_or(chart.right()),
         app.drawing_bbox_on_screen(chart, profile)
             .expect("the object projects"),
@@ -2316,7 +2327,8 @@ fn a_narrow_chart_opens_the_inspector_pinned_until_the_pin_is_touched() {
     run_sized_frame(&mut app, &ctx, narrow, Vec::new());
     assert!(
         app.focused_pane()
-            .last_chart_area
+            .frame
+            .chart_area
             .is_some_and(|chart| chart.width() < INSPECTOR_AUTO_PIN_CHART_WIDTH_PX),
         "this proof needs a chart narrower than the auto-pin threshold"
     );
@@ -2449,7 +2461,7 @@ fn the_object_manager_opens_beside_the_rail() {
     let manager = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_manager")))
         .expect("the manager is open");
-    let chart = app.focused_pane().last_chart_area.expect("chart laid out");
+    let chart = app.focused_pane().frame.chart_area.expect("chart laid out");
     // Default dock is Left: the manager opens one gap inboard of the
     // rail's inner edge, aligned with its leading (top) end.
     assert!(
@@ -2477,7 +2489,10 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // tick(2) with an odd trade count: the last print leaves a bar open,
     // which `app_with_history`'s tick(1) never does.
     let (mut app, evt_tx, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 2;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(2));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=201).map(trade).collect();
@@ -2495,9 +2510,9 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
 
     // Aim at the forming slot: the newest one, at the right edge of the
     // history area.
-    let chart = pane.last_chart_area.expect("chart laid out");
+    let chart = pane.frame.chart_area.expect("chart laid out");
     let width = pane.viewport.candle_width();
-    let right = pane.last_lane_divider_x.unwrap_or(chart.right());
+    let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
     arm_drawing_from_toolbox(&mut app, &ctx, "arrow-mark-up");
@@ -2538,7 +2553,8 @@ fn a_pencil_stroke_ignores_points_outside_its_own_band() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("chart laid out");
 
     arm_drawing_from_toolbox(&mut app, &ctx, "brush");
@@ -2572,7 +2588,8 @@ fn a_pencil_stroke_ignores_points_outside_its_own_band() {
     let (lo, hi) = app
         .active_tab()
         .flow_pane
-        .last_auto_range
+        .frame
+        .auto_range
         .expect("the pane has a range");
     let span = hi - lo;
     for point in &stroke.points {
@@ -2694,7 +2711,8 @@ fn the_field_opens_below_a_note_that_has_no_room_above_it() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("a drawn chart");
     click_chart(&mut app, &ctx, egui::pos2(700.0, chart.top() + 2.0));
     let output = run_frame(&mut app, &ctx);
@@ -2821,7 +2839,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         "the words stayed with the note"
     );
     assert_eq!(
-        owner.flow_pane.content_editing, None,
+        owner.flow_pane.gestures.content_editing, None,
         "and the pane holding it stopped suppressing it, so it paints again"
     );
 }
@@ -3121,7 +3139,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
         viewport_before,
         "resizing a drawing must not pan the chart"
     );
-    assert_eq!(app.active_tab().flow_pane.drawing_drag, DrawingDrag::None);
+    assert_eq!(app.active_tab().flow_pane.gestures.drag, DrawingDrag::None);
     assert!(
         painted_text(&run_frame(&mut app, &ctx))
             .iter()
@@ -3188,7 +3206,10 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
 fn a_source_reset_keeps_the_marks_and_re_anchors_them_by_market_time() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     let ctx = egui::Context::default();
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     run_frame(&mut app, &ctx);
@@ -4029,7 +4050,8 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
     let width = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out")
         .width();
     app.active_tab_mut()

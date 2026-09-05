@@ -162,7 +162,11 @@ impl Tab {
                 // Each context chart carries its own timeframe selector (§11):
                 // its BARS group, beside the toolbar's, which keeps governing
                 // the flow pane.
-                let mut interval_ms = self.time_panes[slot].time_interval_ms;
+                let mut interval_ms = self.time_panes[slot]
+                    .spec
+                    .retained(BarKind::Time)
+                    .time_interval_ms()
+                    .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
                 let header_layout = crate::time_header::draw(
                     ui,
                     areas.header,
@@ -176,8 +180,7 @@ impl Tab {
                 }
                 if header_layout.changed {
                     let pane = &mut self.time_panes[slot];
-                    pane.kind = BarKind::Time;
-                    pane.time_interval_ms = interval_ms;
+                    pane.spec.set(crate::state::BarSpec::Time(interval_ms));
                 }
                 context_charts.push(areas.chart);
             }
@@ -209,9 +212,9 @@ impl Tab {
             // `starved_pane` would then offer as somewhere to paint the
             // offline note — off the visible canvas, on a chart that is not
             // there.
-            flow_pane.last_area = None;
+            flow_pane.frame.area = None;
             for pane in time_panes.iter_mut() {
-                pane.last_area = None;
+                pane.frame.area = None;
             }
             // The time pane has no tape of its own (§11), so its footprint
             // rows adopt the flow pane's capture bucket — the instrument's
@@ -378,7 +381,8 @@ impl Tab {
             // spans a whole chart — from reporting a hit on the pane beside
             // the one the pointer is in, at the same height.
             if !pane
-                .last_chart_area
+                .frame
+                .chart_area
                 .is_some_and(|chart| chart.contains(position))
             {
                 continue;

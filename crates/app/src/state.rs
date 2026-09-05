@@ -47,6 +47,27 @@ impl BarKind {
         BarKind::Imbalance,
     ];
 
+    /// The spec this kind opens on when nothing has chosen a parameter for
+    /// it yet — the value a fresh chart, and every kind the trader has not
+    /// visited, starts from.
+    ///
+    /// One arm per variant, and the only per-kind table the bar vocabulary
+    /// still needs: [`SpecSelector`] builds its whole retained set by mapping
+    /// this over [`Self::ALL`], so a new kind's default is written here and
+    /// nowhere else.
+    #[must_use]
+    pub fn default_spec(self) -> BarSpec {
+        match self {
+            BarKind::Tick => BarSpec::Tick(50),
+            BarKind::Volume => BarSpec::Volume(dec_from_f64(5.0)),
+            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(500_000.0)),
+            // `bars -> time` opens on a real timeframe, not a one-second
+            // chart (audit QW2): the same 1m the split's time pane opens on.
+            BarKind::Time => BarSpec::Time(crate::time_header::DEFAULT_INTERVAL_MS),
+            BarKind::Imbalance => BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
+        }
+    }
+
     /// A short display label.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -90,6 +111,40 @@ impl BarKind {
     }
 }
 
+/// The smallest a `Decimal` bar parameter — volume units, dollar notional —
+/// is allowed to be. Bar parameters only: [`dec_from_f64`] carries prices too,
+/// and floors those with its own constant.
+///
+/// Not zero: a bar rule that closes on no quantity closes on every trade, and
+/// the chart that produces is not what anyone asked for. Small enough that no
+/// parameter a trader would choose is touched by it.
+pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
+
+/// Any UI `f64` as a positive [`Decimal`].
+///
+/// Two kinds of number pass through here and they are not the same kind: a bar
+/// rule's threshold from the toolbar, and — via `pane::strategy_region` — a
+/// drawing's anchor *prices*. The floor below is its own constant for exactly
+/// that reason: it is the positivity floor this conversion has always applied,
+/// not [`DECIMAL_PARAM_FLOOR`], and tuning the bar-parameter floor must not
+/// silently retune where a strategy region's bounds land.
+///
+/// The price case is why that floor is a wart rather than a guard: a region
+/// drawn on a negative-valued band (a CVD) has both bounds collapsed onto it.
+/// Pre-existing and outside this change; written down here so the next reader
+/// finds it rather than trusting the constant's name.
+#[must_use]
+pub fn dec_from_f64(x: f64) -> Decimal {
+    use rust_decimal::prelude::FromPrimitive as _;
+    /// The smallest positive `Decimal` this conversion produces. A separate
+    /// number from [`DECIMAL_PARAM_FLOOR`], which it happens to equal: they
+    /// answer to different callers.
+    const POSITIVE_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
+    Decimal::from_f64(x)
+        .unwrap_or(Decimal::ONE)
+        .max(POSITIVE_FLOOR)
+}
+
 /// A bar type together with its threshold parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarSpec {
@@ -118,6 +173,28 @@ impl BarSpec {
             BarSpec::Dollar(_) => BarKind::Dollar,
             BarSpec::Time(_) => BarKind::Time,
             BarSpec::Imbalance(..) => BarKind::Imbalance,
+        }
+    }
+
+    /// This spec with its parameter held to what the engine will accept.
+    ///
+    /// A selector can hold a zero — a workspace written by an older build, a
+    /// config file, or a control call that asked for one — and a zero-length
+    /// bar rule is not a rule: a volume bar that closes on no volume closes on
+    /// every trade.
+    ///
+    /// The floors are the ones the selectors already enforced before the
+    /// parameters moved onto the variants: `1` for the counted kinds, and
+    /// [`DECIMAL_PARAM_FLOOR`] for the two measured in `Decimal`, which is
+    /// what [`dec_from_f64`] has always applied on the way in.
+    #[must_use]
+    pub fn clamped(&self) -> BarSpec {
+        match self {
+            BarSpec::Tick(n) => BarSpec::Tick((*n).max(1)),
+            BarSpec::Time(ms) => BarSpec::Time((*ms).max(1)),
+            BarSpec::Imbalance(unit, target) => BarSpec::Imbalance(*unit, (*target).max(1)),
+            BarSpec::Volume(units) => BarSpec::Volume((*units).max(DECIMAL_PARAM_FLOOR)),
+            BarSpec::Dollar(notional) => BarSpec::Dollar((*notional).max(DECIMAL_PARAM_FLOOR)),
         }
     }
 
@@ -262,6 +339,141 @@ impl BarSpec {
                 "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance"
             )),
         }
+    }
+}
+
+/// A bar kind and one retained parameter per kind — the state the BARS group
+/// of the toolbar edits, and the pane's answer to "what rule am I on?".
+///
+/// The parameters used to live one field per kind on `ChartPane`: `tick_n`,
+/// `volume_units`, `dollar_notional`, `time_interval_ms`, `imbalance_target`
+/// and `imbalance_unit`, beside `kind` and `pending_spec`. That is one field
+/// per variant on the struct every variant shares, so a seventh bar kind cost
+/// a field on a chart pane that has nothing to do with bar kinds — and the
+/// pane grew one every time the vocabulary did.
+///
+/// Here the parameter travels with the variant that owns it. [`Self::retained`]
+/// is one [`BarSpec`] per entry of [`BarKind::ALL`], built from
+/// [`BarKind::default_spec`], so a new kind is a variant, an `ALL` entry and a
+/// default — and no field anywhere else.
+///
+/// Retention is the point of the array. A trader who moves tick → volume →
+/// tick gets their own tick count back rather than a default, because the
+/// tick slot was never overwritten by the detour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecSelector {
+    /// The kind the selectors are on. The parameter it reads is
+    /// [`Self::retained`]'s entry for this kind.
+    pub kind: BarKind,
+    /// One spec per [`BarKind::ALL`], in `ALL`'s order, each holding the
+    /// parameter that kind was last set to. Only the entry for
+    /// [`Self::kind`] is live; the rest are what the trader gets back on
+    /// returning to them.
+    retained: Vec<BarSpec>,
+    /// The spec the selectors ask for, applied one frame after they settle so
+    /// the frame carrying the change paints the loading overlay before the
+    /// synchronous rebuild holds this thread. See `Tab::apply_spec_change`.
+    pub pending: Option<BarSpec>,
+}
+
+impl Default for SpecSelector {
+    fn default() -> Self {
+        Self {
+            kind: BarKind::Tick,
+            retained: BarKind::ALL
+                .iter()
+                .map(|kind| kind.default_spec())
+                .collect(),
+            pending: None,
+        }
+    }
+}
+
+impl SpecSelector {
+    /// Defaults for every kind, with `spec`'s own parameter applied and its
+    /// kind selected.
+    #[must_use]
+    pub fn new(spec: BarSpec) -> Self {
+        let mut selector = Self::default();
+        selector.set(spec);
+        selector
+    }
+
+    /// Where `kind`'s parameter lives in [`Self::retained`].
+    ///
+    /// Derived from [`BarKind::ALL`] rather than written out, which is what
+    /// makes an eighth bar kind free here: it lands in `ALL`, and this finds
+    /// it.
+    ///
+    /// The `expect` is guarded by `barkind_all_lists_every_variant`, which
+    /// stops compiling the day a variant is added and not listed — so the
+    /// only way to reach the panic is to make the test fail first.
+    fn slot(kind: BarKind) -> usize {
+        BarKind::ALL
+            .iter()
+            .position(|candidate| *candidate == kind)
+            .expect("BarKind::ALL lists every kind")
+    }
+
+    /// The spec the selectors currently ask for, parameters clamped to what
+    /// the engine will accept.
+    ///
+    /// Because it clamps, a caller reading a parameter off the result needs no
+    /// positivity guard of its own: `spec().time_interval_ms()` is `None` on a
+    /// pane that does not cut by time, and at least 1 ms on one that does.
+    /// Two callers in `pane` rely on exactly that.
+    #[must_use]
+    pub fn spec(&self) -> BarSpec {
+        self.retained(self.kind).clamped()
+    }
+
+    /// `kind`'s retained parameter, whether or not it is the selected kind.
+    ///
+    /// Asserts the slot invariant on the way out, which is where a slot
+    /// written through [`Self::retained_mut`] with the wrong variant surfaces.
+    #[must_use]
+    pub fn retained(&self, kind: BarKind) -> &BarSpec {
+        let spec = &self.retained[Self::slot(kind)];
+        debug_assert_eq!(
+            spec.kind(),
+            kind,
+            "the {kind:?} slot holds a {:?} spec: retained_mut was given another kind's rule, and the selector now paints one kind's parameter under another kind's label",
+            spec.kind()
+        );
+        spec
+    }
+
+    /// `kind`'s retained parameter, to edit in place. The widget that drags a
+    /// parameter binds to the variant's own field through this, so a new
+    /// kind's editor needs no new state to bind to.
+    ///
+    /// Edit the parameter, never the variant: a slot holds its own kind, and
+    /// assigning another kind's spec through this leaves [`Self::spec`]
+    /// returning one rule while [`Self::kind`] names another — the toolbar
+    /// would then drag a volume threshold under a "tick" label.
+    /// [`Self::retained`] asserts it in debug builds; [`Self::retain`] is the
+    /// safe way to store a whole spec.
+    pub(crate) fn retained_mut(&mut self, kind: BarKind) -> &mut BarSpec {
+        let slot = Self::slot(kind);
+        &mut self.retained[slot]
+    }
+
+    /// The selected kind's retained parameter, to edit in place.
+    pub fn active_mut(&mut self) -> &mut BarSpec {
+        self.retained_mut(self.kind)
+    }
+
+    /// Store `spec` as its kind's retained parameter, leaving the selected
+    /// kind alone.
+    pub fn retain(&mut self, spec: BarSpec) {
+        let kind = spec.kind();
+        *self.retained_mut(kind) = spec;
+    }
+
+    /// Store `spec` and select its kind.
+    pub fn set(&mut self, spec: BarSpec) {
+        self.kind = spec.kind();
+        self.retain(spec);
     }
 }
 
@@ -771,6 +983,89 @@ mod tests {
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
+    }
+
+    /// The one thing [`SpecSelector`] takes on trust: that `ALL` is the whole
+    /// of `BarKind`. The match is exhaustive and unmatchable by a wildcard, so
+    /// adding a variant breaks this line at compile time; the assertion then
+    /// catches the variant that was added here but forgotten in `ALL`.
+    #[test]
+    fn barkind_all_lists_every_variant() {
+        let named = [
+            BarKind::Tick,
+            BarKind::Volume,
+            BarKind::Dollar,
+            BarKind::Time,
+            BarKind::Imbalance,
+        ];
+        for kind in named {
+            match kind {
+                BarKind::Tick
+                | BarKind::Volume
+                | BarKind::Dollar
+                | BarKind::Time
+                | BarKind::Imbalance => {}
+            }
+            assert!(
+                BarKind::ALL.contains(&kind),
+                "{kind:?} is a bar kind BarKind::ALL does not list, so SpecSelector has no slot to retain its parameter in"
+            );
+        }
+        assert_eq!(
+            BarKind::ALL.len(),
+            named.len(),
+            "BarKind::ALL and this test disagree about how many kinds there are"
+        );
+    }
+
+    /// A zero parameter reaches the selector from outside — a workspace file,
+    /// a config line, a control call — and no kind may pass one on. The
+    /// counted kinds floor at one bar's worth; the two measured in `Decimal`
+    /// floor at [`DECIMAL_PARAM_FLOOR`], which is the floor `dec_from_f64`
+    /// applied on the way in before the parameters moved onto the variants.
+    ///
+    /// Volume is the one that bites: a bar closing on no quantity closes on
+    /// every trade.
+    #[test]
+    fn no_kind_can_be_read_back_with_a_zero_parameter() {
+        let zeroed = [
+            BarSpec::Tick(0),
+            BarSpec::Time(0),
+            BarSpec::Imbalance(ImbalanceUnit::Trades, 0),
+            BarSpec::Volume(Decimal::ZERO),
+            BarSpec::Dollar(Decimal::ZERO),
+        ];
+        for spec in zeroed {
+            let selector = SpecSelector::new(spec.clone());
+            let read_back = selector.spec();
+            let floored = match &read_back {
+                BarSpec::Tick(n) => u64::from(*n > 0),
+                BarSpec::Time(ms) => u64::from(*ms > 0),
+                BarSpec::Imbalance(_, target) => u64::from(*target > 0),
+                BarSpec::Volume(units) => u64::from(*units >= DECIMAL_PARAM_FLOOR),
+                BarSpec::Dollar(notional) => u64::from(*notional >= DECIMAL_PARAM_FLOOR),
+            };
+            assert_eq!(
+                floored, 1,
+                "{spec:?} was read back as {read_back:?}, a rule that closes on nothing"
+            );
+        }
+    }
+
+    /// Retention is the whole reason the selector keeps an array rather than
+    /// one live spec: a detour through another kind must give the trader
+    /// their own parameter back, not a default.
+    #[test]
+    fn a_detour_through_another_kind_returns_the_original_parameter() {
+        let mut selector = SpecSelector::new(BarSpec::Tick(377));
+        selector.set(BarSpec::Volume(dec_from_f64(12.5)));
+        assert_eq!(selector.spec(), BarSpec::Volume(dec_from_f64(12.5)));
+        selector.kind = BarKind::Tick;
+        assert_eq!(
+            selector.spec(),
+            BarSpec::Tick(377),
+            "the tick slot was never overwritten by the volume detour"
+        );
     }
 
     /// Whatever a chart is showing, a config or a saved workspace can name —

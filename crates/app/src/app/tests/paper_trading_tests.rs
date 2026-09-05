@@ -42,7 +42,8 @@ fn an_armed_tool_leaves_the_chart_navigable() {
     let over_candles = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("a frame has been drawn")
         .center();
     run_frame_with_events(
@@ -79,7 +80,8 @@ fn an_armed_two_point_tool_completes_on_a_single_drag() {
         let chart = app
             .active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("a frame has been drawn");
         let start = chart.center() - egui::vec2(120.0, 40.0);
         let end = chart.center() + egui::vec2(120.0, 40.0);
@@ -429,6 +431,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
             app.active_tab()
                 .flow_pane
                 .strategies
+                .anchors
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
@@ -443,6 +446,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
         app.active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -467,6 +471,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     let pane = &app.active_tab().flow_pane;
     let instance = pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("the instance still rides the drawing");
     assert_eq!(
@@ -591,6 +596,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -618,6 +624,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -789,7 +796,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
         app.active_tab().paper.working_orders().is_empty(),
         "no resting bot order outlives its badge"
     );
-    assert!(app.active_tab().flow_pane.strategies.is_empty());
+    assert!(app.active_tab().flow_pane.strategies.anchors.is_empty());
 }
 
 /// The bug the trader reported, walked through the real chart path: a
@@ -890,6 +897,7 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -985,6 +993,7 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -1059,6 +1068,7 @@ fn co_triggered_instances_do_not_stack_orders() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .instances
         .iter()
         .filter(|instance| {
@@ -1100,6 +1110,7 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
     let pane = &app.active_tab().flow_pane;
     let instance = pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("still attached");
     assert_eq!(
@@ -1150,12 +1161,14 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane laid out");
     let tag_right = app
         .active_tab()
         .flow_pane
-        .last_lane_divider_x
+        .frame
+        .lane_divider_x
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1209,12 +1222,14 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane laid out");
     let tag_right = app
         .active_tab()
         .flow_pane
-        .last_lane_divider_x
+        .frame
+        .lane_divider_x
         .unwrap_or(chart.right());
     let y = price_y(&app, PaneSide::Flow, 100.5);
     let close = crate::paper_trading::close_button_rect(
@@ -1453,7 +1468,8 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
 
     let chart = app
         .drawing_pane()
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane has been laid out");
     let popup = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("drawing_inspector")))
@@ -1881,6 +1897,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     assert_ne!(copy, source);
     let carried = pane
         .strategies
+        .anchors
         .for_drawing(copy)
         .expect("the copy carries its own armed instance");
     assert_eq!(carried.preset, "carry me", "same preset, by name");
@@ -1895,7 +1912,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
         "the copy starts watching, carrying none of the original's state"
     );
     assert!(
-        pane.strategies.for_drawing(source).is_some(),
+        pane.strategies.anchors.for_drawing(source).is_some(),
         "and the original keeps its own"
     );
 }
