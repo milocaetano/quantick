@@ -20,6 +20,14 @@ set -u
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 GUARDRAILS="$script_dir/guardrails.sh"
 
+# Which copy of the script `run` invokes. The real one, except in the block
+# that has to control what `ai_review_threads.sh` answers: the gate finds that
+# sibling beside itself, so the only way to stub it without teaching the script
+# an env override -- a switch whose whole purpose would be to turn the gate off
+# -- is to run a copy from a directory the fixture owns. The copy is `cp`ed from
+# the real file, so nothing here tests a script that is not the shipped one.
+GUARDRAILS_UNDER_TEST="$GUARDRAILS"
+
 passed=0
 failed=0
 
@@ -206,12 +214,16 @@ run() {
     # emitting a well-formed decision is a defect the suite should see.
     # The fixture silences git's own CRLF warnings above so this stays
     # signal rather than noise.
-    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>&1)
+    out=$(printf '%s' "$payload" | sh "$GUARDRAILS_UNDER_TEST" "$mode" 2>&1)
     status=$?
 
     actual=silent
     case "$out" in
         *'"permissionDecision":"deny"'*) actual=deny ;;
+        # Neither yes nor no: the gate could not determine something and said
+        # so. Distinguished from `silent` on purpose -- the whole point of the
+        # decision is that a count nobody could take does not read as zero.
+        *'"permissionDecision":"ask"'*) actual=ask ;;
         *'"additionalContext"'*) actual=context ;;
     esac
 
@@ -479,6 +491,109 @@ set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
 run "the script judges the payload, not the tool that produced it" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
+
+# --- pr-gate: the draft PR and the merge gate -------------------------------
+#
+# Phase one ends at a draft PR and phase two ends at a merge, so the gate moved
+# with the work: a draft opens ungated, and `gh pr ready` and `gh pr merge`
+# want both markers *and* zero open ai-review threads.
+#
+# These cases run a copy of the script from a fixture directory, because the
+# gate resolves `ai_review_threads.sh` beside itself and the count has to be
+# controlled without reaching GitHub. `threads` in that directory is what the
+# stub answers: a number, or `unavailable` for the case where no count can be
+# taken at all.
+mkdir -p "$root/hooks"
+cp "$GUARDRAILS" "$root/hooks/guardrails.sh"
+cat > "$root/hooks/ai_review_threads.sh" <<'STUB'
+#!/bin/sh
+# Fixture stub for the real ai_review_threads.sh. Honours only the one
+# subcommand the gate calls, and refuses the rest loudly rather than answering
+# a question it was never asked.
+[ "${1:-}" = count ] || exit 64
+stub_answer=$(cat "$(dirname "$0")/threads" 2>/dev/null)
+case "$stub_answer" in
+    unavailable)
+        echo "the fixture says gh cannot answer" >&2
+        exit 2
+        ;;
+esac
+printf '%s\n' "$stub_answer"
+STUB
+
+set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
+
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+
+# A draft PR is where phase one ends and where the findings get posted, so it
+# opens with no marker at all. This is the case the whole two-phase split rests
+# on: gating it would require the reviews before the review that informs them.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+set_threads 0
+run "a draft PR opens with no marker recorded" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+
+run "the short spelling of draft is a draft too" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create -d --fill")" silent
+
+# The one spelling that contains the flag and means the opposite of it. Read as
+# a draft, it would open an ungated real PR.
+run "--draft=false is not a draft" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft=false --fill")" deny "arch-review-ok"
+
+# The flag has to come from the statement the gate matched. A `--draft`
+# anywhere else on the line is somebody else's argument.
+run "a draft flag in a neighbouring statement is not this PR's" \
+    pr-gate "$(json_bash "$root/wt" "echo --draft && gh pr create --fill")" deny "arch-review-ok"
+
+# Order matters: an unreviewed branch is told about the review it skipped, not
+# about threads. The markers are the older rule and the cheaper check.
+run "gh pr ready wants the reviews before it wants a thread count" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "arch-review-ok"
+
+run "gh pr merge wants the reviews too" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "arch-review-ok"
+
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+
+set_threads 0
+run "both reviews and no open thread makes the branch ready" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
+
+run "both reviews and no open thread merges" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" silent
+
+set_threads 2
+run "gh pr ready is denied while an ai-review thread is open" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "PR #42 has 2"
+
+run "gh pr merge is denied while an ai-review thread is open" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "PR #42 has 2"
+
+# The denial has to name the way out, and the way out is the list of threads.
+run "the denial names the command that lists the open threads" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42")" deny "ai_review_threads.sh list 42"
+
+# A count nobody could take is not a count of zero, and the gate says which of
+# the two it is holding. It asks rather than denies: the file's rule is
+# fail-open, and a human can still answer for it.
+set_threads unavailable
+run "a count that cannot be taken asks rather than passing in silence" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "could not be counted"
+
+set_threads 0
+run "a command naming no PR asks rather than guessing which PR to count" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready")" ask "names no PR number"
+
+# `gh pr create` is never held on the thread count, draft or not: the PR is
+# where the findings live, so they cannot be a precondition for opening it.
+set_threads 9
+run "an open thread never blocks opening the PR that carries it" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+
+GUARDRAILS_UNDER_TEST="$GUARDRAILS"
 
 # --- pr-gate: the small tier ------------------------------------------------
 #
