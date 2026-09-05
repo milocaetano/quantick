@@ -190,6 +190,7 @@
 # options and identities, the lifecycle, the local actions, and the frame
 # service the screenshot arc is armed against. `invoke_local_action` at 164
 # lines and `service_replay_trace` are the next cut's job.
+#
 # The 56 fields became 24: six owner structs, declared in the sidecar that
 # owns each, replacing 38 flat fields. `app.rs` falls 789 -> 625 production
 # lines, because every moved field took its doc comment with it. Nothing was
