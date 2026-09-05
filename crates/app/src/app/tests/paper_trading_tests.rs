@@ -431,6 +431,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
             app.active_tab()
                 .flow_pane
                 .strategies
+                .anchors
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
@@ -445,6 +446,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
         app.active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -469,6 +471,7 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     let pane = &app.active_tab().flow_pane;
     let instance = pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("the instance still rides the drawing");
     assert_eq!(
@@ -593,6 +596,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -620,6 +624,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -791,7 +796,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
         app.active_tab().paper.working_orders().is_empty(),
         "no resting bot order outlives its badge"
     );
-    assert!(app.active_tab().flow_pane.strategies.is_empty());
+    assert!(app.active_tab().flow_pane.strategies.anchors.is_empty());
 }
 
 /// The bug the trader reported, walked through the real chart path: a
@@ -892,6 +897,7 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -987,6 +993,7 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -1061,6 +1068,7 @@ fn co_triggered_instances_do_not_stack_orders() {
         .active_tab()
         .flow_pane
         .strategies
+        .anchors
         .instances
         .iter()
         .filter(|instance| {
@@ -1102,6 +1110,7 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
     let pane = &app.active_tab().flow_pane;
     let instance = pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("still attached");
     assert_eq!(
@@ -1888,6 +1897,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     assert_ne!(copy, source);
     let carried = pane
         .strategies
+        .anchors
         .for_drawing(copy)
         .expect("the copy carries its own armed instance");
     assert_eq!(carried.preset, "carry me", "same preset, by name");
@@ -1902,7 +1912,7 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
         "the copy starts watching, carrying none of the original's state"
     );
     assert!(
-        pane.strategies.for_drawing(source).is_some(),
+        pane.strategies.anchors.for_drawing(source).is_some(),
         "and the original keeps its own"
     );
 }

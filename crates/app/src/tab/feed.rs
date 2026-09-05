@@ -210,6 +210,7 @@ impl Tab {
             // lines down cancels every order with the honest `reset` label.
             let _ = pane
                 .strategies
+                .anchors
                 .disarm_all(quantick_strategy::DisarmReason::MarketChanged);
             let _ = pane.take_strategy_bars();
         }

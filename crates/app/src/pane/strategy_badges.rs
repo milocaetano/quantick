@@ -104,7 +104,7 @@ impl ChartPane {
     #[cfg(test)]
     #[must_use]
     pub(crate) fn strategy_badge_text(&self, id: drawings::DrawingId) -> String {
-        let Some(instance) = self.strategies.for_drawing(id) else {
+        let Some(instance) = self.strategies.anchors.for_drawing(id) else {
             return String::new();
         };
         let Some(index) = self.drawings.index_of(id) else {
@@ -178,14 +178,14 @@ impl ChartPane {
             return;
         }
         let id = drawing.id;
-        let Some(instance) = self.strategies.for_drawing(id) else {
+        let Some(instance) = self.strategies.anchors.for_drawing(id) else {
             let add = ui.button("Add strategy…").on_hover_text(
                 "arm a strategy on this region: it fires on the trigger bar, in paper trading",
             );
             #[cfg(test)]
             self.gestures.menu_rects.push(("Add strategy", add.rect));
             if add.clicked() {
-                self.strategy_popup_request = Some(id);
+                self.strategies.popup_request = Some(id);
                 ui.close_menu();
             }
             return;
@@ -212,10 +212,10 @@ impl ChartPane {
                 #[cfg(test)]
                 self.gestures.menu_rects.push(("Disarm", disarm.rect));
                 if disarm.clicked()
-                    && let Some(instance) = self.strategies.for_drawing_mut(id)
+                    && let Some(instance) = self.strategies.anchors.for_drawing_mut(id)
                 {
                     let cleanup = instance.armed.disarm(DisarmReason::User);
-                    self.strategy_cleanup.extend(cleanup);
+                    self.strategies.cleanup.extend(cleanup);
                     ui.close_menu();
                 }
             }
@@ -270,14 +270,14 @@ impl ChartPane {
     /// replay-seek trap where force bars right after a seek never fire.
     pub(crate) fn rearm_strategy_for_drawing(&mut self, drawing: drawings::DrawingId) {
         use quantick_strategy::ArmedState;
-        let Some(instance) = self.strategies.for_drawing(drawing) else {
+        let Some(instance) = self.strategies.anchors.for_drawing(drawing) else {
             return;
         };
         let series_changed = matches!(
             instance.armed.state(),
             ArmedState::Disarmed { reason } if reason.resets_series()
         );
-        if let Some(instance) = self.strategies.for_drawing_mut(drawing) {
+        if let Some(instance) = self.strategies.anchors.for_drawing_mut(drawing) {
             instance.armed.rearm();
         }
         if series_changed {
@@ -290,11 +290,11 @@ impl ChartPane {
     /// whose disarm reset the ruler. Venue-prefix candles are excluded for
     /// the same reason as at arm time: they measure another ruler entirely.
     fn rewarm_strategy_trigger(&mut self, id: drawings::DrawingId) {
-        let Some(instance) = self.strategies.for_drawing(id) else {
+        let Some(instance) = self.strategies.anchors.for_drawing(id) else {
             return;
         };
         let bars = self.strategy_warmup_bars(instance.armed.trigger().warmup_bars());
-        let Some(instance) = self.strategies.for_drawing_mut(id) else {
+        let Some(instance) = self.strategies.anchors.for_drawing_mut(id) else {
             return;
         };
         instance.armed.warm(&bars);
@@ -333,18 +333,22 @@ impl ChartPane {
     /// order with no badge over it. Cleanup is queued for the tab's
     /// same-frame drain like the menu's.
     pub(crate) fn sweep_strategy_orphans(&mut self) {
-        if self.strategies.is_empty() {
+        if self.strategies.anchors.is_empty() {
             return;
         }
         let alive: Vec<drawings::DrawingId> = self
             .strategies
+            .anchors
             .instances
             .iter()
             .map(|instance| instance.drawing)
             .filter(|id| self.drawings.index_of(*id).is_some())
             .collect();
-        let cleanup = self.strategies.drop_orphans(|id| alive.contains(&id));
-        self.strategy_cleanup.extend(cleanup);
+        let cleanup = self
+            .strategies
+            .anchors
+            .drop_orphans(|id| alive.contains(&id));
+        self.strategies.cleanup.extend(cleanup);
     }
 
     /// The last `want` closed bars of the live series — never venue-prefix
@@ -362,14 +366,14 @@ impl ChartPane {
     /// them to the paper host on this same frame.
     #[must_use]
     pub fn take_strategy_cleanup(&mut self) -> Vec<quantick_sim::Command> {
-        std::mem::take(&mut self.strategy_cleanup)
+        std::mem::take(&mut self.strategies.cleanup)
     }
 
     /// Remove the instance riding `drawing` and queue the sweep of its
     /// pending entry — every "the bot dies with its drawing" path funnels
     /// through here so none of them can orphan a resting retest limit.
     pub(crate) fn remove_strategy_for_drawing(&mut self, drawing: drawings::DrawingId) {
-        let cleanup = self.strategies.remove_for_drawing(drawing);
-        self.strategy_cleanup.extend(cleanup);
+        let cleanup = self.strategies.anchors.remove_for_drawing(drawing);
+        self.strategies.cleanup.extend(cleanup);
     }
 }

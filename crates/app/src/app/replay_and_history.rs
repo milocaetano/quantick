@@ -470,6 +470,7 @@ impl QuantickApp {
             .active_tab()
             .pane(side)
             .strategies
+            .anchors
             .for_drawing(duplicated.source)
             .filter(|instance| {
                 matches!(

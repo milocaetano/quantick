@@ -626,7 +626,7 @@ impl QuantickApp {
                 // stages the mark itself rather than waiting for a market
                 // that may not oblige before the shutter.
                 let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
-                if let Some(instance) = pane.strategies.for_drawing_mut(drawing_id) {
+                if let Some(instance) = pane.strategies.anchors.for_drawing_mut(drawing_id) {
                     instance.mark = crate::strategy_anchors::AlarmMark::Preview;
                 }
                 // Placing a drawing selects it, and a selected drawing raises

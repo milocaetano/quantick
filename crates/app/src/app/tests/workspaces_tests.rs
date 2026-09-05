@@ -204,6 +204,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
         let instance = tab
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert!(
@@ -229,6 +230,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(

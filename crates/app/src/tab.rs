@@ -1642,6 +1642,7 @@ impl Tab {
                 // and now — through the same funnel manual orders use.
                 let cleanup = pane
                     .strategies
+                    .anchors
                     .disarm_all(quantick_strategy::DisarmReason::BarSpecChanged);
                 let _ = pane.take_strategy_bars();
                 for command in cleanup {

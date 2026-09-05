@@ -53,12 +53,14 @@ mod footprint;
 mod frame;
 mod gestures;
 mod menus;
+mod strategies;
 mod strategy_badges;
 
 pub use context_menu::ContextMenu;
 pub use footprint::FootprintState;
 pub use frame::PaneFrame;
 pub use gestures::GestureState;
+pub use strategies::PaneStrategies;
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
 const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
@@ -1211,23 +1213,9 @@ pub struct ChartPane {
     /// What the right-click that opened the layer menu resolved — see
     /// [`ContextMenu`].
     pub context_menu: ContextMenu,
-    /// Armed strategy instances riding this pane's drawings. The kernel
-    /// (`quantick-strategy`) judges; this pane only anchors and paints.
-    pub strategies: crate::strategy_anchors::StrategyAnchors,
-    /// Closed bars awaiting strategy evaluation, each with the slot it
-    /// closed at. Pushed by `ingest_live_trade` only while instances
-    /// exist, drained by the tab in the same ingestion sweep — the slot
-    /// and the drawings' anchors are therefore read against one cut of
-    /// the series.
-    strategy_pending: Vec<(quantick_engine::Bar, usize)>,
-    /// The drawing whose "Add strategy…" was clicked; the app drains it
-    /// and opens the arming dialog over this pane.
-    pub(crate) strategy_popup_request: Option<drawings::DrawingId>,
-    /// Simulator commands the drawing menu owes the paper host — cancelling
-    /// a resting retest limit on disarm/removal. The pane cannot reach the
-    /// tab's simulator from inside the menu, so the tab drains this on the
-    /// same frame ([`crate::tab::TabState::apply_strategy_cleanup`]).
-    strategy_cleanup: Vec<quantick_sim::Command>,
+    /// The strategies armed on this pane's drawings — see
+    /// [`PaneStrategies`].
+    pub strategies: PaneStrategies,
 
     /// User drawings live entirely in the app overlay layer, never in market
     /// state, so chart/backtest/bot determinism stays untouched.
@@ -1339,10 +1327,7 @@ impl ChartPane {
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu: ContextMenu::default(),
-            strategies: crate::strategy_anchors::StrategyAnchors::default(),
-            strategy_pending: Vec::new(),
-            strategy_popup_request: None,
-            strategy_cleanup: Vec::new(),
+            strategies: PaneStrategies::default(),
             drawings: Drawings::default(),
             gestures: GestureState::default(),
             pending_reanchor: None,
@@ -2338,7 +2323,7 @@ impl ChartPane {
         self.hover_pos = None;
         // Bars queued for the strategies belong to the series that just
         // died; the tab disarms the instances with the reset's own reason.
-        self.strategy_pending.clear();
+        self.strategies.pending.clear();
     }
 
     /// Fill a pane opened mid-session from the trades another pane of the same
@@ -2388,9 +2373,9 @@ impl ChartPane {
             // *composed* one (venue history prefix + live bars) — the same
             // space the drawings' anchors live in, or the region's time
             // window would be off by the prefix length.
-            if !self.strategies.is_empty() {
+            if !self.strategies.anchors.is_empty() {
                 let slot = self.history_prefix.len() + bars_after - 1;
-                self.strategy_pending.push((closed, slot));
+                self.strategies.pending.push((closed, slot));
             }
         }
     }
@@ -2399,7 +2384,7 @@ impl ChartPane {
     /// the tab right after the ingestion sweep that queued them.
     #[must_use]
     pub fn take_strategy_bars(&mut self) -> Vec<(quantick_engine::Bar, usize)> {
-        std::mem::take(&mut self.strategy_pending)
+        std::mem::take(&mut self.strategies.pending)
     }
 
     /// Resolve the drawing an instance is anchored to into the kernel's
@@ -5304,7 +5289,7 @@ impl ChartPane {
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
         // allow. O(armed instances), zero when none.
-        for instance in &self.strategies.instances {
+        for instance in &self.strategies.anchors.instances {
             let Some(index) = self.drawings.index_of(instance.drawing) else {
                 continue;
             };

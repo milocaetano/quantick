@@ -2558,7 +2558,7 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
     };
     // Nothing was armed here before, so there is no replaced instance
     // whose resting order would need sweeping.
-    assert!(pane.strategies.arm(instance).is_empty());
+    assert!(pane.strategies.anchors.arm(instance).is_empty());
 
     let badge = pane.strategy_badge_text(id);
     assert!(
@@ -2679,7 +2679,7 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
             .is_empty()
     );
 
-    assert!(pane.strategies.arm(instance).is_empty());
+    assert!(pane.strategies.anchors.arm(instance).is_empty());
     let badge = pane.strategy_badge_text(id);
 
     let ruler = badge

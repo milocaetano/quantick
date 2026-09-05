@@ -170,7 +170,8 @@ impl QuantickApp {
             let request = self
                 .active_tab_mut()
                 .pane_mut(side)
-                .strategy_popup_request
+                .strategies
+                .popup_request
                 .take();
             if let Some(drawing) = request {
                 let form = crate::strategy_presets::StoredPreset::starting_point(

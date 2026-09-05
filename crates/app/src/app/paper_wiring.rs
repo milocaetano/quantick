@@ -360,6 +360,7 @@ impl QuantickApp {
             // entirely (a 1-minute body dwarfs a tick-bar body).
             armed.warm(&pane.strategy_warmup_bars(armed.trigger().warmup_bars()));
             pane.strategies
+                .anchors
                 .arm(crate::strategy_anchors::AnchoredInstance {
                     drawing,
                     preset: preset_label,

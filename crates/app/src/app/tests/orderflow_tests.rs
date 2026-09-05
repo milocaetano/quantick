@@ -192,6 +192,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
         let instance = tab
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert!(

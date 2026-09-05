@@ -281,6 +281,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         app.active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance")
             .armed
@@ -317,6 +318,7 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
         let pane = &mut app.active_tab_mut().flow_pane;
         let _ = pane
             .strategies
+            .anchors
             .for_drawing_mut(drawing)
             .expect("instance")
             .armed
@@ -399,6 +401,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
             .active_tab()
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert_eq!(
@@ -440,6 +443,7 @@ fn extend_right_keeps_the_region_active_past_the_drawn_end() {
             app.active_tab()
                 .flow_pane
                 .strategies
+                .anchors
                 .for_drawing(drawing)
                 .expect("instance")
                 .armed
