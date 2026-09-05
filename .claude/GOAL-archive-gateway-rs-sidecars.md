@@ -104,10 +104,12 @@ over; the live doubts are recorded as `S1`–`S4` below.
   prescribes (connection session and dispatchers away from the accept loop),
   with no baseline raise signed. Safe to assume: the request prescribes the
   remedy; only whether it triggers is unknown, and measuring answers that.
-- **S4** — Measured against `origin/main` at `62c8730`, not the brief's
-  `cc4c92f`; the budget baseline is `!budget 50996`, not the 52139 the brief
-  recorded. R13's "lower by at least 2,300" is applied to the measured starting
-  number. Safe to assume: R19 instructs re-measurement over trust.
+- **S4** — Measured against `origin/main`, not the brief's `cc4c92f`, and
+  re-measured after each move: the budget read `52139` in the brief, `50996` at
+  `62c8730`, and `48185` at `0c3431d` once #307 merged mid-review. R13's "lower
+  by at least 2,300" is applied to whichever number is current. Safe to assume:
+  R19 instructs re-measurement over trust, and the assumption is what made the
+  mid-review merge a re-run rather than a wrong number.
 
 ## Acceptance criteria
 
@@ -150,7 +152,7 @@ over; the live doubts are recorded as `S1`–`S4` below.
       re-export line quoted. → PR body. *(R8)*
 - [ ] **A9** — Baselines tightened: `--tighten` run, every new file under 1,500
       production lines, no raise signed, and the `!budget` lower by at least
-      2,300 against the measured start of 50996.
+      2,300 against the measured start (50,996, then 48,185 after #307).
       *Evidence:* `git diff crates/guards/size-baseline.txt`.
       → PR body. *(R11, R13, S3, S4)*
 - [ ] **A10** — `--report` before and after differ only in `gateway.rs`-related
@@ -237,7 +239,10 @@ over; the live doubts are recorded as `S1`–`S4` below.
 
 ## Evidence as measured
 
-Recorded at commit `0b09b86`, branched from `origin/main` at `62c8730`.
+Recorded at commit `23ba851`, rebased onto `origin/main` at `0c3431d` after
+`refactor/tab-rs-sidecars` merged as #307. That branch and this one meet only
+at the `!budget` line, exactly as the brief's parallel-work note predicted; the
+figures below are against the rebased base.
 
 | | Result |
 | --- | --- |
@@ -248,7 +253,7 @@ Recorded at commit `0b09b86`, branched from `origin/main` at `62c8730`.
 | **A7** seam grep 1 | `grep -nE 'egui\|eframe' control/gateway/server.rs` -> **no match** (exit 1) |
 | **A7** seam grep 2 | `grep -nE 'TcpStream\|TcpListener' control/gateway.rs` -> exactly two lines: the `net::` import and `TrackedSocket.stream`, the type handed across. No `TcpListener` |
 | **A8** re-export | `pub(crate) use server::runtime_id_bytes;`; the six cross-file paths of ledger #7 re-measured at 7/1/2/2/3/1 and all resolve |
-| **A9** ratchet | ceiling 4,142 -> 1,696; `!budget` 50,996 -> 48,550, a fall of **2,446** (asked: >= 2,300). No new baseline entry, no raise signed; every sibling under the 1,500 threshold (`server.rs` closest, at 1,445) |
+| **A9** ratchet | ceiling 4,142 -> 1,696; `!budget` 48,185 -> 45,739, a fall of **2,446** (asked: >= 2,300). No new baseline entry, no raise signed; every sibling under the 1,500 threshold (`server.rs` closest, at 1,445) |
 | **A10** report | only `gateway.rs`-related lines moved -- see the deviation below |
 | **A11** tests | `control` 148 before / 148 after; `gateway` 36 / 36; app suite 1,899 passed both on the branch and on `origin/main`. No generated file in the diff |
 | **A12** contract | `git diff --stat origin/main` names neither `contract.rs` nor any bridge test |
@@ -270,9 +275,11 @@ Claims #1-#11 all re-measured true. Two corrections:
    recorded `--report` output under `docs/evidence/`. None is updated: they
    record what was true when written. So **R10 had no live target**, and the
    split leaves no stale path behind.
-2. **The budget had moved.** The brief measured `!budget 52139` at `cc4c92f`;
-   `origin/main` was at `62c8730` with `!budget 50996`. The 2,446 fall is
-   against the measured number (S4).
+2. **The budget had moved, twice.** The brief measured `!budget 52139` at
+   `cc4c92f`; `origin/main` was at `62c8730` with `50996`; and #307 landed
+   during the review, taking it to `48185`. The 2,446 fall is against whatever
+   the measured number is, which is the point of re-measuring rather than
+   trusting (S4). It now reads 48,185 -> 45,739.
 
 ### Deviations, stated rather than absorbed
 

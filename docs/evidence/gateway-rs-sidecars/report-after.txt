@@ -1,4 +1,4 @@
-crate.lines.app	109336
+crate.lines.app	109423
 crate.lines.backtest	2400
 crate.lines.control	5184
 crate.lines.control-local	1612
@@ -17,7 +17,7 @@ crate.lines.replay	3787
 crate.lines.sim	2279
 crate.lines.strategy	1879
 crate.lines.trading	1789
-crate.lines.total	174550
+crate.lines.total	174637
 crate.lines.app_percent	62
 file.largest.crates/app/src/drawings/mod.rs	2283
 file.largest.crates/app/src/footprint_render.rs	2236
@@ -26,7 +26,7 @@ file.largest.crates/app/src/orderflow_view.rs	2485
 file.largest.crates/app/src/pane.rs	5618
 file.largest.crates/app/src/paper_report.rs	3300
 file.largest.crates/app/src/paper_trading.rs	4589
-file.largest.crates/app/src/tab.rs	4472
+file.largest.crates/feed-mt5/src/stream.rs	2195
 struct.wide.app::ChartPane	77
 struct.wide.app::PaperTrading	31
 struct.wide.app::QuantickApp	56
@@ -38,9 +38,9 @@ struct.wide.orderflow::BubbleStyle	30
 struct.wide.orderflow::HeatmapConfig	34
 struct.wide.orderflow::OrderflowHealth	32
 struct.wide.sim::PerformanceReport	36
-ratchet.size.budget	48550
-ratchet.size.recorded	48550
-ratchet.size.measured	174550
+ratchet.size.budget	45739
+ratchet.size.recorded	45739
+ratchet.size.measured	174637
 ratchet.context.budget	235924
 ratchet.context.recorded	163195
 ratchet.context.measured	237465
@@ -49,8 +49,8 @@ ratchet.cycle.recorded	3
 ratchet.cycle.measured	3
 site.allow	89
 site.process_id	12
-site.cfg_test	624
-app.lines.without_egui	105628
+site.cfg_test	623
+app.lines.without_egui	105714
 graph.edges	25
 headless.findings	0
 scan.unreadable	0
