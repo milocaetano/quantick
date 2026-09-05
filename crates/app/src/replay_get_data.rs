@@ -424,7 +424,9 @@ impl GetDataPanel {
             if let Some(finished) = self.absorb(event) {
                 action = Some(finished);
                 ended = true;
-            } else if !matches!(self.phase, Phase::Probing | Phase::Running { .. }) {
+            } else if !matches!(self.day_before_stage, Some(DayBeforeStage::Running { .. }))
+                && !matches!(self.phase, Phase::Probing | Phase::Running { .. })
+            {
                 ended = true;
             }
         }
@@ -1776,6 +1778,38 @@ mod tests {
             !matches!(panel.phase, Phase::Failed { .. }),
             "the chosen day's download did not fail"
         );
+    }
+
+    /// The chosen day's phase stays finished while its optional predecessor is
+    /// fetched. Progress from that second worker must not make `poll` mistake
+    /// the finished first phase for the end of the still-running second job.
+    #[test]
+    fn day_before_progress_keeps_its_job_connected() {
+        let mut panel = panel_on("2026-08-31");
+        panel.phase = Phase::Finished {
+            ticks: 1_200,
+            sessions: 5,
+            complete: true,
+        };
+        panel.day_before_stage = Some(DayBeforeStage::Running {
+            day: "2026-08-28".to_string(),
+            ticks: 0,
+        });
+        let (sender, events) = std::sync::mpsc::channel();
+        sender
+            .send(DownloadEvent::Progress { ticks: 250_000 })
+            .expect("the live worker still owns its receiver");
+        panel.job = Some(DownloadJob::stopped_for_test(events));
+
+        let action = panel.poll();
+
+        assert!(action.is_none());
+        assert!(panel.job.is_some(), "the second worker is still running");
+        assert!(matches!(
+            panel.day_before_stage,
+            Some(DayBeforeStage::Running { ticks: 250_000, .. })
+        ));
+        drop(sender);
     }
 
     /// The caption under the tick and the tick itself are one statement. They
