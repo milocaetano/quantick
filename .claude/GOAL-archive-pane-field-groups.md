@@ -216,14 +216,24 @@ itself (its own mission), and `ChartState`'s `deal_samples` deposit found by
       *Evidence:* command output.
       → PR body.
 
-### Not applicable, and why
+- [x] **G6** — *(promoted out of the exclusions below, during delivery-review,
+      when its own trigger fired.)* The bar-spec commit turned a direct field
+      read into more than a struct field access on a per-frame path, in
+      `ChartPane::future_slot_at_time` and `pane/drawing_gestures.rs`. The
+      exclusion said that made this gate applicable **and measured**, so it is
+      measured rather than argued.
+      *Evidence:* a release-mode timing harness over 20,000,000 iterations of
+      the old and new expressions against the real types — `new=1.72ns/call
+      old=0.48ns/call delta=1.24ns` — costed at the worst rate the product
+      permits (512 freehand anchors x 2 panes = 1.27 microseconds per frame,
+      0.015% of a 8.3ms frame). The harness was deleted and is not in the diff.
+      → PR body, and `delivery-review/performance.txt`.
 
-- **Hot path evidence** (`APP_HEALTH_SUMMARY` under a dense tape vs. a `main`
-  control run) — the diff is a field regrouping with no change to what is
-  computed or how often. G3 still requires the classification to be *declared*;
-  a measured run is not owed for a move that generates identical code. If the
-  bar-spec commit turns a direct field read into anything more than a struct
-  field access on a per-frame path, this becomes applicable and is measured.
+### Not applicable, and why
+- **A full `APP_HEALTH_SUMMARY` run** against a `main` control — the measured
+  delta is 1.24ns per call on a path bounded to about a microsecond per frame,
+  which is below what an fps comparison between two launches can resolve. The
+  direct measurement in G6 is reported in its place, and says so.
 - **`ui-harness` / `visual-qa` / `trader-ux-review`** — nothing user-visible
   changes. No surface is added, moved or restyled; the pixels are identical by
   construction (R5), and that is what the existing app suite proves. Had any
