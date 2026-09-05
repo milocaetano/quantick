@@ -1,6 +1,6 @@
 //! A throwaway probe for the ai-review thread mechanics. Not in the workspace.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// The next alert kind means editing this enum and every match on it.
 pub enum AlertKind {
@@ -8,9 +8,9 @@ pub enum AlertKind {
     Volume,
 }
 
-/// Owns a map and reports it in iteration order, which is not stable.
+/// Owns a map whose order is the keys own order, so two runs agree.
 pub struct AlertBook {
-    alerts: HashMap<String, AlertKind>,
+    alerts: BTreeMap<String, AlertKind>,
 }
 
 impl AlertBook {
