@@ -2489,7 +2489,10 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // tick(2) with an odd trade count: the last print leaves a bar open,
     // which `app_with_history`'s tick(1) never does.
     let (mut app, evt_tx, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 2;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(2));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=201).map(trade).collect();
@@ -3203,7 +3206,10 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
 fn a_source_reset_keeps_the_marks_and_re_anchors_them_by_market_time() {
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     let ctx = egui::Context::default();
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     run_frame(&mut app, &ctx);

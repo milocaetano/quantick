@@ -149,7 +149,7 @@ fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().apply_spec_changes();
     assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
-    assert!(app.active_tab().flow_pane.pending_spec.is_none());
+    assert!(app.active_tab().flow_pane.spec.pending.is_none());
 }
 
 /// Both folded legends come back folded — the time pane's included.
@@ -502,8 +502,8 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
         .spec()
         .clone();
     let pane = app.active_tab_mut().focused_pane_mut();
-    pane.kind = crate::state::BarKind::Time;
-    pane.time_interval_ms = 900_000;
+    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec.retain(crate::state::BarSpec::Time(900_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(

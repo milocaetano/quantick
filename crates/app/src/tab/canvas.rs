@@ -162,7 +162,11 @@ impl Tab {
                 // Each context chart carries its own timeframe selector (§11):
                 // its BARS group, beside the toolbar's, which keeps governing
                 // the flow pane.
-                let mut interval_ms = self.time_panes[slot].time_interval_ms;
+                let mut interval_ms = self.time_panes[slot]
+                    .spec
+                    .retained(BarKind::Time)
+                    .time_interval_ms()
+                    .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
                 let header_layout = crate::time_header::draw(
                     ui,
                     areas.header,
@@ -176,8 +180,7 @@ impl Tab {
                 }
                 if header_layout.changed {
                     let pane = &mut self.time_panes[slot];
-                    pane.kind = BarKind::Time;
-                    pane.time_interval_ms = interval_ms;
+                    pane.spec.set(crate::state::BarSpec::Time(interval_ms));
                 }
                 context_charts.push(areas.chart);
             }

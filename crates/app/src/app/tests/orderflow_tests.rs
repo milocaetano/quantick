@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn switching_only_the_imbalance_unit_recuts_the_series() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Imbalance;
+    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Imbalance;
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
@@ -15,7 +15,15 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
         "the kind switch lands on the default trades unit first"
     );
 
-    app.active_tab_mut().flow_pane.imbalance_unit = crate::state::ImbalanceUnit::Volume;
+    let retained = app
+        .active_tab_mut()
+        .flow_pane
+        .spec
+        .retained_mut(crate::state::BarKind::Imbalance);
+    let BarSpec::Imbalance(unit, _) = retained else {
+        panic!("the imbalance slot holds an imbalance spec")
+    };
+    *unit = crate::state::ImbalanceUnit::Volume;
     app.active_tab_mut().apply_spec_changes();
     assert!(
         app.active_tab().loading.is_active(LoadingTask::BarRebuild),

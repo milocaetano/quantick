@@ -292,7 +292,7 @@ crates/app/src/paper_trading.rs 4589
 # badge's repair to `badge_text_for` -- is not undone: those lines moved to
 # `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
 # simply not here.
-crates/app/src/pane.rs 5618
+crates/app/src/pane.rs 5384
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a

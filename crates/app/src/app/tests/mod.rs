@@ -373,7 +373,10 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     // answer intact for the test that reads it
     // (`each_layer_switch_moves_exactly_one_owner`).
     app.active_tab_mut().flow_pane.live_strip_visible = false;
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
@@ -880,8 +883,8 @@ fn split_with_a_shared_line(
         .active_tab_mut()
         .time_pane_mut()
         .expect("two frames is enough for the deferred layout to build it");
-    pane.kind = crate::state::BarKind::Time;
-    pane.time_interval_ms = 1_000;
+    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec.retain(crate::state::BarSpec::Time(1_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     run_frame(&mut app, ctx);

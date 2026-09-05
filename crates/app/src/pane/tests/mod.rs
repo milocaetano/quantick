@@ -5,6 +5,8 @@
 // so the move costs no widened visibility in production code, and the one
 // `use super::*` below is the same line the module had inline.
 
+use rust_decimal::Decimal;
+
 use super::*;
 use crate::indicator_worker::IndicatorEvent;
 
@@ -771,7 +773,7 @@ fn a_recut_keeps_the_mark_on_its_own_instant() {
     let old_slots = pane.slots();
 
     // Two trades per bar: the same tape, half the bars.
-    pane.tick_n = 2;
+    pane.spec.retain(crate::state::BarSpec::Tick(2));
     let spec = pane.current_spec();
     pane.state.set_spec(spec);
     pane.reanchor_drawings(old_slots);

@@ -22,7 +22,6 @@ use crate::bands::{self, Band};
 use crate::chart::PriceScale;
 use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand};
 use crate::plot_area::PlotAreas;
-use crate::state::BarKind;
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
@@ -188,13 +187,11 @@ impl ChartPane {
         // enough trades happen, and no elapsed time can be named for it. That
         // stays `None` — an invented timestamp is worse than a control that
         // says why it is off.
-        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
-            return None;
-        }
+        let interval = self.spec.spec().time_interval_ms().filter(|ms| *ms > 0)?;
         let last = slots.checked_sub(1)?;
         let ahead = i64::try_from(slot - last).ok()?;
         self.slot_open_time(last)?
-            .checked_add(ahead.checked_mul(self.time_interval_ms)?)
+            .checked_add(ahead.checked_mul(interval)?)
     }
 
     /// Placement consumes clicks while a drawing tool is armed, preventing a

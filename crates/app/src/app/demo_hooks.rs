@@ -1001,7 +1001,10 @@ impl QuantickApp {
         // Half the bars, same trades — the plainest re-cut there is. Two
         // settle frames because a spec change waits for the selector to hold
         // still for one (`Tab::apply_spec_change`).
-        pane.tick_n = pane.tick_n.saturating_mul(2).max(2);
+        if let crate::state::BarSpec::Tick(n) = pane.spec.retained_mut(crate::state::BarKind::Tick)
+        {
+            *n = n.saturating_mul(2).max(2);
+        }
         self.active_tab_mut().apply_spec_changes();
         self.active_tab_mut().apply_spec_changes();
     }

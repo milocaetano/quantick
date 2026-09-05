@@ -1560,7 +1560,7 @@ impl Tab {
         }
         let rebuilding = self
             .panes()
-            .any(|(pane, _side)| pane.pending_spec.is_some());
+            .any(|(pane, _side)| pane.spec.pending.is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -1588,14 +1588,14 @@ impl Tab {
         if desired == *pane.state.spec() {
             // Selection and chart agree — nothing is pending any more (a feed
             // switch or reset may have rebuilt the state under a pending spec).
-            pane.pending_spec = None;
+            pane.spec.pending = None;
             return;
         }
-        match pane.pending_spec.take() {
+        match pane.spec.pending.take() {
             // The frame that changed the selector: arm the indicator, paint.
-            None => pane.pending_spec = Some(desired),
+            None => pane.spec.pending = Some(desired),
             // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => pane.pending_spec = Some(desired),
+            Some(pending) if pending != desired => pane.spec.pending = Some(desired),
             // Settled since last frame: do the rebuild.
             Some(_) => {
                 // Where the user is looking, in market time — the one thing a

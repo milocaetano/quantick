@@ -65,7 +65,10 @@ fn the_lane_axis_reads_its_window_in_a_human_unit() {
 #[test]
 fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 100;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(100));
     app.active_tab_mut()
         .flow_pane
         .drawings
@@ -92,9 +95,15 @@ fn bar_spec_change_defers_one_frame_and_shows_the_rebuild() {
 #[test]
 fn a_still_moving_selector_keeps_deferring_the_rebuild() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 100;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(100));
     app.active_tab_mut().apply_spec_changes();
-    app.active_tab_mut().flow_pane.tick_n = 200; // the drag continues
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(200)); // the drag continues
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
         app.active_tab().flow_pane.state.spec(),
@@ -251,7 +260,10 @@ fn nothing_the_corner_does_throws_a_chart_away() {
 fn a_rebuild_leaves_a_live_view_at_the_live_edge() {
     let (mut app, _cmd_rx) = app_with_history(400);
     assert!(app.active_tab().flow_pane.viewport.follows_live());
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert!(app.active_tab().flow_pane.viewport.follows_live());
@@ -430,7 +442,10 @@ fn a_rebuilt_chart_still_paints_itself() {
         .viewport
         .pan_pixels(200.0 * 8.0, slots);
 
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     let armed = painted_text(&run_frame(&mut app, &ctx));
     assert!(
         armed.iter().any(|text| text.contains("rebuilding bars")),
@@ -598,8 +613,12 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
     ));
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
-    assert_eq!(pane.tick_n, 377, "the selector moved with the rule");
-    assert_eq!(pane.kind, crate::state::BarKind::Tick);
+    assert_eq!(
+        pane.spec.retained(crate::state::BarKind::Tick),
+        &crate::state::BarSpec::Tick(377),
+        "the selector moved with the rule"
+    );
+    assert_eq!(pane.spec.kind, crate::state::BarKind::Tick);
 }
 
 /// The interval a reply carries is tagged rather than assumed. A base this

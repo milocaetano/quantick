@@ -741,8 +741,8 @@ fn set_interval(
             "this tab has no context chart at address {pane}"
         )));
     };
-    let changed = chart.time_interval_ms != input.interval_ms;
-    chart.kind = crate::state::BarKind::Time;
-    chart.time_interval_ms = input.interval_ms;
+    let asked = crate::state::BarSpec::Time(input.interval_ms);
+    let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
+    chart.spec.set(asked);
     result(app, index, changed)
 }

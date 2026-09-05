@@ -16,8 +16,7 @@
 use std::collections::BTreeSet;
 
 use eframe::egui;
-use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
 use crate::bands::{self, Band, BandLabel, Bands};
@@ -38,7 +37,7 @@ use crate::paper_trading::{ChartInput, PaperTrading};
 use crate::plot_area::{self, PlotAreas, plot_split, split_time_strip};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
-use crate::state::{BarKind, BarSpec, ChartState, ImbalanceUnit};
+use crate::state::{BarSpec, ChartState, SpecSelector, dec_from_f64};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -713,11 +712,6 @@ fn region_pause(drawing: &drawings::Drawing, all_hidden: bool) -> Option<&'stati
     None
 }
 
-/// Convert a UI `f64` parameter to a positive `Decimal` for a builder threshold.
-fn dec_from_f64(x: f64) -> Decimal {
-    Decimal::from_f64(x.max(1e-8)).unwrap_or(Decimal::ONE)
-}
-
 /// What the pointer is currently doing to a drawing, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DrawingDrag {
@@ -1146,18 +1140,9 @@ pub struct ChartPane {
     #[cfg(test)]
     pub layer_menu_rects: Vec<(ChartLayer, egui::Rect)>,
 
-    // Bar-type selector state (one parameter retained per kind).
-    pub kind: BarKind,
-    // The spec the selectors ask for, applied one frame after they settle so
-    // the frame carrying the change paints the loading overlay before the
-    // synchronous rebuild holds this thread. See QuantickApp::apply_spec_change.
-    pub pending_spec: Option<BarSpec>,
-    pub tick_n: u64,
-    pub volume_units: f64,
-    pub dollar_notional: f64,
-    pub time_interval_ms: i64,
-    pub imbalance_target: u64,
-    pub imbalance_unit: ImbalanceUnit,
+    /// The bar rule this pane is on, and the parameter every other kind is
+    /// holding for the trader — see [`SpecSelector`].
+    pub spec: SpecSelector,
 
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
@@ -1243,7 +1228,7 @@ pub struct ChartPane {
     /// Parked rather than acted on: the dialog is the app's — one dialog for
     /// the whole window — and the gestures that ask for it are read deep inside
     /// this pane's input pass, holding borrows the app's state cannot cross.
-    /// The same shape `pending_spec` uses for the other direction.
+    /// The same shape [`SpecSelector::pending`] uses for the other direction.
     pending_settings: Option<SlotId>,
 }
 
@@ -1266,28 +1251,11 @@ impl ChartPane {
     /// among the panes on screen.
     fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
-        let mut tick_n = 50;
-        let mut volume_units = 5.0;
-        let mut dollar_notional = 500_000.0;
-        // `bars → time` opens on a real timeframe, not a one-second chart
-        // (audit QW2): the same 1m the split's time pane opens on.
-        let mut time_interval_ms = crate::time_header::DEFAULT_INTERVAL_MS;
-        let mut imbalance_target = 100;
-        let mut imbalance_unit = ImbalanceUnit::Trades;
-        match &spec {
-            BarSpec::Tick(n) => tick_n = *n,
-            BarSpec::Volume(u) => volume_units = u.to_f64().unwrap_or(volume_units),
-            BarSpec::Dollar(d) => dollar_notional = d.to_f64().unwrap_or(dollar_notional),
-            BarSpec::Time(ms) => time_interval_ms = *ms,
-            BarSpec::Imbalance(unit, target) => {
-                imbalance_unit = *unit;
-                imbalance_target = *target;
-            }
-        }
+        let selector = SpecSelector::new(spec.clone());
 
         Self {
             id,
-            kind: spec.kind(),
+            spec: selector,
             state: ChartState::new(spec),
             pagination_revision: 0,
             orderflow,
@@ -1309,13 +1277,6 @@ impl ChartPane {
             hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
             #[cfg(test)]
             layer_menu_rects: Vec::new(),
-            pending_spec: None,
-            tick_n,
-            volume_units,
-            dollar_notional,
-            time_interval_ms,
-            imbalance_target,
-            imbalance_unit,
             viewport: Viewport::new(),
             frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
@@ -1362,7 +1323,7 @@ impl ChartPane {
     ///
     /// Startup-scoped: the caller is a workspace restoring the bar rule this
     /// pane was last read on, into a pane that has not drawn a frame yet. A
-    /// live change goes through `pending_spec` instead, so the frame carrying
+    /// live change goes through [`SpecSelector::pending`] instead, so the frame carrying
     /// it paints the loading overlay before the rebuild replays the tape —
     /// there is no tape to replay here, and nothing to paint over.
     ///
@@ -1372,21 +1333,7 @@ impl ChartPane {
     /// snap the chart back to a rule they never chose.
     pub fn set_spec(&mut self, spec: BarSpec) {
         let changed = self.state.spec() != &spec;
-        self.kind = spec.kind();
-        match &spec {
-            BarSpec::Tick(n) => self.tick_n = *n,
-            BarSpec::Volume(units) => {
-                self.volume_units = units.to_f64().unwrap_or(self.volume_units);
-            }
-            BarSpec::Dollar(notional) => {
-                self.dollar_notional = notional.to_f64().unwrap_or(self.dollar_notional);
-            }
-            BarSpec::Time(ms) => self.time_interval_ms = *ms,
-            BarSpec::Imbalance(unit, target) => {
-                self.imbalance_unit = *unit;
-                self.imbalance_target = *target;
-            }
-        }
+        self.spec.set(spec.clone());
         self.state.set_spec(spec);
         if changed {
             self.bump_pagination_revision();
@@ -1851,15 +1798,7 @@ impl ChartPane {
 
     /// The bar spec implied by the current selector state.
     pub fn current_spec(&self) -> BarSpec {
-        match self.kind {
-            BarKind::Tick => BarSpec::Tick(self.tick_n.max(1)),
-            BarKind::Volume => BarSpec::Volume(dec_from_f64(self.volume_units)),
-            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(self.dollar_notional)),
-            BarKind::Time => BarSpec::Time(self.time_interval_ms.max(1)),
-            BarKind::Imbalance => {
-                BarSpec::Imbalance(self.imbalance_unit, self.imbalance_target.max(1))
-            }
-        }
+        self.spec.spec()
     }
 
     /// How many bar slots the chart draws: the venue prefix, the closed bars
@@ -5142,17 +5081,15 @@ impl ChartPane {
     /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
     /// answer here.
     fn future_slot_at_time(&self, time: i64) -> Option<f32> {
-        if self.kind != BarKind::Time || self.time_interval_ms <= 0 {
-            return None;
-        }
+        let interval = self.spec.spec().time_interval_ms().filter(|ms| *ms > 0)?;
         let last = self.slots().checked_sub(1)?;
         let last_open = self.slot_open_time(last)?;
         let ahead = time.checked_sub(last_open)?;
-        if ahead < self.time_interval_ms {
+        if ahead < interval {
             return None;
         }
         #[allow(clippy::cast_precision_loss)]
-        Some(last as f32 + ahead as f32 / self.time_interval_ms as f32)
+        Some(last as f32 + ahead as f32 / interval as f32)
     }
 
     /// Re-express a foreign drawing's anchors in this pane's bar space.

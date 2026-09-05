@@ -4815,7 +4815,10 @@ fn control_idle_dense_replay_benchmark() {
 
     let ctx = egui::Context::default();
     let (mut app, events, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 16;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(16));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     events
