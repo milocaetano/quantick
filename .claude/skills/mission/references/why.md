@@ -27,18 +27,10 @@ you type when the change earns them.
 
 ## Why the bare tier word is accepted despite the misparse
 
-The bare form misreads an objective that genuinely opens with one of the four
-words: `/mission small fonts are unreadable on the axis`, `/mission high CPU on
-the heatmap`. For three of the four tiers a misparse costs nothing anyone
-notices. For `small` it costs the interrogation, most of the gate table and
-`delivery-review` — a skipped gate, from a typo-shaped ambiguity.
-
-Two things hold it, and neither pretends to be a parser. Step 1's echo names
-*what the tier drops* rather than merely the word it read, so the expensive
-misparse is the one that announces itself loudest to the person reading the
-first turn. And the flagged form is there for exactly the objective a bare word
-would guess wrong on. This is a residual the design accepts openly rather than
-one it claims to have closed.
+An objective such as `/mission small fonts are unreadable` can be misparsed
+as a tier, skipping gates. The echo exposes what that tier drops, and the
+flagged form disambiguates the objective. The bare form retains this known
+ambiguity; the workflow does not claim to eliminate it.
 
 ## Why tiers exist at all
 
