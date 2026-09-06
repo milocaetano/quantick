@@ -22,6 +22,7 @@ boundary and the evidence each delivery left behind.
 | Document | What it settles |
 | --- | --- |
 | [`control-plane/README.md`](control-plane/README.md) | The directory's own index, its precedence order and its change policy |
+| [`../crates/mcp/README.md`](../crates/mcp/README.md) | The MCP adapter's tool-by-tool reference, setup flow and evidence-bundle semantics |
 | [`mcp-control-plane-development-plan.md`](mcp-control-plane-development-plan.md) | Scope and delivery sequence — it owns ordering; the contract owns details |
 | [`control-plane/control-contract.md`](control-plane/control-contract.md) | Identifier, schema, revision, authority, limit, tool-surface, determinism and trade-annotation rules |
 | [`control-plane/adr-0001-local-transport-and-instance-discovery.md`](control-plane/adr-0001-local-transport-and-instance-discovery.md) | Why the transport is an authenticated loopback socket and how a client discovers a running instance |
