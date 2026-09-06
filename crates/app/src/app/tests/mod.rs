@@ -42,6 +42,7 @@ mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
 mod layers_tests;
