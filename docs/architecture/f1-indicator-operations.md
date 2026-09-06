@@ -97,7 +97,7 @@ Five focused regressions pass in `focused-tests-fixed.log`:
   collisions, v1 insertion order, every cleanup collection and missing-host cleanup.
 - `human_script_operations_mirror_two_panes_and_save_once` drives the toolbar
   library action and removes from the nonfocused pane, checking both workers,
-  layout content and one debounced/consumed save intent for each mutation.
+  layout content and one pending/consumed save intent for each mutation.
 - `operator_script_operations_preserve_human_mirrors_and_saved_content` drives
   registered agent actions, preserves both human panes and the complete saved
   layout book, and checks refused human removal produces no save intent.
@@ -123,7 +123,8 @@ Lockfile SHA256 is
 unchanged benchmark source SHA256 is
 `BA8E22DFAC51FD0C2A9B195A3F170AB95D86C3AB019BB45543203E013F03B0A8`.
 The baseline test executable was built at the full base SHA above before source
-edits; candidate source is the runtime/test content committed with this dossier.
+edits; measured candidate source is the runtime/test content at
+`2c50fcd810ae9858300c92c0a4a33e73edbdd8d9`.
 `benchmark-binaries.txt` records both executable hashes. The PR records the
 candidate commit SHA, avoiding a self-referential commit hash in this document.
 
@@ -199,3 +200,31 @@ commit; no runtime source changes followed the measurements. Independent
 AI/architecture/delivery reviews and exact-diff markers belong to the coordinator
 after this implementation/mission archive commit; this dossier does not claim
 a review of its own branch. The PR base is explicitly `campaign/architecture-a`.
+
+## Phase-two save assertion repair
+
+PR #332 [AI-review thread](https://github.com/milocaetano/quantick/pull/332#discussion_r3945209724)
+identified a timing-sensitive operation test: after real worker flushing,
+`take_save(Instant::now())` can correctly return `Write` when compilation or a
+scheduler pause outlasts the 1,000 ms debounce. Repair attempt 1 checks
+`is_dirty()`, consumes one `take_flush() == Write`, verifies the cleared flag,
+and requires a second flush to return `Wait`. These checks read no clock, so
+worker delay cannot change their save decision. No sleep or clock injection is
+needed. The existing explicit-clock tests
+`a_change_inside_the_debounce_window_is_not_yet_asked_for` and
+`a_change_that_has_settled_is_asked_for_once` retain the before/at-boundary
+debounce evidence; the existing exit-flush test retains immediate flush evidence.
+
+Only this operation-test helper and this dossier change after the measured
+candidate commit. Production source, runtime policy, performance fixture,
+budgets, timeouts and concurrency settings are identical to that commit. The
+paired measurements above are retained as evidence for equivalent production
+source, not described as a benchmark of the repaired test executable.
+
+Repair verification uses new logs in the same evidence directory:
+`fix-guards.log`, `fix-focused-tests.log`, `fix-layout-store-tests.log`, and the
+ordered full loop `fix-fmt.log`, `fix-clippy.log`, `fix-build.log`, `fix-test.log`.
+`fix-verification-exits.txt` records the full-loop exit codes;
+`fix-source-equivalence.txt` records the changed-file and unchanged-source audit.
+Earlier failure logs and retry history remain intact. Fresh CI and independent
+reviews of the repair commit remain the coordinator's responsibility.

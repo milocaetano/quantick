@@ -5,12 +5,10 @@ use crate::workspace_store::LayoutSave;
 
 fn assert_one_indicator_save(app: &mut QuantickApp) {
     let store = app.workspace.layouts_mut();
-    assert_eq!(
-        store.take_save(Instant::now()),
-        LayoutSave::Wait,
-        "the edit retains its debounce"
-    );
+    // Worker completion may outlast the debounce; save intent has no deadline.
+    assert!(store.is_dirty(), "the edit leaves a pending save");
     assert_eq!(store.take_flush(), LayoutSave::Write, "one save is pending");
+    assert!(!store.is_dirty(), "flushing clears the pending save");
     assert_eq!(
         store.take_flush(),
         LayoutSave::Wait,
