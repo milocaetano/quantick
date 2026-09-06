@@ -27,52 +27,30 @@ you type when the change earns them.
 
 ## Why the bare tier word is accepted despite the misparse
 
-The bare form misreads an objective that genuinely opens with one of the four
-words: `/mission small fonts are unreadable on the axis`, `/mission high CPU on
-the heatmap`. For three of the four tiers a misparse costs nothing anyone
-notices. For `small` it costs the interrogation, most of the gate table and
-`delivery-review` — a skipped gate, from a typo-shaped ambiguity.
-
-Two things hold it, and neither pretends to be a parser. Step 1's echo names
-*what the tier drops* rather than merely the word it read, so the expensive
-misparse is the one that announces itself loudest to the person reading the
-first turn. And the flagged form is there for exactly the objective a bare word
-would guess wrong on. This is a residual the design accepts openly rather than
-one it claims to have closed.
+An objective such as `/mission small fonts are unreadable` can be misparsed
+as a tier, skipping gates. The echo exposes what that tier drops, and the
+flagged form disambiguates the objective. The bare form retains this known
+ambiguity; the workflow does not claim to eliminate it.
 
 ## Why tiers exist at all
 
-Until the tier table existed every mission charged the same: a one-line fix
-paid for an interrogation round, a full gate table, a `high`-effort bug pass
-and a fresh-context conformance review. The predictable result is that the flow
-got skipped rather than scaled, and a skipped flow protects nothing.
-
-The whole ladder then moved down a notch after the trader measured what it
-cost: three `xhigh` bug passes and a full conformance review on one docs
-branch, for work that used to ship at roughly four-fifths the quality in a
-fraction of the time. The reply to that is not to delete the gates, it is to
-stop charging `high` prices for `small` work.
+Uniform interrogation and review costs encouraged skipping the workflow on
+small changes. The tier ladder was lowered after a documentation branch paid
+for three `xhigh` bug passes and a full conformance review. Tiers scale that
+cost while retaining the gates appropriate to the work.
 
 ## Why the goal file is written into the worktree, not the checkout
 
-The ordering used to be the other way round. A `GOAL.md` written into the main
-checkout is not on the branch, so the archive step has no source to rename
-there and stages a commit onto `main` if run from the main checkout — and
-`delivery-review`, which looks for the checklist *on the branch*, returns NOT
-GRADEABLE. The stranded `GOAL-archive-*.md` files sitting untracked in the main
-checkout are what that ordering left behind.
-
-The file keeps its name: dozens of archives already use it, and renaming the
-record would buy nothing.
+A goal written in the main checkout is absent from the task branch: archiving
+can commit to main, and delivery review returns NOT GRADEABLE. Earlier ordering
+left stranded archives there. The established filename remains compatible
+with existing archives.
 
 ## Why the tier is recorded with its branch name
 
-The two review markers hold a sha, so they go stale the moment the branch
-moves. A bare tier word would outlive the mission that wrote it, and the next
-branch checked out in that worktree would inherit an exemption it never asked
-for and ship ungraded. That was measured on the first version of this feature,
-not imagined — which is why `guardrails.sh` refuses a declaration naming any
-other branch, and refuses the one-field format outright rather than guessing.
+The first implementation let a later branch inherit a bare tier exemption.
+Binding the declaration to its branch prevents that measured failure;
+`guardrails.sh` rejects other branches and the old one-field format.
 
 ## Why the archive commit comes before the reviews
 

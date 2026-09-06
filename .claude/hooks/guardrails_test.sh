@@ -590,8 +590,8 @@ set_threads 0
 run "both reviews and no open thread makes the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
 
-run "both reviews and no open thread merges" \
-    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" silent
+run "even reviewed main merges remain exclusively human" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 
 set_threads 2
 run "gh pr ready is denied while an ai-review thread is open" \
@@ -1387,6 +1387,12 @@ for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
 done
 
 # --- report -----------------------------------------------------------------
+
+if sh "$script_dir/campaign_context_test.sh"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

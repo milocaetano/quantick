@@ -3,6 +3,9 @@ name: ship
 description: Deliver the current branch - run the full verification loop, commit, pass both pre-PR reviews (arch-review for shape and bugs, delivery-review for conformance to what was asked), push, open a PR with Closes #N, and watch CI until green. Use when the user types /ship or asks to finish or deliver the current task.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Ship the current branch
 
 ## Guards
@@ -38,4 +41,4 @@ description: Deliver the current branch - run the full verification loop, commit
 
 7. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
 
-8. **Report** the PR URL and CI status. Do **not** merge unless the user asks. When they do, merge **from the worktree** — `WT=/path/to/worktree`, then `cd "$WT" && gh pr merge <pr> --merge` — the gate reads that worktree's markers and thread count, and removing the worktree first deletes the git dir holding them. Clean up after: from the main checkout, `git worktree remove ../quantick-worktrees/<dir>` and then `git branch -d <branch>` — `--delete-branch` cannot delete a checked-out branch. `Closes #N` closes the issue and moves the board card to Done.
+8. **Report** the PR URL and CI status. The user alone merges to `main`; never enable auto-merge or enqueue it. Authorized intermediate campaign merges follow the integration contract above, from the reviewed task worktree. Retain that worktree through the merge because its git directory holds the review evidence. After verified integration, remove only the owned clean task worktree and delete its merged local branch. Campaign issue completion requires explicit evidence and synchronization; a non-default-base merge does not automatically close the issue.
