@@ -3,6 +3,9 @@ name: ai-review
 description: Review a diff the way an AI engineer would - modularity, decoupling, MCP and agent readiness, agent testability and legibility, extensibility, scalability. Use when the user types /ai-review. Posts each finding to a PR as its own resolvable thread; never edits or builds.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # AI engineer review
 
 Target: `git diff origin/main...HEAD` by default, or the path, branch or PR

@@ -3,6 +3,9 @@ name: mission
 description: Define and enforce a mission for the current session — read the request into a traceable ledger, interrogate what is ambiguous, derive acceptance criteria including the standard quantick gates (arch-review, delivery-review, visual-qa, trader-ux-review, ui-harness hooks) that match the kind of work, keep every action aligned, prove every criterion with recorded evidence, and hand back a ready-to-paste /goal condition. Use when the user types /mission <objective> or asks to set a goal for the session/task.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Mission
 
 Argument: an optional tier, then the session objective — `/mission small the
@@ -17,18 +20,14 @@ word of it. With no tier given, the mission runs at **`small`**.
 An objective that genuinely starts with a tier word uses the flagged form so
 the adjective is not parsed as a tier; step 1's echo exposes any misparse.
 
-The mission is the orchestrator: it decides which other skills are part of
-*done* so the user never has to list them. One session, one mission, one
-branch, one worktree, one PR.
+The mission selects the skills required for done. Each mission owns one
+branch, worktree and PR.
 
-**This skill is not `/goal`.** Claude Code's built-in `/goal` sets a completion
-condition and keeps re-running turns until a small fast model judges it met; it
-knows nothing about this repo. The two compose — this skill decides *what done
-means*, `/goal` keeps the session from stopping before it. Step 9 hands over
-the line to paste.
+**This skill defines done; `/goal` supplies continuation.** Claude's built-in
+`/goal` repeats turns until its evaluator accepts the condition, without
+repository knowledge. Step 9 provides that condition.
 
-The reasoning behind the flow, and what each rule was bought with, is
-`references/why.md`. Read it when changing a rule, not when following one.
+Read `references/why.md` when changing a rule; it explains the rationale.
 
 ## Tiers
 
@@ -309,6 +308,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
 Done = the PR is open, CI is green, `delivery-review` returned PASS, and the
 evidence is in the PR body. At `small`, where that review does not run, done is
 the same line without it — the PR open, CI green, `arch-review` closed, the
-evidence in the body. Not merged — merging is the user's call, always. Do not
+evidence in the body. Main merging is exclusively the user's action;
+intermediate campaign merges follow their explicit grant and integration contract. Do not
 ask permission to push or open the PR; opening it *is* the mission's final
 step, at every tier.

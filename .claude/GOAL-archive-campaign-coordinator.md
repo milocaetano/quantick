@@ -4,7 +4,7 @@ Build a shared, durable campaign coordinator and deliver a ready PR with green
 CI so large objectives can advance across agents and sessions.
 
 **Tier:** high: operational authority, recovery and cross-session coordination
-need independent review even though the shipped change is documentation only.
+need independent review. Later steering adds executable review/merge guards.
 
 ## Request ledger
 
@@ -29,12 +29,19 @@ need independent review even though the shipped change is documentation only.
 - R19: Consider #314, #322, #323 and #324; do not execute the future A+ campaign or publish unrelated positioning claims.
 - R20: Provide short examples, state/human-task/recovery formats, appropriate validation, implementation issue, ready PR and green CI; simulate a small persisted campaign and independently resume it.
 - R21: Keep local validation proportional: docs/skills avoid full local workspace suite; CI may supply it; strengthen architecture/concurrency/persistence/security checks; complexity is not measured by text size alone.
+- R22: Use a dedicated integration branch per implementation campaign; each child retains its own branch/worktree and builds on integrated predecessors.
+- R23: Persist the exact campaign merge destination, initial/current SHAs, scope and user authorization; intermediate merges require reviews and green CI.
+- R24: Main merging is exclusively human, including no auto-merge, merge queue, direct integration push or protection bypass by agents.
+- R25: Existing task/review skills and shared hooks use the campaign base explicitly, retaining main as default and invalidating reviews when the campaign base changes.
+- R26: Score the campaign SHA honestly, synchronize main with new integration checks, and deliver a fully reviewed consolidated main PR.
+- R27: Separate candidate readiness from main integration; stop autonomous integration at ready for user evaluation and observe the user's merge before recording main completion.
 
 ## Decisions
 
 - D1: User explicitly authorizes repository/GitHub analysis, issue/Project creation, isolated implementation, commits, testing, PR creation and CI follow-through. No merge request was made.
 - D2: User explicitly directs targeted local validation for docs/skills and permits full workspace verification in CI; this overrides the older full-local wording for this mission only.
 - D3: User explicitly requests all seven supplied project skills. Delivery review runs in full from fresh context.
+- D4: Later user steering requests the integration-branch model and states main merge must be theirs. This authorizes implementing that mode, not performing a merge for this coordinator delivery.
 
 ## Assumptions
 
@@ -51,16 +58,20 @@ need independent review even though the shipped change is documentation only.
 - [ ] **A4** — Resume/recovery, retries, ownership, next actions, stalled work, evidence and stop rules survive a context-free simulation. *Evidence:* GitHub simulation and independent read-only report → docs/campaign/validation.md. *(R13, R14, R15, R20)*
 - [ ] **A5** — Concise updates, permission recovery and credential/authority boundaries are explicit; no A+ work or merge performed. *Evidence:* contracts, simulation checkpoint and diff → docs/campaign/validation.md. *(R16, R17, R19)*
 - [ ] **A6** — Risk-based checks follow explicit user instruction, with local structural/guards/link/hygiene proof and required full CI at delivery. *Evidence:* recorded local results → docs/campaign/validation.md; CI is a closing step. *(R12, R20, R21)*
+- [ ] **A7** — Campaign base, authority and final lifecycle are persisted and integrated with existing skills; main remains exclusively human. *Evidence:* integration contract and helper/boundary tests → docs/campaign/validation.md. *(R22, R23, R24, R25, R26, R27)*
 - [ ] **G1** — Authored artifacts are English except this attributed verbatim request. *Evidence:* guards and prose inspection → docs/campaign/validation.md.
-- [ ] **G2** — Architecture bug pass and language review have no unresolved findings. Shape dimensions waived for prose only. *Evidence:* final-head review → PR review record.
+- [ ] **G2** — Architecture bug, relevant shape and language review have no unresolved findings. *Evidence:* final-head review → PR review record.
 
 ## Not applicable
 
-No Rust, hooks, runtime config, UI, public product contract or executable helper
-changes. UI/visual/trader reviews, performance measurements and engine fixtures
-are not applicable. Runtime performance is unchanged; workflow runs rarely at
-explicit agent invocation. Full local workspace checks are replaced under D2;
-the existing CI still runs its complete checks. No global tier policy changes.
+No Rust, runtime config, UI or public product contract changes. UI/visual/trader
+reviews, runtime measurements and engine fixtures are not applicable. Runtime
+performance is unchanged; workflow runs rarely at explicit agent invocation.
+The added shell authority/base helpers require hermetic positive/negative tests
+and the full shared guardrail suite locally. Full Rust integration remains in
+CI under D2; no Rust dependency changed. The small-tier fix retains thread and
+merge-authority checks after its delivery-review exemption; #324 retains the
+general risk-tier redesign.
 
 ## Closing steps
 
@@ -265,3 +276,60 @@ The following is an attributed quotation of the user's implementation request.
 >   Antes de concluir, simule uma campanha pequena e confirme que outro agente conseguiria retomá-la apenas lendo o estado persistido.
 >
 >   Comece agora e prossiga autonomamente até o PR estar pronto.
+
+## Subsequent user steering (attributed quotation)
+
+> › entao a main tem um trava somente eu posso mergear. Mas e se a gnt crair um branch por camapnha? ai os merges ficam em cima da branh da campanha. Assim nao temos risco de causar
+>   dano a main. E teriamos temos para avaliar como ficou apos o final dela. Ai eu daria full autorziacao para margear na branch. Eu coloco essa regra  na skill da campanha ou nao?
+>
+> • Sim — eu colocaria esse modo na skill campaign. Uma branch de integração por campanha combina bem com o que você quer: autonomia para integrar as etapas e uma decisão sua antes de
+>   levar o conjunto à main.
+>
+>   O fluxo seria:
+>
+>   main
+>    └─ campaign/architecture-a
+>        ├─ missão 1 → PR para campaign/architecture-a
+>        ├─ missão 2 → PR para campaign/architecture-a
+>        └─ missão 3 → PR para campaign/architecture-a
+>
+>   campaign/architecture-a → PR final para main → você decide o merge
+>
+>   Cada missão continua em sua própria branch e worktree. Depois de integrar uma missão, a seguinte parte da branch atualizada da campanha, incorporando o trabalho anterior.
+>
+>   Isso protege a main de alterações diretas durante a campanha. Ainda precisamos testar a integração final: quanto mais tempo a campanha durar, maior a possibilidade de divergência
+>   com mudanças feitas na main.
+>
+>   Eu separaria a regra geral da autorização específica:
+>
+>   - Na skill: como criar, atualizar, testar e concluir uma campanha com branch de integração.
+>   - No registro de cada campanha: branch exata de destino, base inicial, escopo e sua autorização para merges.
+>   - No GitHub: manter a proteção da main. A skill orienta o agente; a proteção técnica garante o limite.
+>
+>   Há um ajuste importante no Quantick: hoje as instruções presumem branches saindo de origin/main e reviews comparando com origin/main. Só adicionar a frase na campanha não basta.
+>   new-task, mission, reviews, ship e os hooks precisam aceitar a base da campanha explicitamente, mantendo main como padrão.
+>
+>   Eu colocaria estas condições no modo de campanha:
+>
+>   1. PRs de missão só podem ser integrados na branch exata autorizada, com revisões e CI verde.
+>   2. A próxima missão usa o resultado já integrado nessa branch.
+>   3. A nota é medida no SHA da campanha; ela não deve ser apresentada como nota da main.
+>   4. Atualizações da main são incorporadas com novos checks, preservando o trabalho da campanha.
+>   5. O encerramento entrega um PR consolidado para main, com revisão do conjunto, evidências e CI. O merge final é exclusivamente seu.
+>
+>   Também vale cuidar do significado de “concluído”: uma tarefa pode estar integrada na campanha, enquanto a campanha está pronta para sua avaliação, sem estar entregue na main.
+>
+>   Minha recomendação é adotar esse modo como padrão para campanhas de refatoração do Quantick. Você concede autonomia dentro de uma branch delimitada e mantém a aprovação do resultado
+>   completo. A autorização deve citar o nome dessa branch, evitando um “pode mergear tudo” genérico.
+>
+> › Quero que o merge para main seja meu.
+>
+> • O merge para main fica exclusivamente com você. O Astra pode integrar os PRs intermediários na branch da campanha e preparar o PR final, mas deve parar antes de integrá-lo à main.
+>
+>   A regra na skill deve ser explícita:
+>
+>   > O coordenador só pode fazer merges na branch de integração autorizada para a campanha. O merge final para main é reservado ao usuário. Não habilitar auto-merge, inserir em fila de
+>   > merge nem contornar proteções para esse destino.
+>
+>   A campanha termina a execução autônoma como “pronta para avaliação do usuário”, com PR final, revisões, CI e scorecard. Só registra “integrada à main” depois de verificar o merge
+>   feito por você.

@@ -12,7 +12,9 @@ The parent body includes: campaign ID (`owner/repo#parent`), schema version,
 objective, expected outcome, scope and exclusions, completion criteria with
 stable IDs, constraints, dependencies, risks/mitigations, baseline and target
 metrics with revision/rubric/evidence, granted actions with source and limits,
-Project URL/ID and field mapping (or explicit pending setup), child issue
+Project URL/ID and field mapping (or explicit pending setup), integration mode,
+exact campaign branch, initial main/current campaign SHA, merge authorization
+source, final PR and status under [integration branches](integration.md), child issue
 index, decision log links, and latest checkpoint link. Add marker
 `<!-- quantick-campaign:v1 -->` for discovery.
 
@@ -47,6 +49,7 @@ replace illustrative values with real URLs/SHAs. Required keys:
   "writer": "codex/session-id",
   "phase": "running",
   "base_sha": "full resolved SHA",
+  "integration": null,
   "authorization": {"source": "charter decision D1", "allowed": ["issues", "branches", "commits", "prs"], "excluded": ["merge", "deploy", "spend"]},
   "lease": {"owner": "codex/session-id", "expires_at": "2026-09-06T18:15:00Z"},
   "project": {"url": null, "id": null, "states": {}, "pending": ["create campaign Project"]},
@@ -62,15 +65,23 @@ replace illustrative values with real URLs/SHAs. Required keys:
 }
 ```
 
-`phase` is `running`, `waiting`, `blocked` or `complete`. Task `state` is
+`phase` is `running`, `waiting`, `blocked`, `ready_for_evaluation`,
+`integrated_main` or `complete`. Integration campaigns require observed user
+merge and final evidence before those last two; evidence-only campaigns can
+complete without a main merge. Candidate readiness does not close the parent. Task `state` is
 `backlog`, `ready`, `in_progress`, `blocked`, `awaiting_human`,
 `awaiting_ci`, `awaiting_review`, `awaiting_merge` or `done`.
 `depends_on` entries are objects with `task`, `condition` and `evidence`:
-normally `merged_with_green_ci` for code, `accepted_evidence` for documents
+normally `integrated_campaign_with_green_ci` for campaign children (record
+merge SHA, target ref and evidence), `merged_with_green_ci` for ordinary code,
+or `accepted_evidence` for documents
 or human tasks. All prerequisites must pass. Never equate issue closure with
 satisfaction. Rejected/closed-unmerged PRs require recovery, not `done`.
 
 `publication_key` is stable across retries of the same snapshot publication.
+`integration` is null for evidence-only campaigns; implementation campaigns
+copy their integration record and both criterion sets from the charter into
+each complete checkpoint, with current campaign SHA and final PR status.
 `inflight`, when non-null, names the stable operation key, target, intended
 mutation, attempt count, starting checkpoint and expected readback. Persist
 before a business mutation; clear only after observed success or a recorded failure.
@@ -101,7 +112,7 @@ an incomplete checkpoint and blocks dependent writes. Never truncate silently.
 | Ready | ready | Authorized autonomous task; prerequisites satisfied |
 | In progress | in_progress, awaiting_ci, awaiting_review | Claimed work or submitted PR; substate visible in checkpoint |
 | Blocked | blocked | Failed dependency, exhausted retry, unsafe/conflicting state |
-| Awaiting human | awaiting_human, awaiting_merge | Explicit human task or missing merge authorization |
+| Awaiting human | awaiting_human, awaiting_merge; parent ready_for_evaluation | Explicit human task, missing campaign merge authorization or final main handoff |
 | Done | done | Criteria proven; integration condition met where required |
 
 Preserve existing Project fields. Use a dedicated `Campaign state` field with

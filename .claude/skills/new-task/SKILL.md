@@ -3,6 +3,9 @@ name: new-task
 description: Start work on a GitHub issue the right way - read it, branch from updated main with the correct prefix, move the board card to In Progress. Use when the user types /new-task <issue-number> or asks to start or pick up an issue.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Start work on an issue
 
 Argument: the issue number (e.g. `/new-task 3`). If missing, list open issues in the current milestone (`gh issue list --milestone "v0.1 - Engine core"`) and ask which one to pick.

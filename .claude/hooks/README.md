@@ -21,6 +21,20 @@ its `/hooks` screen, as required by the
 
 ## Why `guard-watch` never blocks and never builds
 
+Campaign children use the branch-bound `mission-base` record and shared
+`campaign_context.sh` commands documented in
+[`docs/campaign/integration.md`](../../docs/campaign/integration.md).
+That contract overrides the main-only review examples below for those tasks.
+The campaign key binds target ref/tip as well as diff. Invalid context fails
+closed; ready verifies the PR base/head, and merge additionally requires a
+persisted grant, current base, passing CI and the explicit head-pinned command.
+Main merges, auto-merge and queue shortcuts are reserved for the user.
+The small-tier exemption removes only delivery review, never thread or merge
+authority checks. `campaign_context_test.sh` exercises these boundaries with
+real git fixtures and fake GitHub responses through both client payloads; the
+main guardrail suite invokes it in CI. Existing command-detection limitations
+still apply; GitHub branch protections are the security boundary.
+
 The other three modes are gates. This one is a courier.
 
 The repository guards — the size, context and cycle ratchets, the language scan, the encoding

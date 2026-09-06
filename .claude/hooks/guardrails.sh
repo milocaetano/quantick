@@ -327,6 +327,7 @@ declared_tier() {
 # not. Numstat is `added<TAB>deleted<TAB>path` in every locale, which is the
 # whole reason it is what gets read here.
 changed_lines() {
+    lines_base=$(review_base "$1") || return 1
     # `-- .` then the exclusions: the goal file and its archive are the
     # mission's own bookkeeping, and `mission` requires that archive as the
     # branch's last commit. Counting it lets a branch be pushed out of a tier it
@@ -335,7 +336,7 @@ changed_lines() {
     # irreversible. The ceiling proxies how many asks a branch carries; a goal
     # file carries none, it *describes* them.
     # shellcheck disable=SC2086
-    lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "origin/$MAIN_BRANCH...HEAD" -- . $SIZE_EXCLUDES 2>/dev/null) || return 1
+    lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "$lines_base...HEAD" -- . $SIZE_EXCLUDES 2>/dev/null) || return 1
 
     lines_total=0
     for lines_n in $(printf '%s\n' "$lines_raw" | cut -f1,2); do
@@ -374,7 +375,21 @@ changed_lines() {
 # The last row is the point. A sha-keyed marker survives a rebase that lands the
 # branch on top of someone else's edits to the very files it changes, which is
 # the case most deserving of a second look. A diff-keyed one does not.
+review_base() {
+    base_record=$(marker_path "$1" mission-base) || return 1
+    if [ -e "$base_record" ]; then
+        sh "$(dirname "$0")/campaign_context.sh" base "$1"
+    else
+        printf 'origin/%s\n' "$MAIN_BRANCH"
+    fi
+}
+
 review_key() {
+    key_record=$(marker_path "$1" mission-base) || return 1
+    if [ -e "$key_record" ]; then
+        sh "$(dirname "$0")/campaign_context.sh" key "$1"
+        return $?
+    fi
     # The preconditions are checked first, and the diff is then piped *raw*.
     # Capturing it in $( ) first would strip the trailing newline, so this
     # function and the recording command the denial prints - a plain
@@ -413,6 +428,9 @@ require_marker() {
     # Every doc on this branch spells the command with the `cd`; the message
     # must not be the one place that drops it.
     require_record="git -C \\\"$require_dir\\\" diff origin/$MAIN_BRANCH...HEAD | git hash-object --stdin > \\\"$require_file\\\""
+    if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
+        require_record="sh .claude/hooks/campaign_context.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
+    fi
 
     if [ ! -f "$require_file" ]; then
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this change. $require_how, then record it:\n\n  $require_record\""
@@ -636,8 +654,10 @@ pr_gate() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
+    gate_base=$(review_base "$dir") || deny '"Campaign review base is invalid or unavailable; reconcile the branch-bound mission-base record."'
     key=$(review_key "$dir")
     if [ -z "$key" ]; then
+        [ "$gate_base" = "origin/$MAIN_BRANCH" ] || deny '"Campaign review identity cannot be computed; no fallback approval is available."'
         # The branch's own change cannot be identified - no origin/<main>, an
         # unrelated history. Fall back to the commit, which is what this gate
         # keyed on before diffs. That is strictly stricter than failing open,
@@ -656,7 +676,7 @@ pr_gate() {
     # to buy its way out of, and a small diff is not the same as a safe one.
     require_marker "$dir" "$key" "$ARCH_MARKER_NAME" \
         "no branch ships un-reviewed" \
-        "Run the arch-review skill over \`git diff origin/$MAIN_BRANCH...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
+        "Run the arch-review skill over \`git diff $gate_base...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
 
     delivery_how="Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
 
@@ -666,23 +686,26 @@ pr_gate() {
     # has merely forgotten the review must never double as an advertisement for
     # the way around it. Only a branch that already asked for the cheap path
     # hears anything at all about the bound on it.
+    small_exempt=0
     if [ "$(declared_tier "$dir")" = "small" ]; then
         small_size=$(changed_lines "$dir")
 
         if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            exit 0
+            small_exempt=1
         fi
 
         if [ -z "$small_size" ]; then
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against origin/$MAIN_BRANCH can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against $gate_base can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
         else
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against $gate_base; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
         fi
     fi
 
-    require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
+    if [ "$small_exempt" -eq 0 ]; then
+      require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
         "no branch ships ungraded against what was asked for" \
         "$delivery_how"
+    fi
 
     # Both reviews are recorded. What is left is the branch's open findings,
     # and only the two commands that actually ship work are held on them: a PR
@@ -712,6 +735,29 @@ pr_gate() {
         deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
     fi
 
+    if [ "$gate_action" = merge ]; then
+        [ "$gate_base" != "origin/$MAIN_BRANCH" ] || deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+        # Only this explicit, head-pinned form is supported. This also rejects
+        # --admin, --auto, alternate repositories and merge-queue shortcuts.
+        gate_merge=$(gh_statement "$command" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        gate_whole=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        [ "$gate_merge" = "$gate_whole" ] || deny '"Run one campaign merge command from the task worktree; compound commands cannot share an authorization check."'
+        gate_head=$(git -C "$dir" rev-parse HEAD)
+        case "$gate_merge" in
+            "gh pr merge $gate_pr --merge --match-head-commit $gate_head"|"gh pr merge $gate_pr --squash --match-head-commit $gate_head") ;;
+            *) deny '"Campaign merges require an explicit PR, --merge or --squash, and --match-head-commit with the reviewed HEAD; no auto-merge, admin override or alternate repository."' ;;
+        esac
+    fi
+    if [ "$gate_base" != "origin/$MAIN_BRANCH" ]; then
+        if [ "$gate_action" = ready ]; then
+            gate_ready=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            [ "$gate_ready" = "gh pr ready $gate_pr" ] || deny '"Run one explicit campaign ready command in the task worktree, without repository overrides or compound commands."'
+        fi
+        if ! sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$gate_pr" "$gate_action" >/dev/null 2>&1; then
+            deny '"Campaign PR identity, authorization or CI could not be verified. Reconcile its exact base/head, persisted merge grant and green checks before continuing."'
+        fi
+    fi
+
     exit 0
 }
 
@@ -724,10 +770,11 @@ commit_reminder() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
+    reminder_base=$(review_base "$dir") || exit 0
     branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
     [ "$branch" != "$MAIN_BRANCH" ] || exit 0
 
-    ahead=$(git -C "$dir" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null) || exit 0
+    ahead=$(git -C "$dir" rev-list --count "$reminder_base..HEAD" 2>/dev/null) || exit 0
     [ "${ahead:-0}" -gt 0 ] || exit 0
 
     # A `small` mission is reminded of the gate it actually faces. Repeating
@@ -751,15 +798,15 @@ commit_reminder() {
         # `[ "" -le 300 ]`, a POSIX `[` error, and emit three contradictory
         # reminders on separate lines, which is not even parseable JSON.
         if [ -z "$small_size" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, but its size against origin/$MAIN_BRANCH cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. origin/$MAIN_BRANCH exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, but its size against $reminder_base cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. $reminder_base exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
         elif [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact change being shipped, which any later edit stales, though a rebase or an amend does not. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact change being shipped, which any later edit stales, though a rebase or an amend does not. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
         else
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact change being shipped. Raise the tier in the goal file and run both reviews.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact change being shipped. Raise the tier in the goal file and run both reviews.\""
         fi
     fi
 
-    context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
+    context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
 }
 
 # PostToolUse on Edit|Write. Runs the repository guards over the file that was

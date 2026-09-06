@@ -27,7 +27,7 @@ pattern of loading detailed instructions from `docs/` on invocation.
 Authored prose and branch/commit text are English. The mission archive includes
 the explicitly attributed Portuguese user request under the repository's
 quotation exemption. Runtime performance is unchanged; the touched path is
-rare agent orchestration. No app trunk, Rust code, hook or runtime config grew.
+rare agent orchestration. No app trunk, Rust code or runtime config grew.
 
 The user explicitly directed proportional local validation for this docs/skills
 change. Full workspace format/lint/build/test runs remain in the unchanged
@@ -74,3 +74,33 @@ The contract now makes journal publication non-recursive, defines parent
 bootstrap/readback and stable publication keys, and treats complete snapshots
 as bounded recovery boundaries with older bodies loaded only on demand.
 Final-head architecture, delivery and AI verdicts are recorded on the PR.
+
+## Integration-branch expansion
+
+The user subsequently reserved every main merge for themselves and requested
+authorized intermediate integration into a dedicated campaign branch. The
+shared integration contract now routes all six task/review skills to explicit
+bases and review keys. The parent/checkpoint distinguishes candidate readiness
+from integration into main; final scoring names the campaign SHA and retains
+any default-branch rubric limitations. Main synchronization uses a reviewed
+campaign PR, preserving integration history.
+
+This extension includes executable shell guards, so the original prose-only
+review waiver no longer applies. Local validation adds the complete shared
+guardrail suite and hermetic campaign boundary tests using real git histories
+and fake GitHub responses. No actual intermediate or main merge is performed.
+The tests exercise missing grant, wrong base/head, remote-base advancement,
+absent/pending CI, branch-bound context, exact ready/merge targets, prohibited
+auto/admin/alternate-repository and compound commands, and the small-tier
+thread/merge gates for both client payloads. A base-only independent commit
+leaves the task diff unchanged but must invalidate its campaign review key.
+
+```text
+sh .claude/hooks/campaign_context_test.sh -> 35 campaign context tests passed
+sh .claude/hooks/guardrails_test.sh       -> 147 passed, 0 failed (includes the 35 campaign cases)
+```
+
+The command gate retains its documented narrow parser coverage; GitHub main
+protection remains the security boundary. Local grant records are projections
+of verified user decisions, not self-issued authority. Live Project operations
+remain blocked by the same OAuth scope and are not part of the mock-GitHub proof.

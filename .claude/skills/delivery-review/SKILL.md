@@ -3,16 +3,14 @@ name: delivery-review
 description: Grade a finished branch against what was actually asked for — every ask in the mission's request ledger and every acceptance criterion marked DELIVERED, PARTIAL, MISSING or UNPROVEN by a reviewer that did not write the code. Runs after arch-review and before the PR; records the delivery-review-ok marker the pr-gate hook requires. Use when the user types /delivery-review, before opening a PR, or when asked whether what shipped is what was requested.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Delivery review
 
-One question, asked by someone who did not build the thing: **is what shipped
-what was asked for?**
-
-`arch-review` grades shape and its step 0 grades bugs; both take the change as
-given and ask whether it is *well made*. Neither opens the request and checks
-that all of it arrived. The failure this skill catches is the quiet one: eight
-asks in, six criteria written, five delivered, everything green, and the trader
-finds the other three by using the product.
+An independent reviewer asks: **is what shipped what was asked for?** Shape
+and bug reviews judge the change as given; this review catches requests that
+never became criteria, and criteria that were never delivered.
 
 The reasoning behind the model split, the reviewer's type and the stall rule
 is `references/why.md`. Read it when changing a rule, not when following one.

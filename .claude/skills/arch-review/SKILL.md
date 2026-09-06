@@ -3,13 +3,12 @@ name: arch-review
 description: The full pre-PR shape review for quantick — bugs first via the bundled code-review, then docking, performance, tests, operability without a mouse, hardcoded values, the trunk and the English rule. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, fast enough, drivable by a script, or properly tested. Reviews a diff; it does not design the assistant.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Architecture-first code review
 
-A new feature should dock like a spacecraft to the ISS: a standard port, no
-modification to the station. Review every change against that bar.
-
-This skill reviews *shape*. Bug hunting belongs to the bundled `code-review`,
-which step 0 runs first.
+Review extension seams and shape; step 0 runs the bundled bug review first.
 
 **How this file is arranged.** Every rule that decides whether a review may
 close is stated here. The worked detail behind a dimension — its exemplars,

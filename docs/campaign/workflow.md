@@ -3,7 +3,10 @@
 `campaign` turns a broad objective into bounded, reviewable tasks and keeps
 advancing while work is authorized and unblocked. Read the [state contract](state.md)
 before any operation. Read [GitHub operations](github.md) before remote writes.
-The canonical entrypoint is in `.claude/skills/campaign/`; Codex only adapts it.
+For implementation campaigns, also read [integration branches](integration.md)
+before creating worktrees, reviewing or merging. It owns campaign bases and
+the exclusively human main merge. The canonical entrypoint is in
+`.claude/skills/campaign/`; Codex only adapts it.
 Astra or another agent resumes from the same GitHub record and repository rules.
 
 ## Operations
@@ -86,8 +89,9 @@ For each cycle:
    issue in every PR. Persist review reports and resolvable findings.
 5. Observe checks at the current PR head. Fix failures within scope and retry
    bounds, refresh invalidated reviews, and watch CI with bounded waits.
-   A green ready PR is `awaiting_merge`, not an integrated dependency. Create
-   a human authorization task if merge authority is absent; continue other
+   A green ready PR is `awaiting_merge`, not an integrated dependency. Merge
+   only into the exact authorized campaign base under the integration contract.
+   Create a human authorization task if that grant is absent; continue other
    ready issues. Never stack dependent implementation on unmerged work unless
    separately authorized with an explicit base and integration plan.
 6. Publish the result checkpoint, evidence URLs and next action, release the
@@ -138,7 +142,9 @@ send per-command narration. Use the human-task format below for needed input.
 Close checks every parent criterion, mandatory child evidence, final metrics
 at the integrated SHA, required CI, unresolved review/authority blockers and
 pending Project writes. Do not close while any required item is unproven.
-Record the final report and mark the parent/Project complete only when these
+For integration campaigns, first hand off the consolidated PR as
+`ready_for_evaluation`, with main merge exclusively the user's action. Record
+the final report and mark the parent/Project complete only when these
 checks pass and campaign-management authority covers it. Never merge, deploy,
 publish, spend or make irreversible changes by implication.
 
