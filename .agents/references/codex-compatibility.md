@@ -1,19 +1,13 @@
 # Codex compatibility
 
-The linked Claude skill is canonical. Preserve its outcomes, gates, evidence,
-markers, and authority boundaries while mapping host mechanics:
+The Claude workflow owns outcomes, gates, evidence, markers, authority and
+done. Translate only these host mechanics:
 
-- `/name` or `Skill(name)` means the matching Codex `$name` skill.
-- Map `AskUserQuestion` to the available Codex user-input mechanism, still
-  obeying the session interaction policy.
-- A mission request authorizes the available Codex goal facility. Use it
-  instead of printing Claude's `/goal`; otherwise execute from `GOAL.md`.
-- Map `/code-review` to native review, or inspect the requested diff directly.
-- A required fresh subagent receives only the stated dossier. Map models by
-  role: fast for retrieval, balanced for checklists, strongest for judgment.
-- Translate POSIX shell examples to the active shell without changing their
-  ordering, target worktree, marker contents, or failure behavior.
-- `.codex/hooks.json` runs the shared guardrails. Trusting it never expands
-  command permissions.
-
-These mappings change mechanisms only; the canonical workflow decides done.
+- `/name` and `Skill(name)` mean Codex `$name`.
+- `AskUserQuestion` means Codex user input under the session policy.
+- A mission authorizes the Codex goal facility; otherwise use `GOAL.md`.
+- `/code-review` means native review or direct inspection of the named diff.
+- Give a fresh subagent only its dossier; use fast models for retrieval,
+  balanced for checklists and the strongest for judgment.
+- Translate POSIX examples without changing order, worktree, markers or failure.
+- `.codex/hooks.json` runs shared guardrails without adding permissions.
