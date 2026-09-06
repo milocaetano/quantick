@@ -14,7 +14,7 @@ that all of it arrived. The failure this skill catches is the quiet one: eight
 asks in, six criteria written, five delivered, everything green, and the trader
 finds the other three by using the product.
 
-The reasoning behind the model split, the reviewer's type and the round budget
+The reasoning behind the model split, the reviewer's type and the stall rule
 is `references/why.md`. Read it when changing a rule, not when following one.
 
 ## What this skill is not
@@ -295,16 +295,12 @@ these gaps either — the session does.
 - **Fix everything the review reported, then re-run** — a fresh dossier and a
   fresh subagent, because a reviewer that has already seen the branch is no
   longer a stranger to it.
-- **Spend from the chain's budget, not a second one.** `CLAUDE.md`'s *review
-  chain has a budget* is the owner: three rounds per branch across **both**
-  reviews together, then the remainder ships as recorded PR follow-ups. Count
-  the rounds this branch has already spent before opening another.
-
-  When the budget is out, report the surviving gaps and what was tried on each,
-  and let the trader decide whether to keep going. **Say which shape it is**: a
-  round whose findings are smaller and fewer is converging; a round still
-  returning Blockers in code the previous round's fix introduced means the
-  approach is wrong rather than incomplete, and more rounds will not fix a
+- **Stop on a stall, not on a count.** `CLAUDE.md`'s *two phases* bullet is the
+  owner: rounds are not rationed, but a run that does not shrink the open set
+  is the last one. If the gaps did not fall between two runs, report the
+  survivors and what was tried on each, and hand the branch to the trader.
+  Findings still returning in code the previous fix introduced mean the
+  approach is wrong rather than incomplete, and more runs will not fix a
   design.
 - **Escalate immediately, without spending a round**, when closing the gap
   would change the mission's scope, contradict a recorded `D` decision, or

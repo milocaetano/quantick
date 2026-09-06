@@ -50,9 +50,9 @@ WT=/path/to/worktree
 cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
 
-**Never re-run a level that already ran clean.** That is about what to skip
-inside one round, not a budget: the count lives in `CLAUDE.md`'s *review chain
-has a budget*, and neither this step nor the shape pass carries a second one.
+**Never re-run a level that already ran clean.** When to stop re-running at
+all is `CLAUDE.md`'s *two phases* bullet: a run that does not shrink the open
+set is the last one. Neither this step nor the shape pass counts its own.
 
 **The bug pass keeps the strong model.** It finds real defects partly by being
 one; it is the exception `CLAUDE.md`'s routing rule exists to protect.

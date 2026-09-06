@@ -9,16 +9,27 @@
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
-#   pr-gate           PreToolUse on Bash. Denies `gh pr create`
-#                     until BOTH reviews have been recorded for the exact
-#                     commit being shipped: arch-review ("no branch ships
-#                     un-reviewed") and delivery-review ("no branch ships
-#                     ungraded against what was asked for"). A mission
-#                     that declared the `small` tier is exempt from the
-#                     second one, but only while the branch stays small
-#                     enough to have earned the word: `declared_tier` reads
-#                     the declaration, `changed_lines` and
-#                     `SMALL_TIER_MAX_CHANGED_LINES` are the bound on it.
+#   pr-gate           PreToolUse on Bash. Denies `gh pr create`, `gh pr
+#                     ready` and `gh pr merge` until BOTH reviews have been
+#                     recorded for the exact commit being shipped:
+#                     arch-review ("no branch ships un-reviewed") and
+#                     delivery-review ("no branch ships ungraded against
+#                     what was asked for"). A mission that declared the
+#                     `small` tier is exempt from the second one, but only
+#                     while the branch stays small enough to have earned
+#                     the word: `declared_tier` reads the declaration,
+#                     `changed_lines` and `SMALL_TIER_MAX_CHANGED_LINES`
+#                     are the bound on it.
+#
+#                     Two things are new with the two-phase chain. A
+#                     *draft* `gh pr create` passes ungated: a draft PR is
+#                     where phase one ends and where `ai-review` posts its
+#                     findings, so gating it would demand the reviews
+#                     before the findings that inform them. And `gh pr
+#                     ready` and `gh pr merge` additionally want zero open
+#                     `ai-review` threads, counted by the sibling script
+#                     that posts them — so the reviewer and the gate share
+#                     one definition of an open finding.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -185,6 +196,19 @@ deny() {
 
 context() {
     printf '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":%s}}\n' "$1"
+    exit 0
+}
+
+# Neither a denial nor a silent pass: the gate could not determine something it
+# is supposed to check, and says so where a human will read it.
+#
+# The file's fail-open rule is kept — `ask` blocks nothing a human does not
+# block. What it refuses to do is fail open *silently*. An unreachable GitHub
+# is the difference between "this branch has no open findings" and "nobody
+# knows whether it has any", and a gate that prints the same nothing for both
+# has taught its reader that silence means clean.
+ask() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":%s}}\n' "$1"
     exit 0
 }
 
@@ -459,9 +483,155 @@ worktree_guard() {
 
 # --- pr-gate ----------------------------------------------------------------
 
+# The statement inside `$1` that runs `$2`, or nothing. Split exactly as
+# `runs_command` splits, because a flag the gate reads must come from the
+# statement it matched rather than from anywhere else on the line: a `--draft`
+# in a neighbouring `echo` is not a draft PR.
+gh_statement() {
+    printf '%s' "$1" |
+        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
+        grep -E "^[[:space:]]*$2([[:space:]]|$)" |
+        head -n 1
+}
+
+# The statement with its quoted spans blanked out, so a flag can be read from
+# what the command *does* rather than from what a title or a body says.
+#
+# This exists because the first version of the draft exemption globbed the
+# whole statement, and `gh pr create --title "Make --draft PRs ungated"` then
+# opened a real, un-reviewed PR. The file already carries that lesson one
+# function up: `runs_command` splits into statements precisely so a commit
+# message naming a gated command cannot trip the gate. Reading a *flag* needs
+# the same care, and more of it — there the mistake blocks something that
+# should pass, here it passes something that should be blocked.
+#
+# A title with a space in it has to be quoted, so blanking quoted spans covers
+# the reachable spellings. It is deliberately not a shell parser: what it
+# cannot understand it leaves in place, and anything left in place is read as
+# an argument, which errs towards gating.
+unquoted_arguments() {
+    printf '%s' "$1" | sed 's/"[^"]*"/ /g; s/'"'"'[^'"'"']*'"'"'/ /g'
+}
+
+# True when the statement asks for a draft PR, as a whole argument word.
+#
+# Every uncertainty here resolves to *not a draft*, because the two mistakes
+# are not the same size: reading a draft as a real PR costs a permission
+# prompt, while reading a real PR as a draft opens it with no review at all.
+draft_flag() {
+    # An odd count of either quote character means a span this cannot pair
+    # off, so `unquoted_arguments` cannot be trusted to have blanked the right
+    # text. Refuse rather than guess.
+    for draft_quote in '"' "'"; do
+        draft_quotes=$(printf '%s' "$1" | tr -cd "$draft_quote" | wc -c)
+        [ $((draft_quotes % 2)) -eq 0 ] || return 1
+    done
+
+    draft_words=$(unquoted_arguments "$1")
+
+    # `--draft=<value>` is a draft only when gh would read the value as true.
+    # gh parses it with Go's ParseBool, whose true spellings are exactly these
+    # six — so `--draft=f`, `--draft=F` and `--draft=False` are all *false*,
+    # and a gate that reads them as a draft opens a real, un-reviewed PR. Only
+    # `false` and `0` were excluded before, which left the other four spellings
+    # of the same instruction wide open.
+    case " $draft_words " in
+        *' --draft=1 '* | *' --draft=t '* | *' --draft=T '* | \
+        *' --draft=true '* | *' --draft=TRUE '* | *' --draft=True '*) return 0 ;;
+        # Any other explicit value: not a draft, whatever it says.
+        *' --draft='*) return 1 ;;
+    esac
+
+    case " $draft_words " in
+        *' --draft '* | *' -d '*) return 0 ;;
+    esac
+    return 1
+}
+
+# The PR number the statement names, or nothing.
+#
+# A *whole word* of digits, never a digit run pulled out of one: splitting on
+# every non-digit read `--body-file notes2.md 42` as PR 2. And exactly one such
+# word, or none — two bare numbers mean the operand cannot be told from a
+# flag's value, and a gate that counts the wrong PR's threads is worse than one
+# that counts none, because it reports a clean number for a branch nobody
+# reviewed. The caller turns "none" into a question rather than a pass.
+pr_number() {
+    number_words=$(unquoted_arguments "$1" | tr -s ' \t' '\n\n' | grep -E '^[0-9]+$')
+    [ "$(printf '%s\n' "$number_words" | grep -c '[0-9]')" -eq 1 ] || return 0
+    printf '%s' "$number_words"
+}
+
+# How many ai-review threads are open on PR `$2`, printed on stdout. Empty when
+# the count could not be taken, which is not the same answer as zero and is why
+# the caller tells the two apart.
+#
+# The sibling script is the single owner of what an ai-review thread is: it
+# writes the marker when it posts one and reads the same marker when it counts.
+# A second definition here would drift, and the first symptom would be a merge
+# gate that either ignores real findings or blocks on a human's question.
+# Two failures, told apart by exit status, because their remedies are nothing
+# alike: 3 means the counting script is not beside this one, 1 means it ran and
+# could not answer. Reporting the second for the first sent an agent to check
+# its GitHub authentication over a missing file.
+#
+# `$3` is the worktree being shipped, and the count runs there. The script asks
+# `gh repo view` which repository it is in, and the hook's own cwd is the
+# session's — the main checkout, or wherever the agent last stood. Every other
+# decision in this gate reads the effective worktree; this one has to as well,
+# or a session sitting in another clone counts that repository's PR #42.
+open_ai_review_threads() {
+    # Resolved to an absolute path *before* the `cd` below, and by the same
+    # step that checks it exists. A relative `$1` otherwise passed the `-f`
+    # test here and then failed to be found from inside the worktree, which
+    # reported "gh could not answer" for a file that was simply somewhere else
+    # — the exact confusion these two exit statuses exist to remove.
+    threads_dir=$(cd "$1" 2>/dev/null && pwd) || return 3
+    threads_script="$threads_dir/ai_review_threads.sh"
+    [ -f "$threads_script" ] || return 3
+    threads_count=$(cd "$3" && sh "$threads_script" count "$2" 2>/dev/null) || return 1
+    case "$threads_count" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$threads_count"
+}
+
 pr_gate() {
     command=$(json_string_field command)
-    runs_command "$command" "gh pr create" || exit 0
+
+    # Which of the three the command is, because they are gated differently:
+    # `create` opens the PR that carries the findings, while `ready` and
+    # `merge` are the two ways work leaves the branch.
+    #
+    # Tested most-restrictive first, and that order is the rule rather than a
+    # preference. A line may run more than one of them — `gh pr create --draft
+    # && gh pr ready` is the natural way to end phase one and open phase two —
+    # and matching `create` first would hand that line the draft exemption and
+    # let the `gh pr ready` beside it through with no review at all.
+    if runs_command "$command" "gh pr merge"; then
+        gate_action=merge
+    elif runs_command "$command" "gh pr ready"; then
+        gate_action=ready
+    elif runs_command "$command" "gh pr create"; then
+        gate_action=create
+    else
+        exit 0
+    fi
+
+    # Phase one ends at a draft PR, and a draft ships nothing: it cannot be
+    # merged, and `gh pr ready` below is where the reviews are wanted. Gating
+    # it would order the chain backwards — the reviews would have to run before
+    # `ai-review` could post its findings onto a PR that does not exist yet.
+    #
+    # `--draft=false` is spelled out rather than left to the match. It is the
+    # one spelling that contains the flag and means the opposite of it, and a
+    # gate that reads it as a draft opens an ungated real PR.
+    if [ "$gate_action" = create ]; then
+        gate_statement=$(gh_statement "$command" "gh pr create")
+        if draft_flag "$gate_statement"; then
+            exit 0
+        fi
+    fi
 
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
@@ -513,6 +683,34 @@ pr_gate() {
     require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
         "no branch ships ungraded against what was asked for" \
         "$delivery_how"
+
+    # Both reviews are recorded. What is left is the branch's open findings,
+    # and only the two commands that actually ship work are held on them: a PR
+    # may be created, draft or not, while findings are still open — the PR is
+    # where they live.
+    [ "$gate_action" = create ] && exit 0
+
+    gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
+    if [ -z "$gate_pr" ]; then
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
+    fi
+
+    gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
+    gate_status=$?
+    if [ "$gate_status" -eq 3 ]; then
+        # The hook runs from the main checkout, always: `$0` is the path
+        # `.claude/settings.json` registered. So a branch that adds or fixes
+        # the counting script is judged by whatever `main` holds, and before
+        # that script has merged there is nothing beside this one to ask.
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. \`ai_review_threads.sh\` is not beside the hook in $(dirname "$0") — this hook runs from the main checkout, so a branch that has not merged the script yet cannot be counted from here. This is not a count of zero. Read the PR's unresolved threads before continuing.\""
+    fi
+    if [ -z "$gate_open" ]; then
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted — \`gh\` missing, unauthenticated, unreachable, or more threads on the PR than one page holds — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
+    fi
+
+    if [ "$gate_open" -gt 0 ]; then
+        deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
+    fi
 
     exit 0
 }

@@ -15,7 +15,7 @@ its `/hooks` screen, as required by the
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
+| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create`, `gh pr ready` and `gh pr merge` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. A **draft** `gh pr create` passes ungated; `gh pr ready` and `gh pr merge` additionally want **zero open `ai-review` threads**. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 
@@ -57,6 +57,45 @@ Under Git Bash the payload spells a path the way the host writes it and
 subtraction produced no match, which reads exactly like a clean file — the
 failure mode this repo's guards exist to prevent, reproduced in the hook that
 reports them.
+
+## Where the gate sits, now that the chain has two phases
+
+Phase one makes the branch work and ends at a **draft** PR. That PR is where
+`ai-review` posts its findings, one resolvable thread each, so the gate cannot
+sit in front of it: requiring the reviews before the draft exists would demand
+the reviews before the review that informs them. A draft ships nothing — it
+cannot be merged — so nothing is lost by letting it open.
+
+Phase two closes those threads, and the gate moved to where work actually
+leaves the branch: `gh pr ready` and `gh pr merge`. Both want what
+`gh pr create` always wanted — the two review markers, for the exact diff being
+shipped — plus a third condition, that no `ai-review` thread is still open.
+
+The tier is read, never required, exactly as before.
+
+### Counting the open threads
+
+The gate does not know what an `ai-review` thread is. It asks
+`ai_review_threads.sh`, the same script the reviewer used to post one, which
+recognises a thread by the marker it writes at the head of the first comment.
+One definition, two readers. A gate with its own definition would drift from
+the reviewer's, and the two failure modes are both bad: ignoring real findings,
+or blocking a merge on a human's ordinary question.
+
+`count` has a machine contract because a gate reads it — a number on stdout and
+exit 0, or nothing on stdout, a reason on stderr and **exit 2**. Exit 2 means
+"could not be determined", which is not the same answer as zero.
+
+### When the count cannot be taken
+
+`gh` missing, unauthenticated or unreachable, or a command that names no PR
+number: the gate emits an **`ask`** decision naming the reason. That keeps this
+file's fail-open rule — `ask` blocks nothing a human does not block, and a
+guardrail that stops a session over its own network is worse than no guardrail
+— while refusing to fail open *silently*. "This branch has no open findings"
+and "nobody knows whether it has any" are different answers, and a gate that
+prints the same nothing for both has taught its reader that silence means
+clean.
 
 ## Recording the two reviews
 
