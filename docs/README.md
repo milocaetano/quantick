@@ -45,6 +45,7 @@ The generated wire schemas live outside this tree, in
 | Document | What it covers |
 | --- | --- |
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
+| [`quality/quantick-score-rubric.md`](quality/quantick-score-rubric.md) | The versioned evidence and scoring rules for sustainable growth, scalability and AI readiness |
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
 | [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the four modes, which three are gates and which one only reports, why they fail open, and how to override them |
 
