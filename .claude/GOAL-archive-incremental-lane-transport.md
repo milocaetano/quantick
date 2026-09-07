@@ -15,7 +15,7 @@ Replace repeated full forming-run copies with incremental internal transport whi
 - R7: Preserve v1/public contracts, financial/bar rules, trade retention and rendering semantics; do not claim a global constant/linear bound for lane_prefixes.
 - R8: Follow campaign #330 Q3 issue #134 ownership, serialized host, full validation and independent review delivery; retain cumulative failures.
 
-- R9: Arm guards and the app all-target check before mission/source edits.
+- R9: Arm guards and the app all-target check, then persist the mission before the first source edit.
 - R10: Respect exact owned paths, including the approved pane test child; do not edit app/tests/mod.rs, Q2 schema paths, or another mission's worktree.
 - R11: Deliver an exact locally validated commit/handoff; leave remote writes, review markers and campaign merges to the coordinator.
 - R12: Acquire an explicit serialized build/desktop host grant before builds or measurements; retain literal releases and receipt times, and yield at the agreed boundaries.
@@ -47,11 +47,11 @@ Replace repeated full forming-run copies with incremental internal transport whi
 - [x] **A4** Alternating original desktop HUD and deterministic CPU results meet predeclared conditions, with hashes/traffic/retention. Evidence: Q3-validation raw logs and same dossier. (R6)
 - [x] **A5** Public/financial/data contracts stay unchanged; residual full worker fold explicitly documented. Evidence: source diff and same dossier. (R7)
 - [x] **A6** Owned paths, serialized host and cumulative operation/repair counters retained. Evidence: same dossier and raw commands. (R8)
-- [x] **A7** Arming commands precede mission and code edits. Evidence: `arm-guards.log`, `arm-app-check.log`, `commands.txt`, and host receipt in Q3-validation. (R9)
+- [x] **A7** Arming commands precede mission persistence, which precedes the first code edit. Evidence: `arm-guards.log`, `arm-app-check.log`, `commands.txt`, host receipt in Q3-validation, and the objective command/file-change audit. (R9)
 - [x] **A8** Final diff is limited to pane.rs, indicator_worker.rs, the approved pane/tests/lane_transport_tests.rs, app/tests/control_plane_tests.rs, this unique mission archive, and docs/quality/incremental-lane-evidence.md. The assigned tab/feed.rs path needed no edit. Evidence: final diff path inventory in the handoff. (R10)
 - [ ] **A9** Handoff names the exact local commit/tree and actual validation outcomes; remote writes/markers/merges remain coordinator-owned. Evidence: local commit and handoff record. (R11)
 - [x] **A10** Every build/measurement window has an explicit coordinator release; each owned app uses isolated stores and an owned PID, and all measured apps are closed. Evidence: quoted host directives below, Q3-validation/commands.txt, per-run process/environment records. (R12)
-- [x] **A11** Each failure signature and repair is retained, and both the adverse original pilot and every final sample are reported under their own identities without relaxed thresholds. Evidence: failure ledger, comparison.json, original/final binary hashes and coordinator's quoted stronger-assertion instruction. (R13)
+- [x] **A11** Each failure is reported before its bounded repair or retry, with cumulative signatures and attempts retained. Both the adverse original pilot and every final sample are reported under their own identities without relaxed thresholds. Evidence: failure ledger, objective command/file-change audit, comparison.json, original/final binary hashes and coordinator's quoted stronger-assertion instruction. (R13)
 - [x] **A12** Latest fetched campaign base and reviewed source/tree identity are recorded; any base movement receives affected revalidation. Evidence: final base/readback and command logs. (R14)
 - [x] **A13** Local handoff explicitly carries the coordinator-owned draft/review/exact-head CI/readiness/campaign-merge obligations as pending closing work, without claiming those phases complete. Evidence: closing steps and final handoff. (R15)
 - [x] **A14** Original issue source and received delegation/host directives are preserved as attributed verbatim quotations; original IDs and issue D3 text remain intact with D4 supersession explicit. Evidence: this archive. (R16)
@@ -66,7 +66,7 @@ No new capability, action, registry, financial rule or UI surface is added. Exis
 ## Closing steps
 
 - C1: Independent delivery review PASS against this archive, coordinated after local validation.
-- C2: Coordinator completes architecture/delivery reviews of the final archived diff before publication, opens the draft PR to campaign/architecture-a, completes AI review and resolves required findings with stale checks/reviews rerun, verifies exact-head green CI, then marks ready under the repository gates.
+- C2: Coordinator opens the draft PR to campaign/architecture-a, completes AI review, then architecture/delivery reviews of the final archived diff, resolves required findings with stale checks/reviews rerun, verifies exact-head green CI and marks ready under the repository gates before the authorized campaign merge in C3.
 - C3: Before the authorized campaign merge, the coordinator re-reads authority, fetches the latest campaign base, rebases/revalidates affected behavior and reruns stale reviews as needed, then performs the head-pinned campaign merge. Main merge remains the user's action.
 - C4: These coordinator-owned remote closing steps remain pending at local handoff. The local commit does not prove remote delivery, authorize another writer, or promise continued offline execution.
 
