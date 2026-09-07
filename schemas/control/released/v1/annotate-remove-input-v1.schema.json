@@ -1,0 +1,21 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a removal takes: the annotation's id, and nothing else. There is no\n\"remove all\" here on purpose — an operator that can sweep the chart is a\ncockpit capability, and the trader's own sweep lives in the object manager.",
+  "properties": {
+    "annotation_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "annotation_id"
+  ],
+  "title": "RemoveInput",
+  "type": "object"
+}

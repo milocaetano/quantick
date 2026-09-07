@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "scopes": {
+      "items": {
+        "$ref": "#/$defs/SnapshotScopeId"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "scopes"
+  ],
+  "title": "SnapshotReadInput",
+  "type": "object"
+}

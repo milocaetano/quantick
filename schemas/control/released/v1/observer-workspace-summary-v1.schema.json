@@ -1,0 +1,212 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "CanvasLayoutDto": {
+      "enum": [
+        "flow",
+        "time",
+        "time_and_flow",
+        "time_time_and_flow"
+      ],
+      "type": "string"
+    },
+    "LayoutTabSnapshot": {
+      "description": "One layout tab, as the strip lists it.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "indicator_count": {
+          "$ref": "#/$defs/WireU64",
+          "description": "How many indicators the layout holds."
+        },
+        "layout_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "layout_id",
+        "name",
+        "active",
+        "indicator_count"
+      ],
+      "type": "object"
+    },
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    },
+    "WorkspacePane": {
+      "properties": {
+        "focused": {
+          "type": "boolean"
+        },
+        "layout_id": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The layout this pane shows, by id in the strip."
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "pane_index": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The pane's address within its tab — the number `layout.focus` takes."
+        },
+        "side": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "visible": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pane_id",
+        "side",
+        "pane_index",
+        "layout_id",
+        "visible",
+        "focused"
+      ],
+      "type": "object"
+    },
+    "WorkspaceTab": {
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "focused_pane": {
+          "$ref": "#/$defs/PaneSideDto"
+        },
+        "index": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "label": {
+          "type": "string"
+        },
+        "layout": {
+          "$ref": "#/$defs/CanvasLayoutDto"
+        },
+        "panes": {
+          "items": {
+            "$ref": "#/$defs/WorkspacePane"
+          },
+          "type": "array"
+        },
+        "split_fraction": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "index",
+        "tab_id",
+        "label",
+        "feed_id",
+        "symbol",
+        "active",
+        "layout",
+        "focused_pane",
+        "split_fraction",
+        "panes"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "active_tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "active_tab_index": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "history_reach": {
+      "default": "",
+      "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
+      "type": "string"
+    },
+    "history_reach_running": {
+      "default": false,
+      "description": "Whether a run of *load older* requests is in flight on the active tab.\n\nThe setting above says what a press will do; this says whether one is\nstill doing it. Without it an operator that started a reach has no way\nto tell a finished run from a running one except by polling bar counts\nand guessing.",
+      "type": "boolean"
+    },
+    "history_reach_span_minutes": {
+      "$ref": "#/$defs/WireU64",
+      "default": "0",
+      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+    },
+    "layouts": {
+      "default": [],
+      "description": "The layout strip: every layout, and which is active. Additive.",
+      "items": {
+        "$ref": "#/$defs/LayoutTabSnapshot"
+      },
+      "type": "array"
+    },
+    "performance_readings_visible": {
+      "type": "boolean"
+    },
+    "progressive_venue_history": {
+      "type": "boolean"
+    },
+    "replay_day_before": {
+      "default": false,
+      "description": "Whether opening a recording joins the session day before it, and a\ndownload fetches that day's tape as well.\n\nAdditive within v1 (contract §4). It decides what a replay an operator\nis about to open will actually hold, so it has to be readable before\nthey open one — the bar counts afterwards are too late to plan with.",
+      "type": "boolean"
+    },
+    "save_on_exit": {
+      "type": "boolean"
+    },
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceTab"
+      },
+      "type": "array"
+    },
+    "timezone_label": {
+      "type": "string"
+    },
+    "timezone_offset_minutes": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "venue_lead_in": {
+      "default": false,
+      "description": "Whether a chart cut by trades carries the venue's candles in front of\nits bars. Read with each pane's `venue_prefix_present`: this is what\nthe trader asked for, that is what the pane actually holds.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "active_tab_index",
+    "active_tab_id",
+    "timezone_offset_minutes",
+    "timezone_label",
+    "save_on_exit",
+    "performance_readings_visible",
+    "progressive_venue_history",
+    "tabs"
+  ],
+  "title": "WorkspaceSnapshot",
+  "type": "object"
+}

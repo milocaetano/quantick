@@ -1,0 +1,398 @@
+{
+  "source_commit": "a808b2d87b36d73041027e4d20c053544b454a96",
+  "source_repository": "https://github.com/milocaetano/quantick",
+  "documents": [
+    {
+      "file_name": "annotate-object-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/annotate-object-input-v1.schema.json",
+      "sha256": "sha256:bf7fbb39e7611b32d5c9a193152ae4b4ec2b4e9aeeb7aae9ac04077df1b812d2"
+    },
+    {
+      "file_name": "annotate-object-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/annotate-object-result-v1.schema.json",
+      "sha256": "sha256:f779cef7907423df5e6360a27ebfebae0a8ebb45ed69827bd7d56ff4d2861b8d"
+    },
+    {
+      "file_name": "annotate-remove-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/annotate-remove-input-v1.schema.json",
+      "sha256": "sha256:d9b0e11af1c5f03fcb19b7422de927c7758c50cf0605fd9e8aafc16473c48077"
+    },
+    {
+      "file_name": "annotate-remove-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/annotate-remove-result-v1.schema.json",
+      "sha256": "sha256:80cd4388b5a2e32aa2215c36100a400a0f45997041e268cc1180ab8374fde9b2"
+    },
+    {
+      "file_name": "attention-mark-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/attention-mark-input-v1.schema.json",
+      "sha256": "sha256:9e4ee95f3db5b2eb6e49a5a8ada07c5ee653d097a907923024ea0e117bb30e64"
+    },
+    {
+      "file_name": "attention-mark-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/attention-mark-result-v1.schema.json",
+      "sha256": "sha256:0f9088871aa3bd6d639adc6703e1bd2d5bafda25d6622a170564ecc35cb1b70b"
+    },
+    {
+      "file_name": "capability-descriptor-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/capability-descriptor-v1.schema.json",
+      "sha256": "sha256:d10cce6d9d4e15d79e04bc7cfbbb64d5fbfe38a0a39ba4bdbbfcd169eb6bb149"
+    },
+    {
+      "file_name": "control-error-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/control-error-v1.schema.json",
+      "sha256": "sha256:4b21c978b0e5a9638575ee01b254cc14796574e42304289169bca1f6b29d3cd3"
+    },
+    {
+      "file_name": "event-cursor-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/event-cursor-v1.schema.json",
+      "sha256": "sha256:722b78a20971c554ed32244fb497a6611b6b9e050ddf9c45cb4ab1ac3ad7084b"
+    },
+    {
+      "file_name": "evidence-bundle-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/evidence-bundle-v1.schema.json",
+      "sha256": "sha256:97657442c3db45cf21fba78557301425c6d73501dc86582d1d743da74e4c8139"
+    },
+    {
+      "file_name": "evidence-capture-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/evidence-capture-input-v1.schema.json",
+      "sha256": "sha256:95b2ffd1ed084be3d1cb8e5adad64e9d9f24314c5a769e98e3523678b56fa0ec"
+    },
+    {
+      "file_name": "evidence-chunk-page-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/evidence-chunk-page-v1.schema.json",
+      "sha256": "sha256:828a70c168304bf3f9e60592adb699a9aa0311a7449a3ee06298b6363d48efd5"
+    },
+    {
+      "file_name": "evidence-manifest-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/evidence-manifest-v1.schema.json",
+      "sha256": "sha256:d6ae4ad7c3c5963c2e07c5b3719d7fa5617dc0a1e7f93d4dcef344601ee0a80a"
+    },
+    {
+      "file_name": "evidence-read-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/evidence-read-input-v1.schema.json",
+      "sha256": "sha256:389e003b5c36d36b0ad4b84039e6993d126ff48f4a080f7be7a9a79e177b5755"
+    },
+    {
+      "file_name": "handshake-reply-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/handshake-reply-v1.schema.json",
+      "sha256": "sha256:3bf0aaed9d6e578579d380df4b90fb3cac3f2fbc1a5f25533284996dd1358681"
+    },
+    {
+      "file_name": "handshake-request-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/handshake-request-v1.schema.json",
+      "sha256": "sha256:34badf27ede3e9932c6169f083ab6769c319ee7e5852b9782232b2edb6c78175"
+    },
+    {
+      "file_name": "handshake-response-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/handshake-response-v1.schema.json",
+      "sha256": "sha256:00a452c57dff9a970c2a61a4610439595b61cdbb35a0c624339fc4aafbb8cbef"
+    },
+    {
+      "file_name": "indicator-script-attach-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/indicator-script-attach-input-v1.schema.json",
+      "sha256": "sha256:662e344deeb47fac2799d40c071ef9f2192df88e731a974c1470e7666efbb5d6"
+    },
+    {
+      "file_name": "indicator-script-attach-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/indicator-script-attach-result-v1.schema.json",
+      "sha256": "sha256:677235fea8611408d5b780b0d419b75ffc2a31e38819776d4aea85fc55ca985c"
+    },
+    {
+      "file_name": "indicator-script-detach-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/indicator-script-detach-input-v1.schema.json",
+      "sha256": "sha256:fd62ec3b9aae23bb5e402842649ae996e213c76a278e02609e31d254a625ea7d"
+    },
+    {
+      "file_name": "indicator-script-detach-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/indicator-script-detach-result-v1.schema.json",
+      "sha256": "sha256:2903539a579dc573b6d81d43cab8254146a40dcba08bdf321dd4b54316b0c441"
+    },
+    {
+      "file_name": "indicator-script-diagnostic-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/indicator-script-diagnostic-v1.schema.json",
+      "sha256": "sha256:9e3ff0c978ff7493f2b2cae19bad0a721c401d8da4755af7a69187f19d3045b9"
+    },
+    {
+      "file_name": "instance-descriptor-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/instance-descriptor-v1.schema.json",
+      "sha256": "sha256:81bab36af7181bd58150c72d818c4db2f0c808cff3dce0a2f3fb006c86c623c4"
+    },
+    {
+      "file_name": "notify-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/notify-input-v1.schema.json",
+      "sha256": "sha256:3f98c13ac24edf570e2edc3244a89840f0765bda04b500412d641ceeb4fadcb8"
+    },
+    {
+      "file_name": "notify-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/notify-result-v1.schema.json",
+      "sha256": "sha256:de3e4ca3a11b0b56cb1e50f9a08c9a400b9244a599828c1fceda67b5e37fd571"
+    },
+    {
+      "file_name": "observer-analysis-drawings-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-analysis-drawings-v1.schema.json",
+      "sha256": "sha256:aae68c5ad90a71fc7391945e6b6d7b7ddeb80b01ad3884ecf9610f7df57bab3d"
+    },
+    {
+      "file_name": "observer-analysis-indicators-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-analysis-indicators-v1.schema.json",
+      "sha256": "sha256:91a16f0dface8f15213c07f91dafc8357d46039590d07ce31d03237710ddae27"
+    },
+    {
+      "file_name": "observer-chart-summary-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-chart-summary-v1.schema.json",
+      "sha256": "sha256:1daa0b612d2eebc94f1b3b8fc7c8d28aac431b5fa71d778483ce3cb2a96b7853"
+    },
+    {
+      "file_name": "observer-chart-window-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-chart-window-input-v1.schema.json",
+      "sha256": "sha256:f862665c9c0e535ba3913cb09ae3a1427695a02a5a8ccb17e44a1092cf9a0701"
+    },
+    {
+      "file_name": "observer-chart-window-page-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-chart-window-page-v1.schema.json",
+      "sha256": "sha256:523ddd058bc30dfd4ab9bf68fce1e24e6c0e02c40ad812cda34bd3b55d738d1f"
+    },
+    {
+      "file_name": "observer-chart-window-query-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-chart-window-query-v1.schema.json",
+      "sha256": "sha256:eaa7874afeb4e5d2453ac1ec5967c2169bd4d20f19e4de98bee7a1997541bd1f"
+    },
+    {
+      "file_name": "observer-cursor-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-cursor-v1.schema.json",
+      "sha256": "sha256:55a919964e338741fbe56cc676b28073693590fe2fe085b0c549a0485a8fc12c"
+    },
+    {
+      "file_name": "observer-describe-result-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-describe-result-v1.schema.json",
+      "sha256": "sha256:77d8982c1b4157ab9c2595064c236d6c612213ddab28a821974611a26aed6458"
+    },
+    {
+      "file_name": "observer-empty-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-empty-input-v1.schema.json",
+      "sha256": "sha256:eb7cf6ec661b0c9d87b79bce551057eba52ad64551710da5cea5753c9f45ca9b"
+    },
+    {
+      "file_name": "observer-event-page-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-event-page-v1.schema.json",
+      "sha256": "sha256:87cc9c843d12b06945aa4ab30b2e4546442d98c6aec6014f3b374218727b9284"
+    },
+    {
+      "file_name": "observer-events-read-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-events-read-input-v1.schema.json",
+      "sha256": "sha256:7974b76d4c53351668ccf87921db5203d20ef2d81a04f0caa6d1bc0d9958dd8c"
+    },
+    {
+      "file_name": "observer-events-wait-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-events-wait-input-v1.schema.json",
+      "sha256": "sha256:57bc049c1713f7e722c6be99839085398b12f542f97072246cf6564ee745311d"
+    },
+    {
+      "file_name": "observer-feed-status-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-feed-status-v1.schema.json",
+      "sha256": "sha256:8bc621886780411e21dc75429f94d60eb37bd452f515a9e1f88834e40f69a5be"
+    },
+    {
+      "file_name": "observer-health-summary-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-health-summary-v1.schema.json",
+      "sha256": "sha256:b6d89d6e7f85c967ceacdeba268c0528549c10d822c966ff500346ca582a2a42"
+    },
+    {
+      "file_name": "observer-orderflow-bubbles-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-orderflow-bubbles-v1.schema.json",
+      "sha256": "sha256:0c1fe3ec6bc0c589a92499312ae71499f029bae5b54e0ae5a9bed82f492cfee0"
+    },
+    {
+      "file_name": "observer-orderflow-footprint-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-orderflow-footprint-v1.schema.json",
+      "sha256": "sha256:7d1a8ddd07b46b5e63923823152c48f1702c7772d32565ebb2cbc56a1d25005a"
+    },
+    {
+      "file_name": "observer-orderflow-heatmap-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-orderflow-heatmap-v1.schema.json",
+      "sha256": "sha256:8674fa3890101a8a84264a98c049c233963bf8c767648efe88fe1b83c89e77c7"
+    },
+    {
+      "file_name": "observer-orderflow-l2-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-orderflow-l2-v1.schema.json",
+      "sha256": "sha256:ade44f081da9b9ddea8cadec36c9ea6d1a9ce1fd8a37c73e3f84c36f065b93b7"
+    },
+    {
+      "file_name": "observer-orderflow-tape-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-orderflow-tape-v1.schema.json",
+      "sha256": "sha256:7bf854e21470bb5acdb1217efad6e5adc637c83f679957a6e053c6ae7560ca01"
+    },
+    {
+      "file_name": "observer-scene-controls-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-scene-controls-v1.schema.json",
+      "sha256": "sha256:d271f16682cdf00ec302b6a9dd33a77627f0e23719033a4cdb22905456e28c31"
+    },
+    {
+      "file_name": "observer-selection-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-selection-v1.schema.json",
+      "sha256": "sha256:a5dad5b3bc7898aad062e40191071283711d9286b659e1569c09238269d81439"
+    },
+    {
+      "file_name": "observer-session-paper-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-session-paper-v1.schema.json",
+      "sha256": "sha256:3dc32d156345d1abd556cce2b4bda5740051748c68a6ff23157ce66a95704e4d"
+    },
+    {
+      "file_name": "observer-session-replay-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-session-replay-v1.schema.json",
+      "sha256": "sha256:b75c7e66b86b5040643ffe4a6f20f1f8aa42e091b967a45c399c4ba553bffbd7"
+    },
+    {
+      "file_name": "observer-snapshot-capture-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-snapshot-capture-v1.schema.json",
+      "sha256": "sha256:75ed8e90fafb3409b3854413a6e919981cb94a9d07149edcfa848c4f7307a0fe"
+    },
+    {
+      "file_name": "observer-snapshot-read-input-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-snapshot-read-input-v1.schema.json",
+      "sha256": "sha256:48c668351ce788748dc2646a67c21cdd1e5b0f8f78edd495185903fd0d204b2e"
+    },
+    {
+      "file_name": "observer-snapshot-scope-descriptor-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-snapshot-scope-descriptor-v1.schema.json",
+      "sha256": "sha256:64f3e1f2825c172c4ef65f65c02465d880ed5938cd7686cd7167a50be1c8b323"
+    },
+    {
+      "file_name": "observer-system-info-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-system-info-v1.schema.json",
+      "sha256": "sha256:e103a425475826a313c1bb2cb008572443e258dafe9ca1cd19ab22d55e9645ce"
+    },
+    {
+      "file_name": "observer-workspace-summary-v1.schema.json",
+      "owner": "app",
+      "version": 1,
+      "source_path": "schemas/control/observer-workspace-summary-v1.schema.json",
+      "sha256": "sha256:a052eefab64e2912b5b3dbca22d28575a4f5b34a4da99604c4b7c95aabb0e5be"
+    },
+    {
+      "file_name": "page-cursor-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/page-cursor-v1.schema.json",
+      "sha256": "sha256:b1f8f7356369db0271677aea009a6a26c4a8a5a32d306cfafcc731b43b124a3c"
+    },
+    {
+      "file_name": "request-envelope-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/request-envelope-v1.schema.json",
+      "sha256": "sha256:b81e8ae65b92730cae09fb4e270ea7b2170378cf90e580a3cbe5e80e6ee61a39"
+    },
+    {
+      "file_name": "response-envelope-v1.schema.json",
+      "owner": "core",
+      "version": 1,
+      "source_path": "schemas/control/response-envelope-v1.schema.json",
+      "sha256": "sha256:bbe72902ca4f4de2fc159d0637e6b9d0c375a95859f434587c6ed62baee07758"
+    }
+  ]
+}
