@@ -19,6 +19,13 @@ issue #316, campaign #330; base `origin/campaign/architecture-a` at
 - R8: Declare command/frame/trade rates and run the existing dense-control baseline.
 - R9: Report actual changed dependencies and meet the repository checks/reviews.
 - R10: Keep this bounded to F1 without a new root field, bus or session redesign.
+- R11: Narrow production detach dependencies without app-wide mutable context.
+- R12: Keep UI selection, filesystem orchestration, consent, schema validation
+  and registry dispatch in their existing adapters.
+- R13: Inventory ambiguous local slot identities and a compatible follow-up,
+  without changing legacy detach addressing.
+- R14: Add no new hot-path work or cost.
+- R15: Collect representative attach latency if compilation or queueing changes.
 
 ## Decisions
 
@@ -69,6 +76,42 @@ issue #316, campaign #330; base `origin/campaign/architecture-a` at
   `docs/architecture/f1-indicator-operations.md`, `%TEMP%/quantick-f1-indicator-operation-owner/`. (R8)
 - [x] **A9**: Actual dependency reduction and changed files recorded for reviewers.
   Evidence: architecture dossier and draft PR body. (R9)
+- [x] **A10**: Production detach resolution and cleanup receive only the
+  documented slot collections and resolved pane host, without app-wide context.
+  Evidence: `IndicatorSlots::operator_target` and `IndicatorSlots::remove` in
+  `crates/app/src/app/indicator_operations.rs`; production calls in
+  `crates/app/src/app/indicator_manager.rs` and
+  `crates/app/src/app/layout_wiring.rs`; the operation module's
+  `fake_hosts_exercise_production_ownership_and_complete_target_cleanup` test
+  and `fix-focused-tests.log` in the raw evidence directory below. (R11)
+- [x] **A11**: UI selection and filesystem orchestration remain in the existing
+  app adapters; consent, schema validation and registry dispatch remain in the
+  existing control adapters. Evidence: the dependency inventory in
+  `docs/architecture/f1-indicator-operations.md`, the manager adapter call sites,
+  the narrow `IndicatorHost`/`IndicatorSlots` interface, and the unchanged
+  `crates/app/src/control/` subtree against the declared campaign base. (R12)
+- [x] **A12**: The identity inventory records per-pane numeric collisions,
+  complete internal `TabSlot` targets, insertion-order v1 operator matching and
+  a versioned follow-up, without implementing an addressing migration.
+  Evidence: the Compatibility inventory in
+  `docs/architecture/f1-indicator-operations.md`, `operator_target` and the
+  fake-host collision assertions in the operation module. (R13, R7)
+- [x] **A13**: The extraction adds no per-frame, per-trade or per-depth work;
+  the existing dense-control evidence supports no new hot-path cost within
+  its recorded measurement limits. Evidence: the branch diff confines
+  production changes to rare operation wiring, and the Rate and measurement
+  plan and Same-host measurements in `docs/architecture/f1-indicator-operations.md`
+  record the paired results and limitations. `ledger-source-equivalence.txt`
+  in the raw evidence directory confirms this ledger repair leaves production
+  source and performance fixtures equivalent to the measured candidate. (R14, R8)
+- [x] **A14**: Representative attach latency is collected if compilation or
+  queueing changes; neither changes in this extraction, so the condition is
+  not triggered. Evidence: unchanged control precompilation, pane allocation
+  and worker/compiler sources against the declared campaign base; the
+  `IndicatorHost` implementation delegates to the existing Add/Remove path.
+  The Rate and measurement plan in `docs/architecture/f1-indicator-operations.md`
+  records this applicability decision; dense replay is not attach-latency
+  evidence. (R15)
 
 ## Injected gates
 
@@ -77,8 +120,17 @@ issue #316, campaign #330; base `origin/campaign/architecture-a` at
   pass in order. Evidence: `%TEMP%/quantick-f1-indicator-operation-owner/` logs.
 - [ ] **G3**: Independent architecture review resolves Blockers/Should-fix.
   Evidence: coordinator review dossier and exact-diff marker after the draft.
-- [x] **G4**: Performance declaration and required measurements have evidence.
+- [x] **G4**: Performance declaration, no new hot-path work/cost and required
+  measurements have evidence.
   Evidence: architecture dossier and dense logs.
+
+R11-R15 and A10-A14 restore five explicit obligations from the original request
+after the delivery completeness finding; no existing request is withdrawn or
+deferred. This mission remains archived. The raw evidence directory is
+`C:/Users/camil/AppData/Local/Temp/quantick-f1-indicator-operation-owner/`.
+The `ledger-*` logs record this documentation repair and its verification;
+the earlier `fix-*` logs belong to the separate save-assertion test repair.
+Dense measurements retain their original candidate attribution in the dossier.
 
 ## Not applicable
 
