@@ -746,24 +746,12 @@ impl QuantickApp {
 
     /// Remove one slot with no fan-out and no dirty mark.
     fn remove_indicator_silently(&mut self, target: TabSlot) {
-        if let Some(pane) = self.pane_mut_at(target.tab, target.side) {
-            pane.indicators.remove(target.slot);
-            pane.indicator_worker
-                .send(IndicatorCommand::Remove(target.slot));
-        }
-        self.indicators
-            .slot_kinds
-            .retain(|(owner, _)| *owner != target);
-        self.indicators.operator_slots.remove(&target);
-        self.indicators
-            .script_files
-            .retain(|(owner, ..)| *owner != target);
-        self.indicators
-            .pending_hidden
-            .retain(|owner| *owner != target);
-        self.indicators
-            .pending_styles
-            .retain(|(owner, _)| *owner != target);
+        let pane = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == target.tab)
+            .and_then(|tab| tab.pane_at_mut(target.side.index()));
+        self.indicators.slots_mut().remove(pane, target);
     }
 
     /// Put a whole saved set on one pane: add, bind inputs, queue the hide
@@ -907,6 +895,7 @@ impl QuantickApp {
     /// every other pane showing it, so the new indicator is on every such
     /// chart the frame it was asked for. Inputs start empty — "the declared
     /// defaults" — until the trader commits some.
+    /// The caller marks save intent once after completing the origin edit.
     pub(super) fn mirror_add(&mut self, origin: TabSlot, kind: &SavedKind) {
         let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
@@ -927,11 +916,11 @@ impl QuantickApp {
         for (tab, side) in self.mirror_targets(origin, layout) {
             self.add_indicator_at(tab, side, kind);
         }
-        self.mark_layouts_dirty();
     }
 
     /// Mirror a removal by layout index: the entry goes, and the slot at that
     /// position on every other pane of the layout with it.
+    /// The caller marks save intent once after removing the origin.
     pub(super) fn mirror_remove(&mut self, origin: TabSlot) {
         let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
@@ -946,7 +935,6 @@ impl QuantickApp {
                 self.remove_indicator_silently(TabSlot { tab, side, slot });
             }
         }
-        self.mark_layouts_dirty();
     }
 
     /// Mirror an eye toggle: the entry records it, and the same position on

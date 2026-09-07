@@ -83,6 +83,19 @@ pub(super) struct IndicatorState {
     pub(super) operator_slots: std::collections::BTreeSet<TabSlot>,
 }
 
+impl IndicatorState {
+    /// Lend only slot bookkeeping to operations; UI/library/poll state stays here.
+    pub(super) fn slots_mut(&mut self) -> super::indicator_operations::IndicatorSlots<'_> {
+        super::indicator_operations::IndicatorSlots {
+            slot_kinds: &mut self.slot_kinds,
+            operator_slots: &mut self.operator_slots,
+            script_files: &mut self.script_files,
+            pending_hidden: &mut self.pending_hidden,
+            pending_styles: &mut self.pending_styles,
+        }
+    }
+}
+
 impl QuantickApp {
     /// Put one Quantick Pine script on the focused pane behind a fresh slot.
     ///
@@ -95,27 +108,19 @@ impl QuantickApp {
         text: String,
         by_operator: bool,
     ) -> (u64, crate::control::PaneSideDto, SlotId) {
-        let slot = self
-            .focused_pane_mut()
-            .add_indicator(IndicatorSource::Script {
-                name: name.clone(),
-                text,
-            });
-        let owner = self.target_slot(slot);
-        let kind = SavedKind::Script { name };
-        self.indicators.slot_kinds.push((owner, kind.clone()));
-        // Whose slot this is decides who may take it away again: the annotate
-        // tier removes what it attached, never what the trader put there. An
-        // operator's overlay stays on the one pane it was attached to and
-        // out of the layout; the trader's script is a layout edit and goes
-        // onto every pane.
-        if by_operator {
-            self.indicators.operator_slots.insert(owner);
-        } else {
+        let tab = self.active_tab();
+        let target = (tab.id, tab.focused_side());
+        let pane = self.tabs[self.active_tab].pane_mut(target.1);
+        let attached =
+            self.indicators
+                .slots_mut()
+                .attach_script(pane, target, name, text, by_operator);
+        let owner = attached.target;
+        if let Some(kind) = attached.layout_entry {
             self.mirror_add(owner, &kind);
         }
         self.note_indicator_edit_at(owner.tab, owner.side);
-        (owner.tab, owner.side.into(), slot)
+        (owner.tab, owner.side.into(), owner.slot)
     }
 
     /// Take one slot **an operator attached** off the chart, through the same
@@ -125,26 +130,8 @@ impl QuantickApp {
     /// takes back its own, and never removes work done by hand (plan §2.6).
     /// `Ok(false)` when there is no such slot at all.
     pub(crate) fn detach_script_indicator(&mut self, slot: u64) -> Result<bool, ()> {
-        // A slot number is allocated per pane, so several panes can carry the
-        // same one: the operator's own is the one to take, and matching on the
-        // number alone would remove whichever pane happened to be registered
-        // first — the trader's, as often as not.
-        let mut known = false;
-        let mut target = None;
-        for (owner, _) in &self.indicators.slot_kinds {
-            if owner.slot.0 != slot {
-                continue;
-            }
-            known = true;
-            if self.indicators.operator_slots.contains(owner) {
-                target = Some(*owner);
-                break;
-            }
-        }
-        let Some(target) = target else {
-            // A slot that exists but belongs to the trader is refused; one
-            // that exists nowhere simply was not there.
-            return if known { Err(()) } else { Ok(false) };
+        let Some(target) = self.indicators.slots_mut().operator_target(slot)? else {
+            return Ok(false);
         };
         self.remove_indicator_at(target);
         self.indicators.operator_slots.remove(&target);
@@ -269,23 +256,9 @@ impl QuantickApp {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
             return;
         };
-        let pane = tab.pane_mut(target.side);
-        pane.indicators.remove(target.slot);
-        pane.indicator_worker
-            .send(IndicatorCommand::Remove(target.slot));
         self.indicators
-            .slot_kinds
-            .retain(|(owner, _)| *owner != target);
-        self.indicators.operator_slots.remove(&target);
-        self.indicators
-            .script_files
-            .retain(|(owner, ..)| *owner != target);
-        self.indicators
-            .pending_hidden
-            .retain(|owner| *owner != target);
-        self.indicators
-            .pending_styles
-            .retain(|(owner, _)| *owner != target);
+            .slots_mut()
+            .remove(Some(tab.pane_mut(target.side)), target);
         self.note_indicator_edit_at(target.tab, target.side);
     }
 
