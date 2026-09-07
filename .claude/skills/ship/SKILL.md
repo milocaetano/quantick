@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Deliver the current branch - run the full verification loop, commit, pass both pre-PR reviews (arch-review for shape and bugs, delivery-review for conformance to what was asked), push, open a PR with Closes #N, and watch CI until green. Use when the user types /ship or asks to finish or deliver the current task.
+description: Verify, review and deliver the current branch through green CI. Use for /ship or requests to finish or deliver a task.
 ---
 
 Campaign children override the main-based examples via the
@@ -10,12 +10,13 @@ Campaign children override the main-based examples via the
 
 ## Guards
 
-- Never ship from `main`. If `git branch --show-current` says `main`, stop and point the user to `/new-task`.
-- Identify the linked issue before opening the PR: check the board card in In Progress, the branch name, or conversation context. If ambiguous, ask the user which issue this closes.
+- Check `git branch --show-current`; on `main`, stop and direct to `/new-task`.
+- Identify the issue from the In Progress card, branch or conversation before
+  opening the PR. Ask only if ambiguous.
 
 ## Steps
 
-1. **Verification loop** — run in order, stop at the first failure and fix it before continuing. Never ship red:
+1. **Verification** — run in order; stop and fix the first failure:
 
    ```sh
    cargo fmt --all
@@ -25,20 +26,59 @@ Campaign children override the main-based examples via the
    cargo test --workspace
    ```
 
-2. **Commit** anything pending: conventional style (`feat: ...`, `fix: ...`), imperative mood, English. If this branch came from `/mission`, its `.claude/GOAL.md` is archived **now**, as the last commit before the reviews — never after them. Both markers hold shas, so a commit made after they are recorded makes both stale, `pr-gate` denies, and the cheapest way out of that denial is to re-stamp them without re-running either review, which silently destroys the only property the markers provide:
+2. **Commit** pending work: conventional style (`feat: ...`, `fix: ...`),
+   imperative mood, English. For `/mission`, archive `.claude/GOAL.md` as the
+   last commit **before** reviews, using `mission` step 8's commands. Changed
+   review keys stale markers; never restamp without rerunning the review.
 
-   The exact commands are `mission` step 8's — kept in one place rather
-   than copied here, because two divergent copies of a five-line procedure
-   is the drift this repo has a test for elsewhere on this very branch.
+3. **Arch-review** (mandatory): run the skill over `git diff origin/main...HEAD`
+   or the explicit campaign base. Wait for its background step 0 `code-review`
+   findings and handle them before calling this closed. Fix every Blocker and
+   Should-fix; note deliberate deferrals in the PR body. Rerun step 1 after
+   changes. Never push or open a PR before this step closes. The skill itself
+   records `arch-review-ok` when closed.
 
-3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step. The skill records `arch-review-ok` itself when the review closes — it is the one that knows whether it closed — so there is nothing to record here.
+4. **Delivery-review**: assign `WT=/path/to/worktree` in the same shell call,
+   then `cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"`.
+   Read the gate's private file, never the goal's `**Tier:**` prose. Only a
+   current-branch `small` declaration within the diff-size ceiling exempts this
+   review. Missing/wrong-branch records or an outgrown ceiling grant no exemption;
+   `.claude/hooks/README.md` owns that mechanism.
 
-4. **Delivery-review** (mandatory at every tier but `small`, see `CLAUDE.md`): read the tier from the file the gate itself reads — `WT=/path/to/worktree` first, then `cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"`; without the assignment `cd ""` is a no-op that leaves you in the main checkout and reads the *shared* git dir's file — never from the goal file, whose `**Tier:**` line is for the reader and is not what `pr-gate` acts on. A branch declaring `small` there skips this step; no file, or one naming another branch, means no exemption, and a diff-size ceiling revokes it after the fact, so a `small` branch that grew still owes this review. `.claude/hooks/README.md` owns the mechanism. At every other tier, run the `delivery-review` skill. It grades the branch against what was asked for — every ask in the goal file's request ledger and every acceptance criterion — from a fresh-context subagent, and passes only when nothing is MISSING, PARTIAL or UNPROVEN. Note which file that is: step 2 archived `.claude/GOAL.md` to `.claude/GOAL-archive-$SLUG.md`, so the archive is what the reviewer reads; pointing it at the old name sends it to a file this skill just deleted. It runs *after* step 3, because it grades the branch as shipped, including whatever arch-review made you change. A branch started from `/new-task` rather than `/mission` has no `GOAL.md`; the skill grades it against the linked issue's `## Acceptance criteria` and says so in the verdict. Fix what it reports and re-run, under the **stall rule** `CLAUDE.md` owns: runs are not rationed, but a run that does not shrink the open set is the last one -- defer the remainder into the PR body with its severity and take it to the user, never discarding it and never deferring an open Blocker. Every fix is a commit, so it stales `arch-review-ok` too: re-run step 3 over the new head rather than re-stamping a review that did not run. The skill records `delivery-review-ok` itself, on PASS only.
+   After step 3, use the skill's fresh-context subagent to grade every ledger
+   ask and criterion in `.claude/GOAL-archive-$SLUG.md`, which replaced the live
+   goal in step 2. A `/new-task` branch without a mission is graded against its
+   linked issue's `## Acceptance criteria`, named in the verdict. PASS requires
+   nothing MISSING, PARTIAL or UNPROVEN. Fix findings, rerun step 1, commit,
+   rerun step 3 over the new head, then rerun delivery review. Only the skill
+   records `delivery-review-ok`, on PASS.
+
+   Keep `CLAUDE.md`'s stall rule: runs are not rationed, but if the open set does
+   not shrink, stop, retain every remainder with severity in the PR body and
+   take it to the user. Never discard findings or defer an open Blocker.
 
 5. **Push**: `git push -u origin <branch>`.
 
-6. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer, and **the mission's tier** when it had one — a branch that skipped `delivery-review` says so in public, not only in its git dir. Use `gh pr create --body-file -` with a heredoc. Then run the `ai-review` skill against that PR number: its threads are what `gh pr ready` and `gh pr merge` gate on, and a branch that never runs it counts zero, which is what clean looks like too. Title and body are English, like the branch name and the commits — `CLAUDE.md`'s language rule covers them, and they are the one part of it no test can see: the language guard reads files, and a PR body is not a file.
+6. **Open a draft PR** using `.github/PULL_REQUEST_TEMPLATE.md`: what/why,
+   `Closes #<N>`, the four verified checkboxes, reviewer notes and mission tier
+   (state a delivery exemption publicly). Title/body stay English under
+   `CLAUDE.md`; the file language guard cannot check a PR body. Use
+   `gh pr create --draft --body-file -` with a heredoc and an explicit campaign
+   `--base` when applicable. Run `ai-review` against the PR. It owns the durable
+   report and `ai-review-complete` recording procedure; completion is required
+   even with zero findings, at every tier. Close all its resolvable threads
+   under its existing fix/acceptance and follow-up rules. Changes require step 1,
+   commit, stale reviews rerun and another push; never merely restamp.
 
-7. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
+7. **Watch CI**: `gh pr checks <pr> --watch`. If unregistered, locate it with
+   `gh run list --branch <branch>`, then `gh run watch <id> --exit-status`.
+   Read failing logs, fix, validate and push until green.
 
-8. **Report** the PR URL and CI status. The user alone merges to `main`; never enable auto-merge or enqueue it. Authorized intermediate campaign merges follow the integration contract above, from the reviewed task worktree. Retain that worktree through the merge because its git directory holds the review evidence. After verified integration, remove only the owned clean task worktree and delete its merged local branch. Campaign issue completion requires explicit evidence and synchronization; a non-default-base merge does not automatically close the issue.
+8. **Mark ready and report**: after current required reviews, zero open AI
+   threads and green CI, run `gh pr ready <pr>` from the task worktree. Report
+   its URL and CI status. The user alone merges to `main`; never enable
+   auto-merge or enqueue it. Authorized campaign merges follow the integration
+   contract from the reviewed worktree; retain its private evidence through merge.
+   After verified integration remove only the owned clean worktree and merged
+   local branch. Explicitly prove/synchronize campaign issue closure; merging to
+   a non-default base does not close it.

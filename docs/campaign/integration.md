@@ -110,7 +110,7 @@ comparison. Full final-campaign reviews instead compare the entire campaign
 against current main. `delivery-review` reads the child mission for child PRs
 and the parent campaign criteria plus child evidence for the consolidated PR.
 
-Record both review markers only after their reviews pass, using the shared
+Record architecture/delivery markers only after their reviews pass, using the shared
 key command instead of the legacy direct `git diff | git hash-object --stdin`
 examples. The helper preserves the existing key for main and includes target
 ref/tip for campaign children, so changing the base invalidates approvals:
@@ -123,6 +123,15 @@ printf '%s\n' "$KEY" > "$GIT_DIR/arch-review-ok"
 # Only after delivery-review PASS:
 printf '%s\n' "$KEY" > "$GIT_DIR/delivery-review-ok"
 ```
+
+AI-review completion is separately required at readiness and merge for every
+tier, even with zero open findings. The canonical
+[AI-review recording procedure](../../.claude/skills/ai-review/SKILL.md#record-completion)
+owns the durable PR report and the private branch-bound `ai-review-complete`
+projection. It uses this same shared key; it does not recompute a different
+campaign hash. Changed task branch, diff, campaign ref or base tip invalidates
+completion. Complete the required follow-up review after changes and retain
+the independent unresolved-thread gate. Never copy or merely restamp evidence.
 
 After fresh checks/authorization readback, the only agent merge forms supported
 by the gate are (substitute the explicit PR number and full reviewed HEAD):

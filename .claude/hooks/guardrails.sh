@@ -27,7 +27,8 @@
 #                     findings, so gating it would demand the reviews
 #                     before the findings that inform them. And `gh pr
 #                     ready` and `gh pr merge` additionally want zero open
-#                     `ai-review` threads, counted by the sibling script
+#                     `ai-review` threads and recorded AI-review completion.
+#                     Threads are counted by the sibling script
 #                     that posts them — so the reviewer and the gate share
 #                     one definition of an open finding.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
@@ -75,6 +76,9 @@ MAIN_BRANCH="main"
 # passed one has not passed both.
 ARCH_MARKER_NAME="arch-review-ok"
 DELIVERY_MARKER_NAME="delivery-review-ok"
+# Completion is independent of finding disposition. This third review record
+# prefixes the shared key with its branch, so branch reuse cannot inherit it.
+AI_MARKER_NAME="ai-review-complete"
 
 # Paths whose churn is mission bookkeeping rather than the change under review.
 # The goal file and its archive are written by `mission` itself, and the archive
@@ -405,6 +409,8 @@ review_key() {
 # being shipped. `$4` states the rule in CLAUDE.md's own words, `$5` says how
 # to satisfy it, and the recording line is derived from the marker name — so
 # the instruction and the file the gate reads cannot drift apart.
+# Optional `$6` requires a branch-bound, single-line `<branch> <key>` record;
+# the existing key validation/comparison below remains the sole comparator.
 #
 # The marker is meant to hold a sha and nothing enforces that: a mistyped
 # redirect, an editor appending a line, a half-written file. Its contents are
@@ -418,6 +424,7 @@ require_marker() {
     require_name=$3
     require_rule=$4
     require_how=$5
+    require_branch=${6:-}
 
     require_file=$(marker_path "$require_dir" "$require_name") || exit 0
     # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
@@ -431,6 +438,10 @@ require_marker() {
     if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
         require_record="sh .claude/hooks/campaign_context.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
     fi
+    if [ -n "$require_branch" ]; then
+        # Do not offer a bare restamp as the remedy for a review that never ran.
+        require_record="Follow the ai-review skill's completion procedure after publishing its PR report and checking review identity stability."
+    fi
 
     if [ ! -f "$require_file" ]; then
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this change. $require_how, then record it:\n\n  $require_record\""
@@ -443,6 +454,18 @@ require_marker() {
     require_reviewed=$(head -n 1 "$require_file" 2>/dev/null |
         tr -d '\r' |
         sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    if [ -n "$require_branch" ]; then
+        # Read the entire record: head alone would ignore an appended second
+        # record. Branch text never reaches the denial's JSON interpolation.
+        require_reviewed=$(cat "$require_file" 2>/dev/null)
+        if [ "$(wc -l < "$require_file" | tr -d ' ')" != 1 ]; then
+            require_reviewed=""
+        fi
+        case "$require_reviewed" in
+            "$require_branch "*) require_reviewed=${require_reviewed#"$require_branch "} ;;
+            *) require_reviewed="" ;;
+        esac
+    fi
     case "$require_reviewed" in
         '' | *[!0-9a-fA-F]*) require_reviewed="(not a commit id)" ;;
         *)
@@ -712,6 +735,15 @@ pr_gate() {
     # may be created, draft or not, while findings are still open — the PR is
     # where they live.
     [ "$gate_action" = create ] && exit 0
+
+    # Every tier owes a completed AI review, even when there were no findings.
+    # Keep this separate from the unchanged unresolved-thread gate below.
+    gate_branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
+        deny '"ai-review-complete requires a named task branch; detached review evidence cannot be inherited."'
+    require_marker "$dir" "$key" "$AI_MARKER_NAME" \
+        "AI review must complete for the current task branch and change" \
+        "Run the ai-review skill against the PR; publish its report and findings and verify the reviewed worktree, branch, HEAD, status, base and key stayed stable" \
+        "$gate_branch"
 
     gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
     if [ -z "$gate_pr" ]; then
