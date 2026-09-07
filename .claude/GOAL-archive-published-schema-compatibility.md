@@ -49,7 +49,7 @@ Released source: original main `a808b2d87b36d73041027e4d20c053544b454a96`.
 - **R36** — Obtain exact-head green CI.
 - **R37** — Use a separate high-tier campaign mission and owned paths.
 - **R38** — Wait for host release and arm before edits.
-- **R39** — Retain full source requests and archive before reviews.
+- **R39** — Create GOAL after arming and before implementation; retain full source requests and archive before reviews.
 - **R40** — Keep complete stable R/A/G traceability and explicit closing steps.
 - **R41** — Preserve bounded retry history and never weaken thresholds.
 - **R42** — Leave publication, markers, remote state and serialized campaign merges to the coordinator.
@@ -168,7 +168,7 @@ Immutable final head, reviews and CI are recorded by the coordinator in issue #3
   *Recorded evidence:* 01-arm-guards.log, 02-arm-app.log, 03-mission.log, source-evidence.json and execution-record.md.
 - [x] **A38** — Coordinator release precedes exit-zero guard build and app all-target check logs. *Evidence:* source/test/log or coordinator report at the destinations above. *(R38)*
   *Recorded evidence:* 01-arm-guards.log, 02-arm-app.log, 03-mission.log, source-evidence.json and execution-record.md.
-- [x] **A39** — This archive includes canonical issue and delegated request verbatim, before any review or marker. *Evidence:* source/test/log or coordinator report at the destinations above. *(R39)*
+- [x] **A39** — GOAL creation follows successful arming and precedes implementation; this archive retains the canonical issue and delegated request verbatim before reviews or markers. *Evidence:* original `Q2-validation/01-arm-guards.log`, `02-arm-app.log`, `03-mission.log`, and `04-freeze.log`, with their original ordered execution records; the source appendix below. *(R39)*
   *Recorded evidence:* this archive, Q2-start-issue.json and archive.py: complete issue/delegated quotations and 60 stable one-to-one R/A pairs plus G1-G4 and C1-C2.
 - [x] **A40** — Every R maps to the same-numbered A; G items have no R tail; review/CI and closing evidence remain explicit. *Evidence:* source/test/log or coordinator report at the destinations above. *(R40)*
   *Recorded evidence:* this archive, Q2-start-issue.json and archive.py: complete issue/delegated quotations and 60 stable one-to-one R/A pairs plus G1-G4 and C1-C2.

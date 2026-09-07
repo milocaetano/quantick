@@ -15,7 +15,7 @@ its `/hooks` screen, as required by the
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create`, `gh pr ready` and `gh pr merge` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. A **draft** `gh pr create` passes ungated; `gh pr ready` and `gh pr merge` additionally want **zero open `ai-review` threads**. |
+| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok` and applicable `delivery-review-ok` record the exact change. Only delivery has a bounded `small` exemption. Draft creation is ungated. Readiness/merge additionally require branch-bound `ai-review-complete` and zero open AI threads at every tier. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 
@@ -29,7 +29,7 @@ The campaign key binds target ref/tip as well as diff. Invalid context fails
 closed; ready verifies the PR base/head, and merge additionally requires a
 persisted grant, current base, passing CI and the explicit head-pinned command.
 Main merges, auto-merge and queue shortcuts are reserved for the user.
-The small-tier exemption removes only delivery review, never thread or merge
+The small-tier exemption removes only delivery review, never AI completion, thread or merge
 authority checks. `campaign_context_test.sh` exercises these boundaries with
 real git fixtures and fake GitHub responses through both client payloads; the
 main guardrail suite invokes it in CI. Existing command-detection limitations
@@ -83,9 +83,35 @@ cannot be merged — so nothing is lost by letting it open.
 Phase two closes those threads, and the gate moved to where work actually
 leaves the branch: `gh pr ready` and `gh pr merge`. Both want what
 `gh pr create` always wanted — the two review markers, for the exact diff being
-shipped — plus a third condition, that no `ai-review` thread is still open.
+shipped — plus AI-review completion and independently zero unresolved AI threads.
 
 The tier is read, never required, exactly as before.
+
+### Recording AI completion
+
+The canonical [AI-review skill](../skills/ai-review/SKILL.md#record-completion)
+owns the producer: stable worktree/branch/HEAD/status/base/key observations,
+completed review, published findings and a durable PR report, followed by the
+private `ai-review-complete` projection. Follow that procedure; a bare restamp
+is not a review. A completed review with findings may record completion, but
+the separate unresolved-thread check below still denies readiness/merge.
+
+The consumer is `pr-gate` in `guardrails.sh`: after the existing create return,
+it passes the current branch and shared review key to `require_marker`, then
+checks threads. The AI record is exactly one LF-terminated line,
+`<branch> <shared-review-key>`. Legacy architecture/delivery records keep their
+raw-key format and existing comparator. AI additionally binds its branch:
+switching branches can leave a raw diff byte-identical, so the key alone cannot
+satisfy that boundary. Detached heads, missing/malformed/stale records and a
+record in another worktree cannot supply completion. Campaign keys already
+bind base ref/tip; no second key algorithm is introduced.
+
+Zero findings alone never proves completion. The report records full HEAD,
+explicit base/ref tip, key, scope, six verdicts and finding IDs/count; the
+marker is its local projection, not a cryptographic check of report provenance
+or review quality. Same-branch rewords with the same key remain valid. Changed
+diffs or campaign bases require the canonical follow-up review before recording
+new completion. Existing command limits and main authority remain unchanged.
 
 ### Counting the open threads
 
@@ -397,8 +423,8 @@ overstatement here is a false sense of cover:
 - Every marker `guardrails.sh` defines is named by **each** of this file,
   `mission` and `ship` — per file, not "somewhere among them". Checking the
   set would stay green while the instruction vanished from two of the three.
-- Each review skill carries a recording command of its own, so `/arch-review`
-  and `/delivery-review` each record their own marker instead of leaving it to
+- Each review skill carries a recording command of its own, so `/arch-review`,
+  `/delivery-review` and `/ai-review` record their own markers instead of leaving them to
   a caller. That asymmetry was a real bug here.
 - Every marker name the prose tells an agent to **write** is one the script
   reads. This is anchored on the recording command's shape rather than on the

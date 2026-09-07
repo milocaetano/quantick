@@ -1,6 +1,6 @@
 ---
 name: mission
-description: Define and enforce a mission for the current session — read the request into a traceable ledger, interrogate what is ambiguous, derive acceptance criteria including the standard quantick gates (arch-review, delivery-review, visual-qa, trader-ux-review, ui-harness hooks) that match the kind of work, keep every action aligned, prove every criterion with recorded evidence, and hand back a ready-to-paste /goal condition. Use when the user types /mission <objective> or asks to set a goal for the session/task.
+description: Define and enforce a mission for the current session — read the request into a traceable ledger, interrogate what is ambiguous, derive acceptance criteria including the standard quantick gates (arch-review, delivery-review, visual-qa, trader-ux-review, ui-harness hooks) that match the kind of work, keep every action aligned, prove every criterion with recorded evidence, and hand back a ready-to-paste /goal condition. Use when the user gives /mission an objective or asks to set a goal for the session/task.
 ---
 
 Campaign children override the main-based examples via the
@@ -249,8 +249,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    that evidence where the criterion said it would land. A criterion without
    evidence is unmet.
 
-   **Archive before you review, not after.** The markers hold shas, so the
-   archive has to be part of the branch the reviews actually graded.
+   **Archive before review.** The archive belongs in the reviewed diff.
 
    1. **Archive**, as the mission's last commit, before either review runs.
       Assign the slug first — an unquoted `<slug>` is two shell redirections.
@@ -273,17 +272,17 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    3. **`Skill(delivery-review)`** — conformance, over the same final branch.
       It records `delivery-review-ok` itself, on PASS only. **Skipped at
       `small`**, and only there.
-   4. **`gh pr create`** — and **the PR body names the tier**, beside the four
-      verification boxes. The third of the three places a tier is recorded, and
-      the only public one: a `small` tier stated where reviewers look is one
-      they can dispute; one stated only to the hook is one nobody can.
+   4. **`gh pr create --draft`** — the body names the tier beside the four
+      verification boxes, making any exemption public. Then `ai-review` owns
+      the durable PR report and `ai-review-complete` projection. Its completion
+      and zero unresolved threads are required before readiness at every tier;
+      follow `ship` for CI, readiness and the unchanged authority boundary.
 
    A `small` mission still archives `GOAL.md`. Nothing grades it at that tier,
    and it is written anyway — the file is the only record of what the branch
    was for.
 
-   If either review changes the branch, commit and re-run both reviews before
-   recording their now-stale markers again.
+   If review changes the diff, commit and rerun all stale reviews before recording.
 
 9. **Hand over the `/goal` condition.** Skipped at `small`. At every other
    tier, right after step 4, print the built-in command for the user to paste:

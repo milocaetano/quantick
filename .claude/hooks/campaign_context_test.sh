@@ -68,11 +68,17 @@ gate() {
     case "$3" in
         allow) [ -z "$output" ] ;;
         deny) printf '%s' "$output" | grep -q '"permissionDecision":"deny"' ;;
-    esac
+    esac || return 1
+    if [ -n "${4:-}" ]; then printf '%s' "$output" | grep -qF -- "$4"; fi
 }
-stamp() {
+stamp_required() {
     sh "$helper" key "$fixture/repo" > "$git_dir/arch-review-ok"
     cp "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok"
+}
+stamp() {
+    stamp_required
+    printf '%s %s\n' "$(git -C "$fixture/repo" symbolic-ref --quiet --short HEAD)" \
+        "$(sh "$helper" key "$fixture/repo")" > "$git_dir/ai-review-complete"
 }
 
 allow 'default base remains main' test "$(sh "$helper" base "$fixture/repo")" = origin/main
@@ -112,7 +118,35 @@ stamp
 
 # The clients share the policy; their tool names do not change its decision.
 for client in Bash exec_command; do
+    rm "$git_dir/ai-review-complete"
+    for action in ready merge; do
+        allow "$client campaign $action denies missing AI completion" gate "$client" "gh pr $action 42" deny ai-review-complete
+    done
+    printf 'feat/child %s\n' "$old_key" > "$git_dir/ai-review-complete"
+    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$advanced"
+    stamp_required
+    identity campaign/test "$head" "$advanced"
+    allow "$client base tip stales AI after earlier reviews refresh" gate "$client" 'gh pr ready 42' deny ai-review-complete
+    allow "$client base tip also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny ai-review-complete
+    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/test "$base"
+    identity campaign/test "$head" "$base"
+    stamp
+    git -C "$fixture/repo" update-ref refs/remotes/origin/campaign/other "$base"
+    printf 'feat/child origin/campaign/other https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+    stamp_required
+    identity campaign/other "$head" "$base"
+    allow "$client equivalent base ref stales AI after earlier reviews refresh" gate "$client" 'gh pr ready 42' deny ai-review-complete
+    allow "$client changed target also blocks campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny ai-review-complete
+    context https://github.com/owner/repo/issues/1#issuecomment-2
+    identity campaign/test "$head" "$base"
+    stamp
     allow "$client campaign merge" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" allow
+    context none
+    allow "$client current AI cannot supply campaign merge authority" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
+    context https://github.com/owner/repo/issues/1#issuecomment-2
+    printf 'pending\n' > "$fixture/bin/checks"
+    allow "$client current AI cannot replace green CI" gate "$client" "gh pr merge 42 --merge --match-head-commit $head" deny 'authorization or CI'
+    printf 'pass\n' > "$fixture/bin/checks"
     allow "$client auto-merge denied" gate "$client" "gh pr merge 42 --auto" deny
     allow "$client admin override denied" gate "$client" "gh pr merge 42 --admin" deny
     allow "$client alternate repository denied" gate "$client" "gh pr merge 42 --merge --match-head-commit $head --repo other/repo" deny
