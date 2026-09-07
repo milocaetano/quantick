@@ -192,3 +192,89 @@ Bounded CI repair1 AND exclusive host released NOW, journal https://github.com/m
 ## CI repair1 execution before final freeze
 
 Initial candidate3ceaf72298db097f17c3e83f23a887441fc3364f was locally validated, committed and published by coordinator as draft342. Windows CI34116356314 then failed all6fixtures at Get-Acl autoload; architecture B1 is open. Raw failure and review retained. Local reproduction uses owned incompatible Security module requiring PowerShell99.0 and child-only PSModulePath: preserved original binary48c9bb048473921d312fcd16db377d0bcda0000fa1f8754d1320ea0ba582153b fails all6 with matching autoload error (expected negative25). Three added test-only lines remove only the oracle child's inherited PSModulePath. Identical controlled parent environment/fixture then passes18/18, including all6policy tests (positive28); exact crate CI command also passes18/18 plus doctests (29), guards26 pass. Actual CI inherited environment was not logged, so its precise cause remains a hypothesis. No global environment/module install/policy/assertion change. Remote failure signatureQ4-CI-GETACL-MODULE-AUTOLOAD: one run,6test occurrences, repair1; controlled expected-negative experiment retained separately. Document-inclusive final ordered checks and new-head CI/reviews remain pending in their respective raw records. A10 is still UNMET; no cleanup retry or self-waiver.
+
+## Completeness round 1: bounded ledger repair 1
+
+The independent source-first completeness report for head
+`fce869e328929984e9f09ed7945faadb613351fd` found seven omissions U1-U7 across
+eight of 53 source groups. The report is retained at
+`Q4-review-fce869e32892/completeness-review.md` and published at
+https://github.com/milocaetano/quantick/pull/342#issuecomment-5570557082.
+Repair intent: https://github.com/milocaetano/quantick/issues/330#issuecomment-5570562977.
+This append records those received obligations without changing the preceding
+archive bytes, original requests, existing IDs or scope. All added criteria
+remain unchecked for independent grading. Representation of a historical
+obligation does not establish that it was fulfilled. A10 remains explicitly
+UNMET; a promise or ledger entry added now cannot repair that history.
+
+### Appended request ledger
+
+- **R35**: Work on the assigned branch `feat/windows-local-authority` in `C:/src/quantick-worktrees/feat-windows-local-authority`, starting from integrated `0bd50f9b815a05e2ba8d0c9804324dbb415f6658`. Source: U1/S27, original issue campaign record and received delegation; continuing base freshness remains R22.
+- **R36**: Target the Q4 pull request exactly at `campaign/architecture-a`. Source: U1/S27, original issue campaign record and received delegation.
+- **R37**: Keep campaign concurrency within the authorized ceiling of three independent implementation missions. Source: U2/S29, original issue D4 campaign record and received delegation.
+- **R38**: Give independent implementation missions disjoint worktrees. Source: U2/S29, original issue D4 campaign record.
+- **R39**: Serialize campaign merges through the coordinator. Source: U2/S29, original issue D4 campaign record and received delegation; R15 retains merge ownership.
+- **R40**: During the bounded CI repair, no other agent edits this worktree. Source: U2/S53, received bounded CI repair1 directive; stopped and serialized Cargo remains R12.
+- **R41**: Read the current repository instructions and applicable skills for Q4. Source: U3/S33, received delegation.
+- **R42**: Follow the existing mission and ship workflow with the campaign integration contract and Codex host mappings. Source: U3/S33, received delegation and the named workflows; historical deviations remain recorded under R10/R23.
+- **R43**: Begin with read-only preparation and wait for explicit coordinator host release before arming, tests or repository edits. Source: U4/S34, received delegation; retain the original preparation boundary and timing.
+- **R44**: Send the coordinator a concrete test-boundary/fixture plan and indispensable uncertainty, then wait for the host before execution. Source: U4/S34, received delegation; a locally saved plan alone is not proof of its handoff.
+- **R45**: After the initial explicit host release, successfully run `cargo build -p quantick-guards` and then `cargo check -p quantick-app --all-targets` before creating the mission and implementing the owned Windows authority tests. Source: U5/S37, received initial host release; this adds the missing arming prerequisite without discharging R10/A10.
+- **R46**: After the requested source-only handoff during Q5's final-check host window, return idle status to free the review slot. Source: U6/S46, received post-failure coordinator disposition; later test or review success is not evidence of this historical return.
+- **R47**: Record the received bounded CI repair1 directive in the existing stable mission ledger before editing its implementation, preserving original source/history and A10. Source: U7/S47, received bounded CI repair1 directive; preserve the original before-edit prerequisite without backdating this entry.
+
+### Appended acceptance criteria
+
+External paths below are relative to `C:/Users/camil/AppData/Local/Temp/quantick-architecture-a`.
+
+- [ ] **A35**: Q4's branch/worktree and integrated starting SHA match R35. Evidence: original claim/delegation and read-only Git identity records -> `Q4-validation/ledger-repair1-before.json` and coordinator claim record. *(R35)*
+- [ ] **A36**: The published Q4 PR has base `campaign/architecture-a`. Evidence: coordinator's actual PR head/base readback -> issue #335/PR #342 evidence; final preflight remains C3. *(R36)*
+- [ ] **A37**: Campaign implementation concurrency never exceeds three independent missions during Q4's execution. Evidence: actual campaign claim/release records and worker lifecycle records -> campaign #330 concurrency evidence; authorization text alone does not prove execution. *(R37)*
+- [ ] **A38**: Concurrent independent implementations use disjoint worktrees. Evidence: actual branch/worktree claim identities and lifecycle records -> campaign #330 concurrency evidence. *(R38)*
+- [ ] **A39**: Campaign merges performed during Q4's execution are serialized by the coordinator. Evidence: actual merge operation records and campaign ref readbacks -> campaign #330 integration evidence; unperformed Q4 integration remains C4. *(R39)*
+- [ ] **A40**: No other agent edits Q4's worktree during bounded CI repair1. Evidence: bounded repair worker lifecycle, completed file-change/command records and frozen tracked-file identities -> `Q4-action-audit/95eb7299094dd3a5/execution-events.jsonl` plus coordinator ownership records; an instruction alone is not execution proof. *(R40)*
+- [ ] **A41**: Current repository instructions and applicable mission/ship skills were read for Q4. Evidence: completed instruction-read commands -> `Q4-action-audit/95eb7299094dd3a5/execution-events.jsonl`; repair reads are recorded separately and do not replace missing historical reads. *(R41)*
+- [ ] **A42**: Q4 follows the applicable mission/ship workflow and campaign/Codex mappings, with actual ordering and every deviation retained. Evidence: command/file-change events, ordered raw logs, commits and independent gate records -> `Q4-action-audit/95eb7299094dd3a5/` and `Q4-validation/`; A10 remains UNMET and this criterion claims no exception. Future closing duties remain C1-C4. *(R42)*
+- [ ] **A43**: Initial preparation is read-only until the explicit host release, with no arming, test or repository edit preceding it. Evidence: completed operations and actual release receipt -> `Q4-action-audit/95eb7299094dd3a5/execution-events.jsonl`, `Q4-validation/host-release-received.txt` and initial raw arming logs. *(R43)*
+- [ ] **A44**: The concrete boundary/fixture plan and indispensable uncertainty were handed to the coordinator before execution, followed by waiting for the host. Evidence: original plan artifact plus actual handoff/lifecycle record and release ordering -> `Q4-validation/preparation.md` and coordinator's retained receipt evidence; no handoff or wait time is inferred from narrative status. *(R44)*
+- [ ] **A45**: Initial guards build and app all-target check both exit 0 after release and before mission creation and implementation. Evidence: raw `01-arm-guards.log`, `02-arm-app.log`, `commands.log` and completed command/file-change events -> `Q4-validation/` and `Q4-action-audit/95eb7299094dd3a5/execution-events.jsonl`; the separate mission-before-source obligation A10 remains UNMET. *(R45)*
+- [ ] **A46**: The requested historical source-only handoff was followed by an idle-status return that freed the review slot. Evidence: actual original handoff and worker completion/lifecycle records -> coordinator's retained Q4/Q5 slot records; no original message content or timestamp is reconstructed from tool-name or receipt indexes. *(R46)*
+- [ ] **A47**: The bounded CI repair1 directive was written into the existing stable mission ledger before its implementation edit, with source/history/A10 preserved. Evidence: completed ledger-write and subsequent source-patch operations -> `Q4-action-audit/95eb7299094dd3a5/execution-events.jsonl`, source lines 878 and 897, plus the retained directive and archive. This appended criterion does not assert historical fulfillment. *(R47)*
+
+### Continuing closing obligations
+
+- **C3**: Before readiness or integration, the coordinator verifies the final Q4 PR head and exact base `campaign/architecture-a` and completes every still-pending mission/ship review and exact-head CI requirement under C1/C2. This remains future work; the ledger repair does not grant readiness or a delivery marker. *(R36, R42)*
+- **C4**: If Q4 reaches authorized campaign integration, the coordinator performs its merge in the serialized campaign merge window after the fresh-base and authorization checks, then retains merge and campaign-ref readbacks. Main merge remains human-exclusive. This remains future work. *(R39, R42)*
+
+### Objective chronology and retained limitations
+
+The action-audit manifest identifies an immutable prefix of completed command
+and file-change events. It excludes implementing narration and message bodies.
+Its `source_line` values address the captured source records, not physical
+line numbers in the extracted file. Event times below are observed completion
+times from that audit, not newly invented receipt or handoff times:
+
+- Source line 86 completes the release-recording/guards command at `2026-09-07T10:05:10.576Z`, exit 0. Source line 138 completes the app all-target check at `2026-09-07T10:06:58.837Z`, exit 0. Inspect the commands and original raw logs for their actual sequence.
+- Source line 176 completes the initial source patch at `2026-09-07T10:10:06.698Z`; source line 192 completes mission persistence at `2026-09-07T10:11:21.563Z`. The source edit preceded the mission. A10 remains UNMET.
+- Source line 878 completes the command appending R32-R34/A32-A34 and the literal CI repair directive to the existing archive at `2026-09-07T11:38:57.250Z`, exit 0. Source line 897 completes the `.env_remove("PSModulePath")` source patch at `2026-09-07T11:40:08.216Z`. These are objective evidence pointers for independent grading; adding R47 now does not change their history.
+
+Historical failure records and raw logs remain unchanged: initial Set-Acl
+privilege setup failures and cleanup double panic; the existing fake-gateway
+send-order race and its bounded test-only repair; observer capture-budget
+failure with its exact isolated diagnostic and single unchanged full retry1;
+missing-sh review-key tooling and its bounded resolution; and Windows CI
+module-autoload failure with CI repair1. The original CI runner environment
+was not logged, so its precise cause remains unproven. Successful later tests
+cannot establish that missing environment. The controlled negative experiment
+remains distinct from unexpected failures. Completeness round 1 and this
+ledger repair1 are recorded separately from architecture/CI repair rounds;
+no historical counter is reset.
+
+Four owned failed-run scratch roots remain pending after the automatic cleanup
+policy rejections. No cleanup attempt is authorized by this repair. This
+append changes only the mission archive. Existing code, tests, raw logs and
+prior evidence retain their bytes. Source-only mapping, original prefix,
+tracked-file hashes, evidence hashes and exact patch are retained as
+`Q4-validation/ledger-repair1-*`. Guards, ordered validation, commit and fresh
+reviews for the appended tree remain pending the coordinator's host/workflow
+release; none is claimed here.
