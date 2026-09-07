@@ -336,3 +336,13 @@ is reset. The first completeness failure identified 19 fragments; this is
 completeness repair 1, awaiting fresh independent review after validation and
 commit. Guards and the full ordered four-command loop remain required before
 that commit, under exclusive coordinator host release.
+
+## Completeness repair 2: explicit criterion mapping
+
+- R81: Before implementation, create the mission with an atomic request ledger and an explicit mapping from each request to its acceptance criteria. *(Source: original delegation, "atomic R ledger and A mapping".)*
+- [ ] **A44** — The mission persisted before the first implementation edit contains an explicit R-to-A mapping. Evidence: `Q5-validation/mission-before-source-proof.md`, its original mission blob and the corresponding objective command/file-change records in `Q5-action-audit/808309e2f8a3e240`. Those original artifacts require independent inspection; this appended statement does not manufacture historical compliance. *(R81)*
+
+The clean-source follow-up closed all 19 original omissions and identified this
+one explicit mapping obligation, which the first review had accepted implicitly.
+Both readings remain recorded. This is completeness repair 2, with no change to
+the original source, existing IDs, implementation, tests, or prior evidence.
