@@ -214,3 +214,125 @@ The coordinator may run up to three independent implementation missions with sep
 
 Initial lanes: Q2 released-schema compatibility, Q3 incremental live-lane transport, Q4 Windows local-transport authority tests. Q4 owns control-local test paths and Windows CI registration; Q2/Q3 do not edit those paths. If that independence fails, schedule the affected work sequentially.
 ```
+
+## Completeness repair 1: appended obligations
+
+The independent completeness-only report for HEAD
+`7485184d6176a1129b0467824320c9bdf8cfb63e` found 19 missing obligation fragments
+among 76 source-derived asks. Report:
+https://github.com/milocaetano/quantick/pull/343#issuecomment-5570288878.
+Repair journal:
+https://github.com/milocaetano/quantick/issues/330#issuecomment-5570290210.
+This appendix adds the missing ledger and criterion mappings without changing
+R1-R56, A1-A21, G1-G3, C1-C3 or any original attributed source. Nothing is
+withdrawn, renumbered, waived or newly claimed delivered. The original 76-ask
+derivation remains immutable; its S identifiers below are source-ask IDs, not
+new mission assumptions. Independent review must assess the complete archive.
+
+### Request ledger additions
+
+- R57: Preserve all existing public contracts. *(Source S11: issue Scope, "public/financial contracts".)*
+- R58: Preserve all existing financial contracts. *(Source S11: issue Scope, "public/financial contracts".)*
+- R59: Introduce no hot-path benchmark or speedup claim without a touched hot path. *(Source S36: issue acceptance criterion 6.)*
+- R60: Start and validate against the latest integrated campaign base; retain R55's coordinated update/revalidation when that base advances. *(Source S44: issue Campaign record.)*
+- R61: Claim completion score credit only after reassessment at the integrated SHA under unchanged quantick-score v1.0. *(Source S46: issue Campaign record.)*
+- R62: Read current AGENTS.md, CLAUDE.md, canonical mission/new-task/ship, campaign integration and Codex mappings. *(Source S47: delegation paragraph 1.)*
+- R63: Apply high tier and its required gates. *(Source S48: delegation paragraph 1.)*
+- R64: Ask no routine questions throughout execution. *(Source S49: delegation paragraph 1.)*
+- R65: Leave remote writes, checkpoints and review markers exclusively to the coordinator. *(Source S50: delegation paragraph 1.)*
+- R66: Preserve the coordinator-owned sequence: draft PR, then independent reviews and CI, then serialized authorized campaign merge; send local handoff under R33. *(Source S50: delegation paragraph 1.)*
+- R67: Introduce no public API of any kind, retaining R7's prohibition of a public test API. *(Source S53: delegation paragraph 2.)*
+- R68: Make no Cargo changes. *(Source S53: delegation paragraph 2; R38, R39 and R54 retain its root-field, dependency and unintegrated-result restrictions.)*
+- R69: Begin with read-only preparation; do not arm, run Cargo, create the mission or edit the repository until explicit coordinator host release. *(Source S54: delegation paragraph 3.)*
+- R70: Save the preparation plan in external `Q5-validation/preparation.md`. *(Source S55: delegation paragraph 3.)*
+- R71: After saving the preparation plan, report preparation and host need to the coordinator. *(Source S55: delegation paragraph 3.)*
+- R72: Do not spawn reviewers as the delegated implementer; independent review remains coordinator-owned. *(Source S56: delegation paragraph 3.)*
+- R73: Check target-cache ownership before any reuse, including reuse after initial arming. *(Source S63: delegation paragraph 3.)*
+- R74: Send the coordinator mission-saved confirmation before the first source edit. *(Source S68: release paragraph 1.)*
+- R75: Make no guesses about historical actions; retain complete attributed source capture and the atomic ledger under R28, and exact logs under R32. *(Source S69: release paragraph 1.)*
+- R76: Schedule affected implementation work sequentially whenever independence is insufficient or fails. *(Source S72: D3 and D4.)*
+- R77: Preserve D4's ceiling of up to three independent implementation missions under the coordinator, with separate branches/worktrees and verified nonconflicting ownership and no unintegrated dependencies. *(Source S74: D4; R30, R53 and R54 retain the independence conditions.)*
+- R78: Serialize all build/benchmark host use, including build/build contention, so CPU contention cannot contaminate timing evidence. *(Source S75: D4.)*
+- R79: Preserve the inherited main merge, push, auto-merge, merge-queue and protection restrictions: main merge is exclusively the user's action; no agent main push, auto-merge, queue, protection change or bypass. *(Source S76: D4; campaign integration contract states the named main boundaries.)*
+- R80: Retain all inherited scope, behavioral-preservation, financial, test, review, retry, paid-service, campaign-only authority and exclusion limits unchanged. Refer to the actual governing authority for any detail absent from the captured D3/D4 text; invent neither a limit nor permission. *(Source S76: D3 paragraph 2 and D4 paragraph 2.)*
+
+### Acceptance criteria additions
+
+These unchecked criteria specify evidence for later independent grading. Their
+addition is not an author grade. Historical assertions need actual records;
+preparation prose, the original progress narrative, receipt metadata without
+message content and this appendix cannot substitute for missing execution or
+message evidence. Unknown historical facts remain UNPROVEN. Coordinator
+closing outcomes remain future obligations until their actual evidence exists.
+
+External evidence root for the following paths:
+`C:/Users/camil/AppData/Local/Temp/quantick-architecture-a/`.
+
+- [ ] **A22** — Existing public and financial contracts are preserved. Evidence: base-to-reviewed-head source diff and unchanged public/financial behavior audit, retained with `Q5-validation/repair1-mapping.md`; independent architecture review verifies it. *(R57, R58)*
+- [ ] **A23** — No hot-path benchmark or speedup claim is introduced without a touched hot path. Evidence: source/evidence diff and rare-import cost record, indexed by `Q5-validation/repair1-mapping.md`. *(R59)*
+- [ ] **A24** — Start and validation use the latest integrated campaign base, with coordinated update/revalidation after any advance. Evidence: actual initial Git commands and current local/remote base readbacks, in `Q5-action-audit/808309e2f8a3e240/` and coordinator validation records under `Q5-validation/`. *(R60)*
+- [ ] **A25** — No completion score credit is claimed before integrated-SHA reassessment under unchanged quantick-score v1.0. Evidence: coordinator score-claim records and, when available, the integrated-SHA scorecard; future reassessment is C6. Destination: campaign #330 and `Q5-validation/repair1-mapping.md`. *(R61)*
+- [ ] **A26** — Actual read records cover every workflow document named in R62. Evidence: completed command events in `Q5-action-audit/808309e2f8a3e240/execution-events.jsonl`, indexed by `Q5-validation/repair1-mapping.md`; `preparation.md` alone is not proof of those reads. *(R62)*
+- [ ] **A27** — The mission retains high tier and its applicable gates, including the branch-bound tier record. Evidence: archived tier declaration, actual tier-file write/read records and coordinator gate evidence, indexed by `Q5-validation/repair1-mapping.md`. *(R63)*
+- [ ] **A28** — Execution contains no routine questions. Evidence: actual implementer/coordinator interaction records for the delegated interval; tool-call names or receipt times alone cannot establish missing message content. Destination: `Q5-validation/repair1-mapping.md`, with any evidence gap explicitly unproven. *(R64)*
+- [ ] **A29** — Remote writes, checkpoints and review-marker operations remain coordinator-exclusive. Evidence: actor-attributed operation records and GitHub readbacks, indexed by `Q5-validation/repair1-mapping.md` and the campaign journal. *(R65)*
+- [ ] **A30** — The recorded delivery plan assigns the draft-before-review/CI-before-merge sequence to the coordinator and requires local handoff. Evidence: C1-C5 and the attributed delegation in this archive; execution of the remaining closing sequence is C4-C5, not claimed here. *(R66, R33)*
+- [ ] **A31** — The diff adds no public API and changes no Cargo file. Evidence: complete base-to-reviewed-head diff and tracked-file hashes in `Q5-validation/repair1-before.json` and `repair1-after.json`, indexed by `repair1-mapping.md`. *(R67, R68)*
+- [ ] **A32** — Preparation remained read-only until explicit host release, before any arming, Cargo, mission creation or repository edit. Evidence: actual completed command/file-change records and attributable release content in the action audit and `Q5-validation/host-release-receipt.md`; receipt metadata alone does not prove message content. *(R69)*
+- [ ] **A33** — The preparation plan exists at the specified external path. Evidence: `Q5-validation/preparation.md`, its actual write event and preserved hash in `repair1-before.json`. *(R70)*
+- [ ] **A34** — The preparation-and-host-need report was sent after saving the plan. Evidence: the actual saved-plan event and actual coordinator-directed report, indexed by `Q5-validation/repair1-mapping.md`; chronology is unproven if the report content is unavailable. *(R71)*
+- [ ] **A35** — The delegated implementer spawned no reviewers. Evidence: actual tool-call/execution coverage for that delegated phase in `Q5-action-audit/808309e2f8a3e240/`, with its coverage limits retained in `Q5-validation/repair1-mapping.md`. *(R72)*
+- [ ] **A36** — Ownership was checked before every target-cache reuse, not only initial arming. Evidence: actual ownership probes ordered before each applicable Cargo invocation, indexed from the action audit and later validation records in `Q5-validation/repair1-mapping.md`; uncovered reuse remains unproven. *(R73)*
+- [ ] **A37** — The coordinator received mission-saved confirmation before the first source edit. Evidence: actual sent confirmation and first file-change event, indexed by `Q5-validation/repair1-mapping.md`; `mission-before-source-proof.md` identifies the claim but does not replace missing message evidence. *(R74)*
+- [ ] **A38** — Historical-action claims cite actual records, complete attributed source quotations and an atomic ledger are retained, and missing facts remain explicitly unproven. Evidence: source hashes, action-audit provenance and identified evidence gaps in `Q5-validation/repair1-mapping.md`. *(R75, R28, R32)*
+- [ ] **A39** — Work with insufficient independence is scheduled sequentially. Evidence: actual ownership/dependency checks and scheduling decisions, including any observed fallback, in campaign #330 coordinator records; do not invent a triggering event if none occurred. Index: `Q5-validation/repair1-mapping.md`. *(R76)*
+- [ ] **A40** — Coordinator scheduling stays within three independent implementation missions with the stated separation and independence conditions. Evidence: D4 plus actual lane/ownership records in campaign #330, indexed by `Q5-validation/repair1-mapping.md`. *(R77)*
+- [ ] **A41** — All build/benchmark host use is serialized across lanes, including build/build use. Evidence: actual host grants, returns and execution intervals from every applicable lane in coordinator records, indexed by `Q5-validation/repair1-mapping.md`; one lane's log alone cannot prove global non-overlap. *(R78)*
+- [ ] **A42** — Main merge/push/auto-merge/queue/protection restrictions remain intact. Evidence: actor-attributed operation and GitHub state records against the integration contract, indexed by `Q5-validation/repair1-mapping.md` and coordinator campaign records. *(R79)*
+- [ ] **A43** — All inherited limits in R80 remain unchanged, with no invented paid-service permission or undisclosed-limit detail. Evidence: governing source records, scoped diff and actual operation audit in `Q5-validation/repair1-mapping.md` and campaign #330; unspecified details are not treated as granted. *(R80)*
+
+### Closing steps additions
+
+- C4: The coordinator preserves the draft-first sequence, obtains fresh independent architecture/AI/source-first delivery and exact-head CI evidence for the repaired head, then applies readiness and serialized authorized campaign merge gates. No future review, CI or merge outcome is asserted by this repair. *(R48-R52, R56, R65, R66)*
+- C5: The coordinator records actual campaign integration readback and completes the existing handoff/checkpoint duties while retaining exclusive remote-write and review-marker ownership. Revalidate affected branches if the campaign base advances. Main delivery remains subject to the human-only integration contract. *(R33, R52, R55, R56, R65, R66, R79)*
+- C6: After campaign integration, reassess the integrated SHA under unchanged quantick-score v1.0 before assigning completion score credit. Keep campaign-candidate evidence distinct from any main-completion requirement. *(R61)*
+
+### Source mapping and retained evidence
+
+| Missing source fragment | Appended R entries | Appended A entries | Future closing step |
+| --- | --- | --- | --- |
+| S11: all public/financial contracts | R57, R58 | A22 | — |
+| S36: benchmark and speedup prohibition | R59 | A23 | — |
+| S44: latest integrated base | R60 | A24 | C5 |
+| S46: integrated-SHA score reassessment | R61 | A25 | C6 |
+| S47: complete workflow-read list | R62 | A26 | — |
+| S48: high tier | R63 | A27 | — |
+| S49: no routine questions | R64 | A28 | — |
+| S50: coordinator ownership and delivery sequence | R65, R66 | A29, A30 | C4, C5 |
+| S53: any public API and Cargo prohibition | R67, R68 | A31 | — |
+| S54: initial read-only and full release gate | R69 | A32 | — |
+| S55: preparation file and subsequent report | R70, R71 | A33, A34 | — |
+| S56: no implementer-spawned reviewers | R72 | A35 | C4 |
+| S63: every target-cache reuse | R73 | A36 | — |
+| S68: sent mission-saved confirmation | R74 | A37 | — |
+| S69: no historical-action guesses | R75 | A38 | — |
+| S72: sequential fallback | R76 | A39 | — |
+| S74: maximum three independent missions | R77 | A40 | — |
+| S75: all build/benchmark serialization | R78 | A41 | — |
+| S76: inherited main and service restrictions | R79, R80 | A42, A43 | C5 |
+
+`Q5-validation/repair1-mapping.md` preserves the full 76-ask mapping, exact
+source/report hashes and evidence destinations. `repair1-before.json`,
+`repair1-after.json`, `repair1-archive-before.bin` and `repair1.patch` preserve
+the edit boundary and raw patch. The original source-derived-asks SHA256 is
+`3b92c49bc96b43460da8db522f02221e4e7164c3d908b8ecc70d1b59cbb1a4e2`.
+
+Retry history remains cumulative. Original observer failure: median 258 us
+against unchanged 250 us; isolated diagnostic subsequently passed, followed
+by full ordered retry 1 with 3463 passed, 0 failed and 12 ignored. Those prior
+passes do not validate this appended archive. Earlier mission-write/tooling
+failures and repairs remain in `Q5-validation/attempt-ledger.md`; no signature
+is reset. The first completeness failure identified 19 fragments; this is
+completeness repair 1, awaiting fresh independent review after validation and
+commit. Guards and the full ordered four-command loop remain required before
+that commit, under exclusive coordinator host release.
