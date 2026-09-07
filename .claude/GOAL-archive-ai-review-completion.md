@@ -28,7 +28,9 @@ key, bind completion to its task branch, and retain the separate finding gate.
 - R18: Preserve command limits, campaign authorization and exclusive human main merge.
 - R19: Reuse existing comparator/key; no generic subsystem, copied algorithm or bypass.
 - R20: Stay within assigned workflow/docs paths; no crates, manifests or lock changes.
+  If additional paths become necessary, report overlap before expanding scope.
 - R21: Keep Q1 independent of F1 code and serialize build-host use and campaign merges.
+  Initial builds and edits must both wait for the coordinator's host release.
 - R22: Arm guards and app all-target check before editing; validate each edit batch.
 - R23: Run full fmt/clippy/build/test in order before every commit and affected checks.
 - R24: Save raw command/exit artifacts outside the repository and report failure counters.
@@ -37,7 +39,23 @@ key, bind completion to its task branch, and retain the separate finding gate.
 - R27: Coordinator owns publication, checkpoints, review records and integration.
 - R28: Independent architecture, AI and delivery reviews plus exact-head CI remain owed.
 - R29: No new runtime, financial or public product contract; declare path rates.
-- R30: Do not claim a score increment before reassessment.
+- R30: Preserve the AD4 score rubric and do not claim an increment before reassessment.
+- R31: Read the full current code relevant to the change before implementation.
+- R32: Read AGENTS/CLAUDE, mission/new-task/ship, canonical AI-review and campaign
+  integration; read mission references/why when changing workflow.
+- R33: Consult the supplied Q1-start-issue.json and Q1-investigation.md inputs.
+- R34: Execute in the assigned worktree and fix/ai-review-completion branch.
+- R35: Create and retain the assigned high-tier GOAL mission.
+- R36: Inventory every source ask atomically in R/A/G, including conditional obligations.
+- R37: Retain the full attributed verbatim assignment and captured issue request.
+- R38: Do not ask the user for routine plan or command permissions; honor coordinator handoffs.
+- R39: Do not create child host goals.
+- R40: Never pass the sandbox_permissions tool option.
+- R41: Notify the coordinator before every commit so its intent is recorded first.
+- R42: Return the full review dossier with the verified local-head handoff.
+- R43: Supply an evidence index for coordinator publication in the issue-comment
+  trail, alongside the committed archive, raw artifacts and linked PR.
+- R44: Inspect later campaign journal metadata for updates to the historical checkpoint.
 
 ## Decisions
 
@@ -100,10 +118,13 @@ fixture and exact command; a pending item is not a pass.
 - [x] **A13** — AI reuses the existing key and comparator with no skip/override.
   *Evidence:* focused implementation diff and architecture dossier. *(R19)*
 - [x] **A14** — Diff stays within assigned workflow/docs ownership and adds no
-  crate, dependency or product contract. *Evidence:* final path list and rate table. *(R20, R29)*
+  crate, dependency or product contract. If expansion is needed, an overlap notice
+  precedes it; otherwise record no expansion. *Evidence:* path/rate table and
+  repair scope record. *(R20, R29)*
 - [x] **A15** — Work is independent of F1 implementation; host acquisition and
-  coordinator-only serialized merge handoff are recorded. *Evidence:* coordination
-  log summarized with source messages in the evidence document. *(R21)*
+  coordinator-only serialized merge handoff are recorded. Initial builds and
+  edits both follow the explicit release. *Evidence:* ordered release, arming
+  logs and first-edit record, with reconstruction limitations disclosed. *(R21)*
 - [x] **A16** — Arming commands precede the first edit and guard tests follow each
   batch. *Evidence:* numbered external raw logs. *(R22)*
 - [ ] **A17** — Full ordered local checks and affected shell/skill/link/language/
@@ -124,8 +145,44 @@ fixture and exact command; a pending item is not a pass.
   finding disposition and exact-head CI URLs; pending at local handoff. The
   delivery PASS and PR-open parts of R28 are C1/C2 under the mission skill's
   closing-step rule, not a substitute completeness criterion. *(R28)*
-- [x] **A23** — Evidence does not claim a score increment; reassessment stays with
-  campaign coordination. *Evidence:* final evidence text. *(R30)*
+- [x] **A23** — No score rubric changes or increment claims; reassessment stays
+  with campaign coordination. *Evidence:* final path list and evidence text. *(R30)*
+- [ ] **A24** — The relevant current code was read before implementation.
+  *Evidence:* pre-edit reading inventory with revision, full-file/supplemental
+  reads and explicit provenance limits, separate from repair-time hashes. *(R31)*
+- [ ] **A25** — Each required rules/skills source was consulted, including the
+  mission rationale because this changes workflow. *Evidence:* reading inventory. *(R32)*
+- [ ] **A26** — Both exact supplied input paths were consulted.
+  *Evidence:* input-reading inventory and retained source files. *(R33)*
+- [ ] **A27** — Git identity confirms the assigned worktree and branch.
+  *Evidence:* repair-readback.json and final handoff identity. *(R34)*
+- [ ] **A28** — High-tier GOAL was created, archived and retained with its tier.
+  *Evidence:* first-edit record, committed archive and private tier readback. *(R35)*
+- [ ] **A29** — The fixed S01–S95 source inventory maps to actual stable R and
+  A/G/C rows, including each conditional and universally quantified case.
+  *Evidence:* complete source-to-ledger table; no review verdict substitutes
+  for the inventory itself. Delivery's own PASS remains the C1 exception. *(R36)*
+- [ ] **A30** — Attributed assignment and issue quotation remain complete and
+  faithful. *Evidence:* unchanged request-section comparison and captured issue
+  byte comparison; D3 is attributed authority, not a verbatim original. *(R37)*
+- [ ] **A31** — No routine user plan/command permission was requested; required
+  coordinator releases and handoffs remain explicit. *Evidence:* action record. *(R38)*
+- [ ] **A32** — The implementation worker created no child host goal.
+  *Evidence:* action record; independent coordinator reviews remain required. *(R39)*
+- [ ] **A33** — Worker tool calls omit sandbox_permissions.
+  *Evidence:* action record with transcript provenance limits. *(R40)*
+- [ ] **A34** — Each commit follows worker notice and recorded coordinator
+  intent. *Evidence:* ordered notice/checkpoint/commit records; the next commit
+  needs its own notice and intent before execution. *(R41)*
+- [ ] **A35** — A full dossier accompanies the verified local-head handoff.
+  *Evidence:* dossier index of source, archive, diff/identity, validation,
+  failures, independent review inputs and pending closing obligations. *(R42)*
+- [ ] **A36** — Coordinator receives an index linking issue/PR evidence,
+  committed archive and raw artifacts; C5 owns publication of that trail.
+  *Evidence:* publication handoff index and existing coordinator links. *(R43)*
+- [ ] **A37** — Later campaign journal metadata is inspected and any relevant
+  base/authority/host change is reconciled before dependent action.
+  *Evidence:* timestamped readback with latest inspected comment identity. *(R44)*
 
 ## Injected gates
 
@@ -150,6 +207,9 @@ fixture and exact command; a pending item is not a pass.
   Watch full exact-head CI until green; only then mark ready through the gate.
 - [ ] **C4** — Coordinator verifies campaign authority/current base/head and
   serializes any authorized child merge. Human main merge remains excluded.
+- [ ] **C5** — Coordinator maintains issue #331's comment evidence trail with
+  the committed archive, raw validation artifact index and linked PR; publish
+  repair evidence after handoff without delegating GitHub writes to this worker.
 
 ## Non-applicable gates
 
