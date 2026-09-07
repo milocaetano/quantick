@@ -59,6 +59,9 @@ fn powershell(script: &str, path: &Path, extra: Option<(&str, &std::ffi::OsStr)>
             "$ErrorActionPreference = 'Stop'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); {script}"
         ))
         .env("Q4_PATH", path)
+        // A PS7-launched test process can inherit incompatible PS7 modules.
+        // Let inbox Windows PowerShell rebuild its own default module paths.
+        .env_remove("PSModulePath")
         .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     if let Some((name, value)) = extra {
         command.env(name, value);

@@ -184,3 +184,66 @@ completed arming, an earlier written preparation plan and a coordinator-recorded
 private tier. This historical ordering deviation is preserved in the mission
 and external chronology evidence, remains open for independent delivery review,
 and has not been self-waived.
+
+## CI fixture repair 1: inherited PowerShell modules
+
+Initial candidate `3ceaf72298db097f17c3e83f23a887441fc3364f`, tree
+`3817b89b7e6945735800bde5f643a231a334c1c5`, passed its authorized full local
+retry (logs 19-22, 3,464 passed/0 failed/12 existing ignored, all six Windows
+authority tests executed). It was committed only after coordinator release and
+published as draft [PR #342](https://github.com/milocaetano/quantick/pull/342).
+The subsequent exact-head [Windows CI job](https://github.com/milocaetano/quantick/actions/runs/34116356314/job/101723991450)
+failed all six new tests at `Get-Acl` module autoload
+(`CouldNotAutoloadMatchingModule`); 12 existing tests passed. Linux and the
+other Windows steps passed. Independent architecture review retained this as
+Blocker B1. Local success did not discharge maintained Windows CI execution.
+Raw evidence: `ci-34116356314-failed.log` and
+`Q4-review-3ceaf72298db/arch-review.md`.
+
+[Microsoft's primary guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6#starting-windows-powershell-from-powershell-7)
+explains that PowerShell 7 module paths can survive an intermediate process and
+make inbox Windows PowerShell load incompatible modules. Removing PSModulePath
+from the child's environment makes Windows PowerShell reconstruct its default
+paths. The test-only repair adds precisely `Command::env_remove("PSModulePath")`
+to the oracle subprocess. The parent environment, process token, filesystem
+policy and every existing test assertion remain unchanged. The original CI
+runner's inherited environment was not logged, so this is a supported repair
+hypothesis, not a claim that its exact cause was independently observed.
+
+A controlled local negative/positive establishes the inherited-path behavior:
+
+- Retain the original unfixed test executable and its source identity before
+  editing. Preserved binary SHA256:
+  `48c9bb048473921d312fcd16db377d0bcda0000fa1f8754d1320ea0ba582153b`;
+  source `windows_tests.rs` SHA256:
+  `1248995f2e06ae723123923f3f183c23a0e543d2a89eb78a31127c84e50efeff`.
+- Create an owned external evidence fixture named
+  `ci-repair1-module-fixture/Microsoft.PowerShell.Security`. Its manifest names
+  a script exporting Get-Acl, module version 9.9.9 and required PowerShell
+  version 99.0, deliberately incompatible with inbox 5.1. It is not installed
+  in any module store. Files and hashes are retained in
+  `ci-repair1-unfixed-proof.json`.
+- Launch only the test subprocess with PSModulePath equal to this fixture
+  directory followed by the inbox Modules directory. Run the existing
+  `discovery::windows_tests::` filter with `--nocapture`. The original binary
+  exits 101: all six tests fail with the same specific module-autoload error
+  (log 25). This is an expected negative experiment, retained separately from
+  unexpected validation failures.
+- Recompile the private test child with the one environment-removal change.
+  Under the identical inherited module-path value and unchanged fixture bytes,
+  the full 18-test executable exits 0; all six policy tests pass (log 28).
+  Parent environment equality is checked before/after. Positive binary/source
+  hashes and build profile are in `ci-repair1-fixed-proof.json`; the retained
+  negative binary is the prior workspace artifact, and the positive artifact
+  is the targeted crate build, so their build identities are stated separately.
+- The exact new CI command `cargo test -p quantick-control-local -- --nocapture`
+  also exits 0 after the repair (18/18 plus doc tests, log 29). Guards pass in
+  log 26. The final document-inclusive ordered check sequence is recorded in
+  `ci-repair1-ordered-results.json` after execution, before commit release.
+
+No module installation, process-global environment mutation, machine-policy
+change, privilege enablement or cleanup retry occurred. The controlled fixture
+and unfixed binary remain deliberate evidence artifacts. New-head Windows CI
+and fresh independent review are still required; the local experiment is not
+claimed as executed CI. Historical A10 remains UNMET and the four previously
+policy-blocked scratch roots remain disclosed above.
