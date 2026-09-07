@@ -204,7 +204,8 @@ and that file differ, that file wins.
 
 ## Verification loop (mandatory)
 
-All four must pass before every commit. CI enforces the same four.
+Code: all four. Prose/reuse: `CLAUDE.md`'s delivery contract.
+Final-head CI: all four.
 
 ```sh
 cargo fmt --all -- --check

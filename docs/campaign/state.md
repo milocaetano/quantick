@@ -163,6 +163,11 @@ denials get no blind retry. Honor rate-limit reset times and checkpoint longer
 waits. Each attempt records error signature, head, evidence, action and result
 in the child; counters persist in checkpoints. A changed hypothesis does not
 erase history. Repository review stall rules can stop earlier and always win.
+Review repairs also follow [the delivery contract](../workflow/delivery.md):
+retain finding IDs and the mission repair-batch counter across checkpoints.
+Record newly discovered findings separately from attempted repairs; do not use
+the raw total-open count as the stall test. Existing failed evidence and
+stricter authorized budgets remain in force.
 Exhaustion blocks that task and creates an actionable escalation, then selects
 other ready tasks. A new budget needs an explicit decision, not a new session.
 

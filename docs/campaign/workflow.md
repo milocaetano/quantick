@@ -70,16 +70,22 @@ it advances while the host can execute. Use a host continuation/wait facility
 only when available and authorized; otherwise checkpoint before the host stops
 and report the precise resume command. Do not promise unattended waking.
 
+[The delivery contract](../workflow/delivery.md) owns finish-first scheduling,
+stage timing, source reconciliation and bounded review repair. Child completion
+returns control here; do not request a user-pasted goal per mission. Keep any
+existing host goal at campaign scope and do not replace it with a child goal.
+
 For each cycle:
 
 1. Reconcile the newest committed checkpoint against live issues, PR heads,
    merged commits, required checks, reviews, human evidence and authorizations.
    Recompute dependencies; board columns are a projection, never proof.
-2. Select a ready autonomous task by recorded priority, then stable task key.
+2. Finish ready merges and bounded review repairs first, then select a ready
+   autonomous implementation by recorded priority and stable task key.
    An unresolved human task blocks only its dependents. If no implementation
    is ready, monitor active CI/reviews or perform other authorized reconciliation.
 3. Claim the task and persist the intended action before mutating. `new-task`
-   owns duplicate checks and the isolated worktree from updated main. `mission`
+   owns duplicate checks and the isolated worktree from the integration base. `mission`
    owns the task ledger and gates: one child mission per implementation/PR,
    never one giant mission/worktree for the campaign. Reuse an existing branch
    only after checking its owner and cleanliness; never reset another writer.
@@ -110,13 +116,10 @@ authority, data, coupling and rollback cost, not characters or changed lines.
 | Bounded runtime behavior | Relevant crate checks/tests and error-path regression, applicable review gates | Full required workspace CI |
 | Architecture, concurrency, persistence, financial behavior, authority, security, migrations, public contracts, hot paths or cross-crate behavior | Stronger affected-path verification: boundary/error tests, deterministic fixtures, compatibility or recovery tests, measurements at the actual execution rate; full local checks where project rules require them | Full required CI plus explicit integration checkpoint |
 
-This table does not silently override `CLAUDE.md`, hooks or the task skills.
-Until #324 changes their full-local requirement, the docs-only path requires an
-explicit applicable user instruction (record its source), as in the coordinator
-implementation request. Without one, follow current rules. Never fabricate
-verification markers or label CI-only checks as locally run. New scripts are
-code even when shipped beside a skill. A line ceiling remains a review signal
-and any existing hook still applies; do not bypass it.
+This table uses the delivery contract's local classification and evidence-reuse
+rules. New scripts are code even beside a skill; changed workflow instructions
+need behavioral proof. Preserve exact-diff markers and final-head CI. #324 owns
+the remaining general tier/line-limit redesign; current hook gates still apply.
 
 Reassess integration after each merged dependency group, before a high-risk
 dependent, and at campaign close. Run extra local integration checks when
@@ -131,6 +134,8 @@ because the prior response was lost. On a blocking permission error, prepare
 all independent artifacts, save exact pending operations and eventually give
 one concrete instruction for the missing permission, without printing secrets.
 
+Before declaring no work remains, reassess the objective and create/reprioritize
+verified remaining gaps; an exhausted initial backlog is not completion.
 Stop only at verified objective completion, no remaining unblocked work, an
 indispensable human decision, or unsafe continuation. Before stopping, publish
 a checkpoint with reason, evidence and next action. A host interruption also
