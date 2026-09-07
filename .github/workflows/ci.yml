@@ -130,11 +130,10 @@ jobs:
   # Deliberately narrow. `cargo build --workspace` proves the whole tree still
   # compiles for `x86_64-pc-windows-msvc` — which is where a path separator, a
   # `std::os::unix` import or a Windows-only linker error shows up — and the
-  # tests are the two crates that are pure computation: `engine` is the
-  # determinism the whole product rests on, `guards` is the ratchets. Neither
-  # opens a window, a socket or a MetaTrader terminal, so this job cannot flake
-  # the way the app's tests can on a runner with no GPU. The Linux job above
-  # stays the one that runs everything.
+  # engine and guards tests prove determinism and the ratchets. The separate
+  # control-local step executes real Windows owner/ACL/junction fixtures plus
+  # loopback transport tests; Linux cannot execute these Windows branches.
+  # None needs a GPU, window or MetaTrader terminal. Linux still tests everything.
   windows:
     runs-on: windows-latest
     steps:
@@ -151,3 +150,6 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test -p quantick-engine -p quantick-guards
+      - name: Test Windows descriptor authority and local transport
+        # Keep test names and token-free fixture prerequisites in exact-head logs.
+        run: cargo test -p quantick-control-local -- --nocapture
