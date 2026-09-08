@@ -62,6 +62,12 @@ IDs from draft v1 are retained. Compound asks have been split into appended IDs,
 - R36: Retain coordinator-owned campaign claim/readback and evidence state.
 - R37: Use no personal store content, live market/broker, paid/deployed services, purchased credits, global DPI mutation or fabricated screenshot metadata.
 - R38: Keep any optional overlay separate; the original hashed image remains primary.
+- R39: Read the actual issue, AGENTS/CLAUDE, canonical mission/new-task/ship workflows and Codex mappings; read new-extension when relevant.
+- R40: Write all artifacts in English.
+- R41: Do not request routine permissions or create subgoals.
+- R42: Coordinate agent-slot needs with the coordinator for any optional independent, bounded, useful delegation.
+- R43: Keep guidance concise and do not invent unnecessary obligations.
+- R44: Read the named Q7-preparation.md and treat authoritative source above its hypotheses, including the coordinator's final refinement.
 
 Fresh independent source-first delivery and PR opening are closing steps C1/C2, not prerequisites to their own verdict.
 
@@ -128,6 +134,11 @@ Owned edits only: crates/app/src/app/tests/screenshot_evidence_tests.rs; ONE mod
 - [ ] **A36**: Scope verification establishes no personal store content/live market/broker/paid/deployed service/credits/global DPI mutation or fabricated metadata usage. Evidence: E/scope-audit.md, isolation report and actual command records. (R37)
 - [ ] **A37**: Any optional overlay/crop is distinctly labeled and hashed separately; inspection references original screenshot.png. Evidence: E/capture/original-image-inspection.md and artifact index, or explicit no-overlay entry. (R38)
 - [ ] **A38**: Ordered fmt-check/clippy/build/workspace-test pass before each commit, and guards pass after each edit batch, with current-base reconciliation when needed. Evidence: E/logs/validation-*.json and E/logs/guards-*.json. (R9)
+- [ ] **A39**: The actual issue, AGENTS/CLAUDE, canonical mission/new-task/ship workflows and Codex mappings are read; new-extension is read when relevant. Evidence: the named source documents, existing pre-code workflow communication and mission/arming records. (R39)
+- [ ] **A40**: Work proceeds under existing authorization without routine permission requests or new subgoals. Evidence: existing D1, campaign authority and actual Q7 coordination records. (R41)
+- [ ] **A41**: Optional implementer delegation, if used, coordinates agent-slot needs with the coordinator and stays independent, bounded and useful. Evidence: actual coordinator delegation/slot records for any such delegation. No delegation is required. (R42)
+- [ ] **A42**: Authored guidance is concise and adds no unnecessary obligations beyond the actual source and applicable canonical rules. Evidence: the mission, proof recipe and their existing independent completeness/review artifacts. (R43)
+- [ ] **A43**: The named Q7 preparation is read and reconciled against authoritative source and the coordinator's final refinement; source controls when a hypothesis differs. Evidence: the original preparation, pre-code port0 correction, source-reconciled recipe and independent recipe check. (R44)
 
 ## Injected gates
 
@@ -187,6 +198,19 @@ Source IDs refer to independently extracted E/precode-source-asks.md SHA256566e0
 | S68 | R36 | A35 |
 
 Implementation source map: R1-R3/R11-R13 use control/gateway/screenshot.rs publish_screenshot_for_test -> accept_screenshot, gateway begin_frame, control/evidence.rs encode_screenshot/region_of, control/scene.rs pane_bounds/rect_bounds, app/tests/mod.rs socket helpers. R12/R16 use existing control_plane_tests.rs evidence tests and evidence coverage. R4/R7/R14 use main.rs spawn_live, feed/config.rs port0 validation, feed/metatrader.rs bridge_autostart, app/launch_hooks.rs, store_home.rs and paper_home.rs. R8/R16/R18 use committed evidence schemas as format reference, with independent verifier arithmetic.
+
+### Additional source mappings
+
+These source IDs refer to the separate fresh135-item extraction in E/../Q7-review-d4a7d95a62b8/completeness.json. The historical68-ask map above remains unchanged. Existing objective evidence paths and their boundaries are recorded in E/ledger-correction-evidence-crosswalk.json.
+
+| Fresh source item | Appended R | Outcome |
+| --- | --- | --- |
+| S089 prescribed orientation | R39 | A39 |
+| S091 English artifacts | R40 | G1 (existing) |
+| S092 autonomy | R41 | A40 |
+| S094 optional delegation slots | R42 | A41 (conditional) |
+| S103 concise guidance/no invented obligations | R43 | A42 |
+| S108 named preparation/source authority | R44 | A43 |
 
 ## Closing steps
 
