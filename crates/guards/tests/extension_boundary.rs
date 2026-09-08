@@ -160,6 +160,45 @@ fn deposits_below_file_ceiling_and_trait_or_qualified_growth_fail() {
 }
 
 #[test]
+fn const_expression_blocks_cannot_hide_root_deposits() {
+    // Both compact and rustfmt-shaped valid Rust forms must charge the
+    // explicit implementation. The literal cap remains four root lines.
+    for (suffix, expected) in [
+        (
+            "const _: () = ({ impl QuantickApp { pub fn deposited(&mut self) { self.window += 1; } } });\n",
+            "QuantickApp: 5",
+        ),
+        (
+            "const _: [(); { impl QuantickApp { pub fn deposited(&mut self) { self.window += 1; } } 0 }] = [];\n",
+            "QuantickApp: 5",
+        ),
+        (
+            "const _: () = ({\n    impl QuantickApp {\n        pub fn deposited(&mut self) {\n            self.window += 1;\n        }\n    }\n});\n",
+            "QuantickApp: 9",
+        ),
+        (
+            "const _: [(); {\n    impl QuantickApp {\n        pub fn deposited(&mut self) {\n            self.window += 1;\n        }\n    }\n    0\n}] = [];\n",
+            "QuantickApp: 9",
+        ),
+    ] {
+        assert_rejected(&format!("{SOURCE}{suffix}"), expected);
+    }
+    let root = fixture();
+    fs::write(
+        root.join("crates/app/src/app.rs"),
+        format!("{SOURCE}const _: () = ({{}});\nconst _: [(); {{ 0 }}] = [];\nfn register(value: impl Into<String>, callback: fn(&QuantickApp)) {{}}\n"),
+    )
+    .unwrap();
+    assert!(findings(&root).is_empty());
+    let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env("QUANTICK_GUARDS_ROOT", root.path())
+        .args(["--file", "crates/app/src/app.rs"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
 fn moving_a_root_impl_preserves_union_and_new_sibling_deposits_fail() {
     let root = fixture();
     let existing = "impl QuantickApp {\n    fn existing(&self) {}\n}\n";

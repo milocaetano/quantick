@@ -188,9 +188,13 @@ pub(super) fn scan(source: &str) -> Result<FileScan, String> {
         }
         let type_position = token.text == "impl"
             && (at.checked_sub(1).is_some_and(|i| tokens[i].text == "->")
-                || tokens[..at].iter().any(|t| {
-                    matches!(t.text.as_str(), "(" | "[") && t.pair.is_some_and(|end| end > at)
-                }));
+                || tokens[..at]
+                    .iter()
+                    .rev()
+                    // A nested block can contain real items even inside a
+                    // parenthesized expression or an array's const length.
+                    .find(|t| t.pair.is_some_and(|end| end > at))
+                    .is_some_and(|t| matches!(t.text.as_str(), "(" | "[")));
         if token.text == "impl" && !type_position {
             let mut open = at + 1;
             while open < tokens.len() && !matches!(tokens[open].text.as_str(), "{" | ";" | "}") {

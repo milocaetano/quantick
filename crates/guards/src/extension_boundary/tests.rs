@@ -35,6 +35,34 @@ fn parameter_impl_trait_is_not_a_root_implementation_item() {
 }
 
 #[test]
+fn nested_const_blocks_count_explicit_root_items() {
+    for (source, expected) in [
+        (
+            "const _: () = ({ impl QuantickApp { fn deposited(&self) {} } });",
+            1,
+        ),
+        (
+            "const _: [(); { impl QuantickApp { fn deposited(&self) {} } 0 }] = [];",
+            1,
+        ),
+        (
+            "const _: () = ({\n    impl QuantickApp {\n        fn deposited(&self) {}\n    }\n});",
+            3,
+        ),
+        (
+            "const _: [(); {\n    impl QuantickApp {\n        fn deposited(&self) {}\n    }\n    0\n}] = [];",
+            3,
+        ),
+    ] {
+        let scanned = scan::scan(source).unwrap();
+        assert_eq!(scanned.lines["QuantickApp"].len(), expected, "{source}");
+    }
+    // An item nested in a const block can itself take an impl-Trait parameter.
+    let source = "const _: () = ({ impl QuantickApp { fn register(title: impl Into<String>, project: fn(&QuantickApp) -> T) {} } });";
+    assert_eq!(scan::scan(source).unwrap().lines["QuantickApp"].len(), 1);
+}
+
+#[test]
 fn lexical_lifetimes_characters_and_nested_type_delimiters_are_supported() {
     let source = "pub(super) struct IndicatorSlots<'a> { pub values: &'a mut Vec<(usize, Option<&'a str>)>, }\n";
     let scan = scan::scan(source).unwrap();
