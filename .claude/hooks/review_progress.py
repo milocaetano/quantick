@@ -47,11 +47,11 @@ def validate(record, previous=None):
     require(grant is None or isinstance(grant, str) and grant.strip(),
             "Invalid authorization evidence.")
     limits = record["limits"]
-    require(isinstance(limits, dict) and set(limits) == {"batches", "attempts"}
+    require(isinstance(limits, dict) and set(limits) in ({"batches", "attempts"}, {"batches", "attempts", "stalls"})
             and all(integer(n) and n > 0 for n in limits.values()),
             "Invalid finite limits.")
-    require(all(n <= 3 for n in limits.values()) or grant,
-            "Limits above three require explicit authorization evidence.")
+    require(all(n <= (2 if key == "stalls" else 3) for key, n in limits.items()) or grant,
+            "Limits above defaults require explicit authorization evidence.")
     findings = record["findings"]
     require(isinstance(findings, dict), "Findings must retain their stable IDs.")
     for key, finding in findings.items():
@@ -82,7 +82,8 @@ def validate(record, previous=None):
     require(record["stalled_batches"] == expected_stalls
             or record["stalled_batches"] == 0 and newly_closed,
             "Reserve each batch in the stall count; reset only with a proven closure.")
-    if any(limits[key] > previous["limits"][key] for key in limits):
+    if any(limits.get(key, 2) > previous["limits"].get(key, 2)
+           for key in ("batches", "attempts", "stalls")):
         require(grant and grant != previous["authorization"],
                 "Increasing a limit requires new authorization evidence.")
 
@@ -144,7 +145,7 @@ def check_repair(record, finding_ids):
     require(record is not None, "No durable history; establish observed counts first.")
     require(finding_ids, "Name the stable finding IDs for this repair batch.")
     require(record["batches"] < record["limits"]["batches"], "Repair batch limit reached.")
-    require(record["stalled_batches"] < 2, "Two batches without closure require escalation.")
+    require(record["stalled_batches"] < record["limits"].get("stalls", 2), "No-progress allowance exhausted; explicit authorization is required.")
     for key in finding_ids:
         finding = record["findings"].get(key)
         require(finding is not None, "Record the finding before dispatching repair.")

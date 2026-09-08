@@ -25,25 +25,11 @@ Two fresh, read-only agents received the repository instructions and
 responses are retained in [cases 1-6](evidence/exercises-a.md) and
 [cases 7-11](evidence/exercises-b.md). They did not execute or merge live PRs.
 
-| Cases | Observed decision |
-| --- | --- |
-| 1, #339 shape | Close the old finding, preserve counters and repair the new evidence links; no false raw-count stall. Reuse requires proof, independent follow-up and final-head CI. |
-| 2, #341 shape | Consolidate repeated gates, repair missing links, and fix the actual red runtime CI with applicable full verification. |
-| 3 | An omitted CSV outcome remains a real missing ask despite a reconciled map. |
-| 4 | Complete evidence-only proof permits targeted local checks; pending CI still blocks readiness. |
-| 5-6 | Build-consumed Markdown, a test helper or changed lockfile requires runtime verification; stale markers do not pass. |
-| 7 | A changed base invalidates review/reuse; missing raw output must be recovered or verification repeated. |
-| 8 | Renaming findings does not reset counters; stalled or exhausted batches escalate, while an all-closed final batch finishes. |
-| 9 | Finish authorized green campaign merges and bounded repairs before new work; preserve concurrency, build-host ownership and user-only main merge. |
-| 10 | Operational skill edits require hook tests and independent exercises; user-approved scope deferral requires the applicable full review. |
-| 11 | An existing campaign first adopts a merged workflow through its reviewed synchronization path; grants, failures and counters survive. |
-
-The exercises exposed contradictory draft-publication and readiness wording in
-the old task skills. Follow-ups confirmed the operative ordering repair and
-identified two residual closing-step sentences. Those sentences now describe
-readiness as completion and permit already-completed draft publication. Case 1
-was clarified to say the worker had reported to its coordinator; that removes
-an ambiguity about whether a required authority gate had happened.
+The retained responses reject frozen-map omissions (case 3), stale/executable
+input reuse (4-7), counter resets (8), unauthorized merges (9), unreviewed scope
+changes (10) and premature adoption (11). Cases 1-2 distinguish ledger repair
+from genuine CI failure. They exposed draft/readiness wording contradictions,
+which the follow-up repaired; case 1 also clarified prior coordinator reporting.
 
 ## Verification and limits
 

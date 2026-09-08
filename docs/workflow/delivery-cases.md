@@ -85,3 +85,10 @@ Do not run commands, edit files, publish or merge while evaluating these cases.
     session resumes, then finds another writer's conflicting intent for the
     third operation key. Decide what to read, what to publish, whether to retry,
     and when a full checkpoint is due. A task then grows past the byte bound.
+
+14. **Standing process delegation.** The user explicitly delegates finite retry
+    renewals and retrospective process exceptions, reserving main merge. A child
+    has an exhausted budget, a genuine edit-before-mission history violation and
+    a currently failing runtime test. A renewal decision is recorded under the
+    standing grant. Decide what can proceed without another user question,
+    what must remain documented, and which delivery gates still block merging.

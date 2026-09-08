@@ -189,6 +189,9 @@ AGENTS.md 13179
 # files contribute their full measured bytes to the budget as usual.
 docs/campaign/state.md 14602
 docs/campaign/workflow.md 10297
-docs/workflow/delivery.md 10916
+# Authorized continuation: standing process delegation and finite stall
+# allowances add 445 bytes. Paid by condensing duplicated initial validation
+# commentary; its original evaluator responses remain intact. Budget unchanged.
+docs/workflow/delivery.md 11361
 
 !budget 295668

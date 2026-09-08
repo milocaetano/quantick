@@ -58,6 +58,31 @@ class ProgressTests(unittest.TestCase):
         self.mock.start()
         self.addCleanup(self.mock.stop)
 
+    def test_authorized_stall_extension_resumes_without_erasing_history(self):
+        old = initial()
+        old.update(batches=2, stalled_batches=2)
+        old["findings"]["F1"]["attempts"] = 2
+        old["evidence"] = ["Observed two unsuccessful repair batches."]
+        self.remote.seed(old)
+        proposed = copy.deepcopy(old)
+        proposed.update(revision=2, authorization="User decision D2: two further attempts.")
+        proposed["limits"] = {"batches": 4, "attempts": 4, "stalls": 4}
+        denied = copy.deepcopy(proposed)
+        denied["authorization"] = None
+        with self.assertRaises(ValueError):
+            progress.validate(denied, old)
+        progress.record_checkpoint("comments", proposed)
+        resumed = progress.history("comments")
+        self.assertEqual(resumed["stalled_batches"], 2)
+        self.assertEqual(resumed["findings"]["F1"]["attempts"], 2)
+        progress.check_repair(resumed, ["F1"])
+        exhausted = copy.deepcopy(resumed)
+        exhausted.update(revision=3, batches=4, stalled_batches=4)
+        exhausted["findings"]["F1"]["attempts"] = 4
+        progress.record_checkpoint("comments", exhausted)
+        with self.assertRaises(ValueError):
+            progress.check_repair(progress.history("comments"), ["F1"])
+
     def test_restart_reads_persisted_history_and_identical_retry_does_not_post(self):
         record = initial()
         progress.record_checkpoint("comments", record)
@@ -120,7 +145,7 @@ class ProgressTests(unittest.TestCase):
             record.update(revision=count + 1, batches=count, stalled_batches=count)
             record["findings"]["F1"]["attempts"] = count
             progress.record_checkpoint("comments", record)
-        with self.assertRaisesRegex(ValueError, "Two batches"):
+        with self.assertRaisesRegex(ValueError, "allowance exhausted"):
             progress.check_repair(progress.history("comments"), ["F1"])
         record = copy.deepcopy(record)
         record.update(revision=4, stage="awaiting_human")

@@ -18,7 +18,7 @@ Issue: https://github.com/milocaetano/quantick/issues/344
 
 - D1: User authorizes changing the workflow and preparing the PR, not main merge.
 - S1: Related #324 remains open for the broader tier redesign; this issue is its bounded throughput subset.
-- S2: Work uses an isolated main-based worktree; running campaign branches and grants are not changed.
+- S2: This PR uses an isolated main-based worktree. Later authorized campaign recovery is a separate task, without adopting this unmerged proposal.
 - S3: Canonical instructions govern both clients; existing marker algorithms and hook boundaries remain unchanged.
 
 ## Acceptance criteria
@@ -40,7 +40,7 @@ Issue: https://github.com/milocaetano/quantick/issues/344
 - [x] G1: English, context/language/encoding guards and diff hygiene pass.
 - [x] G2: Required local checks, skill validation and hook regression suite pass; record exactly which checks ran or were reused. Runtime rate: rare agent workflow only; no trading runtime changes.
 - C1: Archive this mission before final independent architecture and delivery reviews; publish draft PR, resolve AI findings, confirm exact-head CI, mark ready, report URL.
-- C2: No merge to main, no active campaign mutation or override. Preserve existing work and grants.
+- C2: No merge to main or protection override. Preserve existing work and grants; separately authorized campaign recovery retains its own ownership and evidence.
 - UI, trading runtime, dependency and market performance benchmarks: not applicable.
   Review follow-up adds repository guards and workflow tooling; full local checks apply.
 
@@ -57,7 +57,8 @@ Attributed follow-up requests (Portuguese):
 R7 source: the ten review threads on PR #345, including comments 3957193898,
 3957196491 and 3957199204. Existing Claude repairs at 3076823 and 8bc7de2 are
 retained. Their two repair commits precede this follow-up batch; no budget reset
-or acceptance of a historical process gap is authorized by the user's request.
+or acceptance of a historical process gap was authorized by that initial request;
+the later standing grant is retained below.
 
 Accepted preceding proposal (scope reference): stabilize requirements before implementation; track progress by finding; proportionate documentary validation; prioritize concluding reviewed PRs; regress #339/#341 without allowing incomplete delivery; isolated PR before applying rules to the campaign.
 
@@ -71,3 +72,19 @@ PR publication, current reviews, full final-head CI and readiness separately.
 Those closing steps are pending at archival and are recorded on the PR.
 
 Review follow-up evidence: `docs/workflow/evidence/review-repairs.md`.
+
+## Authorized continuation
+
+Attributed user replies in the continuing session (Portuguese):
+> pod eaplicar
+> mas preicsamo resolver o problema par anao travar a campnaha reportado pela outa sessao
+> tenha mais autonomia.. dizem que vc eh AGI
+> Eu soh quero reolver o problema
+> resolva tudo e soh peca qndo pra eumergear
+
+The user approved the fourth repair batch, then delegated further process
+resolution without repeated permission requests. Record bounded renewals and
+retrospective process exceptions under this standing grant, keeping counts and
+history. Product requirements, current reviews/tests, score criteria, financial
+rules and exclusively human main merge remain intact. R7/A7 includes preventing
+repeated escalation despite a recorded standing authorization.

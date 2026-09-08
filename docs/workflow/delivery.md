@@ -74,8 +74,12 @@ none of the targeted findings, or a limit is exhausted with findings open,
 checkpoint that task and escalate with the concrete patch/evidence. New IDs do
 not reset the mission budget. If the last allowed batch closes everything,
 finish delivery. Scope, authority or safety decisions escalate immediately.
-No open required finding is waived by progress or budget exhaustion; only the
-user can approve a deferral. Independent campaign tasks may continue.
+Progress or exhaustion never waives a finding. Use explicit user decisions or
+standing delegation for bounded retry renewals and retrospective process
+exceptions; record the grant, decision, evidence and preserved counters instead
+of asking again. Without that authority, escalate. A delegated exception cannot
+waive current tests/reviews, product requirements or score criteria, fabricate
+history, or grant main merge. Independent campaign tasks may continue.
 
 ### Durable review record
 
@@ -84,7 +88,8 @@ append-only `quantick-review-progress:v1` records on the PR. A missing record is
 history, not zero attempts. One coordinator writes with `progress-record <pr>`
 and a JSON body on stdin; it supplies `schema: 1`, `mission`, `revision`, `head`,
 `stage`, cumulative `batches`, `stalled_batches`, `limits`, `findings`, `evidence`
-and `authorization`.
+and `authorization`. Optional `limits.stalls` defaults to two; an authorized
+finite increase permits resumption without resetting the accumulated streak.
 Each finding maps its stable ID (the review thread ID when available) to
 `attempts`, `disposition` and evidence URLs. Initial adoption records observed
 prior counts with source evidence; never guess away missing history.
@@ -99,8 +104,8 @@ conflicting revisions, lost IDs and decreasing counters. Retry a lost write
 using the identical record; readback reconciles it without another increment.
 Store stage timestamps and the input-bound validation/reuse report as linked
 artifacts in `evidence`; campaign checkpoints link this PR record instead of
-reconstructing counts from session memory. Inspect the actual user decision
-behind any authorization URL: stored text cannot grant a larger budget or deferral.
+reconstructing counts from session memory. Inspect the user grant behind each
+authorization URL; delegated renewals link it. A changed URL alone grants nothing.
 
 ## Validation follows changed inputs
 
@@ -164,5 +169,5 @@ user decision remains blocked. Adoption does not grant a deferral or reset work.
 A missing link to an existing historical artifact is repairable traceability.
 A historical action that never happened is not: a later mission record cannot
 prove pre-edit planning. Preserve the observed chronology, recover original
-artifacts when available, and request a specific user decision for an unmet
-historical obligation or exhausted budget. Do not manufacture retrospective proof.
+artifacts when available, and use the recorded process-exception delegation or
+request a decision for unmet historical obligations. Never manufacture proof.

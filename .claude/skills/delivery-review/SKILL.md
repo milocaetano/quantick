@@ -300,19 +300,18 @@ these gaps either — the session does.
   would change the mission's scope, contradict a recorded `D` decision, or
   require a call that belongs to the trader.
 
-**Deferral** is the only way a gap ships, and only the trader grants it. A
-granted deferral is written into the goal file under a `## Deferred` heading —
-the line's ID, what is missing, why, and that the trader approved it — and
-repeated in the PR body. By the time a deferral exists the archive is the file
-to edit, and editing it stales both markers: obtain current verdicts before
+**Deferral** requires user approval or an expressly delegated retrospective
+process exception under the delivery contract. Record a granted deferral in
+the goal file under a `## Deferred` heading —
+the line's ID, what is missing, why, and the applicable grant and decision — and
+repeated in the PR body. Edit the archive; this stales both markers: obtain current verdicts before
 recording them. A deferral changes scope and requires the applicable full
 review, not the traceability-only follow-up path.
 
 **`## Deferred` means granted.** A gap still waiting on an answer goes under
 `## Deferral requested — NOT granted`, which reads correctly at a glance; a
 subtitle correcting the heading is not enough, because the heading is what gets
-skimmed. A deferral the session grants itself is not a deferral; it is the
-failure this skill was built to stop.
+skimmed. Without a user grant or its explicit delegation, no deferral exists.
 
 ## Step 6 — Record the marker
 

@@ -49,3 +49,28 @@ progress tests and 35 campaign cases. The modified delivery-review skill passed
 its bundled validator. Raw outputs, including the two failed runs, accompany
 independent review. Cases 12-13 returned the historical-authority and journal
 recovery decisions preserved above.
+
+
+## Authorized recovery follow-up (batch 4)
+
+The preceding sections describe batch 3. The user subsequently authorized
+batch 4 and delegated continued process resolution. The retained source is in
+the mission archive; the grant is recorded on PR #345 in comments 5584752155
+and 5584841998. This does not adopt an unmerged workflow into the campaign.
+
+Finding 3957560206 exposed a permanent stop after two stalled batches even
+when a finite renewal was expressly authorized. Optional `limits.stalls` now
+defaults to two and permits an authorized finite increase. Existing histories
+remain valid; attempts, batches and stalled history are retained. The new
+offline regression exercises denial without a grant, restart, authorized
+resumption and exhaustion. A changed evidence URL alone is not authority.
+
+The delivery contract now recognizes recorded standing process delegation.
+It preserves current product, review, test, score and main-merge gates.
+The independent case 14 response is retained in `standing-delegation.md`.
+
+Local batch-4 validation passed fmt, clippy, build and the full serial workspace
+test suite. Shared hooks passed 147 checks and 20 Python tests. No application
+test or timing threshold was changed. Raw batch-4 outputs and exact input
+identity accompany the final independent review dossier. Final normal CI at
+the new PR head remains required before readiness.
