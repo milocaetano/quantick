@@ -49,6 +49,7 @@ mod layers_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
+mod screenshot_evidence_tests;
 mod toolrail_tests;
 mod workspaces_tests;
 
