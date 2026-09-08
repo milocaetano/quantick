@@ -46,12 +46,32 @@ pub(super) struct IndicatorSlots<'a> {
 
 /// The adapter has enough information to mirror a human change without the
 /// operation borrowing layout state. Operator overlays have no layout entry.
-pub(super) struct ScriptAttachment {
+pub(super) struct IndicatorAttachment {
     pub target: TabSlot,
     pub layout_entry: Option<SavedKind>,
 }
 
 impl IndicatorSlots<'_> {
+    /// Native ids, including unknown ones, reach the worker without fallback.
+    pub fn attach_native(
+        &mut self,
+        host: &mut impl IndicatorHost,
+        (tab, side): (u64, PaneSide),
+        id: &str,
+    ) -> IndicatorAttachment {
+        let slot = host.add(IndicatorSource::Native {
+            id: id.to_owned(),
+            values: Vec::new(),
+        });
+        let target = TabSlot { tab, side, slot };
+        let kind = SavedKind::native(id);
+        self.slot_kinds.push((target, kind.clone()));
+        IndicatorAttachment {
+            target,
+            layout_entry: Some(kind),
+        }
+    }
+
     pub fn attach_script(
         &mut self,
         host: &mut impl IndicatorHost,
@@ -59,7 +79,7 @@ impl IndicatorSlots<'_> {
         name: String,
         text: String,
         by_operator: bool,
-    ) -> ScriptAttachment {
+    ) -> IndicatorAttachment {
         let slot = host.add(IndicatorSource::Script {
             name: name.clone(),
             text,
@@ -70,7 +90,7 @@ impl IndicatorSlots<'_> {
         if by_operator {
             self.operator_slots.insert(target);
         }
-        ScriptAttachment {
+        IndicatorAttachment {
             target,
             layout_entry: (!by_operator).then_some(kind),
         }
@@ -224,5 +244,75 @@ mod tests {
         slots.remove(None::<&mut FakeHost>, second.target);
         assert_eq!(slots.operator_target(0), Err(()));
         assert_eq!(human_host.added, [(SlotId(0), "script.human".into())]);
+    }
+    #[test]
+    fn independent_native_host_observes_exact_source_and_full_cleanup() {
+        #[derive(Default)]
+        struct NativeHost {
+            sources: Vec<(String, usize)>,
+            removed: Vec<SlotId>,
+        }
+        impl IndicatorHost for NativeHost {
+            fn add(&mut self, source: IndicatorSource) -> SlotId {
+                let IndicatorSource::Native { id, values } = source else {
+                    panic!("native attachment must send a native source");
+                };
+                self.sources.push((id, values.len()));
+                SlotId(41)
+            }
+            fn remove(&mut self, slot: SlotId) {
+                self.removed.push(slot);
+            }
+        }
+        for id in ["native.ema", "native.nonesuch"] {
+            let mut kinds = Vec::new();
+            let mut operators = BTreeSet::new();
+            let mut files = Vec::new();
+            let mut hidden = Vec::new();
+            let mut styles = Vec::new();
+            let mut slots = IndicatorSlots {
+                slot_kinds: &mut kinds,
+                operator_slots: &mut operators,
+                script_files: &mut files,
+                pending_hidden: &mut hidden,
+                pending_styles: &mut styles,
+            };
+            let mut host = NativeHost::default();
+            let attached = slots.attach_native(&mut host, (73, PaneSide::Time(1)), id);
+            let expected = TabSlot {
+                tab: 73,
+                side: PaneSide::Time(1),
+                slot: SlotId(41),
+            };
+            let expected_kind = SavedKind::Native { id: id.to_owned() };
+            assert_eq!(host.sources, [(id.to_owned(), 0)]);
+            assert_eq!(attached.target, expected);
+            assert_eq!(attached.layout_entry, Some(expected_kind.clone()));
+            assert_eq!(*slots.slot_kinds, [(expected, expected_kind)]);
+            assert!(slots.operator_slots.is_empty());
+            assert_eq!(slots.operator_target(41), Err(()));
+            assert!(slots.script_files.is_empty());
+            assert!(slots.pending_hidden.is_empty());
+            assert!(slots.pending_styles.is_empty());
+            let survivor = TabSlot {
+                tab: 74,
+                ..expected
+            };
+            for target in [expected, survivor] {
+                slots.script_files.push((target, 3, SystemTime::UNIX_EPOCH));
+                slots.pending_hidden.push(target);
+                slots
+                    .pending_styles
+                    .push((target, StyleOverride::default()));
+            }
+            slots.remove(Some(&mut host), expected);
+            assert_eq!(host.removed, [SlotId(41)]);
+            assert!(slots.slot_kinds.is_empty());
+            assert!(slots.operator_slots.is_empty());
+            assert_eq!(*slots.script_files, [(survivor, 3, SystemTime::UNIX_EPOCH)]);
+            assert_eq!(*slots.pending_hidden, [survivor]);
+            assert_eq!(slots.pending_styles.len(), 1);
+            assert_eq!(slots.pending_styles[0].0, survivor);
+        }
     }
 }

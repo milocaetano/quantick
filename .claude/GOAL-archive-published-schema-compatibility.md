@@ -51,8 +51,8 @@ Released source: original main `a808b2d87b36d73041027e4d20c053544b454a96`.
 - **R38** — Wait for host release and arm before edits.
 - **R39** — Create GOAL after arming and before implementation; retain full source requests and archive before reviews.
 - **R40** — Keep complete stable R/A/G traceability and explicit closing steps.
-- **R41** — Preserve bounded retry history and never weaken thresholds.
-- **R42** — Leave publication, markers, remote state and serialized campaign merges to the coordinator.
+- **R41** — Preserve bounded retry history, stop and report to the coordinator before retries, and never weaken thresholds.
+- **R42** — Leave publication, markers, remote state and serialized campaign merges to the coordinator: publish a draft PR, then complete independent review gates and CI before the authorized intermediate merge into `campaign/architecture-a`.
 - **R43** — Update and revalidate if the campaign base advances.
 - **R44** — Supply a source-based review dossier and raw logs.
 - **R45** — Read AGENTS/CLAUDE and mission/new-task/ship/campaign instructions before implementation.
@@ -239,7 +239,7 @@ CI and C1/C2 remain expressly owed. This evidence state does not waive any ask.
 ## Closing steps
 
 - **C1** — Independent delivery-review returns PASS against this archived mission and the final branch after architecture/AI findings and CI are discharged.
-- **C2** — Coordinator publishes the PR against `campaign/architecture-a`, records complete evidence and reports its URL. Implementation agent performs no remote writes.
+- **C2** — Coordinator publishes a draft PR against `campaign/architecture-a`, then completes independent review gates and CI before the authorized intermediate merge, records complete evidence and reports its URL. Implementation agent performs no remote writes.
 
 ## Verbatim source requests
 
@@ -280,3 +280,10 @@ OWN: crates/control/tests/ (including reusable test-only support if needed), cra
 START READ-ONLY analysis/atomic source-derived requirements now: Q1 owns build/test host through one unchanged budget-test diagnosis/full retry; WAIT for coordinator release before builds/edits. Then arm cargo build -p quantick-guards + cargo check -p quantick-app --all-targets before first edit; guards after edit batches; full fmt check, workspace clippy/build/test in order before every commit. Save exact commands/merged outputs/exits with explicit UTF8 Python subprocess runner outside repo (PowerShell default logs may UTF16/BOM). Do not invent benchmark needs for test-only code. Preserve signatures/counters (max3 per task/failure), stop/report before retries; no threshold weakening or unsupported baseline claims.
 Allowed local implementation/tests/commit after green only; notify coordinator before commit for journal. NO push/PR/GitHub/checkpoint/marker writes or self-reviews; coordinator publishes draft then independent gates/CI and authorized intermediate merge. If integration branch advances, update preserved owned edits and revalidate before review/merge. No child host goals/prompts. Return full source-based review dossier/raw logs and exact clean head when done.
 ```
+
+
+## Recovery decision, 2026-09-08
+
+The authenticated user's [standing process-resolution instruction](https://github.com/milocaetano/quantick/issues/330#issuecomment-5584842294) authorizes the coordinator to resolve the disclosed Q2 delivery stall without another routine permission prompt. This is a concrete continuation decision, not a claim that the prior two missing ledger facets passed. R41, R42 and C2 now explicitly retain the original source obligations. The original creation-order omission was fixed previously; the two later facets were previously untouched and had no repair attempt. This recovery consumes their first repair attempt, with the existing per-signature maximum of three; all earlier signatures and counts remain in campaign checkpoints.
+
+The child incorporates campaign base `4af299f7489d26631bb49a36674c133709e4a88a` through a history-preserving merge. Its registration conflict keeps both independently added test modules. Required validation, independent architecture/AI/full delivery reviews and exact-head CI remain mandatory. No implementation criterion, schema policy or evidence requirement is deferred. Only `campaign/architecture-a` may receive the reviewed intermediate merge; final main integration remains exclusively human. The original delegated implementer restrictions remain historical scope; the newly assigned coordinator performs publication and integration under D1 and this standing instruction.
