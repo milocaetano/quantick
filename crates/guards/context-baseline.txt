@@ -168,21 +168,27 @@ AGENTS.md 13179
 # -5,330 for the delivery contract, and this one is NOT a saving. Read it as a
 # measurement that got worse.
 #
-# The tracked files really did fall 7,383 bytes -- `ship` -1,951, the two
-# `references/why.md` -4,732 between them, the three skills -740. But the rules
-# that left them did not evaporate: they moved to `docs/workflow/delivery.md`
-# (8,838), `delivery-cases.md` (4,619) and `validation.md` (4,270), and
-# `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, the PR template, `ship`,
-# `arch-review`, `delivery-review` and both campaign documents now delegate
-# binding decisions there. A session that follows any of them loads the
-# contract.
+# The tracked files really did fall 7,058 bytes -- `ship` -1,725, the two
+# `references/why.md` -4,732 between them, `mission`/`arch-review`/
+# `delivery-review` -740, against +99 on `ai-review` and +20 on each root file.
+# But the rules that left them did not evaporate: they moved to
+# `docs/workflow/delivery.md` (8,838), `delivery-cases.md` (4,619) and
+# `validation.md` (4,270), and `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, the
+# PR template, `ship`, `arch-review`, `delivery-review` and both campaign
+# documents now delegate binding decisions there. A session that follows any of
+# them loads the contract.
 #
 # `context.rs` scans `INSTRUCTION_DIRS = [".claude/skills/", ".agents/"]` plus
 # the two root files, so `docs/` is invisible to it -- and `size` counts only
 # `.rs`, so nothing else weighs that tree either. Measured on this branch: a
-# `/ship` invocation reads 6,098 -> 12,985 bytes (+113%), and the whole
-# instruction path for a campaign child mission goes 128,081 -> 134,963
-# (+6,882). This number fell by 5,330 while the session pays 6,882 more.
+# `/ship` invocation reads 6,098 -> 13,211 bytes (+117%), because the skill it
+# loads now sends it to an 8,838-byte contract that no ratchet weighs. This
+# number fell by 5,330 while that invocation pays 7,113 more.
+#
+# All byte figures here are blob bytes, which is what a clean `eol=lf` checkout
+# and CI measure. A Windows working tree that has drifted to CRLF measures the
+# same trees about a kilobyte larger, so read a local `--report` against that
+# unit before concluding this branch is over.
 #
 # That is the dodge the module doc names -- "splitting a tracked file into
 # sub-threshold pieces moves the prose a session loads not at all, and a budget

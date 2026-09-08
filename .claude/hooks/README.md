@@ -205,16 +205,17 @@ not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
 an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
 group, an absolute path.
 
-`ship` step 3 is *not* one of them, and the distinction matters: it says to use
-`gh pr create --body-file -` **with a heredoc**, and that spelling begins the
-segment, so it does reach the gate. Both were measured rather than assumed — an
-earlier draft of this paragraph named `ship` as the pipe example, which would
-have told an auditor that the repo's own standard flow evades the gate.
+`ship` is *not* one of them, and the distinction matters. Its step 3 spells
+`gh pr create --draft --body-file -` **with a heredoc**, and step 6 spells
+`gh pr ready`; both begin their segment, so both reach the matcher. Step 3 is
+then exempted for being a draft, and step 6 is the one that faces the markers.
+That was measured rather than assumed — an earlier draft of this paragraph
+named `ship` as the pipe example, which would have told an auditor that the
+repo's own standard flow evades the gate.
 
-The step number is load-bearing for that reason, so it moves when `ship` does —
-this paragraph is true only while the step it names is the one that opens the
-PR. Renumbering `ship` without it once left this claim pointing at a step that
-had stopped prescribing any spelling at all.
+Both halves are load-bearing, so they move when `ship` does. Renumbering it
+once left this paragraph naming a step that had stopped prescribing any
+spelling, and reporting a draft creation as though it were the gated command.
 
 That is a real gap and it is deliberately left as it was rather than deepened
 here. Closing it by parsing harder was tried, over eight review rounds, and did

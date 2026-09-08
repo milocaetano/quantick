@@ -44,10 +44,10 @@ for the base, review key and authorized merge command; normal tasks use main.
 
 3. **Publish the draft.** Push the owned task branch and create/reuse its draft
    PR with explicit base and linked issue. Follow the PR template; name the
-   mission tier and precisely label local, reused and CI verification. Use
-   `gh pr create --body-file -` with a heredoc, never a pipe: `pr-gate` anchors
-   its match to a segment start, so a piped spelling is invisible to it.
-   A draft is not permission to merge.
+   mission tier and precisely label local, reused and CI verification. Open it
+   with `gh pr create --draft --body-file -` and a heredoc: `--draft` is what
+   `pr-gate` exempts, and a heredoc starts its own segment where the matcher
+   can see it. A draft is not permission to merge.
    Campaign bases require explicit issue closure only after integration proof;
    `Closes #N` does not close an issue on an intermediate campaign merge.
 
@@ -57,8 +57,10 @@ for the base, review key and authorized merge command; normal tasks use main.
    Resolve all required findings; only user-approved deferrals may ship and
    must appear in the PR. After PASS, the skills record `arch-review-ok` and
    `delivery-review-ok` against the current diff.
-   Read the tier from `<worktree-private-git-dir>/mission-tier`, not just prose;
-   the `small` exemption is subject to the existing hook ceiling. Independent
+   Read the tier with `arch-review`'s step 0 command, not from prose; assign
+   `WT` first, because a bare `cd ""` leaves you in the main checkout and reads
+   the shared git dir's file. The `small` exemption is subject to the hook
+   ceiling. Independent
    delta follow-ups may carry forward unaffected evidence under the delivery
    contract; they still issue a verdict for the current review key.
 
