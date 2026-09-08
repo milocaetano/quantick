@@ -15,6 +15,13 @@ import struct
 import zlib
 
 
+# Match crates/control/src/limits.rs::CONTROL_EVIDENCE_MAX_BUNDLE_BYTES
+# (64 MiB divided among eight retained bundles); recovery imports this owner.
+MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
+# Allow a 4096-by-4096 image while bounding decoded RGBA storage to 64 MiB.
+MAX_PNG_PIXELS = 16_777_216
+
+
 class EvidenceError(ValueError):
     """An artifact failed a named integrity or association check."""
 
@@ -75,7 +82,7 @@ def decode_png(data):
             require(kind == b"IHDR" and length == 13, "PNG first IHDR")
             width, height, bits, color, compression, filtering, interlace = struct.unpack(
                 ">IIBBBBB", payload)
-            require(0 < width * height <= 16_777_216, "PNG pixel budget")
+            require(0 < width * height <= MAX_PNG_PIXELS, "PNG pixel budget")
             require((bits, color, compression, filtering, interlace) == (8, 6, 0, 0, 0),
                     "expected production noninterlaced RGBA8 PNG")
         elif kind == b"IHDR":
@@ -171,7 +178,7 @@ def verify_geometry(document, descriptor):
 
 
 def verify(manifest, bundle_bytes, original_png=None):
-    require(len(bundle_bytes) <= 8 * 1024 * 1024, "bundle byte budget")
+    require(len(bundle_bytes) <= MAX_ARTIFACT_BYTES, "bundle byte budget")
     require(digest(bundle_bytes) == manifest["content_digest"], "original bundle digest")
     require(len(bundle_bytes) == unsigned(manifest["encoded_bytes"]), "bundle encoded_bytes")
     chunk_size = unsigned(manifest["chunk_bytes"])

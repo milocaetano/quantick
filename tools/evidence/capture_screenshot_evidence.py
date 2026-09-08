@@ -17,6 +17,14 @@ import threading
 from verify_screenshot_evidence import digest, read_json, require, verify
 
 
+# Allow asynchronous screenshot processing while bounding a stalled adapter.
+MCP_RESPONSE_TIMEOUT_SECONDS = 45
+# Give the owned adapter a brief EOF shutdown window before terminating it.
+MCP_SHUTDOWN_TIMEOUT_SECONDS = 5
+# Predeclared raster-edge allowance; visible target identity is checked separately.
+CANVAS_EDGE_TOLERANCE_PX = 3
+
+
 def utc():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -59,7 +67,7 @@ class Mcp:
             return None
         # One bounded wait. Failure is surfaced, never retried automatically.
         try:
-            line = self.lines.get(timeout=45)
+            line = self.lines.get(timeout=MCP_RESPONSE_TIMEOUT_SECONDS)
         except queue.Empty as error:
             raise TimeoutError(f"MCP response timeout: {method}") from error
         require(line is not None, "MCP closed before response")
@@ -84,7 +92,7 @@ class Mcp:
             # Preserve the original capture failure if the adapter already died.
             pass
         try:
-            self.process.wait(timeout=5)
+            self.process.wait(timeout=MCP_SHUTDOWN_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait()
@@ -99,7 +107,7 @@ def capture(args):
     write_json(args.output / "capture-start.json", {
         "started_utc": utc(), "owned_pid": args.pid, "source_sha": args.source_sha,
         "mcp_executable_digest": digest(args.mcp.read_bytes()),
-        "predeclared_canvas_edge_tolerance_px": 3,
+        "predeclared_canvas_edge_tolerance_px": CANVAS_EDGE_TOLERANCE_PX,
         "source_provenance": "Must be corroborated by separate exact-source build/launch receipts."})
     mcp = Mcp(args.mcp, protocol)
     try:

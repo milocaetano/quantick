@@ -14,11 +14,19 @@ from pathlib import Path
 import re
 import urllib.request
 
-from verify_screenshot_evidence import read_json, require, verify
+from verify_screenshot_evidence import MAX_ARTIFACT_BYTES, read_json, require, verify
 
 
+# Q7's public recovery destination is pinned to its source-evidence issue.
 REPOSITORY = "milocaetano/quantick"
+RECOVERY_ISSUE_ID = 337
+# Leave room for metadata and fencing around each ASCII base64 comment.
 BLOCK_BYTES = 36_000
+BASE64_BLOCK_MAX_CHARS = 4 * ((BLOCK_BYTES + 2) // 3)
+# Bound each public comment request without automatic retry bursts.
+HTTP_TIMEOUT_SECONDS = 30
+# Allow the base64 body plus GitHub's JSON metadata without unbounded reads.
+COMMENT_RESPONSE_MAX_BYTES = 128 * 1024
 
 
 def sha(data):
@@ -40,7 +48,7 @@ def prepare(args):
                     "manifest.json": args.capture / "manifest.json", "provenance.json": args.provenance}
     if args.inspection:
         source_files["original-image-inspection.md"] = args.inspection
-    manifest = {"version": 1, "repository": REPOSITORY, "issue": 337,
+    manifest = {"version": 1, "repository": REPOSITORY, "issue": RECOVERY_ISSUE_ID,
                 "source_sha": args.source_sha, "encoding": "gzip+base64", "artifacts": []}
     comments = 0
     for name, path in source_files.items():
@@ -51,7 +59,7 @@ def prepare(args):
         blocks = [compressed[start:start + BLOCK_BYTES] for start in range(0, len(compressed), BLOCK_BYTES)]
         for index, block in enumerate(blocks):
             encoded = base64.b64encode(block).decode("ascii")
-            require(len(encoded) <= 48_000, "comment base64 budget")
+            require(len(encoded) <= BASE64_BLOCK_MAX_CHARS, "comment base64 budget")
             body_name = f"{name}.chunk-{index:04d}.md"
             body = (f"Q7 recoverable original bytes; source `{args.source_sha}`.\n\n"
                     f"Artifact: `{name}`; gzip chunk {index + 1}/{len(blocks)}.\n\n"
@@ -73,7 +81,8 @@ def recover(args):
     manifest_bytes = args.manifest.read_bytes()
     require(sha(manifest_bytes) == args.manifest_sha256, "pinned recovery manifest digest")
     manifest = read_json(manifest_bytes)
-    require(manifest["repository"] == REPOSITORY and manifest["issue"] == 337, "recovery repository/issue")
+    require(manifest["repository"] == REPOSITORY and manifest["issue"] == RECOVERY_ISSUE_ID,
+            "recovery repository/issue")
     require(manifest["version"] == 1 and manifest["encoding"] == "gzip+base64", "recovery format")
     args.output.mkdir(parents=True, exist_ok=False)
     reports, names = [], set()
@@ -90,12 +99,12 @@ def recover(args):
             request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
                                                           "User-Agent": "quantick-evidence-recovery"})
             # One request per chunk; HTTP failures propagate without retry bursts.
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw_response = response.read(128 * 1024 + 1)
-            require(len(raw_response) <= 128 * 1024, "comment response budget")
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                raw_response = response.read(COMMENT_RESPONSE_MAX_BYTES + 1)
+            require(len(raw_response) <= COMMENT_RESPONSE_MAX_BYTES, "comment response budget")
             (args.output / f"comment-{chunk['comment_id']}.json").write_bytes(raw_response)
             comment = read_json(raw_response)
-            require(comment["issue_url"] == f"https://api.github.com/repos/{REPOSITORY}/issues/337",
+            require(comment["issue_url"] == f"https://api.github.com/repos/{REPOSITORY}/issues/{RECOVERY_ISSUE_ID}",
                     "comment issue association")
             blocks = re.findall(r"(?m)^```q7-base64\r?\n([A-Za-z0-9+/=\r\n]+)^```[ \t]*$", comment["body"])
             require(len(blocks) == 1, "exactly one named base64 fence required")
@@ -105,7 +114,7 @@ def recover(args):
             compressed.extend(block)
         require(len(compressed) == artifact["compressed_bytes"]
                 and sha(compressed) == artifact["compressed_sha256"], "compressed artifact bytes/digest")
-        require(artifact["bytes"] <= 8 * 1024 * 1024, "recovered artifact byte budget")
+        require(artifact["bytes"] <= MAX_ARTIFACT_BYTES, "recovered artifact byte budget")
         # The pinned manifest bounds output; do not inflate unbounded input.
         import io
         with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as stream:
