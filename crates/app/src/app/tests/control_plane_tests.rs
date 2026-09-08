@@ -2101,15 +2101,20 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     }
     // A worker-side read is answered without the frame loop and without
     // the stalled client's replies ever being read.
-    assert!(matches!(
-        live.invoke(
+    let outcome = live
+        .invoke(
             crate::control::DESCRIBE_CAPABILITY_ID,
-            serde_json::json!({})
+            serde_json::json!({}),
         )
         .unwrap()
-        .outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+        .outcome;
+    assert!(
+        matches!(
+            outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the live client's worker-side read succeeds: {outcome:?}"
+    );
     // A UI-side read completes while the stalled client's replies sit
     // unread in its socket.
     let request_id = live
