@@ -208,3 +208,44 @@ fn invalid_library_script_retains_mirrored_error_slots_for_repair() {
         );
     }
 }
+
+#[test]
+fn native_toolbar_operations_mirror_two_panes_and_save_once() {
+    for (id, has_error) in [("native.ema", false), ("native.nonesuch", true)] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = split_app(&ctx, 40);
+        let tab = app.active_tab().id;
+        let layout = app.pane_layout(tab, PaneSide::Flow);
+        assert_eq!(layout, app.pane_layout(tab, PaneSide::Time(0)));
+        app.workspace.layouts_mut().take_flush();
+        app.apply_toolbar_action(ToolbarAction::AddNative(id));
+        settle_indicators(&mut app);
+        assert_one_indicator_save(&mut app);
+        assert!(app.indicators.operator_slots.is_empty());
+        let targets = app.indicators.slot_kinds.clone();
+        assert_eq!(targets.len(), 2);
+        for (target, kind) in &targets {
+            assert_eq!(target.tab, tab);
+            assert_eq!(*kind, SavedKind::Native { id: id.into() });
+        }
+        assert_eq!(app.layouts().get(layout).unwrap().indicators.len(), 1);
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            let views = app.active_tab().pane(side).indicators.all();
+            assert_eq!(views.len(), 1);
+            assert_eq!(views[0].error.is_some(), has_error);
+        }
+        let other = targets
+            .iter()
+            .find(|(target, _)| target.side != app.active_tab().focused_side())
+            .unwrap()
+            .0;
+        app.remove_indicator_at(other);
+        settle_indicators(&mut app);
+        assert_one_indicator_save(&mut app);
+        assert!(app.indicators.slot_kinds.is_empty());
+        assert!(app.layouts().get(layout).unwrap().indicators.is_empty());
+        for side in [PaneSide::Flow, PaneSide::Time(0)] {
+            assert!(app.active_tab().pane(side).indicators.all().is_empty());
+        }
+    }
+}

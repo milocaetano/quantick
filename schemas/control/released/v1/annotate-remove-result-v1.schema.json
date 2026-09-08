@@ -1,0 +1,31 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "annotation_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "removed": {
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "annotation_id",
+    "tab_id",
+    "pane_id",
+    "removed"
+  ],
+  "title": "RemoveResult",
+  "type": "object"
+}

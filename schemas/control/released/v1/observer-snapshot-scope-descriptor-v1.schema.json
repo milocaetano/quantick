@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "PermissionId": {
+      "description": "A granular authority or data-read grant.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "id": {
+      "$ref": "#/$defs/SnapshotScopeId"
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "required_permissions": {
+      "items": {
+        "$ref": "#/$defs/PermissionId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema": true,
+    "schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "module_id",
+    "schema_version",
+    "title",
+    "description",
+    "required_permissions",
+    "schema"
+  ],
+  "title": "SnapshotScopeDescriptor",
+  "type": "object"
+}
