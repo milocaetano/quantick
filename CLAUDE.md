@@ -53,7 +53,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 
 ## Keeping the instructions small
 
-The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/` or `.agents/`; goal files are excluded. Its ceilings are in `context-baseline.txt`, using the mechanism shared with `size` in `ratchet.rs`.
+The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/`; goal files and workflow evidence are excluded. Ceilings live in `context-baseline.txt`; `ratchet.rs` owns the mechanism.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
 - **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.

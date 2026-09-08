@@ -24,9 +24,9 @@ Lower tiers reconcile inline. Amend the map when source requirements change;
 never freeze away a real omission. Existing missions can establish this map
 from their retained sources without restarting implementation.
 
-At delivery, read the retained source and compare the map, source changes and
-evidence. Reuse the preflight mapping rather than independently repartitioning
-unchanged sentences into a new checklist each round. A new omission must cite
+At delivery, independently identify distinct outcomes, constraints and gates
+from the retained source before reading the map. Then reconcile them with the
+existing IDs and evidence; do not renumber equivalent asks. A new omission must cite
 the source span and explain the distinct uncovered outcome/constraint or gate;
 a different wording or atomization alone is not a finding.
 
@@ -77,6 +77,31 @@ finish delivery. Scope, authority or safety decisions escalate immediately.
 No open required finding is waived by progress or budget exhaustion; only the
 user can approve a deferral. Independent campaign tasks may continue.
 
+### Durable review record
+
+Use `sh .claude/hooks/ai_review_threads.sh progress-show <pr>` to read the
+append-only `quantick-review-progress:v1` records on the PR. A missing record is unknown
+history, not zero attempts. One coordinator writes with `progress-record <pr>`
+and a JSON body on stdin; it supplies `schema: 1`, `mission`, `revision`, `head`,
+`stage`, cumulative `batches`, `stalled_batches`, `limits`, `findings`, `evidence`
+and `authorization`.
+Each finding maps its stable ID (the review thread ID when available) to
+`attempts`, `disposition` and evidence URLs. Initial adoption records observed
+prior counts with source evidence; never guess away missing history.
+
+Before dispatch, `progress-check <pr> <finding-id>...` must pass; persist the
+incremented batch/target attempt counters and `stalled_batches` before repair.
+After independent review, append dispositions/evidence; only closing a prior
+open finding resets the stall streak. On interruption reconcile the reserved
+batch before resuming it; do not reserve another batch for the same action.
+Ordinary discussion replies do not count as attempts. The reader rejects
+conflicting revisions, lost IDs and decreasing counters. Retry a lost write
+using the identical record; readback reconciles it without another increment.
+Store stage timestamps and the input-bound validation/reuse report as linked
+artifacts in `evidence`; campaign checkpoints link this PR record instead of
+reconstructing counts from session memory. Inspect the actual user decision
+behind any authorization URL: stored text cannot grant a larger budget or deferral.
+
 ## Validation follows changed inputs
 
 Full required CI at the final PR head is mandatory in every path. A missing,
@@ -118,8 +143,9 @@ Never bypass a gate or merge authority to reduce queue length.
 Record stage transitions (implementation, local validation, review, repair,
 CI, ready-to-merge, integrated) with timestamps and head. Summarize queue age,
 repair batches and reasons for revalidation at milestones; separate overlapping
-durations and offline/human waits. Publish checkpoints on meaningful transitions,
-before mutations and necessary lease renewal, not repeated unchanged status.
+durations and offline/human waits. Use the campaign state's compact operation
+journal before mutations and full checkpoints at recovery boundaries; do not
+publish a full snapshot for an unchanged status or every individual mutation.
 After integration reassess the campaign target and schedule remaining verified
 gaps. Exhausting the original backlog below target requires replanning, not a
 claim of completion. Child completion returns control to the coordinator;
@@ -134,3 +160,9 @@ original requests, findings, counters and failed evidence. Reconcile existing
 escalations under the adopted rules; a raw-count false stall may resume only
 within remaining recorded authority and budgets. An exhausted budget or a real
 user decision remains blocked. Adoption does not grant a deferral or reset work.
+
+A missing link to an existing historical artifact is repairable traceability.
+A historical action that never happened is not: a later mission record cannot
+prove pre-edit planning. Preserve the observed chronology, recover original
+artifacts when available, and request a specific user decision for an unmet
+historical obligation or exhausted budget. Do not manufacture retrospective proof.

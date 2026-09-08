@@ -62,7 +62,9 @@
 # recorded as one. The alternative was a `CLAUDE.md` whose architecture list
 # does not contain a workspace crate, which `claude_md_lists_every_crate`
 # fails on and which is the drift this whole tree exists to prevent.
-CLAUDE.md 9527
+# PR #345 review repair (Codex): +24 bytes declares the expanded
+# normative-contract scope and its mission-evidence exclusion.
+CLAUDE.md 9551
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -165,38 +167,28 @@ AGENTS.md 13179
 # The first cut was 1,949; ten independent reviews found none of its six
 # verdicts falsifiable, and the 804 bytes added are the falsifiers.
 #
-# -5,330 for the delivery contract, and this one is NOT a saving. Read it as a
-# measurement that got worse.
+# PR #345 review repair (Codex): re-seed the expanded normative scope.
+# The earlier 230,594 budget excluded docs/campaign/ and docs/workflow/;
+# moving binding rules there had lowered the old scan without saving context.
+# The corrected scope now charges all Markdown in both directories, except
+# docs/workflow/evidence/, whose files are mission records like GOAL archives.
 #
-# The tracked files really did fall 7,058 bytes -- `ship` -1,725, the two
-# `references/why.md` -4,732 between them, `mission`/`arch-review`/
-# `delivery-review` -740, against +99 on `ai-review` and +20 on each root file.
-# But the rules that left them did not evaporate: they moved to
-# `docs/workflow/delivery.md` (8,838), `delivery-cases.md` (4,619) and
-# `validation.md` (4,270), and `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, the
-# PR template, `ship`, `arch-review`, `delivery-review` and both campaign
-# documents now delegate binding decisions there. A session that follows any of
-# them loads the contract.
+# Reconciliation in bytes: 230,594 + 404 = 230,998 for the
+# previous scope at its current ceilings and measured sub-threshold files;
+# + 64,670 newly tracked normative bytes = 295,668. This is accounting
+# for newly visible rules, not a claimed reduction or an unallocated allowance.
+# The small previous-scope delta includes the signed CLAUDE scope clarification
+# above and current skill/reference edits. Threshold (10,000), ceiling slack
+# (1,000), budget headroom (2,000) and downward slack (4,000) are unchanged.
+# Future growth must be paid for across the expanded scope.
 #
-# `context.rs` scans `INSTRUCTION_DIRS = [".claude/skills/", ".agents/"]` plus
-# the two root files, so `docs/` is invisible to it -- and `size` counts only
-# `.rs`, so nothing else weighs that tree either. Measured on this branch: a
-# `/ship` invocation reads 6,098 -> 13,211 bytes (+117%), because the skill it
-# loads now sends it to an 8,838-byte contract that no ratchet weighs. This
-# number fell by 5,330 while that invocation pays 7,113 more.
-#
-# All byte figures here are blob bytes, which is what a clean `eol=lf` checkout
-# and CI measure. A Windows working tree that has drifted to CRLF measures the
-# same trees about a kilobyte larger, so read a local `--report` against that
-# unit before concluding this branch is over.
-#
-# That is the dodge the module doc names -- "splitting a tracked file into
-# sub-threshold pieces moves the prose a session loads not at all, and a budget
-# of ceilings alone would have called it a saving" -- at directory granularity,
-# where the budget's second half cannot reach it. The honest fix is to widen
-# `INSTRUCTION_DIRS` to the contract trees and re-seed this line from what that
-# scan measures; that changes guard behaviour for every branch, so it is its
-# own change with its own review rather than a line smuggled into this one.
-# Until then: a fall in this number is not a lighter session, and it is not
-# headroom to spend. Weight relocated under `docs/` has not been paid for.
-!budget 230594
+# First ceilings for newly tracked contracts above 10,000 bytes. Seeded at
+# their measured LF byte sizes, with no per-file headroom: state owns durable
+# campaign identity and records; workflow owns campaign transitions; delivery
+# owns review source reconciliation and bounded repair. Sub-threshold contract
+# files contribute their full measured bytes to the budget as usual.
+docs/campaign/state.md 14602
+docs/campaign/workflow.md 10297
+docs/workflow/delivery.md 10916
+
+!budget 295668

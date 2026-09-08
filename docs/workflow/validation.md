@@ -1,9 +1,12 @@
-# Workflow throughput validation
+# Initial workflow throughput validation
 
 Issue: [#344](https://github.com/milocaetano/quantick/issues/344).
 Base: `a808b2d87b36d73041027e4d20c053544b454a96`.
-Scope: agent instructions, documentation and a lowered instruction budget;
-no runtime, dependency, executable hook or review-key algorithm changes.
+This report records the initial candidate `db1c178`; subsequent PR-review
+repairs add executable guards and durable review tooling. Final-head local/CI
+results and independent follow-ups are recorded on PR #345. The initial budget
+reduction below was limited to the old scan scope, not a net context saving;
+the follow-up extends accounting to the delegated contract trees.
 
 ## Observed failure and intervention
 

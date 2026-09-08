@@ -16,7 +16,7 @@ never became criteria, and criteria that were never delivered.
 reconciliation, operational gates, traceability-only repairs, delta follow-ups
 and finding-level retry limits. Read it before grading or repeating a review.
 
-The reasoning behind the model split, the reviewer's type and the stall rule
+The reasoning behind the model split, independence and bounded repairs
 is `references/why.md`. Read it when changing a rule, not when following one.
 
 ## What this skill is not
@@ -201,7 +201,8 @@ criteria that never became code. Grade the criteria pass as one table — the
 merge happens before you read it.
 
 **Completeness pass** — source against the reconciled map. Read the original
-request first, then its preflight map and amendments. Without a preflight,
+request first and derive its distinct asks independently, then compare the
+preflight map and amendments. Without a preflight,
 establish that map now; do not restart implementation. Apply the delivery
 contract's distinct-outcome and operational-gate rules. A real uncovered ask
 is **UNLEDGERED**: cite the source span, missing outcome/constraint and whether
@@ -235,7 +236,7 @@ pending. Misclassified closing steps need a map correction, not a product fix.
 is the honest answer when the outcome may well be there and nothing on disk
 says so. Treat it as a failure, and fix it by recording the evidence.
 
-## Anti-rubber-stamp rules
+## Independent evidence rules
 
 A clean review needs evidence, not an invented finding. These rules are binding
 on the subagent and go into its prompt.

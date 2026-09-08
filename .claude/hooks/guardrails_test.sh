@@ -1394,5 +1394,14 @@ else
     failed=$((failed + 1))
 fi
 
+if python3 -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python3;
+elif python -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python;
+else progress_python=python3; fi
+if "$progress_python" "$script_dir/review_progress_test.py"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

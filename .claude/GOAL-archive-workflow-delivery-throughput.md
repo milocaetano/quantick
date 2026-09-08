@@ -11,6 +11,8 @@ Issue: https://github.com/milocaetano/quantick/issues/344
 - R4: Prioritize completing active campaign PRs and expose stage timing.
 - R5: Prove behavior with #339/#341-shaped and negative regression scenarios.
 - R6: Deliver a reviewed PR with green CI; main merge belongs to the user.
+- R7: Resolve PR #345 review comments with enforceable instruction links/accounting,
+  durable review counters, compact recovery journaling and source-first independence.
 
 ## Decisions and assumptions
 
@@ -30,16 +32,32 @@ Issue: https://github.com/milocaetano/quantick/issues/344
 
 ## Gates and closing steps
 
+- [x] A7: Regression tests reject missing instruction targets and unbudgeted
+  contract growth; durable progress survives restart without counter resets;
+  independent exercises verify compact journal recovery and historical evidence
+  limits. Evidence: review follow-up report and final-head checks. (R7)
+
 - [x] G1: English, context/language/encoding guards and diff hygiene pass.
-- [x] G2: Required local checks, skill validation and hook regression suite pass; record exactly which checks ran or were reused. Runtime rate: rare agent workflow only; no Rust runtime changes.
+- [x] G2: Required local checks, skill validation and hook regression suite pass; record exactly which checks ran or were reused. Runtime rate: rare agent workflow only; no trading runtime changes.
 - C1: Archive this mission before final independent architecture and delivery reviews; publish draft PR, resolve AI findings, confirm exact-head CI, mark ready, report URL.
 - C2: No merge to main, no active campaign mutation or override. Preserve existing work and grants.
-- UI, trading runtime, dependency and performance benchmarks: not applicable; this changes agent instructions only.
+- UI, trading runtime, dependency and market performance benchmarks: not applicable.
+  Review follow-up adds repository guards and workflow tooling; full local checks apply.
 
 ## Verbatim user request
 
 Attributed user request (Portuguese):
 > Corrija o workflow para reduzir retrabalho e acelerar a entrega, preservando os gates de qualidade. Prepare o PR; o merge para main é meu.
+
+Attributed follow-up requests (Portuguese):
+> eu fiz um code review com o claude, resolva os comentarios la no pr
+> se tiver tudo certo fala que ta pronto para o merge
+> Veja se esse pr vai ajudar
+
+R7 source: the ten review threads on PR #345, including comments 3957193898,
+3957196491 and 3957199204. Existing Claude repairs at 3076823 and 8bc7de2 are
+retained. Their two repair commits precede this follow-up batch; no budget reset
+or acceptance of a historical process gap is authorized by the user's request.
 
 Accepted preceding proposal (scope reference): stabilize requirements before implementation; track progress by finding; proportionate documentary validation; prioritize concluding reviewed PRs; regress #339/#341 without allowing incomplete delivery; isolated PR before applying rules to the campaign.
 
@@ -51,3 +69,5 @@ The implementation and independent instruction exercises are indexed in
 A6 covers the common entrypoints and main-only-human boundary; C1 tracks actual
 PR publication, current reviews, full final-head CI and readiness separately.
 Those closing steps are pending at archival and are recorded on the PR.
+
+Review follow-up evidence: `docs/workflow/evidence/review-repairs.md`.

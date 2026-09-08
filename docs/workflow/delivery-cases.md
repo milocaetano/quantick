@@ -71,3 +71,17 @@ Do not run commands, edit files, publish or merge while evaluating these cases.
     still uses an old campaign base and has no recorded adoption checkpoint.
     No new permission or reset of counters was granted. Decide how the
     coordinator may apply the new rules without bypassing the old branch gate.
+
+12. **Historical obligations.** Four technically green PRs are held at delivery:
+    one has an existing artifact without a ledger link and exhausted attempts;
+    two cannot locate requested historical evidence; one first recorded its
+    mission after editing. The user authorizes campaign merges but has approved
+    no deferrals or new retry budgets. Decide which corrections are factual,
+    what can be recovered, and what still requires a user decision after adoption.
+
+13. **Compact recovery.** A complete campaign checkpoint precedes three Project
+    field updates. Each update has a pending operation journal record; the first
+    two also have confirmed result records. The third write timed out. A new
+    session resumes, then finds another writer's conflicting intent for the
+    third operation key. Decide what to read, what to publish, whether to retry,
+    and when a full checkpoint is due. A task then grows past the byte bound.

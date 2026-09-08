@@ -80,8 +80,8 @@ For each cycle:
 1. Reconcile the newest committed checkpoint against live issues, PR heads,
    merged commits, required checks, reviews, human evidence and authorizations.
    Recompute dependencies; board columns are a projection, never proof.
-2. Finish ready merges and bounded review repairs first, then select a ready
-   autonomous implementation by recorded priority and stable task key.
+2. Select work under the delivery contract's scheduling order, using recorded
+   priority and stable task keys.
    An unresolved human task blocks only its dependents. If no implementation
    is ready, monitor active CI/reviews or perform other authorized reconciliation.
 3. Claim the task and persist the intended action before mutating. `new-task`
@@ -91,7 +91,7 @@ For each cycle:
    only after checking its owner and cleanliness; never reset another writer.
 4. Implement and validate according to affected behavior. `ship` owns commits,
    PR creation, checks and repairs; `arch-review`, `delivery-review` and
-   `ai-review` retain their exact-diff gates and stall rules. Record the task
+   `ai-review` retain their exact-diff gates and bounded repair rules. Record the task
    issue in every PR. Persist review reports and resolvable findings.
 5. Observe checks at the current PR head. Fix failures within scope and retry
    bounds, refresh invalidated reviews, and watch CI with bounded waits.
@@ -105,21 +105,12 @@ For each cycle:
    without acceptance evidence remains blocked in the campaign; reopen or
    repair only within granted issue-management authority.
 
-## Validation by risk
+## Validation
 
-Record a validation plan on each child before editing. Classify by behavior,
-authority, data, coupling and rollback cost, not characters or changed lines.
-
-| Change | Local proof | Integration proof |
-| --- | --- | --- |
-| Prose/skills only; no executable scripts, config, contracts or hooks | Both client skill validators, relevant links, language/context guards, diff hygiene, realistic workflow exercise | Full required workspace CI at PR head |
-| Bounded runtime behavior | Relevant crate checks/tests and error-path regression, applicable review gates | Full required workspace CI |
-| Architecture, concurrency, persistence, financial behavior, authority, security, migrations, public contracts, hot paths or cross-crate behavior | Stronger affected-path verification: boundary/error tests, deterministic fixtures, compatibility or recovery tests, measurements at the actual execution rate; full local checks where project rules require them | Full required CI plus explicit integration checkpoint |
-
-This table uses the delivery contract's local classification and evidence-reuse
-rules. New scripts are code even beside a skill; changed workflow instructions
-need behavioral proof. Preserve exact-diff markers and final-head CI. #324 owns
-the remaining general tier/line-limit redesign; current hook gates still apply.
+Record each child's validation plan using the delivery contract's single
+classification and evidence-reuse table. `mission` selects the tier from the
+actual task risks; do not inherit the parent campaign's tier automatically.
+#324 owns the broader tier redesign; this change does not lower existing gates.
 
 Reassess integration after each merged dependency group, before a high-risk
 dependent, and at campaign close. Run extra local integration checks when
