@@ -1,0 +1,5 @@
+# Origin 0bd50f9b815a05e2ba8d0c9804324dbb415f6658: QuantickApp 10243; ChartState 429.
+# Separate source union caps; native ownership extraction lowers only QuantickApp.
+!budget 10669
+ChartState 429
+QuantickApp 10240
