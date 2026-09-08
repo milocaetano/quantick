@@ -1,0 +1,92 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "description": "A stable machine-readable error code.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "ModuleRevision": {
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "revision": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "module_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "PreconditionId": {
+      "description": "A stable namespaced capability precondition.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "current_revisions": {
+      "items": {
+        "$ref": "#/$defs/ModuleRevision"
+      },
+      "type": "array"
+    },
+    "details": true,
+    "diagnostic_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "next_steps": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "violated_precondition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PreconditionId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "retryable"
+  ],
+  "title": "ControlError",
+  "type": "object"
+}

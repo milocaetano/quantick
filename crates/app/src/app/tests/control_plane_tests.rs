@@ -2101,15 +2101,20 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     }
     // A worker-side read is answered without the frame loop and without
     // the stalled client's replies ever being read.
-    assert!(matches!(
-        live.invoke(
+    let outcome = live
+        .invoke(
             crate::control::DESCRIBE_CAPABILITY_ID,
-            serde_json::json!({})
+            serde_json::json!({}),
         )
         .unwrap()
-        .outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+        .outcome;
+    assert!(
+        matches!(
+            outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the live client's worker-side read succeeds: {outcome:?}"
+    );
     // A UI-side read completes while the stalled client's replies sit
     // unread in its socket.
     let request_id = live
@@ -4888,4 +4893,108 @@ fn control_idle_dense_replay_benchmark() {
         "CONTROL_IDLE_DENSE_REPLAY {{\"frame_cpu_ms\":{average:.6},\"frame_p99_ms\":{p99:.6},\"frame_worst_ms\":{worst:.6},\"feed_arrival_ms\":{:?},\"trades_per_s\":{trades_per_second:.3},\"frames\":{MEASURED_FRAMES},\"trades_per_frame\":{TRADES_PER_FRAME}}}",
         app.active_tab().trade_arrival_ms()
     );
+}
+
+/// Q3's deterministic CPU frame fixture; desktop HUD evidence is separate.
+/// Conditions and the alternating comparison protocol live in the Q3 dossier.
+#[test]
+#[ignore = "manual serialized dense time/dollar lane comparison"]
+fn incremental_lane_dense_frame_benchmark() {
+    const WARMUP: u64 = 30;
+    const FRAMES: u64 = 600;
+    const PRINTS: u64 = 64;
+    fn btc_print(id: u64) -> quantick_engine::Trade {
+        quantick_engine::Trade {
+            agg_id: id,
+            timestamp_ms: 1_720_000_020_000 + id as i64,
+            price: Decimal::from(60_000) + Decimal::new((id % 20) as i64, 1),
+            quantity: Decimal::new(1, 2),
+            side: if id.is_multiple_of(3) {
+                quantick_engine::Side::Sell
+            } else {
+                quantick_engine::Side::Buy
+            },
+        }
+    }
+    for spec in [
+        BarSpec::Time(60_000),
+        BarSpec::Dollar(Decimal::from(12_000_000)),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands, _book) = test_app();
+        app.active_tab_mut().flow_pane.spec.set(spec.clone());
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(app.active_tab().flow_pane.state.spec(), &spec);
+        assert!(
+            app.active_tab_mut()
+                .tape_mut()
+                .apply_preset("dense tape btc")
+        );
+        app.active_tab_mut().flow_pane.add_indicator(
+            crate::indicator_worker::IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
+        );
+        events
+            .try_send(FeedEvent::Backfilled((1..=8_000).map(btc_print).collect()))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let mut next = 8_001;
+        let mut samples = Vec::with_capacity(FRAMES as usize);
+        let mut measured_traffic = 0;
+        let mut measured_updates = 0;
+        let mut saw_lane = false;
+        let mut started = Instant::now();
+        for frame in 0..WARMUP + FRAMES {
+            if frame == WARMUP {
+                let pane = &app.active_tab().flow_pane;
+                measured_traffic = pane.indicator_worker.lane_traffic_for_test();
+                measured_updates = pane.indicator_worker.partial_updates_for_test();
+                assert!(
+                    pane.frame.lane_divider_x.is_some(),
+                    "fixture has a visible lane"
+                );
+                started = Instant::now();
+            }
+            events
+                .try_send(FeedEvent::LiveBatch(
+                    (next..next + PRINTS).map(btc_print).collect(),
+                ))
+                .unwrap();
+            next += PRINTS;
+            let before = Instant::now();
+            run_frame(&mut app, &ctx);
+            if frame >= WARMUP {
+                saw_lane |= !app.active_tab().flow_pane.indicators.all()[0]
+                    .lane
+                    .is_empty();
+                samples.push(before.elapsed().as_secs_f64() * 1_000.0);
+            }
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        assert!(
+            saw_lane,
+            "CVD produces live lane samples during drawn frames"
+        );
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+        let traffic = pane.indicator_worker.lane_traffic_for_test() - measured_traffic;
+        let updates = pane.indicator_worker.partial_updates_for_test() - measured_updates;
+        let (retained, capacity) = pane.indicator_worker.retained_lane_for_test();
+        samples.sort_by(f64::total_cmp);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let percentile = |p: usize| samples[(samples.len() * p).div_ceil(100) - 1];
+        println!(
+            "Q3_DENSE_FRAME {{\"spec\":\"{}\",\"mean_ms\":{mean:.6},\"p95_ms\":{:.6},\"p99_ms\":{:.6},\"worst_ms\":{:.6},\"trades_per_s\":{:.3},\"transport_entries\":{traffic},\"transport_bytes\":{},\"partial_updates\":{updates},\"retained_entries\":{retained},\"retained_capacity\":{capacity},\"frames\":{FRAMES},\"prints_per_frame\":{PRINTS}}}",
+            spec.summary(),
+            percentile(95),
+            percentile(99),
+            samples.last().unwrap(),
+            FRAMES as f64 * PRINTS as f64 / elapsed,
+            traffic * std::mem::size_of::<quantick_engine::Trade>()
+        );
+    }
 }

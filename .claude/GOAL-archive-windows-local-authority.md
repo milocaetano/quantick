@@ -278,3 +278,18 @@ tracked-file hashes, evidence hashes and exact patch are retained as
 `Q4-validation/ledger-repair1-*`. Guards, ordered validation, commit and fresh
 reviews for the appended tree remain pending the coordinator's host/workflow
 release; none is claimed here.
+
+
+## Deferred
+
+These narrowly scoped retrospective process exceptions implement the authenticated user's [standing process-resolution instruction](https://github.com/milocaetano/quantick/issues/330#issuecomment-5584842294), granted after the Q2-Q5 blockers were disclosed. The user delegated their resolution without repeated approval prompts. The coordinator records the specified historical exceptions under that instruction; it does not claim the original actions were delivered. Original request and criterion IDs, failure signatures, counters and adverse evidence remain retained.
+
+- **A10 / R10 - historical mission-before-source order.** Historical grade remains MISSING: the completed source edit at 2026-09-07 10:10:06.698 UTC preceded mission persistence at 10:11:21.563 UTC. Later documentation cannot repair that chronology.
+- **A25 / R25 - complete historical tool-call absence proof.** Historical grade remains UNPROVEN for omitted nested/rejected/lifecycle events; no prohibited action is inferred. Current authority and tool limits remain mandatory.
+- **A37 / R37 and A38 / R38 - complete historical concurrency and disjoint-worktree census.** Historical grades remain UNPROVEN where full claim/release records are missing. Current recovery is serial and worktrees are explicitly identified.
+- **A40 / R40 - complete cross-agent write coverage during historical CI repair1.** Historical grade remains UNPROVEN; actual saved trees and recorded writes remain evidence within their scope.
+- **A44 / R44 and A46 / R46 - original plan handoff, waiting and idle/slot-release records.** Historical grades remain UNPROVEN where content/lifecycle records are unavailable. No retrospective message or idle timestamp is invented.
+
+All current product requirements, deterministic behavior, public/financial contracts, independent reviews, tests, exact-head CI and score criteria remain unchanged. The linked R obligations are exempt only to the extent discharged by the historical portions listed here; their other current/observable portions still require proof. Missing encrypted/private originals are not reconstructed from authored quotations.
+
+The recovery applies these recorded exceptions and validates the latest campaign integration through one bounded repair attempt for the historical-process signature, preserving the previous attempts. Further actual failures retain their own existing finite per-signature limits; the same unavailable-history search is not repeated. Only reviewed green intermediate PRs may merge into `campaign/architecture-a`. Main merge remains exclusively the user's action.

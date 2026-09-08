@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "EvidenceId": {
+      "description": "A retained evidence-bundle identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "PageCursor": {
+      "properties": {
+        "consistency_mode": {
+          "$ref": "#/$defs/PaginationConsistency"
+        },
+        "consistency_revision": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "high_water_position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_position": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "query_digest": {
+          "$ref": "#/$defs/Sha256Digest"
+        },
+        "resource_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_id": {
+          "$ref": "#/$defs/SnapshotScopeId"
+        }
+      },
+      "required": [
+        "instance_id",
+        "scope_id",
+        "query_digest",
+        "consistency_mode",
+        "consistency_revision",
+        "next_position"
+      ],
+      "type": "object"
+    },
+    "PaginationConsistency": {
+      "enum": [
+        "revision_locked",
+        "append_only",
+        "retained_resource"
+      ],
+      "type": "string"
+    },
+    "ResourceId": {
+      "description": "A retained immutable resource identity.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "Sha256Digest": {
+      "maxLength": 71,
+      "minLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "SnapshotScopeId": {
+      "description": "A namespaced semantic snapshot projection.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`evidence.read`: one bundle by identifier, and where the last page stopped.",
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PageCursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_id": {
+      "$ref": "#/$defs/EvidenceId"
+    }
+  },
+  "required": [
+    "evidence_id"
+  ],
+  "title": "EvidenceReadInput",
+  "type": "object"
+}
