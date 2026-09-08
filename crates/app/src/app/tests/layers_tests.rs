@@ -816,6 +816,19 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = history_app(&ctx);
 
+    // Fixture frames do not await the book worker's tape-price grid.
+    // Settle that input before hiding the footprint and testing propagation.
+    app.active_tab_mut().tape_mut().flush_for_test();
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group(),
+        Decimal::new(1, 1),
+        "the fixture's ten-cent tape grid is published before the scenario"
+    );
+
     // The bucket the flow pane's tape publishes for this market. That is
     // the one answer; the question is whether the other pane reaches it.
     let market_bucket = app

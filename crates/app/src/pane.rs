@@ -29,7 +29,7 @@ use crate::drawings::{
 };
 use crate::indicator_render::{self, PlotX};
 use crate::indicator_worker::{
-    IndicatorCommand, IndicatorSource, IndicatorWorker, MAX_LANE_RUNGS, SlotId,
+    IndicatorCommand, IndicatorSource, IndicatorWorker, LaneTransport, MAX_LANE_RUNGS, SlotId,
 };
 use crate::indicators::{IndicatorViews, MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
@@ -1163,7 +1163,7 @@ pub struct ChartPane {
     // there is no lane: the worker then walks no ladder and the panes draw
     // nothing on the tape, which is the whole cost of this feature on a chart
     // that has no tape to draw on.
-    lane_rungs: usize,
+    lane: LaneTransport,
     // Manual price-axis pan/zoom (auto-fit until the user drags vertically).
     pub price_view: PriceView,
     /// The price band's label, shared into every carve instead of cloned.
@@ -1282,7 +1282,7 @@ impl ChartPane {
             viewport: Viewport::new(),
             frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
-            lane_rungs: 0,
+            lane: LaneTransport::default(),
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
@@ -2007,10 +2007,12 @@ impl ChartPane {
     /// command behind spec switches, prepended history and source resets, so
     /// indicators inherit correct behavior for every rebuild path.
     pub fn send_indicator_rebuild(&mut self) {
+        self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.closed_bars(),
             self.state.partial().cloned(),
         ));
+        self.publish_partial();
     }
 
     /// Every closed bar the pane shows, prefix first — what an indicator is
@@ -2095,6 +2097,7 @@ impl ChartPane {
             self.bump_pagination_revision();
         }
         self.state.ingest_backfill(trades);
+        self.lane.reset();
         self.indicator_worker
             .send(IndicatorCommand::Backfilled(self.closed_bars()));
         let partial = self.partial_command();
@@ -2252,6 +2255,8 @@ impl ChartPane {
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
         self.state = ChartState::new(self.current_spec());
+        self.lane.reset();
+        self.publish_partial();
         self.bump_pagination_revision();
         self.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing
@@ -2307,6 +2312,7 @@ impl ChartPane {
         if bars_after > bars_before
             && let Some(closed) = self.state.bars().last().cloned()
         {
+            self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
             // Queued for the armed instances only while any exist: an idle
@@ -2378,32 +2384,11 @@ impl ChartPane {
         self.indicator_worker.send(command);
     }
 
-    /// The forming bar, the run of trades behind it, and how many rungs the
-    /// lane can show — everything the worker needs to preview the bar and to
-    /// sample it across the tape.
-    ///
-    /// The run is a slice of trades the pane already owns, cloned once per
-    /// drain rather than per print. The rung budget comes from the lane's
-    /// width at the last draw: a chart with no lane asks for none, and the
-    /// worker then walks no ladder at all.
-    fn partial_command(&self) -> IndicatorCommand {
-        let partial = self.state.partial().cloned();
-        // No lane, no run. The clone is proportional to the forming bar's
-        // trade count, and a chart with nowhere to draw the result would pay
-        // it on every drain for nothing.
-        let run = partial
-            .as_ref()
-            .filter(|_| self.lane_rungs > 0)
-            .map_or_else(Vec::new, |bar| {
-                let trades = self.state.trades();
-                let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
-                trades[trades.len().saturating_sub(count)..].to_vec()
-            });
-        IndicatorCommand::PartialUpdated {
-            partial,
-            run,
-            rungs: self.lane_rungs,
-        }
+    /// Publish only the forming run's unsent suffix; the worker retains it.
+    /// Rebuilds and lane enable cold-seed the current run once.
+    fn partial_command(&mut self) -> IndicatorCommand {
+        self.lane
+            .command(self.state.partial().cloned(), self.state.trades())
     }
 
     /// Work a shared mark that lives on the other pane, from this one.
@@ -3667,11 +3652,17 @@ impl ChartPane {
         self.frame.lane_divider_x =
             crate::orderflow_render::lane_divider_x(chart_rect, lane_width_px);
         self.frame.chart_rect = Some(chart_rect);
-        self.lane_rungs = lane_rungs(
+        let rungs = lane_rungs(
             self.frame
                 .lane_divider_x
                 .map_or(0.0, |divider| chart_rect.right() - divider),
         );
+        if self.lane.set_rungs(rungs) {
+            let command = self
+                .lane
+                .command(self.state.partial().cloned(), self.state.trades());
+            self.indicator_worker.send(command);
+        }
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
             egui::pos2(
@@ -5384,3 +5375,7 @@ fn magnet_price_of(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "pane/tests/lane_transport_tests.rs"]
+mod lane_transport_tests;
