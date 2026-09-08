@@ -1,0 +1,323 @@
+{
+  "$defs": {
+    "Availability": {
+      "properties": {
+        "next_step": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AvailabilityReasonId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/AvailabilityStatus"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "AvailabilityReasonId": {
+      "description": "A stable reason why a capability cannot run immediately.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "AvailabilityStatus": {
+      "enum": [
+        "available",
+        "unavailable",
+        "confirmation_required",
+        "permission_denied"
+      ],
+      "type": "string"
+    },
+    "CapabilityExample": {
+      "properties": {
+        "input": true,
+        "output": true,
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "input",
+        "output"
+      ],
+      "type": "object"
+    },
+    "CapabilityId": {
+      "description": "A versioned operation exposed by a module.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "ConfirmationClassId": {
+      "description": "An application-defined confirmation policy class.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "CostClassId": {
+      "description": "A declared cold-path execution cost class.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "EffectId": {
+      "description": "A remote effect classification.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "EffectPersistence": {
+      "enum": [
+        "none",
+        "transient",
+        "durable"
+      ],
+      "type": "string"
+    },
+    "ExpectedCost": {
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/CostClassId"
+        },
+        "max_items": {
+          "format": "uint",
+          "maximum": 2048,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_response_bytes": {
+          "format": "uint",
+          "maximum": 8388608,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "type": "object"
+    },
+    "IdempotencyPolicy": {
+      "enum": [
+        "forbidden",
+        "optional",
+        "required"
+      ],
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "PaginationConsistency": {
+      "enum": [
+        "revision_locked",
+        "append_only",
+        "retained_resource"
+      ],
+      "type": "string"
+    },
+    "PermissionId": {
+      "description": "A granular authority or data-read grant.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "PreconditionDescriptor": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/PreconditionId"
+        }
+      },
+      "required": [
+        "id",
+        "description"
+      ],
+      "type": "object"
+    },
+    "PreconditionId": {
+      "description": "A stable namespaced capability precondition.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "RevisionPolicy": {
+      "enum": [
+        "forbidden",
+        "optional_for_additive",
+        "required"
+      ],
+      "type": "string"
+    },
+    "RiskFlagId": {
+      "description": "A declared side effect or risk dimension.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "availability": {
+      "$ref": "#/$defs/Availability"
+    },
+    "confirmation_class": {
+      "$ref": "#/$defs/ConfirmationClassId"
+    },
+    "description": {
+      "type": "string"
+    },
+    "destructive": {
+      "type": "boolean"
+    },
+    "dry_run_supported": {
+      "type": "boolean"
+    },
+    "effect": {
+      "$ref": "#/$defs/EffectId"
+    },
+    "examples": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CapabilityExample"
+      },
+      "type": "array"
+    },
+    "expected_cost": {
+      "$ref": "#/$defs/ExpectedCost"
+    },
+    "id": {
+      "$ref": "#/$defs/CapabilityId"
+    },
+    "idempotency": {
+      "$ref": "#/$defs/IdempotencyPolicy"
+    },
+    "input_schema": true,
+    "module": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "output_schema": true,
+    "pagination": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PaginationConsistency"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "persistence": {
+      "$ref": "#/$defs/EffectPersistence"
+    },
+    "preconditions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PreconditionDescriptor"
+      },
+      "type": "array"
+    },
+    "read_only": {
+      "type": "boolean"
+    },
+    "required_permissions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PermissionId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "reversible": {
+      "type": "boolean"
+    },
+    "revision_policy": {
+      "$ref": "#/$defs/RevisionPolicy"
+    },
+    "risk_flags": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RiskFlagId"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "risk_reducing": {
+      "type": "boolean"
+    },
+    "stale_input_safety": {
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "version": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "title",
+    "description",
+    "module",
+    "input_schema",
+    "output_schema",
+    "effect",
+    "read_only",
+    "idempotency",
+    "revision_policy",
+    "dry_run_supported",
+    "persistence",
+    "reversible",
+    "destructive",
+    "risk_reducing",
+    "confirmation_class",
+    "availability",
+    "expected_cost"
+  ],
+  "title": "CapabilityDescriptor",
+  "type": "object"
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a notification says. The actor is not part of it: the interface\nstamps who asked, so a client cannot sign a popup as the platform.",
+  "properties": {
+    "message": {
+      "maxLength": 240,
+      "minLength": 1,
+      "type": "string"
+    },
+    "title": {
+      "description": "A popup's heading. Ignored by the toast and the sound.",
+      "maxLength": 80,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "message"
+  ],
+  "title": "NotifyInput",
+  "type": "object"
+}

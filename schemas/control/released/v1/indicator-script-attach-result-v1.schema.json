@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "PaneSideDto": {
+      "enum": [
+        "flow",
+        "time"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an attach returns on success: the slot to detach later, and where it\nwent. A failure is an error with the diagnostics in its details, never a\nsuccess carrying a rendered message.",
+  "properties": {
+    "declared_inputs": {
+      "description": "The inputs the script declared, by name, so a caller can see what it\ncan later bind without reading the source back.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": "string"
+    },
+    "pane_side": {
+      "$ref": "#/$defs/PaneSideDto"
+    },
+    "slot_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "slot_id",
+    "tab_id",
+    "pane_side",
+    "name",
+    "declared_inputs"
+  ],
+  "title": "AttachResult",
+  "type": "object"
+}
