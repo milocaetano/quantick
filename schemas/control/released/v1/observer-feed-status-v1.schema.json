@@ -1,0 +1,271 @@
+{
+  "$defs": {
+    "FeedCapabilitiesSnapshot": {
+      "properties": {
+        "book_capture": {
+          "type": "boolean"
+        },
+        "history_paging": {
+          "type": "boolean"
+        },
+        "traded_volume": {
+          "type": "boolean"
+        },
+        "venue_ohlcv_generation": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "venue_ohlcv_history": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "book_capture",
+        "history_paging",
+        "traded_volume",
+        "venue_ohlcv_history",
+        "venue_ohlcv_generation"
+      ],
+      "type": "object"
+    },
+    "FeedGapSnapshot": {
+      "description": "A hole in the tape, in market time.",
+      "properties": {
+        "duration_ms": {
+          "description": "How long nothing was heard.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        },
+        "from_unix_ms": {
+          "description": "The last print before the silence.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "to_unix_ms": {
+          "description": "The first print after it.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        }
+      },
+      "required": [
+        "from_unix_ms",
+        "to_unix_ms",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    "FeedNoticeSnapshot": {
+      "properties": {
+        "headline_present": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "next_step_present": {
+          "type": "boolean"
+        },
+        "text_availability": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "headline_present",
+        "next_step_present",
+        "text_availability"
+      ],
+      "type": "object"
+    },
+    "FeedStallSnapshot": {
+      "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
+      "properties": {
+        "needs_attention": {
+          "description": "Whether this is unambiguously wrong (a transport that never landed or\ndropped) or merely observed silence, which is also what a closed market\nlooks like. The interface colours the two differently and so should a\nclient deciding whether to say anything to the trader.",
+          "type": "boolean"
+        },
+        "primary_recovery": {
+          "description": "`reconnect` or `reload` — the capability that addresses this stall.\nThe other one is always available too.",
+          "type": "string"
+        },
+        "text_availability": {
+          "description": "Why the words are not in this payload.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "primary_recovery",
+        "needs_attention",
+        "text_availability"
+      ],
+      "type": "object"
+    },
+    "FeedTabSnapshot": {
+      "properties": {
+        "active_feed_id": {
+          "type": "string"
+        },
+        "active_symbol": {
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/FeedCapabilitiesSnapshot"
+        },
+        "connection_state": {
+          "type": "string"
+        },
+        "feed_display_name": {
+          "type": "string"
+        },
+        "history_reach_note": {
+          "description": "What the last *load older* press had to say, while it is still on\nscreen — the exact sentence the trader reads in the loading lane.\n\n`null` is the ordinary state: no press yet, a press that landed what it\npromised, or one whose remark has had its time. Here because the\noutcome of a reach is the whole point of making one, and an operator\ndriving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`\nmust be able to learn it from the same words rather than by diffing\nbar counts.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "history_reach_running": {
+          "default": false,
+          "description": "Whether a run of *load older* requests is in flight right now.\n\n`#[serde(default)]` keeps it out of the schema's `required` list, which\nis what makes adding it here a *compatible* change to a v1 payload: the\ncontrol-plane contract (§5.6 of the development plan) counts a new\nrequired field as breaking, and a v1 payload recorded by an earlier\nbuild must keep deserializing. Absent reads as \"no run\", which is what\na build with no reach campaigns was in fact reporting.",
+          "type": "boolean"
+        },
+        "history_trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "latest_arrival_latency_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "latest_trade_unix_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "live_trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "notice": {
+          "$ref": "#/$defs/FeedNoticeSnapshot"
+        },
+        "opening_slices_remaining": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Slices of the opening session still to arrive, while a source is\nfilling the chart in behind what it first painted.\n\nAbsent when nothing is filling, which is the steady state — so an\noperator can tell \"this chart is still arriving\" from \"this is all\nthere is\", which `history_trade_count` alone cannot say: it rises with\nno denominator."
+        },
+        "provenance": {
+          "$ref": "#/$defs/MarketDataProvenance"
+        },
+        "requested_feed_id": {
+          "type": "string"
+        },
+        "requested_symbol": {
+          "type": "string"
+        },
+        "source_mode": {
+          "type": "string"
+        },
+        "stall": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedStallSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The application's own judgement that this feed has stopped delivering,\nor absent while it is merely slow.\n\nDistinct from `notice`, which is what the *provider* said. A transport\nthat reports itself connected while nothing comes down it produces no\nnotice at all, and this is the only field that reports it — which is\nexactly the case a client watching for a frozen terminal has to see."
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tape_age_ms": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "tape_gaps": {
+          "description": "Stretches of market time this tab's tape does not cover, left by a\nreconnect that kept the timeline. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
+          "items": {
+            "$ref": "#/$defs/FeedGapSnapshot"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tab_id",
+        "requested_feed_id",
+        "requested_symbol",
+        "active_feed_id",
+        "active_symbol",
+        "feed_display_name",
+        "source_mode",
+        "connection_state",
+        "notice",
+        "capabilities",
+        "provenance",
+        "history_trade_count",
+        "live_trade_count"
+      ],
+      "type": "object"
+    },
+    "MarketDataProvenance": {
+      "properties": {
+        "aggressor_side": {
+          "type": "string"
+        },
+        "price": {
+          "type": "string"
+        },
+        "replay": {
+          "type": "boolean"
+        },
+        "volume": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "price",
+        "volume",
+        "aggressor_side",
+        "replay"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "tabs": {
+      "items": {
+        "$ref": "#/$defs/FeedTabSnapshot"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tabs"
+  ],
+  "title": "FeedSnapshot",
+  "type": "object"
+}

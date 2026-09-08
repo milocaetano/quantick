@@ -47,6 +47,7 @@ pub mod blast_radius;
 pub mod context;
 pub mod cycle;
 pub mod encoding;
+pub mod extension_boundary;
 pub mod generated;
 pub mod graph;
 pub mod headless;
@@ -171,6 +172,16 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "extension-boundary",
+        check: extension_boundary::check,
+        check_file: extension_boundary::check_file,
+        ratchet: Some(Ratchet {
+            tighten: extension_boundary::tighten,
+            policy: &extension_boundary::POLICY,
+            measured: extension_boundary::measured,
+        }),
+    },
     Guard {
         name: "size",
         check: size::check,

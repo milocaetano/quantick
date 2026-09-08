@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One compile problem, as data: the stable code, the byte span, the message\nand the notes — never a rendered line an agent has to parse.",
+  "properties": {
+    "code": {
+      "description": "The stable `pine.*` code.",
+      "type": "string"
+    },
+    "column": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "end": {
+      "description": "One past the last byte.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "line": {
+      "description": "1-based line and column of `start`, so a client can point at it\nwithout counting bytes itself.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "message": {
+      "type": "string"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "start": {
+      "description": "First byte of the offending text.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "code",
+    "start",
+    "end",
+    "line",
+    "column",
+    "message",
+    "notes"
+  ],
+  "title": "ScriptDiagnostic",
+  "type": "object"
+}

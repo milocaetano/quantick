@@ -535,8 +535,9 @@ mod tests {
             let codec = BoundedCodec::handshake();
             let request = codec.read_handshake_request(&mut stream).unwrap();
             let frame = codec.encode(FrameRole::Response, &reply).unwrap();
-            stream.write_all(&frame).unwrap();
+            // Observe the request before the reply lets the caller drop its receiver.
             seen_tx.send(request).unwrap();
+            stream.write_all(&frame).unwrap();
             // Hold the socket open until the client is done with it.
             let mut sink = [0u8; 1];
             let _ = stream.read(&mut sink);

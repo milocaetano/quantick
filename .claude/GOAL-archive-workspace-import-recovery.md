@@ -346,3 +346,17 @@ The clean-source follow-up closed all 19 original omissions and identified this
 one explicit mapping obligation, which the first review had accepted implicitly.
 Both readings remain recorded. This is completeness repair 2, with no change to
 the original source, existing IDs, implementation, tests, or prior evidence.
+
+
+## Deferred
+
+These narrowly scoped retrospective process exceptions implement the authenticated user's [standing process-resolution instruction](https://github.com/milocaetano/quantick/issues/330#issuecomment-5584842294), granted after the Q2-Q5 blockers were disclosed. The user delegated their resolution without repeated approval prompts. The coordinator records the specified historical exceptions under that instruction; it does not claim the original actions were delivered. Original request and criterion IDs, failure signatures, counters and adverse evidence remain retained.
+
+- **A28 / R64 - complete historical interaction coverage proving no routine questions.** Historical grade remains UNPROVEN; tool names and receipt times do not prove missing bodies.
+- **A34 / R71 - original preparation-and-host-need report.** Historical grade remains UNPROVEN; the saved plan proves preparation, not transmission.
+- **A37 / R74 - original mission-saved confirmation receipt.** Historical grade remains UNPROVEN; actual mission persistence before the first source edit remains proven separately and is not relabeled as communication evidence.
+- **A43 / R80 - complete historical coordinator/implementer operation coverage only.** Historical grade remains UNPROVEN where retained audits are incomplete. This exception does not grant paid services, relax actual authority/service/retry limits, or waive any observed violation. Current scope and financial/public-contract preservation remain mandatory.
+
+All current product requirements, deterministic behavior, public/financial contracts, independent reviews, tests, exact-head CI and score criteria remain unchanged. The linked R obligations are exempt only to the extent discharged by the historical portions listed here; their other current/observable portions still require proof. Missing encrypted/private originals are not reconstructed from authored quotations.
+
+The recovery applies these recorded exceptions and validates the latest campaign integration through one bounded repair attempt for the historical-process signature, preserving the previous attempts. Further actual failures retain their own existing finite per-signature limits; the same unavailable-history search is not repeated. Only reviewed green intermediate PRs may merge into `campaign/architecture-a`. Main merge remains exclusively the user's action.

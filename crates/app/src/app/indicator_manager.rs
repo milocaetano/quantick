@@ -848,19 +848,16 @@ impl QuantickApp {
     /// one this replaced turned every unrecognised kind into an EMA, so a
     /// mistyped id put an indicator on the chart that nobody had asked for.
     pub(super) fn add_native_indicator(&mut self, id: &str) -> SlotId {
-        let kind = SavedKind::native(id);
-        let source = IndicatorSource::Native {
-            id: id.to_owned(),
-            values: Vec::new(),
-        };
-        let slot = self.focused_pane_mut().add_indicator(source);
-        let owner = self.target_slot(slot);
-        self.indicators.slot_kinds.push((owner, kind.clone()));
-        // Every other pane of every tab gets the same indicator now; the
-        // settled reconciliation binds the layout's copy of it.
-        self.mirror_add(owner, &kind);
+        let tab = self.active_tab();
+        let target = (tab.id, tab.focused_side());
+        let pane = self.tabs[self.active_tab].pane_mut(target.1);
+        let attached = self.indicators.slots_mut().attach_native(pane, target, id);
+        let owner = attached.target;
+        if let Some(kind) = attached.layout_entry {
+            self.mirror_add(owner, &kind);
+        }
         self.note_indicator_edit_at(owner.tab, owner.side);
-        slot
+        owner.slot
     }
 
     /// An indicator edit happened on the focused pane. Edits that know their
