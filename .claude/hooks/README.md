@@ -205,11 +205,16 @@ not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
 an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
 group, an absolute path.
 
-`ship` step 6 is *not* one of them, and the distinction matters: it says to use
+`ship` step 3 is *not* one of them, and the distinction matters: it says to use
 `gh pr create --body-file -` **with a heredoc**, and that spelling begins the
 segment, so it does reach the gate. Both were measured rather than assumed — an
 earlier draft of this paragraph named `ship` as the pipe example, which would
 have told an auditor that the repo's own standard flow evades the gate.
+
+The step number is load-bearing for that reason, so it moves when `ship` does —
+this paragraph is true only while the step it names is the one that opens the
+PR. Renumbering `ship` without it once left this claim pointing at a step that
+had stopped prescribing any spelling at all.
 
 That is a real gap and it is deliberately left as it was rather than deepened
 here. Closing it by parsing harder was tried, over eight review rounds, and did
@@ -313,12 +318,13 @@ being exact about why it is not the skip file that got reverted.
 
   **This is narrower than "the gate cannot teach its own way around itself",
   and that stronger claim would be false.** `CLAUDE.md` is loaded in every
-  session and states the exemption; `ship` step 4 spells out how to read the
-  tier; this very section carries a writable snippet. The mechanism is
-  documented on purpose — one nobody can find is one nobody can audit — so what
-  the denial buys is only that an agent which merely *forgot* the review is not
-  handed the bypass at the moment it is most tempted. The load-bearing
-  protection is the bound below, not the silence.
+  session and states the exemption; `arch-review`'s step 0 carries the runnable
+  command that reads the tier and `ship` step 4 says to read it from that file
+  rather than from prose; this very section carries a writable snippet. The
+  mechanism is documented on purpose — one nobody can find is one nobody can
+  audit — so what the denial buys is only that an agent which merely *forgot*
+  the review is not handed the bypass at the moment it is most tempted. The
+  load-bearing protection is the bound below, not the silence.
 - **The word has to be true.** The exemption lapses once the branch exceeds
   `SMALL_TIER_MAX_CHANGED_LINES` changed lines — insertions plus deletions
   against `origin/main` — and past that the branch pays in full whatever the

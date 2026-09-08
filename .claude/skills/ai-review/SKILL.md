@@ -68,5 +68,7 @@ takes its subject from `... list <pr>` and verifies only those open threads,
 plus a narrow check that the fixes introduced no new FAIL. It may not open a
 new WEAK against code it already passed.** And **a thread closes by the fix -
 `... resolve <thread-id>` - or by an acceptance the trader records on it**; a
-WEAK whose breaking variant you cannot name is a PASS. `CLAUDE.md`'s stall rule
-owns when to stop; the reasoning is `docs/agentic-development.md`.
+WEAK whose breaking variant you cannot name is a PASS. When to stop follows
+[the delivery contract](../../../docs/workflow/delivery.md); the reasoning is
+`docs/agentic-development.md`. A thread is a finding's persistent identity
+there and its reply count the attempt counter, read off the PR not a session.

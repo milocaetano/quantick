@@ -44,8 +44,10 @@ for the base, review key and authorized merge command; normal tasks use main.
 
 3. **Publish the draft.** Push the owned task branch and create/reuse its draft
    PR with explicit base and linked issue. Follow the PR template; name the
-   mission tier and precisely label local, reused and CI verification. Use a
-   body file, not interpolated shell text. A draft is not permission to merge.
+   mission tier and precisely label local, reused and CI verification. Use
+   `gh pr create --body-file -` with a heredoc, never a pipe: `pr-gate` anchors
+   its match to a segment start, so a piped spelling is invisible to it.
+   A draft is not permission to merge.
    Campaign bases require explicit issue closure only after integration proof;
    `Closes #N` does not close an issue on an intermediate campaign merge.
 
