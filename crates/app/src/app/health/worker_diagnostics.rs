@@ -2,8 +2,11 @@
 use crate::tab::Tab;
 use crate::worker_progress::ProgressSnapshot;
 
+// Preserve the existing health-summary sampling cadence for every worker owner.
+const SUMMARY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub(super) fn emit_if_due(tabs: &[Tab], elapsed: std::time::Duration) -> bool {
-    if elapsed < std::time::Duration::from_secs(2) {
+    if elapsed < SUMMARY_INTERVAL {
         return false;
     }
     if !tracing::enabled!(target: "quantick::app", tracing::Level::INFO) {

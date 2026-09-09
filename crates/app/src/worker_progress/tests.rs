@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+pub(crate) mod protocol;
+
 pub(crate) struct Gate {
     now: AtomicU64,
     holds: Mutex<VecDeque<PhaseHold>>,
@@ -123,7 +125,7 @@ fn overflow_and_clock_regression_are_explicit() {
     p.send(&tx, ()).unwrap();
     clock.at(10);
     assert_eq!(p.snapshot().oldest_wait, Age::Invalid);
-    p.lock().counts.accepted = u64::MAX;
+    p.lock_admission().accepted = u64::MAX;
     p.send(&tx, ()).unwrap();
     assert!(!p.snapshot().valid);
     assert_eq!(p.snapshot().counts.accepted, u64::MAX);

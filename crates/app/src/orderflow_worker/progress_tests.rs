@@ -4,6 +4,36 @@ use quantick_engine::{Bar, Side};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 use std::time::Duration;
 
+#[test]
+fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
+    // The independent owner-ledger protocol fixture supplies adversarial send
+    // bookkeeping; this is the ordinary BookWorker consumer and mailbox path.
+    let clock = Gate::new();
+    let progress = WorkerProgress::with_clock(clock.clone());
+    let (tx, rx) = channel();
+    let shared = Arc::new(Mutex::new(BookPublished::initial()));
+    let observed = progress.clone();
+    let worker = std::thread::spawn(move || {
+        run(
+            BookEngine::new("BTCUSDT".to_owned()),
+            &rx,
+            &shared,
+            observed,
+        );
+    });
+    crate::worker_progress::tests::protocol::delayed_bookkeeping(
+        &progress,
+        &clock,
+        &tx,
+        BookCommand::Flush,
+    );
+    drop(tx);
+    worker
+        .join()
+        .expect("real BookWorker exited after sender closure");
+    assert_eq!(progress.snapshot().phase, Phase::Closed);
+}
+
 fn level(price: i64, quantity: i64) -> BookLevel {
     BookLevel::new(Decimal::from(price), Decimal::from(quantity)).unwrap()
 }

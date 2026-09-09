@@ -1,10 +1,11 @@
 //! Bounded, owner-local diagnostics. Backlog means accepted commands not yet
 //! admitted to a batch, not the instantaneous channel length. One ticket is
-//! sampled until admission; later unsampled tickets make oldest age unknown.
+//! sampled until its admission is observed; unsampled tickets and missed
+//! admission observations make waiting time or sample residence unknown.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SendError, Sender};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -19,7 +20,7 @@ pub(crate) enum Phase {
     Unwound,
 }
 
-/// Callbacks run without telemetry, channel or publication locks. The normal
+/// Phase callbacks run without telemetry, channel or publication locks. The normal
 /// clock is monotonic nanoseconds since owner creation; fixtures inject both
 /// time and synchronization through this same production port.
 pub(crate) trait ProgressClock: Send + Sync {
@@ -88,12 +89,36 @@ struct Sample {
     ticket: u64,
     at: Option<u64>,
 }
+// Keep the producer and consumer lock/data regions on separate 64-byte
+// boundaries. Storage is fixed per owner, independent of queue/history size.
+#[repr(align(64))]
+struct Admission {
+    valid: bool,
+    accepted: u64,
+    failed_sends: u64,
+    sample: Option<Sample>,
+}
+impl Admission {
+    fn record_send(&mut self, success: bool, clock: &dyn ProgressClock) {
+        if success {
+            add(&mut self.accepted, 1, &mut self.valid);
+            if self.sample.is_none() {
+                self.sample = Some(Sample {
+                    ticket: self.accepted,
+                    at: clock.now_ns(),
+                });
+            }
+        } else {
+            add(&mut self.failed_sends, 1, &mut self.valid);
+        }
+    }
+}
+#[repr(align(64))]
 struct Ledger {
     phase: Phase,
     valid: bool,
     counts: Counts,
     admitted: u64,
-    sample: Option<Sample>,
     last_sampled_ticket: Option<u64>,
     residence: Age,
     processing_at: Option<u64>,
@@ -103,6 +128,7 @@ struct Ledger {
 pub(crate) struct WorkerProgress {
     instance: Option<u64>,
     clock: Arc<dyn ProgressClock>,
+    admission: Mutex<Admission>,
     ledger: Mutex<Ledger>,
 }
 
@@ -119,6 +145,12 @@ fn elapsed(now: Option<u64>, then: Option<u64>) -> Age {
         _ => Age::Unknown,
     }
 }
+fn subtract(total: u64, part: u64, valid: &mut bool) -> u64 {
+    total.checked_sub(part).unwrap_or_else(|| {
+        *valid = false;
+        0
+    })
+}
 
 impl WorkerProgress {
     pub(crate) fn new() -> Arc<Self> {
@@ -132,12 +164,17 @@ impl WorkerProgress {
         Arc::new(Self {
             instance,
             clock,
+            admission: Mutex::new(Admission {
+                valid: true,
+                accepted: 0,
+                failed_sends: 0,
+                sample: None,
+            }),
             ledger: Mutex::new(Ledger {
                 phase: Phase::Idle,
                 valid: true,
                 counts: Counts::default(),
                 admitted: 0,
-                sample: None,
                 last_sampled_ticket: None,
                 residence: Age::NotApplicable,
                 processing_at: None,
@@ -152,59 +189,61 @@ impl WorkerProgress {
             state
         })
     }
-    /// Serialize send and accounting so batch admission cannot outrun acceptance.
+    fn lock_admission(&self) -> MutexGuard<'_, Admission> {
+        self.admission.lock().unwrap_or_else(|poison| {
+            let mut state = poison.into_inner();
+            state.valid = false;
+            state
+        })
+    }
+    fn try_admission(&self) -> Option<MutexGuard<'_, Admission>> {
+        match self.admission.try_lock() {
+            Ok(state) => Some(state),
+            Err(TryLockError::WouldBlock) => None,
+            Err(TryLockError::Poisoned(poison)) => {
+                let mut state = poison.into_inner();
+                state.valid = false;
+                Some(state)
+            }
+        }
+    }
+    /// Serialize sends and acceptance, without acquiring consumer progress.
     /// The unbounded send does not call domain code or wait for the receiver.
     pub(crate) fn send<T>(&self, sender: &Sender<T>, command: T) -> Result<(), SendError<T>> {
-        let mut state = self.lock();
-        let terminal = matches!(state.phase, Phase::Closed | Phase::Unwound);
+        let mut state = self.lock_admission();
         let result = sender.send(command);
-        let Ledger { counts, valid, .. } = &mut *state;
-        if result.is_ok() {
-            add(&mut counts.accepted, 1, valid);
-            add(
-                if terminal {
-                    &mut counts.unfinished
-                } else {
-                    &mut counts.queued
-                },
-                1,
-                valid,
-            );
-            if !terminal && state.sample.is_none() {
-                state.sample = Some(Sample {
-                    ticket: state.counts.accepted,
-                    at: self.clock.now_ns(),
-                });
-            }
-        } else {
-            add(&mut counts.failed_sends, 1, valid);
-        }
+        state.record_send(result.is_ok(), self.clock.as_ref());
         result
     }
     pub(crate) fn begin(&self, count: usize) {
         {
             let mut state = self.lock();
+            let mut admission = self.try_admission();
             let now = self.clock.now_ns();
             let count = count as u64;
+            let previous_admitted = state.admitted;
             let Ledger {
                 counts,
                 valid,
                 admitted,
                 ..
             } = &mut *state;
-            if let Some(remaining) = counts.queued.checked_sub(count) {
-                counts.queued = remaining;
-            } else {
-                *valid = false;
-            }
             counts.inflight = count;
             add(admitted, count, valid);
-            if let Some(sample) = state.sample
+            // Never wait for a producer, including one between channel send and
+            // bookkeeping. A missed transfer remains in the single sample slot;
+            // a later batch/reader reports unknown residence, not a later time.
+            if let Some(admission) = admission.as_mut()
+                && let Some(sample) = admission.sample
                 && sample.ticket <= state.admitted
             {
-                state.residence = elapsed(now, sample.at);
+                state.residence = if sample.ticket > previous_admitted {
+                    elapsed(now, sample.at)
+                } else {
+                    Age::Unknown
+                };
                 state.last_sampled_ticket = Some(sample.ticket);
-                state.sample = None;
+                admission.sample = None;
             }
             state.processing_at = now;
             state.phase = Phase::Applying;
@@ -252,18 +291,32 @@ impl WorkerProgress {
         self.clock.phase(Phase::Idle);
     }
     pub(crate) fn snapshot(&self) -> ProgressSnapshot {
+        // This order closes the send/bookkeeping interval before observing the
+        // consumer. begin() only tries the producer lock, so it cannot invert
+        // this order by waiting. No queue scan or retry loop is needed.
+        let admission = self.lock_admission();
         let state = self.lock();
         let now = self.clock.now_ns();
-        let pending = state.counts.queued != 0 || state.counts.inflight != 0;
-        let sample_age = state
+        let terminal = matches!(state.phase, Phase::Closed | Phase::Unwound);
+        let mut valid = state.valid && admission.valid;
+        let mut counts = state.counts;
+        counts.accepted = admission.accepted;
+        counts.failed_sends = admission.failed_sends;
+        if terminal {
+            counts.unfinished = subtract(counts.accepted, counts.retired, &mut valid);
+        } else {
+            counts.queued = subtract(counts.accepted, state.admitted, &mut valid);
+            valid &= counts.retired.checked_add(counts.inflight) == Some(state.admitted);
+        }
+        let pending = counts.queued != 0 || counts.inflight != 0;
+        let sample = admission
             .sample
-            .map_or(Age::NotApplicable, |s| elapsed(now, s.at));
-        let oldest_wait = if state.counts.queued == 0 {
+            .filter(|s| !terminal && s.ticket > state.admitted);
+        let missed = admission.sample.filter(|s| s.ticket <= state.admitted);
+        let sample_age = sample.map_or(Age::NotApplicable, |s| elapsed(now, s.at));
+        let oldest_wait = if counts.queued == 0 {
             Age::NotApplicable
-        } else if state
-            .sample
-            .is_some_and(|s| state.admitted.checked_add(1) == Some(s.ticket))
-        {
+        } else if sample.is_some_and(|s| state.admitted.checked_add(1) == Some(s.ticket)) {
             sample_age
         } else {
             Age::Unknown
@@ -272,13 +325,17 @@ impl WorkerProgress {
             instance: self.instance,
             clock_source: self.clock.source(),
             phase: state.phase,
-            valid: state.valid,
-            counts: state.counts,
-            sampled_ticket: state.sample.map(|s| s.ticket),
+            valid,
+            counts,
+            sampled_ticket: sample.map(|s| s.ticket),
             sample_age,
             oldest_wait,
-            last_sampled_ticket: state.last_sampled_ticket,
-            last_sample_residence: state.residence,
+            last_sampled_ticket: missed.map(|s| s.ticket).or(state.last_sampled_ticket),
+            last_sample_residence: if missed.is_some() {
+                Age::Unknown
+            } else {
+                state.residence
+            },
             processing_age: if state.counts.inflight == 0 {
                 Age::NotApplicable
             } else {
@@ -306,11 +363,9 @@ impl Drop for Lifecycle {
         };
         {
             let mut state = self.0.lock();
-            let Ledger { counts, valid, .. } = &mut *state;
-            add(&mut counts.unfinished, counts.queued, valid);
-            add(&mut counts.unfinished, counts.inflight, valid);
-            counts.queued = 0;
-            counts.inflight = 0;
+            // A successful send may still be recording acceptance. The reader
+            // joins both ledgers and derives all unretired work as unfinished.
+            state.counts.inflight = 0;
             state.phase = phase;
             state.processing_at = None;
         }
