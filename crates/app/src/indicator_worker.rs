@@ -13,7 +13,9 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
-use crate::worker_progress::{Coalescing, ObservedOutput, ProgressSnapshot, WorkerProgress};
+use crate::worker_progress::{
+    Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -456,8 +458,7 @@ struct SlotMirror {
 
 /// UI-side handle: send commands, drain events each frame.
 pub(crate) struct IndicatorWorker {
-    commands: Sender<IndicatorCommand>,
-    progress: Arc<WorkerProgress>,
+    commands: ObservedSender<IndicatorCommand>,
     events: Receiver<IndicatorEvent>,
     /// Forming-bar updates sent, so a test can hold the UI to one per drain.
     #[cfg(test)]
@@ -473,17 +474,16 @@ impl IndicatorWorker {
         Self::spawn_with_progress(WorkerProgress::new())
     }
 
-    pub(crate) fn spawn_with_progress(progress: Arc<WorkerProgress>) -> Self {
+    pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
         let (cmd_tx, cmd_rx) = channel::<IndicatorCommand>();
         let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
-        let observed = Arc::clone(&progress);
+        let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-indicators".to_owned())
             .spawn(move || run_observed(&cmd_rx, &evt_tx, observed))
             .expect("spawn indicator worker thread");
         Self {
-            commands: cmd_tx,
-            progress,
+            commands: progress.bind(cmd_tx),
             events: evt_rx,
             #[cfg(test)]
             partial_updates: std::cell::Cell::new(0),
@@ -501,7 +501,7 @@ impl IndicatorWorker {
             self.partial_updates.set(self.partial_updates.get() + 1);
             self.lane_traffic.set(self.lane_traffic.get() + run.len());
         }
-        if self.progress.send(&self.commands, command).is_err() {
+        if self.commands.send(command).is_err() {
             tracing::error!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -513,7 +513,7 @@ impl IndicatorWorker {
     }
 
     pub(crate) fn progress(&self) -> ProgressSnapshot {
-        self.progress.snapshot()
+        self.commands.snapshot()
     }
 
     /// Every event the worker published since the last drain.
@@ -614,7 +614,7 @@ fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
 fn run_observed(
     rx: &Receiver<IndicatorCommand>,
     sender: &Sender<IndicatorEvent>,
-    progress: Arc<WorkerProgress>,
+    progress: Arc<SharedProgress>,
 ) {
     let _lifecycle = progress.lifecycle();
     let events = &ObservedOutput {
@@ -2238,11 +2238,13 @@ mod incremental_lane_tests {
         let (tx, rx) = channel();
         let (events, output) = channel();
         let progress = WorkerProgress::new();
+        let observed = progress.consumer();
+        let tx = progress.bind(tx);
         for command in commands {
-            progress.send(&tx, command).unwrap();
+            tx.send(command).unwrap();
         }
         drop(tx);
-        run_observed(&rx, &events, progress);
+        run_observed(&rx, &events, observed);
         drop(events);
         collect(output.try_iter().collect())
     }

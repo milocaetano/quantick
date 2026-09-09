@@ -2,6 +2,8 @@
 //! Q8-PERF-001-repair1-independent-schedules.md (S1-S4). Direct enqueue plus
 //! the production record_send helper exposes the bookkeeping interval; it is
 //! not a replacement for ordinary send-wrapper or domain-worker tests.
+//! Repair 2 preserves the schedules while local acceptance replaces the old
+//! producer mutex. Only the consumer Arc moves into the worker thread.
 
 use super::*;
 
@@ -45,29 +47,27 @@ fn evidence(stage: &str, snapshot: &ProgressSnapshot) {
 
 /// S1-S3 run against the caller's real worker consumer and actual Flush port.
 pub(crate) fn delayed_bookkeeping<T>(
-    p: &Arc<WorkerProgress>,
     clock: &Arc<Gate>,
-    commands: &Sender<T>,
+    commands: &ObservedSender<T>,
     flush: impl Fn(Sender<()>) -> T,
 ) {
+    let p = commands.progress.observer();
     let instance = p.snapshot().instance;
     assert!(instance.is_some_and(|id| id > 0));
     let first = clock.hold(Phase::Applying);
     let publication = clock.hold(Phase::Publishing);
-    let mut producer = p.lock_admission();
     clock.at(120);
     let (tx, a1) = channel();
-    assert!(commands.send(flush(tx)).is_ok());
+    assert!(commands.sender.send(flush(tx)).is_ok());
     first.reached();
     clock.at(150);
     first.release();
     publication.reached();
     clock.at(180);
     publication.release();
-    acknowledge(a1); // Producer guard is still owned here.
+    acknowledge(a1); // Successful-send accounting is still delayed here.
     clock.at(200);
-    producer.record_send(true, clock.as_ref());
-    drop(producer);
+    commands.progress.record_send(true);
 
     for now in [230, 240] {
         clock.at(now);
@@ -85,7 +85,7 @@ pub(crate) fn delayed_bookkeeping<T>(
     let idle = clock.hold(Phase::Idle);
     clock.at(260);
     let (tx, a2) = channel();
-    assert!(p.send(commands, flush(tx)).is_ok());
+    assert!(commands.send(flush(tx)).is_ok());
     second.reached();
     let s = p.snapshot();
     core(&s, instance, [2, 0, 1, 1, 0, 0]);
@@ -98,7 +98,7 @@ pub(crate) fn delayed_bookkeeping<T>(
 
     clock.at(400);
     let (tx, a3) = channel();
-    assert!(p.send(commands, flush(tx)).is_ok());
+    assert!(commands.send(flush(tx)).is_ok());
     clock.at(430);
     let s = p.snapshot();
     core(&s, instance, [3, 1, 0, 2, 0, 0]);
@@ -152,15 +152,16 @@ enum Terminal {
 
 fn terminal_schedule(branch: Terminal) {
     let clock = Gate::new();
-    let p = WorkerProgress::with_clock(clock.clone());
+    let producer = WorkerProgress::with_clock(clock.clone());
+    let p = producer.observer().clone();
     let instance = p.snapshot().instance;
     assert!(instance.is_some_and(|id| id > 0));
     let (tx, rx) = channel();
+    let observed = producer.consumer();
+    let tx = producer.bind(tx);
     let (done_tx, done_rx) = channel();
-    let mut producer = p.lock_admission();
     clock.at(100);
-    tx.send(()).unwrap();
-    let observed = p.clone();
+    tx.sender.send(()).unwrap();
     let worker_clock = clock.clone();
     let worker = std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -189,8 +190,7 @@ fn terminal_schedule(branch: Terminal) {
     worker.join().expect("checked protocol consumer join");
     assert_eq!(unwound, branch == Terminal::Unwound);
     clock.at(200);
-    producer.record_send(true, clock.as_ref());
-    drop(producer);
+    tx.progress.record_send(true);
 
     let phase = if branch == Terminal::Unwound {
         Phase::Unwound
@@ -211,7 +211,7 @@ fn terminal_schedule(branch: Terminal) {
     evidence(&format!("S4-{branch:?}-successful"), &s);
     drop(rx);
     clock.at(260);
-    assert!(p.send(&tx, ()).is_err());
+    assert!(tx.send(()).is_err());
     clock.at(280);
     let s = p.snapshot();
     core(&s, instance, [1, 0, 0, retired, unfinished, 1]);

@@ -2,8 +2,9 @@
 
 This dossier describes the internal observations added for campaign Q8 / issue
 #340. Experiment 1 failed its completion-overhead gates on source `a5dfbb4`.
-The reserved Q8-PERF-001 repair 1 separates admission and consumer accounting;
-its validation and new paired measurements remain pending. This file does not
+Experiment 2 also failed completion gates on source `d461e00` after repair 1.
+The reserved Q8-PERF-001 repair 2 makes admission and observation local to the
+UI owner; its final validation and paired measurements remain pending. This file does not
 claim a score increment, benchmark PASS, or final source identity yet.
 
 ## Production path and ownership
@@ -17,18 +18,17 @@ instance ID. `observation` is a JSON-encoded typed internal snapshot. This is
 an internal tracing event; no public DTO, schema, permission or capability was
 added. There is no new control-plane reachability claim.
 
-The observation reader locks its fixed-size admission and consumer ledgers.
-It does not inspect
-the command queue or clone indicator columns, ladders or projected frames.
+The observation reader combines owner-local admission counters with its
+fixed-size shared sample slot and consumer ledger. It does not inspect the
+command queue or clone indicator columns, ladders or projected frames.
 Serialization occurs after both locks are released and only at the health
 cadence when INFO logging is enabled. Every summary adds one record per owned
 worker, so event volume is proportional to owner count, not session history.
 
 ## Accounting and sampling
 
-Each worker keeps two fixed-size ledgers and one optional accepted-command
-sample. Normal
-clocks report monotonic nanoseconds since that instance's creation. Fixture
+Each worker keeps fixed-size local admission counters, a shared consumer
+ledger and one optional accepted-command sample. Normal clocks report monotonic nanoseconds since that instance's creation. Fixture
 clocks are explicitly labeled `fixture_explicit`; their numbers are scripted
 observations, not measured wall-clock latencies. Instance IDs are process-local
 and never reused; exhausted ID space yields an unavailable ID.
@@ -63,22 +63,33 @@ For a valid ledger, accepted commands reconcile as
   delivery, not UI adoption. Book `mailbox_replacements` records replacement
   of its existing latest-value mailbox; intermediate values may never be read.
 
-Admission serializes the existing unbounded send and successful-send accounting
-under the producer ledger lock. Consumer progress uses a separate lock; batch
-admission only tries the producer lock once to transfer the sampled ticket and
-continues immediately if it is busy. Domain work, channel receive, mailbox
-access, logging and phase callbacks hold no ledger lock. Clock reads must be
-bounded and nonblocking; fixture synchronization belongs in phase callbacks.
+A unique `ObservedSender` owns the existing unbounded command sender and local
+checked admission counters. It is not Clone, Send or Sync. The read-only
+`ProgressObserver` can be cloned on the same UI thread; its `Rc` retains local
+counters and identity after the command endpoint is dropped without keeping the
+channel open. Only the `Arc<SharedProgress>` consumer ledger and sample state
+cross into the worker thread. No atomic counter publication or shared producer
+mutex is paid per command.
 
-The reader acquires producer then consumer state. This closes any interval
-between successful enqueue and its bookkeeping before reporting a coherent
-snapshot. Active backlog is accepted minus admitted work; terminal unfinished
-work is accepted minus retired work, including successful sends accounted after
-closure. The consumer never waits for producer ownership, so its single try
-cannot deadlock with that reader lock order. Fixed storage and observation work
-do not establish a hard wall-clock bound on mutex acquisition. Both ledger
-regions use 64-byte alignment as a fixed layout choice, not a claim about every
-host's cache-line size.
+An unsampled successful send updates local counters and reads the sample's
+atomic pending flag. When that flag reports the previous sample acknowledged,
+the producer acquires the sample slot and offers the next ticket with its clock
+reading. The consumer only tries that slot once during batch admission and
+continues immediately on contention. Clearing the slot publishes acknowledgement
+with release ordering; the next producer observation uses acquire ordering.
+The slot remains protected by its mutex, including a second empty-slot check.
+
+Observation cannot overlap enqueue/bookkeeping because the unique producer and
+all read-only observation handles belong to the same thread. The reader takes
+the sample slot then consumer ledger; consumer admission only tries the sample
+lock, so it never waits in the reverse order. Active backlog is accepted minus
+admitted work; terminal unfinished work is accepted minus retired work, including
+successful sends accounted after closure. Domain work, channel send/receive,
+mailbox access, logging and phase callbacks hold no diagnostic lock. Clock reads
+must be bounded and nonblocking; fixture synchronization belongs in phase
+callbacks. Fixed storage does not establish a hard wall-clock bound on mutex
+acquisition. Shared sample and consumer regions use 64-byte alignment as a fixed
+layout choice, not a claim about every host's cache-line size.
 
 The first accepted command after the previous sample's admission was
 acknowledged becomes the new sample. Later accepted commands have no auxiliary
@@ -86,7 +97,7 @@ timestamps. This is a
 biased single-ticket sample, not a distribution or percentile estimator.
 `sample_age` is its time since successful admission; `last_sample_residence`
 is the duration to batch admission when that transition was observed, attributed
-by `last_sampled_ticket`. If producer contention prevents the transfer at
+by `last_sampled_ticket`. If sample installation is late or sample-slot contention prevents transfer at
 admission, residence is Unknown. A later observation cannot substitute its own
 time for that missed transition. The retained slot is acknowledged by a later
 uncontended batch; only a subsequent successful send can install a new sample.
@@ -110,6 +121,14 @@ The explicit clock/phase port is compiled into normal worker lifecycle,
 admission, applying and publication paths. The injected fixture fake pauses
 those phases without holding telemetry, channel or publication locks. Tests
 require successful bounded acknowledgements; timeout is a failure escape.
+
+Known-age fixtures use test-only prepared constructors that return the ordinary
+endpoint and a closure calling the unchanged production consumer. They complete
+the original first send and its sample publication before spawning that closure.
+The actual-summary fixture still records the original zero-work indicator
+snapshot before its first send. This orders the prescribed Known(30) schedule
+without a production startup callback, extra command or timing assumption.
+The separate S1-S4 schedules deliberately retain late bookkeeping and Unknown.
 
 `indicator_worker::progress_tests` prescribes an Add batch followed by history
 `+10`, two input edits, two partial suffixes `+2,-1`, and Flush. It expects
@@ -140,13 +159,29 @@ first progress, unavailable clocks, backwards time and counter overflow.
 Repair 1 adds independently prescribed ledger protocol schedules in
 `worker_progress::tests::protocol` and the real book worker's
 `delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery`.
-They hold producer bookkeeping through actual Flush acknowledgement, require
+They delay successful-send bookkeeping through actual Flush acknowledgement, require
 Unknown residence for the missed admission, and recover a 50 ns residence on
 ticket 3 after ticket 2 acknowledges the stale sample. Separate retired,
 unwound and unadmitted terminal branches distinguish late successful accounting
 from an ordinary failed send. Direct enqueue followed by the same production
 accounting helper is explicitly a protocol interleaving fixture, not proof of
 the whole ordinary send wrapper or a replacement domain-processing path.
+Repair 2 retains the S1-S4 schedules and expected values while removing the old
+implementation-specific producer-mutex hold. The new ownership fixture checks
+that producer endpoints cannot be cloned/shared across threads and only consumer
+state can cross the thread boundary. A separate held-slot fixture requires an
+unsampled send to complete while the shared sample slot is locked, preserves
+ticket 1, and recovers ticket 3 while ticket 2 remains an unsampled head. Both
+real-worker fixtures retain observation clones through actual worker destruction
+and still require Closed with no unfinished work.
+An additional contention fixture holds the actual shared sample mutex through
+production begin/finish acknowledgement at 30 ns for a ticket sampled at 10 ns.
+After releasing the lock, the 50 ns observation requires Unknown residence,
+never the missed 20 ns or observation-derived 40 ns. Ticket 2 acknowledges the
+stale slot at 80 ns; ticket 3 sampled at 100 ns and admitted at 130 ns recovers
+a literal Known(30). Actual channel receipt, acknowledgements and thread joins
+are required. This complements the unsampled-send fixture, whose lock is
+released before admission, rather than claiming that fixture covered contention.
 `app::tests::worker_progress_tests` captures an actual JSON tracing subscriber
 while calling the existing summary entrypoint with off-screen tab 42 and
 context pane 900, asserting owner records and paused/recovered observations.
@@ -179,14 +214,26 @@ from 7.797 to 30.754 microseconds per synthetic two-second summary opportunity.
 That result is descriptive and excludes asynchronous counter-reset completion,
 disk I/O and GUI work.
 
-The repair hypothesis is that shared producer/consumer exclusion can alter
-natural batch boundaries and repeat retained-lane or projection/publication
-work. The measured admission increase alone accounts for only about 2, 2 and
-4 microseconds per time/dollar/depth burst, compared with completion increases
-of about 45, 42 and 2969 microseconds. Baseline cycle/projection counts were
-unavailable, so amplification is not a proven cause. The repair changes only
-diagnostic ownership; natural channel draining, domain work, projection cadence,
-shared harness bytes, independent oracles and acceptance ceilings remain fixed.
+Experiment 2 retains all six runs under the coordinator's
+`quantick-campaign-score9/experiment-2-workers/`. All 18 domain/telemetry contracts
+and admission absolute gates passed. Completion mean ratios were time 1.0804,
+dollar 1.1678 and depth 1.1518; dollar/depth means failed. Time p99 1.3045 and
+dollar p95 1.3223 also failed. Candidate workload cycle counts, including warmup
+but excluding setup, were time 721/775/771, dollar 878/910/906 and depth
+818/782/800 for 630 bursts each. Baseline cycle/rebuild counters remain
+unavailable, so those counts do not prove amplification relative to baseline.
+The separately executed summary experiment passed its descriptive ownership and
+record contracts; it does not waive the failed worker completion gates.
+
+Repair 2 removes the shared producer mutex paid on every command by making
+admission explicitly single-producer and owner-local. Added mean admission
+cost in experiment 2 was about 1.90, 2.28 and 5.86 microseconds per time/dollar/
+depth burst, versus completion increases of about 31.59, 36.18 and 4588.16
+microseconds. Direct admission cost alone does not explain those differences.
+Natural batch timing can repeat retained-lane or projection/publication work,
+but that is a repair hypothesis, not an established cause or a predicted PASS.
+Natural channel draining, domain work, projection cadence, shared harness bytes,
+independent domain oracles and acceptance ceilings remain fixed.
 
 External evidence is retained under the coordinator's `Q8-validation/`
 directory. `04-development-check-failure-excerpts.md` preserves the original
@@ -259,4 +306,27 @@ last-sample refinements. Indicator regressions passed 33 tests and orderflow
 regressions passed 92 (`19-indicators` and `20-orderflow`). The first complete
 validation loop stopped at a test-fixture type-complexity Clippy finding; its
 repair names the phase-hold fields and preserves the synchronization oracle.
-A fresh complete loop is required after that repair. No measurements have run.
+At that historical source boundary, a fresh complete loop was required and no
+measurements had yet run. Experiments 1 and 2 above record the later failures.
+
+
+Repair 2 focused validation is retained under the coordinator's
+`quantick-campaign-score9/repair2/`, with full source manifests in each JSON
+receipt. `01-guards` passed 206 tests; `02-check` passed the app all-targets
+check; `03-progress` passed 27 tests with zero failures and one ignored
+benchmark. After formatting, `05-indicators` passed 33 tests and `06-orderflow`
+passed 93 tests, both with zero failures. The original S1-S4 protocol and
+real-worker domain expectations remain unchanged. These development checks are not the final ordered workspace
+loop, independent reviews, release build or paired performance experiment.
+
+
+Independent preflight findings Q8-PREFLIGHT2-001 and Q8-PREFLIGHT2-002 led to
+the test-only setup ordering and explicit contended-admission fixture above.
+Their development checks are retained in
+`quantick-campaign-score9/repair2-preflight-fixes/`: app all-target Clippy
+(`03-clippy`) passed and the focused progress suite (`04-progress`) passed
+28 tests with zero failures and one ignored benchmark. The original Known-age,
+S1-S4, zero-work snapshot and domain literal oracles remain. Production worker
+and telemetry source bytes and all benchmark inputs are unchanged by these
+fixture corrections. Independent follow-up and final ordered validation remain
+separate; this is still performance repair 2 after two failed experiments.

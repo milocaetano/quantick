@@ -50,10 +50,11 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     let indicator_hold = indicator_clock.hold(Phase::Applying);
     let book_clock = Gate::new();
     let book_hold = book_clock.hold(Phase::Applying);
-    tab.flow_pane.indicator_worker =
-        IndicatorWorker::spawn_with_progress(WorkerProgress::with_clock(indicator_clock.clone()));
-    let book =
-        BookWorker::spawn_with_progress("TESTUSDT", WorkerProgress::with_clock(book_clock.clone()));
+    let (indicator, run_indicator) =
+        IndicatorWorker::prepared_for_test(WorkerProgress::with_clock(indicator_clock.clone()));
+    tab.flow_pane.indicator_worker = indicator;
+    let (book, run_book) =
+        BookWorker::prepared_for_test("TESTUSDT", WorkerProgress::with_clock(book_clock.clone()));
     let (book_first_tx, book_first_rx) = channel();
     let (book_ack_tx, book_ack_rx) = channel();
     app.tabs.push(tab);
@@ -77,6 +78,7 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     let (ack_tx, ack_rx) = channel();
     // Before work, insert the actual BookWorker into the ordinary view owner.
     book.send(BookCommand::Flush(book_first_tx));
+    let book_thread = std::thread::spawn(run_book);
     book_hold.reached();
     book_clock.at(10);
     book.send(BookCommand::Flush(book_ack_tx));
@@ -84,11 +86,12 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     app.tabs[1].flow_pane.orderflow = Some(
         crate::orderflow_view::OrderflowView::with_worker_for_test("TESTUSDT", book),
     );
-    tracing::subscriber::with_default(subscriber, || {
+    let indicator_thread = tracing::subscriber::with_default(subscriber, || {
         let normal_at = app.health.last_summary + Duration::from_secs(2);
         app.maybe_emit_summary(normal_at, &ctx);
         let worker = &app.tabs[1].flow_pane.indicator_worker;
         worker.send(IndicatorCommand::Flush(first_tx));
+        let thread = std::thread::spawn(run_indicator);
         indicator_hold.reached();
         indicator_clock.at(10);
         worker.send(IndicatorCommand::Flush(ack_tx));
@@ -101,6 +104,7 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
                 .expect("real workers drained");
         }
         app.maybe_emit_summary(normal_at + Duration::from_secs(4), &ctx);
+        thread
     });
     let transcript = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
     println!("Q8_APP_DIAGNOSTIC_TRANSCRIPT\n{transcript}");
@@ -167,4 +171,7 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
             .iter()
             .any(|row| row["fields"]["pane"] == 900 && row["fields"]["side"] == 1)
     );
+    drop(app);
+    indicator_thread.join().expect("summary indicator closed");
+    book_thread.join().expect("summary book closed");
 }

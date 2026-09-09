@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+mod ownership;
 pub(crate) mod protocol;
 
 pub(crate) struct Gate {
@@ -89,18 +90,21 @@ fn sampled_ticket_does_not_claim_unobserved_head_or_idle_stall() {
     // Independent schedule: ticket 1 at 10, ticket 2 at 20. Admit only 1 at
     // 30, then ticket 3 at 40: ticket 2 has no timestamp, so oldest is unknown.
     let clock = Gate::new();
-    let p = WorkerProgress::with_clock(clock.clone());
+    let producer = WorkerProgress::with_clock(clock.clone());
+    let p = producer.observer().clone();
+    let observed = producer.consumer();
     let (tx, _rx) = channel();
+    let tx = producer.bind(tx);
     assert_eq!(p.snapshot().since_progress, Age::NotApplicable);
     clock.at(10);
-    p.send(&tx, ()).unwrap();
+    tx.send(()).unwrap();
     clock.at(20);
-    p.send(&tx, ()).unwrap();
+    tx.send(()).unwrap();
     clock.at(30);
-    p.begin(1);
+    observed.begin(1);
     assert_eq!(p.snapshot().last_sample_residence, Age::Known(20));
     clock.at(40);
-    p.send(&tx, ()).unwrap();
+    tx.send(()).unwrap();
     clock.at(70);
     let s = p.snapshot();
     assert_eq!(s.sampled_ticket, Some(3));
@@ -109,9 +113,9 @@ fn sampled_ticket_does_not_claim_unobserved_head_or_idle_stall() {
     assert_eq!(s.oldest_wait, Age::Unknown);
     assert_eq!(s.processing_age, Age::Known(40));
     assert_eq!(s.since_progress, Age::Unknown);
-    p.finish(false);
-    p.begin(2);
-    p.finish(false);
+    observed.finish(false);
+    observed.begin(2);
+    observed.finish(false);
     assert_eq!(p.snapshot().counts.retired, 3);
     assert_eq!(p.snapshot().since_progress, Age::NotApplicable);
 }
@@ -119,14 +123,18 @@ fn sampled_ticket_does_not_claim_unobserved_head_or_idle_stall() {
 #[test]
 fn overflow_and_clock_regression_are_explicit() {
     let clock = Gate::new();
-    let p = WorkerProgress::with_clock(clock.clone());
+    let producer = WorkerProgress::with_clock(clock.clone());
+    let p = producer.observer().clone();
     let (tx, _rx) = channel();
+    let tx = producer.bind(tx);
     clock.at(20);
-    p.send(&tx, ()).unwrap();
+    tx.send(()).unwrap();
     clock.at(10);
     assert_eq!(p.snapshot().oldest_wait, Age::Invalid);
-    p.lock_admission().accepted = u64::MAX;
-    p.send(&tx, ()).unwrap();
+    let mut admission = p.0.admission.get();
+    admission.accepted = u64::MAX;
+    p.0.admission.set(admission);
+    tx.send(()).unwrap();
     assert!(!p.snapshot().valid);
     assert_eq!(p.snapshot().counts.accepted, u64::MAX);
 }
@@ -139,9 +147,11 @@ fn unavailable_clock_is_unknown() {
             None
         }
     }
-    let p = WorkerProgress::with_clock(Arc::new(Unavailable));
+    let producer = WorkerProgress::with_clock(Arc::new(Unavailable));
+    let p = producer.observer().clone();
     let (tx, _rx) = channel();
-    p.send(&tx, ()).unwrap();
+    let tx = producer.bind(tx);
+    tx.send(()).unwrap();
     assert_eq!(p.snapshot().oldest_wait, Age::Unknown);
 }
 
@@ -149,12 +159,14 @@ fn unavailable_clock_is_unknown() {
 fn coalescing_subsets_survive_an_unfinished_domain_batch() {
     // Three accepted commands; two input supersessions occurred before a
     // domain unwind. They remain subsets of the three unfinished commands.
-    let p = WorkerProgress::new();
+    let producer = WorkerProgress::new();
+    let p = producer.observer().clone();
+    let observed = producer.consumer();
     let (tx, _rx) = channel();
+    let tx = producer.bind(tx);
     for _ in 0..3 {
-        p.send(&tx, ()).unwrap();
+        tx.send(()).unwrap();
     }
-    let observed = p.clone();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _lifecycle = observed.lifecycle();
         observed.begin(3);
@@ -179,11 +191,13 @@ fn coalescing_subsets_survive_an_unfinished_domain_batch() {
 
 #[test]
 fn send_racing_receiver_destruction_is_unfinished_after_terminal_observation() {
-    let p = WorkerProgress::new();
+    let producer = WorkerProgress::new();
+    let p = producer.observer().clone();
     let (tx, rx) = channel();
-    drop(p.lifecycle());
+    drop(producer.consumer().lifecycle());
+    let tx = producer.bind(tx);
     // The receiver still exists for the small interval after run() returns.
-    p.send(&tx, ()).unwrap();
+    tx.send(()).unwrap();
     let s = p.snapshot();
     assert_eq!(s.phase, Phase::Closed);
     assert_eq!(
@@ -191,6 +205,6 @@ fn send_racing_receiver_destruction_is_unfinished_after_terminal_observation() {
         (1, 0, 1)
     );
     drop(rx);
-    assert!(p.send(&tx, ()).is_err());
+    assert!(tx.send(()).is_err());
     assert_eq!(p.snapshot().counts.failed_sends, 1);
 }

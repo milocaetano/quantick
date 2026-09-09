@@ -4,6 +4,23 @@ use quantick_engine::Side;
 use rust_decimal::Decimal;
 use std::time::Duration;
 
+impl IndicatorWorker {
+    /// Prepare the ordinary endpoint and production consumer separately so a
+    /// fixture can finish its initial send/sample before starting admission.
+    pub(crate) fn prepared_for_test(progress: WorkerProgress) -> (Self, impl FnOnce() + Send) {
+        let (commands, rx) = channel();
+        let (events, output) = channel();
+        let observed = progress.consumer();
+        let worker = Self {
+            commands: progress.bind(commands),
+            events: output,
+            partial_updates: std::cell::Cell::new(0),
+            lane_traffic: std::cell::Cell::new(0),
+        };
+        (worker, move || run_observed(&rx, &events, observed))
+    }
+}
+
 fn print(id: u64, quantity: i64) -> Trade {
     Trade {
         agg_id: id,
@@ -66,8 +83,10 @@ fn held_real_indicator_has_exact_backlog_progress_and_ordered_suffixes() {
     let second = clock.hold(Phase::Applying);
     let publication = clock.hold(Phase::Publishing);
     let progress = WorkerProgress::with_clock(clock.clone());
-    let worker = IndicatorWorker::spawn_with_progress(progress.clone());
+    let observer = progress.observer().clone();
+    let (worker, run) = IndicatorWorker::prepared_for_test(progress);
     worker.send(add());
+    let thread = std::thread::spawn(run);
     first.reached();
     clock.at(10);
     worker.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(
@@ -161,9 +180,10 @@ fn held_real_indicator_has_exact_backlog_progress_and_ordered_suffixes() {
     let closed = clock.hold(Phase::Closed);
     drop(worker);
     closed.reached();
-    assert_eq!(progress.snapshot().phase, Phase::Closed);
-    assert_eq!(progress.snapshot().counts.unfinished, 0);
+    assert_eq!(observer.snapshot().phase, Phase::Closed);
+    assert_eq!(observer.snapshot().counts.unfinished, 0);
     closed.release();
+    thread.join().expect("prepared indicator consumer closed");
 }
 
 #[test]
@@ -172,7 +192,7 @@ fn indicator_unwind_failed_send_and_explicit_replacement_keep_separate_identity(
     let hold = clock.hold(Phase::Applying);
     let terminal = clock.hold(Phase::Unwound);
     let progress = WorkerProgress::with_clock(clock.clone());
-    let worker = IndicatorWorker::spawn_with_progress(progress.clone());
+    let worker = IndicatorWorker::spawn_with_progress(progress);
     worker.send(add());
     hold.reached();
     worker.send(IndicatorCommand::Backfilled(vec![Bar::opened_by(&print(

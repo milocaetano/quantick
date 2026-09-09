@@ -4,15 +4,39 @@ use quantick_engine::{Bar, Side};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 use std::time::Duration;
 
+impl BookWorker {
+    /// Instantiate the production consumer without starting it until the
+    /// fixture's first ordinary send has also published its initial sample.
+    pub(crate) fn prepared_for_test(
+        symbol: &str,
+        progress: WorkerProgress,
+    ) -> (Self, impl FnOnce() + Send) {
+        let (commands, rx) = channel();
+        let published = Arc::new(Mutex::new(BookPublished::initial()));
+        let shared = Arc::clone(&published);
+        let symbol = symbol.to_owned();
+        let observed = progress.consumer();
+        let worker = Self {
+            commands: progress.bind(commands),
+            published,
+        };
+        (worker, move || {
+            run(BookEngine::new(symbol), &rx, &shared, observed);
+        })
+    }
+}
+
 #[test]
 fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
     // The independent owner-ledger protocol fixture supplies adversarial send
     // bookkeeping; this is the ordinary BookWorker consumer and mailbox path.
     let clock = Gate::new();
     let progress = WorkerProgress::with_clock(clock.clone());
+    let observer = progress.observer().clone();
     let (tx, rx) = channel();
     let shared = Arc::new(Mutex::new(BookPublished::initial()));
-    let observed = progress.clone();
+    let observed = progress.consumer();
+    let tx = progress.bind(tx);
     let worker = std::thread::spawn(move || {
         run(
             BookEngine::new("BTCUSDT".to_owned()),
@@ -21,17 +45,12 @@ fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
             observed,
         );
     });
-    crate::worker_progress::tests::protocol::delayed_bookkeeping(
-        &progress,
-        &clock,
-        &tx,
-        BookCommand::Flush,
-    );
+    crate::worker_progress::tests::protocol::delayed_bookkeeping(&clock, &tx, BookCommand::Flush);
     drop(tx);
     worker
         .join()
         .expect("real BookWorker exited after sender closure");
-    assert_eq!(progress.snapshot().phase, Phase::Closed);
+    assert_eq!(observer.snapshot().phase, Phase::Closed);
 }
 
 fn level(price: i64, quantity: i64) -> BookLevel {
@@ -151,8 +170,10 @@ fn held_real_book_reports_backlog_publication_and_all_ordered_data() {
     let second = clock.hold(Phase::Applying);
     let publication = clock.hold(Phase::Publishing);
     let progress = WorkerProgress::with_clock(clock.clone());
-    let worker = BookWorker::spawn_with_progress("BTCUSDT", progress.clone());
+    let observer = progress.observer().clone();
+    let (worker, run) = BookWorker::prepared_for_test("BTCUSDT", progress);
     worker.send(setup());
+    let thread = std::thread::spawn(run);
     first.reached();
     clock.at(10);
     let ack = replay(&worker);
@@ -211,9 +232,10 @@ fn held_real_book_reports_backlog_publication_and_all_ordered_data() {
     let closed = clock.hold(Phase::Closed);
     drop(worker);
     closed.reached();
-    assert_eq!(progress.snapshot().phase, Phase::Closed);
-    assert_eq!(progress.snapshot().counts.unfinished, 0);
+    assert_eq!(observer.snapshot().phase, Phase::Closed);
+    assert_eq!(observer.snapshot().counts.unfinished, 0);
     closed.release();
+    thread.join().expect("prepared book consumer closed");
 }
 
 #[test]

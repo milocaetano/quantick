@@ -12,7 +12,9 @@
 //! dropped. The UI repaints on its own ~60 fps cadence, so no egui handle is
 //! needed here.
 
-use crate::worker_progress::{Coalescing, ProgressSnapshot, WorkerProgress};
+use crate::worker_progress::{
+    Coalescing, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
+};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -64,8 +66,7 @@ pub(crate) enum BookCommand {
 
 /// UI-side handle: send commands, read the latest published snapshot.
 pub(crate) struct BookWorker {
-    commands: Sender<BookCommand>,
-    progress: Arc<WorkerProgress>,
+    commands: ObservedSender<BookCommand>,
     published: Arc<Mutex<BookPublished>>,
 }
 
@@ -76,19 +77,18 @@ impl BookWorker {
         Self::spawn_with_progress(symbol, WorkerProgress::new())
     }
 
-    pub(crate) fn spawn_with_progress(symbol: &str, progress: Arc<WorkerProgress>) -> Self {
+    pub(crate) fn spawn_with_progress(symbol: &str, progress: WorkerProgress) -> Self {
         let (tx, rx) = channel::<BookCommand>();
         let published = Arc::new(Mutex::new(BookPublished::initial()));
         let shared = Arc::clone(&published);
         let engine_symbol = symbol.to_owned();
-        let observed = Arc::clone(&progress);
+        let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-book".to_owned())
             .spawn(move || run(BookEngine::new(engine_symbol), &rx, &shared, observed))
             .expect("spawn book worker thread");
         Self {
-            commands: tx,
-            progress,
+            commands: progress.bind(tx),
             published,
         }
     }
@@ -97,7 +97,7 @@ impl BookWorker {
     /// log line), never a full queue: the channel is unbounded and command
     /// volume is bounded by feed cadence.
     pub(crate) fn send(&self, command: BookCommand) {
-        if self.progress.send(&self.commands, command).is_err() {
+        if self.commands.send(command).is_err() {
             tracing::error!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -109,7 +109,7 @@ impl BookWorker {
     }
 
     pub(crate) fn progress(&self) -> ProgressSnapshot {
-        self.progress.snapshot()
+        self.commands.snapshot()
     }
 
     /// Latest snapshot published by the worker.
@@ -148,7 +148,7 @@ fn run(
     mut engine: BookEngine,
     rx: &Receiver<BookCommand>,
     shared: &Arc<Mutex<BookPublished>>,
-    progress: Arc<WorkerProgress>,
+    progress: Arc<SharedProgress>,
 ) {
     let _lifecycle = progress.lifecycle();
     // Kept across batches so the worker can re-project after data changes
