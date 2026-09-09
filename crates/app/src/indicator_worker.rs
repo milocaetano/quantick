@@ -13,7 +13,11 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
+use crate::worker_progress::{
+    Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
+};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use quantick_engine::{Bar, Trade};
@@ -454,7 +458,7 @@ struct SlotMirror {
 
 /// UI-side handle: send commands, drain events each frame.
 pub(crate) struct IndicatorWorker {
-    commands: Sender<IndicatorCommand>,
+    commands: ObservedSender<IndicatorCommand>,
     events: Receiver<IndicatorEvent>,
     /// Forming-bar updates sent, so a test can hold the UI to one per drain.
     #[cfg(test)]
@@ -467,14 +471,19 @@ impl IndicatorWorker {
     /// Spawn the indicator thread.
     #[must_use]
     pub(crate) fn spawn() -> Self {
+        Self::spawn_with_progress(WorkerProgress::new())
+    }
+
+    pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
         let (cmd_tx, cmd_rx) = channel::<IndicatorCommand>();
         let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
+        let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-indicators".to_owned())
-            .spawn(move || run(&cmd_rx, &evt_tx))
+            .spawn(move || run_observed(&cmd_rx, &evt_tx, observed))
             .expect("spawn indicator worker thread");
         Self {
-            commands: cmd_tx,
+            commands: progress.bind(cmd_tx),
             events: evt_rx,
             #[cfg(test)]
             partial_updates: std::cell::Cell::new(0),
@@ -501,6 +510,10 @@ impl IndicatorWorker {
                 "indicator worker thread is gone; indicator commands are being dropped"
             );
         }
+    }
+
+    pub(crate) fn progress(&self) -> ProgressSnapshot {
+        self.commands.snapshot()
     }
 
     /// Every event the worker published since the last drain.
@@ -598,7 +611,16 @@ fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
     });
 }
 
-fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
+fn run_observed(
+    rx: &Receiver<IndicatorCommand>,
+    sender: &Sender<IndicatorEvent>,
+    progress: Arc<SharedProgress>,
+) {
+    let _lifecycle = progress.lifecycle();
+    let events = &ObservedOutput {
+        sender,
+        progress: &progress,
+    };
     let mut host = IndicatorHost::new();
     let mut lane_run: Vec<Trade> = Vec::new();
     // BTreeMap: deterministic iteration order for event emission.
@@ -610,7 +632,11 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
             batch.push(next);
         }
 
+        progress.begin(batch.len());
+        let mut coalescing = Coalescing::new(&progress);
+        let original_len = batch.len();
         drop_superseded_inputs(&mut batch);
+        coalescing.inputs = original_len - batch.len();
 
         let mut flushes: Vec<Sender<()>> = Vec::new();
         // Latest-wins; `Some(None)` means "partial vanished" must be applied.
@@ -649,6 +675,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     } else {
                         lane_run.extend(run);
                     }
+                    coalescing.partials += usize::from(partial_update.is_some());
                     partial_update = Some(partial);
                     lane_request = Some(rungs);
                 }
@@ -841,7 +868,9 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
             .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
 
+        coalescing.publishing();
         publish_deltas(&host, &mut slots, events, rebuilt, &mut lane);
+        progress.finish(false);
         for ack in flushes {
             let _ = ack.send(());
         }
@@ -896,7 +925,7 @@ fn walk_lane(
 fn publish_deltas(
     host: &IndicatorHost,
     slots: &mut BTreeMap<SlotId, SlotMirror>,
-    events: &Sender<IndicatorEvent>,
+    events: &ObservedOutput<'_, IndicatorEvent>,
     rebuilt: bool,
     lane: &mut BTreeMap<SlotId, Vec<LaneSample>>,
 ) {
@@ -2207,11 +2236,14 @@ mod incremental_lane_tests {
     fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
         let (tx, rx) = channel();
         let (events, output) = channel();
+        let progress = WorkerProgress::new();
+        let observed = progress.consumer();
+        let tx = progress.bind(tx);
         for command in commands {
             tx.send(command).unwrap();
         }
         drop(tx);
-        run(&rx, &events);
+        run_observed(&rx, &events, observed);
         drop(events);
         collect(output.try_iter().collect())
     }
@@ -2389,3 +2421,6 @@ mod incremental_lane_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod progress_tests;
