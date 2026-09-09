@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 10] = [
+const TESTED: [&str; 11] = [
     "size",
     "language",
     "encoding",
@@ -28,6 +28,7 @@ const TESTED: [&str; 10] = [
     "graph",
     "headless",
     "extension-boundary",
+    "instruction_links",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -426,4 +427,9 @@ fn the_crates_below_app_stay_headless() {
 #[test]
 fn protected_root_shapes_and_implementation_caps_hold() {
     assert_clean(TESTED[9]);
+}
+
+#[test]
+fn instruction_entrypoint_links_resolve() {
+    assert_clean(TESTED[10]);
 }

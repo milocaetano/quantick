@@ -120,8 +120,9 @@ own way around itself.
 a change a trader touches mid-session gets `trader-ux-review`; anything
 visual gets `visual-qa`; a docs-only change gets neither, but never skips the
 English check or the correctness pass. The tier decides how hard the ones that
-do apply look — and nothing, at any tier, skips the four checks or the bug
-pass. A cheap review is a real one done briefly; it is never an absent one.
+do apply look. Local checks now follow the changed inputs under
+[the delivery contract](workflow/delivery.md); full final-head CI and the bug
+pass remain. A cheap review is a real one done briefly, not an absent one.
 
 ## Two phases, and why the rounds had to go
 
@@ -153,11 +154,12 @@ compaction, addressable by id, anchored at `file:line`, resolvable, and visible
 to the trader without an agent in the room. The number of open ones is the
 convergence trend, recorded for free by the act of reviewing.
 
-What replaces the budget is a stall rule: if the open set does not shrink
-between two runs, the branch goes to the trader. That is the same judgement the
-old budget was trying to buy — findings shrinking is convergence, findings flat
-or climbing into the last run's code is a design problem — with the arbitrary
-number taken out.
+The first stall rule compared total open findings. Campaign #330 exposed its
+false positive: #339 closed an omission, then a new reviewer split unchanged
+source more finely and found two others. The implementation gates passed, but
+the count forced a human handoff over documentary mapping. Current rules track
+finding identities, separate new discoveries from failed repairs, and retain
+finite budgets. The delivery contract owns those decisions.
 
 **The loop still needs a stop, and two rules give it one.** Round one reviews
 the whole diff; every later run verifies only the open threads plus a narrow

@@ -65,13 +65,18 @@ severity first, anchored at `file:line`, one per finding, body on stdin to
 `sh .claude/hooks/ai_review_threads.sh post <pr> <file> <line>`. With no PR
 target, print the report and post nothing. Never apply a fix either way.
 
-Two rules, both binding. **Round one reviews the whole diff; every later run
-takes its subject from `... list <pr>` and verifies only those open threads,
-plus a narrow check that the fixes introduced no new FAIL. It may not open a
-new WEAK against code it already passed.** And **a thread closes by the fix -
+**Round one reviews the whole diff.** Missing prior report, changed base or
+scope, or uncertain impact requires a full current review under the delivery
+contract. Otherwise a later run takes its subject from `... list <pr>` and
+verifies those open threads plus a narrow check that fixes introduced no new
+FAIL; it may not open a new WEAK against code it already passed.
+
+**A thread closes by the fix -
 `... resolve <thread-id>` - or by an acceptance the trader records on it**; a
-WEAK whose breaking variant you cannot name is a PASS. `CLAUDE.md`'s stall rule
-owns when to stop; the reasoning is `docs/agentic-development.md`.
+WEAK whose breaking variant you cannot name is a PASS. When to stop follows
+[the delivery contract](../../../docs/workflow/delivery.md), for which an open
+thread id is a finding's durable identity; the reasoning is
+`docs/agentic-development.md`.
 
 ## Record completion
 

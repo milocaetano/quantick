@@ -74,11 +74,11 @@ A capability the trader did not grant is refused at the gate with
 tool it came through — `quantick_invoke` is checked exactly like a named tool.
 
 The generated [capability inventory](docs/control-plane/capability-inventory.md)
-lists capability identifiers, versions, modules and required permissions. The
+lists capability IDs, versions, modules and required permissions. The
 generated [capability catalog](schemas/control/observer-capability-catalog-v1.json)
 also records profiles, selectable permissions and snapshot scopes. Both are
 checked against the code that generates them; use `quantick_describe` for the
-running instance's effective surface.
+live effective surface.
 
 ### Two things worth knowing before writing a client
 
@@ -205,7 +205,8 @@ and that file differ, that file wins.
 
 ## Verification loop (mandatory)
 
-All four must pass before every commit. CI enforces the same four.
+Code: all four. Prose/reuse: `CLAUDE.md`'s delivery contract.
+Final-head CI: all four.
 
 ```sh
 cargo fmt --all -- --check

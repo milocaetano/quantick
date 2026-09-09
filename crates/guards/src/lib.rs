@@ -6,7 +6,8 @@
 //! cycle ([`cycle`]), everything written into a tracked file is English
 //! ([`language`]), sources are UTF-8 without a BOM and without welded doc
 //! comments ([`encoding`]), the generated indexes still say what the code
-//! says ([`generated`]), a test's temporary directory is minted by its
+//! says ([`generated`]), instruction links resolve ([`instruction_links`]),
+//! a test's temporary directory is minted by its
 //! crate's scratch module rather than spelled by hand ([`scratch`]), the
 //! crate graph runs one way ([`graph`]), and everything below `app` stays
 //! headless ([`headless`]).
@@ -51,6 +52,7 @@ pub mod extension_boundary;
 pub mod generated;
 pub mod graph;
 pub mod headless;
+pub mod instruction_links;
 pub mod language;
 pub mod ratchet;
 pub mod report;
@@ -172,6 +174,12 @@ pub struct Guard {
 
 /// Every guard this crate runs.
 pub const GUARDS: &[Guard] = &[
+    Guard {
+        name: "instruction_links",
+        check: instruction_links::check,
+        check_file: instruction_links::check_file,
+        ratchet: None,
+    },
     Guard {
         name: "extension-boundary",
         check: extension_boundary::check,

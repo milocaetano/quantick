@@ -32,7 +32,9 @@ Every change follows the same loop — including changes by the maintainer:
 
 ## Verification loop (mandatory)
 
-All four must pass before every commit — no exceptions:
+Code commits require all four below. For prose-only changes and evidence reuse,
+follow [the delivery contract](docs/workflow/delivery.md#validation-follows-changed-inputs).
+Full final-head CI remains mandatory for every PR:
 
 ```sh
 cargo fmt --all -- --check

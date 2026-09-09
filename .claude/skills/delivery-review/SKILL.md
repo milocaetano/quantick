@@ -1,6 +1,6 @@
 ---
 name: delivery-review
-description: Grade a finished branch against what was actually asked for — every ask in the mission's request ledger and every acceptance criterion marked DELIVERED, PARTIAL, MISSING or UNPROVEN by a reviewer that did not write the code. Runs after arch-review and before the PR; records the delivery-review-ok marker the pr-gate hook requires. Use when the user types /delivery-review, before opening a PR, or when asked whether what shipped is what was requested.
+description: Independently grade a branch against retained requests, criteria and evidence before PR readiness. Records delivery-review-ok only after PASS. Use for delivery review or to check whether the requested outcomes shipped.
 ---
 
 Campaign children override the main-based examples via the
@@ -12,7 +12,11 @@ An independent reviewer asks: **is what shipped what was asked for?** Shape
 and bug reviews judge the change as given; this review catches requests that
 never became criteria, and criteria that were never delivered.
 
-The reasoning behind the model split, the reviewer's type and the stall rule
+[The delivery contract](../../../docs/workflow/delivery.md) owns source/map
+reconciliation, operational gates, traceability-only repairs, delta follow-ups
+and finding-level retry limits. Read it before grading or repeating a review.
+
+The reasoning behind the model split, independence and bounded repairs
 is `references/why.md`. Read it when changing a rule, not when following one.
 
 ## What this skill is not
@@ -27,8 +31,8 @@ is `references/why.md`. Read it when changing a rule, not when following one.
 
 ## The one branch this does not grade
 
-A mission that declared the `small` tier at its outset is exempt, and its PR
-opens on `arch-review-ok` alone.
+A mission that declared the `small` tier at its outset is exempt from this
+marker only; architecture, AI-thread, CI and authority gates still apply.
 
 **That is the mission's decision, taken before the work, and never this
 skill's.** Invoked at all, this skill grades the branch and records its marker
@@ -42,16 +46,13 @@ dossier, the fresh subagent, all three passes, every `A` and `G` graded.
 
 **Completeness-only** (`medium`): step 1, then the **completeness pass alone**,
 run inline in the calling session. No dossier, no subagent, no criteria pass.
-Read the verbatim request at the foot of the goal file, derive the atomic asks
-from it, and compare against the ledger. PASS when nothing is `UNLEDGERED`;
+Read the retained request and reconcile its distinct outcomes/constraints and
+operational obligations against the map. PASS when nothing is `UNLEDGERED`;
 record the marker on PASS, and **say in the verdict which mode ran** — a marker
 from a completeness pass must never read as one from a full review.
 
-It is the half worth keeping when only one is affordable: the completeness pass
-is the only check in the pipeline that can see an ask which never became a
-criterion, it costs reading two blocks of text, and it survives being run
-inline. "Is `A7` delivered?" is a judgement about work you just did, which is
-why that one keeps the stranger.
+Completeness checks the request beyond the checklist. Full criteria review
+retains an independent reviewer for implementation evidence.
 
 ### Which model each pass runs on
 
@@ -134,14 +135,13 @@ announces itself — both read as a suspiciously generous pass. **Check the stat
 before dispatching**; if it does not look like the branch you are reviewing,
 stop.
 
-**Inputs the reviewer may receive:** the checklist from step 1, verbatim; the
-diff, its stat and its log; every path named in a criterion's `→` evidence
-tail; the repository itself, read-only.
+**Inputs the reviewer may receive:** the retained request, reviewed source map,
+checklist, full diff/stat/log, named evidence, and read-only repository. For a
+follow-up include the prior independent verdict, stable finding IDs and exact
+delta; the delivery contract governs carrying forward unaffected conclusions.
 
-A criterion whose evidence tail says "the PR body" has nowhere to point yet —
-this skill runs before the PR exists. Write that evidence into the dossier as a
-file first and let the PR body be authored from it: evidence written down and
-then published is a record, evidence recalled while writing the PR is a story.
+If the draft PR does not yet exist, write evidence destined for its body into
+the dossier first. Publish that artifact later, not a recollection of the run.
 
 **Inputs it may not receive — this list is the skill:** the implementing
 session's transcript, summary, plan or narrative; your explanation of why a
@@ -200,16 +200,16 @@ ledger pass catches asks that never became criteria, the criteria pass catches
 criteria that never became code. Grade the criteria pass as one table — the
 merge happens before you read it.
 
-**Completeness pass** — the ledger against the request that produced it. Read
-the verbatim request yourself and derive the atomic asks from it — the same way
-`mission` was supposed to — *before* looking at the ledger. Then compare.
-
-An ask you found in the request that no `R` line carries is **UNLEDGERED**, the
-most serious grade here: every other finding is about work that fell short of a
-written promise, this one is about a promise that was never written, and it is
-the only failure the rest of the pipeline is blind to by construction. Report
-it with the trader's own words beside it. For a source-2 branch the issue body
-is the request.
+**Completeness pass** — source against the reconciled map. Read the original
+request first and derive its distinct asks independently, then compare the
+preflight map and amendments. Without a preflight,
+establish that map now; do not restart implementation. Apply the delivery
+contract's distinct-outcome and operational-gate rules. A real uncovered ask
+is **UNLEDGERED**: cite the source span, missing outcome/constraint and whether
+the gap is outcome/evidence or traceability only. Operational obligations are
+checked via their `G/C` source/evidence, not duplicated into `R/A`. A changed
+wording or number of extracted clauses alone proves no omission. Source-2
+branches use the issue body. Freezing a map cannot suppress a genuine gap.
 
 **Ledger pass** — one grade per `R`:
 
@@ -220,10 +220,10 @@ is the request.
 | `DROPPED` | no criterion discharges it, or every criterion that does failed |
 
 **Criteria pass** — one grade per `A` and per `G`, and no others. A `C` line
-under **Closing steps** is deliberately not a criterion: none of them can have
-happened while you are writing this verdict, and two are unblocked *by* it. A
-checklist that puts them among the `A` or `G` lines gets a finding against the
-checklist, and the rest is graded.
+under **Closing steps** records delivery sequencing, not product acceptance.
+Some steps, such as draft publication, may already have happened; readiness
+waits for this verdict and CI. Verify completed steps and leave later ones
+pending. Misclassified closing steps need a map correction, not a product fix.
 
 | Grade | Meaning |
 | --- | --- |
@@ -236,17 +236,18 @@ checklist, and the rest is graded.
 is the honest answer when the outcome may well be there and nothing on disk
 says so. Treat it as a failure, and fix it by recording the evidence.
 
-## Anti-rubber-stamp rules
+## Independent evidence rules
 
-A reviewer that agrees with everything has reviewed nothing. These are binding
+A clean review needs evidence, not an invented finding. These rules are binding
 on the subagent and go into its prompt.
 
 1. **"The code looks right" is not evidence.** Cite the `file:line` that
    implements the outcome, or grade it `MISSING`.
 2. **A criterion naming a test** is graded by reading that test's assertions. A
    test that exists but asserts nothing about the criterion is `UNPROVEN`.
-3. **A criterion naming a command** needs that command's output recorded — and
-   the reviewer may simply re-run it, which is faster than arguing.
+3. **A criterion naming a command** needs recorded output and input identity.
+   Verify permitted evidence reuse under the delivery contract; rerun when
+   evidence is missing, stale or contradicted, not merely to reproduce a PASS.
 4. **A prose criterion** is graded by quoting the lines that say it. A
    paraphrase is not a quote.
 5. **Grade the branch, not the plan.** Something living only in a `TODO`, a doc
@@ -266,8 +267,7 @@ on the subagent and go into its prompt.
 pass actually ran; nothing `UNLEDGERED`; every `R` `COVERED`; every `A` and `G`
 `DELIVERED`; nothing `UNPROVEN`, `MISSING` or `PARTIAL`.
 
-Those grades are the **merged** ones — a re-graded line counts at the
-escalation's reading. Where the two differed, say so beside the line.
+Use merged grades; disclose differences on escalated lines.
 
 **An approved deferral is exempt from every one of those clauses, the ledger
 included.** A deferred `A` does not grade `DELIVERED`, so every `R` it
@@ -290,32 +290,28 @@ This loop belongs to the session that called the skill. The reviewer grades and
 returns; it never edits the branch it is judging. The trader does not close
 these gaps either — the session does.
 
-- **Fix everything the review reported, then re-run** — a fresh dossier and a
-  fresh subagent, because a reviewer that has already seen the branch is no
-  longer a stranger to it.
-- **Stop on a stall, not on a count.** `CLAUDE.md`'s *two phases* bullet is the
-  owner: rounds are not rationed, but a run that does not shrink the open set
-  is the last one. If the gaps did not fall between two runs, report the
-  survivors and what was tried on each, and hand the branch to the trader.
-  Findings still returning in code the previous fix introduced mean the
-  approach is wrong rather than incomplete, and more runs will not fix a
-  design.
+- **Batch compatible fixes, then obtain an independent follow-up** under the
+  delivery contract. Keep the source map, prior verdict, full diff and exact
+  delta available; recheck affected findings and evidence at the current key.
+- **Track finding-level progress and finite budgets** under that contract.
+  Newly discovered independent gaps do not undo closed findings. Repeated
+  failures and exhausted budgets escalate; no unresolved gap earns PASS.
 - **Escalate immediately, without spending a round**, when closing the gap
   would change the mission's scope, contradict a recorded `D` decision, or
   require a call that belongs to the trader.
 
-**Deferral** is the only way a gap ships, and only the trader grants it. A
-granted deferral is written into the goal file under a `## Deferred` heading —
-the line's ID, what is missing, why, and that the trader approved it — and
-repeated in the PR body. By the time a deferral exists the archive is the file
-to edit, and editing it is a commit, which stales both markers by design: both
-reviews run again over the new head before either is re-recorded.
+**Deferral** requires user approval or an expressly delegated retrospective
+process exception under the delivery contract. Record a granted deferral in
+the goal file under a `## Deferred` heading —
+the line's ID, what is missing, why, and the applicable grant and decision — and
+repeated in the PR body. Edit the archive; this stales both markers: obtain current verdicts before
+recording them. A deferral changes scope and requires the applicable full
+review, not the traceability-only follow-up path.
 
 **`## Deferred` means granted.** A gap still waiting on an answer goes under
 `## Deferral requested — NOT granted`, which reads correctly at a glance; a
 subtitle correcting the heading is not enough, because the heading is what gets
-skimmed. A deferral the session grants itself is not a deferral; it is the
-failure this skill was built to stop.
+skimmed. Without a user grant or its explicit delegation, no deferral exists.
 
 ## Step 6 — Record the marker
 
@@ -328,7 +324,7 @@ cd "$WT" &&
     git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
 ```
 
-`pr-gate` denies `gh pr create` until this file holds the hash of the exact
+`pr-gate` denies `gh pr ready` until this file holds the hash of the exact
 change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or
 before the last edit, is lying to the gate — the second is caught
 automatically, the first is caught by nothing but you.

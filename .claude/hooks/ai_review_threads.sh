@@ -49,6 +49,9 @@ usage: ai_review_threads.sh post <pr> <path> <line>   # finding body on stdin
        ai_review_threads.sh list <pr>
        ai_review_threads.sh count <pr>
        ai_review_threads.sh resolve <thread-id>
+       ai_review_threads.sh progress-show <pr>
+       ai_review_threads.sh progress-record <pr>      # checkpoint JSON on stdin
+       ai_review_threads.sh progress-check <pr> <finding-id> ...
 
 `count` prints a number and exits 0, or prints a reason on stderr and exits 2
 when the count cannot be taken. Every other subcommand exits non-zero on
@@ -72,7 +75,7 @@ repository() {
 # rather than truncates: `totalCount` above the page means the answer cannot be
 # trusted, and a PR with a hundred resolved threads and one open finding would
 # otherwise report a clean zero and merge. A branch with more than a hundred
-# threads has a problem no pagination fixes, and the stall rule in CLAUDE.md
+# threads has a problem no pagination fixes, and the delivery contract's stall rule
 # should have caught it long before; what matters here is that the failure is
 # loud instead of silent.
 open_threads() {
@@ -153,6 +156,14 @@ post_thread() {
 }
 
 case "${1:-}" in
+    progress-show|progress-record|progress-check)
+        operation=${1#progress-}
+        shift
+        if python3 -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python3;
+        elif python -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python;
+        else echo 'Python is required for durable review progress.' >&2; exit 2; fi
+        exec "$progress_python" "$(dirname "$0")/review_progress.py" "$operation" "$@"
+        ;;
     post)
         [ $# -eq 4 ] || usage
         post_thread "$2" "$3" "$4"

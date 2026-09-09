@@ -1,22 +1,28 @@
 ---
 name: ship
-description: Verify, review and deliver the current branch through green CI. Use for /ship or requests to finish or deliver a task.
+description: Verify and deliver a Quantick branch through independent reviews and green CI. Prepare main PRs for the user; merge only into an explicitly authorized campaign branch.
 ---
-
-Campaign children override the main-based examples via the
-[integration contract](../../../docs/campaign/integration.md), including review keys.
 
 # Ship the current branch
 
+Read [the delivery contract](../../../docs/workflow/delivery.md) for local
+validation, evidence reuse, independent follow-ups and bounded repairs.
+Campaign children use [the integration contract](../../../docs/campaign/integration.md)
+for the base, review key and authorized merge command; normal tasks use main.
+
 ## Guards
 
-- Check `git branch --show-current`; on `main`, stop and direct to `/new-task`.
-- Identify the issue from the In Progress card, branch or conversation before
-  opening the PR. Ask only if ambiguous.
+- Never ship from `main`; use `new-task` and its isolated worktree.
+- Identify the linked issue from the mission or branch before publication.
+  Resolve genuine ambiguity from repository state, asking only if indispensable.
+- Preserve current exact-diff review markers and zero unresolved required
+  findings. This skill never manufactures review evidence.
 
 ## Steps
 
-1. **Verification** — run in order; stop and fix the first failure:
+1. **Validate the frozen change.** Classify the actual delta under the delivery
+   contract. For code/config/test/script changes run the ordered loop, stopping
+   and fixing the first failure:
 
    ```sh
    cargo fmt --all
@@ -26,59 +32,52 @@ Campaign children override the main-based examples via the
    cargo test --workspace
    ```
 
-2. **Commit** pending work: conventional style (`feat: ...`, `fix: ...`),
-   imperative mood, English. For `/mission`, archive `.claude/GOAL.md` as the
-   last commit **before** reviews, using `mission` step 8's commands. Changed
-   review keys stale markers; never restamp without rerunning the review.
+   Run affected non-Cargo checks as `CLAUDE.md` requires. Prose-only changes and
+   qualifying evidence corrections use the contract's targeted checks. Record
+   commands, outputs and input identity; distinguish reused evidence from new
+   execution. Never infer success from an empty log or an old checkmark.
 
-3. **Arch-review** (mandatory): run the skill over `git diff origin/main...HEAD`
-   or the explicit campaign base. Wait for its background step 0 `code-review`
-   findings and handle them before calling this closed. Fix every Blocker and
-   Should-fix; note deliberate deferrals in the PR body. Rerun step 1 after
-   changes. Never push or open a PR before this step closes. The skill itself
-   records `arch-review-ok` when closed.
+2. **Archive and commit.** `mission` step 8 owns the archive procedure. Include
+   the archive and evidence in the frozen reviewed tree before final reviews.
+   Use conventional English commits. Batch compatible repairs; later edits
+   require new verdicts before replacing stale markers.
 
-4. **Delivery-review**: assign `WT=/path/to/worktree` in the same shell call,
-   then `cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"`.
-   Read the gate's private file, never the goal's `**Tier:**` prose. Only a
-   current-branch `small` declaration within the diff-size ceiling exempts this
-   review. Missing/wrong-branch records or an outgrown ceiling grant no exemption;
-   `.claude/hooks/README.md` owns that mechanism.
+3. **Publish the draft.** Push the owned task branch and create/reuse its draft
+   PR with explicit base and linked issue. Follow the PR template; name the
+   mission tier and precisely label local, reused and CI verification. Open it
+   with `gh pr create --draft --body-file -` and a heredoc: `--draft` is what
+   `pr-gate` exempts, and a heredoc starts its own segment where the matcher
+   can see it. A draft is not permission to merge.
+   Campaign bases require explicit issue closure only after integration proof;
+   `Closes #N` does not close an issue on an intermediate campaign merge.
 
-   After step 3, use the skill's fresh-context subagent to grade every ledger
-   ask and criterion in `.claude/GOAL-archive-$SLUG.md`, which replaced the live
-   goal in step 2. A `/new-task` branch without a mission is graded against its
-   linked issue's `## Acceptance criteria`, named in the verdict. PASS requires
-   nothing MISSING, PARTIAL or UNPROVEN. Fix findings, rerun step 1, commit,
-   rerun step 3 over the new head, then rerun delivery review. Only the skill
-   records `delivery-review-ok`, on PASS.
+4. **Review the final diff.** Run `arch-review` including its native/direct bug
+   pass and wait for its findings. Run `ai-review`, posting each finding as a
+   resolvable thread. It owns the durable PR report and `ai-review-complete`
+   projection, required even with zero findings at every tier. Then run
+   `delivery-review` last under its tier rules.
+   Resolve findings; only deferrals authorized under the delivery contract ship and
+   must appear in the PR. After PASS, the skills record `arch-review-ok` and
+   `delivery-review-ok` against the current diff.
+   Read the tier with `arch-review`'s step 0 command, not from prose; assign
+   `WT` first, because a bare `cd ""` leaves you in the main checkout and reads
+   the shared git dir's file. The `small` exemption is subject to the hook
+   ceiling. Independent
+   delta follow-ups may carry forward unaffected evidence under the delivery
+   contract; they still issue a verdict for the current review key.
 
-   Keep `CLAUDE.md`'s stall rule: runs are not rationed, but if the open set does
-   not shrink, stop, retain every remainder with severity in the PR body and
-   take it to the user. Never discard findings or defer an open Blocker.
+5. **Finish checks and repairs.** Observe required CI at the actual PR head.
+   Use `gh pr checks <n>` or run/job metadata when checks are not registered;
+   bounded waits allow progress updates. Read failure logs, repair within scope
+   and budgets, validate, commit/push, and refresh affected reviews. Do not
+   rerun unchanged passing checks without a changed input or unresolved failure.
+   No pending, missing or red CI counts as success.
 
-5. **Push**: `git push -u origin <branch>`.
-
-6. **Open a draft PR** using `.github/PULL_REQUEST_TEMPLATE.md`: what/why,
-   `Closes #<N>`, the four verified checkboxes, reviewer notes and mission tier
-   (state a delivery exemption publicly). Title/body stay English under
-   `CLAUDE.md`; the file language guard cannot check a PR body. Use
-   `gh pr create --draft --body-file -` with a heredoc and an explicit campaign
-   `--base` when applicable. Run `ai-review` against the PR. It owns the durable
-   report and `ai-review-complete` recording procedure; completion is required
-   even with zero findings, at every tier. Close all its resolvable threads
-   under its existing fix/acceptance and follow-up rules. Changes require step 1,
-   commit, stale reviews rerun and another push; never merely restamp.
-
-7. **Watch CI**: `gh pr checks <pr> --watch`. If unregistered, locate it with
-   `gh run list --branch <branch>`, then `gh run watch <id> --exit-status`.
-   Read failing logs, fix, validate and push until green.
-
-8. **Mark ready and report**: after current required reviews, zero open AI
-   threads and green CI, run `gh pr ready <pr>` from the task worktree. Report
-   its URL and CI status. The user alone merges to `main`; never enable
-   auto-merge or enqueue it. Authorized campaign merges follow the integration
-   contract from the reviewed worktree; retain its private evidence through merge.
-   After verified integration remove only the owned clean worktree and merged
-   local branch. Explicitly prove/synchronize campaign issue closure; merging to
-   a non-default base does not close it.
+6. **Mark ready and deliver.** Once current reviews, required checks and finding
+   resolution are proven, run `gh pr ready <n>` from the reviewed worktree.
+   Report the PR URL and exact-head CI. The user alone merges to main: no
+   auto-merge, queue, direct push or protection override. An authorized campaign
+   child instead returns to its coordinator for the serialized, head-pinned
+   merge in the integration contract. Keep its worktree through merge so the
+   private review evidence remains available; clean up only the owned clean
+   worktree after verified integration. Never delete another writer's work.

@@ -39,7 +39,9 @@
 //! Exactly the files a session loads: `CLAUDE.md`, `AGENTS.md` (which
 //! `CLAUDE.md` delegates the crate map to, so a cut that moves weight there
 //! must still be paid for), and every `.md` under the Claude and Codex
-//! instruction trees. Goal files are not in scope — a `GOAL.md` is a record
+//! instruction trees, plus the normative `docs/campaign/` and `docs/workflow/`
+//! contracts. `docs/workflow/evidence/` holds mission records and is excluded.
+//! Goal files are not in scope — a `GOAL.md` is a record
 //! of one mission, read deliberately and never at start-up. Rationing it would
 //! push authors to write down less of what they were asked for.
 
@@ -97,7 +99,12 @@ pub const BUDGET_HEADROOM: usize = 2_000;
 /// rationed as a skill — and, worse, an entry recorded for such a file would
 /// never be found by [`measure`], which walks the real directory, so the
 /// guard would report its own scan as a stale entry.
-const INSTRUCTION_DIRS: [&str; 2] = [".claude/skills/", ".agents/"];
+const INSTRUCTION_DIRS: [&str; 4] = [
+    ".claude/skills/",
+    ".agents/",
+    "docs/campaign/",
+    "docs/workflow/",
+];
 
 /// The context files that are not skills, relative to the workspace root.
 const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
@@ -167,7 +174,8 @@ pub fn tracked(relative: &str) -> bool {
         || (INSTRUCTION_DIRS
             .iter()
             .any(|directory| relative.starts_with(directory))
-            && relative.ends_with(".md"))
+            && relative.ends_with(".md")
+            && !relative.starts_with("docs/workflow/evidence/"))
 }
 
 /// What a walk of the context tree found.
@@ -254,6 +262,9 @@ fn walk(dir: &Path, root: &Path, found: &mut Measured) {
                 continue;
             }
         };
+        if relative_to(root, &path) == "docs/workflow/evidence" {
+            continue;
+        }
         if path.is_dir() {
             walk(&path, root, found);
             continue;
@@ -305,6 +316,9 @@ pub fn measure(root: &Path) -> Measured {
     }
     for directory in INSTRUCTION_DIRS {
         let path = root.join(directory);
+        if relative_to(root, &path) == "docs/workflow/evidence" {
+            continue;
+        }
         if path.is_dir() {
             walk(&path, root, &mut found);
         }
@@ -522,6 +536,34 @@ mod tests {
         ));
         assert!(tracked(".agents/skills/mission/SKILL.md"));
         assert!(tracked(".agents/references/codex-compatibility.md"));
+    }
+
+    #[test]
+    fn relocated_contracts_still_spend_budget_but_mission_evidence_does_not() {
+        let root = scratch("contract-scope", 12_000, 10_000, 22_000);
+        for path in ["docs/campaign/integration.md", "docs/workflow/delivery.md"] {
+            fs::write(root.join(path), "x".repeat(1_500)).unwrap();
+            assert!(tracked(path));
+        }
+        fs::create_dir_all(root.join("docs/workflow/evidence/nested")).unwrap();
+        fs::write(
+            root.join("docs/workflow/evidence/nested/review.md"),
+            "x".repeat(50_000),
+        )
+        .unwrap();
+        let found = measure(&root);
+        assert_eq!(ratchet::total(&found.counts), 25_000);
+        assert!(!tracked("docs/workflow/evidence/nested/review.md"));
+        assert!(tracked("docs/workflow/evidence-notes/rules.md"));
+        assert!(!tracked("docs/workflow-old/delivery.md"));
+        assert!(!tracked("docs/campaign-old/integration.md"));
+        assert!(
+            check(&root)
+                .iter()
+                .any(|f| f.line.contains("the tracked total is 25000"))
+        );
+        fs::write(root.join("docs/workflow/delivery.md"), "x".repeat(10_001)).unwrap();
+        assert!(!check_file(&root, "docs/workflow/delivery.md").is_empty());
     }
 
     #[test]
@@ -753,6 +795,8 @@ mod tests {
         fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".agents/skills")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join("docs/campaign")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join("docs/workflow")).expect("scratch dirs are creatable");
         fs::write(
             root.join(BASELINE_FILE),
             format!(

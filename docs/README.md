@@ -42,6 +42,9 @@ The generated wire schemas live outside this tree, in
 
 ## Building the project with agents
 
+[Delivery without repeated reconstruction](workflow/delivery.md) owns stable
+requirement mapping, bounded repair progress and proportional validation.
+
 The [architecture preparation plan](architecture/foundation.md) records the
 audited ownership boundaries, [ordered refactoring tasks](architecture/preparation-tasks.md)
 and [baseline evidence](architecture/baseline.md) for future extensible content,
