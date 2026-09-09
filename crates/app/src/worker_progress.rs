@@ -331,17 +331,6 @@ impl SharedProgress {
         }
         self.clock.phase(Phase::Applying);
     }
-    pub(crate) fn superseded(&self, inputs: usize, partials: usize, projects: usize) {
-        let mut state = self.lock();
-        let Ledger { counts, valid, .. } = &mut *state;
-        add(&mut counts.inputs_superseded, inputs as u64, valid);
-        add(&mut counts.partials_superseded, partials as u64, valid);
-        add(&mut counts.projects_superseded, projects as u64, valid);
-    }
-    pub(crate) fn publishing(&self) {
-        self.lock().phase = Phase::Publishing;
-        self.clock.phase(Phase::Publishing);
-    }
     pub(crate) fn output(&self, success: bool) {
         let mut state = self.lock();
         let Ledger { counts, valid, .. } = &mut *state;
@@ -463,6 +452,7 @@ pub(crate) struct ObservedOutput<'a, T> {
 /// One bounded ledger update per batch, including an incomplete batch.
 pub(crate) struct Coalescing<'a> {
     progress: &'a SharedProgress,
+    armed: bool,
     pub inputs: usize,
     pub partials: usize,
     pub projects: usize,
@@ -471,16 +461,37 @@ impl<'a> Coalescing<'a> {
     pub(crate) fn new(progress: &'a SharedProgress) -> Self {
         Self {
             progress,
+            armed: true,
             inputs: 0,
             partials: 0,
             projects: 0,
         }
     }
+
+    pub(crate) fn publishing(mut self) {
+        {
+            let mut state = self.progress.lock();
+            self.record(&mut state);
+            state.phase = Phase::Publishing;
+        }
+        // The callback runs outside the ledger and may unwind. Its committed
+        // subsets must not be recorded again by this guard's destructor.
+        self.armed = false;
+        self.progress.clock.phase(Phase::Publishing);
+    }
+
+    fn record(&self, state: &mut Ledger) {
+        let Ledger { counts, valid, .. } = state;
+        add(&mut counts.inputs_superseded, self.inputs as u64, valid);
+        add(&mut counts.partials_superseded, self.partials as u64, valid);
+        add(&mut counts.projects_superseded, self.projects as u64, valid);
+    }
 }
 impl Drop for Coalescing<'_> {
     fn drop(&mut self) {
-        self.progress
-            .superseded(self.inputs, self.partials, self.projects);
+        if self.armed {
+            self.record(&mut self.progress.lock());
+        }
     }
 }
 impl<T> ObservedOutput<'_, T> {

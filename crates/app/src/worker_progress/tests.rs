@@ -190,6 +190,75 @@ fn coalescing_subsets_survive_an_unfinished_domain_batch() {
 }
 
 #[test]
+fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
+    // Three admitted commands contain two input supersessions. One output is
+    // delivered before the Publishing callback unwinds; no cycle completes.
+    let clock = Gate::new();
+    let publishing = clock.hold(Phase::Publishing);
+    let terminal = clock.hold(Phase::Unwound);
+    let producer = WorkerProgress::with_clock(clock);
+    let p = producer.observer().clone();
+    let observed = producer.consumer();
+    let (tx, rx) = channel();
+    let tx = producer.bind(tx);
+    let (output_tx, output_rx) = channel();
+    for _ in 0..3 {
+        tx.send(()).unwrap();
+    }
+    let worker = std::thread::spawn(move || {
+        let _lifecycle = observed.lifecycle();
+        for _ in 0..3 {
+            rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        observed.begin(3);
+        let mut subsets = Coalescing::new(&observed);
+        subsets.inputs = 2;
+        ObservedOutput {
+            sender: &output_tx,
+            progress: &observed,
+        }
+        .send(17)
+        .unwrap();
+        subsets.publishing();
+        panic!("Publishing callback should have unwound");
+    });
+    publishing.reached();
+    assert_eq!(output_rx.recv_timeout(Duration::from_secs(10)).unwrap(), 17);
+    let before = p.snapshot();
+    assert!(before.valid);
+    assert_eq!(before.phase, Phase::Publishing);
+    assert_eq!(
+        before.counts,
+        Counts {
+            accepted: 3,
+            inflight: 3,
+            inputs_superseded: 2,
+            output_attempts: 1,
+            output_successes: 1,
+            ..Counts::default()
+        }
+    );
+    publishing.unwind();
+    terminal.reached();
+    let after = p.snapshot();
+    assert!(after.valid);
+    assert_eq!(after.phase, Phase::Unwound);
+    assert_eq!(
+        after.counts,
+        Counts {
+            accepted: 3,
+            unfinished: 3,
+            inputs_superseded: 2,
+            output_attempts: 1,
+            output_successes: 1,
+            ..Counts::default()
+        }
+    );
+    terminal.release();
+    assert!(worker.join().is_err());
+}
+
+#[test]
 fn send_racing_receiver_destruction_is_unfinished_after_terminal_observation() {
     let producer = WorkerProgress::new();
     let p = producer.observer().clone();

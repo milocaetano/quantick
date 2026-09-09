@@ -3,9 +3,10 @@
 This dossier describes the internal observations added for campaign Q8 / issue
 #340. Experiment 1 failed its completion-overhead gates on source `a5dfbb4`.
 Experiment 2 also failed completion gates on source `d461e00` after repair 1.
-The reserved Q8-PERF-001 repair 2 makes admission and observation local to the
-UI owner; its final validation and paired measurements remain pending. This file does not
-claim a score increment, benchmark PASS, or final source identity yet.
+Experiment 3 on `27fc95d` passed all numeric gates except time completion p99.
+The reserved final Q8-PERF-001 repair 3 combines adjacent subset-accounting and
+Publishing updates. Its full validation and paired measurement remain pending.
+This file does not claim a score increment, benchmark PASS or final source identity.
 
 ## Production path and ownership
 
@@ -58,6 +59,11 @@ For a valid ledger, accepted commands reconcile as
   replaced Project requests. These are subsets of batch work, not additional
   retirements or dropped data commands. A batch-local RAII owner preserves
   already-counted subsets when domain work unwinds.
+  The normal transition commits these subsets and the Publishing phase under
+  one ledger lock, then disarms the RAII flush before calling the unlocked
+  phase callback. An Applying unwind still flushes once; a Publishing callback
+  unwind cannot count the subsets twice. Each output result remains accounted
+  immediately after its existing send.
 - Indicator `output_attempts = output_successes + output_failures` records
   event-channel sends separately from cycle completion. Success means channel
   delivery, not UI adoption. Book `mailbox_replacements` records replacement
@@ -235,6 +241,39 @@ but that is a repair hypothesis, not an established cause or a predicted PASS.
 Natural channel draining, domain work, projection cadence, shared harness bytes,
 independent domain oracles and acceptance ceilings remain fixed.
 
+Experiment 3 retains all six worker and summary runs under
+`quantick-campaign-score9/experiment-3-workers/` and `experiment-3-summary/`.
+The [prospective record](https://github.com/milocaetano/quantick/issues/340#issuecomment-5609287684)
+binds source `27fc95d97d2af33c3e2d9d22350a616a9136d5a7`, the actual release
+binary and complete manifests to the unchanged recipe. All 18 worker
+domain/counter contracts and every absolute admission gate passed. The
+[complete result](https://github.com/milocaetano/quantick/issues/340#issuecomment-5609378223)
+retains the failed time p99 gate:
+
+| Completion ratio, candidate/base | Mean (limit 1.10) | p95 (limit 1.15) | p99 (limit 1.15) |
+| --- | --- | --- | --- |
+| Time | 1.034928 | 1.029565 | **1.263822 FAIL** |
+| Dollar | 1.042041 | 1.073533 | 1.032802 |
+| Depth | 0.985278 | 0.957698 | 0.976308 |
+
+The six summary contracts passed; median mean synchronous caller cost was
+7.7065 microseconds for the baseline and 32.7853 microseconds for the candidate.
+Summary cost remains descriptive and excludes disk I/O, GUI work and
+asynchronous resets. It does not substitute for the failed worker gate.
+The exact failed experiment 3 binary is retained as
+`candidate-release-3/frozen-build-3/original-test-binary.exe`, SHA256
+`ff7e8dde2664ccd0fb71c811518a153e0f1dc989d10e445fe9ea31ed6029388f`.
+
+The [repair 3 reservation and independent diagnosis](https://github.com/milocaetano/quantick/issues/340#issuecomment-5609490772)
+retain all distributions and reject treating the failed p99 as disposable noise.
+Fusing the adjacent subset and Publishing ledger updates saves one acquisition
+per completed transition, or 701/710/703 in the observed candidate time runs.
+The source and aggregate counters do not prove that this will close the
+remaining 82.145 microseconds above the p99 ceiling. No domain scheduling,
+retained-lane folding, clock callback order, immediate output accounting or
+benchmark input is changed. Repair attempts are 3 of 3; experiment attempts
+remain 3 until a separately frozen fourth experiment is prospectively recorded.
+
 External evidence is retained under the coordinator's `Q8-validation/`
 directory. `04-development-check-failure-excerpts.md` preserves the original
 development compile failure with tool-output provenance, and
@@ -328,5 +367,21 @@ Their development checks are retained in
 28 tests with zero failures and one ignored benchmark. The original Known-age,
 S1-S4, zero-work snapshot and domain literal oracles remain. Production worker
 and telemetry source bytes and all benchmark inputs are unchanged by these
-fixture corrections. Independent follow-up and final ordered validation remain
-separate; this is still performance repair 2 after two failed experiments.
+fixture corrections. The independent follow-up closed both findings, and
+`validation-repair2-final` then passed the full ordered workspace loop with
+3543 tests, zero failures and 15 ignored tests. That frozen source became
+`27fc95d` and was measured in experiment 3 above.
+
+Repair 3 focused evidence is in `quantick-campaign-score9/repair3/`, with full
+source manifests and checksums in each receipt and `09-handoff.json`.
+Guards passed 206 tests; app check and Clippy passed all targets; progress
+passed 29 tests with zero failures and one ignored benchmark; indicator and
+orderflow suites passed 33 and 93 tests. Formatting and diff checks passed.
+The added `publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output`
+fixture holds a real phase callback after three accepted/admitted commands,
+two input supersessions and delivery of output 17. Literal full-count snapshots
+prove the Publishing callback unwind leaves two supersessions, one successful
+output, three unfinished commands and zero retirements/cycles/mailbox updates.
+Existing Applying-unwind, S1-S4, ownership and real-domain fixtures are unchanged.
+These focused checks do not replace final full validation, independent reviews
+or paired performance evidence for the repaired source.

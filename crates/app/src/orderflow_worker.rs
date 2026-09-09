@@ -220,8 +220,7 @@ fn run(
             engine.project_at(request, Instant::now());
         }
 
-        drop(coalescing);
-        progress.publishing();
+        coalescing.publishing();
         {
             let mut mailbox = shared.lock().expect("book published mailbox poisoned");
             *mailbox = engine.published();

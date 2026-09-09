@@ -868,8 +868,7 @@ fn run_observed(
             .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
 
-        drop(coalescing);
-        progress.publishing();
+        coalescing.publishing();
         publish_deltas(&host, &mut slots, events, rebuilt, &mut lane);
         progress.finish(false);
         for ack in flushes {
