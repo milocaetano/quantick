@@ -12,6 +12,7 @@
 //! dropped. The UI repaints on its own ~60 fps cadence, so no egui handle is
 //! needed here.
 
+use crate::worker_progress::{Coalescing, ProgressSnapshot, WorkerProgress};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -64,6 +65,7 @@ pub(crate) enum BookCommand {
 /// UI-side handle: send commands, read the latest published snapshot.
 pub(crate) struct BookWorker {
     commands: Sender<BookCommand>,
+    progress: Arc<WorkerProgress>,
     published: Arc<Mutex<BookPublished>>,
 }
 
@@ -71,16 +73,22 @@ impl BookWorker {
     /// Spawn the book thread for `symbol`.
     #[must_use]
     pub(crate) fn spawn(symbol: &str) -> Self {
+        Self::spawn_with_progress(symbol, WorkerProgress::new())
+    }
+
+    pub(crate) fn spawn_with_progress(symbol: &str, progress: Arc<WorkerProgress>) -> Self {
         let (tx, rx) = channel::<BookCommand>();
         let published = Arc::new(Mutex::new(BookPublished::initial()));
         let shared = Arc::clone(&published);
         let engine_symbol = symbol.to_owned();
+        let observed = Arc::clone(&progress);
         std::thread::Builder::new()
             .name("quantick-book".to_owned())
-            .spawn(move || run(BookEngine::new(engine_symbol), &rx, &shared))
+            .spawn(move || run(BookEngine::new(engine_symbol), &rx, &shared, observed))
             .expect("spawn book worker thread");
         Self {
             commands: tx,
+            progress,
             published,
         }
     }
@@ -89,7 +97,7 @@ impl BookWorker {
     /// log line), never a full queue: the channel is unbounded and command
     /// volume is bounded by feed cadence.
     pub(crate) fn send(&self, command: BookCommand) {
-        if self.commands.send(command).is_err() {
+        if self.progress.send(&self.commands, command).is_err() {
             tracing::error!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -98,6 +106,10 @@ impl BookWorker {
                 "book worker thread is gone; heatmap commands are being dropped"
             );
         }
+    }
+
+    pub(crate) fn progress(&self) -> ProgressSnapshot {
+        self.progress.snapshot()
     }
 
     /// Latest snapshot published by the worker.
@@ -132,7 +144,13 @@ impl BookWorker {
     }
 }
 
-fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<BookPublished>>) {
+fn run(
+    mut engine: BookEngine,
+    rx: &Receiver<BookCommand>,
+    shared: &Arc<Mutex<BookPublished>>,
+    progress: Arc<WorkerProgress>,
+) {
+    let _lifecycle = progress.lifecycle();
     // Kept across batches so the worker can re-project after data changes
     // without waiting for the UI to ask again.
     let mut last_request: Option<ProjectionRequest> = None;
@@ -143,6 +161,8 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
             batch.push(next);
         }
 
+        progress.begin(batch.len());
+        let mut coalescing = Coalescing::new(&progress);
         let mut flushes: Vec<Sender<()>> = Vec::new();
         let mut incoming_request: Option<ProjectionRequest> = None;
         for command in batch {
@@ -177,7 +197,10 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
                 }
                 BookCommand::ResetSummaryCounters => engine.reset_summary_counters(),
                 // Latest-wins: only the newest layout of this batch is built.
-                BookCommand::Project(request) => incoming_request = Some(request),
+                BookCommand::Project(request) => {
+                    coalescing.projects += usize::from(incoming_request.is_some());
+                    incoming_request = Some(request);
+                }
                 BookCommand::Flush(ack) => flushes.push(ack),
             }
         }
@@ -197,12 +220,18 @@ fn run(mut engine: BookEngine, rx: &Receiver<BookCommand>, shared: &Arc<Mutex<Bo
             engine.project_at(request, Instant::now());
         }
 
+        drop(coalescing);
+        progress.publishing();
         {
             let mut mailbox = shared.lock().expect("book published mailbox poisoned");
             *mailbox = engine.published();
         }
+        progress.finish(true);
         for ack in flushes {
             let _ = ack.send(());
         }
     }
 }
+
+#[cfg(test)]
+mod progress_tests;

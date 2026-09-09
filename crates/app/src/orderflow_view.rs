@@ -1304,10 +1304,6 @@ impl OrderflowView {
         self.config.depth_visible() && self.published.status.is_syncing()
     }
 
-    pub fn reset_summary_counters(&mut self) {
-        self.worker.send(BookCommand::ResetSummaryCounters);
-    }
-
     /// Picker, save and reload for the named bubble looks.
     ///
     /// Saving writes the whole presets file, so what the panel shows and what
@@ -3534,3 +3530,5 @@ mod tests {
         assert_eq!(view.health().status, "connecting");
     }
 }
+
+mod worker_diagnostics;
