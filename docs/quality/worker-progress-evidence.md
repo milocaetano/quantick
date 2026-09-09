@@ -4,9 +4,10 @@ This dossier describes the internal observations added for campaign Q8 / issue
 #340. Experiment 1 failed its completion-overhead gates on source `a5dfbb4`.
 Experiment 2 also failed completion gates on source `d461e00` after repair 1.
 Experiment 3 on `27fc95d` passed all numeric gates except time completion p99.
-The reserved final Q8-PERF-001 repair 3 combines adjacent subset-accounting and
-Publishing updates. Its full validation and paired measurement remain pending.
-This file does not claim a score increment, benchmark PASS or final source identity.
+Repair 3 combines adjacent subset-accounting and Publishing updates. Source
+`65e24caa` passed the full ordered validation and every unchanged performance
+gate in experiment 4. Earlier failures remain retained below. Independent final
+reviews, final-head CI, campaign integration and score reassessment remain due.
 
 ## Production path and ownership
 
@@ -271,8 +272,9 @@ per completed transition, or 701/710/703 in the observed candidate time runs.
 The source and aggregate counters do not prove that this will close the
 remaining 82.145 microseconds above the p99 ceiling. No domain scheduling,
 retained-lane folding, clock callback order, immediate output accounting or
-benchmark input is changed. Repair attempts are 3 of 3; experiment attempts
-remain 3 until a separately frozen fourth experiment is prospectively recorded.
+benchmark input is changed. At that reservation, repair attempts were 3 of 3 and experiment attempts
+remained 3. The separately frozen fourth experiment below advances only the
+experiment count to 4; no repair budget or failed result is reset.
 
 External evidence is retained under the coordinator's `Q8-validation/`
 directory. `04-development-check-failure-excerpts.md` preserves the original
@@ -281,6 +283,84 @@ development compile failure with tool-output provenance, and
 The frozen harness, source/binary manifests, raw test transcripts, measurements
 and ordered verification receipts must be associated with the delivered source
 commit before this dossier can claim completion.
+
+## Experiment 4 and delivered-source evidence
+
+The [prospective experiment](https://github.com/milocaetano/quantick/issues/340#issuecomment-5609794967)
+and [complete checkpoint 953](https://github.com/milocaetano/quantick/issues/330#issuecomment-5609826793)
+precede first B1 execution at 2026-09-09T22:52:45Z. The
+[complete result](https://github.com/milocaetano/quantick/issues/340#issuecomment-5609861970) retains all six alternating worker runs and
+six separate summary runs. Every one of the 18 domain/counter contracts and
+all original performance gates passed. All summary output contracts passed.
+There was no selected rerun, trimming, threshold change or discarded prior
+failure. This finite evidence supports the repaired candidate; it does not
+establish a causal explanation for every earlier timing distribution.
+
+| Completion candidate/base | Mean (limit 1.10) | p95 (limit 1.15) | p99 (limit 1.15) |
+| --- | --- | --- | --- |
+| Time | 1.022367 | 1.012538 | 1.032396 |
+| Dollar | 1.051347 | 1.048045 | 1.014022 |
+| Depth | 0.993455 | 0.983488 | 0.984447 |
+
+Admission gates use added nanoseconds per command, not relative percentages.
+Adverse relative changes are retained in this table and the complete result.
+
+| Kind / metric | Baseline ns | Candidate ns | Added ns | Relative change | Limit added ns |
+| --- | --- | --- | --- | --- | --- |
+| time / mean | 83.546875 | 87.216146 | 3.669271 | +4.391871% | 250 |
+| time / p95 | 200.000000 | 200.000000 | 0.000000 | +0.000000% | 500 |
+| time / p99 | 1200.000000 | 1100.000000 | -100.000000 | -8.333333% | 500 |
+| dollar / mean | 88.612572 | 93.294620 | 4.682048 | +5.283729% | 250 |
+| dollar / p95 | 300.000000 | 300.000000 | 0.000000 | +0.000000% | 500 |
+| dollar / p99 | 1600.000000 | 1700.000000 | 100.000000 | +6.250000% | 500 |
+| depth / mean | 83.725641 | 91.580769 | 7.855128 | +9.381986% | 250 |
+| depth / p95 | 200.000000 | 100.000000 | -100.000000 | -50.000000% | 500 |
+| depth / p99 | 1300.000000 | 1400.000000 | 100.000000 | +7.692308% | 500 |
+
+The separate summary fixture's median mean synchronous caller cost was
+7.832500 microseconds baseline and
+31.281667 microseconds candidate
+(+299.382913%). It emits five additional worker records
+per opportunity. Its synthetic two-second cadence yields arithmetic costs,
+not measured background CPU, disk throughput or GUI frame time; no numerical
+summary gate was introduced. See the complete result for tail/byte/event values.
+
+| Frozen input | Identity |
+| --- | --- |
+| Candidate source | `65e24caa23b35381471b84eb69ae69db09ac794f` |
+| Candidate tree | `a20943228cf0691d566d2bd66933fff652e13caf` |
+| Candidate release test binary SHA256 | `43877d47bf50b9d27b3bb14e308139bc1b725c165c4c91e2e8c1220bd2199b3d` |
+| Complete source manifest SHA256 | `74764bfdc9c2c1cae42d06d8299c91a990868e7b2d22b07ba6745beb4fd329e1` |
+| Actual release build log SHA256 | `c65835d0326ecd0ff258b6f0b97f88ab873fdd839909603a519dce91ee2c3f36` |
+| Full validation source manifest SHA256 | `eede4b969675a4f8004476cadbbf0cc420e9c5799baf741701fd7c30b75678bd` |
+| Independent experiment audit SHA256 | `68360820b2fe50d4532b901a8274f02d3873602009ef0d51a3f7913aa9b72057` |
+
+All exact manifests, raw samples and output/exit hashes remain in
+`quantick-campaign-score9/experiment-4-inputs`, `experiment-4-workers` and
+`experiment-4-summary`; the actual executable is also archived under
+`candidate-release-4/frozen-build-4/original-test-binary.exe`. Baseline is the
+unchanged instrumented `98c1955` control; its manifest and binary identity are
+in the prospective record. The two pre-execution host-policy/missing-host
+preparation failures are retained explicitly there and in
+`experiment-4-preparation-launch-failures.json`. No executable ran during those
+failures; the unchanged manifest helper and both dry-run validators then passed.
+
+The source-bound final repair validation passed fmt, guards, 29 focused tests,
+workspace Clippy/build and 3544 workspace tests (zero failures, 15 ignored).
+Its six unchanged-source receipts are in `validation-repair3-final` and bound
+by [reviewed checkpoint 952](https://github.com/milocaetano/quantick/issues/330#issuecomment-5609766090).
+[Committed transcript excerpts](worker-progress-transcripts.md) retain actual
+normal/degraded/recovered application rows and both workers' degraded/recovered/
+terminal observations with the exact log hash and independent fixture oracles.
+
+Only evidence and the mission archive are added after this measured source.
+Q8's explicit G2 still requires a new full ordered validation before that archive
+commit; its actual receipts and final committed identity belong on issue340/PR.
+Performance evidence is attributed to the frozen source above, never relabeled
+as a new measurement of the archive commit. No runtime, benchmark, validator,
+dependency, configuration, clock or domain-fixture input is intentionally changed.
+Final reviews must inspect the complete delta and confirm that attribution.
+Campaign SE9 credit and the overall9.0 goal remain pending integrated assessment.
 
 ## Limits
 
