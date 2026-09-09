@@ -83,10 +83,12 @@ satisfaction. Rejected/closed-unmerged PRs require recovery, not `done`.
 copy their integration record and both criterion sets from the charter into
 each complete checkpoint, with current campaign SHA and final PR status.
 `inflight`, when non-null, names the stable operation key, target, intended
-mutation, attempt count, starting checkpoint and expected readback. Persist
-before a business mutation; clear only after observed success or a recorded failure.
-Checkpoint publication is the journal write itself, exempt from recursively
-journaling another checkpoint. After a lost publication response, find its
+mutation, attempt count, starting checkpoint and expected readback. Persist it
+in a compact operation journal comment before a business mutation; record its
+result only after observed success or failure. Do not copy the full checkpoint
+for each mutation. Journal records supplement the latest complete snapshot.
+Checkpoint and operation-journal publications never journal themselves.
+After a lost checkpoint publication response, find its
 exact `publication_key` and read it back before retrying. Do not publish a new
 sequence until that uncertain journal write is reconciled. Parent creation is
 the bootstrap exception: first search the stable objective key specified in
@@ -102,7 +104,28 @@ frontier, terminal prerequisite proof links, counters and next action; paginate
 children rather than loading full histories. At 50 active entries, partition
 into linked checkpoint comments and publish a final manifest listing all part
 URLs/counts. Only the final manifest commits the snapshot. A missing part is
-an incomplete checkpoint and blocks dependent writes. Never truncate silently.
+an incomplete checkpoint and blocks dependent writes. Also partition when a
+serialized snapshot exceeds 24 KiB, even below 50 tasks. Never truncate silently.
+
+### Compact operation journal
+
+On the parent issue append `<!-- campaign-operation:v1 -->` followed by JSON:
+`campaign_id`, `checkpoint` (complete snapshot URL), `operation_key`, `attempt`,
+`owner`, `lease_expires_at`, `target`, `intent`, `expected_readback`, `status`
+(`pending`, `succeeded` or `failed`) and `evidence` (result/error URLs). The
+pending record precedes the operation; its result uses the same key and attempt.
+Keep each journal body within 8 KiB by linking payload/evidence artifacts, never
+omitting authority, identity or readback information. Identical records are
+idempotent; conflicting payloads for one key/attempt require reconciliation.
+After an uncertain append, search/read that exact record before retrying.
+
+Full checkpoints are for task claims, PR publication, completed reviews, merges,
+blocks, ownership transfers and stopping. They fold in reconciled operations
+and link the consumed journal records. A lease renewal may use a journal record
+under the same owner; ownership transfer still requires a full checkpoint.
+No unchanged-status snapshot is needed. Snapshot frequency follows recovery
+boundaries, not a timer or the number of field updates. Legacy snapshots remain
+valid; new journal records are adopted only with the reviewed workflow revision.
 
 ## State projection
 
@@ -125,7 +148,7 @@ and values as the machine-readable board until the view is confirmed.
 
 GitHub issue comments are not an atomic lock. Default to a single coordinator.
 Before claiming, read the latest complete snapshot and subsequent checkpoint
-metadata, append the lease,
+and journal records, append the lease,
 then re-read to detect another claim. Before each mutation recheck ownership
 and expiry. Renew before expiry. Conflicting claims or sibling sequence values
 stop writes to the affected campaign; do not resolve by timestamp alone. An
@@ -138,8 +161,11 @@ Every complete checkpoint is a recovery boundary: it carries current
 authorization sources, decisions, cumulative retry counters, active tasks,
 dependency proof links and pending mutations without requiring older bodies.
 Resume reads the charter, that boundary, referenced active children/decisions/
-evidence and live GitHub state. Inspect subsequent checkpoint metadata for
-forks; older bodies are read only to resolve a specific uncertainty. If the
+evidence and live GitHub state. Fold subsequent journal records into `inflight`
+and counters, verify current lease, and read back unresolved operations before
+new writes. Missing, conflicting or failed journal records never imply success.
+Inspect subsequent checkpoint metadata for forks; older bodies are read only
+to resolve a specific uncertainty. If the
 index is stale, paginate comment metadata and filter checkpoint markers with
 CLI/API tooling before loading bodies into agent context. An interrupted
 publication with no final
@@ -162,7 +188,12 @@ transient failures; three repair attempts per task/failure signature. Permission
 denials get no blind retry. Honor rate-limit reset times and checkpoint longer
 waits. Each attempt records error signature, head, evidence, action and result
 in the child; counters persist in checkpoints. A changed hypothesis does not
-erase history. Repository review stall rules can stop earlier and always win.
+erase history. The delivery contract's stricter repair limits still apply.
+Review repairs also follow [the delivery contract](../workflow/delivery.md):
+retain finding IDs and the mission repair-batch counter across checkpoints.
+Record newly discovered findings separately from attempted repairs; do not use
+the raw total-open count as the stall test. Existing failed evidence and
+stricter authorized budgets remain in force.
 Exhaustion blocks that task and creates an actionable escalation, then selects
 other ready tasks. A new budget needs an explicit decision, not a new session.
 

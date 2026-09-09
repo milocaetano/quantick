@@ -44,6 +44,19 @@ fn fixture() -> ScratchDir {
     let root = ScratchDir::new("extension-boundary");
     fs::create_dir_all(root.join("crates/app/src")).unwrap();
     fs::create_dir_all(root.join("crates/guards")).unwrap();
+    // The compiled CLI also checks instruction links. Supply a valid independent
+    // documentation tree so boundary assertions cannot fail on missing inputs.
+    for dir in [".github", ".claude/skills", ".agents", "docs"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    for file in [
+        "CLAUDE.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+    ] {
+        fs::write(root.join(file), "# Fixture instructions\n").unwrap();
+    }
     fs::write(root.join("crates/guards/size-baseline.txt"), "!budget 0\n").unwrap();
     fs::write(root.join("crates/guards/cycle-baseline.txt"), "!budget 0\n").unwrap();
     fs::write(root.join("crates/app/src/app.rs"), SOURCE).unwrap();
