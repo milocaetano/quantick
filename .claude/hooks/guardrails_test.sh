@@ -1499,5 +1499,14 @@ else
     failed=$((failed + 1))
 fi
 
+for campaign_suite in "$repo_root/tools/campaign/test-architecture-a-coordinator-v2.py" \
+    "$repo_root/tools/campaign/test_campaign_recovery.py"; do
+    if "$progress_python" -B "$campaign_suite"; then
+        passed=$((passed + 1))
+    else
+        failed=$((failed + 1))
+    fi
+done
+
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
