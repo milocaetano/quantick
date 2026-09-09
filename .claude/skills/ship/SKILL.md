@@ -1,21 +1,28 @@
 ---
 name: ship
-description: Deliver the current branch - run the full verification loop, commit, pass both pre-PR reviews (arch-review for shape and bugs, delivery-review for conformance to what was asked), push, open a PR with Closes #N, and watch CI until green. Use when the user types /ship or asks to finish or deliver the current task.
+description: Verify and deliver a Quantick branch through independent reviews and green CI. Prepare main PRs for the user; merge only into an explicitly authorized campaign branch.
 ---
-
-Campaign children override the main-based examples via the
-[integration contract](../../../docs/campaign/integration.md), including review keys.
 
 # Ship the current branch
 
+Read [the delivery contract](../../../docs/workflow/delivery.md) for local
+validation, evidence reuse, independent follow-ups and bounded repairs.
+Campaign children use [the integration contract](../../../docs/campaign/integration.md)
+for the base, review key and authorized merge command; normal tasks use main.
+
 ## Guards
 
-- Never ship from `main`. If `git branch --show-current` says `main`, stop and point the user to `/new-task`.
-- Identify the linked issue before opening the PR: check the board card in In Progress, the branch name, or conversation context. If ambiguous, ask the user which issue this closes.
+- Never ship from `main`; use `new-task` and its isolated worktree.
+- Identify the linked issue from the mission or branch before publication.
+  Resolve genuine ambiguity from repository state, asking only if indispensable.
+- Preserve current exact-diff review markers and zero unresolved required
+  findings. This skill never manufactures review evidence.
 
 ## Steps
 
-1. **Verification loop** — run in order, stop at the first failure and fix it before continuing. Never ship red:
+1. **Validate the frozen change.** Classify the actual delta under the delivery
+   contract. For code/config/test/script changes run the ordered loop, stopping
+   and fixing the first failure:
 
    ```sh
    cargo fmt --all
@@ -25,20 +32,50 @@ Campaign children override the main-based examples via the
    cargo test --workspace
    ```
 
-2. **Commit** anything pending: conventional style (`feat: ...`, `fix: ...`), imperative mood, English. If this branch came from `/mission`, its `.claude/GOAL.md` is archived **now**, as the last commit before the reviews — never after them. Both markers hold shas, so a commit made after they are recorded makes both stale, `pr-gate` denies, and the cheapest way out of that denial is to re-stamp them without re-running either review, which silently destroys the only property the markers provide:
+   Run affected non-Cargo checks as `CLAUDE.md` requires. Prose-only changes and
+   qualifying evidence corrections use the contract's targeted checks. Record
+   commands, outputs and input identity; distinguish reused evidence from new
+   execution. Never infer success from an empty log or an old checkmark.
 
-   The exact commands are `mission` step 8's — kept in one place rather
-   than copied here, because two divergent copies of a five-line procedure
-   is the drift this repo has a test for elsewhere on this very branch.
+2. **Archive and commit.** `mission` step 8 owns the archive procedure. Include
+   the archive and evidence in the frozen reviewed tree before final reviews.
+   Use conventional English commits. Batch compatible repairs; later edits
+   require new verdicts before replacing stale markers.
 
-3. **Arch-review** (mandatory, see `CLAUDE.md`): run the `arch-review` skill over `git diff origin/main...HEAD`. Its step 0 dispatches the bundled `code-review` in the background, so this step is not done when the skill returns — it is done when those findings have landed and been handled. Fix every Blocker and Should-fix finding, re-running step 1 on whatever changed. A finding deliberately deferred is noted in the PR body. Never push or open a PR ahead of this step. The skill records `arch-review-ok` itself when the review closes — it is the one that knows whether it closed — so there is nothing to record here.
+3. **Publish the draft.** Push the owned task branch and create/reuse its draft
+   PR with explicit base and linked issue. Follow the PR template; name the
+   mission tier and precisely label local, reused and CI verification. Open it
+   with `gh pr create --draft --body-file -` and a heredoc: `--draft` is what
+   `pr-gate` exempts, and a heredoc starts its own segment where the matcher
+   can see it. A draft is not permission to merge.
+   Campaign bases require explicit issue closure only after integration proof;
+   `Closes #N` does not close an issue on an intermediate campaign merge.
 
-4. **Delivery-review** (mandatory at every tier but `small`, see `CLAUDE.md`): read the tier from the file the gate itself reads — `WT=/path/to/worktree` first, then `cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"`; without the assignment `cd ""` is a no-op that leaves you in the main checkout and reads the *shared* git dir's file — never from the goal file, whose `**Tier:**` line is for the reader and is not what `pr-gate` acts on. A branch declaring `small` there skips this step; no file, or one naming another branch, means no exemption, and a diff-size ceiling revokes it after the fact, so a `small` branch that grew still owes this review. `.claude/hooks/README.md` owns the mechanism. At every other tier, run the `delivery-review` skill. It grades the branch against what was asked for — every ask in the goal file's request ledger and every acceptance criterion — from a fresh-context subagent, and passes only when nothing is MISSING, PARTIAL or UNPROVEN. Note which file that is: step 2 archived `.claude/GOAL.md` to `.claude/GOAL-archive-$SLUG.md`, so the archive is what the reviewer reads; pointing it at the old name sends it to a file this skill just deleted. It runs *after* step 3, because it grades the branch as shipped, including whatever arch-review made you change. A branch started from `/new-task` rather than `/mission` has no `GOAL.md`; the skill grades it against the linked issue's `## Acceptance criteria` and says so in the verdict. Fix what it reports and re-run, under the **stall rule** `CLAUDE.md` owns: runs are not rationed, but a run that does not shrink the open set is the last one -- defer the remainder into the PR body with its severity and take it to the user, never discarding it and never deferring an open Blocker. Every fix is a commit, so it stales `arch-review-ok` too: re-run step 3 over the new head rather than re-stamping a review that did not run. The skill records `delivery-review-ok` itself, on PASS only.
+4. **Review the final diff.** Run `arch-review` including its native/direct bug
+   pass and wait for its findings. Run `ai-review`, posting each finding as a
+   resolvable thread. Then run `delivery-review` last under its tier rules.
+   Resolve findings; only deferrals authorized under the delivery contract ship and
+   must appear in the PR. After PASS, the skills record `arch-review-ok` and
+   `delivery-review-ok` against the current diff.
+   Read the tier with `arch-review`'s step 0 command, not from prose; assign
+   `WT` first, because a bare `cd ""` leaves you in the main checkout and reads
+   the shared git dir's file. The `small` exemption is subject to the hook
+   ceiling. Independent
+   delta follow-ups may carry forward unaffected evidence under the delivery
+   contract; they still issue a verdict for the current review key.
 
-5. **Push**: `git push -u origin <branch>`.
+5. **Finish checks and repairs.** Observe required CI at the actual PR head.
+   Use `gh pr checks <n>` or run/job metadata when checks are not registered;
+   bounded waits allow progress updates. Read failure logs, repair within scope
+   and budgets, validate, commit/push, and refresh affected reviews. Do not
+   rerun unchanged passing checks without a changed input or unresolved failure.
+   No pending, missing or red CI counts as success.
 
-6. **Open the PR** following the repo template (`.github/PULL_REQUEST_TEMPLATE.md`): summary of what and why, `Closes #<N>`, the four verification-loop boxes checked (they just ran), notes for the reviewer, and **the mission's tier** when it had one — a branch that skipped `delivery-review` says so in public, not only in its git dir. Use `gh pr create --body-file -` with a heredoc. Then run the `ai-review` skill against that PR number: its threads are what `gh pr ready` and `gh pr merge` gate on, and a branch that never runs it counts zero, which is what clean looks like too. Title and body are English, like the branch name and the commits — `CLAUDE.md`'s language rule covers them, and they are the one part of it no test can see: the language guard reads files, and a PR body is not a file.
-
-7. **Watch CI**: `gh pr checks <pr> --watch`. If checks have not registered yet, find the run with `gh run list --branch <branch>` and use `gh run watch <id> --exit-status`. Red → read the failing log, fix, push, repeat.
-
-8. **Report** the PR URL and CI status. The user alone merges to `main`; never enable auto-merge or enqueue it. Authorized intermediate campaign merges follow the integration contract above, from the reviewed task worktree. Retain that worktree through the merge because its git directory holds the review evidence. After verified integration, remove only the owned clean task worktree and delete its merged local branch. Campaign issue completion requires explicit evidence and synchronization; a non-default-base merge does not automatically close the issue.
+6. **Mark ready and deliver.** Once current reviews, required checks and finding
+   resolution are proven, run `gh pr ready <n>` from the reviewed worktree.
+   Report the PR URL and exact-head CI. The user alone merges to main: no
+   auto-merge, queue, direct push or protection override. An authorized campaign
+   child instead returns to its coordinator for the serialized, head-pinned
+   merge in the integration contract. Keep its worktree through merge so the
+   private review evidence remains available; clean up only the owned clean
+   worktree after verified integration. Never delete another writer's work.

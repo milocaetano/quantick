@@ -62,7 +62,9 @@
 # recorded as one. The alternative was a `CLAUDE.md` whose architecture list
 # does not contain a workspace crate, which `claude_md_lists_every_crate`
 # fails on and which is the drift this whole tree exists to prevent.
-CLAUDE.md 9527
+# PR #345 review repair (Codex): +24 bytes declares the expanded
+# normative-contract scope and its mission-evidence exclusion.
+CLAUDE.md 9551
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -164,4 +166,32 @@ AGENTS.md 13179
 # reference file to extract and no sibling prose this branch owned to cut.
 # The first cut was 1,949; ten independent reviews found none of its six
 # verdicts falsifiable, and the 804 bytes added are the falsifiers.
-!budget 235924
+#
+# PR #345 review repair (Codex): re-seed the expanded normative scope.
+# The earlier 230,594 budget excluded docs/campaign/ and docs/workflow/;
+# moving binding rules there had lowered the old scan without saving context.
+# The corrected scope now charges all Markdown in both directories, except
+# docs/workflow/evidence/, whose files are mission records like GOAL archives.
+#
+# Reconciliation in bytes: 230,594 + 404 = 230,998 for the
+# previous scope at its current ceilings and measured sub-threshold files;
+# + 64,670 newly tracked normative bytes = 295,668. This is accounting
+# for newly visible rules, not a claimed reduction or an unallocated allowance.
+# The small previous-scope delta includes the signed CLAUDE scope clarification
+# above and current skill/reference edits. Threshold (10,000), ceiling slack
+# (1,000), budget headroom (2,000) and downward slack (4,000) are unchanged.
+# Future growth must be paid for across the expanded scope.
+#
+# First ceilings for newly tracked contracts above 10,000 bytes. Seeded at
+# their measured LF byte sizes, with no per-file headroom: state owns durable
+# campaign identity and records; workflow owns campaign transitions; delivery
+# owns review source reconciliation and bounded repair. Sub-threshold contract
+# files contribute their full measured bytes to the budget as usual.
+docs/campaign/state.md 14602
+docs/campaign/workflow.md 10297
+# Authorized continuation: standing process delegation and finite stall
+# allowances add 445 bytes. Paid by condensing duplicated initial validation
+# commentary; its original evaluator responses remain intact. Budget unchanged.
+docs/workflow/delivery.md 11361
+
+!budget 295668
