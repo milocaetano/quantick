@@ -178,6 +178,40 @@ milocaetano/quantick#359. Base `origin/campaign/architecture-a`.
 - **C1** — `delivery-review` returns PASS.
 - **C2** — The pull request is open against `campaign/architecture-a`.
 
+## Review outcomes
+
+`arch-review` at `7542f7d3afe18bcb0fb59f509dcbf65f963304af`, step 0 at
+`medium`: three confirmed correctness findings, all repaired on the branch —
+a keyed call that could still act twice after a `control.timeout`, records
+outliving the connection that could use them, and a conflict reported as
+retryable while the first call was in flight. The shape pass raised two more
+against the same diff, also repaired: the trunk crossing the size ratchet's
+threshold, and a second convention for a poisoned lock. Nothing deferred.
+
+`delivery-review`, full mode, independent reviewer on a fresh context:
+eleven of twelve lines `DELIVERED`, with `A6` `PARTIAL` because the merge it
+names had not happened when the review ran. Nothing `UNLEDGERED`, no `R`
+`DROPPED`, no exclusion wrongly claimed.
+
+### The assumption that should have been a question
+
+The reviewer's audit of `S2` and `S6` is upheld, and it is a finding against
+this mission's own interrogation rather than against the branch. The
+guarantee's scope — per connection rather than per client, so a client that
+reconnects starts its keys over — shapes `IdempotencyScope` and narrows a
+promise the descriptors made in prose. This mission set its tier to `high`
+citing exactly that risk ("a wrong scope is a data leak ... the contract
+change needs the full interrogation"), and then decided the scope by
+assumption anyway. `S2` even records it as *wanted to ask*.
+
+The question step 3 should have put to the trader: **should the retry
+guarantee survive a reconnect, and if it cannot without an authenticated
+durable client identity, is silently narrowing the descriptor's prose
+acceptable?** The reading taken is the safe one — the alternative lets one
+client replay another's recorded result — and it is stated in the module
+documentation, the two descriptor comments and the pull request body rather
+than left implicit. It stands as taken, and it is the trader's to revisit.
+
 ## The request as received
 
 > resolver o item 3 e fazer pr pra branch. Faça mesmo memso o merge tem
