@@ -1,19 +1,19 @@
-=== final head, after the third bug pass ===
+=== final head, after the fourth bug pass ===
 === cargo fmt --all -- --check ===
 exit=0
 
 === cargo clippy --workspace --all-targets ===
-    Finished `dev` profile [optimized + debuginfo] target(s) in 0.43s
+   Compiling quantick-app v0.1.0 (/home/user/quantick-worktrees/fix-idempotency-contract/crates/app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 10.92s
 exit=0
 
 === cargo build --workspace ===
-    Finished `dev` profile [optimized + debuginfo] target(s) in 0.32s
+   Compiling quantick-app v0.1.0 (/home/user/quantick-worktrees/fix-idempotency-contract/crates/app)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 42.45s
 exit=0
 
 === cargo test --workspace ===
-(the previous attempt tripped #361, the pre-existing worker_progress race; re-run
- under the policy recorded below, which re-runs only that failure and no other)
-test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -23,7 +23,7 @@ test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 184 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
@@ -68,7 +68,7 @@ exit=0
 === quantick-guards ===
 guards-exit=0
 
-server.rs total lines: 1502 (threshold 1500, production under it)
+server.rs total lines: 1502 (production under the 1500 threshold)
 
 === note on #361 ===
 orderflow_worker::progress_tests::delayed_producer_bookkeeping_... fails about once in

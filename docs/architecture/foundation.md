@@ -119,11 +119,13 @@ does not guarantee a template can be imported on another machine.
 ### Authority and operations
 
 Keep `ActionOrigin`, actor provenance, request validation, event recording and
-the pre-dispatch permission/deadline recheck. The live host currently rejects
-dry runs, idempotency keys and expected revisions
-([prepare](../../crates/app/src/control/contract.rs), line 1367). Generic/fake
-contract support is not proof of live retry safety. Do not advertise automatic
-retries for mutations until implemented and tested as separate work.
+the pre-dispatch permission/deadline recheck. The live host rejects dry
+runs and expected revisions, and honours the idempotency policy each descriptor
+declares ([prepare](../../crates/app/src/control/contract.rs)); the store
+behind it is `crates/app/src/control/gateway/idempotency.rs`. Generic/fake
+contract support was never proof of live retry safety and still is not — that
+module states what the guarantee covers and where it stops, and the retry a
+host advertises may never be wider than that.
 
 Trade scope remains denied by default and filtered from the access panel.
 Moving an operation behind a smaller context must not widen that scope. Voice

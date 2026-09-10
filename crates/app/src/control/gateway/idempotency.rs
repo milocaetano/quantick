@@ -210,6 +210,14 @@ impl IdempotencyStore {
         let Some(key) = envelope.idempotency_key.clone() else {
             return Ok(None);
         };
+        // A dry run mutates nothing, so there is nothing for a key to
+        // deduplicate and it reserves none — the contract says so in §5.2 and
+        // the reference host does the same. Unreachable while `prepare`
+        // refuses every dry run, and stated here rather than left to the
+        // digest, which could only ever tell two dry runs apart.
+        if envelope.dry_run {
+            return Ok(None);
+        }
         // `expected_revisions` cannot be non-empty on this host — `prepare`
         // refuses an envelope carrying any — but it is digested anyway, so a
         // later host that starts accepting them cannot forget that two calls

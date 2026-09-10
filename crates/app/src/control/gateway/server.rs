@@ -1077,12 +1077,9 @@ fn dispatch_prepared(
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
             send_response(&response_writer, &response_codec, response);
-            response_slots.forget(&wait_envelope.request_id);
-            response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
-            response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
-            // A timeout says this thread stopped waiting, not that the action
-            // did not happen. `idempotency.rs` owns why a keyed call is
-            // followed here, and why the window records rather than releases.
+            // The slots release after the settle wait, not before: they bound
+            // how many response threads exist, and a wedged application is
+            // when that bound has to hold. `idempotency.rs` owns the rest.
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
                 let at = metrics::wall_clock_ms();
                 match response_rx.recv_timeout(settle_window) {
@@ -1093,6 +1090,9 @@ fn dispatch_prepared(
                     Err(_) => response_idempotency.record_unresolved(ticket, &wait_envelope, at),
                 }
             }
+            response_slots.forget(&wait_envelope.request_id);
+            response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
+            response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
         slots.forget(&envelope.request_id);
