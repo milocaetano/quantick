@@ -60,6 +60,15 @@
 //! `feed.reload` rebuilding a chart) has its retry run it a second time, which
 //! is the one outcome this module exists to prevent.
 //!
+//! Which slots the waiting thread keeps is part of the same question. The
+//! request ID and the gateway-wide buffered-response slot go back as soon as
+//! the answer is sent: they are shared across connections, and holding either
+//! through the wait would refuse another client's request while nothing is
+//! running. The connection's own in-flight slot is held until the wait ends,
+//! because that one is what bounds how many response threads a single client
+//! can have alive — and a wedged application is exactly when that bound has
+//! to hold.
+//!
 //! So the bound records rather than releases. When the window closes with no
 //! answer, the outcome genuinely is unknown, and that is what goes in the
 //! store: a non-retryable refusal naming the uncertainty, with a next step

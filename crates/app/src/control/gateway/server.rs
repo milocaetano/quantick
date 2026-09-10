@@ -1077,9 +1077,11 @@ fn dispatch_prepared(
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
             send_response(&response_writer, &response_codec, response);
-            // The slots release after the settle wait, not before: they bound
-            // how many response threads exist, and a wedged application is
-            // when that bound has to hold. `idempotency.rs` owns the rest.
+            // The answer is out: the request ID and the gateway-wide slot go
+            // back now, this connection's own slot after the wait below.
+            // `idempotency.rs` says why the two part company here.
+            response_slots.forget(&wait_envelope.request_id);
+            response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
                 let at = metrics::wall_clock_ms();
                 match response_rx.recv_timeout(settle_window) {
@@ -1090,9 +1092,7 @@ fn dispatch_prepared(
                     Err(_) => response_idempotency.record_unresolved(ticket, &wait_envelope, at),
                 }
             }
-            response_slots.forget(&wait_envelope.request_id);
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
-            response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
         slots.forget(&envelope.request_id);
