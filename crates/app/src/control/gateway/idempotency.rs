@@ -38,9 +38,26 @@
 //! stops. Widening it needs a durable client identity the handshake proves,
 //! which is a contract change and not this module's to make.
 //!
-//! **Retention is bounded.** The guarantee covers the most recent
-//! [`CONTROL_IDEMPOTENCY_MAX_ENTRIES`] keys within
+//! **Retention is bounded, and so is the wait behind it.** The guarantee
+//! covers the most recent [`CONTROL_IDEMPOTENCY_MAX_ENTRIES`] keys within
 //! [`CONTROL_IDEMPOTENCY_RETENTION_MS`].
+//!
+//! The wait is the subtler half. A `control.timeout` says the response thread
+//! stopped waiting, not that the action did not happen: `execute_on_ui`
+//! refuses only a request whose deadline had already passed when it was
+//! dequeued, so one dequeued just before it runs in full. A timeout is
+//! retryable and therefore never recorded, which would leave a keyed retry
+//! free to act a second time. So the thread keeps the reservation and follows
+//! the call for one more request window, records what actually happened
+//! without sending it, and the retry replays that.
+//!
+//! That follow-on wait is bounded rather than open-ended, because an
+//! unbounded park would be the one thing here with no stated cap: an
+//! application thread that stopped draining would hold one thread per
+//! timed-out keyed call, and the connection's own in-flight slots are released
+//! before it starts. When the window expires the outcome is genuinely unknown,
+//! the ticket drops and the key is freed — a retry re-executing is the honest
+//! answer for a call nobody can account for.
 //!
 //! **A replayed answer is not marked as one on the wire.** The `warnings`
 //! field that would carry such a mark has no producer anywhere in the tree,

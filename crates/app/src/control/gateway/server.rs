@@ -1046,6 +1046,7 @@ fn dispatch_prepared(
     let contract = Arc::clone(&authority.contract);
     let response_ticket = ticket.clone();
     let response_idempotency = Arc::clone(&authority.idempotency);
+    let settle_window = authority.options.request_timeout;
     let wait_envelope = envelope.clone();
     let spawn = thread::Builder::new()
         .name(format!("quantick-control-response-{}", envelope.request_id))
@@ -1079,13 +1080,13 @@ fn dispatch_prepared(
             response_slots.forget(&wait_envelope.request_id);
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
-            // A timeout says this thread stopped waiting, not that the
-            // action did not happen. Keep the key reserved and record what
-            // actually happens, without sending it; `idempotency.rs` says why
-            // a keyed call cannot be abandoned here.
+            // A timeout says this thread stopped waiting, not that the action
+            // did not happen; the key stays reserved for one more window while
+            // the real outcome is recorded. `idempotency.rs` owns why, and why
+            // the window is bounded.
             if timed_out
                 && let Some(ticket) = response_ticket.as_ref()
-                && let Ok(result) = response_rx.recv()
+                && let Ok(result) = response_rx.recv_timeout(settle_window)
             {
                 let settled = serialize_ui_result(&contract, &wait_envelope, result);
                 response_idempotency.record(ticket, &settled, metrics::wall_clock_ms());

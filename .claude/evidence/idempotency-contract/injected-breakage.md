@@ -39,3 +39,22 @@ test result: FAILED. 0 passed; 1 failed
 ```
 
 The line was restored and the test passes again.
+
+## The policy table, separately
+
+The `Required`-with-a-dry-run guard in `check_idempotency_key` was inverted
+(`if dry_run` instead of `if !dry_run`) and the new table test re-run. It
+failed on the row that has no caller anywhere in the tree:
+
+```text
+test registry::tests::check_idempotency_key_states_the_whole_policy ... FAILED
+Required, key=false, dry_run=false: expected Some("capability requires an idempotency key"), got Ok(())
+
+test result: FAILED. 0 passed; 1 failed
+```
+
+Removing the guard outright was tried first and proved nothing: it fails to
+compile on an unused `dry_run` before any test runs. The inverted guard is the
+break that actually exercises the assertion.
+
+The guard was restored and the test passes again.
