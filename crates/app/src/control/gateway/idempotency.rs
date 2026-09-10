@@ -55,8 +55,8 @@
 //! [`IdempotencyPolicy::Optional`]: quantick_control::registry::IdempotencyPolicy::Optional
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, PoisonError},
+    collections::BTreeMap,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use quantick_control::{
@@ -141,7 +141,11 @@ impl Drop for ScopeReservation {
 #[derive(Debug, Default)]
 struct Ledger {
     records: BTreeMap<IdempotencyScope, IdempotencyRecord>,
-    in_flight: BTreeSet<IdempotencyScope>,
+    /// The digest travels with the reservation so a key reused over different
+    /// input is a conflict while the first call is still running, exactly as
+    /// it is once the first call has finished. Telling such a caller to retry
+    /// would be sending it back for an answer it can never get.
+    in_flight: BTreeMap<IdempotencyScope, Sha256Digest>,
 }
 
 /// The records one enabling of the gateway retains.
@@ -151,6 +155,19 @@ pub(super) struct IdempotencyStore {
 }
 
 impl IdempotencyStore {
+    /// The ledger, or nothing when a panic left it unreadable.
+    ///
+    /// A poisoned lock means the store's own history is unknown, and this
+    /// repository's rule for that is the safe side rather than the convenient
+    /// one — `ConnectionSlots::is_in_flight` reads a poisoned lock as "in
+    /// flight" for exactly this reason. Here the safe side is to admit
+    /// nothing: a keyed call whose history cannot be read might already have
+    /// run, and letting it through is the double effect the key exists to
+    /// prevent. Calls carrying no key never reach this lock and are untouched.
+    fn ledger(&self) -> Option<MutexGuard<'_, Ledger>> {
+        self.ledger.lock().ok()
+    }
+
     /// The ticket for `envelope`, or `None` when the request carries no key.
     ///
     /// Called only after [`ObserverContract::prepare`] has accepted the
@@ -210,7 +227,20 @@ impl IdempotencyStore {
         envelope: &RequestEnvelope,
         now_unix_ms: i64,
     ) -> Option<ResponseEnvelope> {
-        let mut ledger = store.ledger.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(mut ledger) = store.ledger() else {
+            return Some(rebuild(
+                envelope,
+                Vec::new(),
+                ResponseOutcome::Failure {
+                    error: ControlError::new(
+                        ErrorCode::new(codes::CAPABILITY_UNAVAILABLE)
+                            .expect("static error code is valid"),
+                        "this instance cannot account for idempotency keys",
+                        false,
+                    ),
+                },
+            ));
+        };
         expire(&mut ledger.records, now_unix_ms);
         if let Some(record) = ledger.records.get(&ticket.scope) {
             if record.input_digest != ticket.input_digest {
@@ -228,22 +258,27 @@ impl IdempotencyStore {
                 record.outcome.clone(),
             ));
         }
-        if !ledger.in_flight.insert(ticket.scope.clone()) {
-            // Retryable on purpose: the caller is told to ask again, and the
-            // answer waiting for it then is the first call's own.
+        if let Some(running) = ledger.in_flight.get(&ticket.scope) {
+            let error = if running == &ticket.input_digest {
+                // Retryable on purpose: the caller is told to ask again, and
+                // the answer waiting for it then is the first call's own.
+                ControlError::new(
+                    ErrorCode::new(codes::REQUEST_IN_PROGRESS).expect("static error code is valid"),
+                    "a call under this idempotency key is still in flight",
+                    true,
+                )
+            } else {
+                ControlError::idempotency_conflict()
+            };
             return Some(rebuild(
                 envelope,
                 Vec::new(),
-                ResponseOutcome::Failure {
-                    error: ControlError::new(
-                        ErrorCode::new(codes::REQUEST_IN_PROGRESS)
-                            .expect("static error code is valid"),
-                        "a call under this idempotency key is still in flight",
-                        true,
-                    ),
-                },
+                ResponseOutcome::Failure { error },
             ));
         }
+        ledger
+            .in_flight
+            .insert(ticket.scope.clone(), ticket.input_digest.clone());
         drop(ledger);
         ticket.reservation = Some(Arc::new(ScopeReservation {
             scope: ticket.scope.clone(),
@@ -252,12 +287,31 @@ impl IdempotencyStore {
         None
     }
 
-    fn release(&self, scope: &IdempotencyScope) {
-        self.ledger
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// Drop everything a principal owns, because the connection it was
+    /// minted for has gone.
+    ///
+    /// `principal_id` lives for one handshake, so a closed connection's
+    /// records can never be replayed by anyone — but they would still hold
+    /// entries against the cap for the whole retention window, and a client
+    /// that reconnects a few times would evict the records of the connections
+    /// still running. Releasing them at the door keeps the cap meaning what
+    /// it says.
+    pub(super) fn forget_principal(&self, principal_id: &PrincipalId) {
+        let Some(mut ledger) = self.ledger() else {
+            return;
+        };
+        ledger
+            .records
+            .retain(|scope, _| &scope.principal_id != principal_id);
+        ledger
             .in_flight
-            .remove(scope);
+            .retain(|scope, _| &scope.principal_id != principal_id);
+    }
+
+    fn release(&self, scope: &IdempotencyScope) {
+        if let Some(mut ledger) = self.ledger() {
+            ledger.in_flight.remove(scope);
+        }
     }
 
     /// Retain `response` as this ticket's answer, when it is one worth
@@ -282,7 +336,9 @@ impl IdempotencyStore {
         if retained_bytes > CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES {
             return;
         }
-        let mut ledger = self.ledger.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(mut ledger) = self.ledger() else {
+            return;
+        };
         make_room(&mut ledger.records);
         ledger.records.insert(
             ticket.scope.clone(),
@@ -297,21 +353,59 @@ impl IdempotencyStore {
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.ledger
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.ledger()
+            .expect("the test store is readable")
             .records
             .len()
     }
 
     #[cfg(test)]
     fn in_flight(&self) -> usize {
-        self.ledger
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.ledger()
+            .expect("the test store is readable")
             .in_flight
             .len()
     }
+}
+
+/// The ticket this request proceeds under, or the answer it gets instead.
+///
+/// `Err` is a complete response and the call never reaches the application: a
+/// replay of the recorded outcome, a conflict, or a refusal. `Ok(Some)`
+/// proceeds holding its key until the ticket drops; `Ok(None)` is a request
+/// that carried no key and is subject to none of this.
+///
+/// This lives here rather than in the connection loop so the gateway's trunk
+/// carries a call to it and not a body — the rule the size ratchet enforces,
+/// which caught this very change growing `server.rs` past its threshold.
+///
+/// The answer is boxed because a `ResponseEnvelope` is far larger than a
+/// ticket, and the common return is the ticket; the repository boxes the big
+/// side of a lopsided type elsewhere for the same reason
+/// (`ControlError::context`, `UiRequest::actor`).
+pub(super) fn admitted(
+    store: &Arc<IdempotencyStore>,
+    instance_id: &InstanceId,
+    principal_id: &PrincipalId,
+    envelope: &RequestEnvelope,
+    now_unix_ms: i64,
+) -> Result<Option<IdempotencyTicket>, Box<ResponseEnvelope>> {
+    let mut ticket = match IdempotencyStore::ticket(instance_id, principal_id, envelope) {
+        Ok(ticket) => ticket,
+        Err(error) => {
+            return Err(Box::new(rebuild(
+                envelope,
+                Vec::new(),
+                ResponseOutcome::Failure { error },
+            )));
+        }
+    };
+    if let Some(held) = ticket.as_mut()
+        && let Some(answered) = IdempotencyStore::admit(store, held, envelope, now_unix_ms)
+    {
+        return Err(Box::new(answered));
+    }
+    Ok(ticket)
 }
 
 /// A success or a refusal the caller cannot get past by trying again.
@@ -590,6 +684,124 @@ mod tests {
         assert!(
             IdempotencyStore::admit(&store, &mut retry, &request, NOW).is_none(),
             "the retry reaches the application, because nothing was recorded"
+        );
+    }
+
+    #[test]
+    fn a_key_reused_over_different_input_while_in_flight_is_a_conflict() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut in_flight = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut in_flight, &request, NOW).is_none());
+
+        let different = envelope("second", Some("key-1"), json!({ "tab": 2 }));
+        let mut racing = ticket_for(&different, 1);
+        let answered = IdempotencyStore::admit(&store, &mut racing, &different, NOW)
+            .expect("a conflicting key is answered rather than dispatched");
+        let ResponseOutcome::Failure { error } = answered.outcome else {
+            panic!("a conflicting key fails");
+        };
+        assert_eq!(error.code.as_str(), codes::IDEMPOTENCY_CONFLICT);
+        assert!(
+            !error.retryable,
+            "sending this caller back for an answer it can never get is worse than refusing it"
+        );
+    }
+
+    /// The client was told `TIMEOUT` and the application ran the action
+    /// anyway. The outcome is recorded under the key it was sent with, so the
+    /// retry replays it instead of doing the same thing a second time.
+    #[test]
+    fn an_answer_recorded_after_a_timeout_is_what_the_retry_replays() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
+
+        let timeout = rebuild(
+            &request,
+            Vec::new(),
+            ResponseOutcome::Failure {
+                error: ControlError::new(
+                    ErrorCode::new(codes::TIMEOUT).expect("static error code is valid"),
+                    "request did not complete before its deadline",
+                    true,
+                ),
+            },
+        );
+        store.record(&ticket, &timeout, NOW);
+        assert_eq!(store.len(), 0, "a retryable answer is not the one to keep");
+
+        store.record(&ticket, &success(&request, json!({ "moved": true })), NOW);
+        drop(ticket);
+
+        let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
+        let replayed = serve(&store, &retry, 1, &success(&retry, json!({})), NOW)
+            .expect("the retry is answered from the store");
+        assert_eq!(
+            replayed.outcome,
+            ResponseOutcome::Success {
+                result: json!({ "moved": true })
+            }
+        );
+    }
+
+    #[test]
+    fn a_poisoned_store_admits_nothing_rather_than_risking_a_double_effect() {
+        let store = store();
+        let poisoner = Arc::clone(&store);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoner.ledger.lock().expect("the store starts readable");
+            panic!("poison the ledger");
+        })
+        .join();
+
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        let answered = IdempotencyStore::admit(&store, &mut ticket, &request, NOW)
+            .expect("a store that cannot read its own history admits nothing");
+        let ResponseOutcome::Failure { error } = answered.outcome else {
+            panic!("a keyed call is refused rather than let through");
+        };
+        assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+        assert!(
+            !error.retryable,
+            "a poisoned lock does not un-poison, so asking again cannot help"
+        );
+    }
+
+    #[test]
+    fn a_closed_connection_takes_its_records_with_it() {
+        let store = store();
+        let mine = envelope("mine", Some("key-1"), json!({ "tab": 1 }));
+        serve(
+            &store,
+            &mine,
+            1,
+            &success(&mine, json!({ "moved": true })),
+            NOW,
+        );
+        let theirs = envelope("theirs", Some("key-1"), json!({ "tab": 1 }));
+        serve(
+            &store,
+            &theirs,
+            2,
+            &success(&theirs, json!({ "moved": true })),
+            NOW,
+        );
+        assert_eq!(store.len(), 2);
+
+        store.forget_principal(&principal(1));
+
+        assert_eq!(
+            store.len(),
+            1,
+            "only the gone connection's record is dropped"
+        );
+        let retry = envelope("retry", Some("key-1"), json!({ "tab": 1 }));
+        assert!(
+            serve(&store, &retry, 2, &success(&retry, json!({})), NOW).is_some(),
+            "the connection that is still running keeps its guarantee"
         );
     }
 

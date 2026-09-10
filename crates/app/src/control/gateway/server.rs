@@ -58,7 +58,7 @@ use super::super::types::known_error;
 // a window, a painter or a piece of application state -- the options it was
 // started with, the channels and counters it reports through, and the request
 // it hands across.
-use super::idempotency::{IdempotencyStore, IdempotencyTicket};
+use super::idempotency::{self, IdempotencyStore, IdempotencyTicket};
 use super::{
     ACCEPT_POLL_MS, ClientRateLimiter, ConnectedClient, ConnectionStatus, DrainObservation,
     GATEWAY_COMMAND_CAPACITY, GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION,
@@ -885,28 +885,19 @@ fn connection_session(
                 continue;
             }
         };
-        let mut ticket = match IdempotencyStore::ticket(
+        let ticket = match idempotency::admitted(
+            &authority.idempotency,
             &authority.identity.instance_id,
             &remote_actor.principal_id,
             &prepared.envelope,
+            metrics::wall_clock_ms(),
         ) {
             Ok(ticket) => ticket,
-            Err(error) => {
-                send_response(&writer, &codec, failure_response(&request, error));
+            Err(answered) => {
+                send_response(&writer, &codec, *answered);
                 continue;
             }
         };
-        if let Some(ticket) = ticket.as_mut()
-            && let Some(answered) = IdempotencyStore::admit(
-                &authority.idempotency,
-                ticket,
-                &prepared.envelope,
-                metrics::wall_clock_ms(),
-            )
-        {
-            send_response(&writer, &codec, answered);
-            continue;
-        }
         dispatch_prepared(
             prepared,
             ticket,
@@ -922,6 +913,12 @@ fn connection_session(
     // The socket is gone: this connection's parked waits release their slots
     // at the manager's next pass instead of holding them to the deadline.
     slots.closed.store(true, Ordering::Release);
+    // This connection's principal dies with it, so nothing it recorded can
+    // ever be replayed again. Freeing the entries keeps the store's cap for
+    // the connections that are still running.
+    authority
+        .idempotency
+        .forget_principal(&remote_actor.principal_id);
 
     if authority
         .statuses
@@ -1054,7 +1051,9 @@ fn dispatch_prepared(
         .name(format!("quantick-control-response-{}", envelope.request_id))
         .spawn(move || {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let response = match response_rx.recv_timeout(remaining) {
+            let settled = response_rx.recv_timeout(remaining);
+            let timed_out = matches!(settled, Err(crossbeam_channel::RecvTimeoutError::Timeout));
+            let response = match settled {
                 Ok(result) => serialize_ui_result(&contract, &wait_envelope, result),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => failure_response(
                     &wait_envelope,
@@ -1080,6 +1079,17 @@ fn dispatch_prepared(
             response_slots.forget(&wait_envelope.request_id);
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
+            // A timeout says this thread stopped waiting, not that the
+            // action did not happen. Keep the key reserved and record what
+            // actually happens, without sending it; `idempotency.rs` says why
+            // a keyed call cannot be abandoned here.
+            if timed_out
+                && let Some(ticket) = response_ticket.as_ref()
+                && let Ok(result) = response_rx.recv()
+            {
+                let settled = serialize_ui_result(&contract, &wait_envelope, result);
+                response_idempotency.record(ticket, &settled, metrics::wall_clock_ms());
+            }
         });
     if spawn.is_err() {
         slots.forget(&envelope.request_id);
