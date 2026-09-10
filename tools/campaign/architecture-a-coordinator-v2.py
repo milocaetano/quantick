@@ -24,6 +24,10 @@ FORMAT = 'quantick-snapshot-parts:v1'
 SNAPSHOT_LIMIT = 24 * 1024
 JOURNAL_LIMIT = 8 * 1024
 CHUNK_BYTES = 12 * 1024
+# Existing operational policy: renewal duration, partition trigger and read page.
+DEFAULT_LEASE_MINUTES = 15
+ACTIVE_TASK_PARTITION_THRESHOLD = 50
+COMMENT_PAGE_SIZE = 5
 _publisher = None
 
 
@@ -108,7 +112,7 @@ def encode_checkpoint(state):
     raw = canonical(state)
     text = body(CHECKPOINT, state)
     active = sum(t.get('state') != 'done' for t in state['tasks'])
-    if len(raw) <= SNAPSHOT_LIMIT and len(text.encode('utf-8')) <= SNAPSHOT_LIMIT and active < 50:
+    if len(raw) <= SNAPSHOT_LIMIT and len(text.encode('utf-8')) <= SNAPSHOT_LIMIT and active < ACTIVE_TASK_PARTITION_THRESHOLD:
         return {'complete': text, 'parts': []}
     chunks = [raw[i:i + CHUNK_BYTES] for i in range(0, len(raw), CHUNK_BYTES)]
     parts = []
@@ -462,7 +466,9 @@ class GhTransport:
         return {'url': obj['html_url'], 'body': obj['body']}
 
     def comments_since(self, boundary):
-        query = 'query($number:Int!,$before:String){repository(owner:"milocaetano",name:"quantick"){issue(number:$number){comments(last:5,before:$before){nodes{url body}pageInfo{hasPreviousPage startCursor}}}}}'
+        query = ('query($number:Int!,$before:String){repository(owner:"milocaetano",name:"quantick"){issue(number:$number){comments(last:'
+                 + str(COMMENT_PAGE_SIZE)
+                 + ',before:$before){nodes{url body}pageInfo{hasPreviousPage startCursor}}}}}')
         cursor, rows = None, []
         while True:
             args = ['api', 'graphql', '-f', 'query=' + query, '-F', 'number=' + str(self.parent_number)]
@@ -571,7 +577,7 @@ def checkpoint(s, operation=None, *, release=False):
         proposed['writer'] = publisher.writer
         proposed['created_at'] = publisher.clock().isoformat()
         proposed['publication_key'] = f'{s["campaign"]}/checkpoint-{proposed["sequence"]}/{publisher.writer}'
-        proposed['lease'] = None if release else {'owner': publisher.writer, 'expires_at': (publisher.clock() + datetime.timedelta(minutes=15)).isoformat()}
+        proposed['lease'] = None if release else {'owner': publisher.writer, 'expires_at': (publisher.clock() + datetime.timedelta(minutes=DEFAULT_LEASE_MINUTES)).isoformat()}
         proposed['consumed_journal_records'] = [url for item in operations.values() for url in item['urls']]
         history = _project_history(base, operations)
         supplied = _history_index(proposed)

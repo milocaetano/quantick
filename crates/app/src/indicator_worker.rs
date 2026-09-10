@@ -655,13 +655,14 @@ fn run_observed(
                 IndicatorCommand::Backfilled(bars) => {
                     host.rebuild(&bars, None);
                     rebuilt = true;
-                    lane_run.clear();
+                    // The retired epoch must not retain its peak allocation.
+                    lane_run = Vec::new();
                     partial_update = None;
                     lane_request = None;
                 }
                 IndicatorCommand::BarClosed(bar) => {
                     host.push_closed_bar(&bar);
-                    lane_run.clear();
+                    lane_run = Vec::new();
                     partial_update = None;
                     lane_request = None;
                 }
@@ -689,7 +690,7 @@ fn run_observed(
                     // series.
                     partial_update = None;
                     lane_request = None;
-                    lane_run.clear();
+                    lane_run = Vec::new();
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -2418,6 +2419,117 @@ mod incremental_lane_tests {
                     },
                 ]
             );
+        }
+    }
+
+    #[test]
+    fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
+        fn publish(worker: &IndicatorWorker, views: &mut IndicatorViews) -> Vec<LaneSample> {
+            worker.flush();
+            let mut lane = Vec::new();
+            for event in worker.drain_events() {
+                // Flush/probe-only batches may publish an empty lane afterwards.
+                if let IndicatorEvent::Lane { samples, .. } = &event
+                    && !samples.is_empty()
+                {
+                    lane = samples.clone();
+                }
+                views.apply(event);
+            }
+            lane
+        }
+
+        let large: Vec<_> = (1..=4096)
+            .map(|id| print(id, if id % 2 == 1 { 1 } else { -1 }))
+            .collect();
+        let history = bar(&[print(0, 10)]);
+        for (reset, mut columns) in [
+            (IndicatorCommand::BarClosed(bar(&large)), vec![10.0, 10.0]),
+            (
+                IndicatorCommand::Backfilled(vec![history.clone()]),
+                vec![10.0],
+            ),
+            (
+                IndicatorCommand::Rebuild(vec![history.clone()], None),
+                vec![10.0],
+            ),
+        ] {
+            let worker = IndicatorWorker::spawn();
+            let mut views = IndicatorViews::new();
+            views.allocate_slot("native.cvd");
+            worker.send(add());
+            worker.send(IndicatorCommand::Backfilled(vec![history.clone()]));
+            worker.send(update(&large[..2048], &large[..2048], 2));
+            publish(&worker, &mut views);
+            assert_eq!(worker.retained_lane_for_test().0, 2048);
+            worker.send(update(&large, &large[2048..], 2));
+            let lane = publish(&worker, &mut views);
+            let (length, peak) = worker.retained_lane_for_test();
+            assert_eq!(length, 4096);
+            assert!(peak >= 4096);
+            assert_eq!(views.all()[0].columns, vec![vec![10.0]]);
+            assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![10.0]);
+            assert_eq!(
+                lane,
+                vec![
+                    LaneSample {
+                        close_time: 2048,
+                        values: vec![10.0]
+                    },
+                    LaneSample {
+                        close_time: 4096,
+                        values: vec![10.0]
+                    },
+                ]
+            );
+
+            worker.send(reset);
+            assert!(publish(&worker, &mut views).is_empty());
+            assert_eq!(worker.retained_lane_for_test(), (0, 0));
+            assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+            assert!(views.all()[0].preview.is_none());
+
+            // Two successive small epochs must not inherit the retired peak.
+            for (run, expected, preview) in [
+                ([print(4097, 7), print(4098, -2)], [17.0, 15.0], 15.0),
+                ([print(4099, 3), print(4100, -1)], [18.0, 17.0], 17.0),
+            ] {
+                worker.send(update(&run[..1], &run[..1], 2));
+                publish(&worker, &mut views);
+                assert_eq!(worker.retained_lane_for_test().0, 1);
+                worker.send(update(&run, &run[1..], 2));
+                let lane = publish(&worker, &mut views);
+                let (length, capacity) = worker.retained_lane_for_test();
+                assert_eq!(length, 2);
+                assert!(capacity < peak);
+                assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+                assert_eq!(
+                    views.all()[0].preview.as_ref().unwrap().values,
+                    vec![preview]
+                );
+                assert_eq!(
+                    lane,
+                    vec![
+                        LaneSample {
+                            close_time: run[0].timestamp_ms,
+                            values: vec![expected[0]]
+                        },
+                        LaneSample {
+                            close_time: run[1].timestamp_ms,
+                            values: vec![expected[1]]
+                        },
+                    ]
+                );
+                worker.send(update(&run, &[], 2));
+                assert_eq!(publish(&worker, &mut views), lane);
+                assert_eq!(worker.retained_lane_for_test(), (length, capacity));
+                worker.send(IndicatorCommand::BarClosed(bar(&run)));
+                assert!(publish(&worker, &mut views).is_empty());
+                assert_eq!(worker.retained_lane_for_test(), (0, 0));
+                columns.push(preview);
+                assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+                assert!(views.all()[0].preview.is_none());
+            }
         }
     }
 }
