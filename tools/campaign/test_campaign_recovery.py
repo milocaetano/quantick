@@ -33,6 +33,8 @@ PARENT = "https://github.com/milocaetano/quantick/issues/330"
 MERGE = "b" * 40
 RECOVERY_KEY = "publish-recovery-evidence"
 AUDIT_KEY = "publish-dependency-audit"
+# Bound a hung offline child process without changing its fixture schedule.
+PROCESS_TIMEOUT_SECONDS = 30
 
 
 def initial_state():
@@ -249,7 +251,7 @@ class FreshProcessRecoveryTests(unittest.TestCase):
             [sys.executable, "-I", "-B", str(Path(__file__).resolve()),
              "--phase", phase, str(self.remote.path), str(cache)],
             cwd=cache, env=environment, capture_output=True, text=True,
-            encoding="utf-8", timeout=30, check=False,
+            encoding="utf-8", timeout=PROCESS_TIMEOUT_SECONDS, check=False,
         )
 
     def interrupt(self):
