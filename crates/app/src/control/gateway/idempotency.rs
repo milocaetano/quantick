@@ -51,13 +51,16 @@
 //! the call for one more request window, records what actually happened
 //! without sending it, and the retry replays that.
 //!
-//! That follow-on wait is bounded rather than open-ended, because an
-//! unbounded park would be the one thing here with no stated cap: an
-//! application thread that stopped draining would hold one thread per
-//! timed-out keyed call, and the connection's own in-flight slots are released
-//! before it starts. When the window expires the outcome is genuinely unknown,
-//! the ticket drops and the key is freed — a retry re-executing is the honest
-//! answer for a call nobody can account for.
+//! That follow-on wait is bounded by the request's own life rather than by a
+//! clock, and the difference matters. The sender lives inside the queued
+//! `UiRequest`, so the wait ends when the application answers or when the
+//! queue is dropped — never later. A wall-clock window was tried instead and
+//! was worse: an action slower than the window (a `feed.reload` rebuilding a
+//! chart) would free its key with nothing recorded, and the keyed retry would
+//! run it a second time, which is the one outcome this module exists to
+//! prevent. The only state that parks a thread indefinitely is an application
+//! that never finishes a request it accepted, and a frame loop wedged that
+//! badly has already cost the trader more than a thread.
 //!
 //! **A replayed answer is not marked as one on the wire.** The `warnings`
 //! field that would carry such a mark has no producer anywhere in the tree,
@@ -356,7 +359,17 @@ impl IdempotencyStore {
         let Some(mut ledger) = self.ledger() else {
             return;
         };
-        make_room(&mut ledger.records);
+        // The reservation is this record's licence to exist. `record` runs
+        // while the ticket is alive, so in every ordinary path the scope is
+        // still reserved — except one: a response worker is detached and
+        // nobody joins it, so it can finish after its connection closed and
+        // `forget_principal` swept. Writing then would leave a record no
+        // client can ever reach, holding a slot against the cap that the
+        // sweep exists to free.
+        if !ledger.in_flight.contains_key(&ticket.scope) {
+            return;
+        }
+        make_room(&mut ledger.records, &ticket.scope.principal_id);
         ledger.records.insert(
             ticket.scope.clone(),
             IdempotencyRecord {
@@ -467,14 +480,38 @@ fn expire(records: &mut BTreeMap<IdempotencyScope, IdempotencyRecord>, now_unix_
     });
 }
 
-/// Evict oldest-first until one more record fits.
+/// Evict until one more record fits, taking from whichever principal holds
+/// the most.
 ///
 /// A busy session reaches the entry cap long before anything ages out, and
-/// refusing every new key once full would never recover.
-fn make_room(records: &mut BTreeMap<IdempotencyScope, IdempotencyRecord>) {
+/// refusing every new key once full would never recover. Which record goes is
+/// the part worth choosing: oldest-first across the whole store lets one
+/// chatty connection spend the cap and silently withdraw the guarantee every
+/// other connection was published. Taking from the largest holder — the
+/// incoming principal itself when it is the largest, which is the common case
+/// — keeps one client's traffic from costing another its retries. Ties go to
+/// the oldest record of that principal, so a holder still loses its stalest
+/// key rather than an arbitrary one.
+fn make_room(records: &mut BTreeMap<IdempotencyScope, IdempotencyRecord>, incoming: &PrincipalId) {
     while records.len() >= CONTROL_IDEMPOTENCY_MAX_ENTRIES {
+        let mut held = BTreeMap::<&PrincipalId, usize>::new();
+        for scope in records.keys() {
+            *held.entry(&scope.principal_id).or_default() += 1;
+        }
+        // `max_by_key` keeps the last maximum, and the map is ordered, so the
+        // tie-break is the highest principal id rather than an arbitrary one;
+        // the incoming principal wins its own tie so a client cannot grow past
+        // its share by racing another of the same size.
+        let Some(fullest) = held
+            .into_iter()
+            .max_by_key(|(principal, count)| (*count, *principal == incoming, *principal))
+            .map(|(principal, _)| principal.clone())
+        else {
+            break;
+        };
         let Some(oldest) = records
             .iter()
+            .filter(|(scope, _)| scope.principal_id == fullest)
             .min_by_key(|(scope, record)| (record.stored_at_unix_ms, *scope))
             .map(|(scope, _)| scope.clone())
         else {
@@ -784,6 +821,60 @@ mod tests {
         assert!(
             !error.retryable,
             "a poisoned lock does not un-poison, so asking again cannot help"
+        );
+    }
+
+    /// A response worker is detached and nobody joins it, so it can finish
+    /// after its connection closed and the sweep already ran. The record it
+    /// would write is one no client can ever reach.
+    #[test]
+    fn a_record_from_a_worker_that_outlived_its_connection_is_not_written() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
+
+        store.forget_principal(&principal(1));
+        store.record(&ticket, &success(&request, json!({ "moved": true })), NOW);
+
+        assert_eq!(
+            store.len(),
+            0,
+            "a record for a connection that is gone holds no slot against the cap"
+        );
+    }
+
+    /// The cap is shared, so who loses a record when it is reached decides
+    /// whether one client can withdraw the guarantee another was published.
+    #[test]
+    fn a_chatty_connection_cannot_spend_another_connections_retries() {
+        let store = store();
+        let quiet = envelope("quiet", Some("key-quiet"), json!({ "tab": 0 }));
+        serve(
+            &store,
+            &quiet,
+            2,
+            &success(&quiet, json!({ "moved": true })),
+            NOW,
+        );
+
+        // One connection spends the whole cap, and its keys are all newer than
+        // the quiet connection's single record — so oldest-first eviction
+        // across the store would take the quiet one first.
+        for index in 0..=CONTROL_IDEMPOTENCY_MAX_ENTRIES {
+            let request = envelope(
+                "chatty",
+                Some(&format!("key-{index}")),
+                json!({ "tab": index }),
+            );
+            let now = NOW + 1 + index as i64;
+            serve(&store, &request, 1, &success(&request, json!({})), now);
+        }
+
+        let retry = envelope("retry", Some("key-quiet"), json!({ "tab": 0 }));
+        assert!(
+            serve(&store, &retry, 2, &success(&retry, json!({})), NOW).is_some(),
+            "the quiet connection still has the guarantee it was published"
         );
     }
 

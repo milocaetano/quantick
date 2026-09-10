@@ -58,3 +58,31 @@ compile on an unused `dry_run` before any test runs. The inverted guard is the
 break that actually exercises the assertion.
 
 The guard was restored and the test passes again.
+
+## The second bug pass, separately
+
+Two of the three findings from the review over `fac5a17` got their own
+regression test, and each was shown to fail without its fix.
+
+Dropping the reservation guard from `record` (the line that refuses to write
+for a connection already swept):
+
+```text
+test result: FAILED. 0 passed; 1 failed   # a_record_from_a_worker_that_outlived_its_connection_is_not_written
+```
+
+Returning `make_room` to oldest-first across the whole store, instead of
+taking from the principal holding the most:
+
+```text
+test result: FAILED. 0 passed; 1 failed   # a_chatty_connection_cannot_spend_another_connections_retries
+```
+
+Both restored; the module's nineteen tests pass.
+
+The third finding was a defect this branch introduced and then removed: a
+wall-clock bound on the post-timeout wait, added in response to the AI
+review's own scalability finding, would have freed the key of any action
+slower than the window and let its keyed retry run twice. The wait was
+already bounded by the request's own life; what the AI review had actually
+found was that the bound was never stated. It is stated now.
