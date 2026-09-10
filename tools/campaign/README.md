@@ -5,7 +5,7 @@ adopted by campaign #330. It journals operations, preserves history and publishe
 bounded, hash-verified checkpoint partitions. It does not schedule tasks,
 authorize business actions or provide an ownership takeover API.
 
-The initial source and all 53 original tests are retained byte-for-byte from
+The initial source and all 53 original tests were adopted byte-for-byte from
 their [adopted source publication](https://github.com/milocaetano/quantick/issues/350#issuecomment-5596003122)
 and [original test publication](https://github.com/milocaetano/quantick/issues/350#issuecomment-5595674363):
 
@@ -14,7 +14,15 @@ and [original test publication](https://github.com/milocaetano/quantick/issues/3
 | `architecture-a-coordinator-v2.py` | `ad028583da5951656f89e84ab24c492913ada31c9c91b2746db9a057dbc685e4` |
 | `test-architecture-a-coordinator-v2.py` | `2c9a432068d02891f6245621f28daed50ca3731ba06d86e53421151e60c8d3b8` |
 
-The historical constants/docstring are also retained. Operational callers must
+The original test file remains byte-for-byte unchanged. The initial source hash
+above records historical provenance; it is not the maintained source hash.
+Q13 names the existing 15-minute renewal, 50-active-task partition trigger and
+five-comment page policy without changing their values or the generated query.
+The maintained source SHA256 is
+`7e73236894f4a64f32b725f232c6a7cfaa0487779f29e2c2161ad60e1811f0c7`.
+See the [final-review correction evidence](../../docs/quality/final-review-corrections-evidence.md)
+for validation status and source attribution. Historical identity constants and
+the import docstring remain unchanged. Operational callers must
 explicitly configure `ROOT` to their own cache directory and `WRITER` to their
 actual coordinator identity before calling `activate`. Import has no I/O and
 does not activate the module. Load the repository file with
