@@ -178,9 +178,9 @@ const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
 /// the keyboard cannot supply (the ParkedHand rule) — and now that the
 /// label rides the pointer, its x is a state of its own to capture.
 const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
-/// Forces every resting order's in-plot tag to its expanded form for a
-/// capture run — the same ParkedHand problem: the compact pill opens under
-/// a pointer no scripted run has.
+/// Forces every resting order's in-plot tag, and every bracket leg's, to its
+/// expanded form for a capture run — the same ParkedHand problem: the
+/// compact pill opens under a pointer no scripted run has.
 const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// Shortest cmd-trading preview line: the pointer near the right edge
 /// still gets a line long enough to read as one, by starting left of it.
@@ -378,11 +378,19 @@ struct CmdPreview {
 /// not is a cancel the trader never saw coming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OpenTag {
-    id: OrderId,
+    key: TagKey,
     /// The ✕ is painted with the full statement, so a press may act on it.
     /// False while the order is being dragged: a moving order offers no
     /// cancel, and its tag is on a different row from its resting price.
     cancel: bool,
+}
+
+/// Whose tag an [`OpenTag`] opens: a working order's, or one leg of a
+/// bracket (see `leg_tag`) — the same two states, one contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TagKey {
+    Order(OrderId),
+    Leg(BracketTarget, Leg),
 }
 
 /// The `QUANTICK_CMD_PREVIEW` hook, parsed: which side to aim and, when
@@ -1219,7 +1227,7 @@ impl PaperTrading {
             // At rest the tag is a pill; it opens under the pointer. Read,
             // never recomputed — this frame's input already decided it,
             // from the pointer and the rect the *press* will use.
-            let open = self.open_tag(order.id);
+            let open = self.open_tag(TagKey::Order(order.id));
             let expanded = open.is_some();
             // The line's own emphasis keeps its own 10 px band: that band
             // is `line_at`'s, so a line that lights up is a line the press
@@ -1264,7 +1272,7 @@ impl PaperTrading {
             }
             // The ✕ is painted exactly when the press-side offers it —
             // one value, read twice, never two formulas.
-            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel));
+            ctx.chip_tag(y, color, &text, open.is_some_and(|tag| tag.cancel), false);
 
             // The order's own protective legs, and the handles for the ones
             // it does not have yet. Dashed, because they are a promise: they
@@ -1508,87 +1516,9 @@ impl PaperTrading {
                 } else {
                     format!("{word} {}", fmt_decimal(level))
                 };
-                ctx.chip_tag(y, color, &text, false);
+                ctx.chip_tag(y, color, &text, false, false);
             }
         }
-    }
-
-    /// One protective leg: its resting line and tag, the drag that reprices
-    /// it, or — while a create-drag runs and the leg does not exist yet —
-    /// the dashed preview of where release would put it. The tag gains the
-    /// live R:R read once both legs are known, which is what turns the drag
-    /// into a decision.
-    fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, paint: &LegPaint) {
-        let identity = (paint.owner, paint.leg);
-        let amending =
-            matches!(self.drag, PaperDrag::Leg { owner, leg } if (owner, leg) == identity);
-        let creating = matches!(self.drag, PaperDrag::CreateLeg { owner, leg } if (owner, leg) == identity)
-            && paint.level.is_none();
-        let resting = paint.level.map(|level| level.to_f64().unwrap_or_default());
-        let price = if amending || creating {
-            self.drag_price.or(resting)
-        } else {
-            resting
-        };
-        let Some(price) = price else { return };
-        let y = ctx.scale.y(price);
-        if !ctx.in_range(y) {
-            return;
-        }
-        let dragging = amending || creating;
-        let hovered = ctx.hovers_line(y);
-        let shown = if dragging {
-            self.account.snap(price)
-        } else {
-            paint.level.unwrap_or_else(|| self.account.snap(price))
-        };
-        let color = leg_color(paint.leg);
-        // Dashed while it is being created (it is not placed yet) and while
-        // it rides an unfilled order (it is a promise that arms on the
-        // fill). Solid only once it is a live exit on an open position.
-        ctx.level_line(
-            y,
-            color,
-            creating || paint.pending,
-            LINE_WIDTH_PX,
-            hovered,
-            dragging,
-        );
-        ctx.gutter_chip(y, color, &fmt_decimal(shown));
-        // A leg riding an unfilled order names the order it belongs to and
-        // says it is not protecting anything yet.
-        //
-        // Both halves are honesty, not decoration. Without the id, two
-        // resting orders put two identical `SL` tags on the chart and no
-        // way to tell which is whose. Without `on fill`, `SL 90.0 -5.0
-        // pts` reads exactly like a live position's stop — a trader would
-        // read protection they do not have, which is the same class of
-        // mistake as reading a simulated fill as a real one. Dashing the
-        // line says it too, but a dash is not a sentence, and this is the
-        // number the eye lands on.
-        let owner = match paint.owner {
-            BracketTarget::Order(id) => format!("#{} ", id.0),
-            BracketTarget::Position => String::new(),
-        };
-        let mut text = format!(
-            "{}{} {} {} pts",
-            owner,
-            paint.leg.word(),
-            fmt_decimal(shown),
-            fmt_signed_points(signed_points(
-                paint.side,
-                paint.reference,
-                shown,
-                paint.quantity
-            )),
-        );
-        if paint.pending {
-            text.push_str(" · on fill");
-        }
-        if dragging && let Some(ratio) = rr_ratio(paint, shown) {
-            text.push_str(&format!(" · R:R {ratio}"));
-        }
-        ctx.chip_tag(y, color, &text, !dragging);
     }
 
     /// Every rung of a laddered bracket, labelled with the slice it closes.
@@ -1656,6 +1586,7 @@ impl PaperTrading {
                         fmt_signed_points(points),
                     ),
                     order.is_some() && !dragging,
+                    false,
                 );
             }
         }
@@ -2002,7 +1933,9 @@ impl PaperTrading {
             // from a different pointer and a different rect.
             if let Some(level) = order.price
                 && let Some(center_y) = visible_center(level)
-                && self.open_tag(order.id).is_some_and(|tag| tag.cancel)
+                && self
+                    .open_tag(TagKey::Order(order.id))
+                    .is_some_and(|tag| tag.cancel)
                 && close_button_rect(tag_right, center_y).contains(pointer)
             {
                 return Some(PaperControl::CancelOrder(order.id));
@@ -2032,9 +1965,13 @@ impl PaperTrading {
             let reference_center = visible_center(reference);
             for leg in [Leg::TakeProfit, Leg::StopLoss] {
                 match leg.level(bracket) {
-                    // A leg that exists offers its cross.
+                    // A leg that exists offers its cross — while its tag is
+                    // open, which is exactly while the cross is painted.
                     Some(level) => {
                         if let Some(center_y) = visible_center(level)
+                            && self
+                                .open_tag(TagKey::Leg(owner, leg))
+                                .is_some_and(|tag| tag.cancel)
                             && close_button_rect(tag_right, center_y).contains(pointer)
                         {
                             return Some(PaperControl::ClearLeg { owner, leg });
@@ -2383,17 +2320,18 @@ impl PaperTrading {
                     .is_some_and(|pointer| tag_row_hit(pointer, scale.y(price), input.chart));
             if expanded {
                 open.push(OpenTag {
-                    id: order.id,
+                    key: TagKey::Order(order.id),
                     cancel: !dragged,
                 });
             }
         }
+        self.fill_open_legs(open, input.pointer, input.chart, scale);
     }
 
-    /// This frame's answer for one order's tag, or `None` while it rests
-    /// as a pill. See [`OpenTag`].
-    fn open_tag(&self, id: OrderId) -> Option<OpenTag> {
-        self.open_tags.iter().copied().find(|tag| tag.id == id)
+    /// This frame's answer for one tag, or `None` while it rests as a
+    /// pill. See [`OpenTag`].
+    fn open_tag(&self, key: TagKey) -> Option<OpenTag> {
+        self.open_tags.iter().copied().find(|tag| tag.key == key)
     }
 
     /// Turn a pending entry-line press into the leg the pull chose, once it
@@ -4026,28 +3964,6 @@ struct PaintCtx<'a> {
     pointer: Option<egui::Pos2>,
 }
 
-/// One protective leg's paint inputs (see `draw_bracket_leg`).
-struct LegPaint {
-    /// Whose leg this is. Also the drag identity: a leg being moved and a
-    /// leg being created differ only in whether it existed a frame ago.
-    owner: BracketTarget,
-    leg: Leg,
-    /// Side of the trade the leg protects.
-    side: Side,
-    /// The price the leg is measured against: the position's average entry,
-    /// or the order's own resting price.
-    reference: Decimal,
-    /// Size, so a level can be read as points rather than as a price.
-    quantity: Decimal,
-    /// This leg's level today, `None` while it does not exist yet.
-    level: Option<Decimal>,
-    /// The other leg's level, for the R:R read while dragging.
-    other_level: Option<Decimal>,
-    /// Whether the leg belongs to an order that has not filled: it is a
-    /// promise, not a live exit, and paints dashed to say so.
-    pending: bool,
-}
-
 impl PaintCtx<'_> {
     fn in_range(&self, y: f32) -> bool {
         y >= self.chart_rect.top() && y <= self.chart_rect.bottom()
@@ -4160,13 +4076,14 @@ impl PaintCtx<'_> {
     /// occupies the tag's right edge, painted on `close_button_rect`'s own
     /// geometry — the exact rect the press-time hit-test computes, so the
     /// two can never disagree. Overlay ✕s carry no tooltip of their own —
-    /// each has a full-size, fully labelled twin in the chrome.
-    fn chip_tag(&self, y: f32, fill: egui::Color32, text: &str, with_close: bool) {
-        let galley = self.painter.layout_no_wrap(
-            text.to_owned(),
-            egui::FontId::monospace(11.0),
-            theme::CHIP_INK,
-        );
+    /// each has a full-size, fully labelled twin in the chrome. A `ghost`
+    /// tag is outlined instead — dark fill, `fill` as its stroke and ink —
+    /// for a leg that has not armed yet (see `leg_tag`).
+    fn chip_tag(&self, y: f32, fill: egui::Color32, text: &str, with_close: bool, ghost: bool) {
+        let ink = if ghost { fill } else { theme::CHIP_INK };
+        let galley =
+            self.painter
+                .layout_no_wrap(text.to_owned(), egui::FontId::monospace(11.0), ink);
         let half = TAG_HEIGHT_PX / 2.0;
         let center_y = clamp_tag_center(y, self.chart_rect.top(), self.chart_rect.bottom());
         let right = self.tag_right - TAG_GAP_PX;
@@ -4176,12 +4093,22 @@ impl PaintCtx<'_> {
             egui::pos2(right - content_w, center_y - half),
             egui::pos2(right, center_y + half),
         );
-        self.painter
-            .rect_filled(full, egui::Rounding::same(3.0), fill);
+        if ghost {
+            self.painter
+                .rect_filled(full, egui::Rounding::same(3.0), theme::INSET);
+            self.painter.rect_stroke(
+                full,
+                egui::Rounding::same(3.0),
+                egui::Stroke::new(1.0_f32, fill),
+            );
+        } else {
+            self.painter
+                .rect_filled(full, egui::Rounding::same(3.0), fill);
+        }
         self.painter.galley(
             egui::pos2(full.left() + TAG_PAD_X, center_y - galley.size().y / 2.0),
             galley,
-            theme::CHIP_INK,
+            ink,
         );
         if !with_close {
             return;
@@ -4192,7 +4119,7 @@ impl PaintCtx<'_> {
             egui::Align2::CENTER_CENTER,
             "×",
             egui::FontId::monospace(11.0),
-            theme::CHIP_INK,
+            ink,
         );
         // A hairline of ink between the words and the ✕, so the zone reads
         // as a button rather than a longer label.
@@ -4204,9 +4131,9 @@ impl PaintCtx<'_> {
             egui::Stroke::new(
                 1.0_f32,
                 egui::Color32::from_rgba_unmultiplied(
-                    theme::CHIP_INK.r(),
-                    theme::CHIP_INK.g(),
-                    theme::CHIP_INK.b(),
+                    ink.r(),
+                    ink.g(),
+                    ink.b(),
                     CLOSE_DIVIDER_ALPHA,
                 ),
             ),
@@ -4380,21 +4307,6 @@ fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect 
         entry_y + HANDLE_CLEAR_PX
     };
     egui::Rect::from_min_size(egui::pos2(right - HANDLE_SIZE.x, y), HANDLE_SIZE)
-}
-
-/// Reward over risk at the dragged level, against the other leg — the read
-/// that turns a drag into a decision. `None` until both legs are known or
-/// while the risk is zero.
-fn rr_ratio(paint: &LegPaint, dragged: Decimal) -> Option<String> {
-    let other = paint.other_level?;
-    let entry = paint.reference;
-    let (stop, target) = match paint.leg {
-        Leg::StopLoss => (dragged, other),
-        Leg::TakeProfit => (other, dragged),
-    };
-    let risk = entry.saturating_sub(stop).abs();
-    let reward = target.saturating_sub(entry).abs();
-    (risk > Decimal::ZERO).then(|| fmt_points(reward / risk))
 }
 
 /// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
@@ -4595,6 +4507,9 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_RULER_TICKS",
     "QUANTICK_PAPER_STRATEGY_EDITOR"
 ];
+
+mod leg_tag;
+use leg_tag::LegPaint;
 
 #[cfg(test)]
 mod tests;
