@@ -322,9 +322,19 @@ fn a_working_orders_legs_are_draggable_and_clearable() {
         "the order's stop line is grabbable like the position's"
     );
 
-    // Its tag cross clears that leg and leaves the target alone.
+    // At rest the leg's tag is a pill with no cross, so nothing there
+    // clears it; reaching the row opens the tag and its cross clears that
+    // leg and leaves the target alone.
     let stop_center = clamp_tag_center(300.0, chart.top(), chart.bottom());
     let cross = close_button_rect(chart.right(), stop_center);
+    assert_eq!(paper.control_at(cross.center(), chart, &scale), None);
+    paper.handle_chart_input(&cmd_frame(
+        chart,
+        &scale,
+        cross.center(),
+        egui::Modifiers::default(),
+        false,
+    ));
     assert_eq!(
         paper.control_at(cross.center(), chart, &scale),
         Some(PaperControl::ClearLeg {
@@ -2219,6 +2229,122 @@ fn a_cancel_offered_this_frame_survives_a_paint_with_no_pointer() {
     ));
     assert!(!layer_shapes(&paper, chart, &scale, Some(on_row)).contains('×'));
     assert!(paper.control_at(on_row, chart, &scale).is_none());
+}
+
+/// A bracket leg's tag rests as a pill, in the order tag's grammar, and
+/// opens under the pointer: the whole statement on every leg used to bury
+/// the candles beside the axis. At rest an unfilled order's leg keeps its
+/// id — two orders' legs are otherwise identical — and its signed points;
+/// the price, `on fill` and the ✕ wait for the pointer.
+#[test]
+fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
+    let mut paper = PaperTrading::new();
+    paper.seed(&print(0, 100));
+    paper.stop_offset_text = "5".to_owned();
+    paper.profit_offset_text = "15".to_owned();
+    // A buy limit at 95 (y 250): its stop at 90 (y 300), target at 110 (y 100).
+    assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+    let id = paper.working_orders()[0].id.0;
+    let (chart, scale) = chart_and_scale(80.0, 120.0);
+    let frame_at = |paper: &mut PaperTrading, y: f32| {
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            egui::pos2(400.0, y),
+            egui::Modifiers::default(),
+            false,
+        ));
+        layer_shapes(paper, chart, &scale, Some(egui::pos2(400.0, y)))
+    };
+
+    let resting = frame_at(&mut paper, 175.0);
+    assert!(
+        resting.contains(&format!("\"#{id} SL -5\"")),
+        "the pill names the order, the leg and what it risks: {resting}"
+    );
+    assert!(resting.contains(&format!("\"#{id} TP +15\"")), "{resting}");
+    assert!(!resting.contains("on fill"), "the words wait: {resting}");
+    assert!(!resting.contains('×'), "and no ✕ beside the axis");
+
+    let opened = frame_at(&mut paper, 300.0);
+    assert!(
+        opened.contains(&format!("#{id} SL 90 -5 pts · on fill")),
+        "reaching for it states the leg whole: {opened}"
+    );
+    assert!(opened.contains('×'), "…and offers the clear: {opened}");
+    assert!(
+        opened.contains(&format!("\"#{id} TP +15\"")),
+        "only the row under the pointer opens: {opened}"
+    );
+}
+
+/// A live position's leg needs no id — there is one position — and rests
+/// just as small.
+#[test]
+fn a_position_leg_rests_as_the_leg_and_its_points() {
+    let mut paper = PaperTrading::new();
+    paper.seed(&print(0, 100));
+    paper.stop_offset_text = "10".to_owned();
+    paper.market(Side::Buy);
+    paper.on_trade(&print(1, 100));
+    let (chart, scale) = chart_and_scale(80.0, 120.0);
+    paper.handle_chart_input(&cmd_frame(
+        chart,
+        &scale,
+        egui::pos2(400.0, 175.0),
+        egui::Modifiers::default(),
+        false,
+    ));
+    let shapes = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 175.0)));
+    assert!(shapes.contains("\"SL -10\""), "{shapes}");
+    assert!(
+        !shapes.contains("SL 90"),
+        "the price is the chip's: {shapes}"
+    );
+}
+
+/// The leg's ✕ obeys the order's law: sweep the ✕ column, and at every
+/// stop ask the painter whether a ✕ came out and `control_at` whether a
+/// press is offered. The target sits against the top edge, where its tag
+/// is clamped off its own line and the two rows part company.
+#[test]
+fn a_leg_offers_its_clear_exactly_while_it_paints_one() {
+    let mut paper = PaperTrading::new();
+    paper.seed(&print(0, 100));
+    paper.stop_offset_text = "5".to_owned();
+    paper.profit_offset_text = "24.5".to_owned();
+    assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
+    let (chart, scale) = chart_and_scale(80.0, 120.0);
+    let x = chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0;
+    let mut cleared = Vec::new();
+    for step in -4_i16..=84 {
+        let pointer = egui::pos2(x, f32::from(step) * 5.0);
+        paper.handle_chart_input(&cmd_frame(
+            chart,
+            &scale,
+            pointer,
+            egui::Modifiers::default(),
+            false,
+        ));
+        let painted = layer_shapes(&paper, chart, &scale, Some(pointer)).contains('×');
+        let control = paper.control_at(pointer, chart, &scale);
+        let pressable = matches!(
+            control,
+            Some(PaperControl::CancelOrder(_) | PaperControl::ClearLeg { .. })
+        );
+        assert_eq!(painted, pressable, "at y {}", pointer.y);
+        if let Some(PaperControl::ClearLeg { leg, .. }) = control {
+            cleared.push(leg);
+        }
+    }
+    assert!(
+        cleared.contains(&Leg::StopLoss),
+        "the sweep cleared the stop"
+    );
+    assert!(
+        cleared.contains(&Leg::TakeProfit),
+        "and the edge-clamped target"
+    );
 }
 
 /// Switched off, the layer is unpainted — so it is also untouchable:
