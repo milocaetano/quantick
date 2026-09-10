@@ -5230,3 +5230,109 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// The settle branch, end to end: a keyed call refused on its own deadline
+/// cannot have acted, so its key comes back free and the retry does the work.
+///
+/// What this proves and what it does not, stated because the difference is
+/// easy to overclaim. It drives the real settle path — a real socket, a real
+/// `control.timeout`, the response worker's follow-on wait, and a retry that
+/// really acts — and it fails if that path stops releasing the key.
+///
+/// It does **not** exercise `UiRequest::started`. The application answers
+/// here, refusing the request on its deadline, so `settle` gets a real
+/// outcome and never consults the flag. The flag decides only the case where
+/// the application began an action and had still not answered a window later,
+/// and forcing that needs an action a test can hold open past the deadline,
+/// which the gateway has no hook for. That branch is covered by the unit
+/// tests over `settle` and by reading, not by this.
+#[test]
+fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free() {
+    use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};
+    use std::time::Duration;
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-settle");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway_with_limits(&mut app, &ctx, &directory, 4, Duration::from_millis(50), 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+    let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
+
+    // Sent and then left alone: no frame runs, so the deadline passes while the
+    // request is still queued and the response worker answers on its own.
+    let first = client
+        .send_with_idempotency_key(
+            RequestId::new("first").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+    let expired = client.read().unwrap();
+    assert_eq!(expired.request_id, first);
+    assert_eq!(response_error(&expired).code.as_str(), codes::TIMEOUT);
+    assert!(
+        response_error(&expired).retryable,
+        "the caller is invited to try again"
+    );
+
+    // The application finally drains it and refuses it on its deadline, before
+    // `started` is ever set.
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before,
+        "a call refused on its deadline created nothing"
+    );
+
+    // The invited retry. `control.request_in_progress` while the settle window
+    // is still open is the contract's own instruction to ask again, so this
+    // asks again rather than treating it as the answer.
+    let mut answered = None;
+    for attempt in 0..40 {
+        let response = remote_call_with_key(
+            &mut app,
+            &ctx,
+            &mut client,
+            &format!("retry-{attempt}"),
+            "layout.tab.create",
+            serde_json::json!({}),
+            "layout-key-1",
+        );
+        let still_running = matches!(
+            &response.outcome,
+            quantick_control::wire::ResponseOutcome::Failure { error }
+                if error.code.as_str() == codes::REQUEST_IN_PROGRESS
+        );
+        if !still_running {
+            answered = Some(response);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let answered = answered.expect("the settle window closes and the key comes back");
+
+    assert!(
+        matches!(
+            answered.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the retry acts, because the call it retries never did: {:?}",
+        answered.outcome
+    );
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before + 1,
+        "exactly one layout, made by the retry"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}

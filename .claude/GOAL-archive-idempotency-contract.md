@@ -212,6 +212,25 @@ client replay another's recorded result — and it is stated in the module
 documentation, the two descriptor comments and the pull request body rather
 than left implicit. It stands as taken, and it is the trader's to revisit.
 
+### A branch nothing drives end to end
+
+`UiRequest::started` decides one case: the application began an action and had
+still not answered a full window after the caller's deadline expired. Only then
+does `settle` record an outcome nobody can determine rather than releasing the
+key.
+
+Forcing that case in a test needs an action a test can hold open past the
+deadline, and the gateway offers no hook for one. So the branch is covered by
+the unit tests over `IdempotencyStore::settle`, which supply the flag directly,
+and by reading the wiring — not by anything that drives it. An end-to-end test
+was written and then found to prove something narrower (a call refused on its
+deadline frees its key, which is worth having and is kept), and its comment was
+corrected rather than left claiming the stronger property.
+
+The gap is bounded: a mistimed flag can only turn a released key into a
+recorded refusal, never a second execution. It is recorded here rather than
+left for the next reader to discover.
+
 ## The request as received
 
 > resolver o item 3 e fazer pr pra branch. Faça mesmo memso o merge tem
