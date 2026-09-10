@@ -1046,6 +1046,7 @@ fn dispatch_prepared(
     let contract = Arc::clone(&authority.contract);
     let response_ticket = ticket.clone();
     let response_idempotency = Arc::clone(&authority.idempotency);
+    let settle_window = authority.options.request_timeout;
     let wait_envelope = envelope.clone();
     let spawn = thread::Builder::new()
         .name(format!("quantick-control-response-{}", envelope.request_id))
@@ -1080,17 +1081,17 @@ fn dispatch_prepared(
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             // A timeout says this thread stopped waiting, not that the action
-            // did not happen; the key stays reserved until the real outcome is
-            // recorded. The wait ends with the request's own life, not a clock:
-            // the sender lives inside the queued `UiRequest`, so this returns
-            // when the application answers or when the queue is dropped.
-            // `idempotency.rs` owns why a keyed call cannot be abandoned here.
-            if timed_out
-                && let Some(ticket) = response_ticket.as_ref()
-                && let Ok(result) = response_rx.recv()
-            {
-                let settled = serialize_ui_result(&contract, &wait_envelope, result);
-                response_idempotency.record(ticket, &settled, metrics::wall_clock_ms());
+            // did not happen. `idempotency.rs` owns why a keyed call is
+            // followed here, and why the window records rather than releases.
+            if timed_out && let Some(ticket) = response_ticket.as_ref() {
+                let at = metrics::wall_clock_ms();
+                match response_rx.recv_timeout(settle_window) {
+                    Ok(result) => {
+                        let settled = serialize_ui_result(&contract, &wait_envelope, result);
+                        response_idempotency.record(ticket, &settled, at);
+                    }
+                    Err(_) => response_idempotency.record_unresolved(ticket, &wait_envelope, at),
+                }
             }
         });
     if spawn.is_err() {

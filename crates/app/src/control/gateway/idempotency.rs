@@ -51,16 +51,22 @@
 //! the call for one more request window, records what actually happened
 //! without sending it, and the retry replays that.
 //!
-//! That follow-on wait is bounded by the request's own life rather than by a
-//! clock, and the difference matters. The sender lives inside the queued
-//! `UiRequest`, so the wait ends when the application answers or when the
-//! queue is dropped — never later. A wall-clock window was tried instead and
-//! was worse: an action slower than the window (a `feed.reload` rebuilding a
-//! chart) would free its key with nothing recorded, and the keyed retry would
-//! run it a second time, which is the one outcome this module exists to
-//! prevent. The only state that parks a thread indefinitely is an application
-//! that never finishes a request it accepted, and a frame loop wedged that
-//! badly has already cost the trader more than a thread.
+//! That follow-on wait is bounded, and what happens when the bound is reached
+//! is the part worth getting right. Two obvious answers are both wrong. Wait
+//! forever and a wedged application accumulates parked threads, socket writer
+//! clones and reservations that nothing caps — and the client is told to retry
+//! a key that will answer `control.request_in_progress` for as long as the
+//! wedge lasts. Free the key instead and an action merely *slow* (a
+//! `feed.reload` rebuilding a chart) has its retry run it a second time, which
+//! is the one outcome this module exists to prevent.
+//!
+//! So the bound records rather than releases. When the window closes with no
+//! answer, the outcome genuinely is unknown, and that is what goes in the
+//! store: a non-retryable refusal naming the uncertainty, with a next step
+//! saying to read the state back. A retry then gets a stable answer instead of
+//! either a second execution or an indefinite hold, and reconciling by
+//! readback is exactly the contract a call whose outcome cannot be determined
+//! is allowed to offer.
 //!
 //! **A replayed answer is not marked as one on the wire.** The `warnings`
 //! field that would carry such a mark has no producer anywhere in the tree,
@@ -332,6 +338,31 @@ impl IdempotencyStore {
         if let Some(mut ledger) = self.ledger() {
             ledger.in_flight.remove(scope);
         }
+    }
+
+    /// Retain the fact that this call's outcome could not be determined.
+    ///
+    /// Reached when a keyed call timed out and the application had still not
+    /// answered a full request window later. The refusal is non-retryable on
+    /// purpose: the caller cannot get past it by asking again, and asking
+    /// again is precisely what must not re-run the action.
+    pub(super) fn record_unresolved(
+        &self,
+        ticket: &IdempotencyTicket,
+        envelope: &RequestEnvelope,
+        now_unix_ms: i64,
+    ) {
+        let mut error = ControlError::new(
+            ErrorCode::new(codes::TIMEOUT).expect("static error code is valid"),
+            "the outcome of this call under this idempotency key is unknown",
+            false,
+        );
+        error.context.next_steps = vec![
+            "Read the state back to see whether the call took effect; retrying this key cannot."
+                .to_owned(),
+        ];
+        let unresolved = rebuild(envelope, Vec::new(), ResponseOutcome::Failure { error });
+        self.record(ticket, &unresolved, now_unix_ms);
     }
 
     /// Retain `response` as this ticket's answer, when it is one worth
@@ -910,6 +941,35 @@ mod tests {
         assert!(
             serve(&store, &retry, 2, &success(&retry, json!({})), NOW).is_some(),
             "the connection that is still running keeps its guarantee"
+        );
+    }
+
+    /// The window closed with the application still silent, so nobody can say
+    /// whether the action happened. The retry gets that answer, not a second
+    /// execution and not an indefinite hold.
+    #[test]
+    fn a_call_whose_outcome_is_unknown_refuses_its_retry_instead_of_repeating_it() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
+        store.record_unresolved(&ticket, &request, NOW);
+        drop(ticket);
+
+        let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
+        let answered = serve(&store, &retry, 1, &success(&retry, json!({})), NOW)
+            .expect("the retry is answered from the store rather than dispatched");
+        let ResponseOutcome::Failure { error } = answered.outcome else {
+            panic!("an unknown outcome is a refusal");
+        };
+        assert_eq!(error.code.as_str(), codes::TIMEOUT);
+        assert!(
+            !error.retryable,
+            "asking again under this key cannot resolve what asking again caused"
+        );
+        assert!(
+            !error.context.next_steps.is_empty(),
+            "the caller is told how to reconcile: by reading the state back"
         );
     }
 
