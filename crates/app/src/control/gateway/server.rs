@@ -1047,6 +1047,8 @@ fn dispatch_prepared(
     let response_ticket = ticket.clone();
     let response_idempotency = Arc::clone(&authority.idempotency);
     let settle_window = authority.options.request_timeout;
+    let started = Arc::new(AtomicBool::new(false));
+    let request_started = Arc::clone(&started);
     let wait_envelope = envelope.clone();
     let spawn = thread::Builder::new()
         .name(format!("quantick-control-response-{}", envelope.request_id))
@@ -1077,20 +1079,17 @@ fn dispatch_prepared(
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
             send_response(&response_writer, &response_codec, response);
-            // The answer is out: the request ID and the gateway-wide slot go
-            // back now, this connection's own slot after the wait below.
-            // `idempotency.rs` says why the two part company here.
+            // Answer out: shared slots back now, ours after the wait below.
             response_slots.forget(&wait_envelope.request_id);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
+                let settled = response_rx
+                    .recv_timeout(settle_window)
+                    .ok()
+                    .map(|result| serialize_ui_result(&contract, &wait_envelope, result));
+                let acted = started.load(Ordering::Acquire);
                 let at = metrics::wall_clock_ms();
-                match response_rx.recv_timeout(settle_window) {
-                    Ok(result) => {
-                        let settled = serialize_ui_result(&contract, &wait_envelope, result);
-                        response_idempotency.record(ticket, &settled, at);
-                    }
-                    Err(_) => response_idempotency.record_unresolved(ticket, &wait_envelope, at),
-                }
+                response_idempotency.settle(ticket, &wait_envelope, settled.as_ref(), acted, at);
             }
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
@@ -1121,6 +1120,7 @@ fn dispatch_prepared(
         connection_id: connection_id.clone(),
         grant_generation: authority.grant_generation,
         deadline,
+        started: request_started,
         response: response_tx,
     };
     match authority.requests.try_send(ui_request) {

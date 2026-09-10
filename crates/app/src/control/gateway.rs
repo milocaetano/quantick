@@ -544,6 +544,10 @@ struct UiRequest {
     connection_id: ConnectionId,
     grant_generation: u64,
     deadline: Instant,
+    /// Set once this request is past every pre-dispatch refusal, so the
+    /// response worker can tell "never ran" from "may have run" when it stops
+    /// hearing back. `gateway/idempotency.rs` is what needs the difference.
+    started: Arc<AtomicBool>,
     response: Sender<Result<UiReadExecution, ControlError>>,
 }
 
@@ -1113,6 +1117,9 @@ impl ControlAccess {
                 ));
             }
         };
+        // Past every refusal that can happen without touching the
+        // application: from here the request may really act.
+        request.started.store(true, Ordering::Release);
         if request.prepared.envelope.instance_id != instance_id {
             return Err(known_error(
                 codes::INSTANCE_GONE,

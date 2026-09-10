@@ -357,13 +357,38 @@ impl IdempotencyStore {
         }
     }
 
+    /// Close out a keyed call whose client already gave up waiting.
+    ///
+    /// Three endings, and telling them apart is the point. `settled` present
+    /// is the real answer arriving late: record it, and the retry replays it.
+    /// Absent while the call may have acted — the application got past every
+    /// pre-dispatch refusal — is the one nobody can determine, and it records
+    /// as such so the retry gets a stable refusal instead of a second
+    /// execution. Absent while it cannot have acted is simply nothing
+    /// happening: the key is released with the ticket and the retry is free to
+    /// try again, which is what a caller whose call never ran is owed.
+    pub(super) fn settle(
+        &self,
+        ticket: &IdempotencyTicket,
+        envelope: &RequestEnvelope,
+        settled: Option<&ResponseEnvelope>,
+        may_have_acted: bool,
+        now_unix_ms: i64,
+    ) {
+        match settled {
+            Some(response) => self.record(ticket, response, now_unix_ms),
+            None if may_have_acted => self.record_unresolved(ticket, envelope, now_unix_ms),
+            None => {}
+        }
+    }
+
     /// Retain the fact that this call's outcome could not be determined.
     ///
     /// Reached when a keyed call timed out and the application had still not
     /// answered a full request window later. The refusal is non-retryable on
     /// purpose: the caller cannot get past it by asking again, and asking
     /// again is precisely what must not re-run the action.
-    pub(super) fn record_unresolved(
+    fn record_unresolved(
         &self,
         ticket: &IdempotencyTicket,
         envelope: &RequestEnvelope,
@@ -961,16 +986,17 @@ mod tests {
         );
     }
 
-    /// The window closed with the application still silent, so nobody can say
-    /// whether the action happened. The retry gets that answer, not a second
-    /// execution and not an indefinite hold.
+    /// The window closed with the application still silent *and* the request
+    /// past every pre-dispatch refusal, so nobody can say whether the action
+    /// happened. The retry gets that answer, not a second execution and not an
+    /// indefinite hold.
     #[test]
     fn a_call_whose_outcome_is_unknown_refuses_its_retry_instead_of_repeating_it() {
         let store = store();
         let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
         let mut ticket = ticket_for(&request, 1);
         assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
-        store.record_unresolved(&ticket, &request, NOW);
+        store.settle(&ticket, &request, None, true, NOW);
         drop(ticket);
 
         let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
@@ -987,6 +1013,50 @@ mod tests {
         assert!(
             !error.context.next_steps.is_empty(),
             "the caller is told how to reconcile: by reading the state back"
+        );
+    }
+
+    /// The same silence, but the request never got past the application's
+    /// pre-dispatch refusals, so it cannot have acted. Nothing is unknown
+    /// here, and a caller whose call never ran is owed its retry.
+    #[test]
+    fn a_call_that_never_reached_the_application_releases_its_key() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
+
+        store.settle(&ticket, &request, None, false, NOW);
+        drop(ticket);
+
+        assert_eq!(store.len(), 0, "nothing happened, so nothing is recorded");
+        let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
+        assert!(
+            serve(&store, &retry, 1, &success(&retry, json!({})), NOW).is_none(),
+            "the retry reaches the application instead of a refusal it did not earn"
+        );
+    }
+
+    /// A late answer is still the answer, and it is what the retry replays.
+    #[test]
+    fn a_late_answer_settles_the_key_with_what_actually_happened() {
+        let store = store();
+        let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
+        let mut ticket = ticket_for(&request, 1);
+        assert!(IdempotencyStore::admit(&store, &mut ticket, &request, NOW).is_none());
+
+        let late = success(&request, json!({ "moved": true }));
+        store.settle(&ticket, &request, Some(&late), true, NOW);
+        drop(ticket);
+
+        let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
+        let replayed = serve(&store, &retry, 1, &success(&retry, json!({})), NOW)
+            .expect("the retry is answered from the store");
+        assert_eq!(
+            replayed.outcome,
+            ResponseOutcome::Success {
+                result: json!({ "moved": true })
+            }
         );
     }
 
