@@ -2239,6 +2239,8 @@ fn a_cancel_offered_this_frame_survives_a_paint_with_no_pointer() {
 #[test]
 fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
     let mut paper = PaperTrading::new();
+    // The capture hook forces every tag open; this test is about the resting pill.
+    paper.order_hover_force = false;
     paper.seed(&print(0, 100));
     paper.stop_offset_text = "5".to_owned();
     paper.profit_offset_text = "15".to_owned();
@@ -2283,6 +2285,7 @@ fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
 #[test]
 fn a_position_leg_rests_as_the_leg_and_its_points() {
     let mut paper = PaperTrading::new();
+    paper.order_hover_force = false;
     paper.seed(&print(0, 100));
     paper.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
@@ -2310,6 +2313,7 @@ fn a_position_leg_rests_as_the_leg_and_its_points() {
 #[test]
 fn a_leg_offers_its_clear_exactly_while_it_paints_one() {
     let mut paper = PaperTrading::new();
+    paper.order_hover_force = false;
     paper.seed(&print(0, 100));
     paper.stop_offset_text = "5".to_owned();
     paper.profit_offset_text = "24.5".to_owned();
