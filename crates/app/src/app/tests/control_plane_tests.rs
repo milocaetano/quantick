@@ -4998,3 +4998,235 @@ fn incremental_lane_dense_frame_benchmark() {
         );
     }
 }
+
+/// A capability that publishes `IdempotencyPolicy::Optional` has to accept the
+/// key it advertises.
+///
+/// `layout.*` says so in prose — "so a client may retry a dropped call without
+/// wondering what the first one did" — while the gateway refused every key
+/// before dispatch. A client that read the descriptor and did the correct
+/// thing got `control.invalid_request` for its trouble.
+#[test]
+fn a_layout_call_may_carry_the_idempotency_key_its_descriptor_promises() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-accepted");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    let response = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+
+    assert!(
+        matches!(
+            response.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "a key the descriptor declares Optional is accepted: {:?}",
+        response.outcome
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The promise itself: the retry is answered, and it does not act again.
+///
+/// `layout.tab.create` with no name adds the next free `Layout N`, so two
+/// unguarded calls would leave two layouts. One layout and two equal answers
+/// is the difference the key buys.
+#[test]
+fn the_same_layout_key_answers_twice_and_acts_once() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-replay");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+
+    let first = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+    let after_first = app.layouts().layouts().len();
+    let second = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "second",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+
+    assert_eq!(after_first, before + 1, "the first call created one layout");
+    assert_eq!(
+        app.layouts().layouts().len(),
+        after_first,
+        "the retry created no second layout"
+    );
+    assert_eq!(
+        first.outcome, second.outcome,
+        "the retry is given the answer the first call got"
+    );
+    assert_eq!(
+        second.request_id.as_str(),
+        "second",
+        "the replay answers the request that asked, not the one recorded"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The same key over different input is a different call wearing the same
+/// name, and saying so is the point of the key.
+#[test]
+fn the_same_layout_key_with_different_input_is_refused_as_a_conflict() {
+    use quantick_control::error::codes;
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-conflict");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+    let after_first = app.layouts().layouts().len();
+    let conflicting = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "second",
+        "layout.tab.create",
+        serde_json::json!({ "name": "Something else" }),
+        "layout-key-1",
+    );
+
+    assert_eq!(
+        response_error(&conflicting).code.as_str(),
+        codes::IDEMPOTENCY_CONFLICT
+    );
+    assert!(
+        !response_error(&conflicting).retryable,
+        "sending the same conflict again cannot help"
+    );
+    assert_eq!(
+        app.layouts().layouts().len(),
+        after_first,
+        "a refused conflict acts on nothing"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The retry a client sends *because* the first call has not answered — which
+/// is the case the descriptors name, and the one a store written at response
+/// time would miss.
+///
+/// The record for an action is written on the response worker, after the
+/// connection loop has gone back to reading. Without a key held for the
+/// duration of the dispatch both calls would find no record and both would
+/// act. Here the second is refused while the first is still queued, retryably,
+/// and the first goes on to create exactly one layout.
+#[test]
+fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
+    use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-race");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+    let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
+
+    let first = client
+        .send_with_idempotency_key(
+            RequestId::new("first").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+    wait_for_queued_gateway_requests(&app, 1);
+    let second = client
+        .send_with_idempotency_key(
+            RequestId::new("second").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+
+    // Refused at once, before the first has been served.
+    let refused = client.read().unwrap();
+    assert_eq!(refused.request_id, second);
+    assert_eq!(
+        response_error(&refused).code.as_str(),
+        codes::REQUEST_IN_PROGRESS
+    );
+    assert!(
+        response_error(&refused).retryable,
+        "the caller is told to ask again once the first has answered"
+    );
+
+    run_frame(&mut app, &ctx);
+    let served = client.read().unwrap();
+    assert_eq!(served.request_id, first);
+    assert!(matches!(
+        served.outcome,
+        quantick_control::wire::ResponseOutcome::Success { .. }
+    ));
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before + 1,
+        "the race created one layout, not two"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}

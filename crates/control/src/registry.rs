@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::{
     canonical::validate_control_value,
     cursor::PaginationConsistency,
+    error::ControlError,
     handshake::ProfileAuthority,
     id::{
         AvailabilityReasonId, CapabilityId, ConfirmationClassId, CostClassId, EffectId, ModuleId,
@@ -98,6 +99,37 @@ pub enum IdempotencyPolicy {
     Forbidden,
     Optional,
     Required,
+}
+
+/// Whether this capability accepts the key this request carries.
+///
+/// A descriptor declares its policy once, and every host that serves the
+/// capability has to enforce the same one. Stating the rule here rather than
+/// inside each host is what stops them drifting into two different contracts
+/// — which is not hypothetical: the application gateway spent months refusing
+/// every idempotency key while its own descriptors advertised
+/// [`IdempotencyPolicy::Optional`] and promised in prose that a dropped call
+/// could be retried.
+///
+/// `dry_run` is a parameter rather than an assumption because a dry run
+/// changes nothing, so there is nothing for a key to deduplicate and a
+/// capability that normally requires one does not demand it.
+pub fn check_idempotency_key(
+    policy: IdempotencyPolicy,
+    carries_key: bool,
+    dry_run: bool,
+) -> Result<(), ControlError> {
+    match (policy, carries_key) {
+        (IdempotencyPolicy::Forbidden, true) => Err(ControlError::invalid_request(
+            "capability forbids idempotency keys",
+        )),
+        (IdempotencyPolicy::Required, false) if !dry_run => Err(ControlError::invalid_request(
+            "capability requires an idempotency key",
+        )),
+        (IdempotencyPolicy::Forbidden, false)
+        | (IdempotencyPolicy::Optional, _)
+        | (IdempotencyPolicy::Required, _) => Ok(()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

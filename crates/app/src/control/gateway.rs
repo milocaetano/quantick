@@ -48,6 +48,7 @@ use super::{
     types::known_error,
 };
 
+mod idempotency;
 mod panel;
 mod screenshot;
 mod semantic;
