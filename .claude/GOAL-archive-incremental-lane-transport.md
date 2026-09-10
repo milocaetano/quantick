@@ -142,49 +142,49 @@ The fixture repair passed guards, its focused test, fmt, clippy and build; the f
 Source: https://github.com/milocaetano/quantick/issues/134, captured before work in Q3-start-issue.json.
 
 > ## What
-> 
+>
 > `ChartPane::partial_command()` (`crates/app/src/pane.rs`) clones the forming bar's **entire** run of trades on every drain that took in live trades:
-> 
+>
 > ```rust
 > let trades = self.state.trades();
 > let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
 > trades[trades.len().saturating_sub(count)..].to_vec()
 > ```
-> 
+>
 > ## Why it matters
-> 
+>
 > - **Rate**: once per drain of live trades — up to ~60 Hz, on the render thread.
 > - **Cost**: one allocation proportional to the forming bar's `trade_count`, each `Trade` ~56 B. On a `time:1m` spec over BTCUSDT aggTrades that run is thousands of trades, so it is hundreds of KB allocated, copied and dropped per frame, where before #130 the same call cloned one `Bar`.
-> 
+>
 > It is correctly gated — nothing is cloned when `lane_rungs == 0`, so a chart with no lane pays nothing — and it is bounded by a single bar, which is why it was not held against #130.
-> 
+>
 > ## The shape that fixes it
-> 
+>
 > Send only the trades that arrived **this drain** and let the worker keep the run, resetting it on `BarClosed` / `Rebuild` / `partial = None`. The batch loop in `indicator_worker::run` then extends its accumulator instead of replacing it (today `lane_request` is latest-wins, which would have to become concatenating). Cost becomes proportional to prints arrived, not to bar size.
-> 
+>
 > ## Acceptance
-> 
+>
 > - [ ] `PartialUpdated` carries only the newly arrived trades; the worker owns the run.
 > - [ ] The run is reset exactly where the forming bar is: `BarClosed`, `Rebuild`, and a vanished partial.
 > - [ ] The existing ladder tests still pass unchanged — `the_lane_samples_end_where_the_preview_does` in particular, since it is what proves the curve's live end and the pane's headline are the same fact.
 > - [ ] A test that a multi-drain sequence produces the same rungs as one drain carrying the whole run.
 > - [ ] Perf HUD frame time on the `dense tape btc` preset with a time or dollar spec and the lane on, before and after, recorded in the PR.
-> 
+>
 > Found by arch-review of #130 (https://github.com/milocaetano/quantick/pull/130#issuecomment-5210381255), deliberately deferred there.
-> 
+>
 > <!-- campaign-task:milocaetano/quantick#330/Q3 -->
 > ## Architecture A campaign assignment
-> 
+>
 > Parent: https://github.com/milocaetano/quantick/issues/330. Stable key Q3, priority 5, autonomous. Risk high (hot-path concurrency and ordered data). Current baseline a808b2d87b36d73041027e4d20c053544b454a96 confirms the issue remains: pane.rs:2400 copies the full forming run on each live drain at tab/feed.rs:481-486. Worker coalescing happens only after those copies. This is forming-bar-length cost, not automatically whole-session-length cost.
-> 
+>
 > Scope: fulfill original #134 with incremental internal run transport, explicit reset/cold-seed handling and unchanged final ladder/preview behavior. Keep BarClosed ordering, lane off/on, history prepend/rebuild/rewind and repeated empty publication correct. Preserve v1 wire/public contracts, financial/bar rules, trade retention and rendering semantics. The worker lane_prefixes full fold remains O(forming-bar trades) unless a separately justified outcome is scheduled; do not claim this task alone proves global linear/constant cost or the A+ scalability gate. #155 is a separate recut investigation.
-> 
+>
 > Additional acceptance evidence:
 > - Actual production producer-boundary counts show N one-print drains transport N new Trade entries, instead of N*(N+1)/2, within an uninterrupted continuously enabled epoch. N and 2N variants and different old-history lengths establish the operation-count bound; cold seed traffic is explicit and separately counted.
 > - Irregular multi-drain and batched command delivery produce the same independently specified final ladder and committed/preview state; existing golden lane tests remain unchanged.
 > - Boundary tests cover closes/rebuild/vanished partial, disable/re-enable, cold seed and repeated no-new-data publication without duplicates or silent loss.
 > - Same-host alternating before/after dense time/dollar lane-enabled fixture records rates, frame average/tails, transported traffic and retained accumulator sizes, with fixture/environment/source hashes and predeclared regression thresholds. The old tick(16) control fixture alone is insufficient.
-> 
+>
 > Dependencies: none on unintegrated work. D3 authorizes at most two independent implementations. Claimed by `codex/01a07841-8868-75a1-b6f6-9cb93837d72d/implement_q3` in `fix/incremental-lane-transport` at `C:/src/quantick-worktrees/fix-incremental-lane-transport`, starting from integrated campaign `0bd50f9b815a05e2ba8d0c9804324dbb415f6658`. Campaign Project item `PVTI_lAHOA0fkv84Bipkmzg5sR_k`. Q2 paths are disjoint; build/benchmark host and merges remain serialized. PR/head publication follows validation. Base latest origin/campaign/architecture-a; PR base campaign/architecture-a. Full local fmt/clippy/build/test before every commit, guards after edits, independent architecture/AI/delivery reviews and exact-head CI required. Initial counters operation=0, repair=0; preserve per-signature history. Evidence destination: this issue and linked PR, with committed mission/dossier and raw CI logs. Existing #134 is reused; no duplicate perf issue is created.
 
 ## Received delegation and directives (verbatim attributed quotations)
