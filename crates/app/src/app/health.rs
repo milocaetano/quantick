@@ -6,7 +6,7 @@
 //! sit together because they answer one question from one set of counters,
 //! and because the log line and the bar must never be able to disagree.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use eframe::egui;
 
@@ -17,9 +17,6 @@ use crate::style::CandlePreset;
 use crate::window_scale;
 
 use super::{QuantickApp, fmt_progress};
-
-/// How often the perf summary is logged (not every frame).
-const SUMMARY_INTERVAL: Duration = Duration::from_secs(2);
 
 /// What the window measures about itself between perf summaries.
 ///
@@ -46,7 +43,7 @@ impl QuantickApp {
     /// Periodically log a perf summary and warn on threshold breaches.
     pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let elapsed = now - self.health.last_summary;
-        if elapsed < SUMMARY_INTERVAL {
+        if !worker_diagnostics::emit_if_due(&self.tabs, elapsed) {
             return;
         }
         // The window's own geometry, because a chart that lays out wider than
@@ -347,3 +344,5 @@ impl QuantickApp {
         }
     }
 }
+
+mod worker_diagnostics;

@@ -58,6 +58,7 @@ use super::super::types::known_error;
 // a window, a painter or a piece of application state -- the options it was
 // started with, the channels and counters it reports through, and the request
 // it hands across.
+use super::idempotency::{self, IdempotencyStore, IdempotencyTicket};
 use super::{
     ACCEPT_POLL_MS, ClientRateLimiter, ConnectedClient, ConnectionStatus, DrainObservation,
     GATEWAY_COMMAND_CAPACITY, GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION,
@@ -250,6 +251,7 @@ fn gateway_run(
         journal_signal: Arc::clone(&start.journal_signal),
         park: park_tx,
         parked_waiters: Arc::new(AtomicUsize::new(0)),
+        idempotency: Arc::new(IdempotencyStore::default()),
     });
     accept_loop(listener, command_rx, Arc::clone(&authority));
 
@@ -410,6 +412,10 @@ struct ConnectionAuthority {
     journal_signal: Arc<JournalSignal>,
     park: Sender<ParkedWaiter>,
     parked_waiters: Arc<AtomicUsize>,
+    /// Replayable outcomes for the keys the descriptors declare
+    /// `IdempotencyPolicy::Optional`. Shared across this grant's
+    /// connections and scoped per principal inside.
+    idempotency: Arc<IdempotencyStore>,
 }
 
 fn accept_loop(
@@ -879,8 +885,22 @@ fn connection_session(
                 continue;
             }
         };
+        let ticket = match idempotency::admitted(
+            &authority.idempotency,
+            &authority.identity.instance_id,
+            &remote_actor.principal_id,
+            &prepared.envelope,
+            metrics::wall_clock_ms(),
+        ) {
+            Ok(ticket) => ticket,
+            Err(answered) => {
+                send_response(&writer, &codec, *answered);
+                continue;
+            }
+        };
         dispatch_prepared(
             prepared,
+            ticket,
             &connection_id,
             &remote_actor,
             &accepted,
@@ -893,6 +913,12 @@ fn connection_session(
     // The socket is gone: this connection's parked waits release their slots
     // at the manager's next pass instead of holding them to the deadline.
     slots.closed.store(true, Ordering::Release);
+    // This connection's principal dies with it, so nothing it recorded can
+    // ever be replayed again. Freeing the entries keeps the store's cap for
+    // the connections that are still running.
+    authority
+        .idempotency
+        .forget_principal(&remote_actor.principal_id);
 
     if authority
         .statuses
@@ -925,6 +951,7 @@ pub(super) fn activity_status_high_watermark(max_connections: usize) -> usize {
 #[allow(clippy::too_many_arguments)]
 fn dispatch_prepared(
     prepared: PreparedRequest,
+    ticket: Option<IdempotencyTicket>,
     connection_id: &ConnectionId,
     remote_actor: &RemoteActor,
     handshake: &quantick_control::handshake::HandshakeResponse,
@@ -977,6 +1004,11 @@ fn dispatch_prepared(
         &handshake.effective_limits,
     ) {
         let response = serialize_worker_result(&authority.contract, &prepared.envelope, result);
+        if let Some(ticket) = ticket.as_ref() {
+            authority
+                .idempotency
+                .record(ticket, &response, metrics::wall_clock_ms());
+        }
         send_response(writer, codec, response);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         slots.forget(&prepared.envelope.request_id);
@@ -1012,12 +1044,19 @@ fn dispatch_prepared(
     let response_slots = Arc::clone(slots);
     let response_global_in_flight = Arc::clone(&authority.global_in_flight);
     let contract = Arc::clone(&authority.contract);
+    let response_ticket = ticket.clone();
+    let response_idempotency = Arc::clone(&authority.idempotency);
+    let settle_window = authority.options.request_timeout;
+    let started = Arc::new(AtomicBool::new(false));
+    let request_started = Arc::clone(&started);
     let wait_envelope = envelope.clone();
     let spawn = thread::Builder::new()
         .name(format!("quantick-control-response-{}", envelope.request_id))
         .spawn(move || {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let response = match response_rx.recv_timeout(remaining) {
+            let settled = response_rx.recv_timeout(remaining);
+            let timed_out = matches!(settled, Err(crossbeam_channel::RecvTimeoutError::Timeout));
+            let response = match settled {
                 Ok(result) => serialize_ui_result(&contract, &wait_envelope, result),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => failure_response(
                     &wait_envelope,
@@ -1036,10 +1075,23 @@ fn dispatch_prepared(
                     ),
                 ),
             };
+            if let Some(ticket) = response_ticket.as_ref() {
+                response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
+            }
             send_response(&response_writer, &response_codec, response);
+            // Answer out: shared slots back now, ours after the wait below.
             response_slots.forget(&wait_envelope.request_id);
-            response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
+            if timed_out && let Some(ticket) = response_ticket.as_ref() {
+                let settled = response_rx
+                    .recv_timeout(settle_window)
+                    .ok()
+                    .map(|result| serialize_ui_result(&contract, &wait_envelope, result));
+                let acted = started.load(Ordering::Acquire);
+                let at = metrics::wall_clock_ms();
+                response_idempotency.settle(ticket, &wait_envelope, settled.as_ref(), acted, at);
+            }
+            response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
         slots.forget(&envelope.request_id);
@@ -1068,6 +1120,7 @@ fn dispatch_prepared(
         connection_id: connection_id.clone(),
         grant_generation: authority.grant_generation,
         deadline,
+        started: request_started,
         response: response_tx,
     };
     match authority.requests.try_send(ui_request) {
@@ -1145,6 +1198,8 @@ fn dispatch_parked_wait(
         // Already behind the journal: no parking, just the read.
         dispatch_prepared(
             to_read(false),
+            // `events.wait` declares `Forbidden`, so no key survived `prepare`.
+            None,
             connection_id,
             remote_actor,
             handshake,
@@ -1247,6 +1302,8 @@ fn dispatch_parked_wait(
                 }
                 WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
                     to_read(reason == WakeReason::TimedOut),
+                    // Same read, same `Forbidden` declaration.
+                    None,
                     &thread_connection_id,
                     &thread_remote_actor,
                     &thread_handshake,

@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "application": {
+      "type": "string"
+    },
+    "application_version": {
+      "type": "string"
+    },
+    "build_profile": {
+      "type": "string"
+    },
+    "control_protocol_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "git_commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "git_commit_provenance": {
+      "type": "string"
+    },
+    "target_arch": {
+      "type": "string"
+    },
+    "target_family": {
+      "type": "string"
+    },
+    "target_os": {
+      "type": "string"
+    },
+    "ui_capture_budget_us": {
+      "$ref": "#/$defs/WireU64",
+      "x-unit": "microseconds"
+    }
+  },
+  "required": [
+    "application",
+    "application_version",
+    "control_protocol_version",
+    "target_os",
+    "target_arch",
+    "target_family",
+    "build_profile",
+    "git_commit_provenance",
+    "ui_capture_budget_us"
+  ],
+  "title": "SystemSnapshot",
+  "type": "object"
+}

@@ -90,6 +90,7 @@ mod ui_state;
 mod viewport;
 mod widgets;
 mod window_scale;
+mod worker_progress;
 mod workspace_bundle;
 mod workspace_store;
 
@@ -482,3 +483,8 @@ mod window_size_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod worker_progress_bench;
+#[cfg(test)]
+mod worker_progress_bench_observer;

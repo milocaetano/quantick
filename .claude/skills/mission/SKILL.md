@@ -247,8 +247,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    that evidence where the criterion said it would land. A criterion without
    evidence is unmet.
 
-   **Archive before you review, not after.** The markers hold shas, so the
-   archive has to be part of the branch the reviews actually graded.
+   **Archive before review.** The archive belongs in the reviewed diff.
 
    1. **Archive**, as the mission's last commit, before either review runs.
       Assign the slug first — an unquoted `<slug>` is two shell redirections.
@@ -274,6 +273,8 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    4. **PR readiness** — `ship` may publish the draft before reviews; `ai-review`
       needs its resolvable threads. Ready waits for current reviews and CI.
       The PR body names the tier and labels local/reused/CI verification.
+      `ai-review` owns the durable PR report and `ai-review-complete` projection;
+      completion and zero unresolved threads are required at every tier.
 
    A `small` mission still archives `GOAL.md` as its durable objective record.
 

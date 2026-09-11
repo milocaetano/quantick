@@ -27,6 +27,7 @@ mod drawing_input;
 mod frame;
 mod health;
 mod indicator_manager;
+mod indicator_operations;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
 mod menu_bar;

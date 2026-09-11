@@ -1,4 +1,4 @@
-//! The repository guards, as the tests CI runs.
+//! The registered repository guards, as the tests CI runs.
 //!
 //! Each is a thin shell over the library: the logic, its rationale and its
 //! unit tests live in the module the failure names, and this file exists so
@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 10] = [
+const TESTED: [&str; 11] = [
     "size",
     "language",
     "encoding",
@@ -27,6 +27,7 @@ const TESTED: [&str; 10] = [
     "scratch",
     "graph",
     "headless",
+    "extension-boundary",
     "instruction_links",
 ];
 
@@ -424,6 +425,11 @@ fn the_crates_below_app_stay_headless() {
 }
 
 #[test]
-fn instruction_entrypoint_links_resolve() {
+fn protected_root_shapes_and_implementation_caps_hold() {
     assert_clean(TESTED[9]);
+}
+
+#[test]
+fn instruction_entrypoint_links_resolve() {
+    assert_clean(TESTED[10]);
 }

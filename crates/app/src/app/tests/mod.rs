@@ -42,12 +42,15 @@ mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
 mod layers_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
+mod published_schema_compatibility_tests;
+mod screenshot_evidence_tests;
 mod toolrail_tests;
 mod workspaces_tests;
 
@@ -1755,6 +1758,54 @@ fn remote_call(
     response
 }
 
+/// A client that asks for the cockpit tier, for the tests that prove what a
+/// capability declaring `IdempotencyPolicy::Optional` does with a key.
+fn cockpit_test_options() -> quantick_control_local::client::ConnectOptions {
+    let mut scopes = gateway_test_scopes();
+    for id in ["cockpit", "cockpit.layout"] {
+        scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
+    }
+    quantick_control_local::client::ConnectOptions::for_profile(
+        "cockpit",
+        "quantick integration test",
+        env!("CARGO_PKG_VERSION"),
+        scopes,
+    )
+}
+
+/// `remote_call`, under an idempotency key and a caller-chosen request ID —
+/// so a retry can be told apart from the call it retries, which is the whole
+/// thing being asserted.
+fn remote_call_with_key(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    client: &mut quantick_control_local::client::LocalClient,
+    request_id: &str,
+    capability: &str,
+    payload: serde_json::Value,
+    key: &str,
+) -> quantick_control::wire::ResponseEnvelope {
+    let sent = client
+        .send_with_idempotency_key(
+            quantick_control::id::RequestId::new(request_id).expect("test request ID is valid"),
+            capability,
+            1,
+            payload,
+            quantick_control::id::IdempotencyKey::new(key.to_owned())
+                .expect("test idempotency key is valid"),
+        )
+        .expect("the request is sent");
+    for _ in 0..400 {
+        run_frame(app, ctx);
+        if client.reply_pending(std::time::Duration::from_millis(5)) {
+            break;
+        }
+    }
+    let response = client.read().expect("the gateway answered");
+    assert_eq!(response.request_id, sent);
+    response
+}
+
 /// Say that these objects were placed by an assistant, as the gateway's
 /// own actor does when an agent calls the same action. Named by id, so a
 /// test can never accidentally relabel the trader's own drawing.
@@ -2388,3 +2439,7 @@ fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
         }),
     }
 }
+
+mod worker_progress_tests;
+
+mod worker_summary_bench_tests;

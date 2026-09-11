@@ -53,7 +53,9 @@ for the base, review key and authorized merge command; normal tasks use main.
 
 4. **Review the final diff.** Run `arch-review` including its native/direct bug
    pass and wait for its findings. Run `ai-review`, posting each finding as a
-   resolvable thread. Then run `delivery-review` last under its tier rules.
+   resolvable thread. It owns the durable PR report and `ai-review-complete`
+   projection, required even with zero findings at every tier. Then run
+   `delivery-review` last under its tier rules.
    Resolve findings; only deferrals authorized under the delivery contract ship and
    must appear in the PR. After PASS, the skills record `arch-review-ok` and
    `delivery-review-ok` against the current diff.

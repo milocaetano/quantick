@@ -13,7 +13,11 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
+use crate::worker_progress::{
+    Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
+};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use quantick_engine::{Bar, Trade};
@@ -241,17 +245,58 @@ impl IndicatorSource {
     }
 }
 
+/// Producer cursor for the worker-owned forming run. No trade storage lives here.
+#[derive(Default)]
+pub(crate) struct LaneTransport {
+    rungs: usize,
+    sent: usize,
+}
+
+impl LaneTransport {
+    pub(crate) fn reset(&mut self) {
+        self.sent = 0;
+    }
+
+    pub(crate) fn set_rungs(&mut self, rungs: usize) -> bool {
+        let changed = self.rungs != rungs;
+        if rungs == 0 {
+            self.reset();
+        }
+        self.rungs = rungs;
+        changed
+    }
+
+    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &[Trade]) -> IndicatorCommand {
+        let count = partial
+            .as_ref()
+            .filter(|_| self.rungs > 0)
+            .map_or(0, |bar| {
+                usize::try_from(bar.trade_count)
+                    .unwrap_or(usize::MAX)
+                    .min(trades.len())
+            });
+        let start = trades.len() - count + self.sent.min(count);
+        let run = trades[start..].to_vec();
+        self.sent = count;
+        IndicatorCommand::PartialUpdated {
+            partial,
+            run,
+            rungs: self.rungs,
+        }
+    }
+}
+
 /// Commands mirror the host's mutation surface (plan §4.1).
 pub(crate) enum IndicatorCommand {
     /// Initial history landed: replay it (equivalent to a rebuild).
     Backfilled(Vec<Bar>),
     /// One live bar closed.
     BarClosed(Bar),
-    /// The forming bar changed (or vanished). Latest-wins within a batch.
+    /// Latest forming bar and ordered new trades; only the preview is latest-wins.
     PartialUpdated {
         partial: Option<Bar>,
-        /// The forming bar's own trades, in occurrence order — the run the
-        /// lane ladder is folded from. Empty when nothing is forming.
+        /// Unsent forming trades, in occurrence order. A reset/enable seeds
+        /// the current run once; later updates append only new prints.
         run: Vec<Trade>,
         /// How many rungs the chart's live lane can show. `0` means there is
         /// no lane on screen and no ladder is walked at all: a chart without
@@ -284,6 +329,8 @@ pub(crate) enum IndicatorCommand {
     /// applied and its events sent.
     #[allow(dead_code)]
     Flush(Sender<()>),
+    #[cfg(test)]
+    InspectLane(Sender<(usize, usize)>),
 }
 
 /// Delta events back to the UI. Bounded cost per event: only [`Rebuilt`]
@@ -411,28 +458,37 @@ struct SlotMirror {
 
 /// UI-side handle: send commands, drain events each frame.
 pub(crate) struct IndicatorWorker {
-    commands: Sender<IndicatorCommand>,
+    commands: ObservedSender<IndicatorCommand>,
     events: Receiver<IndicatorEvent>,
     /// Forming-bar updates sent, so a test can hold the UI to one per drain.
     #[cfg(test)]
     partial_updates: std::cell::Cell<usize>,
+    #[cfg(test)]
+    lane_traffic: std::cell::Cell<usize>,
 }
 
 impl IndicatorWorker {
     /// Spawn the indicator thread.
     #[must_use]
     pub(crate) fn spawn() -> Self {
+        Self::spawn_with_progress(WorkerProgress::new())
+    }
+
+    pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
         let (cmd_tx, cmd_rx) = channel::<IndicatorCommand>();
         let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
+        let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-indicators".to_owned())
-            .spawn(move || run(&cmd_rx, &evt_tx))
+            .spawn(move || run_observed(&cmd_rx, &evt_tx, observed))
             .expect("spawn indicator worker thread");
         Self {
-            commands: cmd_tx,
+            commands: progress.bind(cmd_tx),
             events: evt_rx,
             #[cfg(test)]
             partial_updates: std::cell::Cell::new(0),
+            #[cfg(test)]
+            lane_traffic: std::cell::Cell::new(0),
         }
     }
 
@@ -441,8 +497,9 @@ impl IndicatorWorker {
     /// is bounded by feed cadence).
     pub(crate) fn send(&self, command: IndicatorCommand) {
         #[cfg(test)]
-        if matches!(command, IndicatorCommand::PartialUpdated { .. }) {
+        if let IndicatorCommand::PartialUpdated { run, .. } = &command {
             self.partial_updates.set(self.partial_updates.get() + 1);
+            self.lane_traffic.set(self.lane_traffic.get() + run.len());
         }
         if self.commands.send(command).is_err() {
             tracing::error!(
@@ -453,6 +510,10 @@ impl IndicatorWorker {
                 "indicator worker thread is gone; indicator commands are being dropped"
             );
         }
+    }
+
+    pub(crate) fn progress(&self) -> ProgressSnapshot {
+        self.commands.snapshot()
     }
 
     /// Every event the worker published since the last drain.
@@ -471,6 +532,19 @@ impl IndicatorWorker {
     #[cfg(test)]
     pub(crate) fn partial_updates_for_test(&self) -> usize {
         self.partial_updates.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lane_traffic_for_test(&self) -> usize {
+        self.lane_traffic.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_lane_for_test(&self) -> (usize, usize) {
+        let (tx, rx) = channel();
+        self.send(IndicatorCommand::InspectLane(tx));
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the worker reports retained lane storage")
     }
 
     /// Block until every command sent before this call has been applied and
@@ -537,8 +611,18 @@ fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
     });
 }
 
-fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
+fn run_observed(
+    rx: &Receiver<IndicatorCommand>,
+    sender: &Sender<IndicatorEvent>,
+    progress: Arc<SharedProgress>,
+) {
+    let _lifecycle = progress.lifecycle();
+    let events = &ObservedOutput {
+        sender,
+        progress: &progress,
+    };
     let mut host = IndicatorHost::new();
+    let mut lane_run: Vec<Trade> = Vec::new();
     // BTreeMap: deterministic iteration order for event emission.
     let mut slots: BTreeMap<SlotId, SlotMirror> = BTreeMap::new();
 
@@ -548,16 +632,18 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
             batch.push(next);
         }
 
+        progress.begin(batch.len());
+        let mut coalescing = Coalescing::new(&progress);
+        let original_len = batch.len();
         drop_superseded_inputs(&mut batch);
+        coalescing.inputs = original_len - batch.len();
 
         let mut flushes: Vec<Sender<()>> = Vec::new();
         // Latest-wins; `Some(None)` means "partial vanished" must be applied.
         let mut partial_update: Option<Option<Bar>> = None;
-        // The run and rung budget that came with the newest partial of the
-        // batch. Coalesced with it rather than separately: a ladder folded
-        // from one batch's trades and previewed against another's forming bar
-        // would draw a curve that never happened.
-        let mut lane_request: Option<(Vec<Trade>, usize)> = None;
+        // Trades concatenate across commands and batches; only the budget and
+        // forming bar are latest-wins. Reset commands cut this epoch in order.
+        let mut lane_request: Option<usize> = None;
         // After a rebuild every slot's full columns go out; appends would be
         // redundant (the snapshot is taken after the whole batch).
         let mut rebuilt = false;
@@ -569,15 +655,30 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                 IndicatorCommand::Backfilled(bars) => {
                     host.rebuild(&bars, None);
                     rebuilt = true;
+                    // The retired epoch must not retain its peak allocation.
+                    lane_run = Vec::new();
+                    partial_update = None;
+                    lane_request = None;
                 }
-                IndicatorCommand::BarClosed(bar) => host.push_closed_bar(&bar),
+                IndicatorCommand::BarClosed(bar) => {
+                    host.push_closed_bar(&bar);
+                    lane_run = Vec::new();
+                    partial_update = None;
+                    lane_request = None;
+                }
                 IndicatorCommand::PartialUpdated {
                     partial,
                     run,
                     rungs,
                 } => {
+                    if partial.is_none() || rungs == 0 {
+                        lane_run = Vec::new();
+                    } else {
+                        lane_run.extend(run);
+                    }
+                    coalescing.partials += usize::from(partial_update.is_some());
                     partial_update = Some(partial);
-                    lane_request = Some((run, rungs));
+                    lane_request = Some(rungs);
                 }
                 IndicatorCommand::Rebuild(bars, partial) => {
                     host.rebuild(&bars, partial.as_ref());
@@ -589,6 +690,7 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     // series.
                     partial_update = None;
                     lane_request = None;
+                    lane_run = Vec::new();
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -749,6 +851,10 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
                     }
                 }
                 IndicatorCommand::Flush(ack) => flushes.push(ack),
+                #[cfg(test)]
+                IndicatorCommand::InspectLane(ack) => {
+                    let _ = ack.send((lane_run.len(), lane_run.capacity()));
+                }
             }
         }
 
@@ -758,12 +864,14 @@ fn run(rx: &Receiver<IndicatorCommand>, events: &Sender<IndicatorEvent>) {
 
         // The ladder is walked here, on the worker's own cadence, for the same
         // reason previews are: the cost is per drained batch, never per print
-        // and never per frame, so a 50x replay cannot melt it.
+        // and never on the render thread. The fold still costs O(forming trades).
         let mut lane = lane_request
-            .map(|(run, rungs)| walk_lane(&mut host, &slots, &run, rungs))
+            .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
 
+        coalescing.publishing();
         publish_deltas(&host, &mut slots, events, rebuilt, &mut lane);
+        progress.finish(false);
         for ack in flushes {
             let _ = ack.send(());
         }
@@ -818,7 +926,7 @@ fn walk_lane(
 fn publish_deltas(
     host: &IndicatorHost,
     slots: &mut BTreeMap<SlotId, SlotMirror>,
-    events: &Sender<IndicatorEvent>,
+    events: &ObservedOutput<'_, IndicatorEvent>,
     rebuilt: bool,
     lane: &mut BTreeMap<SlotId, Vec<LaneSample>>,
 ) {
@@ -2082,3 +2190,349 @@ mod exhaustion_reversal_chain_tests {
         );
     }
 }
+#[cfg(test)]
+mod incremental_lane_tests {
+    use super::*;
+    use crate::indicators::IndicatorViews;
+    use quantick_engine::Side;
+    use rust_decimal::Decimal;
+
+    fn print(id: u64, quantity: i64) -> Trade {
+        Trade {
+            agg_id: id,
+            timestamp_ms: id as i64,
+            price: Decimal::from(100),
+            quantity: Decimal::from(quantity.abs()),
+            side: if quantity > 0 { Side::Buy } else { Side::Sell },
+        }
+    }
+
+    fn bar(run: &[Trade]) -> Bar {
+        let mut bar = Bar::opened_by(&run[0]);
+        for trade in &run[1..] {
+            bar.extend(trade);
+        }
+        bar
+    }
+
+    fn update(run: &[Trade], new: &[Trade], rungs: usize) -> IndicatorCommand {
+        IndicatorCommand::PartialUpdated {
+            partial: (!run.is_empty()).then(|| bar(run)),
+            run: new.to_vec(),
+            rungs,
+        }
+    }
+
+    fn add() -> IndicatorCommand {
+        IndicatorCommand::Add {
+            slot: SlotId(0),
+            source: IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
+        }
+    }
+
+    /// Queue everything before running: this exercises one actual worker batch.
+    fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
+        let (tx, rx) = channel();
+        let (events, output) = channel();
+        let progress = WorkerProgress::new();
+        let observed = progress.consumer();
+        let tx = progress.bind(tx);
+        for command in commands {
+            tx.send(command).unwrap();
+        }
+        drop(tx);
+        run_observed(&rx, &events, observed);
+        drop(events);
+        collect(output.try_iter().collect())
+    }
+
+    /// Flush-only batches may emit an empty Lane in the existing event protocol.
+    /// Keep the last nonempty publication to inspect the evaluated partial itself.
+    fn collect(events: Vec<IndicatorEvent>) -> (IndicatorViews, Vec<LaneSample>) {
+        let mut views = IndicatorViews::new();
+        views.allocate_slot("native.cvd");
+        let mut last_lane = Vec::new();
+        for event in events {
+            if let IndicatorEvent::Lane { samples, .. } = &event
+                && !samples.is_empty()
+            {
+                last_lane = samples.clone();
+            }
+            views.apply(event);
+        }
+        (views, last_lane)
+    }
+
+    fn assert_final(views: &IndicatorViews, lane: &[LaneSample]) {
+        // History is +10. The signed live prints are +2,-1,+4,-2,+3,-1,+5.
+        // Seven prints sampled with three rungs end at prints 3,6,7.
+        assert_eq!(views.all()[0].columns, vec![vec![10.0]]);
+        assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![20.0]);
+        assert_eq!(
+            lane,
+            &[
+                LaneSample {
+                    close_time: 3,
+                    values: vec![15.0]
+                },
+                LaneSample {
+                    close_time: 6,
+                    values: vec![15.0]
+                },
+                LaneSample {
+                    close_time: 7,
+                    values: vec![20.0]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn irregular_drains_and_batched_commands_match_independent_cvd_rungs() {
+        let prints: Vec<_> = [2, -1, 4, -2, 3, -1, 5]
+            .into_iter()
+            .enumerate()
+            .map(|(index, quantity)| print(index as u64 + 1, quantity))
+            .collect();
+        let history = bar(&[print(0, 10)]);
+        let (whole, whole_lane) = one_batch(vec![
+            add(),
+            IndicatorCommand::Backfilled(vec![history.clone()]),
+            update(&prints, &prints, 3),
+        ]);
+        assert_final(&whole, &whole_lane);
+        let (batched, batched_lane) = one_batch(vec![
+            add(),
+            IndicatorCommand::Backfilled(vec![history.clone()]),
+            update(&prints[..1], &prints[..1], 3),
+            update(&prints[..4], &prints[1..4], 3),
+            update(&prints[..4], &[], 3),
+            update(&prints[..6], &prints[4..6], 3),
+            update(&prints, &prints[6..], 3),
+        ]);
+        assert_final(&batched, &batched_lane);
+        let worker = IndicatorWorker::spawn();
+        worker.send(add());
+        worker.send(IndicatorCommand::Backfilled(vec![history]));
+        let mut before = 0;
+        let mut events = Vec::new();
+        for after in [1, 4, 4, 6, 7] {
+            worker.send(update(&prints[..after], &prints[before..after], 3));
+            worker.flush();
+            events.extend(worker.drain_events());
+            assert_eq!(worker.retained_lane_for_test().0, after);
+            before = after;
+        }
+        let (separate, separate_lane) = collect(events);
+        assert_final(&separate, &separate_lane);
+    }
+
+    #[test]
+    fn close_cuts_an_earlier_partial_before_the_next_run_in_the_same_batch() {
+        let old = [print(1, 2), print(2, -1)];
+        let next = [print(3, 7), print(4, -2)];
+        let (views, lane) = one_batch(vec![
+            add(),
+            IndicatorCommand::Backfilled(vec![bar(&[print(0, 10)])]),
+            update(&old, &old, 8),
+            IndicatorCommand::BarClosed(bar(&old)),
+            update(&next, &next[..1], 8),
+            update(&next, &next[1..], 8),
+        ]);
+        assert_eq!(views.all()[0].columns, vec![vec![10.0, 11.0]]);
+        assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![16.0]);
+        assert_eq!(
+            lane,
+            vec![
+                LaneSample {
+                    close_time: 3,
+                    values: vec![18.0]
+                },
+                LaneSample {
+                    close_time: 4,
+                    values: vec![16.0]
+                },
+            ]
+        );
+        let (closed, lane) = one_batch(vec![
+            add(),
+            update(&old, &old, 8),
+            IndicatorCommand::BarClosed(bar(&old)),
+        ]);
+        assert_eq!(closed.all()[0].columns, vec![vec![1.0]]);
+        assert!(closed.all()[0].preview.is_none());
+        assert!(lane.is_empty());
+    }
+
+    #[test]
+    fn rebuild_backfill_vanished_partial_and_disabled_lane_cut_stale_runs() {
+        let stale = [print(1, 90)];
+        let current = [print(2, 3), print(3, -1)];
+        for reset in [
+            IndicatorCommand::Rebuild(vec![bar(&[print(0, 20)])], None),
+            IndicatorCommand::Backfilled(vec![bar(&[print(0, 20)])]),
+        ] {
+            let (views, lane) = one_batch(vec![
+                add(),
+                update(&stale, &stale, 8),
+                reset,
+                update(&current, &current, 8),
+            ]);
+            assert_eq!(views.all()[0].columns, vec![vec![20.0]]);
+            assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![22.0]);
+            assert_eq!(
+                lane,
+                vec![
+                    LaneSample {
+                        close_time: 2,
+                        values: vec![23.0]
+                    },
+                    LaneSample {
+                        close_time: 3,
+                        values: vec![22.0]
+                    },
+                ]
+            );
+        }
+        for reset in [update(&[], &[], 8), update(&stale, &[], 0)] {
+            let (views, lane) = one_batch(vec![
+                add(),
+                update(&stale, &stale, 8),
+                reset,
+                update(&current, &current, 8),
+                update(&current, &[], 8),
+            ]);
+            assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![2.0]);
+            assert_eq!(
+                lane,
+                vec![
+                    LaneSample {
+                        close_time: 2,
+                        values: vec![3.0]
+                    },
+                    LaneSample {
+                        close_time: 3,
+                        values: vec![2.0]
+                    },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn retired_epoch_releases_peak_capacity_and_preserves_small_run_outputs() {
+        fn publish(worker: &IndicatorWorker, views: &mut IndicatorViews) -> Vec<LaneSample> {
+            worker.flush();
+            let mut lane = Vec::new();
+            for event in worker.drain_events() {
+                // Flush/probe-only batches may publish an empty lane afterwards.
+                if let IndicatorEvent::Lane { samples, .. } = &event
+                    && !samples.is_empty()
+                {
+                    lane = samples.clone();
+                }
+                views.apply(event);
+            }
+            lane
+        }
+
+        let large: Vec<_> = (1..=4096)
+            .map(|id| print(id, if id % 2 == 1 { 1 } else { -1 }))
+            .collect();
+        let history = bar(&[print(0, 10)]);
+        for (reset, mut columns) in [
+            (IndicatorCommand::BarClosed(bar(&large)), vec![10.0, 10.0]),
+            (
+                IndicatorCommand::Backfilled(vec![history.clone()]),
+                vec![10.0],
+            ),
+            (
+                IndicatorCommand::Rebuild(vec![history.clone()], None),
+                vec![10.0],
+            ),
+        ] {
+            let worker = IndicatorWorker::spawn();
+            let mut views = IndicatorViews::new();
+            views.allocate_slot("native.cvd");
+            worker.send(add());
+            worker.send(IndicatorCommand::Backfilled(vec![history.clone()]));
+            worker.send(update(&large[..2048], &large[..2048], 2));
+            publish(&worker, &mut views);
+            assert_eq!(worker.retained_lane_for_test().0, 2048);
+            worker.send(update(&large, &large[2048..], 2));
+            let lane = publish(&worker, &mut views);
+            let (length, peak) = worker.retained_lane_for_test();
+            assert_eq!(length, 4096);
+            assert!(peak >= 4096);
+            assert_eq!(views.all()[0].columns, vec![vec![10.0]]);
+            assert_eq!(views.all()[0].preview.as_ref().unwrap().values, vec![10.0]);
+            assert_eq!(
+                lane,
+                vec![
+                    LaneSample {
+                        close_time: 2048,
+                        values: vec![10.0]
+                    },
+                    LaneSample {
+                        close_time: 4096,
+                        values: vec![10.0]
+                    },
+                ]
+            );
+
+            worker.send(reset);
+            assert!(publish(&worker, &mut views).is_empty());
+            assert_eq!(worker.retained_lane_for_test(), (0, 0));
+            assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+            assert!(views.all()[0].preview.is_none());
+
+            // Two successive small epochs must not inherit the retired peak.
+            for (run, expected, preview) in [
+                ([print(4097, 7), print(4098, -2)], [17.0, 15.0], 15.0),
+                ([print(4099, 3), print(4100, -1)], [18.0, 17.0], 17.0),
+            ] {
+                worker.send(update(&run[..1], &run[..1], 2));
+                publish(&worker, &mut views);
+                assert_eq!(worker.retained_lane_for_test().0, 1);
+                worker.send(update(&run, &run[1..], 2));
+                let lane = publish(&worker, &mut views);
+                let (length, capacity) = worker.retained_lane_for_test();
+                assert_eq!(length, 2);
+                assert!(capacity < peak);
+                assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+                assert_eq!(
+                    views.all()[0].preview.as_ref().unwrap().values,
+                    vec![preview]
+                );
+                assert_eq!(
+                    lane,
+                    vec![
+                        LaneSample {
+                            close_time: run[0].timestamp_ms,
+                            values: vec![expected[0]]
+                        },
+                        LaneSample {
+                            close_time: run[1].timestamp_ms,
+                            values: vec![expected[1]]
+                        },
+                    ]
+                );
+                worker.send(update(&run, &[], 2));
+                assert_eq!(publish(&worker, &mut views), lane);
+                assert_eq!(worker.retained_lane_for_test(), (length, capacity));
+                worker.send(IndicatorCommand::BarClosed(bar(&run)));
+                assert!(publish(&worker, &mut views).is_empty());
+                assert_eq!(worker.retained_lane_for_test(), (0, 0));
+                columns.push(preview);
+                assert_eq!(views.all()[0].columns, vec![columns.clone()]);
+                assert!(views.all()[0].preview.is_none());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod progress_tests;

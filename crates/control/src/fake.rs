@@ -21,6 +21,7 @@ use crate::{
         ControlRegistry, DefaultGrant, EffectConstraints, EffectPersistence, EffectPolicy,
         ExpectedCost, IdempotencyPolicy, McpHintFloor, ModuleDescriptor, PermissionDescriptor,
         PreconditionDescriptor, ProfileDescriptor, RegistryError, RevisionPolicy,
+        check_idempotency_key,
     },
     schema::validate_instance,
     wire::{
@@ -594,18 +595,12 @@ impl FakeHost {
                 "capability does not support dry runs",
             ));
         }
-        match (descriptor.idempotency, request.idempotency_key.as_ref()) {
-            (IdempotencyPolicy::Forbidden, Some(_)) => {
-                return failure(ControlError::invalid_request(
-                    "capability forbids idempotency keys",
-                ));
-            }
-            (IdempotencyPolicy::Required, None) if !request.dry_run => {
-                return failure(ControlError::invalid_request(
-                    "capability requires an idempotency key",
-                ));
-            }
-            _ => {}
+        if let Err(error) = check_idempotency_key(
+            descriptor.idempotency,
+            request.idempotency_key.is_some(),
+            request.dry_run,
+        ) {
+            return failure(error);
         }
         match descriptor.revision_policy {
             RevisionPolicy::Forbidden if !request.expected_revisions.is_empty() => {

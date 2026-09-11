@@ -314,7 +314,7 @@ set_tier() {
 }
 
 json_path() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
-json_bash() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
+json_bash() { printf '{"tool_name":"%s","cwd":"%s","tool_input":{"command":"%s"}}' "${3:-Bash}" "$1" "$2"; }
 json_patch() {
     printf '%s%s%s%s%s' \
         '{"tool_name":"apply_patch","cwd":"' "$1" \
@@ -587,7 +587,90 @@ set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_marker delivery-review-ok "$(marker_key "$root/wt")"
 
 set_threads 0
-run "both reviews and no open thread makes the branch ready" \
+# AI completion is not inferred from zero findings. Pin each failure with all
+# preceding evidence current, through both hosts' shared hook entry point.
+for client in Bash exec_command; do
+    for tier in $tiers; do
+        set_tier "$root/wt" "$tier"
+        set_marker ai-review-complete ""
+        if [ "$tier" = small ]; then set_marker delivery-review-ok ""; fi
+        for action in ready merge; do
+            run "$client $tier $action requires AI completion with zero threads" \
+                pr-gate "$(json_bash "$root/wt" "gh pr $action 42" "$client")" deny "ai-review-complete"
+        done
+        set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+        run "$client $tier current clean AI completion allows ready" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
+        set_threads 1
+        run "$client $tier completed review with findings still denies ready" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'PR #42 has 1'
+        set_threads 0
+        set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    done
+    set_tier "$root/wt" ""
+    set_marker ai-review-complete "feat/x $stale_sha"
+    run "$client stale AI key denies ready" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    for malformed in "$(marker_key "$root/wt")" 'he said "hi"' \
+        "feat/x $(marker_key "$root/wt") extra" "feat/x $(marker_key "$root/wt") "; do
+        set_marker ai-review-complete "$malformed"
+        run "$client malformed AI record denies with safe JSON" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+    done
+    : > "$wt_git_dir/ai-review-complete"
+    run "$client empty AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    printf 'feat/x %s\nextra' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
+    run "$client unterminated appended AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+    printf 'feat/x %s\n\n' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
+    run "$client multiline AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+
+    set_marker ai-review-complete ""
+    set_marker_in "$big_git_dir" ai-review-complete "feat/x $(marker_key "$root/wt")"
+    run "$client another worktree cannot supply the identical AI record" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    ai_original_key=$(marker_key "$root/wt")
+    git -C "$root/wt" checkout -qb "feat/ai-$client"
+    if [ "$(marker_key "$root/wt")" = "$ai_original_key" ]; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL branch-only AI fixture changed the raw key\n'
+        failed=$((failed + 1))
+    fi
+    run "$client branch-only change invalidates AI completion" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    set_marker ai-review-complete "feat/ai-$client $ai_original_key"
+    git -C "$root/wt" commit -q --amend -m "same diff, $client reword"
+    run "$client same-branch reword preserves AI completion" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
+    printf 'AI source change\n' >> "$root/wt/src/a.txt"
+    git -C "$root/wt" commit -qam 'change after AI review'
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    run "$client source change stales AI after other reviews refresh" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    git -C "$root/wt" checkout -q feat/x
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    set_marker arch-review-ok ""
+    run "$client AI completion cannot replace architecture review" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'arch-review-ok'
+    set_marker delivery-review-ok ""
+    set_marker ai-review-complete ""
+    run "$client draft creation needs no review markers" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr create --draft --fill' "$client")" silent
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    run "$client AI completion cannot replace delivery review" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'delivery-review-ok'
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+done
+
+run "all required reviews and no open thread makes the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
 
 run "even reviewed main merges remain exclusively human" \
@@ -1209,7 +1292,7 @@ flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skill
 # Each review skill must carry its own recording command. Which marker belongs
 # to which is derived from the skill's directory rather than listed, so this is
 # not a third copy of the names.
-review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md"
+review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md .claude/skills/ai-review/SKILL.md"
 
 # Per file, not "somewhere among them": checking the set would stay green while
 # the instruction vanished from two of the three.
@@ -1357,6 +1440,19 @@ for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
     fi
 done
 
+# AI completion uses the shared key producer and an explicit branch prefix.
+# These fixed producer obligations must not vanish with a renamed marker.
+for required in 'campaign_context.sh key' 'symbolic-ref --quiet --short HEAD' \
+    'gh pr comment' 'REVIEWED_BASE_TIP' 'REVIEWED_HEAD' 'REVIEWED_KEY' \
+    'status --porcelain=v1 --untracked-files=all'; do
+    if grep -qF -- "$required" "$repo_root/.claude/skills/ai-review/SKILL.md"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL AI completion producer lost required evidence command: %s\n' "$required"
+        failed=$((failed + 1))
+    fi
+done
+
 # And no document that describes the gate may still say a marker holds a
 # commit sha. Command drift and prose drift are different failures: the first
 # hands an agent a marker the gate rejects, the second teaches the next reader
@@ -1402,6 +1498,15 @@ if "$progress_python" "$script_dir/review_progress_test.py"; then
 else
     failed=$((failed + 1))
 fi
+
+for campaign_suite in "$repo_root/tools/campaign/test-architecture-a-coordinator-v2.py" \
+    "$repo_root/tools/campaign/test_campaign_recovery.py"; do
+    if "$progress_python" -B "$campaign_suite"; then
+        passed=$((passed + 1))
+    else
+        failed=$((failed + 1))
+    fi
+done
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
