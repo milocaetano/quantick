@@ -188,7 +188,12 @@ AGENTS.md 13179
 # owns review source reconciliation and bounded repair. Sub-threshold contract
 # files contribute their full measured bytes to the budget as usual.
 docs/campaign/state.md 14602
-docs/campaign/workflow.md 10297
+# +1,281 for the campaign's Routing section: which model runs each child, the
+# `executor:` line resume and Codex honour, and the coordinator running the
+# child's interrogation because a subagent cannot ask the trader. A raise, not
+# a trade: the tracked total stays under the unchanged budget. Every line of
+# it decides a dispatch, so there was no reasoning to move out.
+docs/campaign/workflow.md 11578
 # Authorized continuation: standing process delegation and finite stall
 # allowances add 445 bytes. Paid by condensing duplicated initial validation
 # commentary; its original evaluator responses remain intact. Budget unchanged.

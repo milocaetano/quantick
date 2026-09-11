@@ -8,6 +8,8 @@ done. Translate only these host mechanics:
 - A mission authorizes the Codex goal facility; otherwise use `GOAL.md`.
 - `/code-review` means native review or direct inspection of the named diff.
 - Give a fresh subagent only its dossier; use fast models for retrieval,
-  balanced for checklists and the strongest for judgment.
+  balanced for checklists and the strongest for judgment. A campaign
+  `executor:` line maps the same way: `haiku` fast, `sonnet` balanced, `opus`
+  the default coding model, `fable` the strongest.
 - Translate POSIX examples without changing order, worktree, markers or failure.
 - `.codex/hooks.json` runs shared guardrails without adding permissions.
