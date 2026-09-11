@@ -20,8 +20,8 @@ index, decision log links, and latest checkpoint link. Add marker
 
 Each child has a stable task key, parent URL, reviewable outcome, criteria and
 evidence destinations, priority, risk/validation plan, owner class, executor,
-dependency keys with satisfaction conditions, issue URL/ID, Project item ID, branch,
-worktree owner, PR URL/head/base and checkpoint links. Unknown IDs are null,
+dependency keys with satisfaction conditions, issue URL/ID, Project item ID,
+branch, worktree owner, PR URL/head/base and checkpoint links. Unknown IDs are null,
 never guessed. Use native parent/sub-issue and dependency relationships where
 available; the explicit issue links and conditions remain the portable record.
 
