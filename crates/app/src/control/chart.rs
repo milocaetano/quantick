@@ -58,7 +58,10 @@ pub(crate) struct ChartPaneSnapshot {
     /// Prints the pane's rule could place in no bar — a deal bar's prints
     /// before its first counter reading. Zero for every other rule. The
     /// number the chart-corner chip shows, as data.
-    pub uncounted_prints: WireU64,
+    /// Optional on the wire so v1 readers remain compatible with snapshots
+    /// produced before deal bars existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncounted_prints: Option<WireU64>,
     pub venue_history_bar_count: WireU64,
     pub backfill_boundary_slot: Option<WireU64>,
     pub has_in_progress_bar: bool,
@@ -284,7 +287,7 @@ fn pane_snapshot(
         timeline_revision: WireU64::new(pane.state.timeline_revision()),
         pagination_revision: WireU64::new(pane.pagination_revision()),
         closed_bar_count: wire_usize(pane.closed_slots()),
-        uncounted_prints: WireU64::new(pane.state.uncounted_trades()),
+        uncounted_prints: Some(WireU64::new(pane.state.uncounted_trades())),
         venue_history_bar_count: wire_usize(seam),
         backfill_boundary_slot: pane
             .state
@@ -300,14 +303,15 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
     let total = pane.slots();
     let (start, end) = visible_slots(pane);
     let price_range = pane
-        .last_auto_range
+        .frame
+        .auto_range
         .map(|auto| pane.price_view.resolve(auto));
-    let chart_width_px = pane.last_chart_area.map(|chart| {
-        let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+    let chart_width_px = pane.frame.chart_area.map(|chart| {
+        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         (right - chart.left()).max(0.0)
     });
     ViewportSnapshot {
-        geometry_available: pane.last_chart_area.is_some(),
+        geometry_available: pane.frame.chart_area.is_some(),
         visible_start_slot: wire_usize(start),
         visible_end_slot_exclusive: wire_usize(end),
         pixels_per_bar: canonical_f32(pane.viewport.px_per_bar(), VIEWPORT_DECIMAL_PLACES)
@@ -329,10 +333,10 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
 
 fn visible_slots(pane: &ChartPane) -> (usize, usize) {
     let total = pane.slots();
-    let Some(chart) = pane.last_chart_area else {
+    let Some(chart) = pane.frame.chart_area else {
         return (0, 0);
     };
-    let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+    let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
     pane.viewport
         .visible_range((right - chart.left()).max(0.0), total)
 }
@@ -517,7 +521,7 @@ pub(crate) fn chart_window_prevalidated(
     } else {
         let (start, requested_end) = match &query.range {
             ChartWindowRange::Visible => {
-                if pane.last_chart_area.is_none() {
+                if pane.frame.chart_area.is_none() {
                     // A well-formed query the pane cannot answer yet: say so
                     // with a retryable code and a next step, not as a malformed
                     // request the client would have to guess about.

@@ -151,17 +151,62 @@
 # the paper-policy branch was editing in parallel, and moving them would have
 # turned that branch's edits into modify/delete conflicts. It has since landed,
 # so giving the constructor a shape is the next cut's job, not this one's.
-# +86 for the trades-bars branch (`feat/trades-bars-b3`), the four raises
-# signed on their entries below: app.rs 7, pane.rs 37, tab.rs 26, stream.rs
-# 24 (+94 in all). Nothing left the trunk to pay for them -- the branch's own tightening
-# of app.rs was overtaken by the sidecar cuts that took app.rs from 9,282 to
-# 1,932 -- so this is a raise. Measured, 52,139 -> 52,233.
-!budget 52233
+#
+# Then lowered by 1,143 -- `app.rs` from 1,932 to 789 -- by that next cut,
+# which took the two regions the paragraph above named. The 721-line launch-
+# hook sequence left `new_with_workspace` for `app/launch_hooks.rs` as
+# `apply_launch_hooks`, split into ten appliers by surface in the order they
+# were read; the paper wiring -- the trades-dir pickers, `persist_*`,
+# `adopt_tab` and `arm_strategy_instance` -- left for `app/paper_wiring.rs` as
+# a pure move. `declare_hooks!` followed the reads, because `hooks::OWNERS`
+# names the file a reader should open and the guard checks the two agree.
+# Same trade, same price: `launch_hooks.rs` (880 production lines) and
+# `paper_wiring.rs` (392) are both under the 1,500-line threshold, so neither
+# takes an entry. They come to 1,272 against a fall of 1,143; the 129
+# difference is two module headers, two import blocks and two
+# `impl QuantickApp` wrappers -- the price of two addresses, paid once.
+# 52,139 - 1,143 = 50,996.
+#
+# What is left in `app.rs` is now the window's definition and nothing else:
+# the struct, `new`, `new_with_workspace`, `attach_surface`, the `eframe::App`
+# impl and `mod tests`. The 56 fields are the next cut's job.
+#
+# Then lowered by 2,446 -- `control/gateway.rs` from 4,142 to 1,696 -- by
+# splitting it along the thread boundary it already had. The gateway thread's
+# free functions left for `control/gateway/server.rs`, the frame emitter and
+# its keys for `semantic.rs`, the parked screenshot arc for `screenshot.rs`,
+# the egui panel for `panel.rs`, and both test modules for `tests/mod.rs`.
+# Every body moved unchanged; the only widenings are the `pub(super)` marks a
+# child module needs to be called by its parent.
+# Same trade, same price: at 1,445, 591, 278 and 278 lines on disk the four
+# siblings are all under the 1,500-line threshold, so none takes an entry, and
+# the 450 lines of tests are untracked either way. `server.rs` is the one to
+# watch: 55 lines of headroom, spent partly on naming its imports instead of
+# globbing them. The connection session and the two dispatchers are where the
+# next cut goes rather than a signed raise.
+# 48,185 - 2,446 = 45,739.
+#
+# What is left in `gateway.rs` is the UI thread's half and nothing else: the
+# options and identities, the lifecycle, the local actions, and the frame
+# service the screenshot arc is armed against. `invoke_local_action` at 164
+# lines and `service_replay_trace` are the next cut's job.
+#
+# The 56 fields became 24: six owner structs, declared in the sidecar that
+# owns each, replacing 38 flat fields. `app.rs` falls 789 -> 625 production
+# lines, because every moved field took its doc comment with it. Nothing was
+# deleted -- the prose moved to `indicator_manager.rs`, `control_host.rs`, a
+# new `chrome.rs`, `tabs.rs`, `health.rs` and `replay_and_history.rs`, all of
+# them under the 1,500-line threshold, so none takes an entry.
+#
+# `layout_wiring.rs` is raised 1,557 -> 1,577 and `app.rs` lowered 789 -> 769
+# to pay for it, so the budget line does not move. The 20 lines are not new
+# code: `self.pending_styles` became `self.indicators.pending_styles`, and the
+# eleven longest of those reads now wrap where they used to fit. A path that
+# says which module owns a field costs a line where it crosses 100 columns --
+# the one price this regroup charges, paid by the file that shrank.
+!budget 45739
 
-# +7 for the trades-bars branch: the `record_deals` field and its
-# constructor line, and the `mod deal_recording_wiring;` registration. The
-# behaviour is the sidecar; the trunk carries the docking lines only.
-crates/app/src/app.rs 1939
+crates/app/src/app.rs 769
 
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
@@ -261,23 +306,17 @@ crates/app/src/paper_trading.rs 4589
 # badge's repair to `badge_text_for` -- is not undone: those lines moved to
 # `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
 # simply not here.
-# +37 for the trades-bars branch: the `deals_n` parameter beside its five
-# siblings and the `BarSpec::Trades` arm in the matches that enumerate every
-# kind (13); `reset_series` split in two, the plain reset for a new market
-# and a keeping variant for the same market restarting (17); `rebuild_bars`,
-# the pane-level rebuild for readings put under bars already folded (7).
-crates/app/src/pane.rs 5655
+# Raised by 14 lines for the pane's generic rebuild/reset hooks that preserve
+# deal readings across same-market timeline resets.
+crates/app/src/pane.rs 5398
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-# +26 for the trades-bars branch: the `deal_recorder` field, one event arm,
-# one per-drain call and the readings handed to a seeded pane (8); the
-# readings put aside for a replay and restored after it (3); the one recut
-# path a spec switch and readings under folded bars share (12); the reason
-# a recut disarms with is the caller's (4). Measured 4,498.
-crates/app/src/tab.rs 4498
-crates/app/src/control/gateway.rs 4142
+# Raised by 15 lines for the deal-recorder field and the shared recut path;
+# feature behavior remains in `deal_recording_tab.rs`.
+crates/app/src/tab.rs 1676
+crates/app/src/control/gateway.rs 1696
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
 crates/app/src/drawings/mod.rs 2283
@@ -287,20 +326,14 @@ crates/app/src/footprint_render.rs 2236
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
-# Raised 10 for the trades-bars branch: an `Mt5Event::DealCounter` variant,
-# the `deal_counter` hello field, the one send that forwards a reading ahead
-# of its print and the offset the heartbeat restates. The reduction is
-# `deals.rs`; the loop only forwards.
-# +6 by the sixteenth bug pass: the heartbeat releases the reading a round
-# was waiting on. Signed in the budget note above.
-# +8 by the seventeenth: the reading a round was still waiting on is flushed
-# when the connection ends, not only on a heartbeat.
+# Raised by 24 lines to stamp the venue counter on the exact fetched round;
+# sampling policy remains in `deals.rs`.
 crates/feed-mt5/src/stream.rs 2224
 crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718
 crates/app/src/control/evidence.rs 1708
 crates/pine/src/eval.rs 1669
-crates/app/src/app/layout_wiring.rs 1557
+crates/app/src/app/layout_wiring.rs 1577
 crates/pine/src/compile.rs 1540
 crates/orderflow/src/config.rs 1523

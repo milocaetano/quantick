@@ -96,6 +96,8 @@
           "type": "boolean"
         },
         "deal_counter": {
+          "default": false,
+          "description": "Defaults off for snapshots produced before deal counters existed.",
           "type": "boolean"
         },
         "history_paging": {
@@ -115,7 +117,6 @@
         "book_capture",
         "history_paging",
         "traded_volume",
-        "deal_counter",
         "venue_ohlcv_history",
         "venue_ohlcv_generation"
       ],

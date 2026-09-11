@@ -22,6 +22,7 @@ use quantick_control::{
         Availability, CapabilityDescriptor, ControlRegistry, DefaultGrant, EffectConstraints,
         EffectPersistence, EffectPolicy, ExpectedCost, IdempotencyPolicy, McpHintFloor,
         ModuleDescriptor, PermissionDescriptor, ProfileDescriptor, RegistryError, RevisionPolicy,
+        check_idempotency_key,
     },
     schema::{CompiledSchema, generated_schema},
     wire::{ModuleRevision, RequestEnvelope, WireU64},
@@ -1364,12 +1365,11 @@ impl ObserverContract {
         validator
             .validate(&envelope.payload)
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-        if envelope.dry_run
-            || envelope.idempotency_key.is_some()
-            || !envelope.expected_revisions.is_empty()
-        {
+        let carries_key = envelope.idempotency_key.is_some();
+        check_idempotency_key(descriptor.idempotency, carries_key, envelope.dry_run)?;
+        if envelope.dry_run || !envelope.expected_revisions.is_empty() {
             return Err(ControlError::invalid_request(
-                "this tier's capabilities forbid dry runs, idempotency keys, and expected revisions",
+                "this tier's capabilities forbid dry runs and expected revisions",
             ));
         }
         if action.is_some() {
@@ -1721,6 +1721,62 @@ mod tests {
     use super::*;
     use quantick_control::handshake::ProfileAuthority as _;
     use quantick_control::{id::RequestId, wire::RequestEnvelope};
+
+    /// The three envelope fields this tier used to refuse together, now that
+    /// only two of them are still refused together.
+    ///
+    /// `layout.*`, `feed.*` and the `trade.*` shaping family publish
+    /// `IdempotencyPolicy::Optional`; a read publishes `Forbidden`. Before
+    /// this trio the gateway refused every key regardless, so the descriptors
+    /// and the door disagreed. These pin both halves: the refusal a
+    /// descriptor asks for still happens, and the two refusals that were
+    /// never in dispute are untouched.
+    #[test]
+    fn a_read_still_refuses_the_idempotency_key_its_descriptor_forbids() {
+        let contract = contract();
+        let grant = contract.default_grant();
+        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
+        envelope.idempotency_key = Some(
+            quantick_control::id::IdempotencyKey::new("key-1".to_owned())
+                .expect("a printable ASCII key is valid"),
+        );
+        let error = contract.prepare(envelope, &grant).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        assert!(
+            error.message.contains("forbids idempotency keys"),
+            "the refusal names the policy that caused it: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_dry_run_is_still_refused_by_this_tier() {
+        let contract = contract();
+        let grant = contract.default_grant();
+        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
+        envelope.dry_run = true;
+        let error = contract.prepare(envelope, &grant).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        assert!(error.message.contains("dry runs"), "{}", error.message);
+    }
+
+    #[test]
+    fn an_expected_revision_is_still_refused_by_this_tier() {
+        let contract = contract();
+        let grant = contract.default_grant();
+        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
+        envelope.expected_revisions = vec![quantick_control::wire::ModuleRevision {
+            module_id: ModuleId::new("chart").expect("static module ID is valid"),
+            revision: quantick_control::wire::WireU64::new(1),
+        }];
+        let error = contract.prepare(envelope, &grant).unwrap_err();
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        assert!(
+            error.message.contains("expected revisions"),
+            "{}",
+            error.message
+        );
+    }
 
     /// The access panel offers no way to grant the trade tier — and above
     /// all not under "Read scopes for the next connection".

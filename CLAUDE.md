@@ -2,11 +2,11 @@
 
 Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for order flow trading. One deterministic Rust engine feeds chart, backtest and bot.
 
-Authoritative for working rules — each stated once, operatively. The reasoning lives in `docs/agentic-development.md`; the crate map, dependency graph and MCP control plane in `AGENTS.md`; the gate mechanics in `.claude/hooks/README.md`; everything else indexed by `docs/README.md`.
+Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gates: `.claude/hooks/README.md`.
 
 ## Verification loop (mandatory)
 
-Between edits: `cargo check -p <crate>`, `cargo test -p <crate> <filter>`, `cargo test -p quantick-guards`. Before every commit, all four — `check` never stands in for `clippy`:
+Between edits: `cargo check -p <crate>`, `cargo test -p <crate> <filter>`, `cargo test -p quantick-guards`. Before code commits, all four — `check` never stands in for `clippy`. Prose-only checks and evidence reuse follow [the delivery contract](docs/workflow/delivery.md#validation-follows-changed-inputs); full final-head CI remains mandatory:
 
 ```sh
 cargo fmt --all -- --check
@@ -15,9 +15,9 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-`cargo test -p quantick-guards` runs the guards in about a second — no dependencies to build, so ask it after a batch of edits, not at the end of a suite. The `PostToolUse` hook runs the same binary per edited file; advisory, gates nothing, and in a fresh worktree reports nothing at all — not "clean", *nothing* — until `cargo build -p quantick-guards` has run there.
+Run `cargo test -p quantick-guards` after edit batches. `PostToolUse` is advisory and silent until guards are built in that worktree; silence is not a pass.
 
-`cargo run -p quantick-guards -- --report` prints the numbers a refactor is judged on — lines per crate, largest files, widest structs, each ratchet against its budget — deterministically, so two runs diff into what a merge changed.
+`cargo run -p quantick-guards -- --report` gives deterministic size/struct/ratchet metrics for comparison.
 
 CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
 
@@ -53,7 +53,7 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 
 ## Keeping the instructions small
 
-The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/` or `.agents/`; goal files are excluded. Its ceilings are in `context-baseline.txt`, using the mechanism shared with `size` in `ratchet.rs`.
+The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/`; goal files and workflow evidence are excluded. Ceilings live in `context-baseline.txt`; `ratchet.rs` owns the mechanism.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
 - **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.
@@ -61,8 +61,8 @@ The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/s
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.
-- Branches `feat/` `fix/` `docs/`; conventional commits, imperative, English.
-- **One goal, one worktree** — cut from updated `main`, under `../quantick-worktrees/`, never the main checkout, never shared between parallel agents. The last line below is not optional:
+- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/`. Conventional commits, imperative, English.
+- **One goal, one worktree** — cut from updated `main` by default; campaign children use the explicit base in [the integration contract](docs/campaign/integration.md). Work under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree. Arm the guards:
 
   ```sh
   git fetch origin
@@ -72,8 +72,8 @@ The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/s
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
 - **One mission, one tier** — `/mission` in Claude Code or `$mission` in Codex takes `small` (the default), `medium`, `high` or `max`, scaling the ceremony and whether `delivery-review` runs. `small` is the only tier the hooks see; the skill owns the table.
-- **Arch-review before PR** — over `git diff origin/main...HEAD`. Its step 0 runs `code-review` on the same diff. Resolve every Blocker and Should-fix; note deferrals in the PR body. A docs/skills change waives shape dimensions 1–7 and 9, never 8 and never step 0.
-- **Delivery-review before PR** — arch-review asks whether the branch is well built, never whether it is what was asked for. Runs last, over the branch as shipped, grading every ask in the goal file (`.claude/GOAL.md` or its `GOAL-archive-<slug>.md`, committed before either review) and every criterion as DELIVERED / PARTIAL / MISSING / UNPROVEN, from a fresh-context subagent. Passes only when nothing is unmet. A `small` mission is exempt, bounded by a diff-size ceiling that revokes the exemption if the branch grows. A branch not from `/mission` is graded against its issue's criteria, and the verdict says so.
-- **The review chain has a budget: three rounds per branch**, then the remainder ships as recorded PR follow-ups. A round is one pass by everything that owes the branch a review — arch-review's bug pass and shape pass, then delivery-review — plus the commit answering them; not three per skill, since a fix commit stales both markers and re-runs both. Nothing is discarded to fit: findings defer into the PR body with their severity. An open Blocker never defers, and if it runs the budget out the branch goes to the trader. On reaching it, say the shape — findings shrinking is convergence, findings flat or climbing into the last round's code is a design problem.
-- **Subagents are routed by model, named at the call** — retrieval `haiku`, applying someone else's checklist `sonnet`, open judgement (bugs, docking, design) the default strong model. Omitting the field inherits the caller's and bills retrieval at open-judgement rates. `delivery-review`'s criteria pass is the standard the next routed site meets.
-- **The worktree rule and both reviews are enforced by hooks, not memory** — a write to the main checkout on `main` is denied, and `gh pr create` is gated on both reviews having run for the exact diff being shipped (hashed, so a rebase does not invalidate a valid review); on arch-review alone for a `small` mission within its ceiling. The tier is read, never required. `.claude/hooks/README.md` owns the mechanism.
+- **Both reviews before `gh pr ready`** — `arch-review` over the declared base (`origin/main` by default), its step 0 running `code-review` on the same diff; resolve every Blocker and Should-fix, note deferrals in the PR body. A docs/skills change waives shape dimensions 1–7 and 9, never 8 and never step 0. Then `delivery-review`, last and from fresh context, grading every ask in the goal file (`.claude/GOAL.md` or its `GOAL-archive-<slug>.md`, committed before either review) and every criterion, passing only when nothing is unmet. `small` is exempt from it within a diff-size ceiling; a branch not from `/mission` is graded against its issue.
+- **Main merges are exclusively the user's action.** Agents may merge only into an explicitly authorized campaign branch under the integration contract. No main auto-merge, merge queue, direct integration push or protection bypass. Hand off the consolidated PR as ready for user evaluation.
+- **Two phases, and the PR carries the state.** Phase one ends at a draft PR with resolvable `ai-review` findings. Phase two repairs them from fresh context, including redesign when required. [The delivery contract](docs/workflow/delivery.md) owns source reconciliation, finding identity, bounded repair progress and delta follow-ups. No unresolved required finding passes by exhaustion or by re-stamping stale review markers.
+- **Name the subagent model at the call** — retrieval `haiku`, checklist application `sonnet`, open judgement (bugs, docking, design) the default strong model. `delivery-review`'s criteria pass is the routing standard.
+- **The worktree rule and the reviews are enforced by hooks, not memory** — a write to the main checkout on `main` is denied; a draft PR opens ungated, while `gh pr ready` and `gh pr merge` want both markers for the exact diff and zero open `ai-review` threads. `.claude/hooks/README.md` owns the mechanism, the hashing that survives a rebase, and `small`'s bounded exemption.

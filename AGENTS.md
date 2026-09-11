@@ -73,11 +73,12 @@ A capability the trader did not grant is refused at the gate with
 `control.permission_denied`, whatever the connection asked for and whichever
 tool it came through — `quantick_invoke` is checked exactly like a named tool.
 
-As [`schemas/control/observer-capability-catalog-v1.json`](schemas/control/observer-capability-catalog-v1.json)
-records it, the surface is **39 capabilities across 20 modules, with 17
-snapshot scopes and 27 selectable permissions**. Recount from that file rather
-than trusting this sentence: the schemas are generated from the Rust contracts
-and guarded by a snapshot test, but this prose is hand-typed and has no guard.
+The generated [capability inventory](docs/control-plane/capability-inventory.md)
+lists capability IDs, versions, modules and required permissions. The
+generated [capability catalog](schemas/control/observer-capability-catalog-v1.json)
+also records profiles, selectable permissions and snapshot scopes. Both are
+checked against the code that generates them; use `quantick_describe` for the
+live effective surface.
 
 ### Two things worth knowing before writing a client
 
@@ -204,7 +205,8 @@ and that file differ, that file wins.
 
 ## Verification loop (mandatory)
 
-All four must pass before every commit. CI enforces the same four.
+Code: all four. Prose/reuse: `CLAUDE.md`'s delivery contract.
+Final-head CI: all four.
 
 ```sh
 cargo fmt --all -- --check

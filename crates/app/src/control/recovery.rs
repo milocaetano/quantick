@@ -218,7 +218,9 @@ fn descriptor(
         // Recovering twice leaves one running session either way, so a client
         // may retry a dropped call. It is not free — a reload rebuilds the
         // chart both times — which is why this is `Optional` rather than a
-        // claim that the second call did nothing.
+        // claim that the second call did nothing. Under a key the gateway
+        // does make the second call cost nothing, within one connection;
+        // `gateway/idempotency.rs` states where that stops.
         idempotency: IdempotencyPolicy::Optional,
         revision_policy: RevisionPolicy::OptionalForAdditive,
         stale_input_safety: Some(if destructive {

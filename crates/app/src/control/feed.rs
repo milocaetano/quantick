@@ -137,6 +137,8 @@ pub(crate) struct FeedCapabilitiesSnapshot {
     pub book_capture: bool,
     pub history_paging: bool,
     pub traded_volume: bool,
+    /// Defaults off for snapshots produced before deal counters existed.
+    #[serde(default)]
     pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,

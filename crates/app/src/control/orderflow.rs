@@ -365,8 +365,8 @@ fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
                 .panes()
                 .map(|(pane, _side)| PaneOrderflowRevisionKey {
                     pane_id: pane.id,
-                    footprint_visible: pane.footprint_visible,
-                    footprint_overridden: pane.footprint_override.is_some(),
+                    footprint_visible: pane.footprint.visible,
+                    footprint_overridden: pane.footprint.config.is_some(),
                     footprint_setup: format!(
                         "{:?}",
                         pane.footprint_config(app.control_footprint_config())
@@ -476,8 +476,8 @@ fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSn
                     .map(|(pane, side)| PaneFootprintSnapshot {
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
-                        visible: pane.footprint_visible,
-                        overridden: pane.footprint_override.is_some(),
+                        visible: pane.footprint.visible,
+                        overridden: pane.footprint.config.is_some(),
                         setup: footprint_setup(pane, window),
                     })
                     .collect(),

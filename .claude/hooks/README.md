@@ -15,11 +15,25 @@ its `/hooks` screen, as required by the
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash` | Denies `gh pr create` until **both** `arch-review-ok` and `delivery-review-ok` record the exact **change** being shipped. A branch that declared the `small` mission tier needs only the first, while it stays under the ceiling. |
+| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok` and applicable `delivery-review-ok` record the exact change. Only delivery has a bounded `small` exemption. Draft creation is ungated. Readiness/merge additionally require branch-bound `ai-review-complete` and zero open AI threads at every tier. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 
 ## Why `guard-watch` never blocks and never builds
+
+Campaign children use the branch-bound `mission-base` record and shared
+`campaign_context.sh` commands documented in
+[`docs/campaign/integration.md`](../../docs/campaign/integration.md).
+That contract overrides the main-only review examples below for those tasks.
+The campaign key binds target ref/tip as well as diff. Invalid context fails
+closed; ready verifies the PR base/head, and merge additionally requires a
+persisted grant, current base, passing CI and the explicit head-pinned command.
+Main merges, auto-merge and queue shortcuts are reserved for the user.
+The small-tier exemption removes only delivery review, never AI completion, thread or merge
+authority checks. `campaign_context_test.sh` exercises these boundaries with
+real git fixtures and fake GitHub responses through both client payloads; the
+main guardrail suite invokes it in CI. Existing command-detection limitations
+still apply; GitHub branch protections are the security boundary.
 
 The other three modes are gates. This one is a courier.
 
@@ -57,6 +71,71 @@ Under Git Bash the payload spells a path the way the host writes it and
 subtraction produced no match, which reads exactly like a clean file — the
 failure mode this repo's guards exist to prevent, reproduced in the hook that
 reports them.
+
+## Where the gate sits, now that the chain has two phases
+
+Phase one makes the branch work and ends at a **draft** PR. That PR is where
+`ai-review` posts its findings, one resolvable thread each, so the gate cannot
+sit in front of it: requiring the reviews before the draft exists would demand
+the reviews before the review that informs them. A draft ships nothing — it
+cannot be merged — so nothing is lost by letting it open.
+
+Phase two closes those threads, and the gate moved to where work actually
+leaves the branch: `gh pr ready` and `gh pr merge`. Both want what
+`gh pr create` always wanted — the two review markers, for the exact diff being
+shipped — plus AI-review completion and independently zero unresolved AI threads.
+
+The tier is read, never required, exactly as before.
+
+### Recording AI completion
+
+The canonical [AI-review skill](../skills/ai-review/SKILL.md#record-completion)
+owns the producer: stable worktree/branch/HEAD/status/base/key observations,
+completed review, published findings and a durable PR report, followed by the
+private `ai-review-complete` projection. Follow that procedure; a bare restamp
+is not a review. A completed review with findings may record completion, but
+the separate unresolved-thread check below still denies readiness/merge.
+
+The consumer is `pr-gate` in `guardrails.sh`: after the existing create return,
+it passes the current branch and shared review key to `require_marker`, then
+checks threads. The AI record is exactly one LF-terminated line,
+`<branch> <shared-review-key>`. Legacy architecture/delivery records keep their
+raw-key format and existing comparator. AI additionally binds its branch:
+switching branches can leave a raw diff byte-identical, so the key alone cannot
+satisfy that boundary. Detached heads, missing/malformed/stale records and a
+record in another worktree cannot supply completion. Campaign keys already
+bind base ref/tip; no second key algorithm is introduced.
+
+Zero findings alone never proves completion. The report records full HEAD,
+explicit base/ref tip, key, scope, six verdicts and finding IDs/count; the
+marker is its local projection, not a cryptographic check of report provenance
+or review quality. Same-branch rewords with the same key remain valid. Changed
+diffs or campaign bases require the canonical follow-up review before recording
+new completion. Existing command limits and main authority remain unchanged.
+
+### Counting the open threads
+
+The gate does not know what an `ai-review` thread is. It asks
+`ai_review_threads.sh`, the same script the reviewer used to post one, which
+recognises a thread by the marker it writes at the head of the first comment.
+One definition, two readers. A gate with its own definition would drift from
+the reviewer's, and the two failure modes are both bad: ignoring real findings,
+or blocking a merge on a human's ordinary question.
+
+`count` has a machine contract because a gate reads it — a number on stdout and
+exit 0, or nothing on stdout, a reason on stderr and **exit 2**. Exit 2 means
+"could not be determined", which is not the same answer as zero.
+
+### When the count cannot be taken
+
+`gh` missing, unauthenticated or unreachable, or a command that names no PR
+number: the gate emits an **`ask`** decision naming the reason. That keeps this
+file's fail-open rule — `ask` blocks nothing a human does not block, and a
+guardrail that stops a session over its own network is worse than no guardrail
+— while refusing to fail open *silently*. "This branch has no open findings"
+and "nobody knows whether it has any" are different answers, and a gate that
+prints the same nothing for both has taught its reader that silence means
+clean.
 
 ## Recording the two reviews
 
@@ -152,11 +231,17 @@ not detected: a pipe (`cat body.md | gh pr create --body-file -`), a newline,
 an `env`/`time`/`sudo` wrapper, a `VAR=value` prefix, `bash -c '…'`, a brace
 group, an absolute path.
 
-`ship` step 6 is *not* one of them, and the distinction matters: it says to use
-`gh pr create --body-file -` **with a heredoc**, and that spelling begins the
-segment, so it does reach the gate. Both were measured rather than assumed — an
-earlier draft of this paragraph named `ship` as the pipe example, which would
-have told an auditor that the repo's own standard flow evades the gate.
+`ship` is *not* one of them, and the distinction matters. Its step 3 spells
+`gh pr create --draft --body-file -` **with a heredoc**, and step 6 spells
+`gh pr ready`; both begin their segment, so both reach the matcher. Step 3 is
+then exempted for being a draft, and step 6 is the one that faces the markers.
+That was measured rather than assumed — an earlier draft of this paragraph
+named `ship` as the pipe example, which would have told an auditor that the
+repo's own standard flow evades the gate.
+
+Both halves are load-bearing, so they move when `ship` does. Renumbering it
+once left this paragraph naming a step that had stopped prescribing any
+spelling, and reporting a draft creation as though it were the gated command.
 
 That is a real gap and it is deliberately left as it was rather than deepened
 here. Closing it by parsing harder was tried, over eight review rounds, and did
@@ -260,12 +345,13 @@ being exact about why it is not the skip file that got reverted.
 
   **This is narrower than "the gate cannot teach its own way around itself",
   and that stronger claim would be false.** `CLAUDE.md` is loaded in every
-  session and states the exemption; `ship` step 4 spells out how to read the
-  tier; this very section carries a writable snippet. The mechanism is
-  documented on purpose — one nobody can find is one nobody can audit — so what
-  the denial buys is only that an agent which merely *forgot* the review is not
-  handed the bypass at the moment it is most tempted. The load-bearing
-  protection is the bound below, not the silence.
+  session and states the exemption; `arch-review`'s step 0 carries the runnable
+  command that reads the tier and `ship` step 4 says to read it from that file
+  rather than from prose; this very section carries a writable snippet. The
+  mechanism is documented on purpose — one nobody can find is one nobody can
+  audit — so what the denial buys is only that an agent which merely *forgot*
+  the review is not handed the bypass at the moment it is most tempted. The
+  load-bearing protection is the bound below, not the silence.
 - **The word has to be true.** The exemption lapses once the branch exceeds
   `SMALL_TIER_MAX_CHANGED_LINES` changed lines — insertions plus deletions
   against `origin/main` — and past that the branch pays in full whatever the
@@ -344,8 +430,8 @@ overstatement here is a false sense of cover:
 - Every marker `guardrails.sh` defines is named by **each** of this file,
   `mission` and `ship` — per file, not "somewhere among them". Checking the
   set would stay green while the instruction vanished from two of the three.
-- Each review skill carries a recording command of its own, so `/arch-review`
-  and `/delivery-review` each record their own marker instead of leaving it to
+- Each review skill carries a recording command of its own, so `/arch-review`,
+  `/delivery-review` and `/ai-review` record their own markers instead of leaving them to
   a caller. That asymmetry was a real bug here.
 - Every marker name the prose tells an agent to **write** is one the script
   reads. This is anchored on the recording command's shape rather than on the

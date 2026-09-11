@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn switching_only_the_imbalance_unit_recuts_the_series() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Imbalance;
+    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Imbalance;
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
@@ -15,7 +15,15 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
         "the kind switch lands on the default trades unit first"
     );
 
-    app.active_tab_mut().flow_pane.imbalance_unit = crate::state::ImbalanceUnit::Volume;
+    let retained = app
+        .active_tab_mut()
+        .flow_pane
+        .spec
+        .retained_mut(crate::state::BarKind::Imbalance);
+    let BarSpec::Imbalance(unit, _) = retained else {
+        panic!("the imbalance slot holds an imbalance spec")
+    };
+    *unit = crate::state::ImbalanceUnit::Volume;
     app.active_tab_mut().apply_spec_changes();
     assert!(
         app.active_tab().loading.is_active(LoadingTask::BarRebuild),
@@ -192,6 +200,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
         let instance = tab
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert!(
@@ -376,7 +385,8 @@ fn the_canvas_switch_takes_the_tape_off_and_puts_it_back() {
         frame(&mut app, None);
         app.active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("the canvas laid out")
     };
     let chip = crate::pane::tape_switch_rect(chart);
@@ -442,7 +452,7 @@ fn every_pencil_point_is_anchored_to_the_tape() {
 fn the_footprint_says_how_much_further_to_zoom() {
     let (mut app, _cmd_rx) = app_with_history(4_000);
     let ctx = egui::Context::default();
-    app.active_tab_mut().flow_pane.footprint_visible = true;
+    app.active_tab_mut().flow_pane.footprint.visible = true;
 
     let opening = painted_text(&run_frame(&mut app, &ctx));
     assert!(

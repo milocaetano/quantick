@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use quantick_guards::{GUARDS, ratchet, remedies, report, workspace_root};
+use quantick_guards::{GUARDS, blast_radius, ratchet, remedies, report, workspace_root};
 
 /// Turn whatever the caller typed into the workspace-relative spelling with
 /// forward slashes that every guard is keyed on.
@@ -57,7 +57,7 @@ fn relative_to(root: &Path, argument: &str) -> Result<String, String> {
 // would do both, while only the first argument was ever honoured — a mistyped
 // invocation exiting 0 having done half of what was asked.
 const USAGE: &str = "\
-usage: quantick-guards (--file <path> | --tighten | --report)
+usage: quantick-guards (--file <path> | --tighten | --report | --blast-radius)
 
   (no arguments)   run every guard over the repository
   --file <path>    run every guard over one workspace-relative path
@@ -66,10 +66,17 @@ usage: quantick-guards (--file <path> | --tighten | --report)
   --report         print the repository's health numbers as a label<TAB>value
                    table; deterministic, so a diff between two runs is the
                    report of what changed between them
+  --blast-radius   read a unified diff on stdin and print, in the same
+                   label<TAB>value shape, the production lines it deposited
+                   into each pre-existing file the size guard tracks, largest
+                   first, with the totals under them. Pre-existing files are
+                   read from the working tree, which is the post-image the
+                   diff describes when it is piped straight from
+                   `git diff origin/main...HEAD`
 
-The three modes are alternatives; they cannot be combined.
-Exit code 1 means a guard found something. --report exits 0: it measures the
-tree, it does not judge it.";
+The four modes are alternatives; they cannot be combined.
+Exit code 1 means a guard found something. --report and --blast-radius exit 0:
+they measure, they do not judge.";
 
 fn main() -> ExitCode {
     // A set-but-empty variable is not a root. `var_os` hands back
@@ -93,6 +100,25 @@ fn main() -> ExitCode {
             print!("{}", report::render(&root));
             ExitCode::SUCCESS
         }
+        // Report-only for the same reason `--report` is, and it reads its
+        // subject from stdin rather than measuring the tree: the diff a
+        // reviewer wants the number for is often not the one checked out.
+        Some("--blast-radius") if args.len() == 1 => {
+            let mut diff = String::new();
+            if let Err(problem) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut diff) {
+                // A diff that could not be read is not an empty diff, and a
+                // table of zeroes is exactly what an empty diff prints. Say so
+                // on stderr and still exit 0: the mode judges nothing, and a
+                // reviewer who sees no table has been told why.
+                eprintln!("the diff could not be read from stdin: {problem}");
+                return ExitCode::SUCCESS;
+            }
+            print!(
+                "{}",
+                blast_radius::render(&blast_radius::measure(&root, &diff))
+            );
+            ExitCode::SUCCESS
+        }
         Some("--file") if args.len() == 2 => match relative_to(&root, &args[1]) {
             Ok(relative) => run_guards(&root, Some(relative)),
             Err(problem) => {
@@ -107,7 +133,7 @@ fn main() -> ExitCode {
         // Everything left over is refused rather than ignored. Silently
         // dropping a trailing argument is how a caller ends up trusting a
         // clean exit for a run that never did what they asked.
-        Some(mode @ ("--file" | "--tighten" | "--report")) => {
+        Some(mode @ ("--file" | "--tighten" | "--report" | "--blast-radius")) => {
             // `--file` consumes the path beside it; the other two consume
             // nothing. Naming only what is actually unconsumed keeps the
             // message from accusing the caller of the argument they got right.

@@ -23,7 +23,7 @@ use quantick_control::{
     handshake::{
         CURRENT_PROTOCOL_VERSION, HandshakeRequest, HandshakeResponse, ProtocolVersionRange,
     },
-    id::{CapabilityId, ErrorCode, InstanceId, PermissionId, ProfileId, RequestId},
+    id::{CapabilityId, ErrorCode, IdempotencyKey, InstanceId, PermissionId, ProfileId, RequestId},
     limits::{CONTROL_HANDSHAKE_TIMEOUT_MS, CONTROL_REQUEST_ID_MAX_BYTES},
     wire::{RequestEnvelope, ResponseEnvelope},
 };
@@ -248,6 +248,41 @@ impl LocalClient {
         capability_version: u32,
         payload: Value,
     ) -> Result<RequestId, ControlError> {
+        self.dispatch(request_id, capability_id, capability_version, payload, None)
+    }
+
+    /// Send under the idempotency key the capability's descriptor allows.
+    ///
+    /// A capability declaring `IdempotencyPolicy::Optional` promises that a
+    /// dropped call may be retried under the same key without acting twice.
+    /// Every other send here writes `idempotency_key: None`, so without this
+    /// the client half could not exercise the promise the contract publishes
+    /// — and a guarantee no client can reach is not one.
+    pub fn send_with_idempotency_key(
+        &mut self,
+        request_id: RequestId,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+        idempotency_key: IdempotencyKey,
+    ) -> Result<RequestId, ControlError> {
+        self.dispatch(
+            request_id,
+            capability_id,
+            capability_version,
+            payload,
+            Some(idempotency_key),
+        )
+    }
+
+    fn dispatch(
+        &mut self,
+        request_id: RequestId,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<RequestId, ControlError> {
         let request = RequestEnvelope {
             protocol_version: self.handshake.protocol_version,
             request_id: request_id.clone(),
@@ -256,7 +291,7 @@ impl LocalClient {
                 .map_err(|error| ControlError::invalid_request(error.to_string()))?,
             capability_version,
             expected_revisions: Vec::new(),
-            idempotency_key: None,
+            idempotency_key,
             dry_run: false,
             reason: None,
             payload,
@@ -535,8 +570,9 @@ mod tests {
             let codec = BoundedCodec::handshake();
             let request = codec.read_handshake_request(&mut stream).unwrap();
             let frame = codec.encode(FrameRole::Response, &reply).unwrap();
-            stream.write_all(&frame).unwrap();
+            // Observe the request before the reply lets the caller drop its receiver.
             seen_tx.send(request).unwrap();
+            stream.write_all(&frame).unwrap();
             // Hold the socket open until the client is done with it.
             let mut sink = [0u8; 1];
             let _ = stream.read(&mut sink);

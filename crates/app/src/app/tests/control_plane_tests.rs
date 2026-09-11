@@ -21,8 +21,9 @@ plot(close)
     )
     .expect("write");
 
-    app.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
+    app.indicators.script_library = crate::indicators::library::ScriptLibrary::scan_dir(&dir);
     let index = app
+        .indicators
         .script_library
         .entries()
         .iter()
@@ -150,8 +151,8 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     {
         let pane = &mut app.active_tab_mut().flow_pane;
-        pane.last_chart_rect = Some(rect);
-        pane.last_lane_divider_x = Some(700.0);
+        pane.frame.chart_rect = Some(rect);
+        pane.frame.lane_divider_x = Some(700.0);
     }
     let tape = app
         .scripted_context_menu_pos(ContextMenuPane::Tape)
@@ -164,7 +165,7 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
     assert!(rect.contains(tape) && rect.contains(chart));
 
     // No lane: the candles still answer, the tape has nothing to open.
-    app.active_tab_mut().flow_pane.last_lane_divider_x = None;
+    app.active_tab_mut().flow_pane.frame.lane_divider_x = None;
     assert_eq!(app.scripted_context_menu_pos(ContextMenuPane::Tape), None);
     assert!(
         app.scripted_context_menu_pos(ContextMenuPane::Chart)
@@ -505,7 +506,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.tz = TzOffset::new(-180);
     app.dock.open_tab(DockTab::Trading);
     app.toolrail.set_dock(ToolboxDock::Bottom);
-    app.show_perf = false;
+    app.health.show_perf = false;
 
     let workspace = app.capture_workspace();
 
@@ -851,7 +852,8 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     wait_for_queued_gateway_requests(&app, 1);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -976,7 +978,8 @@ fn gateway_request_timeout_is_structured_and_late_ui_work_is_discarded() {
 
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1098,6 +1101,7 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
 
     run_frame(&mut app, &ctx);
     let remaining = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed")
@@ -1105,6 +1109,7 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
     assert!((4..=8).contains(&remaining));
     for _ in 0..10 {
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -1116,7 +1121,8 @@ fn gateway_ui_budget_defers_work_beyond_one_frame() {
         run_frame(&mut app, &ctx);
     }
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1337,7 +1343,8 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
     run_frame(&mut app, &ctx);
 
     let read = |app: &QuantickApp| {
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -1424,7 +1431,8 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
 
     // The whole journal is held to the wire's rule: presence, never text.
     let encoded = serde_json::to_string(
-        &app.control_access
+        &app.control
+            .control_access
             .as_ref()
             .unwrap()
             .journal()
@@ -1471,7 +1479,7 @@ fn observer_projects_order_flow_layers_and_states_the_absent_engine() {
     // reports what the pane actually holds.
     assert_eq!(
         footprint["visible"],
-        app.active_tab().flow_pane.footprint_visible,
+        app.active_tab().flow_pane.footprint.visible,
         "the scope reports the pane's own layer state"
     );
     assert_eq!(
@@ -1947,7 +1955,8 @@ fn gateway_refuses_a_request_before_the_handshake_and_closes() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -1969,13 +1978,15 @@ fn gateway_exit_shutdown_removes_discovery() {
     let descriptor: quantick_control::descriptor::InstanceDescriptor =
         serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
 
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .shutdown_for_exit();
     assert!(!descriptor_path.exists(), "exit removes discovery");
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .is_disabled_for_test()
@@ -2002,6 +2013,7 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     for _ in 0..400 {
         run_frame(&mut app, &ctx);
         ids = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2013,13 +2025,15 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     }
     assert_eq!(ids.len(), 1, "the connected client is listed");
 
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .revoke(ids[0].clone());
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .connection_ids_for_test()
@@ -2089,15 +2103,20 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     }
     // A worker-side read is answered without the frame loop and without
     // the stalled client's replies ever being read.
-    assert!(matches!(
-        live.invoke(
+    let outcome = live
+        .invoke(
             crate::control::DESCRIBE_CAPABILITY_ID,
-            serde_json::json!({})
+            serde_json::json!({}),
         )
         .unwrap()
-        .outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+        .outcome;
+    assert!(
+        matches!(
+            outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the live client's worker-side read succeeds: {outcome:?}"
+    );
     // A UI-side read completes while the stalled client's replies sit
     // unread in its socket.
     let request_id = live
@@ -2109,6 +2128,7 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
     for iteration in 0..400 {
         run_frame(&mut app, &ctx);
         let queued = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2284,7 +2304,8 @@ fn gateway_wait_for_change_sees_a_human_mark_and_does_not_delay_a_concurrent_rea
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(50));
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test(),
@@ -2591,8 +2612,8 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.pending_control_annotation = Some("this absorption".to_owned());
-    app.pending_control_notification = Some("popup:look at 108k".to_owned());
+    app.control.pending_control_annotation = Some("this absorption".to_owned());
+    app.control.pending_control_notification = Some("popup:look at 108k".to_owned());
     run_frame(&mut app, &ctx);
 
     let items = app.active_tab().drawing_pane().drawings.items();
@@ -3344,6 +3365,7 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
         run_frame(&mut app, &ctx);
     }
     let replayed = app
+        .control
         .control_access
         .as_ref()
         .unwrap()
@@ -3443,8 +3465,8 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
     let expected_slot = 20usize;
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
-        let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
+        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.viewport.x_center(expected_slot, right, pane.slots()),
             chart.center().y,
@@ -3523,7 +3545,7 @@ fn the_control_the_cursor_resolves_to_is_one_the_scene_names() {
     run_frame(&mut app, &ctx);
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
         chart.center()
     };
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
@@ -3720,7 +3742,8 @@ fn observer_resolves_mirrored_drawings_without_leaking_user_text() {
     let time_chart = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("time pane reported its rect");
     let position = egui::pos2(
         time_chart.center().x,
@@ -4261,7 +4284,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     // And the trader's own words in the *journal*, through the hotkey's
     // own action — the page a bundle embeds carries these verbatim, so
     // this is the leak the drawing canary above cannot find.
-    app.pending_control_mark = Some(MARK_CANARY.to_owned());
+    app.control.pending_control_mark = Some(MARK_CANARY.to_owned());
     run_frame(&mut app, &ctx);
 
     let directory = gateway_test_directory("evidence-redaction");
@@ -4391,11 +4414,12 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
-    app.pending_control_evidence = Some("all".to_owned());
+    app.control.pending_control_evidence = Some("all".to_owned());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .retained_evidence_for_test(),
@@ -4403,13 +4427,14 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
         "the hook captured one bundle without a client on the socket"
     );
     assert!(
-        app.pending_control_evidence.is_none(),
+        app.control.pending_control_evidence.is_none(),
         "and it fires once, not on every frame"
     );
 
     // Readable back the same way: the store is one store, and the read is
     // the same registered capability a client would invoke.
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
@@ -4434,7 +4459,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
             serde_json::json!({ "evidence_id": captured["evidence_id"] }),
         )
         .expect("what was captured is readable");
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     assert_eq!(page["content_digest"], captured["content_digest"]);
     assert_eq!(page["page"]["has_more"], false);
 }
@@ -4468,6 +4493,7 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
     for _ in 0..PARK_WAIT_FRAMES {
         run_frame(&mut app, &ctx);
         waited = app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -4479,11 +4505,12 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
     assert_eq!(waited, 1, "the capture parked instead of answering blind");
 
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
     access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     for _ in 0..REPLY_WAIT_FRAMES {
         run_frame(&mut app, &ctx);
         if client.reply_pending(std::time::Duration::from_millis(5)) {
@@ -4498,7 +4525,8 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
         "the image that arrived belongs to the capture that waited for it"
     );
     assert_eq!(
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .awaiting_screenshot_for_test(),
@@ -4595,6 +4623,7 @@ fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
     let limit = 4_usize;
     {
         let access = app
+            .control
             .control_access
             .as_mut()
             .expect("control access is installed");
@@ -4606,6 +4635,7 @@ fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
         }
     }
     let newest = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed")
@@ -4667,6 +4697,7 @@ fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
         run_frame(&mut app, &ctx);
     }
     let access = app
+        .control
         .control_access
         .as_ref()
         .expect("control access is installed");
@@ -4816,7 +4847,10 @@ fn control_idle_dense_replay_benchmark() {
 
     let ctx = egui::Context::default();
     let (mut app, events, _commands, _book) = test_app();
-    app.active_tab_mut().flow_pane.tick_n = 16;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(16));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     events
@@ -4993,4 +5027,446 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
         3,
         "the live reading and the file's two"
     );
+}
+
+/// Q3's deterministic CPU frame fixture; desktop HUD evidence is separate.
+/// Conditions and the alternating comparison protocol live in the Q3 dossier.
+#[test]
+#[ignore = "manual serialized dense time/dollar lane comparison"]
+fn incremental_lane_dense_frame_benchmark() {
+    const WARMUP: u64 = 30;
+    const FRAMES: u64 = 600;
+    const PRINTS: u64 = 64;
+    fn btc_print(id: u64) -> quantick_engine::Trade {
+        quantick_engine::Trade {
+            agg_id: id,
+            timestamp_ms: 1_720_000_020_000 + id as i64,
+            price: Decimal::from(60_000) + Decimal::new((id % 20) as i64, 1),
+            quantity: Decimal::new(1, 2),
+            side: if id.is_multiple_of(3) {
+                quantick_engine::Side::Sell
+            } else {
+                quantick_engine::Side::Buy
+            },
+        }
+    }
+    for spec in [
+        BarSpec::Time(60_000),
+        BarSpec::Dollar(Decimal::from(12_000_000)),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, events, _commands, _book) = test_app();
+        app.active_tab_mut().flow_pane.spec.set(spec.clone());
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        assert_eq!(app.active_tab().flow_pane.state.spec(), &spec);
+        assert!(
+            app.active_tab_mut()
+                .tape_mut()
+                .apply_preset("dense tape btc")
+        );
+        app.active_tab_mut().flow_pane.add_indicator(
+            crate::indicator_worker::IndicatorSource::Native {
+                id: "native.cvd".to_owned(),
+                values: Vec::new(),
+            },
+        );
+        events
+            .try_send(FeedEvent::Backfilled((1..=8_000).map(btc_print).collect()))
+            .unwrap();
+        app.active_tab_mut().drain_feed();
+        let mut next = 8_001;
+        let mut samples = Vec::with_capacity(FRAMES as usize);
+        let mut measured_traffic = 0;
+        let mut measured_updates = 0;
+        let mut saw_lane = false;
+        let mut started = Instant::now();
+        for frame in 0..WARMUP + FRAMES {
+            if frame == WARMUP {
+                let pane = &app.active_tab().flow_pane;
+                measured_traffic = pane.indicator_worker.lane_traffic_for_test();
+                measured_updates = pane.indicator_worker.partial_updates_for_test();
+                assert!(
+                    pane.frame.lane_divider_x.is_some(),
+                    "fixture has a visible lane"
+                );
+                started = Instant::now();
+            }
+            events
+                .try_send(FeedEvent::LiveBatch(
+                    (next..next + PRINTS).map(btc_print).collect(),
+                ))
+                .unwrap();
+            next += PRINTS;
+            let before = Instant::now();
+            run_frame(&mut app, &ctx);
+            if frame >= WARMUP {
+                saw_lane |= !app.active_tab().flow_pane.indicators.all()[0]
+                    .lane
+                    .is_empty();
+                samples.push(before.elapsed().as_secs_f64() * 1_000.0);
+            }
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        assert!(
+            saw_lane,
+            "CVD produces live lane samples during drawn frames"
+        );
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.indicator_worker.flush();
+        pane.apply_indicator_events();
+        let traffic = pane.indicator_worker.lane_traffic_for_test() - measured_traffic;
+        let updates = pane.indicator_worker.partial_updates_for_test() - measured_updates;
+        let (retained, capacity) = pane.indicator_worker.retained_lane_for_test();
+        samples.sort_by(f64::total_cmp);
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let percentile = |p: usize| samples[(samples.len() * p).div_ceil(100) - 1];
+        println!(
+            "Q3_DENSE_FRAME {{\"spec\":\"{}\",\"mean_ms\":{mean:.6},\"p95_ms\":{:.6},\"p99_ms\":{:.6},\"worst_ms\":{:.6},\"trades_per_s\":{:.3},\"transport_entries\":{traffic},\"transport_bytes\":{},\"partial_updates\":{updates},\"retained_entries\":{retained},\"retained_capacity\":{capacity},\"frames\":{FRAMES},\"prints_per_frame\":{PRINTS}}}",
+            spec.summary(),
+            percentile(95),
+            percentile(99),
+            samples.last().unwrap(),
+            FRAMES as f64 * PRINTS as f64 / elapsed,
+            traffic * std::mem::size_of::<quantick_engine::Trade>()
+        );
+    }
+}
+
+/// A capability that publishes `IdempotencyPolicy::Optional` has to accept the
+/// key it advertises.
+///
+/// `layout.*` says so in prose — "so a client may retry a dropped call without
+/// wondering what the first one did" — while the gateway refused every key
+/// before dispatch. A client that read the descriptor and did the correct
+/// thing got `control.invalid_request` for its trouble.
+#[test]
+fn a_layout_call_may_carry_the_idempotency_key_its_descriptor_promises() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-accepted");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    let response = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+
+    assert!(
+        matches!(
+            response.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "a key the descriptor declares Optional is accepted: {:?}",
+        response.outcome
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The promise itself: the retry is answered, and it does not act again.
+///
+/// `layout.tab.create` with no name adds the next free `Layout N`, so two
+/// unguarded calls would leave two layouts. One layout and two equal answers
+/// is the difference the key buys.
+#[test]
+fn the_same_layout_key_answers_twice_and_acts_once() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-replay");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+
+    let first = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+    let after_first = app.layouts().layouts().len();
+    let second = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "second",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+
+    assert_eq!(after_first, before + 1, "the first call created one layout");
+    assert_eq!(
+        app.layouts().layouts().len(),
+        after_first,
+        "the retry created no second layout"
+    );
+    assert_eq!(
+        first.outcome, second.outcome,
+        "the retry is given the answer the first call got"
+    );
+    assert_eq!(
+        second.request_id.as_str(),
+        "second",
+        "the replay answers the request that asked, not the one recorded"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The same key over different input is a different call wearing the same
+/// name, and saying so is the point of the key.
+#[test]
+fn the_same_layout_key_with_different_input_is_refused_as_a_conflict() {
+    use quantick_control::error::codes;
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-conflict");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "first",
+        "layout.tab.create",
+        serde_json::json!({}),
+        "layout-key-1",
+    );
+    let after_first = app.layouts().layouts().len();
+    let conflicting = remote_call_with_key(
+        &mut app,
+        &ctx,
+        &mut client,
+        "second",
+        "layout.tab.create",
+        serde_json::json!({ "name": "Something else" }),
+        "layout-key-1",
+    );
+
+    assert_eq!(
+        response_error(&conflicting).code.as_str(),
+        codes::IDEMPOTENCY_CONFLICT
+    );
+    assert!(
+        !response_error(&conflicting).retryable,
+        "sending the same conflict again cannot help"
+    );
+    assert_eq!(
+        app.layouts().layouts().len(),
+        after_first,
+        "a refused conflict acts on nothing"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The retry a client sends *because* the first call has not answered — which
+/// is the case the descriptors name, and the one a store written at response
+/// time would miss.
+///
+/// The record for an action is written on the response worker, after the
+/// connection loop has gone back to reading. Without a key held for the
+/// duration of the dispatch both calls would find no record and both would
+/// act. Here the second is refused while the first is still queued, retryably,
+/// and the first goes on to create exactly one layout.
+#[test]
+fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
+    use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-race");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+    let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
+
+    let first = client
+        .send_with_idempotency_key(
+            RequestId::new("first").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+    wait_for_queued_gateway_requests(&app, 1);
+    let second = client
+        .send_with_idempotency_key(
+            RequestId::new("second").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+
+    // Refused at once, before the first has been served.
+    let refused = client.read().unwrap();
+    assert_eq!(refused.request_id, second);
+    assert_eq!(
+        response_error(&refused).code.as_str(),
+        codes::REQUEST_IN_PROGRESS
+    );
+    assert!(
+        response_error(&refused).retryable,
+        "the caller is told to ask again once the first has answered"
+    );
+
+    run_frame(&mut app, &ctx);
+    let served = client.read().unwrap();
+    assert_eq!(served.request_id, first);
+    assert!(matches!(
+        served.outcome,
+        quantick_control::wire::ResponseOutcome::Success { .. }
+    ));
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before + 1,
+        "the race created one layout, not two"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The settle branch, end to end: a keyed call refused on its own deadline
+/// cannot have acted, so its key comes back free and the retry does the work.
+///
+/// What this proves and what it does not, stated because the difference is
+/// easy to overclaim. It drives the real settle path — a real socket, a real
+/// `control.timeout`, the response worker's follow-on wait, and a retry that
+/// really acts — and it fails if that path stops releasing the key.
+///
+/// It does **not** exercise `UiRequest::started`. The application answers
+/// here, refusing the request on its deadline, so `settle` gets a real
+/// outcome and never consults the flag. The flag decides only the case where
+/// the application began an action and had still not answered a window later,
+/// and forcing that needs an action a test can hold open past the deadline,
+/// which the gateway has no hook for. That branch is covered by the unit
+/// tests over `settle` and by reading, not by this.
+#[test]
+fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free() {
+    use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};
+    use std::time::Duration;
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("idempotency-settle");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway_with_limits(&mut app, &ctx, &directory, 4, Duration::from_millis(50), 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let before = app.layouts().layouts().len();
+    let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
+
+    // Sent and then left alone: no frame runs, so the deadline passes while the
+    // request is still queued and the response worker answers on its own.
+    let first = client
+        .send_with_idempotency_key(
+            RequestId::new("first").unwrap(),
+            "layout.tab.create",
+            1,
+            serde_json::json!({}),
+            key(),
+        )
+        .unwrap();
+    let expired = client.read().unwrap();
+    assert_eq!(expired.request_id, first);
+    assert_eq!(response_error(&expired).code.as_str(), codes::TIMEOUT);
+    assert!(
+        response_error(&expired).retryable,
+        "the caller is invited to try again"
+    );
+
+    // The application finally drains it and refuses it on its deadline, before
+    // `started` is ever set.
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before,
+        "a call refused on its deadline created nothing"
+    );
+
+    // The invited retry. `control.request_in_progress` while the settle window
+    // is still open is the contract's own instruction to ask again, so this
+    // asks again rather than treating it as the answer.
+    let mut answered = None;
+    for attempt in 0..40 {
+        let response = remote_call_with_key(
+            &mut app,
+            &ctx,
+            &mut client,
+            &format!("retry-{attempt}"),
+            "layout.tab.create",
+            serde_json::json!({}),
+            "layout-key-1",
+        );
+        let still_running = matches!(
+            &response.outcome,
+            quantick_control::wire::ResponseOutcome::Failure { error }
+                if error.code.as_str() == codes::REQUEST_IN_PROGRESS
+        );
+        if !still_running {
+            answered = Some(response);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let answered = answered.expect("the settle window closes and the key comes back");
+
+    assert!(
+        matches!(
+            answered.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the retry acts, because the call it retries never did: {:?}",
+        answered.outcome
+    );
+    assert_eq!(
+        app.layouts().layouts().len(),
+        before + 1,
+        "exactly one layout, made by the retry"
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
 }

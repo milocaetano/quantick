@@ -1,0 +1,7 @@
+# Origin 0bd50f9b815a05e2ba8d0c9804324dbb415f6658: QuantickApp 10243; ChartState 429.
+# Pull request #306 adds retained deal readings to ChartState and 23 lines of
+# window docking. The recording policy and window wiring remain in dedicated
+# owners; this amendment records the reviewed integration surface explicitly.
+!budget 10855
+ChartState 592
+QuantickApp 10263

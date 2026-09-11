@@ -42,12 +42,15 @@ mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
 mod layers_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
+mod published_schema_compatibility_tests;
+mod screenshot_evidence_tests;
 mod toolrail_tests;
 mod workspaces_tests;
 
@@ -165,7 +168,7 @@ fn pane_is_auto(app: &QuantickApp, slot: SlotId) -> bool {
 fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
     let pane = &app.active_tab().flow_pane;
     let areas = plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -178,7 +181,7 @@ fn pane_gutter(app: &QuantickApp, index: usize) -> egui::Rect {
 fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
     let pane = &app.active_tab().flow_pane;
     let areas = plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -197,7 +200,7 @@ fn right_edge(app: &QuantickApp) -> f32 {
 fn pane_slots(app: &QuantickApp) -> Vec<crate::indicators::PaneSlot> {
     let pane = &app.active_tab().flow_pane;
     plot_split(
-        pane.last_plot_area.expect("a frame has been drawn"),
+        pane.frame.plot_area.expect("a frame has been drawn"),
         pane.live_strip_width(app.active_tab().capabilities(&app.config)),
         pane.indicators
             .pane_sizing(&mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES]),
@@ -375,7 +378,10 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     // answer intact for the test that reads it
     // (`each_layer_switch_moves_exactly_one_owner`).
     app.active_tab_mut().flow_pane.live_strip_visible = false;
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
@@ -882,8 +888,8 @@ fn split_with_a_shared_line(
         .active_tab_mut()
         .time_pane_mut()
         .expect("two frames is enough for the deferred layout to build it");
-    pane.kind = crate::state::BarKind::Time;
-    pane.time_interval_ms = 1_000;
+    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec.retain(crate::state::BarSpec::Time(1_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     run_frame(&mut app, ctx);
@@ -939,15 +945,15 @@ fn time_pane_projection(app: &QuantickApp) -> (egui::Rect, PriceScale) {
         .active_tab()
         .time_pane()
         .expect("the split built a time pane");
-    let chart = time_pane.last_chart_area.expect("the time pane drew");
+    let chart = time_pane.frame.chart_area.expect("the time pane drew");
     let (lo, hi) = time_pane
         .price_view
-        .resolve(time_pane.last_auto_range.expect("the pane has a range"));
+        .resolve(time_pane.frame.auto_range.expect("the pane has a range"));
     let scale = PriceScale::from_range(
         lo,
         hi,
-        time_pane.last_chart_top,
-        time_pane.last_chart_top + time_pane.last_chart_height,
+        time_pane.frame.chart_top,
+        time_pane.frame.chart_top + time_pane.frame.chart_height,
     );
     (chart, scale)
 }
@@ -1198,7 +1204,8 @@ fn settle_indicators(app: &mut QuantickApp) {
 fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane reported its rect")
         .center()
 }
@@ -1207,8 +1214,8 @@ fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
 /// frame computes it.
 fn price_y(app: &QuantickApp, side: PaneSide, price: f64) -> f32 {
     let pane = app.active_tab().pane(side);
-    let chart = pane.last_chart_area.expect("the pane reported its rect");
-    let auto = pane.last_auto_range.expect("the pane fitted a range");
+    let chart = pane.frame.chart_area.expect("the pane reported its rect");
+    let auto = pane.frame.auto_range.expect("the pane fitted a range");
     let (lo, hi) = pane.price_view.resolve(auto);
     PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).y(price)
 }
@@ -1709,7 +1716,8 @@ fn annotator_test_options() -> quantick_control_local::client::ConnectOptions {
 /// Grant the annotate tier for the next connection through the panel's
 /// own named call — the door the checkboxes and the hook both use.
 fn grant_annotate_for_test(app: &mut QuantickApp, scopes: &str) {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .configure_scopes(scopes)
@@ -1754,6 +1762,54 @@ fn remote_call(
     }
     let response = client.read().expect("the gateway answered");
     assert_eq!(response.request_id, request_id);
+    response
+}
+
+/// A client that asks for the cockpit tier, for the tests that prove what a
+/// capability declaring `IdempotencyPolicy::Optional` does with a key.
+fn cockpit_test_options() -> quantick_control_local::client::ConnectOptions {
+    let mut scopes = gateway_test_scopes();
+    for id in ["cockpit", "cockpit.layout"] {
+        scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
+    }
+    quantick_control_local::client::ConnectOptions::for_profile(
+        "cockpit",
+        "quantick integration test",
+        env!("CARGO_PKG_VERSION"),
+        scopes,
+    )
+}
+
+/// `remote_call`, under an idempotency key and a caller-chosen request ID —
+/// so a retry can be told apart from the call it retries, which is the whole
+/// thing being asserted.
+fn remote_call_with_key(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    client: &mut quantick_control_local::client::LocalClient,
+    request_id: &str,
+    capability: &str,
+    payload: serde_json::Value,
+    key: &str,
+) -> quantick_control::wire::ResponseEnvelope {
+    let sent = client
+        .send_with_idempotency_key(
+            quantick_control::id::RequestId::new(request_id).expect("test request ID is valid"),
+            capability,
+            1,
+            payload,
+            quantick_control::id::IdempotencyKey::new(key.to_owned())
+                .expect("test idempotency key is valid"),
+        )
+        .expect("the request is sent");
+    for _ in 0..400 {
+        run_frame(app, ctx);
+        if client.reply_pending(std::time::Duration::from_millis(5)) {
+            break;
+        }
+    }
+    let response = client.read().expect("the gateway answered");
+    assert_eq!(response.request_id, sent);
     response
 }
 
@@ -1808,7 +1864,8 @@ fn enable_test_gateway(
     directory: &std::path::Path,
     queue_capacity: usize,
 ) -> std::path::PathBuf {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .enable_for_test(ctx, directory.to_path_buf(), queue_capacity);
@@ -1823,7 +1880,8 @@ fn enable_test_gateway_with_limits(
     request_timeout: std::time::Duration,
     max_connections: usize,
 ) -> std::path::PathBuf {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .enable_for_test_with_limits(
@@ -1843,6 +1901,7 @@ fn wait_for_test_gateway_descriptor(
     for _ in 0..400 {
         run_frame(app, ctx);
         if let Some(path) = app
+            .control
             .control_access
             .as_ref()
             .and_then(crate::control::ControlAccess::descriptor_path_for_test)
@@ -1857,6 +1916,7 @@ fn wait_for_test_gateway_descriptor(
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
     for _ in 0..400 {
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -1871,13 +1931,15 @@ fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
 }
 
 fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.control_access
+    app.control
+        .control_access
         .as_mut()
         .expect("control access is installed")
         .disable_for_test();
     for _ in 0..400 {
         run_frame(app, ctx);
         if app
+            .control
             .control_access
             .as_ref()
             .expect("control access is installed")
@@ -2155,8 +2217,8 @@ fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
     run_frame(app, ctx);
     let position = {
         let pane = &app.active_tab().flow_pane;
-        let chart = pane.last_chart_area.expect("the pane reported its rect");
-        let right = pane.last_lane_divider_x.unwrap_or_else(|| chart.right());
+        let chart = pane.frame.chart_area.expect("the pane reported its rect");
+        let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
             pane.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,
@@ -2305,7 +2367,8 @@ fn capture_with_screenshot(
     // of failing later on a confusing assertion about the manifest.
     let parked = (0..PARK_WAIT_FRAMES).any(|_| {
         run_frame(app, ctx);
-        app.control_access
+        app.control
+            .control_access
             .as_ref()
             .expect("control access is installed")
             .awaiting_screenshot_for_test()
@@ -2316,11 +2379,12 @@ fn capture_with_screenshot(
         "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
     );
     let mut access = app
+        .control
         .control_access
         .take()
         .expect("control access is installed");
     access.publish_screenshot_for_test(app, image);
-    app.control_access = Some(access);
+    app.control.control_access = Some(access);
     for _ in 0..REPLY_WAIT_FRAMES {
         run_frame(app, ctx);
         if client.reply_pending(std::time::Duration::from_millis(5)) {
@@ -2382,3 +2446,7 @@ fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
         }),
     }
 }
+
+mod worker_progress_tests;
+
+mod worker_summary_bench_tests;

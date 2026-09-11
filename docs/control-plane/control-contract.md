@@ -231,14 +231,33 @@ digest returns `control.idempotency_conflict`; retrying while the first attempt
 is still executing returns retryable `control.request_in_progress`. Raw keys
 are never logged.
 
-Records remain for the configured retention period or the life of the instance,
-whichever ends first. The store does not evict an unexpired record to accept a
-new request whose descriptor requires idempotency; it returns backpressure at
-capacity. Such capabilities return compact results that fit the record limit.
-They may reference a durable resource only when its lifetime is at least the
-idempotency retention; a temporary in-memory resource is invalid. A dry run
-never mutates state or reserves an idempotency key, and an unsupported dry run
-fails before dispatch.
+Records are scoped to the connection's authenticated principal, which the local
+gateway mints per handshake. They remain for the configured retention period,
+the life of the instance, or the life of the connection that made them,
+whichever ends first. That third bound is narrower than the first two and is
+deliberate: the identifiers that survive a reconnect are either shared by every
+client of one grant or supplied by the client itself, so scoping wider would
+let one client replay another's recorded result. Widening it needs a durable
+client identity the handshake proves.
+
+At capacity the store evicts, taking the oldest record of whichever principal
+holds the most, so one busy connection cannot spend the shared cap and withdraw
+the guarantee published to every other. The rule that a capability whose
+descriptor *requires* idempotency receives backpressure rather than costing an
+unexpired record its place is **not implemented**: no capability declares
+`Required`, and the first that does owes it. Such capabilities return compact
+results that fit the record limit. They may reference a durable resource only
+when its lifetime is at least the idempotency retention; a temporary in-memory
+resource is invalid.
+
+A dry run never mutates state or reserves an idempotency key, and an
+unsupported dry run fails before dispatch.
+
+A keyed call whose outcome cannot be determined — the application had still not
+answered a full request window after the caller's own deadline expired —
+records a non-retryable refusal naming the uncertainty rather than releasing
+its key. The retry receives that refusal instead of either a second execution
+or an indefinite hold, and reconciles by reading state back.
 
 ### 5.3 Pagination cursors
 

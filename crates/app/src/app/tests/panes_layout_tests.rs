@@ -366,7 +366,7 @@ fn dragging_the_price_gutter_leaves_every_pane_alone() {
     let gutter = {
         let pane = &app.active_tab().flow_pane;
         plot_split(
-            pane.last_plot_area.expect("a frame has been drawn"),
+            pane.frame.plot_area.expect("a frame has been drawn"),
             pane.live_strip_width(app.active_tab().capabilities(&app.config)),
             pane.indicators.pane_sizing(
                 &mut [crate::indicators::PaneSizing::Auto; crate::indicators::MAX_PANES],
@@ -406,7 +406,8 @@ fn dragging_the_price_gutter_through_the_flip_turns_the_chart_over() {
     let gutter = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter");
     assert!(!app.active_tab().flow_pane.price_view.is_inverted());
 
@@ -499,7 +500,8 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let gutter = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter");
     let position = app
         .scripted_context_menu_pos(ContextMenuPane::Axis)
@@ -508,7 +510,8 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_rect
+        .frame
+        .chart_rect
         .expect("the canvas laid out");
     assert!(
         position.x > chart.right(),
@@ -547,7 +550,8 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let strip = app
         .active_tab()
         .flow_pane
-        .last_time_strip
+        .frame
+        .time_strip
         .expect("the draw published the strip");
     let position = app
         .scripted_context_menu_pos(ContextMenuPane::Time)
@@ -556,7 +560,8 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_rect
+        .frame
+        .chart_rect
         .expect("the canvas laid out");
     assert!(
         position.y > chart.bottom(),
@@ -577,7 +582,8 @@ fn right_clicking_the_price_gutter_offers_inverted_chart() {
     let target = app
         .active_tab()
         .flow_pane
-        .last_price_gutter
+        .frame
+        .price_gutter
         .expect("the draw published the gutter")
         .center();
     run_frame_with_events(
@@ -754,8 +760,8 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
     run_frame(&mut app, &ctx);
 
     let tab = app.active_tab();
-    let flow = tab.flow_pane.last_area.expect("the flow pane painted");
-    let time = tab.time_panes[0].last_area.expect("the time pane painted");
+    let flow = tab.flow_pane.frame.area.expect("the flow pane painted");
+    let time = tab.time_panes[0].frame.area.expect("the time pane painted");
     let (chosen, slots) = tab.starved_pane().expect("a painted pane");
     assert_eq!(slots, 0, "the starved pane is the one with nothing on it");
     assert_eq!(chosen, flow, "the note belongs to the pane that is waiting");
@@ -964,7 +970,8 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
 
     let chart = app
         .drawing_pane()
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the pane holding the selection drew");
     let bar = app
         .surfaces
@@ -1020,7 +1027,8 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
         .active_tab()
         .time_pane()
         .expect("the split has a time pane")
-        .last_plot_area
+        .frame
+        .plot_area
         .expect("laid out by the frames above");
     // The time pane carries no tape and no indicator panes, so its own
     // layout call reduces to this.
@@ -1096,7 +1104,8 @@ fn the_focused_pane_hands_the_pointer_to_the_simulator() {
         let chart = app
             .active_tab()
             .pane(side)
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("the pane reported its rect");
         let start = egui::pos2(chart.center().x, price_y(&app, side, entry));
         assert!(
@@ -1129,12 +1138,14 @@ fn enabling_the_split_lays_out_two_panes_and_a_divider() {
         .active_tab()
         .time_pane()
         .expect("Time + Flow builds the time pane")
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out");
     let flow = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the flow pane was laid out");
     assert!(
         time.right() <= flow.left(),
@@ -1514,8 +1525,8 @@ fn the_bars_selectors_govern_the_focused_pane() {
     // The exact selector fields the toolbar's BARS group borrows for the
     // focused pane, written through the same deferred-spec path.
     let pane = app.active_tab_mut().focused_pane_mut();
-    pane.kind = crate::state::BarKind::Time;
-    pane.time_interval_ms = 300_000;
+    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec.retain(crate::state::BarSpec::Time(300_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1652,7 +1663,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let flow_before = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     let divider = app
@@ -1671,7 +1683,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     assert!(
         app.active_tab()
             .flow_pane
-            .last_chart_area
+            .frame
+            .chart_area
             .expect("laid out")
             .width()
             < flow_before,
@@ -1697,7 +1710,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let flow_width = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     // "Stops at the minimum" is the claim, so the test is that it stops:
@@ -1719,7 +1733,8 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
     let after = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out")
         .width();
     assert!(
@@ -1933,7 +1948,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         "and the flow pane still shows layout 1's EMA"
     );
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         1,
         "the time pane's registration went with the layout it left, and              only the flow pane's is left"
     );
@@ -1961,7 +1976,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     );
     assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
     assert_eq!(
-        app.slot_kinds.len(),
+        app.indicators.slot_kinds.len(),
         2,
         "one registration per pane, and no leak from the switch"
     );
@@ -2002,7 +2017,7 @@ fn two_panes_show_two_layouts_side_by_side() {
     // count but shifts every later edit's layout index by one, so a
     // mirrored remove would take the wrong indicator on the other panes.
     assert_eq!(
-            app.slot_kinds
+            app.indicators.slot_kinds
                 .iter()
                 .filter(|(owner, _)| owner.tab == app.active_tab().id
                     && owner.side == PaneSide::Time(0))
@@ -2127,7 +2142,11 @@ fn a_previewed_input_never_reaches_the_layout() {
         slot,
     };
     app.open_indicator_settings_at(target);
-    app.indicator_settings.as_mut().expect("dialog").draft = vec![
+    app.indicators
+        .indicator_settings
+        .as_mut()
+        .expect("dialog")
+        .draft = vec![
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
     ];
@@ -2153,8 +2172,8 @@ fn deleting_a_layout_waits_for_the_confirmation() {
     let second = app.create_layout(Some("levels")).expect("second");
     app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
     assert_eq!(app.layouts().layouts().len(), 2, "nothing is deleted yet");
-    assert_eq!(app.layout_delete_confirm, Some(second));
-    app.layout_delete_confirm = None;
+    assert_eq!(app.chrome.layout_delete_confirm, Some(second));
+    app.chrome.layout_delete_confirm = None;
     assert_eq!(app.layouts().layouts().len(), 2, "cancelling keeps it");
 
     app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
@@ -2165,7 +2184,7 @@ fn deleting_a_layout_waits_for_the_confirmation() {
         second,
         "and the neighbour is active"
     );
-    assert!(app.layout_delete_confirm.is_none());
+    assert!(app.chrome.layout_delete_confirm.is_none());
 }
 
 /// Going back to Single hides the context chart; it must not throw away
@@ -2242,7 +2261,8 @@ fn the_single_layout_still_gives_the_flow_pane_the_whole_canvas() {
     let chart = app
         .active_tab()
         .flow_pane
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("laid out");
     // The canvas the pane was given, reconstructed from the rect it kept:
     // wider than half the window, so nothing was carved off for a divider.
@@ -2500,7 +2520,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
 
     // The toolbar route: `bars → time`. The kind's default interval is a
     // real timeframe (QW2), so the spec that lands is one minute.
-    app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Time;
+    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Time;
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -2531,7 +2551,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
 
     // And leaving the time kind hands the prefix back: a tick chart is
     // the tape's alone.
-    app.active_tab_mut().flow_pane.kind = crate::state::BarKind::Tick;
+    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Tick;
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
@@ -2595,7 +2615,7 @@ fn the_reach_is_a_standing_choice_mirrored_onto_every_tab() {
         history_reach::HistoryReach::Page,
         "the press the button has always had is what a chart opens on"
     );
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().history_reach,
@@ -2738,7 +2758,8 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     let point = app
         .active_tab()
         .pane(PaneSide::Time(0))
-        .last_chart_area
+        .frame
+        .chart_area
         .expect("the time pane was laid out")
         .center();
     click_chart(&mut app, &ctx, point);
@@ -2807,7 +2828,7 @@ fn a_background_tab_keeps_ingesting() {
         "a tab off screen still takes in what its feed sent"
     );
     assert_eq!(
-        app.trades_since_summary, 5,
+        app.health.trades_since_summary, 5,
         "and the window counts them as its own ingest"
     );
 }
@@ -2824,14 +2845,22 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     // Register a slot on the tab about to close, so the bookkeeping has
     // something to lose with it.
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
-    assert!(app.slot_kinds.iter().any(|(owner, _)| owner.tab == second));
+    assert!(
+        app.indicators
+            .slot_kinds
+            .iter()
+            .any(|(owner, _)| owner.tab == second)
+    );
 
     app.apply_tab_action(TabAction::Close(1));
 
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.active_tab().id, first, "a neighbour takes over");
     assert!(
-        !app.slot_kinds.iter().any(|(owner, _)| owner.tab == second),
+        !app.indicators
+            .slot_kinds
+            .iter()
+            .any(|(owner, _)| owner.tab == second),
         "its indicator bookkeeping went with it"
     );
     // The last tab stays: a window with no market has nothing to draw.

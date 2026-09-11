@@ -204,6 +204,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
         let instance = tab
             .flow_pane
             .strategies
+            .anchors
             .for_drawing(drawing)
             .expect("instance");
         assert!(
@@ -229,6 +230,7 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
     let instance = tab
         .flow_pane
         .strategies
+        .anchors
         .for_drawing(drawing)
         .expect("instance");
     assert_eq!(
@@ -572,9 +574,9 @@ fn a_restored_workspace_puts_the_window_back() {
     assert_eq!(app.dock.tab(), Some(DockTab::Trades));
     assert!(!app.toolrail.visible());
     assert_eq!(app.toolrail.dock(), ToolboxDock::Bottom);
-    assert!(!app.show_perf);
+    assert!(!app.health.show_perf);
     assert!(
-        !app.progressive_history,
+        !app.history.progressive_history,
         "a trader who chose the single-request fetch reopens on it"
     );
     assert!(

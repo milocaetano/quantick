@@ -93,6 +93,7 @@ impl QuantickApp {
             })
             .collect();
         let scripts: Vec<String> = self
+            .indicators
             .script_library
             .entries()
             .iter()
@@ -105,9 +106,9 @@ impl QuantickApp {
         // picked "previous session" once means it in the next tab too — so it
         // is split off and written back the way the layout picker's flags are.
         let history_reach_running = self.active_tab().history_reach_running();
-        let mut history_reach = self.history_reach;
-        let mut history_reach_span_minutes = self.history_reach_span_minutes;
-        let mut history_menu_rect = self.history_menu_rect;
+        let mut history_reach = self.history.history_reach;
+        let mut history_reach_span_minutes = self.history.history_reach_span_minutes;
+        let mut history_menu_rect = self.chrome.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
         // into the *focused pane* — the pane the status bar reads and every
@@ -116,15 +117,13 @@ impl QuantickApp {
         // the Time layout the group governs the chart actually on screen.
         // Split off the picker's flags before the tab borrow: the model wants
         // both, and they live on the same struct.
-        let mut layout_picker_open = self.layout_picker_open;
+        let mut layout_picker_open = self.chrome.layout_picker_open;
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
         let layout_picker_autostart = self.harness.take_layout_picker_autostart();
         let deal_recording = self.active_tab().deal_recording_view();
         let deal_recording_menu =
             deal_recording.is_some() && self.harness.take_deal_recording_menu();
-        // Sticky until the combo consumed it: the first frames may draw no
-        // toolbar yet, and a hook taken then would open nothing.
         let mut bars_menu = self.harness.bars_menu_pending();
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
@@ -142,17 +141,10 @@ impl QuantickApp {
             symbols,
             symbol: &mut tab.symbol,
             replay,
-            kind: &mut pane.kind,
-            tick_n: &mut pane.tick_n,
-            deals_n: &mut pane.deals_n,
+            spec: &mut pane.spec,
             deal_recording,
             deal_recording_menu,
             bars_menu: &mut bars_menu,
-            volume_units: &mut pane.volume_units,
-            dollar_notional: &mut pane.dollar_notional,
-            time_interval_ms: &mut pane.time_interval_ms,
-            imbalance_target: &mut pane.imbalance_target,
-            imbalance_unit: &mut pane.imbalance_unit,
             history_step: &mut tab.history_step,
             history_menu_rect: &mut history_menu_rect,
             history_reach_span_minutes: &mut history_reach_span_minutes,
@@ -184,7 +176,7 @@ impl QuantickApp {
         // The popover's own state, back where it lives. Without this the flag
         // resets every frame and the button never reads as open.
         drop(model);
-        self.layout_picker_open = layout_picker_open;
+        self.chrome.layout_picker_open = layout_picker_open;
         if !bars_menu {
             self.harness.clear_bars_menu();
         }
@@ -192,7 +184,7 @@ impl QuantickApp {
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
         self.set_history_reach_span_minutes(history_reach_span_minutes);
-        self.history_menu_rect = history_menu_rect;
+        self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
         // and snapping it away would relabel the whole session — the status
@@ -269,7 +261,7 @@ impl QuantickApp {
             // layer menu calls — so the button, the menu and the lamp can
             // never disagree about which chart the command described.
             ToolbarAction::SetFootprint(shown) => {
-                self.focused_pane_mut().footprint_visible = shown;
+                self.focused_pane_mut().footprint.visible = shown;
             }
             ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),

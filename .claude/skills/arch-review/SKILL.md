@@ -3,21 +3,15 @@ name: arch-review
 description: The full pre-PR shape review for quantick — bugs first via the bundled code-review, then docking, performance, tests, operability without a mouse, hardcoded values, the trunk and the English rule. Use when the user types /arch-review, asks for a code review or a bug pass before shipping, or asks whether a change is modular, fast enough, drivable by a script, or properly tested. Reviews a diff; it does not design the assistant.
 ---
 
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
+
 # Architecture-first code review
 
-A new feature should dock like a spacecraft to the ISS: a standard port, no
-modification to the station. Review every change against that bar.
+Review extension seams and shape; step 0 runs the bundled bug review first.
 
-This skill reviews *shape*. Bug hunting belongs to the bundled `code-review`,
-which step 0 runs first.
-
-**How this file is arranged.** Every rule that decides whether a review may
-close is stated here. The worked detail behind a dimension — its exemplars,
-its anti-patterns, and the histories that set its bar — lives in
-`references/`, one file per dimension, read on demand. **Read a dimension's
-reference before writing a finding in it**, and skip it for a dimension that
-comes back clean. That is what keeps a clean review cheap and a filed finding
-accurate.
+Read a dimension's reference before filing a finding in it; skip references
+for clean dimensions. The operative review rules are below.
 
 ## Step 0 — the native code review runs first, always
 
@@ -50,9 +44,10 @@ WT=/path/to/worktree
 cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
 ```
 
-**Never re-run a level that already ran clean.** That is about what to skip
-inside one round, not a budget: the count lives in `CLAUDE.md`'s *review chain
-has a budget*, and neither this step nor the shape pass carries a second one.
+**Never re-run a level that already ran clean.** When to stop re-running at
+all follows [the delivery contract](../../../docs/workflow/delivery.md): keep
+finding IDs and bounded repair progress. Use its independent delta follow-up
+when inputs qualify; otherwise review the applicable full diff.
 
 **The bug pass keeps the strong model.** It finds real defects partly by being
 one; it is the exception `CLAUDE.md`'s routing rule exists to protect.
@@ -88,13 +83,13 @@ When the findings land:
   severity assigned here.
 - **Step 0 never publishes.** No `--fix`, no `--comment`, no `--post`.
 
-A branch still needs the `arch-review-ok` marker to open a PR, so on a
+A branch still needs the `arch-review-ok` marker for PR readiness, so on a
 docs/skills change — where the shape pass is waived — run this skill anyway
 and report step 0's findings through it. The bug pass is not the waived part.
 
 ## Record the marker when the review closes
 
-A branch cannot open a PR until this review is recorded against the exact
+A branch cannot mark its PR ready until this review is recorded against the exact
 change being shipped — a hash of the branch's diff, so a rebase does not
 invalidate it but an edit to a tracked file does. Once every Blocker and
 Should-fix is resolved or deferred in the PR body, and no further commits are
@@ -109,7 +104,7 @@ cd "$WT" &&
 
 The `cd` matters: both `git` calls resolve against the shell's cwd, which for
 an agent session is the main checkout. Without it the marker lands in the
-wrong git dir holding the wrong sha, and the next `gh pr create` denies with
+wrong git dir holding the wrong sha, and the next `gh pr ready` denies with
 no clue why.
 
 A branch that gains another commit after this has a stale marker by design:
@@ -307,7 +302,9 @@ Reviews are judged on precision, not volume.
    findings die here because the thing exists one function up.
 2. For each surviving finding, argue the opposite case: is this already
    handled, deliberate, or out of scope? Drop it if the refutation holds.
-3. Confirm the four checks actually pass — do not take a claim on trust:
+3. Verify actual outputs for the applicable local path in the delivery
+contract, including any input-bound reuse proof; final-head CI is mandatory.
+Code changes require the four checks below — do not take a claim on trust:
 
 ```sh
 cargo fmt --all -- --check

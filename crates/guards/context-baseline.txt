@@ -19,8 +19,8 @@
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
 .claude/skills/mission/SKILL.md 18664
-.claude/skills/arch-review/SKILL.md 19573
-.claude/skills/delivery-review/SKILL.md 18087
+.claude/skills/arch-review/SKILL.md 19568
+.claude/skills/delivery-review/SKILL.md 17853
 
 # Pre-existing debt this branch measured rather than paid. `ui-harness` and its
 # registry are the next cut and were deliberately out of its scope: the
@@ -62,7 +62,9 @@
 # recorded as one. The alternative was a `CLAUDE.md` whose architecture list
 # does not contain a workspace crate, which `claude_md_lists_every_crate`
 # fails on and which is the drift this whole tree exists to prevent.
-CLAUDE.md 10148
+# PR #345 review repair (Codex): +24 bytes declares the expanded
+# normative-contract scope and its mission-evidence exclusion.
+CLAUDE.md 9551
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -70,18 +72,26 @@ CLAUDE.md 10148
 # the whole of the difference. Regenerating is the only way to change this
 # file, so the number follows the code rather than the other way round.
 #
-# +786 for the trades-bars branch. Generated, not written: two rows,
-# `QUANTICK_DEAL_RECORDING` and `QUANTICK_DEALS_DIR`, for the REC control and
-# the recording folder a capture must point away from the trader's home. A
-# surface with no row is one nobody can reach, so the rows are part of the
-# feature; kept to two sentences each rather than the paragraph the older
-# rows run to. Measured, 70,167 -> 70,953.
-# +496 for the same branch: the `QUANTICK_BARS_MENU` row, the hook that
-# opens the bar-kind combo so the entries a source cannot offer — the
-# disabled `trades` with its reason — are reachable by a capture. Measured,
-# 70,953 -> 71,449.
-.claude/skills/ui-harness/references/hook-registry.md 71449
-.claude/skills/ui-harness/SKILL.md 13377
+# +650 more, for the same reason and paid for in the same change. The launch
+# hooks left the constructor for `crates/app/src/app/launch_hooks.rs`, and
+# `declare_hooks!` had to follow them, because `hooks::OWNERS` names the file a
+# reader should open and the guard checks the two agree. So fifty rows'
+# *Declared in* went from `app.rs` to `app/launch_hooks.rs` -- thirteen bytes
+# each, and the longer path is the whole of the difference. Generated, so the
+# number follows the code either way.
+#
+# Paid for out of `SKILL.md` below, lowered by the same 650: four histories and
+# two pieces of reasoning left it -- what the file used to say about
+# `harness.rs`, what a misspelt hook used to look like, the field count behind
+# the `Harness` argument (whose own module header carries it, as the sentence
+# said), the four edits the `Surface` port removes, and `ChartLayer`'s variant
+# count. None of them decided an outcome, which is the test `CLAUDE.md` sets
+# for a line in a `SKILL.md`. The trade is even; the tracked total moves by the
+# 90 bytes the new prose costs.
+# Raised by 305 bytes for the three hooks that make deal recording and the
+# unavailable trades-bar state reachable without a hand.
+.claude/skills/ui-harness/references/hook-registry.md 71122
+.claude/skills/ui-harness/SKILL.md 12727
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
 # than a list that costs 54 bytes — an agent reading it would find the step in
@@ -158,9 +168,37 @@ AGENTS.md 13179
 # reference file to extract and no sibling prose this branch owned to cut.
 # The first cut was 1,949; ten independent reviews found none of its six
 # verdicts falsifiable, and the 804 bytes added are the falsifiers.
-# +2,927 for the trades-bars branch: 1,282 of it the three generated hook
-# rows signed on the registry's entry above; the other 1,645 was already on
-# `main`, inside the headroom, when this branch merged it, so the rows could
-# not fit under the budget as it stood. A raise, not a trade. Measured,
-# 235,924 -> 238,851.
-!budget 238851
+#
+# PR #345 review repair (Codex): re-seed the expanded normative scope.
+# The earlier 230,594 budget excluded docs/campaign/ and docs/workflow/;
+# moving binding rules there had lowered the old scan without saving context.
+# The corrected scope now charges all Markdown in both directories, except
+# docs/workflow/evidence/, whose files are mission records like GOAL archives.
+#
+# Reconciliation in bytes: 230,594 + 404 = 230,998 for the
+# previous scope at its current ceilings and measured sub-threshold files;
+# + 64,670 newly tracked normative bytes = 295,668. This is accounting
+# for newly visible rules, not a claimed reduction or an unallocated allowance.
+# The small previous-scope delta includes the signed CLAUDE scope clarification
+# above and current skill/reference edits. Threshold (10,000), ceiling slack
+# (1,000), budget headroom (2,000) and downward slack (4,000) are unchanged.
+# Future growth must be paid for across the expanded scope.
+#
+# First ceilings for newly tracked contracts above 10,000 bytes. Seeded at
+# their measured LF byte sizes, with no per-file headroom: state owns durable
+# campaign identity and records; workflow owns campaign transitions; delivery
+# owns review source reconciliation and bounded repair. Sub-threshold contract
+# files contribute their full measured bytes to the budget as usual.
+docs/campaign/state.md 14602
+# +1,277 for the campaign's Routing section: which model runs each child, the
+# `executor:` line resume and Codex honour, and the coordinator running the
+# child's interrogation because a subagent cannot ask the trader. A raise, not
+# a trade: the tracked total stays under the unchanged budget. Every line of
+# it decides a dispatch, so there was no reasoning to move out.
+docs/campaign/workflow.md 11574
+# Authorized continuation: standing process delegation and finite stall
+# allowances add 445 bytes. Paid by condensing duplicated initial validation
+# commentary; its original evaluator responses remain intact. Budget unchanged.
+docs/workflow/delivery.md 11361
+
+!budget 295668

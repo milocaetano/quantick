@@ -1495,7 +1495,7 @@ The MVP is complete when:
 - [New extension guide](../.claude/skills/new-extension/SKILL.md): Docking
   ports, performance budgets, and the definition of a modular extension.
 - [`ChartState`](../crates/app/src/state.rs): Existing headless chart state.
-- [Feed protocol](../crates/app/src/feed/mod.rs): Existing events, commands,
+- [Feed protocol](../crates/feed/src/lib.rs): Existing events, commands,
   notices, and capabilities.
 - [Drawing registry](../crates/app/src/drawings/mod.rs): An existing shared,
   extensible registry.

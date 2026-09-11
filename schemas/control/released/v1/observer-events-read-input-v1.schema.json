@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "EventCursor": {
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_sequence": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "instance_id",
+        "next_sequence"
+      ],
+      "type": "object"
+    },
+    "EventStart": {
+      "enum": [
+        "oldest",
+        "latest"
+      ],
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`events.read`: a cursor from a previous page, or an explicit start.",
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventCursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "limit": {
+      "format": "uint",
+      "maximum": 256,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "start": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventStart"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Required on a first read (there is no implicit start position);\nforbidden together with a cursor."
+    }
+  },
+  "title": "EventsReadInput",
+  "type": "object"
+}

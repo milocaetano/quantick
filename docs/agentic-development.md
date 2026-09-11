@@ -42,6 +42,7 @@ The adapter location and `$name` spelling follow the
 | `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small` (the default), `medium`, `high`, `max` — which scales all of that to the size of the change, down to how hard the bug pass looks and whether the conformance review runs at all. One session, one mission. |
 | `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
+| `quantick-score` | The project baseline. It assigns evidence-based scores to sustainable engineering, scalability, agentic development and AI-operated product behavior; unlike `ai-review`, it measures a repository revision rather than a diff. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
 | `delivery-review` | The other pre-PR review, and the one that asks a different question: not *is this well built* but **is this what was asked for**. It grades every ask in the mission's request ledger and every acceptance criterion — DELIVERED, PARTIAL, MISSING or UNPROVEN — from a fresh-context subagent that never sees the implementing session's account of its own work. |
 | `visual-qa` | Autonomous visual QA. Drives every affected surface through the harness hooks, **asks the live control plane what the application believes is on screen**, captures a state matrix, and reads the images against a defect checklist. |
@@ -119,8 +120,57 @@ own way around itself.
 a change a trader touches mid-session gets `trader-ux-review`; anything
 visual gets `visual-qa`; a docs-only change gets neither, but never skips the
 English check or the correctness pass. The tier decides how hard the ones that
-do apply look — and nothing, at any tier, skips the four checks or the bug
-pass. A cheap review is a real one done briefly; it is never an absent one.
+do apply look. Local checks now follow the changed inputs under
+[the delivery contract](workflow/delivery.md); full final-head CI and the bug
+pass remain. A cheap review is a real one done briefly, not an absent one.
+
+## Two phases, and why the rounds had to go
+
+The chain used to run one loop: review, fix, review again, and a budget of
+three rounds over the whole thing. It did not hold. PR #306 shipped after 28
+commits, among them "fix: round 17 of the review chain" and "the fifteenth bug
+pass" — and a later `ai-review` still returned five of its six dimensions WEAK.
+Every gate the repository owns had passed it.
+
+Two things were wrong, and they are the two halves of the fix.
+
+**A round could not redesign.** Making it work and making it right ran in one
+loop, so a fix commit was always a patch *inside* a design it had no licence to
+change. `DealBarBuilder`'s four coordination booleans were authored in rounds
+12, 12, 12 and 15, and `bar_opened_at` in round 14, while the domain concepts
+they coordinate came in the first feature commit. The late rounds did not
+improve that design; they hung flags on it, which is the only move a round has.
+So the work is two phases now, and phase two is explicitly allowed to change
+signatures. That is not licence to redesign at will — it is the licence a
+finding needs when the honest fix is structural and the alternative is a
+fifth boolean.
+
+**A round was the wrong unit to count.** Three rounds was a real rule that
+nothing enforced, and 17 rounds happened anyway. Worse, counting rounds treats
+independent findings as iterations of one thing: closing six unrelated threads
+is not six attempts at anything. So the count moved to the findings themselves,
+which now live as GitHub review threads — durable across a restart or a
+compaction, addressable by id, anchored at `file:line`, resolvable, and visible
+to the trader without an agent in the room. The number of open ones is the
+convergence trend, recorded for free by the act of reviewing.
+
+The first stall rule compared total open findings. Campaign #330 exposed its
+false positive: #339 closed an omission, then a new reviewer split unchanged
+source more finely and found two others. The implementation gates passed, but
+the count forced a human handoff over documentary mapping. Current rules track
+finding identities, separate new discoveries from failed repairs, and retain
+finite budgets. The delivery contract owns those decisions.
+
+**The loop still needs a stop, and two rules give it one.** Round one reviews
+the whole diff; every later run verifies only the open threads plus a narrow
+check that the fixes introduced no new FAIL, and may not open a new WEAK
+against code it already passed. Without that, a reviewer re-reading the same
+file can always find one more thing, the finding set is unbounded and no amount
+of fixing ever empties it. And a thread closes exactly two ways — the fix, or
+an acceptance the trader records on it — so a finding nobody will act on has a
+door out that is not "argue with it again next run". The corollary is the
+sharpest of the rules: a WEAK whose breaking variant the reviewer cannot name
+is not a WEAK, it is a PASS. A worry is not a finding.
 
 ## The hooks that make the gates real
 

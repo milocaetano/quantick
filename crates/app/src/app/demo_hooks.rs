@@ -80,15 +80,16 @@ impl QuantickApp {
     /// [`crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
     /// surface that never presents.
     pub(super) fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
-        if self.pending_control_evidence.is_none() {
+        if self.control.pending_control_evidence.is_none() {
             return;
         }
         // Access is taken *before* the request is, so a frame that finds it
         // borrowed leaves the hook pending rather than dropping it silently.
-        let Some(mut access) = self.control_access.take() else {
+        let Some(mut access) = self.control.control_access.take() else {
             return;
         };
         let request = self
+            .control
             .pending_control_evidence
             .take()
             .expect("the hook was pending one line above");
@@ -146,8 +147,8 @@ impl QuantickApp {
                 // repaint, the counter would never advance, and the hook would
                 // neither complete nor give up.
                 ctx.request_repaint();
-                self.pending_control_evidence = Some(request);
-                self.control_access = Some(access);
+                self.control.pending_control_evidence = Some(request);
+                self.control.control_access = Some(access);
                 return;
             }
             tracing::warn!(
@@ -168,7 +169,7 @@ impl QuantickApp {
             "evidence.capture",
             serde_json::json!({ "scopes": scopes, "screenshot": wants_screenshot }),
         );
-        self.control_access = Some(access);
+        self.control.control_access = Some(access);
         match outcome {
             Ok(manifest) => tracing::info!(
                 target: "quantick::control",
@@ -254,7 +255,8 @@ impl QuantickApp {
         // photograph as an empty chart, which is the one failure this hook
         // exists to prevent.
         let (centre, band) = pane
-            .last_auto_range
+            .frame
+            .auto_range
             .filter(|(lo, hi)| hi > lo)
             .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
                 ((lo + hi) / 2.0, hi - lo)
@@ -309,7 +311,7 @@ impl QuantickApp {
             // nothing: the handles are on screen or they are not photographed
             // at all. Centre on the object's bar span, the object manager's
             // own "select and centre".
-            if let Some(chart) = pane.last_chart_area {
+            if let Some(chart) = pane.frame.chart_area {
                 let points = &pane.drawings.items()[index].points;
                 if !points.is_empty() {
                     let mid =
@@ -356,7 +358,7 @@ impl QuantickApp {
         // answers only a drawn frame has.
         let pane = &self.active_tab().flow_pane;
         let slots = pane.slots();
-        let (Some(chart), true) = (pane.last_chart_area, slots > 0) else {
+        let (Some(chart), true) = (pane.frame.chart_area, slots > 0) else {
             return;
         };
         self.harness.drawing_draft_staged();
@@ -372,7 +374,8 @@ impl QuantickApp {
             .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
             .unwrap_or(1.0);
         let (centre, band) = pane
-            .last_auto_range
+            .frame
+            .auto_range
             .filter(|(lo, hi)| hi > lo)
             .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
                 ((lo + hi) / 2.0, hi - lo)
@@ -418,7 +421,7 @@ impl QuantickApp {
                     chart.height() * DEMO_DRAFT_POINTER_OFFSET.y,
                 )
         };
-        pane.parked_hand = Some(pane::ParkedHand {
+        pane.gestures.parked_hand = Some(pane::ParkedHand {
             position: parked,
             constrain: if constrain {
                 drawings::Constrain::Level
@@ -624,7 +627,7 @@ impl QuantickApp {
                 // stages the mark itself rather than waiting for a market
                 // that may not oblige before the shutter.
                 let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
-                if let Some(instance) = pane.strategies.for_drawing_mut(drawing_id) {
+                if let Some(instance) = pane.strategies.anchors.for_drawing_mut(drawing_id) {
                     instance.mark = crate::strategy_anchors::AlarmMark::Preview;
                 }
                 // Placing a drawing selects it, and a selected drawing raises
@@ -999,7 +1002,10 @@ impl QuantickApp {
         // Half the bars, same trades — the plainest re-cut there is. Two
         // settle frames because a spec change waits for the selector to hold
         // still for one (`Tab::apply_spec_change`).
-        pane.tick_n = pane.tick_n.saturating_mul(2).max(2);
+        if let crate::state::BarSpec::Tick(n) = pane.spec.retained_mut(crate::state::BarKind::Tick)
+        {
+            *n = n.saturating_mul(2).max(2);
+        }
         self.active_tab_mut().apply_spec_changes();
         self.active_tab_mut().apply_spec_changes();
     }

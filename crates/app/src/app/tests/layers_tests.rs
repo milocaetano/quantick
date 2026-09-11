@@ -213,7 +213,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     let (mut app, _commands) = app_with_history(120);
     // The state a shipped default leaves behind: the ladder on, before the
     // second pane exists at all.
-    app.active_tab_mut().flow_pane.footprint_visible = true;
+    app.active_tab_mut().flow_pane.footprint.visible = true;
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     // One frame builds the time pane; that is the frame under test.
     run_frame(&mut app, &ctx);
@@ -222,7 +222,7 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
         .time_pane()
         .expect("the split is what this proof is about");
     assert!(
-        time.footprint_visible,
+        time.footprint.visible,
         "the time pane opened without the ladder the flow pane beside it is drawing"
     );
 }
@@ -790,7 +790,7 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
         "the strip is a flow layer and claims no pixels here"
     );
     assert!(
-        time.last_lane_divider_x.is_none(),
+        time.frame.lane_divider_x.is_none(),
         "and there is no live lane to divide"
     );
     // The toggles still reached the flow pane, which is what owns them.
@@ -815,6 +815,19 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
 fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = history_app(&ctx);
+
+    // Fixture frames do not await the book worker's tape-price grid.
+    // Settle that input before hiding the footprint and testing propagation.
+    app.active_tab_mut().tape_mut().flush_for_test();
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab()
+            .pane(PaneSide::Flow)
+            .state
+            .footprint_group(),
+        Decimal::new(1, 1),
+        "the fixture's ten-cent tape grid is published before the scenario"
+    );
 
     // The bucket the flow pane's tape publishes for this market. That is
     // the one answer; the question is whether the other pane reaches it.

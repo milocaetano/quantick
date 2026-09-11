@@ -107,7 +107,9 @@ impl Tab {
             // the focused one, like every bar control; the change is picked
             // up a frame later by the same spec sync a toolbar click goes
             // through.
-            DealRecordingAction::ShowAsTrades => self.focused_pane_mut().kind = BarKind::Trades,
+            DealRecordingAction::ShowAsTrades => {
+                self.focused_pane_mut().spec.kind = BarKind::Trades;
+            }
             DealRecordingAction::OpenFolder => {
                 crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
             }
@@ -157,7 +159,7 @@ impl Tab {
         let pane = &self.flow_pane;
         deal_recording_ui::chip_for(
             &view,
-            pane.kind,
+            pane.spec.kind,
             pane.state.deal_samples().last().is_some(),
             pane.state.uncounted_trades(),
         )

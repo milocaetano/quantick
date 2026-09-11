@@ -233,7 +233,7 @@ fn set(
         // nothing. It reaches every tab's recorder, this one included, so
         // the tab is let go of and taken again.
         let _ = tab;
-        app.set_record_deals_default(on);
+        crate::app::deal_recording_wiring::set_default(app, on);
     }
     let (tab, _config) = app
         .control_tab_with_config(index)

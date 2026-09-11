@@ -97,7 +97,10 @@ pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[
 /// checks the two agree: a slice registered under the wrong path, or a file
 /// that reads a `QUANTICK_*` without registering a slice at all, is a finding.
 pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
-    ("crates/app/src/app.rs", crate::app::HOOKS),
+    (
+        "crates/app/src/app/launch_hooks.rs",
+        crate::app::launch_hooks::HOOKS,
+    ),
     (
         "crates/app/src/bubble_presets.rs",
         crate::bubble_presets::HOOKS,

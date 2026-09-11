@@ -29,6 +29,25 @@ use super::QuantickApp;
 /// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
 pub(super) const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 
+/// Where a signal alarm is played, and why the last one was not.
+///
+/// Owned by this module, which owns the alert plumbing itself. The two
+/// travel together because a sink that refused is only ever reported
+/// through the failure beside it: an alarm the trader never heard is
+/// never assumed heard.
+pub(super) struct AlertState {
+    /// Where signal alarms are played. The shipped sink is the platform's
+    /// own sounds; a test swaps in a recorder, which is how "the alarm
+    /// sounded, once, and it was the sound the preset named" is asserted
+    /// without a build machine making noise.
+    pub(super) alerts: Box<dyn crate::audio::AlertSink>,
+
+    /// The last reason a sound could not be played, shown once in the
+    /// dialog. A build with no audio backend, or a platform that refused,
+    /// is reported: an alarm the trader never heard is never assumed heard.
+    pub(super) alert_failure: Option<String>,
+}
+
 impl QuantickApp {
     /// Carry out what the replay interface asked for.
     /// Whether the action reached its destination. Only a transport control
@@ -80,15 +99,15 @@ impl QuantickApp {
         // The axis's menu lives on the gutter, off the canvas entirely — the
         // draw publishes that band the same way it publishes the divider.
         if pane == ContextMenuPane::Axis {
-            return Some(flow.last_price_gutter?.center());
+            return Some(flow.frame.price_gutter?.center());
         }
         // The time axis, likewise off the canvas — and its own published band,
         // because the segment past the lane divider is the tape's.
         if pane == ContextMenuPane::Time {
-            return Some(flow.last_time_strip?.center());
+            return Some(flow.frame.time_strip?.center());
         }
-        let rect = flow.last_chart_rect?;
-        let divider = flow.last_lane_divider_x;
+        let rect = flow.frame.chart_rect?;
+        let divider = flow.frame.lane_divider_x;
         let x = match (pane, divider) {
             (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
             (ContextMenuPane::Tape, None) => return None,
@@ -112,7 +131,7 @@ impl QuantickApp {
     pub(super) fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
         let fraction = self.harness.pointer()?;
         let flow = &self.active_tab().flow_pane;
-        let candles = flow.drawing_area(flow.last_chart_rect?);
+        let candles = flow.drawing_area(flow.frame.chart_rect?);
         Some(egui::pos2(
             candles.left() + fraction.x * candles.width(),
             candles.top() + fraction.y * candles.height(),
@@ -380,7 +399,7 @@ impl QuantickApp {
         if distinct.is_empty() {
             return;
         }
-        let outcome = self.alerts.play(&distinct);
+        let outcome = self.audio.alerts.play(&distinct);
         self.report_alert_attempt(outcome);
     }
 
@@ -394,10 +413,10 @@ impl QuantickApp {
     /// one transient refusal does not leave a permanent red line behind it.
     pub(super) fn report_alert_attempt(&mut self, outcome: Result<(), &'static str>) {
         match outcome {
-            Ok(()) => self.alert_failure = None,
+            Ok(()) => self.audio.alert_failure = None,
             Err(reason) => {
-                let first = self.alert_failure.as_deref() != Some(reason);
-                self.alert_failure = Some(reason.to_owned());
+                let first = self.audio.alert_failure.as_deref() != Some(reason);
+                self.audio.alert_failure = Some(reason.to_owned());
                 if first {
                     self.show_agent_toast(format!("no alarm sound was played: {reason}"));
                 }
@@ -470,6 +489,7 @@ impl QuantickApp {
             .active_tab()
             .pane(side)
             .strategies
+            .anchors
             .for_drawing(duplicated.source)
             .filter(|instance| {
                 matches!(

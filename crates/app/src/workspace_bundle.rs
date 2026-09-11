@@ -193,6 +193,20 @@ pub(crate) fn apply<'a>(
     stores: &'a [CockpitStore],
     path_of: StorePath<'_>,
 ) -> Result<Vec<&'a str>, String> {
+    apply_with_rename(bundle, stores, path_of, |temp, live| {
+        std::fs::rename(temp, live)
+    })
+}
+
+/// Keep validation, staging and installation together so failure fixtures
+/// exercise the same import as the app. Only the final rename is injectable;
+/// the live closure is statically dispatched and uses the real filesystem.
+fn apply_with_rename<'a>(
+    bundle: &Bundle,
+    stores: &'a [CockpitStore],
+    path_of: StorePath<'_>,
+    mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
+) -> Result<Vec<&'a str>, String> {
     let stores = check(bundle, stores)?;
     let mut staged: Vec<(PathBuf, PathBuf, &CockpitStore)> = Vec::with_capacity(stores.len());
     let cleanup = |staged: &[(PathBuf, PathBuf, &CockpitStore)]| {
@@ -222,7 +236,7 @@ pub(crate) fn apply<'a>(
     let total = staged.len();
     let mut written = Vec::with_capacity(total);
     for (temp, live, store) in staged {
-        if let Err(error) = std::fs::rename(&temp, &live) {
+        if let Err(error) = rename(&temp, &live) {
             let _ = std::fs::remove_file(&temp);
             return Err(format!(
                 "replaced {} of {total} settings groups, then {} failed: {error}. Open the file \
@@ -401,6 +415,9 @@ pub(crate) fn file_name_for(name: &str) -> String {
     };
     format!("{stem}.{BUNDLE_EXTENSION}")
 }
+
+#[cfg(test)]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {

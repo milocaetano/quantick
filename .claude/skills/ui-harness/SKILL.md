@@ -43,14 +43,13 @@ the `declare_hooks!` line beside each read, fused with the prose in
 but not read, fails `cargo test -p quantick-guards`. Edit the prose, never the
 registry, then `cargo run -p quantick-app -- --dump-hook-registry` over it.
 
-**No one file owns the hooks**, and this section used to say `harness.rs` did
-— sending anyone after the other hundred to the wrong file. It holds 24 of the
-126; the rest are declared where they are read, across 37 files (50 in
-`app.rs`, 8 in `paper_trading.rs`, 6 in `surfaces/drawing_chrome/mod.rs`). The
-registry's *Declared in* column is the answer.
+**No one file owns the hooks.** `harness.rs` holds 24 of the 126; the rest are declared where they are read, across 37 files (50 in
+`app/launch_hooks.rs`, 8 in `paper_trading.rs`, 6 in
+`surfaces/drawing_chrome/mod.rs`). The registry's *Declared in* column is the
+answer. **Every launch hook is applied in `crates/app/src/app/launch_hooks.rs`,
+in the order its doc comment fixes** — that module is the application point.
 
-**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`. A
-misspelt hook used to present as a surface that never opened.
+**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`.
 
 ## Launch and capture workflow
 
@@ -211,28 +210,24 @@ neither of them is the trunk:
   lives in **`crates/app/src/harness.rs`**. One field on `Harness`, one line in
   `Harness::from_env`, one accessor named for what the hook is *for*. The
   trunk's own line is then the single call that asks for it. That module's
-  header carries the argument; the short version is that twenty-three of
-  `QuantickApp`'s ninety-eight fields used to be this wiring, so every module
-  that touched the trunk saw them.
+  header carries the argument.
 - **A hook a floating surface owns** — its hook lives **in that surface's own
   module** under `crates/app/src/surfaces/`, as an `apply_env_hook` the
-  registry calls. Not another line in `app.rs`. That line is the fifth
-  hand-written edit per feature the `Surface` port removes — the other four
-  being the field, the initialiser, the draw call and the hotkey — and
+  registry calls. Not another line in the window's own file;
   `crates/guards/src/size.rs` fails a branch that adds it to the trunk instead.
 
 So: **a surface's hook goes beside the surface; every other hook goes in
-`harness.rs`.** If you are about to add a `std::env::var` call to `app.rs`, the
-answer is almost always one of those two files instead.
+`harness.rs`.** If you are about to add a `std::env::var` call to the window,
+the answer is almost always one of those two files instead.
 
-*Almost*: about fifty reads stay in `app.rs`, and are not debt in the same
-sense — see `docs/agentic-development.md`. A hook that keeps a field and
-needs nothing but its own parsed value belongs in the owner.
+*Almost*: about fifty launch reads stay in `app/launch_hooks.rs`, applied to
+the built window and not debt in the same sense — see
+`docs/agentic-development.md`. A hook that keeps a field and needs nothing but
+its own parsed value belongs in the owner.
 
 **Prefer a defaulting field to a new variant.** A hook that already exists and
 needs a second dimension — "the same demo, but shared across the split", "the
 same profile, but left selected" — becomes a field on that hook's struct
 (`DrawingsDemo`, `FrvpDemo`, `DrawingDraft`), defaulting to "did not ask". It
 does not become a new arm of an enum, which reopens every call site that
-matches on it. `ChartLayer`'s 21 variants across 264 call sites are what that
-rule is written against.
+matches on it.

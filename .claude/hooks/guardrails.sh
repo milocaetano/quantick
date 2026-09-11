@@ -9,16 +9,28 @@
 #   worktree-guard    PreToolUse on Edit|Write|NotebookEdit. Denies a write
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
-#   pr-gate           PreToolUse on Bash. Denies `gh pr create`
-#                     until BOTH reviews have been recorded for the exact
-#                     commit being shipped: arch-review ("no branch ships
-#                     un-reviewed") and delivery-review ("no branch ships
-#                     ungraded against what was asked for"). A mission
-#                     that declared the `small` tier is exempt from the
-#                     second one, but only while the branch stays small
-#                     enough to have earned the word: `declared_tier` reads
-#                     the declaration, `changed_lines` and
-#                     `SMALL_TIER_MAX_CHANGED_LINES` are the bound on it.
+#   pr-gate           PreToolUse on Bash. Denies `gh pr create`, `gh pr
+#                     ready` and `gh pr merge` until BOTH reviews have been
+#                     recorded for the exact commit being shipped:
+#                     arch-review ("no branch ships un-reviewed") and
+#                     delivery-review ("no branch ships ungraded against
+#                     what was asked for"). A mission that declared the
+#                     `small` tier is exempt from the second one, but only
+#                     while the branch stays small enough to have earned
+#                     the word: `declared_tier` reads the declaration,
+#                     `changed_lines` and `SMALL_TIER_MAX_CHANGED_LINES`
+#                     are the bound on it.
+#
+#                     Two things are new with the two-phase chain. A
+#                     *draft* `gh pr create` passes ungated: a draft PR is
+#                     where phase one ends and where `ai-review` posts its
+#                     findings, so gating it would demand the reviews
+#                     before the findings that inform them. And `gh pr
+#                     ready` and `gh pr merge` additionally want zero open
+#                     `ai-review` threads and recorded AI-review completion.
+#                     Threads are counted by the sibling script
+#                     that posts them — so the reviewer and the gate share
+#                     one definition of an open finding.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -64,6 +76,9 @@ MAIN_BRANCH="main"
 # passed one has not passed both.
 ARCH_MARKER_NAME="arch-review-ok"
 DELIVERY_MARKER_NAME="delivery-review-ok"
+# Completion is independent of finding disposition. This third review record
+# prefixes the shared key with its branch, so branch reuse cannot inherit it.
+AI_MARKER_NAME="ai-review-complete"
 
 # Paths whose churn is mission bookkeeping rather than the change under review.
 # The goal file and its archive are written by `mission` itself, and the archive
@@ -188,6 +203,19 @@ context() {
     exit 0
 }
 
+# Neither a denial nor a silent pass: the gate could not determine something it
+# is supposed to check, and says so where a human will read it.
+#
+# The file's fail-open rule is kept — `ask` blocks nothing a human does not
+# block. What it refuses to do is fail open *silently*. An unreachable GitHub
+# is the difference between "this branch has no open findings" and "nobody
+# knows whether it has any", and a gate that prints the same nothing for both
+# has taught its reader that silence means clean.
+ask() {
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":%s}}\n' "$1"
+    exit 0
+}
+
 # True when the command actually runs `$2` as a statement, rather than merely
 # mentioning it. A commit message body reaches the hook inside the command
 # string, so a free substring match blocks `git commit -F -` whenever the
@@ -303,6 +331,7 @@ declared_tier() {
 # not. Numstat is `added<TAB>deleted<TAB>path` in every locale, which is the
 # whole reason it is what gets read here.
 changed_lines() {
+    lines_base=$(review_base "$1") || return 1
     # `-- .` then the exclusions: the goal file and its archive are the
     # mission's own bookkeeping, and `mission` requires that archive as the
     # branch's last commit. Counting it lets a branch be pushed out of a tier it
@@ -311,7 +340,7 @@ changed_lines() {
     # irreversible. The ceiling proxies how many asks a branch carries; a goal
     # file carries none, it *describes* them.
     # shellcheck disable=SC2086
-    lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "origin/$MAIN_BRANCH...HEAD" -- . $SIZE_EXCLUDES 2>/dev/null) || return 1
+    lines_raw=$(LC_ALL=C git -C "$1" diff --numstat "$lines_base...HEAD" -- . $SIZE_EXCLUDES 2>/dev/null) || return 1
 
     lines_total=0
     for lines_n in $(printf '%s\n' "$lines_raw" | cut -f1,2); do
@@ -350,7 +379,21 @@ changed_lines() {
 # The last row is the point. A sha-keyed marker survives a rebase that lands the
 # branch on top of someone else's edits to the very files it changes, which is
 # the case most deserving of a second look. A diff-keyed one does not.
+review_base() {
+    base_record=$(marker_path "$1" mission-base) || return 1
+    if [ -e "$base_record" ]; then
+        sh "$(dirname "$0")/campaign_context.sh" base "$1"
+    else
+        printf 'origin/%s\n' "$MAIN_BRANCH"
+    fi
+}
+
 review_key() {
+    key_record=$(marker_path "$1" mission-base) || return 1
+    if [ -e "$key_record" ]; then
+        sh "$(dirname "$0")/campaign_context.sh" key "$1"
+        return $?
+    fi
     # The preconditions are checked first, and the diff is then piped *raw*.
     # Capturing it in $( ) first would strip the trailing newline, so this
     # function and the recording command the denial prints - a plain
@@ -366,6 +409,8 @@ review_key() {
 # being shipped. `$4` states the rule in CLAUDE.md's own words, `$5` says how
 # to satisfy it, and the recording line is derived from the marker name — so
 # the instruction and the file the gate reads cannot drift apart.
+# Optional `$6` requires a branch-bound, single-line `<branch> <key>` record;
+# the existing key validation/comparison below remains the sole comparator.
 #
 # The marker is meant to hold a sha and nothing enforces that: a mistyped
 # redirect, an editor appending a line, a half-written file. Its contents are
@@ -379,6 +424,7 @@ require_marker() {
     require_name=$3
     require_rule=$4
     require_how=$5
+    require_branch=${6:-}
 
     require_file=$(marker_path "$require_dir" "$require_name") || exit 0
     # `git -C "$require_dir"`, never `git -C .`. The remedy is pasted into a
@@ -389,6 +435,13 @@ require_marker() {
     # Every doc on this branch spells the command with the `cd`; the message
     # must not be the one place that drops it.
     require_record="git -C \\\"$require_dir\\\" diff origin/$MAIN_BRANCH...HEAD | git hash-object --stdin > \\\"$require_file\\\""
+    if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
+        require_record="sh .claude/hooks/campaign_context.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
+    fi
+    if [ -n "$require_branch" ]; then
+        # Do not offer a bare restamp as the remedy for a review that never ran.
+        require_record="Follow the ai-review skill's completion procedure after publishing its PR report and checking review identity stability."
+    fi
 
     if [ ! -f "$require_file" ]; then
         deny "\"CLAUDE.md: $require_rule. \`$require_name\` has not been recorded for this change. $require_how, then record it:\n\n  $require_record\""
@@ -401,6 +454,18 @@ require_marker() {
     require_reviewed=$(head -n 1 "$require_file" 2>/dev/null |
         tr -d '\r' |
         sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    if [ -n "$require_branch" ]; then
+        # Read the entire record: head alone would ignore an appended second
+        # record. Branch text never reaches the denial's JSON interpolation.
+        require_reviewed=$(cat "$require_file" 2>/dev/null)
+        if [ "$(wc -l < "$require_file" | tr -d ' ')" != 1 ]; then
+            require_reviewed=""
+        fi
+        case "$require_reviewed" in
+            "$require_branch "*) require_reviewed=${require_reviewed#"$require_branch "} ;;
+            *) require_reviewed="" ;;
+        esac
+    fi
     case "$require_reviewed" in
         '' | *[!0-9a-fA-F]*) require_reviewed="(not a commit id)" ;;
         *)
@@ -459,15 +524,163 @@ worktree_guard() {
 
 # --- pr-gate ----------------------------------------------------------------
 
+# The statement inside `$1` that runs `$2`, or nothing. Split exactly as
+# `runs_command` splits, because a flag the gate reads must come from the
+# statement it matched rather than from anywhere else on the line: a `--draft`
+# in a neighbouring `echo` is not a draft PR.
+gh_statement() {
+    printf '%s' "$1" |
+        sed 's/&&/\n/g; s/||/\n/g; s/;/\n/g' |
+        grep -E "^[[:space:]]*$2([[:space:]]|$)" |
+        head -n 1
+}
+
+# The statement with its quoted spans blanked out, so a flag can be read from
+# what the command *does* rather than from what a title or a body says.
+#
+# This exists because the first version of the draft exemption globbed the
+# whole statement, and `gh pr create --title "Make --draft PRs ungated"` then
+# opened a real, un-reviewed PR. The file already carries that lesson one
+# function up: `runs_command` splits into statements precisely so a commit
+# message naming a gated command cannot trip the gate. Reading a *flag* needs
+# the same care, and more of it — there the mistake blocks something that
+# should pass, here it passes something that should be blocked.
+#
+# A title with a space in it has to be quoted, so blanking quoted spans covers
+# the reachable spellings. It is deliberately not a shell parser: what it
+# cannot understand it leaves in place, and anything left in place is read as
+# an argument, which errs towards gating.
+unquoted_arguments() {
+    printf '%s' "$1" | sed 's/"[^"]*"/ /g; s/'"'"'[^'"'"']*'"'"'/ /g'
+}
+
+# True when the statement asks for a draft PR, as a whole argument word.
+#
+# Every uncertainty here resolves to *not a draft*, because the two mistakes
+# are not the same size: reading a draft as a real PR costs a permission
+# prompt, while reading a real PR as a draft opens it with no review at all.
+draft_flag() {
+    # An odd count of either quote character means a span this cannot pair
+    # off, so `unquoted_arguments` cannot be trusted to have blanked the right
+    # text. Refuse rather than guess.
+    for draft_quote in '"' "'"; do
+        draft_quotes=$(printf '%s' "$1" | tr -cd "$draft_quote" | wc -c)
+        [ $((draft_quotes % 2)) -eq 0 ] || return 1
+    done
+
+    draft_words=$(unquoted_arguments "$1")
+
+    # `--draft=<value>` is a draft only when gh would read the value as true.
+    # gh parses it with Go's ParseBool, whose true spellings are exactly these
+    # six — so `--draft=f`, `--draft=F` and `--draft=False` are all *false*,
+    # and a gate that reads them as a draft opens a real, un-reviewed PR. Only
+    # `false` and `0` were excluded before, which left the other four spellings
+    # of the same instruction wide open.
+    case " $draft_words " in
+        *' --draft=1 '* | *' --draft=t '* | *' --draft=T '* | \
+        *' --draft=true '* | *' --draft=TRUE '* | *' --draft=True '*) return 0 ;;
+        # Any other explicit value: not a draft, whatever it says.
+        *' --draft='*) return 1 ;;
+    esac
+
+    case " $draft_words " in
+        *' --draft '* | *' -d '*) return 0 ;;
+    esac
+    return 1
+}
+
+# The PR number the statement names, or nothing.
+#
+# A *whole word* of digits, never a digit run pulled out of one: splitting on
+# every non-digit read `--body-file notes2.md 42` as PR 2. And exactly one such
+# word, or none — two bare numbers mean the operand cannot be told from a
+# flag's value, and a gate that counts the wrong PR's threads is worse than one
+# that counts none, because it reports a clean number for a branch nobody
+# reviewed. The caller turns "none" into a question rather than a pass.
+pr_number() {
+    number_words=$(unquoted_arguments "$1" | tr -s ' \t' '\n\n' | grep -E '^[0-9]+$')
+    [ "$(printf '%s\n' "$number_words" | grep -c '[0-9]')" -eq 1 ] || return 0
+    printf '%s' "$number_words"
+}
+
+# How many ai-review threads are open on PR `$2`, printed on stdout. Empty when
+# the count could not be taken, which is not the same answer as zero and is why
+# the caller tells the two apart.
+#
+# The sibling script is the single owner of what an ai-review thread is: it
+# writes the marker when it posts one and reads the same marker when it counts.
+# A second definition here would drift, and the first symptom would be a merge
+# gate that either ignores real findings or blocks on a human's question.
+# Two failures, told apart by exit status, because their remedies are nothing
+# alike: 3 means the counting script is not beside this one, 1 means it ran and
+# could not answer. Reporting the second for the first sent an agent to check
+# its GitHub authentication over a missing file.
+#
+# `$3` is the worktree being shipped, and the count runs there. The script asks
+# `gh repo view` which repository it is in, and the hook's own cwd is the
+# session's — the main checkout, or wherever the agent last stood. Every other
+# decision in this gate reads the effective worktree; this one has to as well,
+# or a session sitting in another clone counts that repository's PR #42.
+open_ai_review_threads() {
+    # Resolved to an absolute path *before* the `cd` below, and by the same
+    # step that checks it exists. A relative `$1` otherwise passed the `-f`
+    # test here and then failed to be found from inside the worktree, which
+    # reported "gh could not answer" for a file that was simply somewhere else
+    # — the exact confusion these two exit statuses exist to remove.
+    threads_dir=$(cd "$1" 2>/dev/null && pwd) || return 3
+    threads_script="$threads_dir/ai_review_threads.sh"
+    [ -f "$threads_script" ] || return 3
+    threads_count=$(cd "$3" && sh "$threads_script" count "$2" 2>/dev/null) || return 1
+    case "$threads_count" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$threads_count"
+}
+
 pr_gate() {
     command=$(json_string_field command)
-    runs_command "$command" "gh pr create" || exit 0
+
+    # Which of the three the command is, because they are gated differently:
+    # `create` opens the PR that carries the findings, while `ready` and
+    # `merge` are the two ways work leaves the branch.
+    #
+    # Tested most-restrictive first, and that order is the rule rather than a
+    # preference. A line may run more than one of them — `gh pr create --draft
+    # && gh pr ready` is the natural way to end phase one and open phase two —
+    # and matching `create` first would hand that line the draft exemption and
+    # let the `gh pr ready` beside it through with no review at all.
+    if runs_command "$command" "gh pr merge"; then
+        gate_action=merge
+    elif runs_command "$command" "gh pr ready"; then
+        gate_action=ready
+    elif runs_command "$command" "gh pr create"; then
+        gate_action=create
+    else
+        exit 0
+    fi
+
+    # Phase one ends at a draft PR, and a draft ships nothing: it cannot be
+    # merged, and `gh pr ready` below is where the reviews are wanted. Gating
+    # it would order the chain backwards — the reviews would have to run before
+    # `ai-review` could post its findings onto a PR that does not exist yet.
+    #
+    # `--draft=false` is spelled out rather than left to the match. It is the
+    # one spelling that contains the flag and means the opposite of it, and a
+    # gate that reads it as a draft opens an ungated real PR.
+    if [ "$gate_action" = create ]; then
+        gate_statement=$(gh_statement "$command" "gh pr create")
+        if draft_flag "$gate_statement"; then
+            exit 0
+        fi
+    fi
 
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
+    gate_base=$(review_base "$dir") || deny '"Campaign review base is invalid or unavailable; reconcile the branch-bound mission-base record."'
     key=$(review_key "$dir")
     if [ -z "$key" ]; then
+        [ "$gate_base" = "origin/$MAIN_BRANCH" ] || deny '"Campaign review identity cannot be computed; no fallback approval is available."'
         # The branch's own change cannot be identified - no origin/<main>, an
         # unrelated history. Fall back to the commit, which is what this gate
         # keyed on before diffs. That is strictly stricter than failing open,
@@ -486,7 +699,7 @@ pr_gate() {
     # to buy its way out of, and a small diff is not the same as a safe one.
     require_marker "$dir" "$key" "$ARCH_MARKER_NAME" \
         "no branch ships un-reviewed" \
-        "Run the arch-review skill over \`git diff origin/$MAIN_BRANCH...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
+        "Run the arch-review skill over \`git diff $gate_base...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
 
     delivery_how="Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
 
@@ -496,23 +709,86 @@ pr_gate() {
     # has merely forgotten the review must never double as an advertisement for
     # the way around it. Only a branch that already asked for the cheap path
     # hears anything at all about the bound on it.
+    small_exempt=0
     if [ "$(declared_tier "$dir")" = "small" ]; then
         small_size=$(changed_lines "$dir")
 
         if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            exit 0
+            small_exempt=1
         fi
 
         if [ -z "$small_size" ]; then
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against origin/$MAIN_BRANCH can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against $gate_base can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
         else
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against origin/$MAIN_BRANCH; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
+            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against $gate_base; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
         fi
     fi
 
-    require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
+    if [ "$small_exempt" -eq 0 ]; then
+      require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
         "no branch ships ungraded against what was asked for" \
         "$delivery_how"
+    fi
+
+    # Both reviews are recorded. What is left is the branch's open findings,
+    # and only the two commands that actually ship work are held on them: a PR
+    # may be created, draft or not, while findings are still open — the PR is
+    # where they live.
+    [ "$gate_action" = create ] && exit 0
+
+    # Every tier owes a completed AI review, even when there were no findings.
+    # Keep this separate from the unchanged unresolved-thread gate below.
+    gate_branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
+        deny '"ai-review-complete requires a named task branch; detached review evidence cannot be inherited."'
+    require_marker "$dir" "$key" "$AI_MARKER_NAME" \
+        "AI review must complete for the current task branch and change" \
+        "Run the ai-review skill against the PR; publish its report and findings and verify the reviewed worktree, branch, HEAD, status, base and key stayed stable" \
+        "$gate_branch"
+
+    gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
+    if [ -z "$gate_pr" ]; then
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
+    fi
+
+    gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
+    gate_status=$?
+    if [ "$gate_status" -eq 3 ]; then
+        # The hook runs from the main checkout, always: `$0` is the path
+        # `.claude/settings.json` registered. So a branch that adds or fixes
+        # the counting script is judged by whatever `main` holds, and before
+        # that script has merged there is nothing beside this one to ask.
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. \`ai_review_threads.sh\` is not beside the hook in $(dirname "$0") — this hook runs from the main checkout, so a branch that has not merged the script yet cannot be counted from here. This is not a count of zero. Read the PR's unresolved threads before continuing.\""
+    fi
+    if [ -z "$gate_open" ]; then
+        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted — \`gh\` missing, unauthenticated, unreachable, or more threads on the PR than one page holds — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
+    fi
+
+    if [ "$gate_open" -gt 0 ]; then
+        deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
+    fi
+
+    if [ "$gate_action" = merge ]; then
+        [ "$gate_base" != "origin/$MAIN_BRANCH" ] || deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+        # Only this explicit, head-pinned form is supported. This also rejects
+        # --admin, --auto, alternate repositories and merge-queue shortcuts.
+        gate_merge=$(gh_statement "$command" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        gate_whole=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        [ "$gate_merge" = "$gate_whole" ] || deny '"Run one campaign merge command from the task worktree; compound commands cannot share an authorization check."'
+        gate_head=$(git -C "$dir" rev-parse HEAD)
+        case "$gate_merge" in
+            "gh pr merge $gate_pr --merge --match-head-commit $gate_head"|"gh pr merge $gate_pr --squash --match-head-commit $gate_head") ;;
+            *) deny '"Campaign merges require an explicit PR, --merge or --squash, and --match-head-commit with the reviewed HEAD; no auto-merge, admin override or alternate repository."' ;;
+        esac
+    fi
+    if [ "$gate_base" != "origin/$MAIN_BRANCH" ]; then
+        if [ "$gate_action" = ready ]; then
+            gate_ready=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            [ "$gate_ready" = "gh pr ready $gate_pr" ] || deny '"Run one explicit campaign ready command in the task worktree, without repository overrides or compound commands."'
+        fi
+        if ! sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$gate_pr" "$gate_action" >/dev/null 2>&1; then
+            deny '"Campaign PR identity, authorization or CI could not be verified. Reconcile its exact base/head, persisted merge grant and green checks before continuing."'
+        fi
+    fi
 
     exit 0
 }
@@ -526,10 +802,11 @@ commit_reminder() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
+    reminder_base=$(review_base "$dir") || exit 0
     branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
     [ "$branch" != "$MAIN_BRANCH" ] || exit 0
 
-    ahead=$(git -C "$dir" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null) || exit 0
+    ahead=$(git -C "$dir" rev-list --count "$reminder_base..HEAD" 2>/dev/null) || exit 0
     [ "${ahead:-0}" -gt 0 ] || exit 0
 
     # A `small` mission is reminded of the gate it actually faces. Repeating
@@ -553,15 +830,15 @@ commit_reminder() {
         # `[ "" -le 300 ]`, a POSIX `[` error, and emit three contradictory
         # reminders on separate lines, which is not even parseable JSON.
         if [ -z "$small_size" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, but its size against origin/$MAIN_BRANCH cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. origin/$MAIN_BRANCH exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, but its size against $reminder_base cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. $reminder_base exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
         elif [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact change being shipped, which any later edit stales, though a rebase or an amend does not. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact change being shipped, which any later edit stales, though a rebase or an amend does not. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
         else
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact change being shipped. Raise the tier in the goal file and run both reviews.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact change being shipped. Raise the tier in the goal file and run both reviews.\""
         fi
     fi
 
-    context "\"Branch \`$branch\` is $ahead commit(s) ahead of origin/$MAIN_BRANCH. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
+    context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
 }
 
 # PostToolUse on Edit|Write. Runs the repository guards over the file that was

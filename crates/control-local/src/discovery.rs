@@ -1030,6 +1030,9 @@ impl fmt::Display for DiscoveryError {
 
 impl std::error::Error for DiscoveryError {}
 
+#[cfg(all(test, windows))]
+mod windows_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

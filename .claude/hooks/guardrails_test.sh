@@ -20,6 +20,14 @@ set -u
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 GUARDRAILS="$script_dir/guardrails.sh"
 
+# Which copy of the script `run` invokes. The real one, except in the block
+# that has to control what `ai_review_threads.sh` answers: the gate finds that
+# sibling beside itself, so the only way to stub it without teaching the script
+# an env override -- a switch whose whole purpose would be to turn the gate off
+# -- is to run a copy from a directory the fixture owns. The copy is `cp`ed from
+# the real file, so nothing here tests a script that is not the shipped one.
+GUARDRAILS_UNDER_TEST="$GUARDRAILS"
+
 passed=0
 failed=0
 
@@ -206,12 +214,16 @@ run() {
     # emitting a well-formed decision is a defect the suite should see.
     # The fixture silences git's own CRLF warnings above so this stays
     # signal rather than noise.
-    out=$(printf '%s' "$payload" | sh "$GUARDRAILS" "$mode" 2>&1)
+    out=$(printf '%s' "$payload" | sh "$GUARDRAILS_UNDER_TEST" "$mode" 2>&1)
     status=$?
 
     actual=silent
     case "$out" in
         *'"permissionDecision":"deny"'*) actual=deny ;;
+        # Neither yes nor no: the gate could not determine something and said
+        # so. Distinguished from `silent` on purpose -- the whole point of the
+        # decision is that a count nobody could take does not read as zero.
+        *'"permissionDecision":"ask"'*) actual=ask ;;
         *'"additionalContext"'*) actual=context ;;
     esac
 
@@ -302,7 +314,7 @@ set_tier() {
 }
 
 json_path() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$1"; }
-json_bash() { printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"%s"}}' "$1" "$2"; }
+json_bash() { printf '{"tool_name":"%s","cwd":"%s","tool_input":{"command":"%s"}}' "${3:-Bash}" "$1" "$2"; }
 json_patch() {
     printf '%s%s%s%s%s' \
         '{"tool_name":"apply_patch","cwd":"' "$1" \
@@ -479,6 +491,288 @@ set_marker arch-review-ok ""
 set_marker delivery-review-ok ""
 run "the script judges the payload, not the tool that produced it" \
     pr-gate "$(printf '{"tool_name":"PowerShell","cwd":"%s","tool_input":{"command":"gh pr create --fill"}}' "$root/wt")" deny
+
+# --- pr-gate: the draft PR and the merge gate -------------------------------
+#
+# Phase one ends at a draft PR and phase two ends at a merge, so the gate moved
+# with the work: a draft opens ungated, and `gh pr ready` and `gh pr merge`
+# want both markers *and* zero open ai-review threads.
+#
+# These cases run a copy of the script from a fixture directory, because the
+# gate resolves `ai_review_threads.sh` beside itself and the count has to be
+# controlled without reaching GitHub. `threads` in that directory is what the
+# stub answers: a number, or `unavailable` for the case where no count can be
+# taken at all.
+mkdir -p "$root/hooks"
+cp "$GUARDRAILS" "$root/hooks/guardrails.sh"
+cat > "$root/hooks/ai_review_threads.sh" <<'STUB'
+#!/bin/sh
+# Fixture stub for the real ai_review_threads.sh. Honours only the one
+# subcommand the gate calls, and refuses the rest loudly rather than answering
+# a question it was never asked.
+[ "${1:-}" = count ] || exit 64
+stub_answer=$(cat "$(dirname "$0")/threads" 2>/dev/null)
+case "$stub_answer" in
+    unavailable)
+        echo "the fixture says gh cannot answer" >&2
+        exit 2
+        ;;
+esac
+printf '%s\n' "$stub_answer"
+STUB
+
+set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
+
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+
+# A draft PR is where phase one ends and where the findings get posted, so it
+# opens with no marker at all. This is the case the whole two-phase split rests
+# on: gating it would require the reviews before the review that informs them.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+set_threads 0
+run "a draft PR opens with no marker recorded" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" silent
+
+run "the short spelling of draft is a draft too" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create -d --fill")" silent
+
+# The one spelling that contains the flag and means the opposite of it. Read as
+# a draft, it would open an ungated real PR.
+run "--draft=false is not a draft" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft=false --fill")" deny "arch-review-ok"
+
+# The flag is read from what the command *does*, never from what it says. The
+# first version globbed the whole statement, so this exact spelling opened a
+# real, un-reviewed PR -- and the PR that introduced the draft exemption is
+# itself the PR whose title is about `--draft`.
+run "a --draft inside a quoted title is not a draft flag" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"Make --draft PRs ungated\" --fill")" deny "arch-review-ok"
+
+run "a -d inside a quoted body is not a draft flag either" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --body \"pass -d to open a draft\" --fill")" deny "arch-review-ok"
+
+# `--draft=f` is what gh's own flag parser calls false, and so are `F`,
+# `False` and `FALSE`. Excluding only `false` and `0` left four spellings of
+# "not a draft" opening a real PR with no review.
+for draft_false in f F False FALSE 0 false; do
+    run "--draft=$draft_false opens a real PR and is gated" \
+        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_false --fill")" deny "arch-review-ok"
+done
+
+for draft_true in 1 t T true TRUE True; do
+    run "--draft=$draft_true is a draft" \
+        pr-gate "$(json_bash "$root/wt" "gh pr create --draft=$draft_true --fill")" silent
+done
+
+# A quote this cannot pair off means the blanking cannot be trusted, so the
+# exemption is refused rather than guessed at.
+run "an unbalanced quote is never a draft" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --title \"unclosed --draft --fill")" deny "arch-review-ok"
+
+# The flag has to come from the statement the gate matched. A `--draft`
+# anywhere else on the line is somebody else's argument.
+run "a draft flag in a neighbouring statement is not this PR's" \
+    pr-gate "$(json_bash "$root/wt" "echo --draft && gh pr create --fill")" deny "arch-review-ok"
+
+# Order matters: an unreviewed branch is told about the review it skipped, not
+# about threads. The markers are the older rule and the cheaper check.
+run "gh pr ready wants the reviews before it wants a thread count" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "arch-review-ok"
+
+run "gh pr merge wants the reviews too" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "arch-review-ok"
+
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+
+set_threads 0
+# AI completion is not inferred from zero findings. Pin each failure with all
+# preceding evidence current, through both hosts' shared hook entry point.
+for client in Bash exec_command; do
+    for tier in $tiers; do
+        set_tier "$root/wt" "$tier"
+        set_marker ai-review-complete ""
+        if [ "$tier" = small ]; then set_marker delivery-review-ok ""; fi
+        for action in ready merge; do
+            run "$client $tier $action requires AI completion with zero threads" \
+                pr-gate "$(json_bash "$root/wt" "gh pr $action 42" "$client")" deny "ai-review-complete"
+        done
+        set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+        run "$client $tier current clean AI completion allows ready" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
+        set_threads 1
+        run "$client $tier completed review with findings still denies ready" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'PR #42 has 1'
+        set_threads 0
+        set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    done
+    set_tier "$root/wt" ""
+    set_marker ai-review-complete "feat/x $stale_sha"
+    run "$client stale AI key denies ready" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    for malformed in "$(marker_key "$root/wt")" 'he said "hi"' \
+        "feat/x $(marker_key "$root/wt") extra" "feat/x $(marker_key "$root/wt") "; do
+        set_marker ai-review-complete "$malformed"
+        run "$client malformed AI record denies with safe JSON" \
+            pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+    done
+    : > "$wt_git_dir/ai-review-complete"
+    run "$client empty AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    printf 'feat/x %s\nextra' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
+    run "$client unterminated appended AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+    printf 'feat/x %s\n\n' "$(marker_key "$root/wt")" > "$wt_git_dir/ai-review-complete"
+    run "$client multiline AI record denies" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny '(not a commit id)'
+
+    set_marker ai-review-complete ""
+    set_marker_in "$big_git_dir" ai-review-complete "feat/x $(marker_key "$root/wt")"
+    run "$client another worktree cannot supply the identical AI record" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    ai_original_key=$(marker_key "$root/wt")
+    git -C "$root/wt" checkout -qb "feat/ai-$client"
+    if [ "$(marker_key "$root/wt")" = "$ai_original_key" ]; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL branch-only AI fixture changed the raw key\n'
+        failed=$((failed + 1))
+    fi
+    run "$client branch-only change invalidates AI completion" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    set_marker ai-review-complete "feat/ai-$client $ai_original_key"
+    git -C "$root/wt" commit -q --amend -m "same diff, $client reword"
+    run "$client same-branch reword preserves AI completion" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" silent
+    printf 'AI source change\n' >> "$root/wt/src/a.txt"
+    git -C "$root/wt" commit -qam 'change after AI review'
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    run "$client source change stales AI after other reviews refresh" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'ai-review-complete'
+    git -C "$root/wt" checkout -q feat/x
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    set_marker arch-review-ok ""
+    run "$client AI completion cannot replace architecture review" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'arch-review-ok'
+    set_marker delivery-review-ok ""
+    set_marker ai-review-complete ""
+    run "$client draft creation needs no review markers" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr create --draft --fill' "$client")" silent
+    set_marker arch-review-ok "$(marker_key "$root/wt")"
+    set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+    run "$client AI completion cannot replace delivery review" \
+        pr-gate "$(json_bash "$root/wt" 'gh pr ready 42' "$client")" deny 'delivery-review-ok'
+    set_marker delivery-review-ok "$(marker_key "$root/wt")"
+done
+
+run "all required reviews and no open thread makes the branch ready" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
+
+run "even reviewed main merges remain exclusively human" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
+
+set_threads 2
+run "gh pr ready is denied while an ai-review thread is open" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "PR #42 has 2"
+
+run "gh pr merge is denied while an ai-review thread is open" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "PR #42 has 2"
+
+# The denial has to name the way out, and the way out is the list of threads.
+run "the denial names the command that lists the open threads" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42")" deny "ai_review_threads.sh list 42"
+
+# A count nobody could take is not a count of zero, and the gate says which of
+# the two it is holding. It asks rather than denies: the file's rule is
+# fail-open, and a human can still answer for it.
+set_threads unavailable
+run "a count that cannot be taken asks rather than passing in silence" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "could not be counted"
+
+set_threads 0
+run "a command naming no PR asks rather than guessing which PR to count" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready")" ask "names no PR number"
+
+# Two bare numbers and the operand cannot be told from a flag's value. Guessing
+# would count another PR's threads and report a clean number for a branch
+# nobody reviewed, so the gate asks instead.
+run "two bare numbers are an ambiguous PR, not a guess" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 306 42 --squash")" ask "names no PR number"
+
+# The hook always runs from the main checkout, so a branch that has not merged
+# the counting script yet cannot be counted from there. That is a different
+# failure from `gh` refusing to answer, and it gets a different message: an
+# agent told to check its GitHub authentication over a missing file goes
+# looking in the wrong place.
+mkdir -p "$root/lonely"
+cp "$GUARDRAILS" "$root/lonely/guardrails.sh"
+GUARDRAILS_UNDER_TEST="$root/lonely/guardrails.sh"
+run "a missing counting script is named as such, not blamed on gh" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "is not beside the hook"
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+
+# `gh pr create` is never held on the thread count, draft or not: the PR is
+# where the findings live, so they cannot be a precondition for opening it.
+set_threads 9
+run "an open thread never blocks opening the PR that carries it" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+
+# A compound line runs two of the gated commands. The draft exemption belongs
+# to the `create` half only, and taking it for the whole line would let the
+# `gh pr ready` beside it ship with no review -- the natural spelling for
+# ending phase one and starting phase two, and the one that must not slip.
+set_marker arch-review-ok ""
+set_marker delivery-review-ok ""
+run "a draft create beside a ready is judged as the ready" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill && gh pr ready")" deny "arch-review-ok"
+
+# The PR number is a whole word. Reading a digit run out of a filename made
+# `--body-file notes2.md 42` count PR 2's threads, which reports a clean number
+# for a branch nobody reviewed -- worse than reporting no number at all.
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_threads 7
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+run "a digit inside a filename is not the PR number" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge --body-file notes2.md 42")" deny "PR #42 has 7"
+GUARDRAILS_UNDER_TEST="$GUARDRAILS"
+
+# --- ai_review_threads.sh: the contract the gate reads ----------------------
+#
+# The gate treats "no count" and "a count of zero" as different answers, and
+# the whole of that distinction rests on this script's exit status. Neither
+# case here reaches GitHub: one asks for nothing, the other runs with a PATH
+# that has no `gh` on it.
+threads_script="$script_dir/ai_review_threads.sh"
+
+threads_out=$(sh "$threads_script" 2>&1)
+threads_status=$?
+if [ "$threads_status" -eq 64 ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL ai_review_threads.sh with no subcommand: exited %s, wanted 64\n  output: %s\n' \
+        "$threads_status" "$threads_out"
+    failed=$((failed + 1))
+fi
+
+# An absolute interpreter, because the emptied PATH would otherwise stop the
+# shell being found before the script ever runs -- 127, not the 2 under test.
+# Every command the script reaches on this path is a builtin.
+threads_sh=$(command -v sh)
+threads_out=$(PATH=/nonexistent "$threads_sh" "$threads_script" count 1 2>/dev/null)
+threads_status=$?
+if [ "$threads_status" -eq 2 ] && [ -z "$threads_out" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL ai_review_threads.sh count without gh: exited %s printing "%s", wanted 2 and nothing\n' \
+        "$threads_status" "$threads_out"
+    failed=$((failed + 1))
+fi
 
 # --- pr-gate: the small tier ------------------------------------------------
 #
@@ -998,7 +1292,7 @@ flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skill
 # Each review skill must carry its own recording command. Which marker belongs
 # to which is derived from the skill's directory rather than listed, so this is
 # not a third copy of the names.
-review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md"
+review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md .claude/skills/ai-review/SKILL.md"
 
 # Per file, not "somewhere among them": checking the set would stay green while
 # the instruction vanished from two of the three.
@@ -1146,6 +1440,19 @@ for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
     fi
 done
 
+# AI completion uses the shared key producer and an explicit branch prefix.
+# These fixed producer obligations must not vanish with a renamed marker.
+for required in 'campaign_context.sh key' 'symbolic-ref --quiet --short HEAD' \
+    'gh pr comment' 'REVIEWED_BASE_TIP' 'REVIEWED_HEAD' 'REVIEWED_KEY' \
+    'status --porcelain=v1 --untracked-files=all'; do
+    if grep -qF -- "$required" "$repo_root/.claude/skills/ai-review/SKILL.md"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL AI completion producer lost required evidence command: %s\n' "$required"
+        failed=$((failed + 1))
+    fi
+done
+
 # And no document that describes the gate may still say a marker holds a
 # commit sha. Command drift and prose drift are different failures: the first
 # hands an agent a marker the gate rejects, the second teaches the next reader
@@ -1176,6 +1483,30 @@ for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
 done
 
 # --- report -----------------------------------------------------------------
+
+if sh "$script_dir/campaign_context_test.sh"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
+
+if python3 -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python3;
+elif python -c 'import sys; assert sys.version_info.major == 3' >/dev/null 2>&1; then progress_python=python;
+else progress_python=python3; fi
+if "$progress_python" "$script_dir/review_progress_test.py"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
+
+for campaign_suite in "$repo_root/tools/campaign/test-architecture-a-coordinator-v2.py" \
+    "$repo_root/tools/campaign/test_campaign_recovery.py"; do
+    if "$progress_python" -B "$campaign_suite"; then
+        passed=$((passed + 1))
+    else
+        failed=$((failed + 1))
+    fi
+done
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

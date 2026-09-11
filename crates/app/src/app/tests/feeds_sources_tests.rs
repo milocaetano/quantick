@@ -311,7 +311,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let area = app
         .active_tab()
         .flow_pane
-        .last_area
+        .frame
+        .area
         .expect("the pane painted");
     let mut popup = egui::Rect::NOTHING;
     let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -530,7 +531,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .expect("a bar under the edge");
 
     // Coarsen: 400 trades become 10 bars, so index 200 no longer exists.
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 10);
@@ -566,7 +570,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
 #[test]
 fn a_finer_spec_follows_the_same_market_time_forward() {
     let (mut app, _cmd_rx) = app_with_history(400);
-    app.active_tab_mut().flow_pane.tick_n = 40;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     let slots = app.active_tab().flow_pane.slots();
@@ -580,7 +587,10 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
         .right_edge_time()
         .expect("a bar under the edge");
 
-    app.active_tab_mut().flow_pane.tick_n = 1;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 400);
@@ -1122,7 +1132,7 @@ fn turning_the_switch_off_asks_for_the_whole_span_in_one_reply() {
     app.drain_tabs();
 
     // Forget the answer and ask again with the switch off.
-    app.progressive_history = false;
+    app.history.progressive_history = false;
     app.active_tab_mut().forget_ohlcv_generation_for_test();
     app.drain_tabs();
     assert_eq!(
@@ -1169,7 +1179,10 @@ fn a_timeframe_change_refolds_locally_without_asking_again() {
     // 1m → 5m: the same history, folded five ways.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+        .spec
+        .retain(crate::state::BarSpec::Time(
+            5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        ));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1206,7 +1219,8 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     // candles adds up to.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 90_000;
+        .spec
+        .retain(crate::state::BarSpec::Time(90_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
 
@@ -1224,7 +1238,10 @@ fn an_unfoldable_interval_drops_the_prefix_and_still_draws() {
     // Back to a foldable one, and the history returns from the same base.
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
-        .time_interval_ms = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+        .spec
+        .retain(crate::state::BarSpec::Time(
+            5 * quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        ));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 24);
@@ -1384,7 +1401,7 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     // And with the lead-in on, it reaches the chart cut by trades too —
     // the whole point of a run-up during a replay, where there are no
     // older *trades* to page: the tape in the file is the whole day.
-    app.venue_lead_in = true;
+    app.history.venue_lead_in = true;
     app.drain_tabs();
     assert_eq!(
         app.active_tab().flow_pane.seam_slot(),
@@ -1431,7 +1448,7 @@ fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1492,7 +1509,7 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1575,7 +1592,7 @@ fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1613,7 +1630,7 @@ fn a_run_that_meets_its_reach_says_nothing() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
 
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
@@ -1742,7 +1759,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         .unwrap();
     app.drain_tabs();
     run_frame(&mut app, &ctx);
-    app.history_reach = history_reach::HistoryReach::PreviousSession;
+    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
     app.drain_tabs();
     drain_load_older(&mut cmd_rx);
 

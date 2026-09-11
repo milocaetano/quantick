@@ -6,7 +6,8 @@ Closes #
 
 ## Verification loop
 
-<!-- All four must pass locally before requesting review (see CONTRIBUTING.md). -->
+<!-- Label local execution, reused evidence and final-head CI separately.
+     Prose-only local checks follow [the delivery contract](../docs/workflow/delivery.md); all four remain required in CI. -->
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets`

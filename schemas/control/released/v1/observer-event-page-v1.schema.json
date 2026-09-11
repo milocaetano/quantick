@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "ActorKind": {
+      "enum": [
+        "human_ui",
+        "automation",
+        "agent"
+      ],
+      "type": "string"
+    },
+    "EventActor": {
+      "description": "Who caused an event, as the journal retains it: the kind and a display\nname, never a principal that could be mistaken for an identity.",
+      "properties": {
+        "client_name": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActorKind"
+        }
+      },
+      "required": [
+        "kind",
+        "client_name"
+      ],
+      "type": "object"
+    },
+    "EventCursor": {
+      "properties": {
+        "instance_id": {
+          "$ref": "#/$defs/InstanceId"
+        },
+        "next_sequence": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "instance_id",
+        "next_sequence"
+      ],
+      "type": "object"
+    },
+    "EventKind": {
+      "description": "A namespaced semantic event kind.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
+      "type": "string"
+    },
+    "InstanceId": {
+      "description": "The identity of one running Quantick instance.",
+      "maxLength": 22,
+      "minLength": 22,
+      "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
+      "type": "string"
+    },
+    "ModuleId": {
+      "description": "A module contributing control-plane behavior.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){0,7}$",
+      "type": "string"
+    },
+    "SemanticEvent": {
+      "description": "One semantic event as a client reads it.",
+      "properties": {
+        "actor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventActor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when a human or an agent caused the event; absent for a\nchange the application observed on its own."
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "payload": true,
+        "recorded_at_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "sequence": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Monotonic, instance-scoped; the cursor token."
+        }
+      },
+      "required": [
+        "sequence",
+        "recorded_at_unix_ms",
+        "module_id",
+        "kind",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A page of events as the UI-thread read returns it, before the envelope.",
+  "properties": {
+    "dropped_before": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventCursor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Present when the requested position had already been evicted; the\npage then begins at the oldest retained event."
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/SemanticEvent"
+      },
+      "type": "array"
+    },
+    "has_more": {
+      "type": "boolean"
+    },
+    "instance_id": {
+      "$ref": "#/$defs/InstanceId"
+    },
+    "next_cursor": {
+      "$ref": "#/$defs/EventCursor",
+      "description": "One past the last returned event, or the resolved start when empty."
+    },
+    "timed_out": {
+      "description": "Set by `wait_for_change` when its timeout elapsed and the page is\nempty; a change that landed between the deadline and the read is\nreported as a change.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "instance_id",
+    "events",
+    "next_cursor",
+    "has_more",
+    "timed_out"
+  ],
+  "title": "EventPage",
+  "type": "object"
+}

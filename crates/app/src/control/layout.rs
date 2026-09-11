@@ -502,7 +502,11 @@ fn descriptor(
         read_only: false,
         // Applying the same arrangement twice leaves the same arrangement, so
         // a client may retry a dropped call without wondering what the first
-        // one did.
+        // one did. The gateway makes that exact: a repeat under the same key
+        // replays the first answer rather than acting again, for as long as
+        // the connection that made it lasts. A client that reconnects arrives
+        // as a new principal and its keys start over --
+        // `gateway/idempotency.rs` says why.
         idempotency: IdempotencyPolicy::Optional,
         revision_policy: RevisionPolicy::OptionalForAdditive,
         stale_input_safety: Some(
@@ -741,8 +745,8 @@ fn set_interval(
             "this tab has no context chart at address {pane}"
         )));
     };
-    let changed = chart.time_interval_ms != input.interval_ms;
-    chart.kind = crate::state::BarKind::Time;
-    chart.time_interval_ms = input.interval_ms;
+    let asked = crate::state::BarSpec::Time(input.interval_ms);
+    let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
+    chart.spec.set(asked);
     result(app, index, changed)
 }
