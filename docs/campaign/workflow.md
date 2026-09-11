@@ -84,10 +84,11 @@ For each cycle:
    priority and stable task keys.
    An unresolved human task blocks only its dependents. If no implementation
    is ready, monitor active CI/reviews or perform other authorized reconciliation.
-3. Claim the task and persist the intended action before mutating. `new-task`
-   owns duplicate checks and the isolated worktree from the integration base. `mission`
-   owns the task ledger and gates: one child mission per implementation/PR,
-   never one giant mission/worktree for the campaign. Reuse an existing branch
+3. Claim the task, [route it](#routing) and persist the intended action
+   before mutating. `new-task` owns duplicate checks and the isolated
+   worktree from the integration base. `mission` owns the task ledger and
+   gates: one child mission per implementation/PR, never one giant
+   mission/worktree for the campaign. Reuse an existing branch
    only after checking its owner and cleanliness; never reset another writer.
 4. Implement and validate according to affected behavior. `ship` owns commits,
    PR creation, checks and repairs; `arch-review`, `delivery-review` and
@@ -104,6 +105,28 @@ For each cycle:
    task when safe, synchronize Project items, and continue. An issue closed
    without acceptance evidence remains blocked in the campaign; reopen or
    repair only within granted issue-management authority.
+
+## Routing
+
+Roles, mapped per host by [Codex compatibility](../../.agents/references/codex-compatibility.md):
+*strongest* (`fable`), *implementation* (`opus`), *checklist* (`sonnet`),
+*retrieval* (`haiku`). The coordinator runs at *strongest*.
+
+- A child mission runs at *implementation* (`Agent` with `model: "opus"`),
+  or at *strongest* when it is tier `high` or `max`, designs a new port or
+  crate boundary, breaks a module cycle, or touches engine determinism or a
+  hot path. A child that raises its tier to `high` or `max` returns for
+  re-routing.
+- An *implementation* child back from two review rounds with its findings
+  flat rather than shrinking is re-dispatched at *strongest*.
+- Retrieval and measurement run at *retrieval*, checklist application at
+  *checklist*, per `CLAUDE.md`.
+- Before each dispatch, append `executor: <model> — <reason>` to the child
+  issue. Resume and Codex run the latest line; they never re-decide it.
+- A subagent cannot ask the trader. The coordinator runs the child's `mission`
+  step 3 before dispatch and passes the answers in the brief as
+  decisions `D1`…`Dn`. A later doubt that would earn a step 3 question becomes
+  a `human_decision` [human task](state.md#human-task-template), never a guess.
 
 ## Validation
 
