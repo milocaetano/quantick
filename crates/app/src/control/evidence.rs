@@ -39,21 +39,16 @@
 //! that thread, on the same response worker that already serializes a
 //! snapshot.
 
-use std::{
-    collections::{BTreeSet, VecDeque},
-    sync::{Arc, Mutex},
-};
+use std::collections::BTreeSet;
 
 use quantick_control::{
-    canonical::{Sha256Digest, canonical_json, raw_digest},
-    cursor::{EventCursor, Page, PageContext, PageCursor, PaginationConsistency},
+    canonical::{Sha256Digest, canonical_json},
+    cursor::{EventCursor, Page, PageCursor},
     error::{ControlError, codes},
     id::{EvidenceId, InstanceId, PermissionId, ProcessNonce, ResourceId, SnapshotScopeId},
     limits::{
         CONTROL_DEFAULT_PAGE_ITEMS, CONTROL_EVIDENCE_CHUNK_BYTES,
-        CONTROL_EVIDENCE_MAX_BUNDLE_BYTES, CONTROL_EVIDENCE_MAX_BUNDLES,
-        CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE, CONTROL_EVIDENCE_MAX_TOTAL_BYTES,
-        CONTROL_EVIDENCE_RETENTION_MS, CONTROL_MAX_SNAPSHOT_SCOPES, CONTROL_SCENE_MAX_CONTROLS,
+        CONTROL_EVIDENCE_MAX_BUNDLE_BYTES, CONTROL_MAX_SNAPSHOT_SCOPES, CONTROL_SCENE_MAX_CONTROLS,
     },
     wire::{Base64Bytes, CanonicalDecimal, WireU64},
 };
@@ -69,10 +64,20 @@ use super::{
     gateway::runtime_id_bytes,
     journal::EventPage,
     registry::{SerializedSnapshotCapture, SnapshotCapture},
-    scene::{CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID, SceneBoundsSnapshot, SceneSnapshot},
+    scene::{CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID, SceneSnapshot},
     system::{SystemSnapshot, snapshot as system_snapshot},
-    types::{canonical_f32, canonical_f64, known_error, wire_usize},
+    types::{known_error, wire_usize},
 };
+
+mod image;
+mod store;
+
+// Re-exported at the visibility they had: the gateway hands a frame over as
+// `RawScreenshot`, and the contract and the gateway share the store by path.
+pub(crate) use image::{RawScreenshot, ScreenshotPixels};
+use image::{encode_screenshot, region_gap};
+pub(crate) use store::EvidenceStore;
+use store::{RetainedBundle, raw_sha256};
 
 /// The module that owns both evidence capabilities.
 pub(crate) const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -465,350 +470,6 @@ pub(crate) struct EvidenceChunk {
     pub byte_length: WireU64,
     pub digest: Sha256Digest,
     pub data: Base64Bytes,
-}
-
-// ---------------------------------------------------------------------------
-// The screenshot, before it is encoded
-// ---------------------------------------------------------------------------
-
-/// One frame as the application thread hands it over: its geometry now, and
-/// its bytes when somebody is ready to pay for them.
-///
-/// The interface toolkit's own image type stops at the gateway — nothing
-/// downstream of here has an opinion about how the window is drawn — but the
-/// *copy* out of it does not belong on the application thread either. A 4K
-/// framebuffer is eight million pixels, and converting them between two frames
-/// is a visible hitch the moment an agent asks for a picture, inside a budget
-/// measured in microseconds. So the geometry travels eagerly and the rows
-/// travel as a closure the response worker calls, beside the PNG encoding it
-/// was always going to pay for.
-pub(crate) struct RawScreenshot {
-    pub width_px: u32,
-    pub height_px: u32,
-    pub pixels_per_point: f32,
-    /// Eight-bit straight-alpha RGBA, row-major,
-    /// `width_px * height_px * 4` bytes — produced on demand, once.
-    pub rgba: ScreenshotPixels,
-}
-
-/// The rows of one frame, still unpaid for.
-pub(crate) struct ScreenshotPixels(Box<dyn FnOnce() -> Vec<u8> + Send>);
-
-impl ScreenshotPixels {
-    pub fn new(produce: impl FnOnce() -> Vec<u8> + Send + 'static) -> Self {
-        Self(Box::new(produce))
-    }
-
-    fn take(self) -> Vec<u8> {
-        (self.0)()
-    }
-}
-
-impl std::fmt::Debug for RawScreenshot {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("RawScreenshot")
-            .field("width_px", &self.width_px)
-            .field("height_px", &self.height_px)
-            .field("pixels_per_point", &self.pixels_per_point)
-            .finish_non_exhaustive()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Retention
-// ---------------------------------------------------------------------------
-
-/// The retained bundles of one running instance.
-///
-/// Shared rather than owned by the application thread: nothing in here needs
-/// application state, so both the write (a capture being encoded) and the read
-/// (a client paging one) happen on the response workers that already do the
-/// serializing. The application thread's only business with the store is
-/// emptying it when access is withdrawn.
-#[derive(Clone)]
-pub(crate) struct EvidenceStore {
-    state: Arc<Mutex<StoreState>>,
-}
-
-struct StoreState {
-    bundles: VecDeque<RetainedBundle>,
-    total_bytes: usize,
-    max_bundles: usize,
-    max_total_bytes: usize,
-    max_bundle_bytes: usize,
-    retention_ms: u64,
-    /// Bumped every time the store is emptied.
-    ///
-    /// A capture is collected on the application thread and finishes encoding
-    /// on a response worker some milliseconds later, so the trader can withdraw
-    /// access in between — and an insert that landed after the clear would put
-    /// a bundle into a store that was just emptied *because* the grant behind
-    /// it was withdrawn, where it would sit for its full retention. Each
-    /// capture carries the epoch it was collected under and is dropped if the
-    /// store has moved on.
-    epoch: u64,
-}
-
-struct RetainedBundle {
-    evidence_id: EvidenceId,
-    resource_id: ResourceId,
-    capture_revision: WireU64,
-    expires_at_unix_ms: i64,
-    content_digest: Sha256Digest,
-    encoded_bytes: usize,
-    source_scopes: BTreeSet<PermissionId>,
-    chunks: Vec<Vec<u8>>,
-}
-
-impl Default for EvidenceStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EvidenceStore {
-    pub fn new() -> Self {
-        Self::with_bounds(
-            CONTROL_EVIDENCE_MAX_BUNDLES,
-            CONTROL_EVIDENCE_MAX_TOTAL_BYTES,
-            CONTROL_EVIDENCE_MAX_BUNDLE_BYTES,
-            CONTROL_EVIDENCE_RETENTION_MS,
-        )
-    }
-
-    pub fn with_bounds(
-        max_bundles: usize,
-        max_total_bytes: usize,
-        max_bundle_bytes: usize,
-        retention_ms: u64,
-    ) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(StoreState {
-                bundles: VecDeque::new(),
-                total_bytes: 0,
-                max_bundles: max_bundles.max(1),
-                max_total_bytes,
-                max_bundle_bytes,
-                retention_ms,
-                epoch: 0,
-            })),
-        }
-    }
-
-    /// Forget every retained bundle. Called when local access is withdrawn and
-    /// when the window closes: evidence outliving the door it came through
-    /// would be exactly the accumulation the retention bounds exist to stop.
-    ///
-    /// Bumps the epoch, which is what closes the door on captures still being
-    /// encoded elsewhere as well as on the ones already retained.
-    pub fn clear(&self) {
-        let mut state = self.lock();
-        state.bundles.clear();
-        state.total_bytes = 0;
-        state.epoch = state.epoch.saturating_add(1);
-    }
-
-    /// The epoch a capture collected now belongs to.
-    pub fn epoch(&self) -> u64 {
-        self.lock().epoch
-    }
-
-    pub fn retention_ms(&self) -> u64 {
-        self.lock().retention_ms
-    }
-
-    #[cfg(test)]
-    pub fn retained(&self) -> usize {
-        self.lock().bundles.len()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, StoreState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn insert(
-        &self,
-        bundle: RetainedBundle,
-        collected_under_epoch: u64,
-        now_unix_ms: i64,
-    ) -> Result<(), ControlError> {
-        let mut state = self.lock();
-        if state.epoch != collected_under_epoch {
-            // Access was withdrawn while this capture was being encoded. The
-            // grant it was collected under is gone, so the bundle is not
-            // retained and the client is told the resource is not there —
-            // which is exactly what it will find if it asks.
-            return Err(known_error(
-                codes::RESOURCE_GONE,
-                "local access was withdrawn while this capture was being encoded",
-                false,
-            ));
-        }
-        if bundle.encoded_bytes > state.max_bundle_bytes {
-            return Err(known_error(
-                codes::BACKPRESSURE,
-                "the capture is larger than one retained evidence bundle may be",
-                false,
-            ));
-        }
-        state.expire(now_unix_ms);
-        state.total_bytes = state.total_bytes.saturating_add(bundle.encoded_bytes);
-        state.bundles.push_back(bundle);
-        state.evict_to_bounds();
-        Ok(())
-    }
-
-    /// One page of one retained bundle.
-    ///
-    /// The grant is rechecked here and not only at dispatch: a resource
-    /// identifier is an address, and the scopes a bundle aggregated may have
-    /// been taken away since it was made.
-    pub fn read(
-        &self,
-        evidence_id: &EvidenceId,
-        cursor: Option<&PageCursor>,
-        instance_id: &InstanceId,
-        granted_scopes: &BTreeSet<PermissionId>,
-        now_unix_ms: i64,
-    ) -> Result<EvidenceChunkPage, ControlError> {
-        let mut state = self.lock();
-        state.expire(now_unix_ms);
-        let bundle = state
-            .bundles
-            .iter()
-            // The sweep above walks from the front and stops at the first
-            // bundle still alive, which is every bundle only while the clock
-            // runs forward. A wall clock can step backwards, and then a
-            // retention that has run out sits behind one that has not. So the
-            // bundle actually asked for is checked on its own terms too:
-            // retention is a promise about this bundle, not about the queue.
-            .find(|bundle| {
-                &bundle.evidence_id == evidence_id && bundle.expires_at_unix_ms > now_unix_ms
-            })
-            .ok_or_else(|| {
-                known_error(
-                    codes::RESOURCE_GONE,
-                    "no retained evidence bundle has that identifier",
-                    false,
-                )
-            })?;
-        if !bundle.source_scopes.is_subset(granted_scopes) {
-            let missing = bundle
-                .source_scopes
-                .difference(granted_scopes)
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            let mut error = known_error(
-                codes::SCOPE_DENIED,
-                "this connection no longer holds every scope the bundle aggregated",
-                false,
-            );
-            error.context.details = Some(json!({ "missing_permissions": missing }));
-            error.context.next_steps =
-                vec!["Enable the required read scopes in Quantick, then reconnect.".to_owned()];
-            return Err(error);
-        }
-
-        let scope_id = SnapshotScopeId::new(EVIDENCE_RESOURCE_SCOPE_ID)
-            .expect("static resource scope ID is valid");
-        let query = json!({ "evidence_id": evidence_id.as_str() });
-        let context = PageContext {
-            instance_id,
-            scope_id: &scope_id,
-            query: &query,
-            consistency_mode: PaginationConsistency::RetainedResource,
-            consistency_revision: bundle.capture_revision,
-            high_water_position: None,
-            resource_id: Some(&bundle.resource_id),
-            resource_available: true,
-        };
-        let start = match cursor {
-            Some(cursor) => {
-                cursor.validate_next(&context)?;
-                usize::try_from(cursor.next_position.get()).unwrap_or(usize::MAX)
-            }
-            None => 0,
-        };
-        if start > bundle.chunks.len() {
-            return Err(known_error(
-                codes::CURSOR_INVALID,
-                "the cursor names a chunk past the end of the bundle",
-                false,
-            ));
-        }
-        let end = start
-            .saturating_add(CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE)
-            .min(bundle.chunks.len());
-        let mut byte_offset = start.saturating_mul(CONTROL_EVIDENCE_CHUNK_BYTES);
-        let mut items = Vec::with_capacity(end.saturating_sub(start));
-        for (index, chunk) in bundle.chunks.iter().enumerate().take(end).skip(start) {
-            items.push(EvidenceChunk {
-                index,
-                byte_offset: wire_usize(byte_offset),
-                byte_length: wire_usize(chunk.len()),
-                digest: raw_sha256(chunk),
-                data: Base64Bytes::from_bytes(chunk),
-            });
-            byte_offset = byte_offset.saturating_add(chunk.len());
-        }
-        let next_cursor = (end < bundle.chunks.len())
-            .then(|| PageCursor::first(&context, wire_usize(end)))
-            .transpose()?;
-        Ok(EvidenceChunkPage {
-            evidence_id: bundle.evidence_id.clone(),
-            resource_id: bundle.resource_id.clone(),
-            content_digest: bundle.content_digest.clone(),
-            media_type: BUNDLE_MEDIA_TYPE.to_owned(),
-            encoded_bytes: wire_usize(bundle.encoded_bytes),
-            chunk_count: bundle.chunks.len(),
-            expires_at_unix_ms: bundle.expires_at_unix_ms,
-            page: Page::new(items, next_cursor)?,
-        })
-    }
-}
-
-impl StoreState {
-    /// Drop every bundle whose retention has run out — all of them, not the
-    /// run at the front.
-    ///
-    /// The deque is not ordered by deadline and cannot be: response workers
-    /// insert concurrently, so two captures can land out of the order they
-    /// were collected in, and a wall clock can step backwards besides. A sweep
-    /// that stopped at the first live bundle would leave an expired one behind
-    /// it holding a slot and its bytes, and the next count or byte eviction
-    /// would then drop a *live* bundle to make room for a dead one.
-    fn expire(&mut self, now_unix_ms: i64) {
-        let reclaimed: usize = self
-            .bundles
-            .iter()
-            .filter(|bundle| bundle.expires_at_unix_ms <= now_unix_ms)
-            .map(|bundle| bundle.encoded_bytes)
-            .sum();
-        self.total_bytes = self.total_bytes.saturating_sub(reclaimed);
-        self.bundles
-            .retain(|bundle| bundle.expires_at_unix_ms > now_unix_ms);
-    }
-
-    fn evict_to_bounds(&mut self) {
-        while self.bundles.len() > self.max_bundles
-            || (self.total_bytes > self.max_total_bytes && self.bundles.len() > 1)
-        {
-            self.drop_front();
-        }
-    }
-
-    fn drop_front(&mut self) {
-        if let Some(dropped) = self.bundles.pop_front() {
-            self.total_bytes = self.total_bytes.saturating_sub(dropped.encoded_bytes);
-        }
-    }
-}
-
-fn raw_sha256(bytes: &[u8]) -> Sha256Digest {
-    Sha256Digest::new(raw_digest(bytes)).expect("a raw digest is always well formed")
 }
 
 // ---------------------------------------------------------------------------
@@ -1290,154 +951,6 @@ fn user_text_gap(source_scopes: &BTreeSet<PermissionId>) -> EvidenceGap {
 }
 
 // ---------------------------------------------------------------------------
-// Screenshot encoding and control correlation
-// ---------------------------------------------------------------------------
-
-/// Turn one frame's pixels into a bundle image with its control regions.
-///
-/// The regions come from the scene captured in the *same* pass, scaled from
-/// the logical points the scene reports into the physical pixels the image is
-/// measured in. That scaling is the only arithmetic here, and it is why the
-/// two have to share a capture revision: a scene from another frame would name
-/// controls that have since moved.
-fn encode_screenshot(
-    raw: RawScreenshot,
-    capture_revision: WireU64,
-    scene: Option<&SceneSnapshot>,
-) -> Result<EvidenceImage, EvidenceGap> {
-    let (width_px, height_px) = (raw.width_px, raw.height_px);
-    let expected = (width_px as usize)
-        .saturating_mul(height_px as usize)
-        .saturating_mul(4);
-    if width_px == 0
-        || height_px == 0
-        || !raw.pixels_per_point.is_finite()
-        || raw.pixels_per_point <= 0.0
-    {
-        return Err(screenshot_gap("frame_pixels_inconsistent"));
-    }
-    // The rows are produced here, on the response worker, and checked against
-    // the geometry that travelled with them before anything is encoded.
-    let rgba = raw.rgba.take();
-    if rgba.len() != expected {
-        return Err(screenshot_gap("frame_pixels_inconsistent"));
-    }
-    let png = encode_png(width_px, height_px, &rgba)
-        .map_err(|_| screenshot_gap("image_encoding_failed"))?;
-    // Against the size the image costs *inside the document*, not the size it
-    // is on its own: it travels as base64, and comparing the raw length would
-    // admit an image a third larger than the ceiling admits.
-    if base64_len(png.len()) > CONTROL_EVIDENCE_MAX_BUNDLE_BYTES {
-        return Err(screenshot_gap("exceeds_evidence_bundle_budget"));
-    }
-
-    // The factor is rounded *before* it is used, not after, so the number the
-    // descriptor publishes is the number the regions were actually built with.
-    // A client that redoes the arithmetic the field's own doc describes lands
-    // on the same pixel; publishing full precision and reporting two places
-    // would put it several pixels out at the right-hand edge.
-    let pixels_per_point = canonical_f32(raw.pixels_per_point, REGION_DECIMAL_PLACES)
-        .ok_or_else(|| screenshot_gap("frame_scale_not_representable"))?;
-    let scale = pixels_per_point
-        .as_str()
-        .parse::<f64>()
-        .map_err(|_| screenshot_gap("frame_scale_not_representable"))?;
-    let mut control_regions = Vec::new();
-    let mut controls_without_region = Vec::new();
-    // A missing scene is reported by the caller, which is the only place that
-    // knows *why* it is missing — never captured, or captured and unreadable.
-    // Here it simply means there is nothing to map.
-    match scene {
-        None => {}
-        Some(scene) => {
-            for control in &scene.controls {
-                let Some(bounds) = &control.bounds else {
-                    controls_without_region.push(EvidenceGap {
-                        subject: control.control_id.clone(),
-                        reason: control
-                            .bounds_availability
-                            .reason
-                            .clone()
-                            .unwrap_or_else(|| "bounds_unavailable".to_owned()),
-                    });
-                    continue;
-                };
-                match region_of(&control.control_id, bounds, scale, width_px, height_px) {
-                    Some(region) => control_regions.push(region),
-                    None => controls_without_region.push(EvidenceGap {
-                        subject: control.control_id.clone(),
-                        reason: "bounds_not_representable".to_owned(),
-                    }),
-                }
-            }
-        }
-    }
-
-    let descriptor = EvidenceScreenshot {
-        capture_revision,
-        width_px,
-        height_px,
-        pixels_per_point,
-        format: SCREENSHOT_FORMAT.to_owned(),
-        image_digest: raw_sha256(&png),
-        image_bytes: wire_usize(png.len()),
-        control_regions,
-        controls_without_region,
-    };
-    Ok(EvidenceImage {
-        image_base64: Base64Bytes::from_bytes(&png),
-        descriptor,
-    })
-}
-
-/// Why this bundle's image carries no control regions.
-fn region_gap(reason: &str) -> EvidenceGap {
-    EvidenceGap {
-        subject: "screenshot.control_regions".to_owned(),
-        reason: reason.to_owned(),
-    }
-}
-
-fn region_of(
-    control_id: &str,
-    bounds: &SceneBoundsSnapshot,
-    scale: f64,
-    image_width_px: u32,
-    image_height_px: u32,
-) -> Option<EvidenceControlRegion> {
-    let x = bounds.x_pt.as_str().parse::<f64>().ok()? * scale;
-    let y = bounds.y_pt.as_str().parse::<f64>().ok()? * scale;
-    let width = bounds.width_pt.as_str().parse::<f64>().ok()? * scale;
-    let height = bounds.height_pt.as_str().parse::<f64>().ok()? * scale;
-    let within_image = x >= 0.0
-        && y >= 0.0
-        && width >= 0.0
-        && height >= 0.0
-        && x + width <= f64::from(image_width_px)
-        && y + height <= f64::from(image_height_px);
-    Some(EvidenceControlRegion {
-        control_id: control_id.to_owned(),
-        x_px: canonical_f64(x, REGION_DECIMAL_PLACES)?,
-        y_px: canonical_f64(y, REGION_DECIMAL_PLACES)?,
-        width_px: canonical_f64(width, REGION_DECIMAL_PLACES)?,
-        height_px: canonical_f64(height, REGION_DECIMAL_PLACES)?,
-        within_image,
-    })
-}
-
-fn encode_png(width_px: u32, height_px: u32, rgba: &[u8]) -> Result<Vec<u8>, png::EncodingError> {
-    let mut buffer = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut buffer, width_px, height_px);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(rgba)?;
-    }
-    Ok(buffer)
-}
-
-// ---------------------------------------------------------------------------
 // Coverage derivation
 // ---------------------------------------------------------------------------
 
@@ -1709,6 +1222,8 @@ fn permission(id: &str) -> PermissionId {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use quantick_control::limits::CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE;
 
     use super::*;
 
