@@ -39,6 +39,13 @@ but the change is far too big for `small`.
   and transport/protocol.
 - **R8** (purpose) — so that the MetaTrader path is readable one owner at a
   time, with no signed exception left behind to explain it away.
+- **R9** — the file-ownership constraint: this child writes only in its own
+  worktree, and only to `crates/feed-mt5/src/stream.rs`, new files under
+  `crates/feed-mt5/src/stream/`, `bridge/mt5/quantick_bridge.py`, new files
+  under `bridge/mt5/`, `bridge/mt5/tests/*` where an import path must follow
+  the split, its own entry in `crates/guards/size-baseline.txt`, and `mod`
+  lines where strictly needed. Every file outside that set is a departure that
+  has to be named and justified, never taken quietly.
 
 ## Decisions
 
@@ -89,6 +96,15 @@ but the change is far too big for `small`.
   rename it here too"), so following it is the guard working, not the guard
   being weakened. The agreements themselves — the numbers must be equal — are
   unchanged.
+- **S5** — four files fall outside R9's set and are named here rather than
+  taken quietly. `crates/guards/tests/session_gap_agreement.rs` and
+  `crates/feed-mt5/src/protocol.rs` are S2's paths-follow-their-constants case,
+  and both **failed** until they did. `bridge/mt5/README.md` gains one
+  paragraph because it is the file that tells a trader how to run the bridge
+  by hand, and after the split "run this one script" is no longer the whole
+  truth — a README left silent about the sibling modules would be a surface
+  the diff made wrong. Safe to assume rather than ask: prose only, inside the
+  directory this mission otherwise owns, and no sibling child touches it.
 - **S3** — `Session` is assembled from four mixins rather than kept whole,
   because no smaller cut brings the entry point under the ceiling without
   leaving a 1,300-line class in it. Method bodies are identical; only the
@@ -125,6 +141,10 @@ but the change is far too big for `small`.
       *Evidence:* the `size-baseline.txt` diff: the `stream.rs` line is gone
       and `!budget` moved 20,025 → 17,825, exactly 2,200 down.
       → the PR body's size report. *(R6)*
+- [ ] **A6** — no file outside R9's set is edited without being named.
+      *Evidence:* `git diff origin/campaign/lean-a-plus...HEAD --name-only`
+      against R9's list, with every departure carrying an `S` line that says
+      why. → this file's `S2` and `S5`, and the PR body. *(R9)*
 - [ ] **G1** — every artifact English; conventional commits.
       *Evidence:* `arch-review` dimension 8 and `cargo test -p quantick-guards`
       (the language guard). → the review verdict.
