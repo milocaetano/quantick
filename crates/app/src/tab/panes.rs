@@ -1,7 +1,14 @@
 //! Addressing the tab's panes: the context column's collapse and order,
 //! the index and side accessors, focus, and the tape the flow pane shows.
 
-use super::*;
+use super::Tab;
+use crate::canvas_layout::PaneKind;
+use crate::chart_layers::{ChartLayer, LayerBlock};
+use crate::config::FeedCapabilities;
+use crate::orderflow_view::OrderflowView;
+use crate::pane::{ChartPane, PaneIndex, PaneSide};
+use crate::style::ChartStyle;
+use quantick_feed::{FeedConnectionState, FeedNotice};
 
 impl Tab {
     /// Put the context column away, or bring it back.

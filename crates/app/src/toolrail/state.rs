@@ -2,7 +2,11 @@
 //! the scroll band's offset, the hit rectangles a script reads, and the
 //! keyboard shortcuts that arm a tool.
 
-use super::*;
+use super::{
+    RailControl, RailControlKind, RailSlot, RailStage, Tool, ToolRail, ToolboxDock, tool_slots,
+};
+use crate::drawings::{DRAWING_TOOLS, DrawingTool};
+use eframe::egui;
 
 impl ToolRail {
     #[must_use]

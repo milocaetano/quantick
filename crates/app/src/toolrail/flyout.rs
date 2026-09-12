@@ -1,7 +1,19 @@
 //! The family slot and the flyout it opens: one row per member, with the
 //! star that pins a member to the favourites section.
 
-use super::*;
+use super::{
+    CARET_INSET_PX, CARET_SIDE_PX, FLYOUT_CORNER_RADIUS_PX, FLYOUT_GLYPH_CENTER_X_PX,
+    FLYOUT_GLYPH_PX, FLYOUT_HEADER_TEXT_PX, FLYOUT_ICON_BOX_PX, FLYOUT_NAME_TEXT_PX,
+    FLYOUT_NAME_X_PX, FLYOUT_ROW_RADIUS_PX, FLYOUT_SHORTCUT_INSET_PX, FLYOUT_SHORTCUT_TEXT_PX,
+    FLYOUT_STAR_HIT_PX, FLYOUT_STAR_PX, FLYOUT_STAR_RIGHT_INSET_PX, FLYOUT_STAR_SLOT_PX, RailSlot,
+    TOOLBOX_CARET_ZONE_PX, TOOLBOX_FLYOUT_ROW_HEIGHT_PX, TOOLBOX_FLYOUT_WIDTH_PX,
+    TOOLBOX_ITEM_GAP_PX, TOOLBOX_MARGIN_PX, Tool, ToolRail, ToolboxDock, tool_slots,
+};
+use crate::drawings::{DrawingTool, Drawings, ToolFamily};
+use crate::theme;
+use crate::widgets::{IconButton, TOOLRAIL_ICON, paint_vector_icon};
+use eframe::egui;
+use egui_phosphor::regular as icons;
 
 impl ToolRail {
     /// A family's shown member: the last-armed one, or `None` before any

@@ -44,13 +44,10 @@
 
 use std::time::Instant;
 
-use crate::indicator_style::StyleOverride;
-use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
-use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
+use crate::indicator_worker::SlotId;
 use crate::layouts::{self, DrawingKey, LayoutBook, LayoutError, LayoutId, Loaded, SavedDrawing};
 use crate::pane::{ChartPane, DrawingDrag, PaneIndex, PaneSide};
 
-use super::chrome::ChromeState;
 use super::{QuantickApp, TabSlot};
 use crate::workspace_store::LayoutSave;
 

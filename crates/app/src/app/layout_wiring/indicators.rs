@@ -3,7 +3,12 @@
 //! removal, a hide, an input edit or a style edit onto every pane showing
 //! the same layout.
 
-use super::*;
+use super::{QuantickApp, TabSlot};
+use crate::indicator_style::StyleOverride;
+use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
+use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
+use crate::layouts::LayoutId;
+use crate::pane::PaneSide;
 
 impl QuantickApp {
     /// Where a slot sits in its pane's layout, or `None` for a slot the

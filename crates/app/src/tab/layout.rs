@@ -2,7 +2,13 @@
 //! layout, the layout a restored pane opens with, and the bar spec changes
 //! a pane applies.
 
-use super::*;
+use super::{CanvasLayout, LegendFold, Tab};
+use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
+use crate::chart_layers::ChartLayer;
+use crate::config::AppConfig;
+use crate::loading::LoadingTask;
+use crate::pane::{ChartPane, PaneIndex, PaneSide, clamp_pane_fraction};
+use crate::style::ChartStyle;
 
 impl Tab {
     /// Switch which panes the canvas shows (§11).

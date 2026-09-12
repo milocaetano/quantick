@@ -1,7 +1,16 @@
 //! The pinned favourites section and the scrolling tool band, with the
 //! chevrons that move it.
 
-use super::*;
+use super::{
+    BAND_ARROW_GLYPH_PX, BAND_ARROW_LENGTH_PX, BandWindow, FAVORITE_BADGE_INSET_PX,
+    FAVORITE_BADGE_PX, RailSlot, TOOLBOX_ITEM_GAP_PX, Tool, ToolRail, band_max_offset,
+    band_scroll_step, band_viewport, band_visible_items,
+};
+use crate::drawings::Drawings;
+use crate::theme;
+use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use eframe::egui;
+use egui_phosphor::regular as icons;
 
 impl ToolRail {
     /// The pinned section at the tool end of the rail: a separator, then one

@@ -14,7 +14,7 @@ use crate::drawings::{
     DRAWING_TOOLS, DrawingTool, Drawings, IconDots, IconLetter, IconStrokes, ToolFamily,
 };
 use crate::theme;
-use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON, paint_vector_icon};
+use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
 
 mod band;
 mod flyout;

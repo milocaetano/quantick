@@ -2,7 +2,10 @@
 //! book after an import, renaming from the strip, drawing the strip and
 //! applying what a click on it asked for.
 
-use super::*;
+use super::QuantickApp;
+use crate::app::chrome::ChromeState;
+use crate::layouts::{self, LayoutBook, LayoutError, LayoutId};
+use std::time::Instant;
 
 impl QuantickApp {
     // ------------------------------------------------------------------

@@ -20,21 +20,17 @@ use tokio::sync::{mpsc, watch};
 
 use quantick_feed_binance::depth::DepthEvent;
 
-use crate::canvas_layout::{
-    self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind,
-};
-use crate::chart_layers::{ChartLayer, LayerBlock};
+/// Only the tests below allocate pane ids directly; the panes a layout
+/// change adds now take theirs in [`layout`].
+#[cfg(test)]
+use crate::canvas_layout::PaneIdAllocator;
+use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
-use crate::orderflow_view::OrderflowView;
-use crate::pane::{
-    ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick,
-    clamp_pane_fraction,
-};
+use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarSpec;
-use crate::style::ChartStyle;
 use quantick_feed::history_reach::{self, Campaign, HistoryReach};
 use quantick_feed::stall::{self};
 use quantick_feed::{
