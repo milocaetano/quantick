@@ -182,21 +182,27 @@ earned, not optional.
       `APP_HEALTH_SUMMARY` fps / frame_avg / frame_cpu, with no regression.
       *Evidence:* the two log excerpts and the table in the PR body. → PR
       body, "Performance". *(R6)*
-- [ ] **A8** — the draft PR exists against `campaign/lean-a-plus` with the
-      prescribed body; the reviews' verdicts, marker recording and CI are
-      reported; `gh pr ready` ran alone once everything was green.
-      *Evidence:* PR URL, review report URLs, marker lines, CI run URL in the
-      handoff. → the handoff block. *(R10, R11)*
+- [x] **A8** — the draft PR exists against `campaign/lean-a-plus` with the
+      prescribed body (tier, campaign line without a `Closes` keyword,
+      moved-item table, multiset proof, frame timing, size report, local
+      verification, attribution). *Amended at review time:* "`gh pr ready`
+      ran alone once everything was green" was a closing step misfiled as
+      a criterion — it is **C2**, where it already stood; the reviews'
+      verdicts and CI are **G3** and **A5**.
+      *Evidence:* `gh pr view 383 --json baseRefName,isDraft,body`. → PR #383.
+      *(R10, R11)*
 - [x] **A9** — every write landed in this worktree and only in the files the
       mission owns.
       *Evidence:* `git diff --name-status <base>...HEAD` in the PR body lists
       only `crates/app/src/pane.rs`, `crates/app/src/pane/*`,
       `crates/guards/size-baseline.txt` and `.claude/GOAL-archive-*.md`.
       → PR body, "Local verification". *(R12)*
-- [ ] **A10** — the HANDOFF BLOCK is returned with every field the brief
+- ~~**A10** — the HANDOFF BLOCK is returned with every field the brief
       lists, A6-of-the-issue (the campaign merge) marked pending for the
-      coordinator.
-      *Evidence:* the final message of this session. → the handoff block.
+      coordinator.~~ *Struck at review time, never renumbered:* the handoff
+      is how control returns to the coordinator — closing step **C3**, not a
+      product outcome — and the campaign merge is **C4** below, the
+      coordinator's action. R13 and R14 are discharged by C3 and C4.
       *(R13, R14)*
 
 ## Gates
@@ -208,12 +214,18 @@ earned, not optional.
       --all-targets`, `cargo build --workspace`, `env -u QUANTICK_BUBBLES cargo
       test --workspace`, each run alone before every commit and on the final
       head. *Evidence:* exit codes in the PR body. → PR body.
-- [ ] **G3** — `arch-review` over `origin/campaign/lean-a-plus...HEAD` with
+- [x] **G3** — `arch-review` over `origin/campaign/lean-a-plus...HEAD` with
       step 0 at `medium`, every Blocker/Should-fix resolved or deferred in the
-      PR body; `ai-review` completion recorded; `delivery-review` PASS.
-      Markers written with `sh .claude/hooks/campaign_context.sh key "$WT"`.
-      *Evidence:* the three verdicts and the marker files. → review reports,
-      the worktree git dir.
+      PR body; `ai-review` completion recorded. (`delivery-review` PASS is
+      **C1**, the closing step, not a gate this review can grade about
+      itself.) Markers written with `sh .claude/hooks/campaign_context.sh
+      key "$WT"`.
+      *Evidence:* the arch-review verdict comment on PR #383
+      (issuecomment-5642365308: step 0 `medium`, two rounds, 8+8 findings,
+      0 correctness, no Blocker/Should-fix open); the AI-review report
+      (issuecomment-5642384918) with its two WEAK threads; `arch-review-ok`
+      and `ai-review-complete` in the worktree git dir, each holding the
+      shared key for the reviewed diff. → PR #383, the worktree git dir.
 - [x] **G4** — performance declared per touched path by rate: `draw_chart`
       and its painters (per-frame), `handle_navigation` and its arms
       (per-frame), the series methods (per-trade / rare) — every one relocated
@@ -294,7 +306,10 @@ the handoff.
 - **C1** — `delivery-review` returns PASS (tier `high`).
 - **C2** — the PR is open as a draft, then `gh pr ready <n>` once reviews,
   markers, AI completion and CI are green.
-- **C3** — control returns to the campaign coordinator with the handoff block.
+- **C3** — control returns to the campaign coordinator with the handoff
+  block (every field the brief lists; R13).
+- **C4** — the coordinator merges into `campaign/lean-a-plus` through this PR
+  and records the merge on #368 (issue A6; R14). Never this mission's action.
 
 ## The request, as received
 
