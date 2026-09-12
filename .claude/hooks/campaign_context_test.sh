@@ -154,6 +154,26 @@ for client in Bash exec_command; do
     allow "$client retarget before merge denied" gate "$client" "gh pr edit 42 --base main && gh pr merge 42 --merge --match-head-commit $head" deny
     allow "$client ready cannot borrow another repository" gate "$client" 'gh pr ready 42 --repo other/repo' deny
     allow "$client campaign ready accepts exact target" gate "$client" 'gh pr ready 42' allow
+    # The agent's Bash tool resets its working directory between calls, so the
+    # pinned statement reaches the task worktree only behind a single
+    # `cd <dir> &&`. One prefix is accepted; anything beside the statement is
+    # not, because a second statement would share the first's authorization.
+    allow "$client cd-prefixed campaign merge" \
+        gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head" allow
+    allow "$client cd-prefixed campaign ready" \
+        gate "$client" "cd $fixture/repo && gh pr ready 42" allow
+    allow "$client cd-prefixed merge cannot carry a second statement" \
+        gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head && echo x" deny
+    allow "$client only one cd prefix is stripped" \
+        gate "$client" "cd $fixture/hooks && cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head" deny
+    allow "$client a cd prefix on a semicolon is not the accepted form" \
+        gate "$client" "cd $fixture/repo ; gh pr merge 42 --merge --match-head-commit $head" deny
+    allow "$client cd-prefixed ready cannot carry a second statement" \
+        gate "$client" "cd $fixture/repo && gh pr ready 42 && gh pr merge 99 --merge" deny
+    allow "$client a cd prefix does not excuse an alternate repository" \
+        gate "$client" "cd $fixture/repo && gh pr merge 42 --merge --match-head-commit $head --repo other/repo" deny
+    allow "$client a cd prefix does not excuse auto-merge" \
+        gate "$client" "cd $fixture/repo && gh pr merge 42 --auto" deny
     printf 'feat/child small\n' > "$git_dir/mission-tier"
     printf '1\n' > "$fixture/hooks/threads"
     allow "$client small tier cannot skip open threads" gate "$client" 'gh pr ready 42' deny

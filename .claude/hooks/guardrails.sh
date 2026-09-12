@@ -240,6 +240,31 @@ effective_dir() {
     printf '%s' "$2"
 }
 
+# The command with its single leading `cd <dir> &&` removed, trimmed at both
+# ends. Everything else is left exactly as written.
+#
+# The campaign statements below are pinned by string equality, and the function
+# above says why every agent command carries that prefix: the payload's `cwd`
+# is the session's and resets between calls, so the bare form the pin asks for
+# would be judged against the main checkout and denied as a merge to main. The
+# pinned form was therefore unreachable from the Bash tool in both directions.
+# The prefix is read with the pattern `effective_dir` uses, so the directory
+# the gate judges and the directory it strips can never disagree.
+#
+# Exactly one prefix, and only across `&&`. A second `cd`, a `;`, a `||` or any
+# trailing statement survives the strip and fails the equality check that
+# follows, so nothing beside the first statement can share its authorization.
+bare_statement() {
+    bare_command=$(printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    bare_rest=$(printf '%s' "$bare_command" |
+        sed -n 's|^cd[[:space:]][[:space:]]*"\{0,1\}[^"[:space:];&|]\{1,\}"\{0,1\}[[:space:]]*&&[[:space:]]*||p')
+    if [ -n "$bare_rest" ]; then
+        printf '%s' "$bare_rest"
+        return 0
+    fi
+    printf '%s' "$bare_command"
+}
+
 # Empty when the git dir cannot be resolved, so the caller can fail open
 # rather than build a path rooted at `/` and hand back a remedy telling an
 # agent to write the marker at the filesystem root.
@@ -769,10 +794,12 @@ pr_gate() {
 
     if [ "$gate_action" = merge ]; then
         [ "$gate_base" != "origin/$MAIN_BRANCH" ] || deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
-        # Only this explicit, head-pinned form is supported. This also rejects
-        # --admin, --auto, alternate repositories and merge-queue shortcuts.
+        # Only this explicit, head-pinned form is supported, bare or behind the
+        # single `cd <worktree> &&` that reaches the task worktree. This also
+        # rejects --admin, --auto, alternate repositories and merge-queue
+        # shortcuts.
         gate_merge=$(gh_statement "$command" "gh pr merge" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-        gate_whole=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        gate_whole=$(bare_statement "$command")
         [ "$gate_merge" = "$gate_whole" ] || deny '"Run one campaign merge command from the task worktree; compound commands cannot share an authorization check."'
         gate_head=$(git -C "$dir" rev-parse HEAD)
         case "$gate_merge" in
@@ -782,7 +809,7 @@ pr_gate() {
     fi
     if [ "$gate_base" != "origin/$MAIN_BRANCH" ]; then
         if [ "$gate_action" = ready ]; then
-            gate_ready=$(printf '%s' "$command" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            gate_ready=$(bare_statement "$command")
             [ "$gate_ready" = "gh pr ready $gate_pr" ] || deny '"Run one explicit campaign ready command in the task worktree, without repository overrides or compound commands."'
         fi
         if ! sh "$(dirname "$0")/campaign_context.sh" check-pr "$dir" "$gate_pr" "$gate_action" >/dev/null 2>&1; then

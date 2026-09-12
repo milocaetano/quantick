@@ -676,6 +676,15 @@ run "all required reviews and no open thread makes the branch ready" \
 run "even reviewed main merges remain exclusively human" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 
+# The `cd <worktree> &&` prefix an agent needs to reach its worktree is read for
+# the campaign form pins only. On a main-based branch it changes nothing: the
+# ready case still passes on its markers, and the merge is still the user's.
+run "a cd prefix leaves a main-based ready where it was" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt && gh pr ready 42")" silent
+
+run "a cd prefix does not make a main merge the agent's" \
+    pr-gate "$(json_bash "$root/wt" "cd $root/wt && gh pr merge 42 --squash")" deny "reserved exclusively"
+
 set_threads 2
 run "gh pr ready is denied while an ai-review thread is open" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "PR #42 has 2"
