@@ -19,9 +19,11 @@ use quantick_control::{
 
 use super::super::types::known_error;
 
-/// The first step every such refusal carries: the outcome is not known.
-const MAY_HAVE_ACTED: &str =
-    "The call may already have taken effect: read the state back before sending it again.";
+/// The first step every such refusal carries. Conditional on purpose: the
+/// gateway sends this without knowing the capability, and a read that was
+/// refused for its size changed nothing.
+const MAY_HAVE_ACTED: &str = "If this call changes state, it may already have taken effect: \
+     read the state back before sending it again.";
 
 /// The refusal for an answer `error` kept off the wire.
 pub(super) fn unencodable(error: &CodecError) -> ControlError {
@@ -48,8 +50,8 @@ pub(super) fn unencodable(error: &CodecError) -> ControlError {
     refusal.context.next_steps.push(MAY_HAVE_ACTED.to_owned());
     if newer_version {
         refusal.context.next_steps.push(
-            "A newer version of this capability may answer in a form the wire accepts; \
-             `control.describe` lists every registered version."
+            "If this capability registers a newer version, that version may answer in a \
+             form the wire accepts; `control.describe` lists every registered version."
                 .to_owned(),
         );
     }

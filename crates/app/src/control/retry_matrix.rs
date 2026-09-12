@@ -173,7 +173,10 @@ const fn journal(
     }
 }
 
-const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
+const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST];
+/// Collapse is also the call the v1 refusal test drives.
+const LAYOUT_COLLAPSE_PROOF: &[&str] =
+    &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
 /// The layout-tab calls have one version and are not called by the v2 test.
 const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";
@@ -261,7 +264,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         Optional,
         workspace::SCOPE_ID,
         "tabs[].panes[].focused",
-        "the pane at the address asked for is the focused one (per pane: two context charts share a side)",
+        "the pane at the address asked for is the focused one, per pane since two context charts share a side; the flag is reported for the active tab only, and a collapsed column reports the flow pane, so reconcile a background or collapsed tab once it is shown",
         LAYOUT_PROOF,
     ),
     // `context_collapsed`, not `panes[].visible`: a collapsed chart is still
@@ -272,7 +275,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         workspace::SCOPE_ID,
         "tabs[].context_collapsed",
         "the tab's context column reads collapsed",
-        LAYOUT_PROOF,
+        LAYOUT_COLLAPSE_PROOF,
     ),
     snapshot(
         "layout.pane.expand",
@@ -303,7 +306,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         Optional,
         chart::SCOPE_ID,
         "panes[].bar_spec",
-        "the pane's bar spec is the interval asked for",
+        "the pane's bar spec is the interval asked for; it is the spec the bars were built with, which follows a new interval within two frames on the active tab and when a background tab is next shown, so read until it settles",
         LAYOUT_PROOF,
     ),
     snapshot(
@@ -334,8 +337,8 @@ pub(crate) const READBACKS: &[Readback] = &[
         "layout.tab.switch",
         Optional,
         workspace::SCOPE_ID,
-        "layouts[].active",
-        "the layout asked for is the active one",
+        "tabs[].panes[].layout_id",
+        "the pane the call named (the active tab's focused pane unless `tab_id`/`pane` say otherwise) carries the layout asked for",
         LAYOUT_TAB_PROOF,
     ),
     journal(

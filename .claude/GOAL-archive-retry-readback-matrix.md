@@ -492,6 +492,34 @@ replays it without acting, `context_collapsed` reads it applied). The same
 batch brought A8, G6, G7, S1 and the not-applicable reasons in line with
 D15–D17, as the resumed completeness pass asked.
 
+Review of the resumed scope, round 3 (a follow-up over `2452e577..a9e202d7`;
+step 0 at `medium`, effort-first, no reuse notice): four findings, all
+confirmed. The head-pinned AP4 reassessment at `a9e202d7` scored **AP4 5/5,
+gate 5 PASS**
+(https://github.com/milocaetano/quantick/issues/378#issuecomment-5648245043)
+and noted that the v1-refusal test was cited on seven rows but drives only
+collapse. Resumed batch 3:
+
+- **M1** — `layout.tab.switch` read `layouts[].active`, which is marked on
+  the focused pane's layout, so switching another pane read as not applied.
+  Closed: the row reads the per-pane `tabs[].panes[].layout_id`, and the
+  optional-row test proves it moves.
+- **M2** — `layout.focus.set`'s `panes[].focused` is reported for the active
+  tab only, and a collapsed column reports the flow pane. Narrowed: the row
+  states both limits and says to reconcile such a tab once it is shown. An
+  exact field would be a new wire field, which the resumed scope does not
+  authorize.
+- **M3** — `layout.pane.set_interval`'s `bar_spec` is the built spec, which
+  follows within two frames on the active tab and when a background tab is
+  next shown. Narrowed the same way: the row says so, and says to read until
+  it settles.
+- **M4** — the refusal told a size-refused read that it might have acted,
+  and pointed single-version capabilities at a v2. Closed: both next steps
+  are conditional ("if this call changes state", "if this capability
+  registers a newer version"), since the gateway sends them without knowing
+  the capability.
+- The v1-refusal test is now cited on `layout.pane.collapse` only.
+
 ## Handoff `human_decision`s
 
 - **N1 — the MCP adapter's default version.** `quantick_invoke` falls back
