@@ -230,11 +230,18 @@ the risk as high, so the full interrogation budget, the full shape pass, a
   `register_reads` table in `reads.rs` (arguably not a pure move), and the
   `docs/architecture/foundation.md:28` link to `invoke_local_action`, which
   R8 keeps this child out of — one-line docs fix at integration.
-- Integration note: the campaign tip moved to `537beca3` (#383) while this
-  child ran, and #383 rewrote the same region of `size-baseline.txt`. The
-  coordinator rebases at integration (per its instruction, not this child)
-  and re-runs `cargo run -p quantick-guards -- --tighten` there; the three
-  entries to drop and the note above carry over unchanged.
+- Integration note: the campaign tip moved twice while this child ran
+  (#383, then #390 → `caa2adb4`), and #383 rewrote the same region of
+  `size-baseline.txt`, which also stopped GitHub from creating
+  `pull_request` runs for the conflicted PR. On the coordinator's
+  instruction the branch was rebased onto `caa2adb4` with its resolution
+  rule: the tip's baseline, minus the three entries (no comment block was
+  attached to any of them), plus the note paragraph, `!budget` set to the sum
+  of the nine remaining entries — 20,025 − 5,122 = 14,903 — and the orphaned
+  `QUANTICK_FOOTPRINT_DEBUG` line (its entry left with #388) removed.
+  `--tighten` then changes nothing and the guards are green. The earlier
+  figures in this file (45,739 → 40,383) were the budget at the original base
+  `e8eb23e5`; the diff over the tip is the same ten files.
 
 ## Closing steps
 
