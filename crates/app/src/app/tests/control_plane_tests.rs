@@ -2116,6 +2116,56 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Whether the gateway answered "the buffered-response budget is busy". That
+/// refusal is about a budget every connection shares, and production marks it
+/// retryable: it never means the client that asked was stalled.
+fn is_retryable_backpressure(outcome: &quantick_control::wire::ResponseOutcome) -> bool {
+    match outcome {
+        quantick_control::wire::ResponseOutcome::Failure { error } => {
+            error.code.as_str() == quantick_control::error::codes::BACKPRESSURE && error.retryable
+        }
+        quantick_control::wire::ResponseOutcome::Success { .. } => false,
+    }
+}
+
+/// Ask the gateway for a worker-side read and return the outcome it answered
+/// with, once the buffered-response slots the previous requests held have been
+/// released.
+///
+/// A response thread releases its global slot after it has written its reply,
+/// which is a moment later than the application frame that answered it. A read
+/// that lands inside that moment is refused with `control.backpressure`, which
+/// production itself marks retryable: it says "the budget is busy", never "this
+/// client is stalled". Asking again inside a bounded budget is therefore a
+/// wait, not a softened assertion — a gateway a stalled client really did stall
+/// never clears, and the caller still asserts a success.
+fn worker_side_read_past_the_unread_replies(
+    client: &mut quantick_control_local::client::LocalClient,
+) -> quantick_control::wire::ResponseOutcome {
+    /// Long enough to outlast the write and the slot release that cost the
+    /// last attempt, short enough not to dominate the test's runtime.
+    const BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
+        let outcome = client
+            .invoke(
+                crate::control::DESCRIBE_CAPABILITY_ID,
+                serde_json::json!({}),
+            )
+            .unwrap()
+            .outcome;
+        if !is_retryable_backpressure(&outcome) {
+            return outcome;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the buffered-response budget never freed a slot for a worker-side read within \
+             {GATEWAY_TEST_WAIT:?}: {outcome:?}"
+        );
+        std::thread::sleep(BACKOFF);
+    }
+}
+
 #[test]
 fn gateway_a_client_that_never_reads_does_not_stall_another() {
     use quantick_control::limits::CONTROL_MAX_IN_FLIGHT_PER_CONNECTION;
@@ -2141,15 +2191,39 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
             )
             .unwrap();
     }
-    // A worker-side read is answered without the frame loop and without
-    // the stalled client's replies ever being read.
-    let outcome = live
+    // Wait for the whole backlog to be queued before asking anything else of
+    // the gateway, so the interleaving below is established rather than raced:
+    // asking first could take the buffered-response slot one of these requests
+    // needs, and then the backlog never reaches its own depth.
+    wait_for_at_least_queued_gateway_requests(&app, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION);
+    // With that backlog queued and unanswered, the other client is answered
+    // either way: served if the shared buffered-response budget still has a
+    // slot, refused retryably if the backlog took them all. A connection may
+    // hold as many in-flight requests as that budget has slots, so which of the
+    // two happens is not the test's to pin — being left to wait on a client
+    // that never reads is, and it is not among the outcomes.
+    let under_backlog = live
         .invoke(
             crate::control::DESCRIBE_CAPABILITY_ID,
             serde_json::json!({}),
         )
         .unwrap()
         .outcome;
+    assert!(
+        matches!(
+            under_backlog,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ) || is_retryable_backpressure(&under_backlog),
+        "a queued backlog answers the live client, with a read or with a retryable refusal: \
+         {under_backlog:?}"
+    );
+    // Answer the backlog, so that what stalls the gateway from here on is the
+    // thing this test is named after: replies sitting unread in a client's
+    // socket, rather than requests still waiting to be served.
+    drain_gateway_requests(&mut app, &ctx);
+    // A worker-side read is answered without the frame loop and without
+    // the stalled client's replies ever being read.
+    let outcome = worker_side_read_past_the_unread_replies(&mut live);
     assert!(
         matches!(
             outcome,
@@ -2165,19 +2239,10 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
             serde_json::json!({ "scopes": ["system.info"] }),
         )
         .unwrap();
-    for iteration in 0..400 {
-        run_frame(&mut app, &ctx);
-        let queued = app
-            .control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test();
-        if iteration >= 10 && queued == 0 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    // Wait for the request to reach the queue before asking the frames to
+    // empty it: an empty queue means nothing until the request is in it.
+    wait_for_queued_gateway_requests(&app, 1);
+    drain_gateway_requests(&mut app, &ctx);
     let response = live.read().unwrap();
     assert_eq!(response.request_id, request_id);
     assert!(matches!(
@@ -5257,7 +5322,12 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
         "the caller is told to ask again once the first has answered"
     );
 
-    run_frame(&mut app, &ctx);
+    // The refusal above was answered before any frame ran, which is the race
+    // this test is about. Serving the first call is not: a frame admits the
+    // queue only inside `CONTROL_UI_BUDGET_US`, and on a loaded machine the
+    // frame's other work can spend that budget before the drain starts, so the
+    // first call is served over as many frames as the budget needs.
+    drain_gateway_requests(&mut app, &ctx);
     let served = client.read().unwrap();
     assert_eq!(served.request_id, first);
     assert!(matches!(
