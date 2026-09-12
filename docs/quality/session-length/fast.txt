@@ -1,0 +1,30 @@
+# command: env -u QUANTICK_BUBBLES cargo test -p quantick-app -- session_length_tests --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit 10b87d90 (dev profile, the one the CI Test step builds)
+test app::tests::session_length_tests::hot_path_work_is_independent_of_session_length ... | path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 8171 |
+| trade.chart.backfilled | 180000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 197 |
+| trade.chart.live | 18000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 213 |
+| trade.chart.live | 180000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 180 |
+| trade.book | 18000 | 1500 | 0.011 | 3.5 | 0.0 | 0 | 0.00 | 0.00 | 633 |
+| trade.book | 180000 | 1500 | 0.011 | 3.5 | 0.0 | 0 | 0.00 | 0.00 | 467 |
+| depth.book | 18000 | 5000 | 19.110 | 6720.6 | 0.0 | 0 | 0.00 | 0.00 | 11773 |
+| depth.book | 180000 | 5000 | 19.110 | 6720.6 | 0.0 | 0 | 0.00 | 0.00 | 9584 |
+| frame.book | 18000 | 300 | 2236.157 | 5156391.5 | 2553042.5 | 9437184 | 0.00 | 0.00 | 8925251 |
+| frame.book | 180000 | 300 | 2236.133 | 5156227.3 | 2552898.8 | 1310720 | 0.00 | 0.00 | 8565599 |
+| frame.app.tick50 | 18000 | 300 | 2538.517 | 753118.4 | 1038177.8 | 322272 | 0.00 | 4.50 | 1753613 |
+| frame.app.tick50 | 180000 | 300 | 2535.270 | 752997.8 | 1036473.3 | 320640 | 0.00 | 4.50 | 1893537 |
+| frame.worker.tick50 | 18000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
+| frame.worker.tick50 | 180000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 300 | 1475.543 | 295506.2 | 766821.5 | 202752 | 0.00 | 5.00 | 895992 |
+| frame.app.time1d | 180000 | 300 | 1481.250 | 297128.8 | 766867.8 | 202944 | 0.00 | 5.00 | 868853 |
+| frame.worker.time1d | 18000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1929.91 | 0.00 | 0 |
+| frame.worker.time1d | 180000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1889.48 | 0.00 | 0 |
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 106.7 | 917504 |
+| 180000 | 85.4 | 7340032 |
+ok
+test app::tests::session_length_tests::long ... ignored, long variant: minutes and gigabytes; run with --ignored, see the module docs
+test app::tests::session_length_tests::the_check_fails_a_path_whose_work_grows_with_the_session ... ok
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 2038 filtered out; finished in 15.43s

@@ -1,0 +1,17 @@
+# method: tools/live_envelope/run_replay.ps1 (WINV26 2026-08-25, speed 60, book + bubbles + footprint + live strip, 45 s, scratch stores), five runs a side interleaved base-1 head-1 base-2 head-2 head-3 base-3 head-4 base-4 head-5 base-5; summarised by python tools/live_envelope/frame_timing.py
+# base: release build of 2452e577 (campaign base); head: release build of 10b87d90
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); sibling agents' builds and tests shared the host, which the interleaving is there to spread
+| Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base-1 | 21 | 59 / 59.19 | 16.667 | 2.065 | 2.049 | 33.35 | 4,697 | 0 | 119 | 0 |
+| head-1 | 21 | 59 / 59.43 | 16.667 | 1.802 | 1.784 | 33.39 | 4,684 | 0 | 265 | 0 |
+| base-2 | 21 | 59 / 59.24 | 16.667 | 2.012 | 1.867 | 33.38 | 4,684 | 0 | 282 | 0 |
+| head-2 | 21 | 59 / 59.43 | 16.666 | 2.398 | 2.375 | 33.13 | 4,692 | 0 | 508 | 0 |
+| head-3 | 21 | 59 / 59.19 | 16.667 | 2.411 | 2.368 | 33.15 | 4,684 | 0 | 240 | 0 |
+| base-3 | 21 | 59 / 59.19 | 16.667 | 2.417 | 2.374 | 17.78 | 4,700 | 0 | 118 | 0 |
+| head-4 | 21 | 59 / 59.24 | 16.674 | 2.415 | 2.410 | 34.77 | 4,697 | 0 | 276 | 0 |
+| base-4 | 21 | 59 / 59.38 | 16.673 | 2.376 | 2.365 | 47.40 | 4,690 | 0 | 483 | 0 |
+| head-5 | 21 | 59 / 59.24 | 16.667 | 2.205 | 2.291 | 33.38 | 4,684 | 0 | 200 | 0 |
+| base-5 | 21 | 59 / 59.19 | 16.667 | 2.268 | 2.251 | 33.28 | 4,686 | 0 | 140 | 0 |
+- **base**: 5 runs; fps min 59; frame_avg 16.668 ms; frame_cpu mean 2.227 ms (per run 2.06, 2.01, 2.42, 2.38, 2.27; stdev 0.182); worst steady frame 47.40 ms; APP_SLOW_FRAMES lines 0
+- **head**: 5 runs; fps min 59; frame_avg 16.668 ms; frame_cpu mean 2.246 ms (per run 1.80, 2.40, 2.41, 2.41, 2.21; stdev 0.264); worst steady frame 34.77 ms; APP_SLOW_FRAMES lines 0
