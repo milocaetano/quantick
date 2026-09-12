@@ -286,7 +286,8 @@ the handoff.
   `nothing_in_view` accessors); a `CandleDressing` value and the
   under-candles carve beside its over-candles twin (F-4);
   `SharedPointer: Copy` carrying `pointer_delta` and the paper claim (F-5,
-  F-6). Four checks green after batch 2, each run alone.
+  F-6). Four checks green after batch 2 (`e8a7432d`), each run alone;
+  `pane.rs` measures 1,212 production lines at the final head.
 
 ## Closing steps
 
