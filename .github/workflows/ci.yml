@@ -121,6 +121,41 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+      - name: App tests under CPU contention
+        # `Test` runs every test once on an idle runner. A test that quietly
+        # assumes a worker thread keeps up with the thread asserting on it
+        # passes there, merges, and goes red later on somebody else's pull
+        # request: #361, #364, #385 and #403 arrived that way within sixteen
+        # hours. Each reproduced only when many copies of the test binary
+        # shared the cores, so this step runs exactly that, on the binary
+        # `Test` just ran: `tools/ci/contention.sh` finds it with the same
+        # `cargo test --workspace` plus `--no-run`, which compiles nothing here.
+        #
+        # The script's defaults: 24 copies sharing 4 cores, each copy at
+        # libtest's default thread count, which follows the affinity mask, so
+        # 96 test threads and their workers on 4 vCPUs. Against the tree
+        # before #403's fix it named that test in 3 of 5 runs; 2 or 3 cores,
+        # and #404's 20 copies on 1 core, never did. The step took 3 to 5
+        # minutes over ten runs; `timeout-minutes` caps it at 8.
+        # The table is in `docs/quality/app-tests-under-contention.md`.
+        #
+        # Tests already known to fail under load are skipped by the copies
+        # only, one per line in `tools/ci/contention-known-issues.txt`, each
+        # naming its issue; `Test` above still runs them. A red step names
+        # each failing test and the copy it failed in, and the next step keeps
+        # every copy's log. Reproduce on Linux with `sh tools/ci/contention.sh`.
+        id: contention
+        timeout-minutes: 8
+        env:
+          CONTENTION_LOGS: ${{ runner.temp }}/contention
+        run: sh tools/ci/contention.sh quantick-app
+      - name: Keep the contention logs
+        if: failure() && steps.contention.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: contention-logs
+          path: ${{ runner.temp }}/contention/
+          retention-days: 14
 
   # The second operating system the README is allowed to claim. It exists so
   # that sentence is backed by a workflow file rather than by memory: the
