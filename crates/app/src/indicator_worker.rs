@@ -311,7 +311,22 @@ pub(crate) enum IndicatorCommand {
     #[allow(dead_code)]
     Flush(Sender<()>),
     #[cfg(test)]
-    InspectLane(Sender<(usize, usize)>),
+    InspectLane(Sender<LaneProbe>),
+}
+
+/// What the worker thread reports about its forming run and its own work.
+#[cfg(test)]
+pub(crate) struct LaneProbe {
+    /// Prints the forming run holds.
+    pub len: usize,
+    /// Prints its storage can hold without growing.
+    pub capacity: usize,
+    /// Prints the worker thread has folded into bars, appends and walks,
+    /// over every run it has held.
+    pub folds: u64,
+    /// The worker thread's heap work since it started; its largest copy is
+    /// the largest since the previous probe.
+    pub heap: crate::work_meter::Tally,
 }
 
 /// Delta events back to the UI. Bounded cost per event: only [`Rebuilt`]
@@ -532,6 +547,13 @@ impl IndicatorWorker {
 
     #[cfg(test)]
     pub(crate) fn retained_lane_for_test(&self) -> (usize, usize) {
+        let probe = self.lane_probe_for_test();
+        (probe.len, probe.capacity)
+    }
+
+    /// The worker thread's own report on its forming run and heap work.
+    #[cfg(test)]
+    pub(crate) fn lane_probe_for_test(&self) -> LaneProbe {
         let (tx, rx) = channel();
         self.send(IndicatorCommand::InspectLane(tx));
         self.await_reply(&rx)
@@ -932,7 +954,14 @@ fn run_observed(
                 IndicatorCommand::Flush(ack) => flushes.push(ack),
                 #[cfg(test)]
                 IndicatorCommand::InspectLane(ack) => {
-                    let _ = ack.send((lane_run.len(), lane_run.capacity()));
+                    let _ = ack.send(LaneProbe {
+                        len: lane_run.len(),
+                        capacity: lane_run.capacity(),
+                        folds: forming_run::folds_on_this_thread(),
+                        heap: crate::work_meter::tally(),
+                    });
+                    // The next probe reports the largest copy since this one.
+                    crate::work_meter::reset_largest();
                 }
             }
         }

@@ -5,7 +5,7 @@
 //! oracle returns, byte for byte, on the engine's golden tapes and on
 //! synthetic runs appended in irregular batches.
 
-use super::forming_run::{CHECKPOINT_SPACING, FormingRun};
+use super::forming_run::{CHECKPOINT_SPACING, FormingRun, folds_on_this_thread};
 use super::*;
 use quantick_engine::{Side, fixture::parse_trades};
 use rust_decimal::Decimal;
@@ -143,18 +143,18 @@ fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
         let mut run = FormingRun::default();
         let tape: Vec<Trade> = (1..=length as u64).map(synthetic).collect();
         for batch in tape.chunks(5) {
-            let before = run.folds();
+            let before = folds_on_this_thread();
             run.extend(batch.to_vec());
             assert!(
-                run.folds() - before <= batch.len() as u64,
+                folds_on_this_thread() - before <= batch.len() as u64,
                 "appending {} prints folds each once",
                 batch.len()
             );
         }
         for rungs in [1_usize, 16, MAX_LANE_RUNGS] {
-            let before = run.folds();
+            let before = folds_on_this_thread();
             let prefixes = run.prefixes(rungs);
-            let walked = run.folds() - before;
+            let walked = folds_on_this_thread() - before;
             assert!(
                 walked <= rungs as u64 * per_rung,
                 "{length} prints, {rungs} rungs: the walk folded {walked}, budget {}",

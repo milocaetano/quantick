@@ -33,6 +33,27 @@ use quantick_engine::{Bar, Trade};
 /// over a run of 4,032 prints, a few seconds of a burst.
 pub(crate) const CHECKPOINT_SPACING: usize = 64;
 
+#[cfg(test)]
+thread_local! {
+    static FOLDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Prints this thread has folded into a bar, appends and walks alike, over
+/// every run it has held — so a test can hold a walk to its budget, and the
+/// worker can report its own across runs cut at every close.
+#[cfg(test)]
+pub(crate) fn folds_on_this_thread() -> u64 {
+    FOLDS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn count_folds(prints: usize) {
+    FOLDS.with(|folds| folds.set(folds.get() + prints as u64));
+}
+
+#[cfg(not(test))]
+fn count_folds(_prints: usize) {}
+
 /// The forming run, in occurrence order, with its fold carried along.
 #[derive(Default)]
 pub(crate) struct FormingRun {
@@ -41,10 +62,6 @@ pub(crate) struct FormingRun {
     checkpoints: Vec<Bar>,
     /// The fold of every print held: the last rung of any walk.
     running: Option<Bar>,
-    /// Prints folded into a bar so far, counted so a test can hold a walk to
-    /// its budget.
-    #[cfg(test)]
-    folds: std::cell::Cell<u64>,
 }
 
 impl FormingRun {
@@ -63,7 +80,7 @@ impl FormingRun {
                     .push(self.running.clone().expect("a print opened the bar"));
             }
         }
-        self.count_folds(appended);
+        count_folds(appended);
     }
 
     /// Prints held.
@@ -78,20 +95,6 @@ impl FormingRun {
     pub(crate) fn capacity(&self) -> usize {
         self.trades.capacity()
     }
-
-    /// Prints folded into a bar since the run was created.
-    #[cfg(test)]
-    pub(crate) fn folds(&self) -> u64 {
-        self.folds.get()
-    }
-
-    #[cfg(test)]
-    fn count_folds(&self, prints: usize) {
-        self.folds.set(self.folds.get() + prints as u64);
-    }
-
-    #[cfg(not(test))]
-    fn count_folds(&self, _prints: usize) {}
 
     /// The fold of the run's first `end` prints (`1 ≤ end ≤ len`), from the
     /// checkpoint at or below `end`.
@@ -108,7 +111,7 @@ impl FormingRun {
         for trade in &self.trades[from..end] {
             bar.extend(trade);
         }
-        self.count_folds(end - from + usize::from(full == 0));
+        count_folds(end - from + usize::from(full == 0));
         bar
     }
 

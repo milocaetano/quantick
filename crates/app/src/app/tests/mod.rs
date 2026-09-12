@@ -52,6 +52,7 @@ mod paper_trading_tests;
 mod published_schema_compatibility_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
+mod session_length_tests;
 mod toolrail_tests;
 mod workspaces_tests;
 
