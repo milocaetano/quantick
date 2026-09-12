@@ -255,6 +255,24 @@ the handoff.
   before/after binaries interleaved; the paired runs sit on the same cap
   (59 fps, 16.7 ms, frame_cpu 2.65 vs 2.72 ms median) — table in the PR.
 
+## Repair batches after the initial review
+
+- **Batch 1** (`d14a7afc`, after step 0 `code-review medium 383` on
+  `2d29ab3a` returned 8 findings, 0 correctness): `TimePaneAreas` kept
+  nameable via `pub(crate) mod canvas_split` (SF-1, closed); `axis_claims`
+  returns a named `AxisChips` (C-3, closed); `handle_context_menu`,
+  `handle_paper_input`, `handle_axis_gestures` and
+  `handle_indicator_pane_gestures` derive `price_band`/`drawing_scale`/
+  `total`/`auto` from the receiver, two `too_many_arguments` allowances
+  dropped (C-4, C-6, closed); four stale location comments and the
+  `drawing_gestures.rs` header fixed (C-7, closed); baseline note names PR
+  #383 and 769 (SF-8, closed); five constants followed their only reader
+  (cut candidate, closed). Deferred to a named follow-up under D1: folding
+  `pointer_delta` into `SharedPointer` with `#[derive(Clone, Copy)]` (C-2
+  and the verifier's candidate 1) and slimming `DrawFrame` / carrying
+  `axis_x`, `clip`, `half`, `content_half`, `candles` in it (C-5).
+  Four checks green at `d14a7afc`, each run alone.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS (tier `high`).
