@@ -104,7 +104,8 @@ coordinator's decisions), the full shape pass, a `medium` bug pass and
   trader may want to ratify; it is carried to the handoff as a
   `human_decision` (keep the test-only ceiling seam, or drop the trade-shaping
   dedup test and let the family rest on unreachability alone). Either answer
-  changes no shipped line.*
+  changes no shipped line.* **Superseded by D17**: the seam stays, test-only,
+  pinned by `the_named_ceiling_seam_is_compiled_for_tests_alone`.
 - **S2** — *The feed-recovery test must not open a venue socket.*
   `feed.reconnect` on a live test tab spawns a real Binance transport, so the
   test aims it at a tab whose feed has left the feed table (`respawned:
@@ -185,11 +186,16 @@ coordinator's decisions), the full shape pass, a `medium` bug pass and
       back, the `store.rs` fixture calls the constructor, and every evidence
       test passes unchanged. *Evidence:* the diff; `cargo test -p quantick-app
       evidence`. → PR body. *(R7)*
-- [x] **A8** — No public contract change: the capability inventory and the
-      published schemas are byte-identical, no descriptor policy, ceiling,
-      profile or token changes. *Evidence:* `the_committed_inventory_is_what_the_generator_emits`
-      and `published_schema_compatibility` green with no regeneration; the
-      diff. → PR body. *(R8)*
+- [x] **A8** — No public contract change outside D15–D17: no descriptor
+      policy, permission ceiling, profile or token changes, and no v1
+      capability changes. D15/D16 add seven capability *versions* (the
+      inventory gains seven rows), two new v2 schema documents, and two
+      optional snapshot fields (the `workspace.summary` and `feed.status` v1
+      snapshots and the catalog are regenerated). The released v1 schema
+      directory is untouched and both published-compatibility suites pass
+      without regeneration. *Evidence:* `released-dir-diff.txt` (empty),
+      `published_schema_compatibility` in both crates, the inventory test.
+      *(R8, as amended by D15–D17)*
 - [x] **A9** — The matrix document states the per-connection limit (#362) and
       that a reconnect falls back to readback. *Evidence:* the quoted
       paragraph. → PR body. *(R9)*
@@ -211,14 +217,18 @@ coordinator's decisions), the full shape pass, a `medium` bug pass and
       deferred in the PR body. `ai-review` completion recorded. D6.
 - [x] **G5** — No new file over 1,500 production lines, no touched file crosses
       it; `cargo test -p quantick-guards` green; context ratchet green. D8.
-- [x] **G6** — Adds something an operator does? No new capability; the new
-      dump command is the named call for the matrix. `arch-review`'s *The
+- [x] **G6** — Adds something an operator does? No new capability — D15 adds
+      *versions* of existing ones, discoverable through `describe` and the
+      catalog; the new dump command is the named call for the matrix. `arch-review`'s *The
       second operator* graded on the generator and test seams.
 
 - [x] **G7** — Writes only inside this worktree, and only to the files this
       child owns (`crates/app/src/control/*`, `crates/control/*`, the
       control-plane test modules under `crates/app/src/app/tests/`, new files,
-      registration lines); siblings' files (`indicator_worker*`,
+      registration lines), plus what D15/D16 required beyond them: the
+      respawn counter in `crates/app/src/tab.rs` (no sibling owns it), the
+      regenerated v1 scope snapshots and capability catalog under
+      `schemas/control/`, and the guards' inventory footer check; siblings' files (`indicator_worker*`,
       `orderflow_worker*`, `state*`, `worker_progress*`, `app/health*`,
       `layers_tests.rs`, `crates/orderflow/src/projection*`/`config*`)
       untouched. The dispatch's *Worktree* section. *Evidence:* `git diff
@@ -466,6 +476,32 @@ findings, all low and all confirmed.
   not decided here. The matrix preamble tells clients to call the newest
   version, and the v2 descriptions say why.
 
+Resumed batch 2 (aimed at R11, after the AP4 reassessment at `db8aed36`
+scored 4 with gate 5 PASS and named the v1 answer's false "unavailable" as
+the next point): the gateway's refusal for an answer the wire cannot carry
+moved from `server.rs` (at its 1,500-line ceiling) to
+`gateway/encode_refusal.rs`, and now says the call may already have taken
+effect, to read the state back before sending it again, and — for a value
+the wire refuses — that a newer version may answer and `control.describe`
+lists them. No code, schema or capability behaviour changes: v1 still acts
+and still cannot encode its answer; only what the refusal tells the client
+changed. Regression:
+`a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted` (keyed
+v1 collapse: acts once, the refusal names the readback, the keyed retry
+replays it without acting, `context_collapsed` reads it applied). The same
+batch brought A8, G6, G7, S1 and the not-applicable reasons in line with
+D15–D17, as the resumed completeness pass asked.
+
+## Handoff `human_decision`s
+
+- **N1 — the MCP adapter's default version.** `quantick_invoke` falls back
+  to `FIRST_CAPABILITY_VERSION` (`crates/mcp/src/tools.rs:514`, `:566`), so
+  an MCP client that omits the version calls v1 of the layout calls and gets
+  the (now honest) refusal instead of v2's answer. Defaulting to the newest
+  registered version, or naming layout tools at v2, changes that tool's
+  published behaviour in a crate this child does not own: reported under
+  the coordinator's "stop and report" instruction, not decided.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS and records its marker.
@@ -478,7 +514,10 @@ findings, all low and all confirmed.
   the test seams are `#[cfg(test)]`, the store is untouched, and the evidence
   constructor runs once per capture on a response worker.
 - *Touches anything user-visible* — no surface, hotkey or panel changes.
-- *Adds a capability* — none; D1 forbids it.
+- *Adds a capability* — none. The gate's classes (feed, bar type, indicator,
+  layer, panel, crate) do not include a new *version* of a control
+  capability, and its intent holds anyway: layout v2 docks as one new file
+  plus one registration line, v1 stays the default nobody has to change.
 - *Engine / determinism territory* — nothing under `crates/engine`.
 
 ## The request as received

@@ -112,6 +112,9 @@ const EVERY_OPTIONAL_TEST: &str =
     "every_reachable_optional_row_replays_a_dropped_answer_and_begins_once";
 /// Version 2 of the layout calls answers through the gateway, exactly.
 const LAYOUT_V2_TEST: &str = "layout_v2_answers_with_the_exact_share_and_v1_is_still_there";
+/// A version-1 answer the wire refuses says the call may have acted.
+const LAYOUT_V1_REFUSAL_TEST: &str =
+    "a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted";
 /// The feed generation moves on every respawn.
 const FEED_GENERATION_TEST: &str = "the_feed_generation_advances_on_every_respawn_and_reads_back";
 /// Every reachable `forbidden` row, one keyed call each.
@@ -170,7 +173,7 @@ const fn journal(
     }
 }
 
-const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST];
+const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
 /// The layout-tab calls have one version and are not called by the v2 test.
 const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";

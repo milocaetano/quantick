@@ -822,6 +822,75 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
     std::fs::remove_dir_all(directory).ok();
 }
 
+/// A version-1 layout call still acts and still cannot put its answer on the
+/// wire — v1 is kept unchanged, as the contract asks of a superseded version.
+/// What changed is what the refusal says: that the call may have acted, to
+/// read the state back, and that a newer version exists. Under a key, the
+/// retry replays that same refusal without acting again, and the named
+/// readback settles what the answer could not.
+#[test]
+fn a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-v1-refusal");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let before = readback(&mut app, &ctx, &mut client, "layout.pane.collapse");
+
+    let (refused, first) = keyed_call(
+        &mut app,
+        &mut client,
+        "first",
+        "layout.pane.collapse",
+        json!({}),
+        "v1-collapse",
+    );
+    let (again, second) = keyed_call(
+        &mut app,
+        &mut client,
+        "second",
+        "layout.pane.collapse",
+        json!({}),
+        "v1-collapse",
+    );
+
+    assert!(first.len() == 1 && first[0].began, "v1 acted");
+    let error = response_error(&refused);
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(
+        error
+            .context
+            .next_steps
+            .iter()
+            .any(|step| step.contains("read the state back")),
+        "the refusal says the call may have acted: {:?}",
+        error.context.next_steps
+    );
+    assert!(
+        error
+            .context
+            .next_steps
+            .iter()
+            .any(|step| step.contains("control.describe")),
+        "and points at the newer version"
+    );
+    assert!(second.is_empty(), "the keyed retry did not act again");
+    assert_eq!(
+        again.outcome, refused.outcome,
+        "it replays the same refusal"
+    );
+    let after = readback(&mut app, &ctx, &mut client, "layout.pane.collapse");
+    assert_ne!(after, before, "and the readback shows the collapse applied");
+    assert_eq!(after, vec![json!(true)]);
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
 /// D16's regression: every feed session a tab takes over advances the
 /// generation `feed.status` reports by exactly one, through the same attach a
 /// respawn takes — which is what lets a client that lost the answer to

@@ -42,6 +42,7 @@ use super::{
     types::known_error,
 };
 
+mod encode_refusal;
 mod idempotency;
 mod local_action;
 mod panel;

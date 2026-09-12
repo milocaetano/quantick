@@ -1446,20 +1446,7 @@ fn send_response(
             response.capture_revision = None;
             response.module_revisions.clear();
             response.outcome = ResponseOutcome::Failure {
-                error: match error {
-                    CodecError::PayloadTooLarge { .. }
-                    | CodecError::StringTooLarge { .. }
-                    | CodecError::JsonTooDeep { .. } => known_error(
-                        codes::PAYLOAD_TOO_LARGE,
-                        "response exceeds the negotiated protocol limit",
-                        false,
-                    ),
-                    _ => known_error(
-                        codes::CAPABILITY_UNAVAILABLE,
-                        "response could not be encoded under the negotiated protocol rules",
-                        false,
-                    ),
-                },
+                error: super::encode_refusal::unencodable(&error),
             };
             match codec.encode(FrameRole::Response, &response) {
                 Ok(frame) => frame,
