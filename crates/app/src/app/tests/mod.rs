@@ -1917,21 +1917,38 @@ fn wait_for_test_gateway_descriptor(
 }
 
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
+    wait_for_queue_depth(app, &format!("reach {expected}"), |queued| {
+        queued == expected
+    });
+}
+
+/// [`wait_for_queued_gateway_requests`] for a caller that only needs the
+/// requests to have arrived, not to be the only ones there. Exact equality is
+/// a trap once more than one request is outstanding: the queue can also shrink
+/// on its own — the response worker answers a request that missed its deadline
+/// without any frame running — and a wait that insists on the peak then never
+/// sees it and reports a defect where there is only a slow machine.
+fn wait_for_at_least_queued_gateway_requests(app: &QuantickApp, expected: usize) {
+    wait_for_queue_depth(app, &format!("reach {expected} or more"), |queued| {
+        queued >= expected
+    });
+}
+
+fn wait_for_queue_depth(app: &QuantickApp, wanted: &str, reached: impl Fn(usize) -> bool) {
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
     loop {
-        if app
+        let queued = app
             .control
             .control_access
             .as_ref()
             .expect("control access is installed")
-            .queued_requests_for_test()
-            == expected
-        {
+            .queued_requests_for_test();
+        if reached(queued) {
             return;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "gateway request queue did not reach {expected} within {GATEWAY_TEST_WAIT:?}"
+            "gateway request queue did not {wanted} within {GATEWAY_TEST_WAIT:?} (queued {queued})"
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }

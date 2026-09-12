@@ -2116,6 +2116,18 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Whether the gateway answered "the buffered-response budget is busy". That
+/// refusal is about a budget every connection shares, and production marks it
+/// retryable: it never means the client that asked was stalled.
+fn is_retryable_backpressure(outcome: &quantick_control::wire::ResponseOutcome) -> bool {
+    match outcome {
+        quantick_control::wire::ResponseOutcome::Failure { error } => {
+            error.code.as_str() == quantick_control::error::codes::BACKPRESSURE && error.retryable
+        }
+        quantick_control::wire::ResponseOutcome::Success { .. } => false,
+    }
+}
+
 /// Ask the gateway for a worker-side read and return the outcome it answered
 /// with, once the buffered-response slots the previous requests held have been
 /// released.
@@ -2142,13 +2154,7 @@ fn worker_side_read_past_the_unread_replies(
             )
             .unwrap()
             .outcome;
-        let busy = match &outcome {
-            quantick_control::wire::ResponseOutcome::Failure { error } => {
-                error.code.as_str() == quantick_control::error::codes::BACKPRESSURE
-            }
-            quantick_control::wire::ResponseOutcome::Success { .. } => false,
-        };
-        if !busy {
+        if !is_retryable_backpressure(&outcome) {
             return outcome;
         }
         assert!(
@@ -2185,14 +2191,35 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
             )
             .unwrap();
     }
-    // Answer every one of them first, so what stalls the gateway from here on
-    // is the thing this test is named after: replies sitting unread in a
-    // client's socket. Leaving them queued instead would stall the gateway for
-    // a different and uninteresting reason — a connection may hold as many
-    // in-flight requests as the whole buffered-response budget has slots, so
-    // whether any other client is served at that moment is a race the test
-    // neither establishes nor is about.
-    wait_for_queued_gateway_requests(&app, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION);
+    // Wait for the whole backlog to be queued before asking anything else of
+    // the gateway, so the interleaving below is established rather than raced:
+    // asking first could take the buffered-response slot one of these requests
+    // needs, and then the backlog never reaches its own depth.
+    wait_for_at_least_queued_gateway_requests(&app, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION);
+    // With that backlog queued and unanswered, the other client is answered
+    // either way: served if the shared buffered-response budget still has a
+    // slot, refused retryably if the backlog took them all. A connection may
+    // hold as many in-flight requests as that budget has slots, so which of the
+    // two happens is not the test's to pin — being left to wait on a client
+    // that never reads is, and it is not among the outcomes.
+    let under_backlog = live
+        .invoke(
+            crate::control::DESCRIBE_CAPABILITY_ID,
+            serde_json::json!({}),
+        )
+        .unwrap()
+        .outcome;
+    assert!(
+        matches!(
+            under_backlog,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ) || is_retryable_backpressure(&under_backlog),
+        "a queued backlog answers the live client, with a read or with a retryable refusal: \
+         {under_backlog:?}"
+    );
+    // Answer the backlog, so that what stalls the gateway from here on is the
+    // thing this test is named after: replies sitting unread in a client's
+    // socket, rather than requests still waiting to be served.
     drain_gateway_requests(&mut app, &ctx);
     // A worker-side read is answered without the frame loop and without
     // the stalled client's replies ever being read.
