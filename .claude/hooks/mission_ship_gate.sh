@@ -12,6 +12,18 @@ fail() {
     exit 1
 }
 
+list_threads() {
+    (cd "$worktree" && sh "$script_dir/ai_review_threads.sh" list "$pr")
+}
+
+require_green_checks() {
+    observed_checks=$(cd "$worktree" && gh pr checks "$pr" --json bucket --jq '.[].bucket') ||
+        fail 'GitHub could not read the exact-head PR checks.'
+    [ -n "$observed_checks" ] || fail 'No CI checks are registered for the current PR head.'
+    observed_nonpassing=$(printf '%s\n' "$observed_checks" | grep -v '^pass$')
+    [ -z "$observed_nonpassing" ] || fail 'At least one exact-head CI check is not green.'
+}
+
 mode=${1:-}
 pr=${2:-}
 worktree=${3:-.}
@@ -22,7 +34,7 @@ worktree=$(CDPATH='' cd -- "$worktree" 2>/dev/null && pwd) || fail 'The task wor
 # Completion reads the literal list before the hook's count, preserving the
 # unresolved set in the refusal rather than reducing it to a green-looking
 # number from another path.
-threads=$(cd "$worktree" && sh "$script_dir/ai_review_threads.sh" list "$pr") ||
+threads=$(list_threads) ||
     fail 'AI-review threads could not be listed; unknown is not zero.'
 if [ -n "$threads" ]; then
     thread_count=$(printf '%s\n' "$threads" | wc -l | tr -d ' ')
@@ -73,11 +85,7 @@ set -- $remote
     fail 'GitHub has not confirmed a mergeable PR; that signal is required but never sufficient.'
 pr_url=$9
 
-checks=$(cd "$worktree" && gh pr checks "$pr" --json bucket --jq '.[].bucket') ||
-    fail 'GitHub could not read the exact-head PR checks.'
-[ -n "$checks" ] || fail 'No CI checks are registered for the current PR head.'
-nonpassing=$(printf '%s\n' "$checks" | grep -v '^pass$')
-[ -z "$nonpassing" ] || fail 'At least one exact-head CI check is not green.'
+require_green_checks
 
 arch_url=$(sh "$script_dir/review_report.sh" verify arch-review "$pr" "$worktree") ||
     fail 'The current architecture marker has no matching durable PASS report.'
@@ -112,8 +120,6 @@ CI: all registered exact-head checks passed
 AI review threads: zero returned by ai_review_threads.sh list
 <!-- end quantick-delivery-evidence:v1 -->
 EOF
-(cd "$worktree" && gh pr edit "$pr" --body-file "$body_tmp") ||
-    fail 'The current-head evidence block could not be published in the PR body.'
 
 clauses=$(sed -n '/<!-- what-done-means:v1 -->/,/<!-- end what-done-means:v1 -->/p' "$skill" |
     grep '^- \*\*D[0-9][0-9]*\*\*')
@@ -145,6 +151,16 @@ EOF
 [ "$seen" = ' D1 D2 D3 D4 D5 D6 D7 D8' ] ||
     fail "What done means clause IDs are missing, duplicated or reordered:$seen"
 printf '\nMISSION-COMPLETION: PASS\n' >> "$report_tmp"
+
+# PR-body reconciliation is not atomic with GitHub checks or review-thread
+# state. Observe both again immediately before durable publication so a
+# change during reconciliation cannot deposit a positive receipt.
+final_threads=$(list_threads) ||
+    fail 'AI-review threads could not be relisted after reconciliation.'
+[ -z "$final_threads" ] || fail 'AI-review threads changed during final reconciliation.'
+require_green_checks
+(cd "$worktree" && gh pr edit "$pr" --body-file "$body_tmp") ||
+    fail 'The current-head evidence block could not be published in the PR body.'
 
 completion_url=$(cd "$worktree" && sh "$script_dir/review_report.sh" \
     publish mission-completion "$pr" "$report_tmp") ||

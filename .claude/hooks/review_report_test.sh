@@ -120,5 +120,13 @@ git -C "$root/repo" commit -qam third
 run_fail 'a prior durable report is stale after a source change' 'No current durable arch-review report' \
     sh "$producer" verify arch-review 42 .
 
+if grep -qF -- 'REPORT_COMMENT_LIMIT=100' "$producer" &&
+    ! grep -qF -- '--paginate' "$producer"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL durable report lookup is not bounded to recent PR comments\n'
+    failed=$((failed + 1))
+fi
+
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

@@ -522,8 +522,15 @@ case "$stub_answer" in
         ;;
 esac
 case "${1:-}" in
-    count) printf '%s\n' "$stub_answer" ;;
+    count)
+        [ "$stub_answer" = late5 ] && stub_answer=0
+        printf '%s\n' "$stub_answer"
+        ;;
     list)
+        if [ "$stub_answer" = late5 ]; then
+            late_file=${QUANTICK_COMPLETION_FIXTURE:?}/listed-once
+            if [ -f "$late_file" ]; then stub_answer=5; else : > "$late_file"; stub_answer=0; fi
+        fi
         stub_line=0
         while [ "$stub_line" -lt "$stub_answer" ]; do
             stub_line=$((stub_line + 1))
@@ -1082,6 +1089,7 @@ case "$operation" in
     publish)
         [ "$kind" = mission-completion ] || exit 64
         grep -q '^MISSION-COMPLETION: PASS$' "$4" || exit 1
+        cp "$4" "$stub_root/published-report"
         printf 'https://example.test/mission-completion-report\n'
         ;;
     *) exit 64 ;;
@@ -1160,6 +1168,18 @@ for completion_mode in mission ship; do
     run_completion "a fully evidenced already-ready PR completes through $completion_mode" \
         "$completion_mode" pass
 done
+
+rm -f "$root/completion/listed-once" "$root/completion/published-report"
+set_threads late5
+run_completion "threads opened during reconciliation block durable completion publication" \
+    mission fail 'threads changed during final reconciliation'
+if [ ! -f "$root/completion/published-report" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL late threads left a durable positive completion report\n'
+    failed=$((failed + 1))
+fi
+set_threads 0
 
 cp "$root/wt/.claude/GOAL-archive-fixture.md" "$root/completion/goal-archive"
 sed -i '/G-AI2/d' "$root/wt/.claude/GOAL-archive-fixture.md"
@@ -1717,6 +1737,14 @@ for caller in mission ship; do
         failed=$((failed + 1))
     fi
 done
+
+if [ "$(grep -cF -- 'require_green_checks' "$repo_root/.claude/hooks/mission_ship_gate.sh")" -ge 3 ] &&
+    [ "$(grep -cF -- 'list_threads' "$repo_root/.claude/hooks/mission_ship_gate.sh")" -ge 3 ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL final completion no longer rechecks CI and AI threads after reconciliation\n'
+    failed=$((failed + 1))
+fi
 
 # And no document that describes the gate may still say a marker holds a
 # commit sha. Command drift and prose drift are different failures: the first

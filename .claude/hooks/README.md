@@ -189,7 +189,8 @@ cd "$WT" && sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_P
 The producer publishes an identity-prefixed PR comment, reads it back, and only
 then records `arch-review-ok`, `delivery-review-ok`, or
 `ai-review-complete`. The gate requires both the current private projection and
-the matching durable receipt; a manually written file therefore fails.
+the matching durable receipt; a manually written file therefore fails. Receipt
+lookup is bounded to the latest 100 PR comments and fails closed when absent.
 
 They are separate files because they answer separate questions. `arch-review`
 asks whether the branch is well built — shape, plus the bug pass its step 0

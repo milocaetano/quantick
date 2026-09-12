@@ -7,6 +7,7 @@ set -u
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 REPORT_MARKER='quantick-review-report:v1'
+REPORT_COMMENT_LIMIT=100
 
 fail() {
     printf '%s\n' "$1" >&2
@@ -83,10 +84,16 @@ verify_report() {
 
     verify_repo=$(cd "$verify_dir" && gh repo view --json nameWithOwner --jq .nameWithOwner) ||
         fail 'GitHub could not resolve the repository for durable-report verification.' 2
-    [ -n "$verify_repo" ] || fail 'GitHub returned no repository for durable-report verification.' 2
+    case "$verify_repo" in
+        */*) verify_owner=${verify_repo%%/*}; verify_name=${verify_repo#*/} ;;
+        *) fail 'GitHub returned no repository for durable-report verification.' 2 ;;
+    esac
     verify_prefix=$(receipt_prefix "$verify_kind" "$verify_verdict")
-    verify_urls=$(cd "$verify_dir" && gh api "repos/$verify_repo/issues/$verify_pr/comments" \
-        --paginate --jq ".[] | select(.body | startswith(\"$verify_prefix\")) | .html_url") ||
+    verify_urls=$(cd "$verify_dir" && gh api graphql \
+        -f query='query($owner:String!,$name:String!,$number:Int!,$limit:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){comments(last:$limit){nodes{body url}}}}}' \
+        -f owner="$verify_owner" -f name="$verify_name" -F number="$verify_pr" \
+        -F limit="$REPORT_COMMENT_LIMIT" \
+        --jq ".data.repository.pullRequest.comments.nodes[] | select(.body | startswith(\"$verify_prefix\")) | .url") ||
         fail 'GitHub could not read durable review reports.' 2
     verify_url=$(printf '%s\n' "$verify_urls" | sed -n '/./h;${x;p;}')
     [ -n "$verify_url" ] || fail "No current durable $verify_kind report exists on PR #$verify_pr."
