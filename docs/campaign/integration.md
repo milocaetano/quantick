@@ -139,13 +139,19 @@ by the gate are (substitute the explicit PR number and full reviewed HEAD):
 ```text
 gh pr merge 42 --merge --match-head-commit FULL_HEAD_SHA
 gh pr merge 42 --squash --match-head-commit FULL_HEAD_SHA
+cd /absolute/task/worktree && gh pr merge 42 --merge --match-head-commit FULL_HEAD_SHA
 ```
 
 No `--auto`, `--admin`, alternate repository or queue shortcut is accepted.
-Run that command alone from the task worktree; compound commands are rejected
-so a second merge or retarget cannot share the first command's authorization.
-Campaign readiness likewise uses a single `gh pr ready NUMBER` command in the
-task worktree, with no repository override or other statement.
+Exactly one leading `cd <worktree> &&` may precede the statement, and nothing
+may follow it. An agent shell whose working directory resets between calls
+reaches the task worktree only that way; a second `cd`, a `;`, a `||` or any
+trailing statement is still rejected, so no second statement can share the
+first's authorization. Campaign readiness likewise uses a single
+`gh pr ready NUMBER`, bare or behind that same one prefix, in the task
+worktree, with no repository override or other statement. A host tool outside
+the gate's matcher — Claude Code's PowerShell tool, for one — must never run
+these commands: a denial is reported to the coordinator, never routed around.
 The helper verifies the live base/head and clean, non-draft, same-repository PR
 with passing checks, and rejects a remote base that advanced since fetch.
 The existing hook's documented command-detection limits still apply: this is
