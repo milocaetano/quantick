@@ -159,7 +159,11 @@ reading the directory with the pattern `effective_dir` already uses — the
 directory the gate judges and the directory it strips can never disagree. Only
 the prefix is forgiven. A second `cd`, a `;`, a `||`, a trailing `&& echo x`,
 `--auto`, `--admin` and `--repo` all survive the strip and fail the same
-equality check they failed before, each with the message it had before.
+equality check they failed before, each with the message it had before. A
+directory containing a space is outside that pattern in both functions, so the
+honest form would be denied there — the worktrees this workflow creates under
+`../quantick-worktrees/` never carry one, and widening the pattern is a change
+with its own review.
 
 **A gate you cannot satisfy is a gate with a hole behind it**, and that is the
 whole reason this is worth a change rather than a workaround. The `Bash`
