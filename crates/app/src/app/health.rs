@@ -34,9 +34,27 @@ pub(super) struct HealthCounters {
     /// Live trades taken in since the last perf summary, across every tab —
     /// what the window is ingesting, not what one market prints.
     pub(super) trades_since_summary: u64,
+    /// The window-wide deferred-command count the last summary reported, so
+    /// the next one can tell a new overflow from an old one.
+    pub(super) worker_deferred_at_summary: u64,
     pub(super) last_summary: Instant,
     // Whether the status bar shows the perf readings (View → perf readings).
     pub(super) show_perf: bool,
+}
+
+impl HealthCounters {
+    /// A window that has measured nothing yet, perf readings shown.
+    pub(super) fn new() -> Self {
+        Self {
+            show_perf: true,
+            frames: FrameStats::new(120),
+            cpu_frames: FrameStats::new(120),
+            last_frame: None,
+            trades_since_summary: 0,
+            worker_deferred_at_summary: 0,
+            last_summary: Instant::now(),
+        }
+    }
 }
 
 impl QuantickApp {
@@ -82,9 +100,9 @@ impl QuantickApp {
         let book = self.active_tab_mut().tape_mut().health();
         let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
-        let book_queue_len = self.active_tab().book_events.len();
         let candle_preset =
             CandlePreset::detect(&self.style.candles).map_or("custom", CandlePreset::log_value);
+        let envelope = envelope::observe(&self.tabs, rate, book_rate);
 
         tracing::info!(
             target: "quantick::app",
@@ -101,6 +119,12 @@ impl QuantickApp {
             feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
+            worker_backlog = envelope.backlog,
+            worker_parked = envelope.parked,
+            worker_deferred = envelope.deferred,
+            worker_coalesced = envelope.coalesced,
+            retained_trades = envelope.retained_trades,
+            live_rate = envelope.live_rate,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
             // Both facts the tape states about its own prices — the grid they
             // land on and the magnitude they land at — and the row width the
@@ -172,7 +196,7 @@ impl QuantickApp {
             }),
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
-            book_queue_len,
+            book_queue_len = self.active_tab().book_events.len(),
             book_channel_closed = self.active_tab().book_channel_closed_reported,
             book_bid_levels = book.bid_levels,
             book_ask_levels = book.ask_levels,
@@ -281,6 +305,7 @@ impl QuantickApp {
             );
         }
 
+        envelope::warn(&envelope, &mut self.health.worker_deferred_at_summary);
         self.health.trades_since_summary = 0;
         self.active_tab_mut().tape_mut().reset_summary_counters();
         self.health.last_summary = now;
@@ -345,4 +370,5 @@ impl QuantickApp {
     }
 }
 
+mod envelope;
 mod worker_diagnostics;

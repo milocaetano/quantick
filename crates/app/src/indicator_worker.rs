@@ -1,7 +1,10 @@
 //! Background thread that owns the [`IndicatorHost`].
 //!
 //! Modelled on [`crate::orderflow_worker`]: the UI thread never touches host
-//! state. Commands go down an unbounded channel; **delta events** come back —
+//! state. Commands go down a channel bounded by
+//! [`INDICATOR_COMMAND_QUEUE`] — a full one parks and folds them on the UI
+//! side ([`fold_parked`]), never blocking and never dropping one; **delta
+//! events** come back —
 //! the UI owns its own copy of the plot columns and applies deltas, so a full
 //! column set crosses the channel only on a rebuild, and appending a live bar
 //! costs O(plots) per indicator, not a clone of history.
@@ -13,12 +16,13 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
+use crate::live_envelope::INDICATOR_COMMAND_QUEUE;
 use crate::worker_progress::{
     Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
 
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
@@ -475,7 +479,7 @@ impl IndicatorWorker {
     }
 
     pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
-        let (cmd_tx, cmd_rx) = channel::<IndicatorCommand>();
+        let (cmd_tx, cmd_rx) = sync_channel::<IndicatorCommand>(INDICATOR_COMMAND_QUEUE);
         let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
         let observed = progress.consumer();
         std::thread::Builder::new()
@@ -483,7 +487,7 @@ impl IndicatorWorker {
             .spawn(move || run_observed(&cmd_rx, &evt_tx, observed))
             .expect("spawn indicator worker thread");
         Self {
-            commands: progress.bind(cmd_tx),
+            commands: progress.bind_merging(cmd_tx, fold_parked),
             events: evt_rx,
             #[cfg(test)]
             partial_updates: std::cell::Cell::new(0),
@@ -492,9 +496,9 @@ impl IndicatorWorker {
         }
     }
 
-    /// Queue one command. A send failure means the worker died — worth a log
-    /// line, never a full queue (the channel is unbounded and command volume
-    /// is bounded by feed cadence).
+    /// Queue one command, or park it when the bounded queue is full; either
+    /// way it reaches the worker and the caller never waits. A send failure
+    /// means the worker died — worth a log line.
     pub(crate) fn send(&self, command: IndicatorCommand) {
         #[cfg(test)]
         if let IndicatorCommand::PartialUpdated { run, .. } = &command {
@@ -517,7 +521,11 @@ impl IndicatorWorker {
     }
 
     /// Every event the worker published since the last drain.
+    ///
+    /// Also the per-frame retry point for commands parked behind a full
+    /// queue: one length read when nothing is parked.
     pub(crate) fn drain_events(&self) -> Vec<IndicatorEvent> {
+        self.commands.pump();
         let mut events = Vec::new();
         while let Ok(event) = self.events.try_recv() {
             events.push(event);
@@ -543,8 +551,23 @@ impl IndicatorWorker {
     pub(crate) fn retained_lane_for_test(&self) -> (usize, usize) {
         let (tx, rx) = channel();
         self.send(IndicatorCommand::InspectLane(tx));
-        rx.recv_timeout(std::time::Duration::from_secs(10))
+        self.await_reply(&rx)
             .expect("the worker reports retained lane storage")
+    }
+
+    /// Wait up to ten seconds for a reply to a command just sent, pumping any
+    /// parked commands meanwhile — a test is its own UI frame loop, and a
+    /// parked barrier would otherwise wait on a queue nobody refills.
+    #[cfg(test)]
+    pub(crate) fn await_reply<T>(&self, rx: &Receiver<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            self.commands.pump();
+            if let Ok(reply) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
+                return Some(reply);
+            }
+        }
+        None
     }
 
     /// Block until every command sent before this call has been applied and
@@ -554,7 +577,80 @@ impl IndicatorWorker {
     pub(crate) fn flush(&self) {
         let (ack_tx, ack_rx) = channel();
         self.send(IndicatorCommand::Flush(ack_tx));
-        let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(10));
+        let _ = self.await_reply(&ack_rx);
+    }
+}
+
+/// The superseding rule for commands parked behind a full queue: `newer`
+/// folds into `older`, the last parked command, only where the worker would
+/// have produced the same result from the pair. Anything else keeps its
+/// place (`Some(newer)`).
+///
+/// - Forming-bar updates carry the unsent prints of the forming run. When the
+///   older one extends the run (a partial and a lane), the newer's prints are
+///   appended to it and its partial and budget win — the batch loop's own
+///   rule. When the newer one clears the run, it replaces the older outright.
+///   An older one that clears followed by a newer one that extends cannot be
+///   expressed as one command, so both stay.
+/// - Input sets for the same slot: the newer replaces the older, which the
+///   batch loop would have skipped ([`drop_superseded_inputs`]).
+/// - A replay from scratch (`Backfilled`, `Rebuild`) followed by another: the
+///   newer replays everything the older would have.
+pub(crate) fn fold_parked(
+    older: &mut IndicatorCommand,
+    newer: IndicatorCommand,
+) -> Option<IndicatorCommand> {
+    match (&mut *older, newer) {
+        (
+            IndicatorCommand::PartialUpdated {
+                partial,
+                run,
+                rungs,
+            },
+            IndicatorCommand::PartialUpdated {
+                partial: next_partial,
+                run: next_run,
+                rungs: next_rungs,
+            },
+        ) => {
+            let newer_clears = next_partial.is_none() || next_rungs == 0;
+            let older_extends = partial.is_some() && *rungs > 0;
+            if newer_clears {
+                *partial = next_partial;
+                *run = next_run;
+                *rungs = next_rungs;
+                None
+            } else if older_extends {
+                run.extend(next_run);
+                *partial = next_partial;
+                *rungs = next_rungs;
+                None
+            } else {
+                Some(IndicatorCommand::PartialUpdated {
+                    partial: next_partial,
+                    run: next_run,
+                    rungs: next_rungs,
+                })
+            }
+        }
+        (
+            IndicatorCommand::SetInputs { slot, values },
+            IndicatorCommand::SetInputs {
+                slot: next_slot,
+                values: next_values,
+            },
+        ) if *slot == next_slot => {
+            *values = next_values;
+            None
+        }
+        (
+            IndicatorCommand::Backfilled(_) | IndicatorCommand::Rebuild(..),
+            replay @ (IndicatorCommand::Backfilled(_) | IndicatorCommand::Rebuild(..)),
+        ) => {
+            *older = replay;
+            None
+        }
+        (_, newer) => Some(newer),
     }
 }
 
@@ -2235,11 +2331,11 @@ mod incremental_lane_tests {
 
     /// Queue everything before running: this exercises one actual worker batch.
     fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
         let (events, output) = channel();
         let progress = WorkerProgress::new();
         let observed = progress.consumer();
-        let tx = progress.bind(tx);
+        let tx = progress.bind_merging(tx, fold_parked);
         for command in commands {
             tx.send(command).unwrap();
         }
@@ -2533,6 +2629,9 @@ mod incremental_lane_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fold_tests;
 
 #[cfg(test)]
 mod progress_tests;

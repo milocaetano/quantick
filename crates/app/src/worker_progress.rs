@@ -1,16 +1,23 @@
-//! Bounded, owner-local diagnostics. Backlog means accepted commands not yet
-//! admitted to a batch, not the instantaneous channel length. One ticket is
-//! sampled until its admission is observed; unsampled tickets and missed
-//! admission observations make waiting time or sample residence unknown.
+//! Bounded command admission and owner-local diagnostics. Backlog means
+//! accepted commands not yet admitted to a batch, not the instantaneous
+//! channel length; parked means accepted by the owner and not yet in the
+//! channel at all, because the channel was full ([`crate::worker_backlog`]).
+//! One ticket is sampled until its admission is observed; unsampled tickets
+//! and missed admission observations make waiting time or sample residence
+//! unknown.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{SendError, Sender};
+use std::sync::mpsc::{SendError, Sender, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Instant;
 
 use serde::Serialize;
+
+#[cfg(test)]
+use crate::worker_backlog::never;
+use crate::worker_backlog::{Admitted, Merge, Parked};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +75,16 @@ pub(crate) struct Counts {
     pub output_failures: u64,
     /// Replacing the BookPublished mailbox, not proof of UI adoption.
     pub mailbox_replacements: u64,
+    /// Commands the owner accepted that are waiting outside a full channel,
+    /// right now. Zero inside the supported envelope.
+    pub parked: u64,
+    /// Commands that found the channel full when sent, cumulative: each was
+    /// parked or folded into a parked one, never dropped.
+    pub deferred: u64,
+    /// Deferred commands that folded into the command parked before them,
+    /// cumulative. Counted separately from the worker-side supersessions
+    /// above because they happen before the channel, not in a batch.
+    pub coalesced_parked: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,6 +113,9 @@ struct Admission {
     valid: bool,
     accepted: u64,
     failed_sends: u64,
+    parked: u64,
+    deferred: u64,
+    coalesced: u64,
 }
 struct SampleSlot {
     valid: bool,
@@ -135,8 +155,13 @@ struct OwnerProgress {
 pub(crate) struct ProgressObserver(Rc<OwnerProgress>);
 
 /// The only command endpoint for this owner. It is neither Clone nor Sync.
+///
+/// The channel is bounded; a command the channel cannot take is parked here
+/// and offered again by [`Self::pump`] and by every later send, so the owner
+/// never blocks and never loses a command.
 pub(crate) struct ObservedSender<T> {
-    sender: Sender<T>,
+    sender: SyncSender<T>,
+    parked: RefCell<Parked<T>>,
     progress: WorkerProgress,
 }
 
@@ -205,6 +230,9 @@ impl WorkerProgress {
                     valid: true,
                     accepted: 0,
                     failed_sends: 0,
+                    parked: 0,
+                    deferred: 0,
+                    coalesced: 0,
                 }),
                 shared,
             })),
@@ -216,11 +244,56 @@ impl WorkerProgress {
     pub(crate) fn consumer(&self) -> Arc<SharedProgress> {
         Arc::clone(&self.observer.0.shared)
     }
-    pub(crate) fn bind<T>(self, sender: Sender<T>) -> ObservedSender<T> {
+    /// Bind a bounded channel whose commands never supersede one another: a
+    /// full channel parks them in order. Both production workers have a
+    /// superseding rule and use [`Self::bind_merging`].
+    #[cfg(test)]
+    pub(crate) fn bind<T>(self, sender: SyncSender<T>) -> ObservedSender<T> {
+        self.bind_merging(sender, never)
+    }
+    /// Bind a bounded channel with the payload's own superseding rule, applied
+    /// only while commands wait outside a full channel.
+    pub(crate) fn bind_merging<T>(
+        self,
+        sender: SyncSender<T>,
+        merge: Merge<T>,
+    ) -> ObservedSender<T> {
         ObservedSender {
             sender,
+            parked: RefCell::new(Parked::new(merge)),
             progress: self,
         }
+    }
+    /// What became of one offered command (`None` for a bare pump) and how
+    /// many parked commands entered the channel on the way; every channel
+    /// entry is an acceptance.
+    fn record_admission(&self, admitted: Option<Admitted>, drained: usize, parked_now: usize) {
+        for _ in 0..drained + usize::from(admitted == Some(Admitted::Queued)) {
+            self.record_send(true);
+        }
+        let mut admission = self.observer.0.admission.get();
+        match admitted {
+            None | Some(Admitted::Queued) => {}
+            Some(Admitted::Parked) => add(&mut admission.deferred, 1, &mut admission.valid),
+            Some(Admitted::Merged) => {
+                add(&mut admission.deferred, 1, &mut admission.valid);
+                add(&mut admission.coalesced, 1, &mut admission.valid);
+            }
+        }
+        admission.parked = parked_now as u64;
+        self.observer.0.admission.set(admission);
+    }
+    /// The worker is gone: every command the disconnect discarded is a failed
+    /// send, counted, and nothing is parked any more.
+    fn record_lost(&self, lost: usize) {
+        let mut admission = self.observer.0.admission.get();
+        add(
+            &mut admission.failed_sends,
+            lost as u64,
+            &mut admission.valid,
+        );
+        admission.parked = 0;
+        self.observer.0.admission.set(admission);
     }
     fn record_send(&self, success: bool) {
         let mut admission = self.observer.0.admission.get();
@@ -247,10 +320,36 @@ impl WorkerProgress {
 }
 
 impl<T> ObservedSender<T> {
+    /// Offer one command. `Ok` means it is queued or parked — either way it
+    /// will reach the worker; the caller never waits. `Err` means the worker
+    /// is gone, and the command comes back.
     pub(crate) fn send(&self, command: T) -> Result<(), SendError<T>> {
-        let result = self.sender.send(command);
-        self.progress.record_send(result.is_ok());
-        result
+        let mut parked = self.parked.borrow_mut();
+        match parked.offer(&self.sender, command) {
+            Ok((admitted, drained)) => {
+                self.progress
+                    .record_admission(Some(admitted), drained, parked.len());
+                Ok(())
+            }
+            Err(refused) => {
+                // The parked commands the disconnect discarded, plus this one.
+                self.progress.record_lost(refused.lost + 1);
+                Err(SendError(refused.command))
+            }
+        }
+    }
+    /// Offer parked commands to the channel again. Called from the owner's
+    /// per-frame read, so a full channel drains at frame cadence even when
+    /// nothing new is sent. Free when nothing is parked: one length read.
+    pub(crate) fn pump(&self) {
+        let mut parked = self.parked.borrow_mut();
+        if parked.len() == 0 {
+            return;
+        }
+        match parked.drain(&self.sender) {
+            Ok(drained) => self.progress.record_admission(None, drained, parked.len()),
+            Err(gone) => self.progress.record_lost(gone.lost),
+        }
     }
     pub(crate) fn snapshot(&self) -> ProgressSnapshot {
         self.progress.observer().snapshot()
@@ -371,6 +470,9 @@ impl SharedProgress {
         let mut counts = state.counts;
         counts.accepted = admission.accepted;
         counts.failed_sends = admission.failed_sends;
+        counts.parked = admission.parked;
+        counts.deferred = admission.deferred;
+        counts.coalesced_parked = admission.coalesced;
         if terminal {
             counts.unfinished = subtract(counts.accepted, counts.retired, &mut valid);
         } else {

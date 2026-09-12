@@ -53,7 +53,8 @@ pub use history::OlderCandles;
 /// late events from an aborted task below the next accepted generation floor.
 pub const BOOK_GENERATION_STRIDE: u64 = 1_000_000;
 /// Bound depth work per frame so a burst cannot starve egui input/rendering.
-const BOOK_DRAIN_BUDGET: usize = 2_048;
+/// The live envelope owns the figure, because the book queue is sized from it.
+const BOOK_DRAIN_BUDGET: usize = crate::live_envelope::BURST_DEPTH_UPDATES_PER_FRAME;
 /// Thickness of the rule marking the focused pane (§11: an accent under the
 /// pane's top edge, never a box drawn around market data).
 const FOCUS_RULE_PX: f32 = 1.0;

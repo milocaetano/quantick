@@ -3,6 +3,11 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+/// Room enough that no fixture here ever finds its queue full; the bounded
+/// behaviour itself is `worker_backlog`'s and `live_envelope`'s to test.
+pub(crate) const TEST_QUEUE: usize = 1 << 12;
+
+mod admission;
 mod ownership;
 pub(crate) mod protocol;
 
@@ -93,7 +98,7 @@ fn sampled_ticket_does_not_claim_unobserved_head_or_idle_stall() {
     let producer = WorkerProgress::with_clock(clock.clone());
     let p = producer.observer().clone();
     let observed = producer.consumer();
-    let (tx, _rx) = channel();
+    let (tx, _rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     assert_eq!(p.snapshot().since_progress, Age::NotApplicable);
     clock.at(10);
@@ -125,7 +130,7 @@ fn overflow_and_clock_regression_are_explicit() {
     let clock = Gate::new();
     let producer = WorkerProgress::with_clock(clock.clone());
     let p = producer.observer().clone();
-    let (tx, _rx) = channel();
+    let (tx, _rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     clock.at(20);
     tx.send(()).unwrap();
@@ -149,7 +154,7 @@ fn unavailable_clock_is_unknown() {
     }
     let producer = WorkerProgress::with_clock(Arc::new(Unavailable));
     let p = producer.observer().clone();
-    let (tx, _rx) = channel();
+    let (tx, _rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     tx.send(()).unwrap();
     assert_eq!(p.snapshot().oldest_wait, Age::Unknown);
@@ -162,7 +167,7 @@ fn coalescing_subsets_survive_an_unfinished_domain_batch() {
     let producer = WorkerProgress::new();
     let p = producer.observer().clone();
     let observed = producer.consumer();
-    let (tx, _rx) = channel();
+    let (tx, _rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     for _ in 0..3 {
         tx.send(()).unwrap();
@@ -199,7 +204,7 @@ fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
     let producer = WorkerProgress::with_clock(clock);
     let p = producer.observer().clone();
     let observed = producer.consumer();
-    let (tx, rx) = channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     let (output_tx, output_rx) = channel();
     for _ in 0..3 {
@@ -262,7 +267,7 @@ fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
 fn send_racing_receiver_destruction_is_unfinished_after_terminal_observation() {
     let producer = WorkerProgress::new();
     let p = producer.observer().clone();
-    let (tx, rx) = channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     drop(producer.consumer().lifecycle());
     let tx = producer.bind(tx);
     // The receiver still exists for the small interval after run() returns.

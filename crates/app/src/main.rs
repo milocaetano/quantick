@@ -44,6 +44,9 @@ mod indicators;
 mod layout_picker;
 mod layout_strip;
 mod layouts;
+mod live_envelope;
+#[cfg(test)]
+mod live_envelope_tests;
 mod live_strip;
 mod loading;
 mod metrics;
@@ -91,6 +94,7 @@ mod ui_state;
 mod viewport;
 mod widgets;
 mod window_scale;
+mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
 mod workspace_store;

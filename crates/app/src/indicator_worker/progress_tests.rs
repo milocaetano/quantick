@@ -8,11 +8,11 @@ impl IndicatorWorker {
     /// Prepare the ordinary endpoint and production consumer separately so a
     /// fixture can finish its initial send/sample before starting admission.
     pub(crate) fn prepared_for_test(progress: WorkerProgress) -> (Self, impl FnOnce() + Send) {
-        let (commands, rx) = channel();
+        let (commands, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
         let (events, output) = channel();
         let observed = progress.consumer();
         let worker = Self {
-            commands: progress.bind(commands),
+            commands: progress.bind_merging(commands, fold_parked),
             events: output,
             partial_updates: std::cell::Cell::new(0),
             lane_traffic: std::cell::Cell::new(0),
