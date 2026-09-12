@@ -14,11 +14,13 @@
 //! `LayerToggle::ALL`, `LAYOUT_PRESETS`, `ScriptedMenu::ALL`. They cannot be
 //! wrong about what is registered because they are holding it.
 //!
-//! **Source** walks read the file. Four of the registries are plain `enum`s
+//! **Source** walks read the file. Six of the registries are plain `enum`s
 //! with no `ALL` array — a `ToolbarAction` cannot be enumerated at runtime
 //! because most variants carry data — and a keyboard shortcut is a `const`,
 //! not a member of anything. For those, the variant names and the constant
-//! names are parsed out of the source text, which is how
+//! names are parsed out of the source text — by declaration name, never by
+//! file path, so a module split moves a registry without breaking the walk
+//! that holds it. That is how
 //! `crates/guards/src/generated.rs` already checks the capability inventory
 //! and the hook registry: cheap, dependency-free, and loud when the parse
 //! finds nothing, because a scan that silently matches zero entries is a guard
@@ -71,18 +73,53 @@ fn production(text: &str) -> &str {
     }
 }
 
-/// The variant names of one `enum`, parsed out of its declaration.
+/// The variant names of one `enum`, parsed out of its declaration wherever in
+/// the crate that declaration lives.
+///
+/// By name and not by path, deliberately. Writing the file out would tie this
+/// guard to the interface's current layout, and the layout is moving: the
+/// toolbar and the tool rail are being split into sibling modules, and the day
+/// `ToolbarAction` lands in `toolbar/actions.rs` a path-keyed walk would fail
+/// with an address complaint rather than a behaviour finding — whose cheapest
+/// reading is to delete the walk.
 ///
 /// Panics when the declaration is not found or yields nothing: a scan that
 /// matches zero variants would let every row in the table look claimed.
-fn enum_variants(relative: &str, name: &str) -> Vec<String> {
-    let text = read(relative);
+fn enum_variants(name: &str) -> Vec<String> {
     let header = format!("enum {name} {{");
-    let start = text
-        .find(&header)
-        .unwrap_or_else(|| panic!("{relative} no longer declares `enum {name}`"))
-        + header.len();
-    let body = &text[start..];
+    let declarations: Vec<(String, String, usize)> = app_sources()
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+            let text = production(&text).to_owned();
+            let start = text.find(&header)? + header.len();
+            let relative = path
+                .strip_prefix(workspace_root())
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            Some((relative, text, start))
+        })
+        .collect();
+    assert!(
+        !declarations.is_empty(),
+        "no file under crates/app/src declares `enum {name}`"
+    );
+    // Exactly one, or the name does not identify a registry. `Tool` is short
+    // enough that a second `enum Tool` elsewhere in the crate would silently
+    // decide which registry this walk is holding, by alphabetical order.
+    assert!(
+        declarations.len() == 1,
+        "`enum {name}` is declared in more than one file, so the name does not say which registry \
+         the walk means: {:?}",
+        declarations
+            .iter()
+            .map(|(relative, _, _)| relative)
+            .collect::<Vec<_>>()
+    );
+    let (relative, text, start) = &declarations[0];
+    let body = &text[*start..];
     let end = body
         .find("\n}")
         .unwrap_or_else(|| panic!("`enum {name}` in {relative} has no closing brace"));
@@ -302,19 +339,19 @@ fn menu_labels() -> (Vec<String>, usize) {
 pub(crate) fn registered() -> Vec<Registered> {
     let mut entries = Vec::new();
 
-    for variant in enum_variants("crates/app/src/toolbar.rs", "ToolbarAction") {
+    for variant in enum_variants("ToolbarAction") {
         entries.push(Registered::new(Source::ToolbarAction, variant));
     }
-    for variant in enum_variants("crates/app/src/layout_strip.rs", "StripAction") {
+    for variant in enum_variants("StripAction") {
         entries.push(Registered::new(Source::StripAction, variant));
     }
-    for variant in enum_variants("crates/app/src/tabstrip.rs", "TabAction") {
+    for variant in enum_variants("TabAction") {
         entries.push(Registered::new(Source::TabAction, variant));
     }
-    for variant in enum_variants("crates/app/src/toolrail.rs", "ToolboxDock") {
+    for variant in enum_variants("ToolboxDock") {
         entries.push(Registered::new(Source::ToolboxDock, variant));
     }
-    for variant in enum_variants("crates/app/src/feed_notice.rs", "NoticeAction") {
+    for variant in enum_variants("NoticeAction") {
         entries.push(Registered::new(Source::NoticeAction, variant));
     }
 
@@ -331,7 +368,7 @@ pub(crate) fn registered() -> Vec<Registered> {
     // `[Tool::Pointer, Tool::Crosshair]` here would let a third non-drawing
     // tool ship unclaimed with this guard green, which is the failure the
     // guard exists to catch.
-    for variant in enum_variants("crates/app/src/toolrail.rs", "Tool") {
+    for variant in enum_variants("Tool") {
         entries.push(Registered::new(Source::RailTool, variant));
     }
     for preset in crate::canvas_layout::LAYOUT_PRESETS {

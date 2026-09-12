@@ -250,6 +250,29 @@ mod tests {
         );
     }
 
+    /// Every source the enum calls walked is actually walked.
+    ///
+    /// `Source` is closed on purpose — a registry the enum does not know about
+    /// is one nothing walks — but closing it puts the variant, its name and
+    /// its walk in three places, and the failure that costs is silent: a
+    /// variant added and never added to `registered`, reported in the
+    /// document's appendix as a source holding rows while nothing checks it.
+    /// This is the assertion that makes that failure loud.
+    #[test]
+    fn every_walked_source_yields_at_least_one_registration() {
+        let registered = sources::registered();
+        for source in Source::ALL {
+            if !source.is_walked() {
+                continue;
+            }
+            assert!(
+                registered.iter().any(|entry| entry.source == source),
+                "`Source::{}` says it is walked and `sources::registered` yields nothing for it",
+                source.as_str()
+            );
+        }
+    }
+
     /// The drift fixture: a behaviour registered with no row is named, not
     /// tolerated.
     ///
