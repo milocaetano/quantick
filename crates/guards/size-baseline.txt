@@ -204,10 +204,20 @@
 # eleven longest of those reads now wrap where they used to fit. A path that
 # says which module owns a field costs a line where it crosses 100 columns --
 # the one price this regroup charges, paid by the file that shrank.
-!budget 45739
+!budget 35488
 
 crates/app/src/app.rs 769
 
+# ## Three entries that no longer exist
+#
+# Everything from here to the note that closes this block is the history of
+# `paper_report.rs`, `paper_account.rs` and `paper_trading.rs` - the two
+# earlier cuts and the allowances they carried, including the `+11` for the
+# eight `QUANTICK_PAPER_*` hooks. None of it attaches to a live entry any
+# more: the third cut took all three under the threshold and their entries
+# are gone. It is kept because the reasoning still explains why the code is
+# shaped the way it is, and deleting it would leave the shape unexplained.
+#
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
 # `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221 of 2,283.
@@ -252,7 +262,6 @@ crates/app/src/app.rs 769
 # asserts a fixed journal's whole report byte for byte, across two cuts. It
 # was written against the old code in its old home and its expected text
 # did not change - same SHA-256 before and after.
-crates/app/src/paper_report.rs 3300
 
 # +11: the eight `QUANTICK_PAPER_*` hooks this file reads, declared beside
 # them. See the budget note above.
@@ -297,9 +306,15 @@ crates/app/src/paper_report.rs 3300
 # the old code in its old home and its expected text did not change - same
 # SHA-256 before and after,
 # ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6.
-crates/app/src/paper_account.rs 2128
-
-crates/app/src/paper_trading.rs 4589
+#
+# The three paper files came under the 1,500-line threshold in one cut, so
+# their entries are gone rather than lowered: `paper_trading.rs` gave the
+# ticket, the chart paint, the pointer, CMD entry, the ruler and the order
+# strategies their own modules; `paper_report.rs` gave the ledger, its rows,
+# the equity curve, the tables and the window theirs; `paper_account.rs` gave
+# risk sizing, order placement, import/export and the report seam theirs.
+# Pure moves, with `the_journal_bytes_are_fixed` and
+# `the_report_numbers_are_fixed` unchanged on both sides of it.
 
 # Lowered by 2,153 by `--tighten` after the four sidecar moves described in
 # the budget note above. The +14 this entry used to carry -- the strategy

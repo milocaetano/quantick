@@ -27,8 +27,8 @@ use quantick_sim::{BracketTarget, signed_points};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
-use super::{LINE_WIDTH_PX, Leg, OpenTag, PaintCtx, PaperDrag, PaperTrading, TagKey};
-use super::{leg_color, tag_row_hit};
+use super::paint_ctx::{PaintCtx, tag_row_hit};
+use super::{LINE_WIDTH_PX, Leg, OpenTag, PaperDrag, PaperTrading, TagKey, leg_color};
 use crate::chart::PriceScale;
 use crate::paper_chrome::{fmt_decimal, fmt_points, fmt_signed_points};
 
