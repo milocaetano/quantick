@@ -241,7 +241,23 @@
 # was never what this entry paid for. Nothing was deleted; the budget falls
 # by the three ceilings.
 # +2: the `QUANTICK_FOOTPRINT_DEBUG` declaration. See the budget note above.
-!budget 12473
+#
+# `eval.rs` and `compile.rs` left this file entirely. The interpreter's
+# built-in families moved out of the evaluator core -- `eval/kernels.rs` (the
+# stateful `ta.*` kernels), `eval/pure.rs` (the pure math, colour and string
+# built-ins) and `eval/objects.rs` (`line.new` / `box.new` / `label.new`, the
+# argument coercions a drawing takes and the `handle.set_*` methods) -- and
+# the compiler's lowering passes out of the driver: `compile/declarations.rs`
+# (pass 1, the `indicator()` header, the plot registry and `fill()`),
+# `compile/fold.rs` (pass 4's constant folder with `Const` and the member
+# constants) and `compile/resolve.rs` (passes 2/3/5/6, the one resolved walk).
+# Pure moves, so both roots fell under the 1,500-line threshold and stopped
+# being tracked; the largest new sibling is `compile/resolve.rs` at 608.
+# `--tighten` first wrote 974 and 323; the two entries are removed by hand
+# because a sub-threshold file with a recorded ceiling is a permission nobody
+# spends, and the budget follows them down by the same 1,297. Nothing was
+# deleted; the multiset proof is in PR #399's body.
+!budget 9264
 
 crates/app/src/app.rs 769
 
@@ -357,6 +373,4 @@ crates/app/src/control/gateway.rs 1696
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718
 crates/app/src/control/evidence.rs 1708
-crates/pine/src/eval.rs 1669
-crates/pine/src/compile.rs 1540
 crates/orderflow/src/config.rs 1523
