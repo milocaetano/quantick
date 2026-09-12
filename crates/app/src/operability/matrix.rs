@@ -363,6 +363,39 @@ mod tests {
         );
     }
 
+    /// An excuse for something the interface no longer registers is drift, and
+    /// it says so in its own words: the reader is sent to `NOT_A_BEHAVIOUR`,
+    /// not hunting a row id that was never in the table.
+    #[test]
+    fn an_excuse_for_a_departed_entry_is_drift() {
+        let capabilities = registered_capability_ids().expect("the inventory parses");
+        let mut excused = NOT_A_BEHAVIOUR.to_vec();
+        excused.push((
+            Source::MenuEntry,
+            "A Menu Nothing Draws",
+            "a fixture: an excuse left behind by a menu entry that is gone",
+        ));
+
+        let findings = drift(
+            UI_BEHAVIOURS,
+            &sources::registered(),
+            &excused,
+            &capabilities,
+        );
+        assert_eq!(
+            findings,
+            vec![Drift::StaleExcuse {
+                source: Source::MenuEntry,
+                key: "A Menu Nothing Draws".to_owned(),
+            }]
+        );
+        assert!(
+            findings[0].message().contains("NOT_A_BEHAVIOUR"),
+            "the message sends the reader to the excuse list: {}",
+            findings[0].message()
+        );
+    }
+
     /// Every row is legible on its own: an identifier that reads like a
     /// capability id, a title, a reach, and — where it is excluded — a reason
     /// long enough to argue with.

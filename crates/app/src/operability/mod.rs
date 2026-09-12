@@ -311,6 +311,16 @@ pub(crate) enum Drift {
         /// The row.
         behaviour: &'static str,
     },
+    /// An entry `NOT_A_BEHAVIOUR` excuses that the interface no longer
+    /// registers. Its own variant rather than an `Orphan` with a placeholder
+    /// row id, because the message has to send the reader to the excuse list
+    /// and not hunting a behaviour that was never in the table.
+    StaleExcuse {
+        /// The registry.
+        source: Source,
+        /// The entry the excuse still names.
+        key: String,
+    },
     /// One entry is both claimed by a row and excused as not a behaviour, so
     /// the two lists contradict each other. Without this the contradiction is
     /// invisible: the entry is skipped for being claimed, and the excuse sits
@@ -367,6 +377,10 @@ impl Drift {
             Self::DuplicateBehaviour { id } => {
                 format!("two rows share the behaviour id `{id}`")
             }
+            Self::StaleExcuse { source, key } => format!(
+                "`NOT_A_BEHAVIOUR` excuses `{}` entry `{key}`, which the interface no longer registers. Drop the excuse",
+                source.as_str()
+            ),
             Self::ClaimedAndExcused {
                 source,
                 key,
@@ -462,8 +476,7 @@ pub(crate) fn drift(
             .iter()
             .any(|entry| entry.source == *source && entry.key.as_str() == *key)
         {
-            findings.push(Drift::Orphan {
-                behaviour: "not_a_behaviour",
+            findings.push(Drift::StaleExcuse {
                 source: *source,
                 key: (*key).to_owned(),
             });

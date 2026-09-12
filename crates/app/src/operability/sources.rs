@@ -43,8 +43,32 @@ fn workspace_root() -> PathBuf {
 
 fn read(relative: &str) -> String {
     let path = workspace_root().join(relative);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+    production(&text).to_owned()
+}
+
+/// The marker a file's test module opens with, and therefore where the
+/// production half of the file ends.
+///
+/// The `mod` is part of the marker on purpose: `#[cfg(test)]` also sits on
+/// individual items — `toolrail.rs` puts one on a constant two hundred lines
+/// above the enum this scan needs — and cutting there would throw away most of
+/// the file and report the registry as gone.
+const TEST_MODULE_MARKER: &str = "\n#[cfg(test)]\nmod ";
+
+/// A file with its test module cut off.
+///
+/// A test module is not the interface. This module's own tests hold fixture
+/// source naming a `MARK_SHORTCUT` and a `LAYOUT_PRESET_KEYS` so they can
+/// check the scan against the shapes rustfmt really produces — and until this
+/// cut existed, the scan read its own fixtures back as two more registrations
+/// and reported the real constants as duplicates of them.
+fn production(text: &str) -> &str {
+    match text.find(TEST_MODULE_MARKER) {
+        Some(index) => &text[..index],
+        None => text,
+    }
 }
 
 /// The variant names of one `enum`, parsed out of its declaration.
@@ -129,44 +153,88 @@ fn app_sources() -> Vec<PathBuf> {
 /// the same constant name bound in two files is an ambiguous key, and the
 /// duplicate check in `registered` says so rather than quietly keeping one.
 ///
-/// Known limit: the scan skips test trees and `*_tests.rs`, not a
-/// `#[cfg(test)]` module inside a production file. A shortcut declared in one
-/// of those would be asked for a row it does not deserve — loudly, which is
-/// the safe direction for a parity guard to fail in.
+/// Test trees, `*_tests.rs` and every file's `#[cfg(test)]` tail are cut
+/// before the scan reads it: a shortcut a test declares is not one the
+/// interface binds, and asking for a row it does not deserve would be as
+/// wrong as missing one it does.
 fn hotkey_constants() -> Vec<String> {
     let mut names = Vec::new();
     for path in app_sources() {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if !trimmed.contains("const ") {
-                continue;
-            }
-            let binds_shortcut = trimmed.contains("KeyboardShortcut");
-            let binds_keys =
-                trimmed.contains("[egui::Key;") || trimmed.contains("[eframe::egui::Key;");
-            if !binds_shortcut && !binds_keys {
-                continue;
-            }
-            let after = trimmed
-                .split("const ")
-                .nth(1)
-                .expect("the line contains `const `");
-            let name: String = after
-                .chars()
-                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-                .collect();
-            if !name.is_empty() {
-                names.push(name);
-            }
-        }
+        names.extend(shortcut_names(production(&text)));
     }
     assert!(
         !names.is_empty(),
         "no keyboard shortcut constants found; the scan is broken"
     );
     names
+}
+
+/// How far past `const ` the type annotation and the initialiser are looked
+/// for, in bytes.
+///
+/// A window rather than the rest of the line, because rustfmt breaks a long
+/// declaration after the name and the type lands on the next line. Reading one
+/// line would skip such a binding in silence, which is the one thing a parity
+/// guard may never do. Generous enough for the longest of either shape in the
+/// tree and short enough that it cannot reach the *next* item's initialiser.
+const DECLARATION_WINDOW_BYTES: usize = 200;
+
+/// The names of the `KeyboardShortcut` and key-array constants one file
+/// declares.
+///
+/// Split out of the read so it can be tested against the shapes rustfmt
+/// actually produces rather than against the ones that happen to be in the
+/// tree today.
+fn shortcut_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (start, _) in text.match_indices("const ") {
+        // A `const` inside a comment is prose, not a declaration.
+        let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
+        if text[line_start..start].trim_start().starts_with("//") {
+            continue;
+        }
+        let end = (start + DECLARATION_WINDOW_BYTES).min(text.len());
+        // Never split a multi-byte character: back off to the nearest boundary.
+        let mut end = end;
+        while end > start && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // And it stops at the declaration's own end. A window that ran on into
+        // the next item's doc comment would read that item's prose as this
+        // one's type — which it did, and reported the window constant above as
+        // a hotkey. A declaration in this tree holds neither a blank line nor a
+        // comment line, so the first of either is past its end.
+        let window = declaration(&text[start..end]);
+        let binds_shortcut = window.contains("KeyboardShortcut");
+        let binds_keys = window.contains("[egui::Key;") || window.contains("[eframe::egui::Key;");
+        if !binds_shortcut && !binds_keys {
+            continue;
+        }
+        let name: String = window["const ".len()..]
+            .chars()
+            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+            .collect();
+        if !name.is_empty() {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The head of `window` up to the first blank line or comment line — the end
+/// of the declaration it opens with.
+fn declaration(window: &str) -> &str {
+    let mut length = 0usize;
+    for line in window.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if length > 0 && (trimmed.is_empty() || trimmed.starts_with("//")) {
+            break;
+        }
+        length += line.len();
+    }
+    &window[..length]
 }
 
 /// How many menu-bar entries carry a label the source computes rather than
@@ -314,6 +382,36 @@ fn duplicate_keys(sorted: &[Registered]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scan reads a declaration, not a line. rustfmt breaks a long one
+    /// after the name, and a binding whose type lands on the next line used to
+    /// be skipped in silence — a new hotkey shipping unclaimed with the guard
+    /// green, which is the failure this module exists to prevent.
+    #[test]
+    fn a_shortcut_whose_type_wrapped_to_the_next_line_is_still_found() {
+        let wrapped = "pub(crate) const A_VERY_LONG_SHORTCUT_NAME_THAT_WRAPS:\n    \
+                       egui::KeyboardShortcut =\n    \
+                       egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Q);\n";
+        assert_eq!(
+            shortcut_names(wrapped),
+            vec!["A_VERY_LONG_SHORTCUT_NAME_THAT_WRAPS".to_owned()]
+        );
+    }
+
+    /// Both shapes the interface uses, and nothing else: a shortcut constant,
+    /// a key array, a constant that is neither, and the word in a comment.
+    #[test]
+    fn the_scan_takes_both_shapes_and_leaves_the_rest() {
+        let source = "// const NOT_A_SHORTCUT: egui::KeyboardShortcut = ...\n\
+                      const MARK_SHORTCUT: egui::KeyboardShortcut =\n    \
+                      egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::M);\n\
+                      const LAYOUT_PRESET_KEYS: [egui::Key; 9] = [egui::Key::Num1];\n\
+                      const MENU_BAR_HEIGHT: f32 = 28.0;\n";
+        assert_eq!(
+            shortcut_names(source),
+            vec!["MARK_SHORTCUT".to_owned(), "LAYOUT_PRESET_KEYS".to_owned()]
+        );
+    }
 
     /// Two doors that look identical to the walk are named, not folded into
     /// one. Without this the second door is invisible: only one row can claim
