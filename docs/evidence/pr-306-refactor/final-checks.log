@@ -9,3 +9,10 @@ Input identity: commit e8f591cbbe1f1eecfd15fc3a3f751d45e3f4eb57, parent origin/m
 2026-09-11 bridge/mt5/tests/test_*.py: exit 0; all four suites passed.
 
 The complete command stream was observed in the mission session. GitHub Actions run 34659625082 independently repeats guardrails, Python checks, supply-chain policy, format, lint, build, workspace test, and Windows transport authority against the pushed commit.
+
+AI-review repair verification, 2026-09-12, input identity d17d0071:
+cargo fmt --all -- --check: exit 0.
+cargo clippy --workspace --all-targets: exit 0.
+cargo build --workspace: exit 0.
+cargo test --workspace: exit 0; 2,041 app tests plus every workspace crate and doctest completed with zero failures.
+The same four commands are repeated after the mission archive establishes the immutable review head.

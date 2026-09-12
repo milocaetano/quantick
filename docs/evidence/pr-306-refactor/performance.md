@@ -1,9 +1,9 @@
 # Performance classification
 
-- Per trade: counter observation and aggregation retain the pull request's constant-time path; this integration adds no loop or allocation.
+- Per trade: counter observation and aggregation retain the pull request's constant-time path through an optional `DealCounterInput`; the lookup and observation are constant-time and add no allocation.
 - Per feed drain: recorder sampling retains the bounded write path.
 - Per frame: the toolbar edits `SpecSelector` instead of synchronizing a second kind/count pair.
-- Rare: schema generation, restoration, control invocation, recorder setup, and recutting run on explicit operations.
+- Rare: schema generation, restoration, control invocation, recorder setup, `.deals` scanning/loading, and recutting run on explicit operations. Rebuild seeding is linear in retained counter samples, as before, and is centralized in one helper.
 
 Ownership and compatibility changed, not hot-path semantics, so no new benchmark comparison was required. Deterministic fixtures cover the semantic paths.
 
