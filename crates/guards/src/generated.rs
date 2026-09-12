@@ -169,13 +169,10 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
         registered.insert(id);
     }
     let mut covered = BTreeSet::new();
-    for columns in table_rows(&matrix, 8) {
+    for columns in table_rows(&matrix, 9) {
         let id = columns[0].trim().trim_matches('`').to_owned();
-        let readback = columns[4].split('`').nth(1).unwrap_or_default().to_owned();
-        // `none: send it again` names no read: the app-side guard owns when
-        // that is allowed, and there is no identifier here to compare.
-        let resends = columns[4].trim().starts_with("none");
-        if !resends && !registered.contains(&readback) {
+        let readback = columns[5].split('`').nth(1).unwrap_or_default().to_owned();
+        if !registered.contains(&readback) {
             findings.push(Finding::new(
                 format!(
                     "{RETRY_MATRIX_PATH}: the row for `{id}` reads back through `{readback}`, \
@@ -365,14 +362,20 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
     // and the footer is cheap to check. It catches the edit the set comparison
     // above cannot: a row whose identifier is right and whose other columns
     // were rewritten by hand still moves the count if a row was duplicated.
+    //
+    // Rows, not identifiers: a capability registers one row per version, and
+    // `layout.*` was the first to register two.
+    let rows = document
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .count();
     if let Some(claimed) = footer_count(&document)
-        && claimed != documented.len()
+        && claimed != rows
     {
         findings.push(Finding::new(
             format!(
                 "{INVENTORY_PATH}: the footer claims {claimed} capabilities but the \
-                 table has {} rows",
-                documented.len()
+                 table has {rows} rows"
             ),
             REMEDY_REGENERATE,
         ));

@@ -18,7 +18,7 @@ use super::{
 pub(crate) const SCOPE_ID: &str = "workspace.summary";
 const MODULE_ID: &str = "workspace";
 const SCHEMA_VERSION: u32 = 1;
-const SPLIT_FRACTION_DECIMAL_PLACES: u32 = 6;
+pub(crate) const SPLIT_FRACTION_DECIMAL_PLACES: u32 = 6;
 
 /// What `history_reach_span_minutes` reads as when a snapshot predates it.
 ///
@@ -97,6 +97,14 @@ pub(crate) struct WorkspaceTab {
     pub layout: CanvasLayoutDto,
     pub focused_pane: PaneSideDto,
     pub split_fraction: CanonicalDecimal,
+    /// Whether the context column is collapsed to its rail. A collapsed chart
+    /// is still counted `visible` in `panes`, because it comes back with its
+    /// bars and drawings; this is the one field that says it is put away.
+    /// The readback for `layout.pane.collapse` and `layout.pane.expand`, and
+    /// `#[serde(default)]` so it is an optional, additive field of the v1
+    /// payload.
+    #[serde(default)]
+    pub context_collapsed: bool,
     pub panes: Vec<WorkspacePane>,
 }
 
@@ -205,6 +213,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
                         SPLIT_FRACTION_DECIMAL_PLACES,
                     )
                     .expect("the pane split fraction is finite"),
+                    context_collapsed: tab.context_collapsed,
                     panes,
                 }
             })

@@ -71,12 +71,17 @@ fn every_mutable_capability_has_one_row_and_no_row_has_drifted() {
             .collect::<Vec<_>>()
             .join("\n")
     );
-    let mutable = contract
+    let mutable: std::collections::BTreeSet<&str> = contract
         .registry()
         .capabilities()
         .filter(|descriptor| !descriptor.read_only)
-        .count();
-    assert_eq!(READBACKS.len(), mutable, "one row per mutable capability");
+        .map(|descriptor| descriptor.id.as_str())
+        .collect();
+    assert_eq!(
+        READBACKS.len(),
+        mutable.len(),
+        "one row per mutable capability, whatever its versions"
+    );
 }
 
 /// The case the guard exists for: a capability registered tomorrow with no
@@ -195,23 +200,6 @@ fn a_read_with_a_selector_it_does_not_take_is_drift() {
     assert_finds(&other_read, &expected("scene.read"));
 }
 
-/// Resending is a reconciliation only an `optional` call can offer: a
-/// forbidden one acts twice.
-#[test]
-fn resending_a_call_that_is_not_optional_is_drift() {
-    let rows = with_row("notify.toast", |row| {
-        row.read = RESEND;
-        row.event = None;
-        row.field = "";
-    });
-    assert_finds(
-        &rows,
-        &Drift::ResendNotSafe {
-            capability: "notify.toast".to_owned(),
-        },
-    );
-}
-
 /// The named readback scope, the other half of the assessor's fixture.
 #[test]
 fn a_scope_the_registry_lacks_is_drift() {
@@ -307,23 +295,30 @@ fn every_row_carries_policy_enforcement_reach_readback_and_proof() {
         .collect();
     let inventory =
         super::super::inventory::capability_inventory_markdown().expect("the registry builds");
-    let mutable_in_inventory = inventory
+    let mutable_in_inventory: std::collections::BTreeSet<&str> = inventory
         .lines()
         .filter(|line| line.starts_with("| `") && line.contains(" | no | "))
-        .count();
-    assert_eq!(rows.len(), mutable_in_inventory);
+        .filter_map(|line| line.split('`').nth(1))
+        .collect();
+    assert_eq!(rows.len(), mutable_in_inventory.len());
     for row in rows {
         let columns: Vec<&str> = row.trim_matches('|').split('|').collect();
-        assert_eq!(columns.len(), 8, "row has the wrong column count: {row}");
+        assert_eq!(columns.len(), 9, "row has the wrong column count: {row}");
         assert!(
-            matches!(columns[1].trim(), "optional" | "forbidden" | "required"),
+            columns[1]
+                .split(',')
+                .all(|version| version.trim().parse::<u32>().is_ok()),
+            "versions are not versions: {row}"
+        );
+        assert!(
+            matches!(columns[2].trim(), "optional" | "forbidden" | "required"),
             "policy is not a policy: {row}"
         );
         for (index, column) in columns.iter().enumerate() {
             assert!(!column.trim().is_empty(), "column {index} is empty: {row}");
         }
         assert!(
-            columns[4].trim().starts_with('`') || columns[4].trim() == "none: send it again",
+            columns[5].trim().starts_with('`'),
             "no readback capability: {row}"
         );
     }

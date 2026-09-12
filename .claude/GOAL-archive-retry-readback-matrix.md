@@ -356,7 +356,7 @@ state. Both fixes change the published wire schema, which D1 forbids. Closing
 the gap contradicts a recorded decision, so it goes to the coordinator
 immediately (delivery contract, *Escalate immediately*).
 
-## Deferral requested — NOT granted
+## Deferral requested — NOT granted (superseded: fixed under D15–D17)
 
 - **R1 / A1 (`layout.pane.collapse`, `layout.pane.expand` readback)** and
   **R11 (AP4 5 and gate 5 PASS)** are unmet at this head because of the
@@ -370,6 +370,82 @@ immediately (delivery contract, *Escalate immediately*).
      this PR ships with AP4 at 4 and gate 5 BLOCKED on them.
 
   No grant exists; nothing here is recorded as deferred.
+
+## Resumed scope — D15, D16, D17 (after the escalation)
+
+The trader answered the escalation on the campaign parent:
+https://github.com/milocaetano/quantick/issues/367#issuecomment-5647748020
+(user, 2026-09-12). These decisions supersede D1's "no public contract
+change" for exactly the items below. They are new authorized scope, not a
+repair, so the repair-batch budget is unchanged.
+
+- **D15** (user, verbatim option label): *"Sim, versão nova aditiva
+  (Recommended)"*. Add `fraction` as a canonical decimal on `LayoutResult`
+  and `ResizeInput` as a new contract version, keep the published v1 intact
+  under the schema-compatibility tests, and add the collapse state to
+  `workspace.summary`. Old clients must not break, and the five commands
+  must answer.
+- **D16** (user, verbatim option label): *"Sim, campo aditivo
+  (Recommended)"*. Add an optional `feed.status` field that changes on every
+  feed respawn.
+- **D17** (coordinator): keep the test-only `trader` ceiling only if it is
+  compiled for tests alone and a guard test pins that no production grant
+  hands it out.
+
+Ledger additions:
+
+- **R12** — `layout.focus.set`, `layout.pane.collapse`,
+  `layout.pane.expand`, `layout.pane.move` and `layout.preset.apply` answer
+  through the real gateway. `fraction` is exact on a new additive version.
+  v1 stays registered and the released v1 baselines stay green without
+  regeneration. *(D15)*
+- **R13** — `workspace.summary` reports the context column's collapse
+  (additive), and collapse/expand get a named readback in the matrix.
+  *(D15)*
+- **R14** — `feed.status` carries an optional field that advances on every
+  respawn, used as the feed rows' readback. *(D16)*
+- **R15** — the named-ceiling seam is test-only and pinned by a guard test.
+  *(D17)*
+
+Criteria additions:
+
+- [x] **A11** — `crates/app/src/control/layout/v2.rs` registers v2 of the
+      seven `LayoutResult` calls. Each v2 descriptor is derived from its v1
+      descriptor and answers `fraction` as a `CanonicalDecimal` (six places,
+      the same writer as `split_fraction`); `layout.pane.resize` v2 takes one
+      and refuses more than six places. v1 is unchanged and still registered.
+      *Evidence:* `layout_v2_answers_with_the_exact_share_and_v1_is_still_there`
+      and `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`,
+      where every acting row now answers `Success` at v2; the new documents
+      `schemas/control/layout-result-v2.schema.json` and
+      `layout-resize-input-v2.schema.json`; `published_schema_compatibility`
+      green in both crates with the released v1 directory untouched.
+      *(R12)*
+- [x] **A12** — `workspace.summary` `tabs[].context_collapsed` (optional);
+      the collapse/expand rows read it, and the table test proves it moves.
+      *Evidence:* the matrix rows and the test. *(R13)*
+- [x] **A13** — `feed.status` `tabs[].feed_generation` (optional,
+      `WireU64`), incremented in `Tab::attach_with`, the single path every
+      respawn takes. The feed rows read it.
+      *Evidence:* `the_feed_generation_advances_on_every_respawn_and_reads_back`;
+      the optional-row plan shows it stays on a call that respawned nothing.
+      *(R14)*
+- [x] **A14** — `the_named_ceiling_seam_is_compiled_for_tests_alone` pins the
+      seam module's `#[cfg(test)]` declaration, and
+      `no_grant_hands_out_a_ceiling_outside_the_grantable_list` pins that no
+      grant hands out `trader`. *(R15)*
+
+Design choices, stated: `CanonicalDecimal` over integer millionths, because
+it is the contract's existing exact-decimal encoding, and the answer and the
+readback then share one writer. Adding v2 descriptors is additive (contract
+§4): the capability inventory gains seven rows, and the observer capability
+catalog snapshot is regenerated through its existing
+`QUANTICK_UPDATE_CONTROL_SCHEMAS` path. The `workspace.summary` and
+`feed.status` additions are optional properties, which the released-v1
+compatibility gate accepts at v1. The "none: send it again" row kind is
+gone, because no row needs it; round-3 follow-ups F3-1 and F3-2 are moot
+with it. The guards inventory footer check now counts table rows rather
+than identifiers, since a capability registers one row per version.
 
 ## Closing steps
 

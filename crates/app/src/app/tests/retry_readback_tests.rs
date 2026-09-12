@@ -96,8 +96,9 @@ fn serve(app: &mut QuantickApp) -> Vec<ServedRequest> {
     with_access(app, |access, app| access.serve_queued_for_test(app))
 }
 
-/// One keyed call, the application thread served through the seam; the
-/// answer and every request the application took off its queue meanwhile.
+/// One keyed call at version 1, the application thread served through the
+/// seam; the answer and every request the application took off its queue
+/// meanwhile.
 fn keyed_call(
     app: &mut QuantickApp,
     client: &mut LocalClient,
@@ -106,11 +107,24 @@ fn keyed_call(
     payload: Value,
     key: &str,
 ) -> (ResponseEnvelope, Vec<ServedRequest>) {
+    keyed_call_at(app, client, request_id, capability, 1, payload, key)
+}
+
+/// [`keyed_call`] at a named capability version.
+fn keyed_call_at(
+    app: &mut QuantickApp,
+    client: &mut LocalClient,
+    request_id: &str,
+    capability: &str,
+    version: u32,
+    payload: Value,
+    key: &str,
+) -> (ResponseEnvelope, Vec<ServedRequest>) {
     let sent = client
         .send_with_idempotency_key(
             RequestId::new(request_id).unwrap(),
             capability,
-            1,
+            version,
             payload,
             IdempotencyKey::new(key.to_owned()).unwrap(),
         )
@@ -136,8 +150,19 @@ fn unkeyed_call(
     capability: &str,
     payload: Value,
 ) -> (ResponseEnvelope, Vec<ServedRequest>) {
+    unkeyed_call_at(app, client, capability, 1, payload)
+}
+
+/// [`unkeyed_call`] at a named capability version.
+fn unkeyed_call_at(
+    app: &mut QuantickApp,
+    client: &mut LocalClient,
+    capability: &str,
+    version: u32,
+    payload: Value,
+) -> (ResponseEnvelope, Vec<ServedRequest>) {
     let sent = client
-        .send(capability, payload)
+        .send_versioned(capability, version, payload)
         .expect("the request is sent");
     let mut served = Vec::new();
     let deadline = Instant::now() + GATEWAY_TEST_WAIT;
@@ -492,78 +517,92 @@ fn a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once() {
 /// What a row's readback must do across its call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Readback {
-    /// The call acts: the field reads differently afterwards.
+    /// The call acts and answers `Success`: the field reads differently
+    /// afterwards.
     Moves,
-    /// The handler refuses the call: the field reads the same afterwards.
+    /// The call is refused, or acts on nothing: the field reads the same
+    /// afterwards.
     Stays,
-    /// The field shows the goal state, not this call's trace (feed recovery).
-    Resolves,
-    /// No read shows the effect; the row says to send the call again, so the
-    /// test proves the effect landed and that sending it again changes
-    /// nothing further.
-    Resend,
 }
+
+/// The version the matrix's layout rows are called at: the newest, which is
+/// the one that can answer with the arrangement it made.
+const LAYOUT_V2: u32 = 2;
 
 /// Every reachable `optional` row, in an order where each call really acts:
 /// the preset first gives the tab two context charts for the pane calls to
 /// work on. Inputs are valid because the contract validates a payload before
 /// it looks at the key, and a call refused on its input never reaches the
 /// store this test is about.
-fn replay_plan() -> Vec<(&'static str, Value, Readback)> {
+fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
         (
             "layout.preset.apply",
+            LAYOUT_V2,
             json!({ "preset_id": "time+time+flow" }),
             Readback::Moves,
         ),
-        ("layout.focus.set", json!({ "pane": "2" }), Readback::Moves),
+        (
+            "layout.focus.set",
+            LAYOUT_V2,
+            json!({ "pane": "2" }),
+            Readback::Moves,
+        ),
         (
             "layout.pane.set_interval",
+            LAYOUT_V2,
             json!({ "pane": "1", "interval_ms": 7_200_000 }),
             Readback::Moves,
         ),
         (
             "layout.pane.move",
+            LAYOUT_V2,
             json!({ "from": "1", "to": "2" }),
             Readback::Moves,
         ),
-        ("layout.pane.collapse", json!({}), Readback::Resend),
-        ("layout.pane.expand", json!({}), Readback::Resend),
-        // `fraction` is an `f64` and the wire refuses floating-point JSON, so
-        // a client can send only the integers 0 or 1 — a defect in the input
-        // schema reported with this change, not fixed by it. 1 leaves no room
-        // for the context column, so the handler refuses it: the readback
-        // has to stay where it was, and the refusal is replayed like any
-        // terminal answer.
+        (
+            "layout.pane.collapse",
+            LAYOUT_V2,
+            json!({}),
+            Readback::Moves,
+        ),
+        ("layout.pane.expand", LAYOUT_V2, json!({}), Readback::Moves),
+        // Seven places cannot come back as they were sent, so v2 refuses
+        // them — and the readback stays where it was.
         (
             "layout.pane.resize",
-            json!({ "fraction": 1 }),
+            LAYOUT_V2,
+            json!({ "fraction": "0.1234567" }),
             Readback::Stays,
         ),
-        ("layout.tab.create", json!({}), Readback::Moves),
+        (
+            "layout.pane.resize",
+            LAYOUT_V2,
+            json!({ "fraction": "0.5" }),
+            Readback::Moves,
+        ),
+        ("layout.tab.create", 1, json!({}), Readback::Moves),
         (
             "layout.tab.rename",
+            1,
             json!({ "new_name": "Renamed on retry" }),
             Readback::Moves,
         ),
         // Filled in when it runs: the layout that was active before the create.
-        ("layout.tab.switch", Value::Null, Readback::Moves),
-        ("feed.reconnect", json!({}), Readback::Resolves),
-        ("feed.reload", json!({}), Readback::Resolves),
+        ("layout.tab.switch", 1, Value::Null, Readback::Moves),
+        // A tab whose feed has left the feed table: the call runs, answers
+        // `respawned: false`, and the generation says so by not moving.
+        ("feed.reconnect", 1, json!({}), Readback::Stays),
+        ("feed.reload", 1, json!({}), Readback::Stays),
     ]
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
 /// answer dropped, and the retry under the same key. The retry is the first
-/// outcome, readdressed; the application began the call once; and the row's
-/// named field moves when the call acted and stays when it was refused — the
-/// readback separating applied from not applied, which is the claim the
-/// matrix makes for it.
-///
-/// Five of the calls that act here answer `control.capability_unavailable`
-/// today: `LayoutResult.fraction` is an `f64` the wire refuses to encode
-/// (reported with this change; fixing it is a schema change). Their readback
-/// moving anyway is exactly how a client learns such a call applied.
+/// outcome, readdressed; the application began the call once; a call that
+/// acts answers `Success` through the real gateway; and the row's named field
+/// moves when the call acted and stays when it did not — the readback
+/// separating applied from not applied, which is the claim the matrix makes.
 #[test]
 fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let ctx = egui::Context::default();
@@ -589,7 +628,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     );
     let mut first_layout = Value::Null;
 
-    for (capability, payload, expected) in plan {
+    for (index, (capability, version, payload, expected)) in plan.into_iter().enumerate() {
         // A connection per row: each call's records, rate and reservations
         // are its own, so one row cannot mask another.
         let mut client = connect(&directory, &cockpit);
@@ -598,10 +637,6 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "layout.tab.switch" => json!({ "name": first_layout }),
             _ => payload,
         };
-        if expected == Readback::Resend {
-            replay_and_resend(&mut app, &mut client, capability, &payload);
-            continue;
-        }
         let before = readback(&mut app, &ctx, &mut client, capability);
         if capability == "layout.tab.create" {
             first_layout = before.first().cloned().expect("a layout is open");
@@ -610,17 +645,25 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             // No venue socket from a test; see the feed test above.
             app.active_tab_mut().feed_id = "retired-feed".to_owned();
         }
-        let key = format!("replay-{capability}");
-        let (lost, first) = keyed_call(
+        let key = format!("replay-{index}-{capability}");
+        let (lost, first) = keyed_call_at(
             &mut app,
             &mut client,
             "first",
             capability,
+            version,
             payload.clone(),
             &key,
         );
-        let (retry, second) =
-            keyed_call(&mut app, &mut client, "second", capability, payload, &key);
+        let (retry, second) = keyed_call_at(
+            &mut app,
+            &mut client,
+            "second",
+            capability,
+            version,
+            payload,
+            &key,
+        );
         assert_eq!(
             first.len(),
             1,
@@ -643,69 +686,165 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut after = readback(&mut app, &ctx, &mut client, capability);
         while expected == Readback::Moves && after == before && Instant::now() < deadline {
             run_frame(&mut app, &ctx);
-            std::thread::sleep(Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(20));
             after = readback(&mut app, &ctx, &mut client, capability);
         }
         match expected {
-            Readback::Moves => assert_ne!(
-                after, before,
-                "{capability}: `{}` shows the call applied (answer: {:?})",
-                row.field, lost.outcome
-            ),
-            Readback::Stays => assert_eq!(
-                after, before,
-                "{capability}: `{}` shows the refused call did not apply",
-                row.field
-            ),
-            Readback::Resolves => assert!(!after.is_empty(), "{capability}: `{}`", row.field),
-            Readback::Resend => unreachable!("handled above"),
+            Readback::Moves => {
+                assert!(
+                    matches!(lost.outcome, ResponseOutcome::Success { .. }),
+                    "{capability} v{version} answers through the gateway: {:?}",
+                    lost.outcome
+                );
+                assert_ne!(
+                    after, before,
+                    "{capability}: `{}` shows it applied",
+                    row.field
+                );
+            }
+            Readback::Stays => {
+                assert_eq!(
+                    after, before,
+                    "{capability}: `{}` shows it did not",
+                    row.field
+                );
+            }
         }
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
 
-/// A row the matrix reconciles by resending: the keyed call and its retry
-/// replay as every optional row does, the effect lands (read off the tab,
-/// since no scope carries it — which is the row's point), and the same call
-/// sent again with no key, as a reconnected client would, leaves it there.
-fn replay_and_resend(
-    app: &mut QuantickApp,
-    client: &mut LocalClient,
-    capability: &str,
-    payload: &Value,
-) {
-    let wanted = capability == "layout.pane.collapse";
-    let key = format!("replay-{capability}");
-    let (lost, first) = keyed_call(app, client, "first", capability, payload.clone(), &key);
-    let (retry, second) = keyed_call(app, client, "second", capability, payload.clone(), &key);
-    assert_eq!(
-        first.len(),
-        1,
-        "{capability}: the call reached the application"
+/// D15's regression: version 2 answers every layout call that version 1
+/// could not encode, with the share exact — the answer's `fraction` is the
+/// `split_fraction` the workspace reads back, to the character — and version 1
+/// is still registered and still dispatches, so a client written against it
+/// meets the same contract it always had.
+#[test]
+fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("layout-v2");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    assert!(first[0].began, "{capability}: and got past every refusal");
+
+    let (resized, _) = unkeyed_call_at(
+        &mut app,
+        &mut client,
+        "layout.pane.resize",
+        LAYOUT_V2,
+        json!({ "fraction": "0.4" }),
+    );
+    assert_eq!(
+        success_result(&resized)["fraction"],
+        "0.4",
+        "the share sent"
+    );
+    assert_eq!(
+        readback(&mut app, &ctx, &mut client, "layout.pane.resize"),
+        vec![json!("0.4")],
+        "is the share the workspace reads back"
+    );
+    for (capability, payload) in [
+        (
+            "layout.preset.apply",
+            json!({ "preset_id": "time+time+flow" }),
+        ),
+        ("layout.focus.set", json!({ "pane": "1" })),
+        ("layout.pane.move", json!({ "from": "1", "to": "2" })),
+        ("layout.pane.collapse", json!({})),
+        ("layout.pane.expand", json!({})),
+        (
+            "layout.pane.set_interval",
+            json!({ "pane": "1", "interval_ms": 300_000 }),
+        ),
+    ] {
+        let (answer, served) =
+            unkeyed_call_at(&mut app, &mut client, capability, LAYOUT_V2, payload);
+        // A new preset's panes are built on the next frame, as the trader's
+        // own click would find them.
+        run_frame(&mut app, &ctx);
+        assert_eq!(served.len(), 1, "{capability} v2 reached the application");
+        let result = success_result(&answer);
+        assert!(
+            result["fraction"].is_string(),
+            "{capability} v2 answers the share as a decimal string: {result}"
+        );
+    }
+
+    let described = remote_call(
+        &mut app,
+        &ctx,
+        &mut client,
+        crate::control::DESCRIBE_CAPABILITY_ID,
+        json!({}),
+    );
+    let versions: BTreeSet<u64> = success_result(&described)["capabilities"]
+        .as_array()
+        .expect("describe lists capabilities")
+        .iter()
+        .filter(|descriptor| descriptor["id"] == "layout.pane.collapse")
+        .filter_map(|descriptor| descriptor["version"].as_u64())
+        .collect();
+    assert_eq!(versions, BTreeSet::from([1, 2]), "v1 stays beside v2");
+    let (_, served) = unkeyed_call_at(&mut app, &mut client, "layout.pane.collapse", 1, json!({}));
     assert!(
-        second.is_empty(),
-        "{capability}: the retry never reached it"
+        served.len() == 1 && served[0].began,
+        "v1 still dispatches to the same handler"
     );
-    assert_eq!(
-        retry.outcome, lost.outcome,
-        "{capability}: the first answer"
-    );
-    assert_eq!(
-        app.active_tab().context_collapsed,
-        wanted,
-        "{capability} applied (answer: {:?})",
-        lost.outcome
-    );
-    let (_, resent) = unkeyed_call(app, client, capability, payload.clone());
-    assert_eq!(resent.len(), 1, "{capability}: the resend is a new call");
-    assert_eq!(
-        app.active_tab().context_collapsed,
-        wanted,
-        "{capability}: sending it again leaves the same state"
-    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// D16's regression: every feed session a tab takes over advances the
+/// generation `feed.status` reports by exactly one, through the same attach a
+/// respawn takes — which is what lets a client that lost the answer to
+/// `feed.reconnect` or `feed.reload` see whether the tab really took a new
+/// session.
+#[test]
+fn the_feed_generation_advances_on_every_respawn_and_reads_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("feed-generation");
+    grant_annotate_for_test(&mut app, "all-reads");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(&directory, &options("observer", &[]));
+    let generation = |values: Vec<Value>| -> u64 {
+        values
+            .first()
+            .and_then(Value::as_str)
+            .and_then(|text| text.parse().ok())
+            .expect("the tab reports its feed generation")
+    };
+    let before = generation(readback(&mut app, &ctx, &mut client, "feed.reconnect"));
+
+    for respawn in 1..=2 {
+        let (_events, events) = mpsc::channel(8);
+        let (_book, book_events) = mpsc::channel(8);
+        let (commands, _command_rx) = mpsc::channel(8);
+        app.active_tab_mut().attach_for_test(FeedHandle {
+            events,
+            book_events,
+            notices: feed::silent_notices(),
+            capabilities: feed::fixed_capabilities(ProviderKind::Binance.capabilities()),
+            latency: feed::unsplit_latency(),
+            commands,
+            replay: None,
+        });
+        assert_eq!(
+            generation(readback(&mut app, &ctx, &mut client, "feed.reconnect")),
+            before + respawn,
+            "respawn {respawn} advanced the generation by one"
+        );
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
 }
 
 /// Every reachable `forbidden` row refuses a key on the socket, before the

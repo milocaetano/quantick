@@ -269,6 +269,12 @@ pub struct Tab {
     /// on a session that started from an empty chart, which has nothing to
     /// overlap with. See [`quantick_feed::past_resume_floor`].
     pub resume_floor_ms: Option<i64>,
+    /// How many feed sessions this tab has taken over since it opened: one
+    /// more on every attach — a reconnect, a reload, a market switch, a replay
+    /// opened or closed. Read by `feed.status` so a client that lost the
+    /// answer to `feed.reconnect` or `feed.reload` can see whether the tab
+    /// really took a new session, which no other field says.
+    feed_generation: u64,
     /// A stall forced by `QUANTICK_FEED_STALL`, for a scripted run that has to
     /// photograph the recovery controls without breaking a real feed.
     ///
@@ -588,6 +594,7 @@ impl Tab {
             feed_attached_ms: metrics::wall_clock_ms(),
             connection_since_ms: metrics::wall_clock_ms(),
             resume_floor_ms: None,
+            feed_generation: 0,
             forced_stall: stall::ForcedStall::from_env(),
             pending_demo_gap_ms: quantick_feed::demo_gap_ms(),
             feed_gaps: Vec::new(),
@@ -714,6 +721,7 @@ impl Tab {
         // this tab no longer shows.
         self.abandon_history_run();
         self.loading.set_active(LoadingTask::VenueHistory, false);
+        self.feed_generation = self.feed_generation.saturating_add(1);
         self.events = handle.events;
         self.book_events = handle.book_events;
         self.notices = handle.notices;
@@ -774,6 +782,11 @@ impl Tab {
     #[cfg(test)]
     pub fn forget_ohlcv_generation_for_test(&mut self) {
         self.ohlcv_generation = u64::MAX;
+    }
+
+    /// How many feed sessions this tab has taken over; see the field.
+    pub fn feed_generation(&self) -> u64 {
+        self.feed_generation
     }
 
     /// Swap in a feed the test drives, through the same path a respawn takes.

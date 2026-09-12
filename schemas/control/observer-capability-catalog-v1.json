@@ -5065,6 +5065,125 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.focus.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Focus one pane: the chart the chrome speaks for and commands land on.",
+        "properties": {
+          "pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address. `0` is the flow pane."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "pane"
+        ],
+        "title": "FocusInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Focus a chart",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5174,6 +5293,118 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Puts the context charts away, leaving the rail that brings them back. The width they had is kept, so expanding returns the layout the trader chose. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.collapse",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Collapse the context column",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Brings the context charts back at the width they had before they were collapsed.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5277,6 +5508,118 @@
       "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
       "title": "Expand the context column",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Brings the context charts back at the width they had before they were collapsed. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.expand",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Expand the context column",
+      "version": 2
     },
     {
       "availability": {
@@ -5404,6 +5747,130 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Moves one context chart up or down the column beside the heatmap. The flow pane does not move: its column is the one thing every preset agrees on. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.move",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Move one context chart within the stack.",
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address now. `0` is the flow pane and cannot be moved."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          },
+          "to": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Where it should sit."
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "MovePaneInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Move a chart within the stack",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5515,6 +5982,129 @@
       "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
       "title": "Resize the context column",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Sets the context column's share of the canvas, held inside the same floor a divider drag is held to. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.resize",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "`layout.pane.resize` v2's input: v1's, with `fraction` exact.",
+        "properties": {
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The share, 0..1, as an exact decimal with at most six places. Held\ninside the same floor a drag is held to."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "fraction"
+        ],
+        "title": "ResizeInputV2",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Resize the context column",
+      "version": 2
     },
     {
       "availability": {
@@ -5643,6 +6233,131 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets one context chart's interval, the same value its own header selector writes. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.set_interval",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Set one context chart's timeframe.",
+        "properties": {
+          "interval_ms": {
+            "description": "The interval in milliseconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address. `0` is the flow pane, which the toolbar governs."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "pane",
+          "interval_ms"
+        ],
+        "title": "IntervalInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Set a chart's timeframe",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read.",
       "destructive": false,
       "dry_run_supported": false,
@@ -5753,6 +6468,125 @@
       "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
       "title": "Apply a layout preset",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Switches the canvas to a named arrangement from the layout registry — the same registry the toolbar picker and the View menu read. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.preset.apply",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Apply a named arrangement from the layout registry.",
+        "properties": {
+          "preset_id": {
+            "description": "A preset id from the registry — `describe` lists them.",
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "preset_id"
+        ],
+        "title": "ApplyPresetInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Apply a layout preset",
+      "version": 2
     },
     {
       "availability": {
@@ -9321,6 +10155,11 @@
               "feed_display_name": {
                 "type": "string"
               },
+              "feed_generation": {
+                "$ref": "#/$defs/WireU64",
+                "default": "0",
+                "description": "How many feed sessions this tab has taken over since it opened. It\nadvances by one on every respawn — a reconnect, a reload, a market\nswitch, a replay opened or closed — and never otherwise.\n\nThe readback for `feed.reconnect` and `feed.reload`: `connection_state`\nsays whether the feed is healthy, not whether a call respawned it,\nand a reload normally lands on a connected feed. A client that lost\nthe answer compares this with its reading from before the call.\n`#[serde(default)]` for the same reason as `history_reach_running`:\nan optional field is an additive change to the v1 payload."
+              },
               "history_reach_note": {
                 "description": "What the last *load older* press had to say, while it is still on\nscreen — the exact sentence the trader reads in the loading lane.\n\n`null` is the ordinary state: no press yet, a press that landed what it\npromised, or one whose remark has had its time. Here because the\noutcome of a reach is the whole point of making one, and an operator\ndriving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`\nmust be able to learn it from the same words rather than by diffing\nbar counts.",
                 "type": [
@@ -12386,6 +13225,11 @@
           "WorkspaceTab": {
             "properties": {
               "active": {
+                "type": "boolean"
+              },
+              "context_collapsed": {
+                "default": false,
+                "description": "Whether the context column is collapsed to its rail. A collapsed chart\nis still counted `visible` in `panes`, because it comes back with its\nbars and drawings; this is the one field that says it is put away.\nThe readback for `layout.pane.collapse` and `layout.pane.expand`, and\n`#[serde(default)]` so it is an optional, additive field of the v1\npayload.",
                 "type": "boolean"
               },
               "feed_id": {

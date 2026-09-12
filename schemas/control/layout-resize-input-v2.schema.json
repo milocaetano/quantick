@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "`layout.pane.resize` v2's input: v1's, with `fraction` exact.",
+  "properties": {
+    "fraction": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "The share, 0..1, as an exact decimal with at most six places. Held\ninside the same floor a drag is held to."
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `observe.workspace` reports it."
+    }
+  },
+  "required": [
+    "fraction"
+  ],
+  "title": "ResizeInputV2",
+  "type": "object"
+}

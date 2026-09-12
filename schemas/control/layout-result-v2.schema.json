@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+  "properties": {
+    "changed": {
+      "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+      "type": "boolean"
+    },
+    "collapsed": {
+      "description": "Whether the context column is collapsed to its rail.",
+      "type": "boolean"
+    },
+    "focused_pane": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The focused pane's address."
+    },
+    "fraction": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+    },
+    "pane_count": {
+      "$ref": "#/$defs/WireU64",
+      "description": "How many panes it draws."
+    },
+    "preset_id": {
+      "description": "The preset the canvas now matches.",
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The tab that changed."
+    }
+  },
+  "required": [
+    "tab_id",
+    "preset_id",
+    "pane_count",
+    "focused_pane",
+    "fraction",
+    "collapsed",
+    "changed"
+  ],
+  "title": "LayoutResultV2",
+  "type": "object"
+}

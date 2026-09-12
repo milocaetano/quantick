@@ -41,12 +41,19 @@ capability that cannot change application state.
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.collapse` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.expand` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.expand` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.move` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.move` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.resize` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_interval` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.set_interval` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.preset.apply` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.preset.apply` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.rename` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.switch` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -63,4 +70,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-38 capabilities registered.
+45 capabilities registered.

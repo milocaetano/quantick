@@ -110,6 +110,10 @@ const LAYOUT_TEST: &str = "a_dropped_layout_answer_is_replayed_and_the_layout_is
 /// Every reachable `optional` row, one keyed call and its retry each.
 const EVERY_OPTIONAL_TEST: &str =
     "every_reachable_optional_row_replays_a_dropped_answer_and_begins_once";
+/// Version 2 of the layout calls answers through the gateway, exactly.
+const LAYOUT_V2_TEST: &str = "layout_v2_answers_with_the_exact_share_and_v1_is_still_there";
+/// The feed generation moves on every respawn.
+const FEED_GENERATION_TEST: &str = "the_feed_generation_advances_on_every_respawn_and_reads_back";
 /// Every reachable `forbidden` row, one keyed call each.
 const EVERY_FORBIDDEN_TEST: &str =
     "every_reachable_forbidden_row_refuses_a_key_before_the_application";
@@ -166,32 +170,7 @@ const fn journal(
     }
 }
 
-/// The `read` of a row whose effect no read shows. Allowed only for an
-/// `optional` capability, whose end state is the same however often it runs:
-/// a client that cannot tell whether its call applied sends it again. Every
-/// such row is a readback still owed, and names what it is waiting for.
-pub(crate) const RESEND: &str = "resend";
-
-/// A row with no readback: the effect is reconciled by sending the call again.
-const fn resend(
-    capability: &'static str,
-    policy: IdempotencyPolicy,
-    applied_when: &'static str,
-    proven_by: &'static [&'static str],
-) -> Readback {
-    Readback {
-        capability,
-        policy,
-        read: RESEND,
-        scope: None,
-        event: None,
-        field: "",
-        applied_when,
-        proven_by,
-    }
-}
-
-const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
@@ -241,17 +220,17 @@ pub(crate) const READBACKS: &[Readback] = &[
         "feed.reconnect",
         Optional,
         feed::SCOPE_ID,
-        "tabs[].connection_state",
-        "the goal state, not this call's trace: a connected feed needs nothing more, and the call ends in the same state however often it runs, so a feed still stalled is the cue to send it again",
-        &[FEED_TEST, EVERY_OPTIONAL_TEST],
+        "tabs[].feed_generation",
+        "the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation)",
+        &[FEED_TEST, EVERY_OPTIONAL_TEST, FEED_GENERATION_TEST],
     ),
     snapshot(
         "feed.reload",
         Optional,
         feed::SCOPE_ID,
-        "tabs[].connection_state",
-        "the goal state, not this call's trace: a connected feed needs nothing more, and the call ends in the same state however often it runs, so a feed still stalled is the cue to send it again",
-        &[FEED_TEST, EVERY_OPTIONAL_TEST],
+        "tabs[].feed_generation",
+        "the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation)",
+        &[FEED_TEST, EVERY_OPTIONAL_TEST, FEED_GENERATION_TEST],
     ),
     // The journal rather than `analysis.indicators`: that scope carries the
     // trader's input values and needs `observe.user_text`, which a caller
@@ -280,20 +259,22 @@ pub(crate) const READBACKS: &[Readback] = &[
         "the pane at the address asked for is the focused one (per pane: two context charts share a side)",
         LAYOUT_PROOF,
     ),
-    // No read projects the context column's collapse: `tabs[].panes[].visible`
-    // counts a collapsed chart as shown, and the only other carrier is the
-    // call's own answer. Collapsing twice leaves it collapsed, so the call is
-    // its own reconciliation until a scope carries the state.
-    resend(
+    // `context_collapsed`, not `panes[].visible`: a collapsed chart is still
+    // counted as shown, because it comes back with its bars and drawings.
+    snapshot(
         "layout.pane.collapse",
         Optional,
-        "no read shows the collapse yet; collapsing twice leaves it collapsed, so send it again",
+        workspace::SCOPE_ID,
+        "tabs[].context_collapsed",
+        "the tab's context column reads collapsed",
         LAYOUT_PROOF,
     ),
-    resend(
+    snapshot(
         "layout.pane.expand",
         Optional,
-        "no read shows the collapse yet; expanding twice leaves it expanded, so send it again",
+        workspace::SCOPE_ID,
+        "tabs[].context_collapsed",
+        "the tab's context column no longer reads collapsed",
         LAYOUT_PROOF,
     ),
     snapshot(
@@ -462,10 +443,6 @@ pub(crate) enum Drift {
     /// The row names a snapshot scope the registry does not register, or
     /// reads `snapshot.read` without naming one.
     UnknownScope { capability: String, scope: String },
-    /// The row reconciles by sending the call again, and its policy does not
-    /// make that safe: only an `optional` call ends in the same state however
-    /// often it runs.
-    ResendNotSafe { capability: String },
     /// The row's read and its scope or event kind do not fit together: a
     /// snapshot needs a scope, the journal needs an event kind, neither takes
     /// the other's, and no other read has a readback grammar a client (or the
@@ -519,11 +496,6 @@ impl fmt::Display for Drift {
             Self::UnknownScope { capability, scope } => write!(
                 f,
                 "the row for `{capability}` names snapshot scope `{scope}`, which is not registered"
-            ),
-            Self::ResendNotSafe { capability } => write!(
-                f,
-                "the row for `{capability}` reconciles by resending, which only an `optional` \
-                 capability can do safely"
             ),
             Self::ReadShape { capability, read } => write!(
                 f,
@@ -597,11 +569,19 @@ fn ceiling(contract: &ObserverContract, profile: &str) -> Option<BTreeSet<Permis
 /// can hand it a mutated table and watch each check bite.
 pub(crate) fn drift(rows: &[Readback], contract: &ObserverContract) -> Vec<Drift> {
     let registry = contract.registry();
-    let mutable: BTreeMap<&str, &CapabilityDescriptor> = registry
+    // Every version of a capability shares its row: a new version changes
+    // what a call carries, not how a lost one is reconciled, and each version
+    // is checked against the row on its own.
+    let mut mutable: BTreeMap<&str, Vec<&CapabilityDescriptor>> = BTreeMap::new();
+    for descriptor in registry
         .capabilities()
         .filter(|descriptor| !descriptor.read_only)
-        .map(|descriptor| (descriptor.id.as_str(), descriptor))
-        .collect();
+    {
+        mutable
+            .entry(descriptor.id.as_str())
+            .or_default()
+            .push(descriptor);
+    }
     let mut findings = Vec::new();
     let mut seen = BTreeMap::<&str, usize>::new();
     for row in rows {
@@ -622,13 +602,19 @@ pub(crate) fn drift(rows: &[Readback], contract: &ObserverContract) -> Vec<Drift
         }
     }
     for row in rows {
-        let Some(descriptor) = mutable.get(row.capability) else {
+        let Some(versions) = mutable.get(row.capability) else {
             findings.push(Drift::Orphan {
                 capability: row.capability.to_owned(),
             });
             continue;
         };
-        findings.extend(row_drift(row, descriptor, contract));
+        for descriptor in versions {
+            for finding in row_drift(row, descriptor, contract) {
+                if !findings.contains(&finding) {
+                    findings.push(finding);
+                }
+            }
+        }
     }
     findings
 }
@@ -646,13 +632,6 @@ fn row_drift(
             expected: row.policy,
             published: descriptor.idempotency,
         });
-    }
-    if row.read == RESEND {
-        let safe = row.policy == IdempotencyPolicy::Optional && row.scope.is_none();
-        if !safe || row.event.is_some() || !row.field.is_empty() {
-            findings.push(Drift::ResendNotSafe { capability });
-        }
-        return findings;
     }
     let Some(read) = contract
         .registry()
@@ -848,24 +827,36 @@ fn policy_name(policy: IdempotencyPolicy) -> &'static str {
 }
 
 struct RenderedRow<'a> {
+    /// The newest registered version, whose policy and reach the row shows.
     descriptor: &'a CapabilityDescriptor,
+    /// Every registered version, oldest first.
+    versions: Vec<u32>,
     row: &'static Readback,
     holder: Holder,
 }
 
 fn render(contract: &ObserverContract) -> String {
-    let registered = contract
+    // The registry iterates by `(id, version)`, so the last descriptor seen
+    // for an id is its newest version.
+    let mut newest: BTreeMap<&str, (&CapabilityDescriptor, Vec<u32>)> = BTreeMap::new();
+    for descriptor in contract
         .registry()
         .capabilities()
         .filter(|descriptor| !descriptor.read_only)
-        .count();
-    let rows: Vec<RenderedRow<'_>> = contract
-        .registry()
-        .capabilities()
-        .filter(|descriptor| !descriptor.read_only)
-        .filter_map(|descriptor| {
+    {
+        let entry = newest
+            .entry(descriptor.id.as_str())
+            .or_insert((descriptor, Vec::new()));
+        entry.0 = descriptor;
+        entry.1.push(descriptor.version);
+    }
+    let registered = newest.len();
+    let rows: Vec<RenderedRow<'_>> = newest
+        .into_values()
+        .filter_map(|(descriptor, versions)| {
             Some(RenderedRow {
                 descriptor,
+                versions,
                 row: readback(descriptor.id.as_str())?,
                 holder: holder(contract, descriptor)?,
             })
@@ -880,12 +871,8 @@ fn render(contract: &ObserverContract) -> String {
     out.push_str(&table(contract, &rows));
     let _ = write!(
         out,
-        "\n{registered} mutable capabilities registered, {} with a row, {} of them with a \
-         readback.\n",
-        rows.len(),
-        rows.iter()
-            .filter(|rendered| rendered.row.read != RESEND)
-            .count()
+        "\n{registered} mutable capabilities registered, {} with a readback.\n",
+        rows.len()
     );
     out
 }
@@ -912,6 +899,12 @@ const PREAMBLE: &str = concat!(
     "second.\n",
     "\n",
     "## Reading a row\n",
+    "\n",
+    "**Versions** lists every registered version of the capability; the row\n",
+    "holds for all of them, and **Policy** and **Reach** are the newest's. Call\n",
+    "the newest: a version is added when the previous one's contract had to\n",
+    "change, and the older one is kept only so an existing client does not\n",
+    "break.\n",
     "\n",
     "**Policy** is the `idempotency` the descriptor publishes. **Enforced** is\n",
     "what the gateway does with it:\n",
@@ -942,10 +935,7 @@ const PREAMBLE: &str = concat!(
     "instead, and its row says which further scope its readback needs.\n",
     "**Readback** is the read that shows the effect — a `snapshot.read` scope,\n",
     "or `events.read` filtered to one journal event kind — and **Field** the\n",
-    "path within it, `[]` stepping into an array. *none: send it again* marks\n",
-    "an `optional` capability no read shows yet: its end state is the same\n",
-    "however often it runs, so a client that cannot tell sends it again, and\n",
-    "the row is a readback still owed. **Applied when** says what the\n",
+    "path within it, `[]` stepping into an array. **Applied when** says what the\n",
     "field shows if the call took effect. **Proven by** names the transport\n",
     "tests, in `crates/app/src/app/tests/retry_readback_tests.rs`, that exercise\n",
     "the row through the real local gateway.\n",
@@ -994,9 +984,13 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
     out.push_str("## Capabilities\n\n");
     let _ = writeln!(
         out,
-        "| Capability | Policy | Enforced | Reach | Readback | Field | Applied when | Proven by |"
+        "| Capability | Versions | Policy | Enforced | Reach | Readback | Field | Applied when | \
+         Proven by |"
     );
-    let _ = writeln!(out, "| --- | --- | --- | --- | --- | --- | --- | --- |");
+    let _ = writeln!(
+        out,
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+    );
     for rendered in rows {
         let row = rendered.row;
         let reach = if rendered.holder.grantable {
@@ -1005,7 +999,6 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
             format!("none (`{}` ceiling)", rendered.holder.profile)
         };
         let mut source = match (row.scope, row.event) {
-            _ if row.read == RESEND => "none: send it again".to_owned(),
             (Some(scope), _) => format!("`{}` `{scope}`", row.read),
             (None, Some(event)) => format!("`{}` `{event}`", row.read),
             (None, None) => format!("`{}`", row.read),
@@ -1025,20 +1018,22 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
             .map(|test| format!("`{test}`"))
             .collect::<Vec<_>>()
             .join(", ");
-        let field = if row.field.is_empty() {
-            "—".to_owned()
-        } else {
-            format!("`{}`", row.field)
-        };
+        let versions = rendered
+            .versions
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | `{}` | {} | {} |",
             rendered.descriptor.id.as_str(),
+            versions,
             policy_name(rendered.descriptor.idempotency),
             enforced(rendered.descriptor.idempotency, rendered.holder.grantable),
             reach,
             source,
-            field,
+            row.field,
             row.applied_when,
             proof,
         );

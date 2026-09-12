@@ -21,6 +21,7 @@ use super::{
     health::HealthSnapshot,
     interaction::{CursorSnapshot, SelectionSnapshot},
     journal::EventPage,
+    layout::{LayoutResultV2, ResizeInputV2},
     notify::{NotifyInput, NotifyResult},
     orderflow::{BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot},
     registry::SerializedSnapshotCapture,
@@ -88,6 +89,11 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         // The shape a failed compile puts in `error.context.details`, so a
         // client can generate a reader for its own diagnostics.
         document::<ScriptDiagnostic>("indicator-script-diagnostic-v1.schema.json"),
+        // Version 2 of the layout calls that answer with the arrangement: the
+        // share as an exact decimal, which version 1's number could not carry
+        // across the wire. Version 1's schemas were never published as files.
+        document::<LayoutResultV2>("layout-result-v2.schema.json"),
+        document::<ResizeInputV2>("layout-resize-input-v2.schema.json"),
     ]
 }
 
