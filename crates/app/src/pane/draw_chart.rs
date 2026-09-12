@@ -14,15 +14,15 @@
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::chart::{self, PriceScale};
+use crate::chart;
 use crate::chart_layers::ChartLayer;
 use crate::indicator_render::{self, PlotX};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
-use crate::plot_area::{PlotAreas, split_time_strip};
+use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_orderflow::reserved_span_ms;
 
-use super::layer_painters::AxisChips;
+use super::draw_frame::{AxisChips, DrawFrame};
 use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
 use super::{
     ChartPane, DrawPass, PaneChrome, PriceAxisClaims, background_color, grid_color, lane_rungs,
@@ -32,38 +32,6 @@ use super::{
 /// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
 /// digits, and a layout that repaints per print reflows under the pointer.
 const LIVE_LADDER_REFRESH_S: f64 = 0.1;
-
-/// What one paint frame has resolved by the time the layers go down: the
-/// geometry, the visible slices of both series and the price scale.
-///
-/// Built once per frame on the stack by [`ChartPane::draw_chart`], after the
-/// viewport is clamped and the scale is known, and lent to every painter in
-/// `layer_painters.rs` by reference. Every field is a `Copy` value or a borrow
-/// of something the frame already holds — nothing is cloned into it, and no
-/// bar is walked to fill it. It is the narrow context the painters read
-/// instead of the pane's whole state, and the reason they can be `&self`
-/// while the slices of `self.state` stay borrowed across the frame.
-pub(super) struct DrawFrame<'a> {
-    pub(super) painter: &'a egui::Painter,
-    pub(super) areas: &'a PlotAreas,
-    pub(super) chart_rect: egui::Rect,
-    pub(super) history_rect: egui::Rect,
-    pub(super) right: f32,
-    pub(super) total: usize,
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) closed_start: usize,
-    pub(super) closed_total: usize,
-    pub(super) scale: PriceScale,
-    pub(super) prefix: &'a [quantick_engine::Bar],
-    pub(super) closed: &'a [quantick_engine::Bar],
-    pub(super) partial: Option<&'a quantick_engine::Bar>,
-    pub(super) partial_visible: Option<&'a quantick_engine::Bar>,
-    pub(super) visible_prefix: &'a [quantick_engine::Bar],
-    pub(super) visible_state: &'a [quantick_engine::Bar],
-    pub(super) canvas_background: egui::Color32,
-    pub(super) cw: f32,
-}
 
 impl ChartPane {
     pub fn draw_chart(

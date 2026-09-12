@@ -62,6 +62,7 @@ mod axes_and_panes;
 pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
+mod draw_frame;
 mod drawing_gestures;
 mod drawing_paint;
 mod footprint;

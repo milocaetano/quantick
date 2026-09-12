@@ -222,10 +222,11 @@
 # at the same indentation; the multiset proof is in PR #383's body.
 #
 # `pane.rs` itself is 1,211 production lines and takes no entry: it is under
-# the threshold, and the largest sibling (`draw_chart.rs`, 778) is under it
-# by a wider margin. `--tighten` first wrote 1,256 and 41,377 (the review's
-# seam repairs then took it to 1,211); the entry is
-# removed by hand because a sub-threshold file with a recorded ceiling is a
+# the threshold, and the largest new sibling (`draw_chart.rs`, 778) is under it
+# by a wider margin, as is the largest of all of them, the untouched
+# `drawing_gestures.rs` at 800. `--tighten` first wrote 1,256 and 41,377 (the
+# review's seam repairs then took it to 1,211); the entry is removed by hand
+# because a sub-threshold file with a recorded ceiling is a
 # permission nobody spends, and the budget follows it down by the same
 # 1,256. 45,739 - 5,384 = 40,355; what the guard measures the sum at today
 # is 40,121, and the line below is that sum, not the arithmetic.
