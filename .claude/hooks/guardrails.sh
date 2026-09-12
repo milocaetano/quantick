@@ -10,11 +10,11 @@
 #                     that lands in the main checkout while it sits on the
 #                     main branch ("one goal, one worktree").
 #   pr-gate           PreToolUse on Bash. Denies `gh pr create`, `gh pr
-#                     ready` and `gh pr merge` until BOTH reviews have been
-#                     recorded for the exact commit being shipped:
-#                     arch-review ("no branch ships un-reviewed") and
-#                     delivery-review ("no branch ships ungraded against
-#                     what was asked for"). A mission that declared the
+#                     ready` and `gh pr merge` until architecture and
+#                     applicable delivery evidence match the exact change.
+#                     Ready/merge also require current AI completion, each
+#                     review's durable PR report, and zero AI threads. A
+#                     mission that declared the
 #                     `small` tier is exempt from the second one, but only
 #                     while the branch stays small enough to have earned
 #                     the word: `declared_tier` reads the declaration,
@@ -67,10 +67,9 @@ set -u
 # The branch that is never worked on directly, and the base every branch is
 # cut from and measured against.
 MAIN_BRANCH="main"
-# Where the two pre-PR reviews record what they approved, in the order they
-# run. Each lives in the worktree's own git dir, so it is per-branch and never
-# committed, and each holds a sha rather than a timestamp: commit again after a
-# review and its marker no longer matches. They are separate files because they
+# Private exact-change projections for independent review reports. Each lives
+# in the worktree's own git dir, so it is per-branch and never committed. A
+# commit after review makes it stale. They remain separate because they
 # answer separate questions — arch-review whether the branch is well built,
 # delivery-review whether it is what was asked for — and a branch that has
 # passed one has not passed both.
@@ -112,7 +111,7 @@ SIZE_EXCLUDES=":(exclude).claude/GOAL.md :(exclude).claude/GOAL-archive-*.md"
 #
 # The file names the branch it was declared for, `<branch> <tier>`, and a
 # declaration for any other branch is no declaration at all. That is not
-# decoration: the two markers above hold a sha, so they go stale the moment the
+# decoration: the review projections go stale when the
 # branch moves, while a bare tier word would outlive the mission that wrote it.
 # A worktree reused for a second branch then inherits an exemption it never
 # asked for and ships with no delivery-review — reproduced against the first
@@ -775,6 +774,27 @@ pr_gate() {
         ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
     fi
 
+    # Private marker files are projections, not proof that their skills ran.
+    # Each must be paired with the durable report its review skill published
+    # on this PR for the same branch, head, base tip and review key. This
+    # catches a hand-written marker while keeping the fast local staleness
+    # checks first.
+    reports_script="$(dirname "$0")/review_report.sh"
+    [ -f "$reports_script" ] ||
+        ask '"Durable review reports cannot be verified because review_report.sh is not beside the gate; a local marker alone is not completion evidence."'
+    report_kinds="arch-review ai-review"
+    [ "$small_exempt" -eq 1 ] || report_kinds="arch-review delivery-review ai-review"
+    for report_kind in $report_kinds; do
+        report_url=$(sh "$reports_script" verify "$report_kind" "$gate_pr" "$dir" 2>/dev/null)
+        report_status=$?
+        if [ "$report_status" -eq 2 ]; then
+            ask "\"The durable \`$report_kind\` report for PR #$gate_pr could not be read from GitHub; unknown report state is not valid review evidence.\""
+        fi
+        if [ "$report_status" -ne 0 ] || [ -z "$report_url" ]; then
+            deny "\"The local \`$report_kind\` marker has no matching durable PR report for the current branch, head, base tip and review key. Run the review skill; its report publisher records the projection after publication succeeds.\""
+        fi
+    done
+
     gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
     gate_status=$?
     if [ "$gate_status" -eq 3 ]; then
@@ -837,7 +857,7 @@ commit_reminder() {
     [ "${ahead:-0}" -gt 0 ] || exit 0
 
     # A `small` mission is reminded of the gate it actually faces. Repeating
-    # the two-marker line at every tier would send it off to run the review its
+    # the full-review line at every tier would send it off to run the review its
     # own tier exempts it from, which is the saving the tier exists to buy. It
     # would also make this the place an agent first learns the exemption exists
     # the thing pr-gate's denial is careful never to be. Here that is safe:
@@ -857,15 +877,15 @@ commit_reminder() {
         # `[ "" -le 300 ]`, a POSIX `[` error, and emit three contradictory
         # reminders on separate lines, which is not even parseable JSON.
         if [ -z "$small_size" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, but its size against $reminder_base cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and \`gh pr create\` wants both markers. $reminder_base exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, but its size against $reminder_base cannot be measured here — so the exemption from \`$DELIVERY_MARKER_NAME\` does not apply and non-draft PR creation needs architecture, delivery and AI evidence. $reminder_base exists - this message could not print otherwise, since the commit count above was measured from it - so look instead for histories with no merge base, a shallow clone, or a file git cannot read. This is about the measurement, not the size of the work: do not raise the tier over it.\""
         elif [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, so \`gh pr create\` wants \`$ARCH_MARKER_NAME\` alone — recorded for the exact change being shipped, which any later edit stales, though a rebase or an amend does not. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`small\` tier, so non-draft PR creation needs current \`$ARCH_MARKER_NAME\` and \`$AI_MARKER_NAME\` evidence. It carries $small_size of the $SMALL_TIER_MAX_CHANGED_LINES changed lines the exemption from \`$DELIVERY_MARKER_NAME\` allows.\""
         else
-            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES the exemption allows, so \`gh pr create\` now wants both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recorded for the exact change being shipped. Raise the tier in the goal file and run both reviews.\""
+            context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES exemption, so non-draft PR creation needs architecture, delivery and AI evidence. Raise the tier in the goal file and run all reviews.\""
         fi
     fi
 
-    context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base. \`gh pr create\` is gated on both \`$ARCH_MARKER_NAME\` and \`$DELIVERY_MARKER_NAME\` recording the exact change being shipped, so run arch-review and then delivery-review once the branch is final — an edit after either one makes its marker stale, though a rebase, an amend or a reword does not.\""
+    context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base. Non-draft PR creation needs current architecture, delivery and AI evidence; publish a draft first, then run all applicable reviews on the final branch.\""
 }
 
 # PostToolUse on Edit|Write. Runs the repository guards over the file that was
