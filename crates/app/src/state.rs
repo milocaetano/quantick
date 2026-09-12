@@ -544,6 +544,21 @@ pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
 /// a speed that made an hour a short drag would make a second unreachable.
 pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
 
+/// Append a loaded batch to the tape, sized to what the next live push would
+/// grow it to — twice what it then holds — so that push copies nothing.
+///
+/// Filled exactly, the tape made the first live print after a load reallocate
+/// the whole loaded session on the UI thread: about 95 MB for a recovered
+/// 1.7 M-print day, one dropped frame the moment the chart went live. The
+/// capacity is the one that push would have reached, taken in the load frame
+/// instead of one frame later. `prepend_history` sizes its joined tape the
+/// same way.
+fn extend_tape(tape: &mut Vec<Trade>, trades: &[Trade]) {
+    let held = tape.len() + trades.len();
+    tape.reserve((2 * held).saturating_sub(tape.len()));
+    tape.extend_from_slice(trades);
+}
+
 pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
@@ -616,7 +631,7 @@ impl ChartState {
     /// Ingest the backfilled history as one batch (call once, before any live
     /// trades), then mark the boundary.
     pub fn ingest_backfill(&mut self, trades: &[Trade]) {
-        self.trades.extend_from_slice(trades);
+        extend_tape(&mut self.trades, trades);
         for trade in trades {
             self.observe_price(trade.price);
         }
@@ -659,7 +674,7 @@ impl ChartState {
         for trade in trades {
             self.observe_price(trade.price);
         }
-        let mut combined = Vec::with_capacity(trades.len() + self.trades.len());
+        let mut combined = Vec::with_capacity(2 * (trades.len() + self.trades.len()));
         combined.extend_from_slice(trades);
         combined.append(&mut self.trades);
         self.trades = combined;
@@ -1535,5 +1550,38 @@ mod tests {
         let before = s.bars().len();
         s.set_spec(BarSpec::Tick(2));
         assert_eq!(s.bars().len(), before);
+    }
+
+    /// The first live print after a backfill must not copy the backfill.
+    ///
+    /// `extend_from_slice` into an empty tape sizes it exactly, so the next
+    /// push reallocated the whole loaded session on the UI thread — about
+    /// 95 MB for a recovered 1.7 M-print day, one dropped frame the moment the
+    /// chart went live. The tape is sized at load to the capacity that push
+    /// would have grown it to, so nothing is copied and nothing more is held.
+    #[test]
+    fn the_first_live_print_after_a_backfill_copies_nothing() {
+        let history: Vec<Trade> = (5_001..=15_000).map(trade).collect();
+        let older: Vec<Trade> = (1..=5_000).map(trade).collect();
+        let mut s = ChartState::new(BarSpec::Tick(50));
+        let first_live = |s: &mut ChartState, id: u64| {
+            let before = crate::work_meter::tally();
+            s.ingest_live(&trade(id));
+            let copied = crate::work_meter::tally().since(before).realloc_copy_bytes;
+            let tape_bytes = (s.trades.len() * std::mem::size_of::<Trade>()) as u64;
+            assert!(
+                copied < tape_bytes / 2,
+                "the first live print copied {copied} bytes of a {tape_bytes}-byte tape"
+            );
+            assert!(
+                s.trades.capacity() <= 2 * s.trades.len(),
+                "no more is held than the push would have grown to"
+            );
+        };
+        s.ingest_backfill(&history);
+        first_live(&mut s, 15_001);
+        // Paging older history in joins a new tape: sized the same way.
+        s.prepend_history(&older);
+        first_live(&mut s, 15_002);
     }
 }
