@@ -9,7 +9,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{SendError, Sender, SyncSender};
+#[cfg(test)]
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::{SendError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::Instant;
 
@@ -75,6 +77,10 @@ pub(crate) struct Counts {
     pub output_failures: u64,
     /// Replacing the BookPublished mailbox, not proof of UI adoption.
     pub mailbox_replacements: u64,
+    /// Output sends that found the bounded output channel full and waited
+    /// for the owner to drain it, cumulative. Nothing is dropped; the worker
+    /// is paused behind a UI that is behind on its reads.
+    pub output_blocked: u64,
     /// Commands the owner accepted that are waiting outside a full channel,
     /// right now. Zero inside the supported envelope.
     pub parked: u64,
@@ -436,6 +442,12 @@ impl SharedProgress {
         }
         self.clock.phase(Phase::Applying);
     }
+    /// One output send found the channel full and waited for the owner.
+    pub(crate) fn output_blocked(&self) {
+        let mut state = self.lock();
+        let Ledger { counts, valid, .. } = &mut *state;
+        add(&mut counts.output_blocked, 1, valid);
+    }
     pub(crate) fn output(&self, success: bool) {
         let mut state = self.lock();
         let Ledger { counts, valid, .. } = &mut *state;
@@ -551,8 +563,12 @@ impl Drop for Lifecycle {
 }
 
 /// Preserve the event protocol while recording delivery independently of cycles.
+///
+/// The output channel is bounded too: a worker whose owner has stopped
+/// draining waits on it — the worker, never the owner — and each such wait
+/// is counted (`output_blocked`), so a UI behind on its reads is visible.
 pub(crate) struct ObservedOutput<'a, T> {
-    pub sender: &'a Sender<T>,
+    pub sender: &'a SyncSender<T>,
     pub progress: &'a SharedProgress,
 }
 
@@ -604,7 +620,14 @@ impl Drop for Coalescing<'_> {
 }
 impl<T> ObservedOutput<'_, T> {
     pub(crate) fn send(&self, value: T) -> Result<(), SendError<T>> {
-        let result = self.sender.send(value);
+        let result = match self.sender.try_send(value) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(value)) => {
+                self.progress.output_blocked();
+                self.sender.send(value)
+            }
+            Err(TrySendError::Disconnected(value)) => Err(SendError(value)),
+        };
         self.progress.output(result.is_ok());
         result
     }

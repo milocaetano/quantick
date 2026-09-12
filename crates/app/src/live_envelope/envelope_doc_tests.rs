@@ -23,7 +23,7 @@ fn grouped(value: u64) -> String {
 
 #[test]
 fn the_document_renders_every_envelope_constant_with_the_codes_value() {
-    let rows: [(&str, u64); 11] = [
+    let rows: [(&str, u64); 14] = [
         ("SUSTAINED_TRADES_PER_S", SUSTAINED_TRADES_PER_S),
         ("BURST_TRADES_PER_S", BURST_TRADES_PER_S),
         ("BURST_TRADES_PER_FRAME", BURST_TRADES_PER_FRAME as u64),
@@ -38,6 +38,9 @@ fn the_document_renders_every_envelope_constant_with_the_codes_value() {
         ("RETAINED_TRADES_PER_PANE", RETAINED_TRADES_PER_PANE as u64),
         ("INDICATOR_COMMAND_QUEUE", INDICATOR_COMMAND_QUEUE as u64),
         ("BOOK_COMMAND_QUEUE", BOOK_COMMAND_QUEUE as u64),
+        ("INDICATOR_EVENT_QUEUE", INDICATOR_EVENT_QUEUE as u64),
+        ("REFERENCE_TICKS_PER_BAR", REFERENCE_TICKS_PER_BAR),
+        ("RETAINED_BARS_PER_PANE", RETAINED_BARS_PER_PANE as u64),
     ];
     for (name, value) in rows {
         let row = format!("| `{name}` | {} |", grouped(value));

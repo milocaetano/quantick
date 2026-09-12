@@ -88,6 +88,28 @@ pub(crate) const RETAINED_TRADES_PER_PANE: usize =
 /// nearly a second one's worth of room while the worker is busy.
 pub(crate) const INDICATOR_COMMAND_QUEUE: usize = 2 * BURST_TRADES_PER_FRAME;
 
+/// Delta events the indicator worker's output channel holds before the
+/// worker waits for the UI to drain it.
+///
+/// A peak frame on a tick:1 pane appends up to `BURST_TRADES_PER_FRAME`
+/// rows per hosted indicator plus a preview, a lane and an objects event:
+/// 515 per indicator, so this holds one peak frame of seven indicators. A
+/// frame with more waits on the worker side until the next frame's drain —
+/// the UI never waits, and nothing is dropped. Kept at this size because the
+/// std array channel preallocates every slot (see `measure.txt`).
+pub(crate) const INDICATOR_EVENT_QUEUE: usize = 4_096;
+
+/// The bar spec the retained-bars figure is stated at: `tick:50`, the
+/// trader's footprint chart and the spec every measurement here runs.
+pub(crate) const REFERENCE_TICKS_PER_BAR: u64 = 50;
+
+/// Bars one pane is expected to retain at the envelope's edge, at the
+/// reference spec: `RETAINED_TRADES_PER_PANE / REFERENCE_TICKS_PER_BAR`
+/// = 79,200. A `tick:N` pane holds `RETAINED_TRADES_PER_PANE / N`; a time
+/// pane far fewer. Like the tape, nothing evicts a bar.
+pub(crate) const RETAINED_BARS_PER_PANE: usize =
+    RETAINED_TRADES_PER_PANE / REFERENCE_TICKS_PER_BAR as usize;
+
 /// Commands the book worker's queue holds before the sender parks.
 ///
 /// Per frame a pane sends one command per depth event drained (at most
@@ -110,6 +132,8 @@ const _: () = {
     assert!(BURST_TRADES_PER_FRAME as u64 >= BURST_TRADES_PER_S / 60);
     assert!(BURST_TRADES_PER_S > SUSTAINED_TRADES_PER_S);
     assert!(SUSTAINED_TRADES_PER_S > MEAN_TRADES_PER_S);
+    // One peak frame of at least one indicator fits the event channel.
+    assert!(INDICATOR_EVENT_QUEUE > BURST_TRADES_PER_FRAME + 3);
 };
 
 #[cfg(test)]

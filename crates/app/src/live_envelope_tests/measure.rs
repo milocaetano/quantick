@@ -23,7 +23,7 @@
 //!    measured half of the envelope's per-frame keep-up claim.
 
 use super::burst::{FRAMES_PER_S, Rig, Tape, play};
-use crate::indicator_worker::IndicatorCommand;
+use crate::indicator_worker::{IndicatorCommand, IndicatorEvent};
 use crate::live_envelope::*;
 use crate::orderflow_worker::BookCommand;
 use crate::state::{BarSpec, ChartState};
@@ -94,6 +94,11 @@ fn sizes() {
     println!(
         "BookCommand {book} B x {BOOK_COMMAND_QUEUE} = {} per pane with order flow",
         mib(((book + slot) * BOOK_COMMAND_QUEUE) as u64)
+    );
+    let event = std::mem::size_of::<IndicatorEvent>();
+    println!(
+        "IndicatorEvent {event} B x {INDICATOR_EVENT_QUEUE} = {} per pane",
+        mib(((event + slot) * INDICATOR_EVENT_QUEUE) as u64)
     );
 }
 

@@ -9,7 +9,7 @@ impl IndicatorWorker {
     /// fixture can finish its initial send/sample before starting admission.
     pub(crate) fn prepared_for_test(progress: WorkerProgress) -> (Self, impl FnOnce() + Send) {
         let (commands, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
-        let (events, output) = channel();
+        let (events, output) = sync_channel(INDICATOR_EVENT_QUEUE);
         let observed = progress.consumer();
         let worker = Self {
             commands: progress.bind_merging(commands, fold_parked),

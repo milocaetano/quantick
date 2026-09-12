@@ -94,9 +94,6 @@ impl QuantickApp {
         let rate = self.health.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = self.active_tab().trade_arrival_ms();
         let avg = self.health.frames.avg_ms().unwrap_or(0.0);
-        let cpu_avg = self.health.cpu_frames.avg_ms().unwrap_or(0.0);
-        let worst = self.health.frames.worst_ms().unwrap_or(0.0);
-        let fps = self.health.frames.fps().unwrap_or(0.0);
         let book = self.active_tab_mut().tape_mut().health();
         let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
@@ -112,10 +109,10 @@ impl QuantickApp {
             // below is the *active* tab's, which is what is on screen.
             tabs = self.tabs.len(),
             tab = self.active_tab().id,
-            fps = fps as i64,
+            fps = self.health.frames.fps().unwrap_or(0.0) as i64,
             frame_avg_ms = avg,
-            frame_cpu_ms = cpu_avg,
-            frame_worst_ms = worst,
+            frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),
+            frame_worst_ms = self.health.frames.worst_ms().unwrap_or(0.0),
             feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
@@ -123,6 +120,7 @@ impl QuantickApp {
             worker_parked = envelope.parked,
             worker_deferred = envelope.deferred,
             worker_coalesced = envelope.coalesced,
+            worker_output_blocked = envelope.output_blocked,
             retained_trades = envelope.retained_trades,
             live_rate = envelope.live_rate,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
@@ -219,6 +217,8 @@ impl QuantickApp {
             heatmap_config_revision = book.config_revision,
             heatmap_snapshots = book.snapshots,
             heatmap_gaps = book.gaps,
+            heatmap_aggressions_evicted = book.aggressions_evicted,
+            heatmap_runs_evicted = book.runs_evicted,
             candle_style_revision = self.style_revision,
             candle_preset,
             candle_body_mode = ?self.style.candles.body_mode,

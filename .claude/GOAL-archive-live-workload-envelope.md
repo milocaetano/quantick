@@ -17,16 +17,16 @@ earns the full shape pass, `code-review` at `medium` and `delivery-review`.
 
 | ID | Outcome | Source | Criteria |
 | --- | --- | --- | --- |
-| R1 | The envelope is data the code reads: named constants for sustained and burst trade rate, depth rate, session duration, retained history per pane, and the derived queue/retained caps, each with a one-line reason; `docs/quality/live-envelope.md` renders the same numbers, the measurement behind each and the reproducing command. Numbers from measurement of the repo's dense fixtures and the venues' bounds, "not from taste" | Issue scope §1, D1 | A1 |
+| R1 | The envelope is data the code reads: named constants for sustained and burst trade rate, depth rate, session duration, retained history per pane (trades and bars — amended, see Amendments), and the derived queue/retained caps, each with a one-line reason; `docs/quality/live-envelope.md` renders the same numbers, the measurement behind each and the reproducing command. Numbers from measurement of the repo's dense fixtures and the venues' bounds, "not from taste" | Issue scope §1, D1 | A1 |
 | R2 | Worker command channels (`indicator_worker`, `orderflow_worker`) are bounded; the UI never blocks on a worker and no trade is lost: superseding commands coalesce, trade batches merge on backpressure and retry next frame; every coalesce/merge counted; an `APP_HEALTH_SUMMARY` field makes overflow observable; no new dependency | Issue scope §2, D2 | A2, A3 |
 | R3 | Retained tape and history in `state.rs`: measure first under rate × duration; if bounded and acceptable inside the envelope, publish the envelope and prove no loss; any cap that evicts what the trader can see is a `human_decision` with exact numbers and proposed policy, never implemented here | Issue scope §2 second half and §4, D3 | A4, A7 |
 | R4 | Measurements of retained state and backlog inside the envelope on the dense fixture and at a burst above it, as a maintained artifact (test or `cargo run` target with a documented command), raw output plus a table with host, SHA, command and numbers committed under `docs/quality/`; reuse the health summary machinery; nothing wall-clock reaches a headless crate | Issue scope §3, D5 | A5 |
-| R5 | Every queue, journal, cache and retained history on the live path has a stated cap in code with a test that exercises the cap and observes the overflow behaviour | Issue A1 | A2, A6 |
+| R5 | Every queue, journal, cache and retained history on the live path has a stated cap in code with a test that exercises the cap and observes the overflow behaviour | Issue A1 | A2, A4, A10 |
 | R6 | A burst test through the real workers at the sustained rate and at the burst rate for a stated duration asserts every trade reached the bars/projection (counts equal), overflow counters zero inside the envelope and non-zero with no loss above it; a `cargo test`, `#[ignore]` only if over ~30 s and then still executed with output committed | Issue A3, D4 | A3 |
-| R7 | The assessor's observable condition is met and an independent reassessment of SE7 at the PR head records the earned score; the handoff carries an honest self-assessment against the anchors | Issue A4, handoff §8 | A8 |
+| R7 | The assessor's observable condition is met and an independent reassessment of SE7 at the PR head records the earned score; the handoff carries an honest self-assessment against the anchors | Issue A4, handoff §8 | A8, A9 |
 | R8 | Merged into `campaign/lean-a-plus` through a PR whose base is exactly that branch, merge read back | Issue A5 | C2 (coordinator) |
 | R9 | Performance: any change to the worker send path or `state.rs` measured before/after on the dense replay (`APP_HEALTH_SUMMARY` fps/frame_avg/frame_cpu, five interleaved runs each side, release); a regression outside noise is a Blocker; nothing per trade allocates more than today | D6, issue G4 | A6, G4 |
-| R10 | "so that" — SE7 earns 3/4 with the evidence each anchor needs and gate 6 is unblocked together with Q4 | Mission preamble | A8 |
+| R10 | "so that" — SE7 earns 3/4 with the evidence each anchor needs and gate 6 is unblocked together with Q4 | Mission preamble | A8, A9 |
 
 ## Decisions (coordinator, D1–D9 of the request)
 
@@ -66,7 +66,7 @@ before any new edit (re-dispatch request, first paragraph):
 ## Assumptions
 
 - S1 The depth-update rate has no measurement on this host: every recording is a trade tape with no book. The depth envelope is therefore derived from the venues' own bounds (Binance `depth@100ms`, the 8,192-event feed channel, the 2,048-per-frame drain budget) and labelled as derived, not measured. Safe: it is stated as such in code and doc, which is what data honesty asks; measuring a live book is a separate session on a live terminal.
-- S2 The sustained rate is the p99 one-second rate over the thirteen WINV26 sessions on this host (226–292 prints/s) and the burst rate their maximum one-second rate (1,849), rounded up; the per-frame burst is their maximum 17 ms window (264). Safe: these are the dense fixtures the request names, measured by a committed script.
+- S2 The sustained rate is the p99 one-second rate over the thirteen WINV26 sessions on this host (224–286 prints/s, corrected from the first executor's 226–292 once `tools/live_envelope/tape_rates.py` was written and run) and the burst rate their maximum one-second rate (1,882), rounded up; the per-frame burst is their maximum 16 ms window (267). Safe: these are the dense fixtures the request names, measured by a committed script.
 - S3 The pending (parked) buffer that holds commands while a queue is full is bounded by the envelope, not by a hard cap: a hard cap would drop trades, which D2 forbids. Its length is observable. Safe: D2 chose merge-on-backpressure over loss.
 - S4 The retry point for parked commands is the worker handle's own per-frame read (`drain_events`, `published`, `published_base_grouping`) plus every later send, so no file outside this mission's ownership needs a new call. Safe: those reads already run every frame; a pane that stops reading has also stopped drawing.
 - S5 A measurement of RSS needs a platform API this workspace does not depend on; retained bytes are computed from element size and vector capacity and labelled as computed. Safe: no new dependency (D2's rule applied generally), and the figure is reproducible.
@@ -102,6 +102,13 @@ before any new edit (re-dispatch request, first paragraph):
       *Evidence:* the handoff block.
       → handoff. *(R7, R10)*
 
+- [ ] **A9** — an independent SE7 reassessment (a fresh reviewer, not this executor) at the PR head is recorded on the PR with the score it earns and the evidence per anchor.
+      *Evidence:* the PR comment carrying the reassessment.
+      → PR #405 comment. *(R7, R10)*
+- [ ] **A10** — the remaining live-path state is inventoried with its cap: the indicator worker's output channel is bounded (`INDICATOR_EVENT_QUEUE`) with the worker, never the UI, waiting when it is full, counted (`output_blocked`, `worker_output_blocked`) and tested; the heatmap history's evictions are on the health summary; the other live-path caps are listed in the doc.
+      *Evidence:* `indicator_worker::event_backpressure_tests`, the summary field list, the doc's inventory table.
+      → `crates/app/src/indicator_worker/event_backpressure_tests.rs`, `docs/quality/live-envelope.md`. *(R5)*
+
 ### Injected gates
 
 - [x] **G1** — every artifact English; conventional commits with the required trailers. Source: `CLAUDE.md`. Evidence: `git log`, `arch-review` dimension 8.
@@ -121,7 +128,37 @@ before any new edit (re-dispatch request, first paragraph):
 ### Closing steps
 
 - C1 — `delivery-review` returns PASS after `arch-review` and `ai-review`; markers recorded under the campaign key.
+- C3 — the HANDOFF BLOCK returned to the coordinator carries every field Delivery §8 lists (issue, branch, worktree, PR URL, head, base tip, kept/discarded, envelope numbers, per-queue cap and policy, measurement table, burst results, frame timing, SE7 self-assessment, review verdicts with URLs, markers, CI run, findings closed/open, repair batches, ready accepted or denied, human_decisions, next action). Source: request Delivery §8. Evidence: the handoff text.
 - C2 — draft PR on `campaign/lean-a-plus`, CI green at the head, `gh pr ready` once; the merge and its readback are the coordinator's (R8).
+
+## Amendments (after the first delivery-review, at `3e59d3a7`)
+
+The first full delivery-review returned FAIL on the completeness and ledger
+passes; repair batch 3 of 3 answers it. Each change to this record, and why:
+
+- **R1 / A1** — D1 names "retained history per pane (trades and bars)"; the
+  ledger had dropped "bars". `RETAINED_BARS_PER_PANE` (at
+  `REFERENCE_TICKS_PER_BAR` = 50) is now a constant, rendered and pinned; A1's
+  constant list includes it and `INDICATOR_EVENT_QUEUE`.
+- **R5 → A10** — issue A1 says *every* queue, journal, cache and retained
+  history. The indicator output channel was still unbounded and uninventoried;
+  A10 covers it, the heatmap evictions on the summary and the inventory. R5's
+  old citation of A6 (frame timing) discharged nothing and is replaced.
+- **R7 → A9** — the independent SE7 reassessment at the PR head had no
+  criterion; A9 adds it.
+- **A6** — its clause "`worker_deferred == 0` throughout on the head" cannot
+  hold on a replay run at 60× (4,700 prints/s, above the envelope): one head
+  run's load frame caught up at 18,269 prints/s and parked 4,544 commands,
+  reported and drained. Read as: `worker_deferred` stays 0 on every run once
+  loaded, and any deferral is reported by `LIVE_QUEUE_DEFERRED` and drained
+  with nothing dropped. A map correction, not a product change.
+- **S2** — figures corrected to the script's output.
+- **C3** — the handoff obligation (Delivery §8) had no closing step.
+- **S8, disclosed** — D2 says a newer config command replaces the queued
+  older one; the book's `ApplyVisualConfig` keeps its place instead, because
+  applying one can prune history the next would not have. Conservative and
+  loss-free, but a departure from the decision's letter: carried to the
+  handoff as a human_decision for confirmation.
 
 ## Request as received (verbatim, attributed quotation from the campaign coordinator's re-dispatch)
 

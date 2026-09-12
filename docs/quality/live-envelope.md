@@ -30,6 +30,9 @@ WDOU26 session recorded on this host ([tape-rates.txt](live-envelope/tape-rates.
 | `RETAINED_SESSIONS` | 2 | derived | the day on screen plus the day before, which the replay browser and the MetaTrader session recovery join in front of the live tape |
 | `RETAINED_TRADES_PER_PANE` | 3,960,000 | derived | `MEAN_TRADES_PER_S × 3,600 × SESSION_HOURS × RETAINED_SESSIONS` |
 | `INDICATOR_COMMAND_QUEUE` | 1,024 | derived | a tick:1 pane sends one closed bar per print plus one forming-bar update: 513 at the peak frame; twice the burst frame |
+| `INDICATOR_EVENT_QUEUE` | 4,096 | derived | a peak frame on a tick:1 pane appends up to 512 rows per hosted indicator plus a preview, a lane and an objects event: 515 per indicator, so one peak frame of seven indicators; kept small because the array channel preallocates every slot |
+| `REFERENCE_TICKS_PER_BAR` | 50 | derived | the spec the retained-bars figure is stated at: tick:50, the trader's footprint chart and the spec every measurement here runs |
+| `RETAINED_BARS_PER_PANE` | 79,200 | derived | `RETAINED_TRADES_PER_PANE / REFERENCE_TICKS_PER_BAR`; a tick:N pane holds `RETAINED_TRADES_PER_PANE / N`, a time pane far fewer |
 | `BOOK_COMMAND_QUEUE` | 4,096 | derived | one command per depth event (≤ 2,048) and per print (≤ 512) plus one layout request: 2,561; next power of two, and the trade channel every venue feed already sizes itself to |
 
 The health summary classes the measured ingest against these rates:
@@ -46,7 +49,7 @@ line describes. A replay played fast is `above` by design.
 | Indicator worker commands (`indicator_worker.rs`) | `INDICATOR_COMMAND_QUEUE` = 1,024, `sync_channel` | the sender parks the command on the UI side, in order, and retries on every later send and every frame's `drain_events`; a forming-bar update folds into a parked forming-bar update (its prints appended, its partial and lane budget winning), an input set into a parked set for the same slot, a replay-from-scratch into a parked replay (`fold_parked`); a closed bar never folds. Nothing blocks, nothing is dropped | `ProgressSnapshot.counts.{queued, parked, deferred, coalesced_parked}`; `APP_HEALTH_SUMMARY.worker_{backlog, parked, deferred, coalesced}`; `LIVE_QUEUE_DEFERRED` warning |
 | Book worker commands (`orderflow_worker.rs`) | `BOOK_COMMAND_QUEUE` = 4,096, `sync_channel` | parked in order the same way, retried on every send and every frame's `published` / `published_base_grouping`; only a layout request folds into a parked layout request. Prints and depth events keep their order — the parked prints *are* the kept batch the next frame retries — and configuration changes keep theirs, because applying one can prune history the next would not have | same fields |
 | Parked commands (UI side) | bounded by the envelope, not by a number: a hard cap would drop prints | above | `worker_parked`, zero inside the envelope |
-| Worker events back to the UI | unbounded `channel`, drained whole every frame | — | its volume is bounded by the commands admitted: a few events per slot per batch |
+| Indicator worker events back to the UI (`indicator_worker.rs`) | `INDICATOR_EVENT_QUEUE` = 4,096, `sync_channel`, drained whole every frame | the *worker* waits for the UI to drain (the UI never waits on it); nothing is dropped, and the command queue above parks behind the paused worker | `counts.output_blocked`; `APP_HEALTH_SUMMARY.worker_output_blocked`; `LIVE_QUEUE_DEFERRED` (`output_blocked_since_summary`) |
 | Book mailbox | one slot, replaced | — | `mailbox_replacements` |
 | Feed trade channel (`crates/feed/src/binance.rs`, `metatrader.rs`, `hyperliquid.rs`) | 4,096, tokio | the venue task awaits (backpressure to the socket) | `feed_arrival_ms` |
 | Feed depth channel | 8,192, tokio | as above | `book_queue_len` |
@@ -69,8 +72,24 @@ error; nothing vanishes uncounted.
 | History | Cap | Past it |
 | --- | --- | --- |
 | A pane's tape (`ChartState::trades`, `state.rs`) | none in code; `RETAINED_TRADES_PER_PANE` = 3,960,000 is the envelope | nothing is evicted. `retained_trades` on the health line reports the largest pane; `LIVE_ENVELOPE_EXCEEDED` warns once when a pane crosses the envelope (again if another pane becomes the one past it, or after the tape is back inside), with the excess. An evicting cap is a product decision (below) |
-| A pane's bars (`ChartState::bars`) | none; 79,200 at tick:50 at the envelope's edge | nothing is evicted |
-| Heatmap aggressions and liquidity runs (`crates/orderflow/src/history.rs`, `HeatmapConfig`) | existing caps: 30 min retention, 100,000 aggressions, 500,000 runs, 64 MiB | the oldest leave the canvas; counted in `HistoryCounters.{aggressions_evicted, runs_evicted}` (not yet on the health line) |
+| A pane's bars (`ChartState::bars`) | none in code; `RETAINED_BARS_PER_PANE` = 79,200 at tick:50 is the envelope | nothing is evicted; `LIVE_ENVELOPE_EXCEEDED` carries the pane's bars beside the envelope's |
+| Heatmap aggressions and liquidity runs (`crates/orderflow/src/history.rs`, `HeatmapConfig`) | existing caps: 30 min retention, 100,000 aggressions, 500,000 runs, 64 MiB | the oldest leave the canvas; counted, cumulative, as `APP_HEALTH_SUMMARY.heatmap_aggressions_evicted` / `heatmap_runs_evicted` (the active tab's book, like every `heatmap_*` field) |
+
+### Other bounded state on the live path
+
+What else a live pane accumulates or queues, with the cap that holds it. These
+caps predate this page and are listed so the inventory is whole:
+
+| State | Cap | Where |
+| --- | --- | --- |
+| The indicator lane's forming run | the forming bar's own prints; freed when the bar closes; the ladder walks at most `MAX_LANE_RUNGS` = 64 rungs | `crates/app/src/indicator_worker.rs` |
+| Indicator draw objects | `MAX_OBJECTS_PER_KIND` = 500 per kind; the oldest goes, as in Pine | `crates/indicators/src/objects.rs` |
+| Trade paint marks | `TRADE_PAINT_LIMIT` = 200 | `crates/app/src/trade_paint.rs` |
+| Drawing undo history | `UNDO_HISTORY_LIMIT` = 64 | `crates/app/src/drawings/mod.rs` |
+| Footprint ladders | one per closed bar while the footprint is on: part of the pane's retained history above, measured below | `crates/app/src/state.rs` (`FootprintSeries`) |
+| Control plane queues, pages and journals | `crates/control/src/limits.rs` and the gateway capacities (`GATEWAY_COMMAND_CAPACITY` = 64, `GATEWAY_STATUS_CAPACITY` = 256, `CONTROL_UI_MAX_STATUS_UPDATES_PER_FRAME` = 32) | `crates/app/src/control/gateway.rs`; tested in `app/tests/control_plane_tests.rs` |
+
+No in-memory journal sits on the market-data path itself.
 
 ### Measured at the envelope's edge
 

@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 
 use super::worker_diagnostics::pane_workers;
 use crate::live_envelope::{
-    BURST_TRADES_PER_S, DEPTH_UPDATES_PER_S, RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S,
+    BURST_TRADES_PER_S, DEPTH_UPDATES_PER_S, REFERENCE_TICKS_PER_BAR, RETAINED_BARS_PER_PANE,
+    RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S,
 };
 use crate::tab::Tab;
 use crate::worker_progress::ProgressSnapshot;
@@ -27,12 +28,17 @@ pub(in crate::app) struct EnvelopeReading {
     pub deferred: u64,
     /// Of those, the ones folded into a parked predecessor, cumulative.
     pub coalesced: u64,
-    /// Each live worker's own cumulative `deferred`, by instance: a closed
-    /// pane takes its count out of [`Self::deferred`], so only a per-worker
-    /// comparison can tell a new overflow from an old one.
-    pub deferred_by_worker: BTreeMap<u64, u64>,
+    /// Worker output sends that waited on a full output channel because the
+    /// UI was behind on its reads, summed and cumulative.
+    pub output_blocked: u64,
+    /// Each live worker's own cumulative `(deferred, output_blocked)`, by
+    /// instance: a closed pane takes its counts out of the sums above, so
+    /// only a per-worker comparison can tell a new overflow from an old one.
+    pub pressure_by_worker: BTreeMap<u64, (u64, u64)>,
     /// The largest retained tape of any pane, in prints.
     pub retained_trades: usize,
+    /// The bars that pane holds.
+    pub retained_bars: usize,
     /// The pane that holds it, as `(tab, pane)`; `None` with no pane.
     pub retained_owner: Option<(u64, u64)>,
     /// Where the measured ingest rates sit against the envelope; see
@@ -48,8 +54,10 @@ impl EnvelopeReading {
         self.parked = self.parked.saturating_add(counts.parked);
         self.deferred = self.deferred.saturating_add(counts.deferred);
         self.coalesced = self.coalesced.saturating_add(counts.coalesced_parked);
+        self.output_blocked = self.output_blocked.saturating_add(counts.output_blocked);
         if let Some(instance) = progress.instance {
-            self.deferred_by_worker.insert(instance, counts.deferred);
+            self.pressure_by_worker
+                .insert(instance, (counts.deferred, counts.output_blocked));
         }
     }
 
@@ -115,6 +123,7 @@ pub(in crate::app) fn observe(
             let retained = pane.state.trades().len();
             if reading.retained_owner.is_none() || retained > reading.retained_trades {
                 reading.retained_trades = retained;
+                reading.retained_bars = pane.state.bars().len();
                 reading.retained_owner = Some((tab.id, pane.id));
             }
         }
@@ -126,8 +135,9 @@ pub(in crate::app) fn observe(
 /// once per event rather than once per summary.
 #[derive(Debug, Default)]
 pub(in crate::app) struct EnvelopeWatch {
-    /// Each worker's cumulative `deferred` at the last summary.
-    deferred_by_worker: BTreeMap<u64, u64>,
+    /// Each worker's cumulative `(deferred, output_blocked)` at the last
+    /// summary.
+    pressure_by_worker: BTreeMap<u64, (u64, u64)>,
     /// The pane last reported past the envelope, until the largest tape is
     /// back inside it.
     exceeded_owner: Option<(u64, u64)>,
@@ -135,34 +145,45 @@ pub(in crate::app) struct EnvelopeWatch {
 
 impl EnvelopeWatch {
     /// Warn, at summary cadence, about the two ways a window leaves the
-    /// envelope: a worker queue that filled since the last summary, and a
-    /// pane retaining more tape than the envelope states. Neither loses data
-    /// (the commands were parked, the prints are all still there), so each
-    /// is a warning that the window runs outside what was measured, not an
-    /// error. The retained-tape warning fires when a pane first crosses the
-    /// envelope, or another pane becomes the one past it, and not on every
-    /// summary after: nothing trims the tape, so it would repeat forever.
+    /// envelope: a worker queue that filled since the last summary (a
+    /// command queue that parked, or an output channel the UI was behind on),
+    /// and a pane retaining more tape than the envelope states. Neither loses
+    /// data (the commands were parked or waited, the prints are all still
+    /// there), so each is a warning that the window runs outside what was
+    /// measured, not an error. The retained-tape warning fires when a pane
+    /// first crosses the envelope, or another pane becomes the one past it,
+    /// and not on every summary after: nothing trims the tape, so it would
+    /// repeat forever.
     pub(in crate::app) fn warn(&mut self, reading: &EnvelopeReading) {
-        let new_deferred: u64 = reading
-            .deferred_by_worker
-            .iter()
-            .map(|(instance, deferred)| {
-                deferred.saturating_sub(self.deferred_by_worker.get(instance).copied().unwrap_or(0))
-            })
-            .fold(0, u64::saturating_add);
-        self.deferred_by_worker
-            .clone_from(&reading.deferred_by_worker);
-        if new_deferred > 0 {
+        let (new_deferred, new_blocked) = reading.pressure_by_worker.iter().fold(
+            (0_u64, 0_u64),
+            |(deferred_sum, blocked_sum), (instance, (deferred, blocked))| {
+                let (was_deferred, was_blocked) = self
+                    .pressure_by_worker
+                    .get(instance)
+                    .copied()
+                    .unwrap_or_default();
+                (
+                    deferred_sum.saturating_add(deferred.saturating_sub(was_deferred)),
+                    blocked_sum.saturating_add(blocked.saturating_sub(was_blocked)),
+                )
+            },
+        );
+        self.pressure_by_worker
+            .clone_from(&reading.pressure_by_worker);
+        if new_deferred > 0 || new_blocked > 0 {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "LIVE_QUEUE_DEFERRED",
                 deferred_since_summary = new_deferred,
+                output_blocked_since_summary = new_blocked,
                 worker_deferred = reading.deferred,
                 worker_coalesced = reading.coalesced,
                 worker_parked = reading.parked,
+                worker_output_blocked = reading.output_blocked,
                 action = "inspect_worker_cost",
-                "a worker queue filled; commands were parked in order, none dropped"
+                "a worker queue filled; commands were parked or waited in order, none dropped"
             );
         }
         let Some(excess) = reading.retained_excess() else {
@@ -182,6 +203,9 @@ impl EnvelopeWatch {
             pane,
             retained_trades = reading.retained_trades,
             envelope_trades = RETAINED_TRADES_PER_PANE,
+            retained_bars = reading.retained_bars,
+            envelope_bars = RETAINED_BARS_PER_PANE,
+            envelope_bars_ticks_per_bar = REFERENCE_TICKS_PER_BAR,
             excess_trades = excess,
             action = "none_evicted_see_live_envelope_doc",
             "a pane retains more tape than the supported live envelope; nothing was evicted"
@@ -256,7 +280,10 @@ mod tests {
             ),
             (6, 4, 10, 2)
         );
-        assert_eq!(reading.deferred_by_worker, BTreeMap::from([(1, 5), (2, 5)]));
+        assert_eq!(
+            reading.pressure_by_worker,
+            BTreeMap::from([(1, (5, 0)), (2, (5, 0))])
+        );
         reading.add(&deferred(3, u64::MAX));
         assert_eq!(reading.deferred, u64::MAX);
     }
@@ -315,6 +342,23 @@ mod tests {
         assert_eq!(rows[0]["level"], "WARN");
         // The cumulative count has not moved: nothing new to say.
         assert!(warnings(&mut watch, &overflowed).is_empty());
+    }
+
+    #[test]
+    fn a_worker_waiting_on_a_ui_behind_on_its_reads_warns_too() {
+        let mut watch = EnvelopeWatch::default();
+        let waited = reading_of(&[snapshot(
+            4,
+            Counts {
+                output_blocked: 12,
+                ..Counts::default()
+            },
+        )]);
+        let rows = warnings(&mut watch, &waited);
+        assert_eq!(codes(&rows), ["LIVE_QUEUE_DEFERRED"]);
+        assert_eq!(rows[0]["fields"]["output_blocked_since_summary"], 12);
+        assert_eq!(rows[0]["fields"]["deferred_since_summary"], 0);
+        assert!(warnings(&mut watch, &waited).is_empty());
     }
 
     #[test]

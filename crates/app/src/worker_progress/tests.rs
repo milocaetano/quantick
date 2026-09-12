@@ -206,7 +206,7 @@ fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
     let observed = producer.consumer();
     let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
-    let (output_tx, output_rx) = channel();
+    let (output_tx, output_rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     for _ in 0..3 {
         tx.send(()).unwrap();
     }

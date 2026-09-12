@@ -4,8 +4,9 @@
 //! state. Commands go down a channel bounded by
 //! [`INDICATOR_COMMAND_QUEUE`] — a full one parks and folds them on the UI
 //! side ([`fold_parked`]), never blocking and never dropping one; **delta
-//! events** come back —
-//! the UI owns its own copy of the plot columns and applies deltas, so a full
+//! events** come back on a channel bounded by [`INDICATOR_EVENT_QUEUE`],
+//! where a UI behind on its reads pauses the worker (counted as
+//! `output_blocked`) instead of growing a queue — the UI owns its own copy of the plot columns and applies deltas, so a full
 //! column set crosses the channel only on a rebuild, and appending a live bar
 //! costs O(plots) per indicator, not a clone of history.
 //!
@@ -16,13 +17,15 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
-use crate::live_envelope::INDICATOR_COMMAND_QUEUE;
+use crate::live_envelope::{INDICATOR_COMMAND_QUEUE, INDICATOR_EVENT_QUEUE};
 use crate::worker_progress::{
     Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
+#[cfg(test)]
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
@@ -479,8 +482,14 @@ impl IndicatorWorker {
     }
 
     pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
+        Self::spawn_bounded(progress, INDICATOR_EVENT_QUEUE)
+    }
+
+    /// Spawn with an event channel of `event_capacity`: production uses
+    /// [`INDICATOR_EVENT_QUEUE`]; a test shrinks it to reach the full path.
+    pub(crate) fn spawn_bounded(progress: WorkerProgress, event_capacity: usize) -> Self {
         let (cmd_tx, cmd_rx) = sync_channel::<IndicatorCommand>(INDICATOR_COMMAND_QUEUE);
-        let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
+        let (evt_tx, evt_rx) = sync_channel::<IndicatorEvent>(event_capacity);
         let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-indicators".to_owned())
@@ -709,7 +718,7 @@ fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
 
 fn run_observed(
     rx: &Receiver<IndicatorCommand>,
-    sender: &Sender<IndicatorEvent>,
+    sender: &SyncSender<IndicatorEvent>,
     progress: Arc<SharedProgress>,
 ) {
     let _lifecycle = progress.lifecycle();
@@ -2332,7 +2341,7 @@ mod incremental_lane_tests {
     /// Queue everything before running: this exercises one actual worker batch.
     fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
         let (tx, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
-        let (events, output) = channel();
+        let (events, output) = sync_channel(INDICATOR_EVENT_QUEUE);
         let progress = WorkerProgress::new();
         let observed = progress.consumer();
         let tx = progress.bind_merging(tx, fold_parked);
@@ -2629,6 +2638,9 @@ mod incremental_lane_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod event_backpressure_tests;
 
 #[cfg(test)]
 mod fold_tests;

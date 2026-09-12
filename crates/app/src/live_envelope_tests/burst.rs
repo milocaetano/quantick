@@ -396,6 +396,16 @@ fn inside_the_envelope_every_print_arrives_and_no_queue_fills() {
         as usize
         + BURST_TRADES_PER_FRAME;
     assert_eq!(tape.prints.len(), expected);
+    // The keep-up half, coarsely: the workers drained a frame before the
+    // next one arrived on most frames. Loose on purpose — a loaded runner
+    // may be late now and then; a worker that cannot hold the envelope's
+    // rate is late on nearly every frame and fails here.
+    let frames = ((SUSTAINED_SECONDS + BURST_SECONDS) * FRAMES_PER_S) as usize;
+    assert!(
+        rig.late_frames * 2 < frames,
+        "{} of {frames} frames found the previous one untaken",
+        rig.late_frames
+    );
     rig.assert_nothing_lost(&tape, depth);
     for counts in [rig.indicator_counts(), rig.book_counts()] {
         assert_eq!(counts.deferred, 0, "inside the envelope no queue fills");
