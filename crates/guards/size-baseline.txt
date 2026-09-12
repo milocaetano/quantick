@@ -261,7 +261,17 @@
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
-!budget 4142
+#
+# `projection.rs` and `config.rs` in `crates/orderflow` left this file too.
+# The projection's read model, print tiers and budget fold went to
+# `projection/{model,tiers,fold}.rs`, the bubble and live-lane config
+# families to `config/{bubbles,lane}.rs`, by pure moves (the multiset proof
+# is in PR #396's body); the roots are 778 and 514 production lines, the
+# largest sibling 557, so none of the seven files is tracked. `--tighten`
+# lowered the two entries rather than removing them; they are removed by hand
+# for the reason `pane.rs`'s note gives, and the budget falls by the two
+# ceilings: 9,264 - 1,850 - 1,523 = 5,891, which is the sum below.
+!budget 769
 
 crates/app/src/app.rs 769
 
@@ -373,5 +383,3 @@ crates/app/src/app.rs 769
 # Pure moves, with `the_journal_bytes_are_fixed` and
 # `the_report_numbers_are_fixed` unchanged on both sides of it.
 
-crates/orderflow/src/projection.rs 1850
-crates/orderflow/src/config.rs 1523

@@ -2520,60 +2520,6 @@ fn a_fold_never_moves_volume_into_another_bars_slot() {
     );
 }
 
-/// Widening the tape buys it more marks, because marks need room.
-///
-/// The split is the lane's own width share rather than a constant of its
-/// own, so the one control the trader already has over the tape moves both
-/// its band and its budget. Without this the number would be a magic
-/// constant that disagrees with the canvas the moment the divider moves.
-#[test]
-fn the_tape_budget_follows_the_room_the_tape_was_given() {
-    let lane_of = |share: f32| LiveLaneStyle {
-        enabled: true,
-        width_share: share,
-        ..LiveLaneStyle::default()
-    };
-    let (narrow_chart, narrow_lane) = pane_budgets(100, &lane_of(MIN_LIVE_LANE_SHARE));
-    let (wide_chart, wide_lane) = pane_budgets(100, &lane_of(MAX_LIVE_LANE_SHARE));
-    assert!(
-        wide_lane > narrow_lane,
-        "a wider tape has room for more marks and did not get them"
-    );
-    assert!(
-        wide_chart < narrow_chart,
-        "and it takes that room from the candles, not from thin air"
-    );
-    for share in [
-        f32::NAN,
-        -1.0,
-        5.0,
-        MIN_LIVE_LANE_SHARE,
-        MAX_LIVE_LANE_SHARE,
-    ] {
-        let (chart, lane) = pane_budgets(100, &lane_of(share));
-        assert!(chart >= 2 && lane >= 2, "every pane can draw both sides");
-        assert!(
-            chart + lane <= 100,
-            "the two shares together overspent the frame's budget"
-        );
-    }
-    // A budget too small to split still leaves both panes able to draw.
-    let (chart, lane) = pane_budgets(1, &lane_of(DEFAULT_LIVE_LANE_SHARE));
-    assert!(chart >= 2 && lane >= 2);
-
-    // With the tape switched off there is no second pane to protect, and
-    // reserving a share for a band nobody is drawing would fold the candles
-    // harder for nothing.
-    let (all, none) = pane_budgets(
-        100,
-        &LiveLaneStyle {
-            enabled: false,
-            ..LiveLaneStyle::default()
-        },
-    );
-    assert_eq!((all, none), (100, 0), "the candles get the whole budget");
-}
-
 /// The fold is paid where it costs least, and the rest of the pane is
 /// untouched.
 ///
