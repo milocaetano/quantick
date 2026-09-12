@@ -137,6 +137,37 @@ and "nobody knows whether it has any" are different answers, and a gate that
 prints the same nothing for both has taught its reader that silence means
 clean.
 
+### The one prefix the pinned forms allow
+
+A campaign merge and a campaign `gh pr ready` are pinned by string equality —
+the explicit PR number, `--merge` or `--squash`, `--match-head-commit` with the
+reviewed HEAD, and nothing else — so that no second statement can ride on the
+first's authorization. That pin wanted the command bare, and the agent shell
+cannot send it bare.
+
+Claude Code's `Bash` tool resets its working directory between calls. Every
+command therefore reaches its task worktree through a leading `cd <dir> &&`,
+which is why `effective_dir` reads the directory from exactly there. Both
+spellings were denied, and the gate was unsatisfiable in both directions: on
+2026-09-11, integrating PR #382, `cd <wt> && gh pr merge 382 --merge
+--match-head-commit 01a001c7…` was denied as a compound command, while the bare
+form would have been judged against the main checkout and denied as a merge to
+main.
+
+So `bare_statement` strips **one** leading `cd <dir> &&` before the comparison,
+reading the directory with the pattern `effective_dir` already uses — the
+directory the gate judges and the directory it strips can never disagree. Only
+the prefix is forgiven. A second `cd`, a `;`, a `||`, a trailing `&& echo x`,
+`--auto`, `--admin` and `--repo` all survive the strip and fail the same
+equality check they failed before, each with the message it had before.
+
+**A gate you cannot satisfy is a gate with a hole behind it**, and that is the
+whole reason this is worth a change rather than a workaround. The `Bash`
+matcher does not cover Claude Code's PowerShell tool, so an agent that finds
+the honest command denied is one keystroke from a spelling nothing inspects.
+Running `gh pr merge` or `gh pr ready` through that tool is prohibited: a
+denial is reported to the coordinator, never routed around.
+
 ## Recording the two reviews
 
 `pr-gate` reads two files in the worktree's git dir, each holding a hash of
