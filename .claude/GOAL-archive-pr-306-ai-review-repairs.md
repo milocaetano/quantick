@@ -20,6 +20,7 @@ No new trader decision was required. The decisions already recorded in `.claude/
 - **S1** — "Refactor" means reducing structural concentration and resolving integration drift without redesigning the feature. This is safe because the pull request already contains a detailed behavioral contract and accepted deferrals.
 - **S2** — The contaminated original worktree must be preserved. A clean integration worktree may use a temporary local branch and push its final head to the existing pull request branch because the remote pull request branch is the mission's delivery target.
 - **S3** — Existing accepted follow-ups remain out of scope unless current `main` integration or a review exposes them as merge blockers. This prevents silently reopening settled trader decisions.
+- **S4** — The final base refresh to `origin/main` commit `57767f25` changes only agentic workflow documentation and hooks; it does not alter the deal-bar implementation, but all final-head gates and reviews are repeated because it changes the reviewed diff identity.
 
 ## Acceptance criteria
 

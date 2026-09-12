@@ -6,4 +6,4 @@ The AI-review repair adds and passes three focused proofs: `checked_start_names_
 
 The first workspace run exposed stale generated observer schemas after the compatibility adjustment. They were regenerated from code and both consistency tests then passed without the update flag.
 
-The original integrated run used commit `e8f591cbbe1f1eecfd15fc3a3f751d45e3f4eb57` with exact `origin/main` parent `e8eb23e5`. The AI-review repair loop passed on `d17d0071`; the archive commit is followed by one final-head repetition. The final command and exit-code record is `final-checks.log`; GitHub Actions supplies the independent remote repetition after push.
+The original integrated run used commit `e8f591cbbe1f1eecfd15fc3a3f751d45e3f4eb57` with exact `origin/main` parent `e8eb23e5`. The AI-review repair loop passed on `d17d0071`. Before review, `origin/main` advanced to `57767f25`; that base was merged cleanly and the archive was refreshed, followed by another final-head repetition. The final command and exit-code record is `final-checks.log`; GitHub Actions supplies the independent remote repetition after push.

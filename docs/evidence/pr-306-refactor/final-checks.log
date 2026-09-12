@@ -16,3 +16,5 @@ cargo clippy --workspace --all-targets: exit 0.
 cargo build --workspace: exit 0.
 cargo test --workspace: exit 0; 2,041 app tests plus every workspace crate and doctest completed with zero failures.
 The same four commands are repeated after the mission archive establishes the immutable review head.
+
+Final base refresh: origin/main advanced to 57767f25 and merged without conflict. The four commands are repeated on the resulting archived review head before any review marker is recorded.
