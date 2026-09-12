@@ -1,19 +1,19 @@
 # method: tools/live_envelope/run_replay.ps1 (WINV26 2026-08-25, speed 60, book + bubbles + footprint + live strip, 45 s, scratch stores), five runs a side interleaved base-1 head-1 base-2 head-2 head-3 base-3 head-4 base-4 head-5 base-5; summarised by python tools/live_envelope/frame_timing.py
-# base: release build of 2452e577 (campaign base); head: release build of df40008e
+# base: release build of 2452e577 (campaign base); head: release build of dcea6d77
 # host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro)
 | Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| base-1 | 21 | 59 / 59.29 | 16.667 | 1.628 | 1.634 | 33.36 | 4,684 | 0 | 163 | 0 |
-| head-1 | 21 | 59 / 59.29 | 16.667 | 1.658 | 1.658 | 33.39 | 4,661 | 0 | 281 | 0 |
-| base-2 | 21 | 59 / 59.24 | 16.667 | 1.644 | 1.633 | 33.31 | 4,671 | 0 | 176 | 0 |
-| head-2 | 21 | 59 / 59.33 | 16.667 | 1.631 | 1.617 | 33.09 | 4,673 | 0 | 51 | 0 |
-| head-3 | 21 | 59 / 59.29 | 16.667 | 1.602 | 1.586 | 33.28 | 4,662 | 0 | 46 | 0 |
-| base-3 | 21 | 59 / 59.38 | 16.667 | 1.634 | 1.608 | 33.35 | 4,681 | 0 | 104 | 0 |
-| head-4 | 21 | 59 / 59.24 | 16.667 | 1.663 | 1.642 | 33.45 | 4,666 | 0 | 71 | 0 |
-| base-4 | 21 | 59 / 59.24 | 16.667 | 1.613 | 1.598 | 33.31 | 4,676 | 0 | 132 | 0 |
-| head-5 | 21 | 59 / 59.48 | 16.667 | 1.617 | 1.608 | 33.22 | 4,677 | 0 | 56 | 0 |
-| base-5 | 21 | 59 / 59.24 | 16.667 | 1.636 | 1.623 | 33.23 | 4,671 | 0 | 250 | 0 |
-- **base**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 1.631 ms (per run 1.63, 1.64, 1.63, 1.61, 1.64; stdev 0.012); worst steady frame 33.36 ms; APP_SLOW_FRAMES lines 0
-- **head**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 1.634 ms (per run 1.66, 1.63, 1.60, 1.66, 1.62; stdev 0.026); worst steady frame 33.45 ms; APP_SLOW_FRAMES lines 0
+| base-1 | 21 | 59 / 59.29 | 16.667 | 1.639 | 1.638 | 33.28 | 4,684 | 0 | 124 | 0 |
+| head-1 | 21 | 59 / 59.33 | 16.667 | 1.620 | 1.598 | 17.36 | 4,665 | 0 | 355 | 0 |
+| base-2 | 21 | 59 / 59.10 | 16.667 | 1.675 | 1.658 | 18.19 | 4,664 | 0 | 220 | 0 |
+| head-2 | 21 | 59 / 59.29 | 16.667 | 1.655 | 1.646 | 17.14 | 4,662 | 0 | 36 | 0 |
+| head-3 | 21 | 59 / 59.19 | 16.667 | 1.621 | 1.606 | 33.24 | 4,668 | 0 | 18 | 0 |
+| base-3 | 21 | 59 / 59.33 | 16.667 | 1.676 | 1.661 | 17.90 | 4,671 | 0 | 89 | 0 |
+| head-4 | 21 | 59 / 59.24 | 16.667 | 1.616 | 1.619 | 33.32 | 4,670 | 0 | 262 | 0 |
+| base-4 | 21 | 59 / 59.14 | 16.667 | 1.673 | 1.667 | 33.41 | 4,667 | 0 | 168 | 0 |
+| head-5 | 21 | 59 / 59.33 | 16.667 | 1.629 | 1.620 | 33.23 | 4,676 | 0 | 0 | 0 |
+| base-5 | 21 | 59 / 59.24 | 16.667 | 1.679 | 1.666 | 17.34 | 4,668 | 0 | 60 | 0 |
+- **base**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 1.669 ms (per run 1.64, 1.67, 1.68, 1.67, 1.68; stdev 0.016); worst steady frame 33.41 ms; APP_SLOW_FRAMES lines 0
+- **head**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 1.628 ms (per run 1.62, 1.66, 1.62, 1.62, 1.63; stdev 0.016); worst steady frame 33.32 ms; APP_SLOW_FRAMES lines 0
 
-# an earlier set at 10b87d90, with sibling agents' builds sharing the host: base 2.227 ms (stdev 0.182), head 2.246 ms (stdev 0.264), t = 0.13
+# earlier sets, same method: at df40008e base 1.631 ms (stdev 0.012), head 1.634 ms (stdev 0.026), t = 0.31; at 10b87d90, with sibling agents' builds sharing the host, base 2.227 ms (stdev 0.182), head 2.246 ms (stdev 0.264), t = 0.13

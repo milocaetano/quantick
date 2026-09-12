@@ -1,24 +1,24 @@
 # command: env -u QUANTICK_BUBBLES cargo test -p quantick-app -- session_length_tests --nocapture --test-threads=1
-# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit df40008e (dev profile, the one the CI Test step builds)
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit dcea6d77 (dev profile, the one the CI Test step builds)
 test app::tests::session_length_tests::hot_path_work_is_independent_of_session_length ... | path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | trade.chart.backfilled | 18000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 180 |
 | trade.chart.backfilled | 180000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 180 |
-| trade.chart.live | 18000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 260 |
-| trade.chart.live | 180000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 260 |
-| trade.book | 18000 | 1500 | 0.011 | 3.5 | 21.8 | 16384 | 0.00 | 0.00 | 500 |
+| trade.chart.live | 18000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 160 |
+| trade.chart.live | 180000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 160 |
+| trade.book | 18000 | 1500 | 0.011 | 3.5 | 21.8 | 16384 | 0.00 | 0.00 | 400 |
 | trade.book | 180000 | 1500 | 0.011 | 3.5 | 21.8 | 16384 | 0.00 | 0.00 | 500 |
-| depth.book | 18000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9000 |
-| depth.book | 180000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9000 |
-| frame.book | 18000 | 300 | 2236.427 | 5156823.5 | 2553069.5 | 1310720 | 0.00 | 0.00 | 219200 |
-| frame.book | 180000 | 300 | 2236.403 | 5156799.1 | 2553069.9 | 1310720 | 0.00 | 0.00 | 297000 |
-| frame.app.tick50 | 18000 | 300 | 2533.617 | 751375.3 | 1035480.9 | 322272 | 0.00 | 4.50 | 1732000 |
-| frame.app.tick50 | 180000 | 300 | 2533.343 | 751645.8 | 1035361.5 | 320640 | 0.00 | 4.50 | 1753700 |
+| depth.book | 18000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9100 |
+| depth.book | 180000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9200 |
+| frame.book | 18000 | 300 | 2236.427 | 5156823.5 | 2553069.5 | 1310720 | 0.00 | 0.00 | 142500 |
+| frame.book | 180000 | 300 | 2236.403 | 5156799.1 | 2553069.9 | 1310720 | 0.00 | 0.00 | 142600 |
+| frame.app.tick50 | 18000 | 300 | 2535.840 | 751869.3 | 1036995.4 | 322272 | 0.00 | 4.50 | 1772200 |
+| frame.app.tick50 | 180000 | 300 | 2535.000 | 752061.1 | 1036673.0 | 320640 | 0.00 | 4.50 | 1762000 |
 | frame.worker.tick50 | 18000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
-| frame.worker.tick50 | 180000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
-| frame.app.time1d | 18000 | 300 | 1353.650 | 275324.5 | 743392.0 | 187872 | 0.00 | 5.00 | 831400 |
-| frame.app.time1d | 180000 | 300 | 1388.903 | 281895.8 | 749468.6 | 187872 | 0.00 | 5.00 | 832500 |
-| frame.worker.time1d | 18000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1929.91 | 0.00 | 0 |
+| frame.worker.tick50 | 180000 | 300 | 55.500 | 4924.2 | 436.5 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 300 | 1355.693 | 275862.4 | 743466.4 | 187872 | 0.00 | 5.00 | 854600 |
+| frame.app.time1d | 180000 | 300 | 1386.067 | 281439.9 | 747282.6 | 187872 | 0.00 | 5.00 | 826100 |
+| frame.worker.time1d | 18000 | 300 | 139.003 | 11919.5 | 0.5 | 160 | 1929.91 | 0.00 | 0 |
 | frame.worker.time1d | 180000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1889.48 | 0.00 | 0 |
 | tape built live to | copy bytes/print over the session | largest single copy |
 | ---: | ---: | ---: |
@@ -27,4 +27,4 @@ test app::tests::session_length_tests::hot_path_work_is_independent_of_session_l
 ok
 test app::tests::session_length_tests::long ... ignored, long variant: minutes and gigabytes; run with --ignored, see the module docs
 test app::tests::session_length_tests::the_check_fails_a_path_whose_work_grows_with_the_session ... ok
-test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 2034 filtered out; finished in 15.06s
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 2034 filtered out; finished in 15.03s
