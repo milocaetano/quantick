@@ -7,7 +7,7 @@ the evidence for rubric criterion SE6 and, beside
 [the live envelope](live-envelope.md), for A+ gate 6.
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)
-at `dcea6d77` of `perf/hot-path-session-length`, the last commit that changed
+at `3013f342` of `perf/hot-path-session-length`, the last commit that changed
 code; each raw output below names its command and commit.
 
 ## The harness
@@ -66,57 +66,64 @@ failing on the real regression this mission removed (below).
 
 ## Per-unit work at both lengths
 
-The long variant at `dcea6d77`, [long.txt](session-length/long.txt) (the fast
+The long variant at `3013f342`, [long.txt](session-length/long.txt) (the fast
 variant's numbers are in [fast.txt](session-length/fast.txt)). *Copy bytes*
 count every reallocation inside the window's laps; the largest single one is
 in the raw file — a stall, not a rate.
 
 | Path | Session | allocs/unit | bytes/unit | copy bytes/unit | folds/unit | lane entries/unit | median ns/unit |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `trade.chart.backfilled` | 18,000 | 0.287 | 110.7 | 13.2 | — | 0.90 | 140 |
-| `trade.chart.backfilled` | 3,960,000 | 0.287 | 110.7 | 3.6 | — | 0.90 | 140 |
+| `trade.chart.backfilled` | 18,000 | 0.287 | 110.7 | 13.2 | — | 0.90 | 200 |
+| `trade.chart.backfilled` | 3,960,000 | 0.287 | 110.7 | 3.6 | — | 0.90 | 200 |
 | `trade.chart.live` | 18,000 | 0.287 | 110.7 | 13.2 | — | 0.90 | 120 |
 | `trade.chart.live` | 3,960,000 | 0.287 | 110.7 | 3.6 | — | 0.90 | 120 |
 | `trade.book` | 18,000 | 0.010 | 3.2 | 29.1 | — | — | 300 |
 | `trade.book` | 3,960,000 | 0.010 | 3.2 | 29.1 | — | — | 300 |
-| `depth.book` | 18,000 | 19.110 | 6,720.6 | 332.0 | — | — | 6,800 |
-| `depth.book` | 3,960,000 | 19.110 | 6,720.6 | 17.5 | — | — | 6,700 |
-| `frame.book` | 18,000 | 2,128.4 | 4,761,780 | 2,887,094 | — | — | 191,900 |
-| `frame.book` | 3,960,000 | 2,128.4 | 4,761,754 | 2,887,094 | — | — | 192,600 |
-| `frame.app.tick50` | 18,000 | 2,895.8 | 854,747 | 1,275,971 | — | 4.50 | 1,443,500 |
-| `frame.app.tick50` | 3,960,000 | 2,895.7 | 855,240 | 1,276,754 | — | 4.50 | 1,476,400 |
-| `frame.worker.tick50` | 18,000 | 55.5 | 4,918 | 460.9 | 26.10 | — | n/a |
-| `frame.worker.tick50` | 3,960,000 | 55.5 | 4,918 | 435.9 | 26.10 | — | n/a |
-| `frame.app.time1d` | 18,000 | 1,457.4 | 297,836 | 811,436 | — | 5.00 | 673,200 |
-| `frame.app.time1d` | 3,960,000 | 1,427.5 | 290,674 | 809,069 | — | 5.00 | 666,300 |
+| `depth.book` | 18,000 | 19.110 | 6,720.6 | 332.0 | — | — | 6,600 |
+| `depth.book` | 3,960,000 | 19.110 | 6,720.6 | 17.5 | — | — | 6,600 |
+| `frame.book` | 18,000 | 2,128.4 | 4,761,780 | 2,887,094 | — | — | 190,800 |
+| `frame.book` | 3,960,000 | 2,128.4 | 4,761,754 | 2,887,094 | — | — | 190,700 |
+| `frame.app.tick50` | 18,000 | 2,896.4 | 854,881 | 1,276,721 | — | 4.50 | 1,390,500 |
+| `frame.app.tick50` | 3,960,000 | 2,893.8 | 854,760 | 1,275,639 | — | 4.50 | 1,390,700 |
+| `frame.worker.tick50` | 18,000 | 55.501 | 4,918.1 | 461.0 | 26.10 | — | n/a |
+| `frame.worker.tick50` | 3,960,000 | 55.503 | 4,918.4 | 435.7 | 26.10 | — | n/a |
+| `frame.app.time1d` | 18,000 | 1,458.7 | 298,124 | 812,935 | — | 5.00 | 643,600 |
+| `frame.app.time1d` | 3,960,000 | 1,431.1 | 291,479 | 812,152 | — | 5.00 | 647,900 |
 | `frame.worker.time1d` | 18,000 | 139.0 | 11,913 | 0.0 | 1,923 | — | n/a |
-| `frame.worker.time1d` | 3,960,000 | 139.0 | 11,913 | 0.4 | 1,916 | — | n/a |
+| `frame.worker.time1d` | 3,960,000 | 139.0 | 11,913 | 0.0 | 1,916 | — | n/a |
 
 Verdict: within budget on every path, counts and time.
 
 Reading it:
 
 - **Every count is flat across a 220x longer session.** The largest move is
-  `frame.app.time1d` allocating 2.1 % *less* at the edge. The short-session
+  `frame.app.time1d` allocating 1.9 % *less* at the edge. The short-session
   copy bytes on `trade.chart`, `trade.book` and `depth.book` are ordinary
   doublings of still-small buffers falling inside that window.
-- **CPU time is flat within the +50 % bound**, the largest move +2.3 %
-  (`frame.app.tick50`). One path was not, before this branch fixed it:
+- **CPU time is flat within the +50 % bound**, the largest move +0.7 %
+  (`frame.app.time1d`). One path was not, before this branch fixed it:
   `frame.book` read 244 µs at the short session and 311 µs at the edge
   (+28 %, at `df40008e`) with identical counts — a walk that allocates
   nothing. The live half of the heatmap projection visited **every retained
   aggression** each frame to keep the ones after the live seam
   (`crates/orderflow/src/projection/tiers.rs`), growing with the session until
   the aggression cap (100,000, or 30 minutes) bound it, about 0.8 ns per
-  aggression. `LiquidityHistory` now counts adjacent prints that arrived out
-  of time order; while there are none, `aggressions_since` bisects to the
-  first print at or after the cut, and otherwise it walks every print as
-  before, so no print the cut owns is skipped and the projection is the same
-  (`history::tests::a_cut_in_time_order_starts_at_the_seam`,
-  `an_out_of_order_print_makes_the_cut_walk_everything_until_it_leaves`,
-  committed ignored and red in `cf72de71` before `dcea6d77`). It now reads
-  192 µs at both lengths. The health summary's retained-print count, which
-  counted the deque on every publish, reads its length.
+  aggression. `LiquidityHistory` now keeps, beside each retained print, the
+  newest timestamp among it and every print before it; that sequence never
+  decreases, so `aggressions_since` bisects it to the first print that can
+  belong to the cut. Every print before that point is older than the cut and
+  than all before it, so none is skipped, and the caller's time test is
+  unchanged, so the projection is the same; the tape is only *almost* in time
+  order, and a late print neither hides one behind it nor sends the walk back
+  to the oldest print. Tests:
+  `history::tests::a_cut_in_time_order_starts_at_the_seam` and
+  `a_late_print_neither_hides_a_print_from_the_cut_nor_turns_it_off`
+  (committed ignored and red in `cf72de71`; a first version, `dcea6d77`,
+  turned the bisection off while any late print was retained, which step 0's
+  third round caught and `3013f342` replaced — the new test failed against
+  it). It now reads 191 µs at both lengths. The health summary's
+  retained-print count, which counted the deque on every publish, reads its
+  length.
 - **Worker-thread rows carry no stopwatch** of their own; their work is the
   counts, and the UI frame that waits on them is timed.
 - **Costs that are flat but large**, recorded because the table shows them,
@@ -174,14 +181,14 @@ Folds per frame, from the harness:
 | Walk | tick:50, 18k | tick:50, 180k | time:1d, 18k | time:1d, 180k | time:1d, 3.96M |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | unbounded (`2452e577`), [fold-unbounded.txt](session-length/fold-unbounded.txt) | 27.0 | 27.0 | 18,908 | 180,908 | — |
-| bounded (`dcea6d77`) | 26.1 | 26.1 | 1,930 | 1,889 | 1,916 |
+| bounded (`3013f342`) | 26.1 | 26.1 | 1,930 | 1,889 | 1,916 |
 
 ## The tape's reallocation stall (D3)
 
 Q3 measured a ~21 ms UI stall when the tape's `Vec<Trade>` doubles at
-2,097,152 prints. At `dcea6d77`, Q3's harness re-run
-([envelope-measure.txt](session-length/envelope-measure.txt)) reads **20.99 ms
-at print 2,097,152** (20.15 ms with the footprint on): still there. The
+2,097,152 prints. At `3013f342`, Q3's harness re-run
+([envelope-measure.txt](session-length/envelope-measure.txt)) reads **24.79 ms
+at print 2,097,152** (19.34 ms with the footprint on): still there. The
 harness reads the same event as work: building a tape live to 3,960,000
 prints copies 64.9 bytes per print on average but **117,440,512 bytes in one
 reallocation** (2,097,152 × 56). It is one dropped frame, once, about 10.6
@@ -218,30 +225,30 @@ mission's files. Both are named as a follow-up in the PR.
 
 `APP_HEALTH_SUMMARY` on the WINV26 2026-08-25 replay at speed 60 with the
 book, bubbles, footprint and live strip on, release builds of the campaign
-base `2452e577` and of `dcea6d77`, five 45 s runs a side, interleaved, every
+base `2452e577` and of `3013f342`, five 45 s runs a side, interleaved, every
 store pointed at a scratch directory (`tools/live_envelope/run_replay.ps1`,
 summarised by `tools/live_envelope/frame_timing.py`); raw table in
 [frame-timing.txt](session-length/frame-timing.txt).
 
 | Side | fps min | frame_avg ms | frame_cpu ms mean (per run) | stdev | worst steady frame | `APP_SLOW_FRAMES` |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| base | 59 | 16.667 | 1.669 (1.64, 1.67, 1.68, 1.67, 1.68) | 0.016 | 33.41 ms | 0 |
-| head | 59 | 16.667 | 1.628 (1.62, 1.66, 1.62, 1.62, 1.63) | 0.016 | 33.32 ms | 0 |
+| base | 59 | 16.667 | 1.771 (1.75, 1.79, 1.79, 1.71, 1.81) | 0.039 | 33.48 ms | 0 |
+| head | 59 | 16.667 | 1.724 (1.70, 1.70, 1.76, 1.74, 1.72) | 0.026 | 33.31 ms | 0 |
 
-frame_avg is identical and fps never fell below 59. frame_cpu is 0.038 ms
-(2.3 %) *lower* on the head, against a standard error of the difference of
-0.011 ms (t ≈ −3.6): faster, not slower. `worker_deferred` stayed 0 in every
-run. Two earlier sets agreed on no regression — `df40008e`, 1.631 against
-1.634 ms (t ≈ 0.31), and `10b87d90`, taken while sibling agents' builds
-shared the host, 2.227 against 2.246 ms (t ≈ 0.13); all three are in the raw
-file.
+frame_avg is identical and fps never fell below 59. frame_cpu is 0.046 ms
+(2.6 %) *lower* on the head, against a standard error of the difference of
+0.021 ms (t ≈ −2.2): faster, not slower. `worker_deferred` stayed 0 in every
+run. Three earlier sets agreed on no regression — `dcea6d77`, 1.669 against
+1.628 ms (t ≈ −3.6); `df40008e`, 1.631 against 1.634 ms (t ≈ 0.31); and
+`10b87d90`, taken while sibling agents' builds shared the host, 2.227 against
+2.246 ms (t ≈ 0.13); all are in the raw file.
 
 ## Gate 6 at one SHA
 
 Gate 6: *scalability claims for supported live workloads have current
 measurements, stated rates and bounded-state evidence at the assessed
 revision*. The interim assessment blocked it on five findings; each, and what
-answers it at `dcea6d77`:
+answers it at `3013f342`:
 
 | Finding (interim assessment, gate 6) | Answered by | Where |
 | --- | --- | --- |
