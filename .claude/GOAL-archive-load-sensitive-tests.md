@@ -219,6 +219,14 @@ rate on both binaries.
 - **C1** — `delivery-review` returns PASS (completeness pass, tier `medium`).
 - **C2** — The PR is open against `campaign/lean-a-plus` and marked ready.
 - **C3** — The after numbers are posted as a comment on #361 and on #364.
+- **C4** — The PR is merged into `campaign/lean-a-plus` and the merge is read
+  back (`mergedAt`, merge commit, campaign ref), then #361 and #364 are closed
+  explicitly. Owned by the campaign coordinator, not by this child: under
+  [the integration contract](../docs/campaign/integration.md) a child hands off
+  its reviewed PR and never merges. Recorded here because the Q1 comment's A4
+  asks for it — *"merged into `campaign/lean-a-plus` through a PR whose base is
+  exactly that branch, with the merge read back"* — and the half this child can
+  discharge (the PR and its base) is A6.
 
 ## The request as received, verbatim
 
