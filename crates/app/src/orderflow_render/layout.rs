@@ -12,7 +12,7 @@ use quantick_orderflow::{AggressionPrimitive, HeatmapProjection};
 
 use crate::viewport::Viewport;
 
-use super::{OrderflowRenderStyle, finite_unit_f64, readable_band};
+use super::OrderflowRenderStyle;
 
 /// Screen x where the history pane ends and the live lane begins.
 ///
@@ -355,5 +355,29 @@ impl EventBand {
 
     pub(super) fn center_y(self) -> f32 {
         (self.top + self.bottom) / 2.0
+    }
+}
+
+fn readable_band(rect: egui::Rect, minimum_height: f32, clip: egui::Rect) -> egui::Rect {
+    if !rect.is_finite() {
+        return egui::Rect::NOTHING;
+    }
+    let minimum_height = minimum_height.max(0.5);
+    let readable = if rect.height() < minimum_height {
+        egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(rect.width().max(0.5), minimum_height),
+        )
+    } else {
+        rect
+    };
+    readable.intersect(clip)
+}
+
+fn finite_unit_f64(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }

@@ -119,19 +119,6 @@ const CENTER_GUTTER_PX: f32 = 2.0;
 /// cluster's, which the trader can switch between two and three.
 const LADDER_QUANTITY_COLUMNS: f32 = 2.0;
 
-/// How far an imbalanced cell sinks *below* its plate.
-///
-/// Below, never above: a light pill under text of the cell's own hue raises
-/// the floor exactly beneath the digits it means to emphasise. Measured, the
-/// old 0.35 pill left its number at 3.2:1 — the layer's most important row as
-/// its least legible one. Sinking the cell and lightening the ink puts the
-/// same row at 8.6:1.
-const IMBALANCE_CELL_ALPHA: f32 = 0.16;
-
-/// Width of the solid edge on the dominant column's outer border, in pixels.
-/// The side is carried by *which* border it is, so the colour is redundancy.
-const IMBALANCE_EDGE_PX: f32 = 2.0;
-
 /// The ladder's own Detailed floor. Kept as a named value because the
 /// hysteresis tests and `candle_body_fade` reason about a single reference
 /// width; every *style* asks [`detailed_min_width`] for its own.
@@ -216,34 +203,9 @@ const CELL_BUDGET: usize = 12_000;
 /// has stopped being a signal.
 const MAX_ZONE_MARKS: usize = 24;
 
-/// The split style's volume-profile silhouette: neutral light, after the
-/// reference charts' white/gray histograms — color stays reserved for the
-/// fight (the delta side) and the POC.
-const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
-
-/// The least an imbalance chip spans, in pixels: enough to ring the number
-/// on a short bar without swallowing the whole half.
-const MIN_CHIP_PX: f32 = 14.0;
-
-/// Gap between an extreme-ratio badge and the row it describes, in pixels —
-/// just off the bar's end, never on the ladder itself.
-const EXTREME_BADGE_GAP_PX: f32 = 3.0;
-
 /// How far above the chart's bottom edge the per-bar delta totals sit —
 /// clear of the legend line below them.
 const TOTALS_STRIP_OFFSET_Y: f32 = 22.0;
-
-/// How much of the canvas the split style's per-bar backdrop keeps: enough
-/// that the footprint owns its interior over the heatmap, little enough
-/// that the map stays visible between candles.
-const BACKDROP_ALPHA: f32 = 0.65;
-
-/// That backdrop, derived from the theme rather than hand-premultiplied —
-/// a canvas color copied by hand goes stale the day the theme moves, with
-/// no test to notice.
-fn canvas_backdrop() -> egui::Color32 {
-    theme::CANVAS.gamma_multiply(BACKDROP_ALPHA)
-}
 
 /// How much of the candle body's fill survives at `candle_width`, `1.0`
 /// (untouched) through `0.0` (outline only).
@@ -1033,16 +995,6 @@ fn zones_of(
         }
     }
     zones
-}
-
-/// Pixel band of display row `row` (rows are `row_group` of price tall).
-///
-/// Ordered on screen, not by price: on an inverted scale the row's high edge
-/// is the *lower* pixel, and a band handed out as `(high_edge, low_edge)`
-/// would give every rect a negative height.
-fn row_band(frame: &LayerFrame<'_>, row: i64, row_group: f64) -> (f32, f32) {
-    let low = row as f64 * row_group;
-    frame.scale.band(low, low + row_group)
 }
 
 /// Inset of the cluster's columns from its box, and the gutter between them.

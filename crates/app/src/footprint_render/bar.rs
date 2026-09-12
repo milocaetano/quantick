@@ -19,10 +19,8 @@ use crate::theme;
 
 use super::heat::{HEAT_INK_FLIP_STEP, HeatScale, heat_fill, heat_ink, heat_step};
 use super::{
-    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, EXTREME_BADGE_GAP_PX,
-    GLYPH_EM, IMBALANCE_CELL_ALPHA, IMBALANCE_EDGE_PX, LADDER_MIN_FONT_PX, LayerFrame, MIN_CHIP_PX,
-    PROFILE_COLOR, QUANTITY_GLYPHS, ZoneMark, canvas_backdrop, fmt_delta, fmt_qty, poc_of,
-    row_band,
+    CENTER_GUTTER_PX, CLUSTER_BOX_PAD_PX, CLUSTER_GUTTER_PX, DetailLevel, GLYPH_EM,
+    LADDER_MIN_FONT_PX, LayerFrame, QUANTITY_GLYPHS, ZoneMark, fmt_delta, fmt_qty, poc_of,
 };
 
 /// Where one display row lands on screen, and what the signals say about it.
@@ -963,4 +961,52 @@ pub(super) fn draw_zone_mark(frame: &LayerFrame<'_>, mark: &ZoneMark, row_group:
         egui::Rounding::ZERO,
         color.gamma_multiply(0.7),
     );
+}
+
+/// How far an imbalanced cell sinks *below* its plate.
+///
+/// Below, never above: a light pill under text of the cell's own hue raises
+/// the floor exactly beneath the digits it means to emphasise. Measured, the
+/// old 0.35 pill left its number at 3.2:1 — the layer's most important row as
+/// its least legible one. Sinking the cell and lightening the ink puts the
+/// same row at 8.6:1.
+pub(super) const IMBALANCE_CELL_ALPHA: f32 = 0.16;
+
+/// Width of the solid edge on the dominant column's outer border, in pixels.
+/// The side is carried by *which* border it is, so the colour is redundancy.
+const IMBALANCE_EDGE_PX: f32 = 2.0;
+
+/// The split style's volume-profile silhouette: neutral light, after the
+/// reference charts' white/gray histograms — color stays reserved for the
+/// fight (the delta side) and the POC.
+pub(super) const PROFILE_COLOR: egui::Color32 = egui::Color32::from_gray(0xD8);
+
+/// The least an imbalance chip spans, in pixels: enough to ring the number
+/// on a short bar without swallowing the whole half.
+const MIN_CHIP_PX: f32 = 14.0;
+
+/// Gap between an extreme-ratio badge and the row it describes, in pixels —
+/// just off the bar's end, never on the ladder itself.
+const EXTREME_BADGE_GAP_PX: f32 = 3.0;
+
+/// How much of the canvas the split style's per-bar backdrop keeps: enough
+/// that the footprint owns its interior over the heatmap, little enough
+/// that the map stays visible between candles.
+const BACKDROP_ALPHA: f32 = 0.65;
+
+/// That backdrop, derived from the theme rather than hand-premultiplied —
+/// a canvas color copied by hand goes stale the day the theme moves, with
+/// no test to notice.
+fn canvas_backdrop() -> egui::Color32 {
+    theme::CANVAS.gamma_multiply(BACKDROP_ALPHA)
+}
+
+/// Pixel band of display row `row` (rows are `row_group` of price tall).
+///
+/// Ordered on screen, not by price: on an inverted scale the row's high edge
+/// is the *lower* pixel, and a band handed out as `(high_edge, low_edge)`
+/// would give every rect a negative height.
+fn row_band(frame: &LayerFrame<'_>, row: i64, row_group: f64) -> (f32, f32) {
+    let low = row as f64 * row_group;
+    frame.scale.band(low, low + row_group)
 }

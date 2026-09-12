@@ -12,8 +12,8 @@ use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence};
 use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
 use super::{
-    OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, draw_text_with_shadow,
-    finite_unit, resting_rgb, rgba,
+    OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit,
+    resting_rgb, rgba,
 };
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
@@ -581,4 +581,22 @@ const HEAT_LEVELS: f32 = 8.0;
 
 fn quantize_heat(intensity: f32) -> f32 {
     ((intensity * HEAT_LEVELS).round() / HEAT_LEVELS).clamp(0.0, 1.0)
+}
+
+fn draw_text_with_shadow(
+    painter: &egui::Painter,
+    anchor: egui::Pos2,
+    align: egui::Align2,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) {
+    painter.text(
+        anchor + egui::vec2(1.0, 1.0),
+        align,
+        text,
+        font.clone(),
+        egui::Color32::from_black_alpha(190),
+    );
+    painter.text(anchor, align, text, font, color);
 }

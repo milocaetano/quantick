@@ -415,40 +415,6 @@ fn draw_dashed_vertical(
     }
 }
 
-fn draw_text_with_shadow(
-    painter: &egui::Painter,
-    anchor: egui::Pos2,
-    align: egui::Align2,
-    text: &str,
-    font: egui::FontId,
-    color: egui::Color32,
-) {
-    painter.text(
-        anchor + egui::vec2(1.0, 1.0),
-        align,
-        text,
-        font.clone(),
-        egui::Color32::from_black_alpha(190),
-    );
-    painter.text(anchor, align, text, font, color);
-}
-
-fn readable_band(rect: egui::Rect, minimum_height: f32, clip: egui::Rect) -> egui::Rect {
-    if !rect.is_finite() {
-        return egui::Rect::NOTHING;
-    }
-    let minimum_height = minimum_height.max(0.5);
-    let readable = if rect.height() < minimum_height {
-        egui::Rect::from_center_size(
-            rect.center(),
-            egui::vec2(rect.width().max(0.5), minimum_height),
-        )
-    } else {
-        rect
-    };
-    readable.intersect(clip)
-}
-
 fn rgba(rgb: [u8; 3], alpha: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         rgb[0],
@@ -468,14 +434,6 @@ fn mix_rgb(from: [u8; 3], to: [u8; 3], amount: f32) -> [u8; 3] {
 }
 
 fn finite_unit(value: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(0.0, 1.0)
-    } else {
-        0.0
-    }
-}
-
-fn finite_unit_f64(value: f64) -> f64 {
     if value.is_finite() {
         value.clamp(0.0, 1.0)
     } else {
