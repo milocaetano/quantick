@@ -7,7 +7,19 @@
 // widens no visibility in production code, and the `use super::*` below is
 // the line the module already had inline.
 
+use super::bubbles::*;
+use super::heatmap::*;
+use super::layout::*;
+use super::legend::*;
+use super::preview::*;
 use super::*;
+use crate::viewport::Viewport;
+use quantick_engine::Side;
+use quantick_orderflow::{
+    AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
+    INV_PHI_2, LiquidityEvidence,
+};
+use rust_decimal::Decimal;
 
 /// The dust threshold is defined by inverting this module's radius
 /// mapping, but lives in `config` beside the style it reads. This pins the
