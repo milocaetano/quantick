@@ -242,14 +242,20 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "chart.bars.set_spec",
         title: "Change what one bar is — kind and size",
         reach: "toolbar bar controls",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the bar-kind and size controls are toolbar widgets, not entries in its action enum",
+        )],
         mapping: capability!("layout.pane.set_interval"),
     },
     UiBehaviour {
         id: "chart.pan",
         title: "Drag the chart back through the tape",
         reach: "primary drag on the canvas; the price and time axes",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "a pointer drag the canvas handles directly; no registry names it",
+        )],
         mapping: excluded!(
             PendingCapability,
             "`chart.window.read` reports the visible window; nothing sets it, so an operator \
@@ -260,7 +266,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "chart.zoom",
         title: "Zoom the chart in or out",
         reach: "wheel on the canvas; drag on either axis",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "a wheel and an axis drag the canvas handles directly; no registry names it",
+        )],
         mapping: excluded!(
             PendingCapability,
             "the read half exists as `chart.window.read` and the write half does not. Tracked \
@@ -278,7 +287,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "layout.pane.focus",
         title: "Make another chart the focused one",
         reach: "click anywhere on a chart",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "a click anywhere on a pane; the focus follows it without a named control",
+        )],
         mapping: capability!("layout.focus.set"),
     },
     UiBehaviour {
@@ -292,7 +304,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "layout.pane.resize",
         title: "Resize a chart by its splitter",
         reach: "drag the divider between two charts",
-        keys: &[],
+        keys: &[(Source::Authored, "a drag on the divider between two panes")],
         mapping: capability!("layout.pane.resize"),
     },
     UiBehaviour {
@@ -401,7 +413,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "history.reach.set",
         title: "Choose how far back the chart reaches, and the page size",
         reach: "toolbar history caret menu, reachable by the `history` scripted-menu hook",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the reach chips and page size inside the toolbar caret menu, drawn per frame",
+        )],
         mapping: PENDING_HISTORY,
     },
     UiBehaviour {
@@ -463,7 +478,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "indicator.native.remove",
         title: "Remove a native indicator",
         reach: "the legend row's close, and the indicators menu",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the legend row close, which the toolbar enum sees only as `RemoveIndicator`",
+        )],
         mapping: excluded!(
             PendingCapability,
             "`indicator.script.detach` names a script; a native has no identifier it accepts. \
@@ -496,14 +514,17 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "trade.aim.bracket",
         title: "Send an entry with its stop and target attached",
         reach: "the ticket's bracket fields, and the aim on the chart",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the ticket bracket fields and the aim on the chart",
+        )],
         mapping: capability!("trade.order.bracket"),
     },
     UiBehaviour {
         id: "trade.instrument.money.set",
         title: "Declare what one point of an instrument is worth",
         reach: "the Trading panel's instrument section",
-        keys: &[],
+        keys: &[(Source::Authored, "the Trading panel instrument section")],
         mapping: capability!("trade.instrument.set_money"),
     },
     UiBehaviour {
@@ -530,7 +551,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "trade.order.place_at_price",
         title: "Rest an order at the price under the pointer",
         reach: "the canvas right-click menu's trade section",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the canvas right-click menu trade section, resolved per click",
+        )],
         mapping: capability!("trade.order.place"),
     },
     UiBehaviour {
@@ -574,21 +598,21 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "trade.ticket.risk.set",
         title: "Say what one trade may lose",
         reach: "the Trading panel's risk section",
-        keys: &[],
+        keys: &[(Source::Authored, "the Trading panel risk field")],
         mapping: capability!("trade.risk.set"),
     },
     UiBehaviour {
         id: "trade.ticket.ruler.set",
         title: "Walk the projected stop and target out from the aim",
         reach: "the ruler wheel on the chart's aim",
-        keys: &[],
+        keys: &[(Source::Authored, "the ruler wheel on the chart aim")],
         mapping: capability!("trade.ruler.set"),
     },
     UiBehaviour {
         id: "trade.ticket.strategy.select",
         title: "Choose the ticket's exit ladder",
         reach: "the Trading panel's strategy selector",
-        keys: &[],
+        keys: &[(Source::Authored, "the Trading panel strategy selector")],
         mapping: capability!("trade.strategy.select"),
     },
     // ---- Feed recovery ----------------------------------------------------
@@ -623,7 +647,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "toolrail.visible.toggle",
         title: "Show or hide the drawing rail",
         reach: "View menu",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "a View menu entry whose label the source computes, so no literal to claim",
+        )],
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
@@ -814,14 +841,20 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "drawing.remove",
         title: "Delete a drawing",
         reach: "the object context bar, the canvas right-click menu, Delete",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the object context bar and the canvas right-click menu, resolved per click",
+        )],
         mapping: capability!("annotate.remove"),
     },
     UiBehaviour {
         id: "drawing.rename",
         title: "Rename a drawing",
         reach: "the canvas right-click menu, drawing section",
-        keys: &[],
+        keys: &[(
+            Source::Authored,
+            "the rename box inside the canvas right-click menu",
+        )],
         mapping: excluded!(
             PendingCapability,
             "`annotate.*` places and removes; nothing edits an object that already exists. \
@@ -832,7 +865,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "drawing.select_and_move",
         title: "Select a drawing and drag it, or one of its handles",
         reach: "primary click and drag on the canvas",
-        keys: &[],
+        keys: &[(Source::Authored, "a primary click and drag on the canvas")],
         mapping: excluded!(
             PendingCapability,
             "an object can be placed and removed by capability and not moved, so an operator \

@@ -47,7 +47,7 @@ The three exclusion classes are closed:
 | Excluded: `pending_capability` | 61 |
 | **Total** | **97** |
 
-80 of the 97 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The remaining 17 are gestures and panel fields that no registry stands behind — a drag on a splitter, a number typed into the ticket — carried in the table because a trader names them, and listed under `authored` below.
+80 of the 97 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 17 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -173,6 +173,34 @@ matrix fails the build.
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
 | `authored` | 17 |
+
+## Appendix: rows no registry stands behind
+
+A behaviour a trader names and no registry registers — a gesture drawn
+straight onto a pane, a field inside a panel. The mechanical guard
+cannot hold these up, so each says why in the table itself rather than
+being counted and left anonymous. A row that claims no entry *and*
+declares nothing here is a guard failure.
+
+| Behaviour | Why nothing registers it |
+| --- | --- |
+| `chart.bars.set_spec` | the bar-kind and size controls are toolbar widgets, not entries in its action enum |
+| `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
+| `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
+| `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
+| `layout.pane.resize` | a drag on the divider between two panes |
+| `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |
+| `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
+| `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |
+| `trade.instrument.money.set` | the Trading panel instrument section |
+| `trade.order.place_at_price` | the canvas right-click menu trade section, resolved per click |
+| `trade.ticket.risk.set` | the Trading panel risk field |
+| `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
+| `trade.ticket.strategy.select` | the Trading panel strategy selector |
+| `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
+| `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
+| `drawing.rename` | the rename box inside the canvas right-click menu |
+| `drawing.select_and_move` | a primary click and drag on the canvas |
 
 ## Appendix: registry entries that are not behaviours
 

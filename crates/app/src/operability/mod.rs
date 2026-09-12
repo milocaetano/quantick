@@ -129,9 +129,15 @@ pub(crate) enum Source {
     /// A `harness::ScriptedMenu` token.
     ScriptedMenu,
     /// No registry stands behind it — a gesture drawn straight onto a pane, or
-    /// a field inside a panel. Exempt from the walk in both directions, and
-    /// counted apart in the matrix so the reader knows how much of the table
-    /// the mechanical guard is holding up.
+    /// a field inside a panel. Its key is the reason why, not an entry to look
+    /// up, and it is exempt from the walk in both directions.
+    ///
+    /// A row *declares* this rather than being inferred from carrying no keys.
+    /// Inferring it made a forgotten key indistinguishable from a deliberate
+    /// gesture, and the generated document then told its reader that a row
+    /// nothing registers is one nothing *can* register — on no better evidence
+    /// than an empty list. A row with neither is now
+    /// [`Drift::Unclassified`](Drift).
     Authored,
 }
 
@@ -176,8 +182,8 @@ impl Source {
     }
 
     /// Whether `sources::registered` enumerates this source. `Authored` is
-    /// the only one it does not, and the only one a row may claim without the
-    /// interface registering anything.
+    /// the only one it does not: its key is a reason, not an entry.
+    #[cfg(test)]
     pub(crate) fn is_walked(self) -> bool {
         !matches!(self, Self::Authored)
     }
@@ -305,9 +311,15 @@ pub(crate) enum Drift {
         /// The identifier used twice.
         id: &'static str,
     },
-    /// A row claims a key under `Source::Authored`, which stands for "no
-    /// registry" and therefore has nothing to claim.
-    AuthoredClaim {
+    /// A row says nothing about where it comes from: no registry entry, and no
+    /// `Source::Authored` declaration saying there is none to name.
+    ///
+    /// Silent before this existed. The matrix counted such a row among the
+    /// gestures no registry stands behind — which is also exactly what a
+    /// *forgotten* key looks like from the outside, so the document described
+    /// a row to its reader as a gesture on no better evidence than an empty
+    /// list.
+    Unclassified {
         /// The row.
         behaviour: &'static str,
     },
@@ -389,9 +401,10 @@ impl Drift {
                 "`{}` entry `{key}` is claimed by behaviour `{behaviour}` and also listed in `NOT_A_BEHAVIOUR`. Drop whichever of the two is wrong",
                 source.as_str()
             ),
-            Self::AuthoredClaim { behaviour } => format!(
-                "behaviour `{behaviour}` claims an `authored` key; `authored` means no registry \
-                 stands behind the row, so it carries no key"
+            Self::Unclassified { behaviour } => format!(
+                "behaviour `{behaviour}` claims no registry entry and does not declare \
+                 `Source::Authored` either, so nothing says where it is reachable from. Give it \
+                 the entry it claims, or an `authored` key saying why there is none"
             ),
         }
     }
@@ -419,11 +432,15 @@ pub(crate) fn drift(
         if !seen_ids.insert(behaviour.id) {
             findings.push(Drift::DuplicateBehaviour { id: behaviour.id });
         }
+        if behaviour.keys.is_empty() {
+            findings.push(Drift::Unclassified {
+                behaviour: behaviour.id,
+            });
+        }
         for (source, key) in behaviour.keys {
+            // An `authored` key is a reason, not an entry: nothing registers
+            // it, so no walk claims it and no walk orphans it.
             if *source == Source::Authored {
-                findings.push(Drift::AuthoredClaim {
-                    behaviour: behaviour.id,
-                });
                 continue;
             }
             if let Some(previous) = claims.insert((*source, key), behaviour.id) {

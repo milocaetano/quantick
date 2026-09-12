@@ -102,20 +102,36 @@ fn summary() -> String {
     let _ = writeln!(out, "| **Total** | **{total}** |");
     out.push('\n');
 
-    let walked = UI_BEHAVIOURS
-        .iter()
-        .filter(|behaviour| !behaviour.keys.is_empty())
-        .count();
+    let authored = authored_rows().len();
     let _ = writeln!(
         out,
-        "{walked} of the {total} rows claim at least one registry entry, so the drift guard \
-         fails when the interface changes under them. The remaining {} are gestures and panel \
-         fields that no registry stands behind — a drag on a splitter, a number typed into the \
-         ticket — carried in the table because a trader names them, and listed under \
-         `authored` below.\n",
-        total - walked
+        "{} of the {total} rows claim at least one registry entry, so the drift guard fails when \
+         the interface changes under them. The other {authored} say in the table that no registry \
+         stands behind them — a drag on a splitter, a number typed into the ticket — each with \
+         the reason, listed in full below. A row that says neither is a guard failure, not a \
+         third category.\n",
+        total - authored
     );
     out
+}
+
+/// The rows that declare no registry stands behind them, with the reason each
+/// gives.
+///
+/// Read off the declaration rather than inferred from an empty key list: those
+/// are different things, and conflating them let a forgotten key present itself
+/// to a reader as a deliberate gesture.
+fn authored_rows() -> Vec<(&'static str, &'static str)> {
+    UI_BEHAVIOURS
+        .iter()
+        .filter_map(|behaviour| {
+            behaviour
+                .keys
+                .iter()
+                .find(|(source, _)| *source == Source::Authored)
+                .map(|(_, reason)| (behaviour.id, *reason))
+        })
+        .collect()
 }
 
 fn rows() -> String {
@@ -160,19 +176,27 @@ fn appendix() -> String {
     let _ = writeln!(out, "| Source | Claims |");
     let _ = writeln!(out, "| --- | --- |");
     for source in Source::ALL {
-        let claims = if source.is_walked() {
-            UI_BEHAVIOURS
-                .iter()
-                .flat_map(|behaviour| behaviour.keys.iter())
-                .filter(|(found, _)| *found == source)
-                .count()
-        } else {
-            UI_BEHAVIOURS
-                .iter()
-                .filter(|behaviour| behaviour.keys.is_empty())
-                .count()
-        };
+        let claims = UI_BEHAVIOURS
+            .iter()
+            .flat_map(|behaviour| behaviour.keys.iter())
+            .filter(|(found, _)| *found == source)
+            .count();
         let _ = writeln!(out, "| `{}` | {claims} |", source.as_str());
+    }
+    out.push('\n');
+
+    out.push_str("## Appendix: rows no registry stands behind\n\n");
+    out.push_str(concat!(
+        "A behaviour a trader names and no registry registers — a gesture drawn\n",
+        "straight onto a pane, a field inside a panel. The mechanical guard\n",
+        "cannot hold these up, so each says why in the table itself rather than\n",
+        "being counted and left anonymous. A row that claims no entry *and*\n",
+        "declares nothing here is a guard failure.\n\n",
+    ));
+    let _ = writeln!(out, "| Behaviour | Why nothing registers it |");
+    let _ = writeln!(out, "| --- | --- |");
+    for (id, reason) in authored_rows() {
+        let _ = writeln!(out, "| `{id}` | {reason} |");
     }
     out.push('\n');
 
@@ -248,6 +272,58 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
+    }
+
+    /// A row that claims nothing and declares nothing is drift, not a gesture.
+    ///
+    /// The two used to be the same thing: a row with no keys was counted among
+    /// the behaviours no registry stands behind, and the generated document
+    /// said so to its reader. A forgotten key looks exactly like that from the
+    /// outside, so the document was making a claim about the interface on the
+    /// evidence of an empty list.
+    #[test]
+    fn a_row_that_claims_and_declares_nothing_is_drift() {
+        let capabilities = registered_capability_ids().expect("the inventory parses");
+        let rows = [super::super::UiBehaviour {
+            id: "fixture.forgotten",
+            title: "A row whose author forgot the key",
+            reach: "somewhere",
+            keys: &[],
+            mapping: Mapping::Excluded {
+                class: ExclusionClass::PendingCapability,
+                reason: "a fixture, long enough for the legibility check to accept it",
+            },
+        }];
+
+        let findings = drift(&rows, &[], &[], &capabilities);
+        assert_eq!(
+            findings,
+            vec![Drift::Unclassified {
+                behaviour: "fixture.forgotten",
+            }]
+        );
+    }
+
+    /// And a declaration is accepted rather than treated as a claim on some
+    /// registry: an `authored` key is a reason, so no walk can orphan it.
+    #[test]
+    fn an_authored_declaration_is_not_a_claim() {
+        let capabilities = registered_capability_ids().expect("the inventory parses");
+        let rows = [super::super::UiBehaviour {
+            id: "fixture.gesture",
+            title: "A drag nothing registers",
+            reach: "the canvas",
+            keys: &[(
+                Source::Authored,
+                "a pointer drag the canvas handles directly",
+            )],
+            mapping: Mapping::Excluded {
+                class: ExclusionClass::PendingCapability,
+                reason: "a fixture, long enough for the legibility check to accept it",
+            },
+        }];
+
+        assert!(drift(&rows, &[], &[], &capabilities).is_empty());
     }
 
     /// Every source the enum calls walked is actually walked.
