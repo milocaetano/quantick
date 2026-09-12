@@ -355,6 +355,39 @@ mod cockpit_tier_tests {
         );
     }
 
+    /// The retry matrix says which capabilities no grant reaches by asking
+    /// which ceilings a grant can hand out, and that list is only true while
+    /// `configured_profile` never returns anything else. So every grant the
+    /// panel can make — none, each tier, and every selectable scope at once,
+    /// `trade` included — is asked for its ceiling here.
+    #[test]
+    fn no_grant_hands_out_a_ceiling_outside_the_grantable_list() {
+        let everything = ControlAccess::new()
+            .contract
+            .selectable_permissions()
+            .map(|descriptor| descriptor.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+            .join(",");
+        for scopes in [
+            "",
+            "all-reads",
+            "annotate-tier",
+            "cockpit,cockpit.layout",
+            "trade",
+            everything.as_str(),
+        ] {
+            let mut access = ControlAccess::new();
+            access
+                .configure_scopes(scopes)
+                .expect("registered permissions");
+            let ceiling = access.configured_profile();
+            assert!(
+                GRANTABLE_PROFILE_IDS.contains(&ceiling.as_str()),
+                "granting `{scopes}` handed out `{ceiling}`, which the retry matrix                  believes no grant reaches"
+            );
+        }
+    }
+
     /// The floor alone opens nothing, and a scope without the floor opens
     /// nothing either — every cockpit capability requires both, so claiming
     /// the tier on half of it would put a grant on the panel that is refused

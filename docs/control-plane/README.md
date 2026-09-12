@@ -13,6 +13,10 @@ sequence; the files here fix the details that outcome has to honour.
   way: every behaviour a trader can reach from the interface, and either the
   capability that performs it or the classified reason none does.
   **Generated**; see [Precedence](#precedence) before editing it.
+- [Retry matrix](retry-matrix.md) runs the inventory's mutable capabilities
+  through retry: the idempotency policy each publishes, what the gateway does
+  with a key, and the read that reconciles a call that did not answer.
+  **Generated**; see [Precedence](#precedence) before editing it.
 - [Control contract](control-contract.md) fixes identifier, schema, revision,
   authority, limit, tool-surface, determinism, and trade-annotation rules.
 - [ADR 0001](adr-0001-local-transport-and-instance-discovery.md) selects the
@@ -55,6 +59,12 @@ actions, the drawing tools, the menu labels — which live behind this crate. It
 fails when a behaviour is registered with no row, when a row claims something
 the interface no longer has, and when a row names a capability the inventory
 does not carry.
+
+The [retry matrix](retry-matrix.md) is generated from the same registry by
+`quantick-app --dump-retry-matrix`. `cargo test -p quantick-app retry_matrix`
+refuses a row whose policy, read, scope or field disagrees with the registry,
+and `cargo test -p quantick-guards` fails in a second when the inventory lists
+a mutable capability the matrix has no row for.
 
 **Wire rules — the contract is authoritative.** Identifier grammar, schema
 shape, revision and cursor semantics, the authority boundary, limits,

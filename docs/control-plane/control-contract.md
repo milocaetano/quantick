@@ -257,7 +257,9 @@ A keyed call whose outcome cannot be determined — the application had still no
 answered a full request window after the caller's own deadline expired —
 records a non-retryable refusal naming the uncertainty rather than releasing
 its key. The retry receives that refusal instead of either a second execution
-or an indefinite hold, and reconciles by reading state back.
+or an indefinite hold, and reconciles by reading state back. Which read
+reconciles each mutable capability is listed, generated from the registry, in
+the [retry matrix](retry-matrix.md).
 
 ### 5.3 Pagination cursors
 
