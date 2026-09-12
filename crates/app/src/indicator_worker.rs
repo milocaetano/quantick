@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 
+use forming_run::FormingRun;
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
@@ -54,33 +55,6 @@ pub(crate) struct LaneSample {
     /// One value per declared plot, in descriptor order; NaN = nothing to
     /// draw, exactly as in a committed row.
     pub values: Vec<f64>,
-}
-
-/// Fold `run` into forming-bar prefixes, at most `rungs` of them.
-///
-/// The trades are the forming bar's own, in occurrence order, so folding all
-/// of them reproduces the bar the chart is drawing — which is why the last
-/// print always gets a rung: the lane's right edge is the live edge, and
-/// stopping a sample short of it would draw the tape as if the newest prints
-/// had not happened.
-fn lane_prefixes(run: &[Trade], rungs: usize) -> Vec<Bar> {
-    if run.is_empty() || rungs == 0 {
-        return Vec::new();
-    }
-    let step = run.len().div_ceil(rungs.min(run.len())).max(1);
-    let mut prefixes = Vec::with_capacity(run.len().div_ceil(step) + 1);
-    let mut forming: Option<Bar> = None;
-    for (index, trade) in run.iter().enumerate() {
-        match &mut forming {
-            None => forming = Some(Bar::opened_by(trade)),
-            Some(bar) => bar.extend(trade),
-        }
-        let last = index + 1 == run.len();
-        if last || (index + 1) % step == 0 {
-            prefixes.push(forming.clone().expect("a trade opened the bar"));
-        }
-    }
-    prefixes
 }
 
 /// UI-side handle for one indicator slot. The UI allocates these (so it can
@@ -727,7 +701,7 @@ fn run_observed(
         progress: &progress,
     };
     let mut host = IndicatorHost::new();
-    let mut lane_run: Vec<Trade> = Vec::new();
+    let mut lane_run = FormingRun::default();
     // BTreeMap: deterministic iteration order for event emission.
     let mut slots: BTreeMap<SlotId, SlotMirror> = BTreeMap::new();
 
@@ -761,13 +735,13 @@ fn run_observed(
                     host.rebuild(&bars, None);
                     rebuilt = true;
                     // The retired epoch must not retain its peak allocation.
-                    lane_run = Vec::new();
+                    lane_run = FormingRun::default();
                     partial_update = None;
                     lane_request = None;
                 }
                 IndicatorCommand::BarClosed(bar) => {
                     host.push_closed_bar(&bar);
-                    lane_run = Vec::new();
+                    lane_run = FormingRun::default();
                     partial_update = None;
                     lane_request = None;
                 }
@@ -777,7 +751,7 @@ fn run_observed(
                     rungs,
                 } => {
                     if partial.is_none() || rungs == 0 {
-                        lane_run = Vec::new();
+                        lane_run = FormingRun::default();
                     } else {
                         lane_run.extend(run);
                     }
@@ -795,7 +769,7 @@ fn run_observed(
                     // series.
                     partial_update = None;
                     lane_request = None;
-                    lane_run = Vec::new();
+                    lane_run = FormingRun::default();
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -991,11 +965,11 @@ fn run_observed(
 fn walk_lane(
     host: &mut IndicatorHost,
     slots: &BTreeMap<SlotId, SlotMirror>,
-    run: &[Trade],
+    run: &FormingRun,
     rungs: usize,
 ) -> BTreeMap<SlotId, Vec<LaneSample>> {
     let mut lane: BTreeMap<SlotId, Vec<LaneSample>> = BTreeMap::new();
-    let prefixes = lane_prefixes(run, rungs.min(MAX_LANE_RUNGS));
+    let prefixes = run.prefixes(rungs.min(MAX_LANE_RUNGS));
     if prefixes.is_empty() {
         return lane;
     }
@@ -1133,6 +1107,13 @@ mod tests {
     use super::*;
     use crate::indicators::IndicatorViews;
     use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade, golden as engine_golden};
+
+    /// The ladder of `run` as the worker samples it.
+    fn lane_prefixes(run: &[Trade], rungs: usize) -> Vec<Bar> {
+        let mut forming = FormingRun::default();
+        forming.extend(run.to_vec());
+        forming.prefixes(rungs)
+    }
     use quantick_indicators::{PlotId, SourceId, native::Ema};
     use rust_decimal::Decimal;
 
@@ -2638,6 +2619,11 @@ mod incremental_lane_tests {
         }
     }
 }
+
+mod forming_run;
+
+#[cfg(test)]
+mod forming_run_tests;
 
 #[cfg(test)]
 mod event_backpressure_tests;
