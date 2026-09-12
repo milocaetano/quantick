@@ -15,17 +15,15 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 use quantick_control::{
     error::{ControlError, codes},
-    handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
-    id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId, RequestId},
+    id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
     limits::{
         CONTROL_CLIENT_BURST, CONTROL_CLIENT_RATE_PER_SECOND, CONTROL_HANDSHAKE_TIMEOUT_MS,
         CONTROL_MAX_CONNECTIONS, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION,
         CONTROL_REQUEST_QUEUE_CAPACITY, CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES,
         CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME,
     },
-    wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
+    wire::{ActorContext, ActorKind, RequestEnvelope},
 };
-use serde_json::Value;
 
 use crate::{app::QuantickApp, metrics};
 
@@ -41,20 +39,19 @@ use super::{
     journal::{EventJournal, JournalSignal},
     notify::NotificationLimiter,
     registry::ProjectionRegistry,
-    trace::{
-        ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, TraceReplay,
-        result_digest,
-    },
     types::known_error,
 };
 
 mod idempotency;
+mod local_action;
 mod panel;
 mod screenshot;
 mod semantic;
 mod server;
+mod trace_replay;
 
 use semantic::SemanticBaseline;
+use trace_replay::TraceReinjection;
 // `runtime_id_bytes` is re-exported: `control/mod.rs` reaches it by path.
 pub(crate) use server::runtime_id_bytes;
 use server::{drain_bounded_since, gateway_main, random_bytes};
@@ -148,125 +145,6 @@ impl ActionOrigin {
     fn is_trace_replay(&self) -> bool {
         matches!(self, Self::TraceReplay(_))
     }
-}
-
-/// A replay session whose control trace is being re-injected: the entries
-/// still due, in replay-time order.
-/// One recording's control trace, loaded once and walked by logical replay
-/// time. Keyed by the session path: two tabs on the same recording share one
-/// walk, driven by the tab that loaded it.
-struct TraceReinjection {
-    /// The tab whose playhead drives the walk.
-    owner_tab_id: u64,
-    /// Completed entries in `(replay_elapsed_ms, sequence)` order — the
-    /// sidecar's at load time plus the actions this run recorded since, so
-    /// an in-session restart replays exactly what a fresh process would.
-    entries: Vec<TraceEntry>,
-    /// The first entry not yet injected on this pass over the session.
-    next_index: usize,
-    /// Where the playhead was last frame; a smaller value now means it moved
-    /// backwards and the walk rewinds.
-    last_elapsed_ms: i64,
-    /// The worker's rewind count last frame; a different value now means a
-    /// restart or seek happened, even if the rerun already advanced past
-    /// `last_elapsed_ms`.
-    last_rewinds: u64,
-    /// Sequences of the actions this run took during the current pass: they
-    /// joined `entries` for the next rerun and are not injected back on the
-    /// spot. Cleared by a rewind.
-    executed_this_pass: Vec<u64>,
-}
-
-/// What the replay link publishes that the walk reads once per frame.
-#[derive(Clone, Copy)]
-struct ReplayPosition {
-    elapsed_ms: i64,
-    rewinds: u64,
-    rewind_target_elapsed_ms: i64,
-}
-
-impl ReplayPosition {
-    fn of(status: &quantick_feed::replay::ReplayStatus) -> Self {
-        Self {
-            elapsed_ms: status.elapsed_ms(),
-            rewinds: status.rewinds(),
-            rewind_target_elapsed_ms: status.rewind_target_elapsed_ms(),
-        }
-    }
-}
-
-impl TraceReinjection {
-    /// Move the entries due at the position into `due`, exactly once per
-    /// pass over the session. A rewind — the worker counted a restart or a
-    /// seek, or the playhead is behind last frame's sample — moves the walk
-    /// back to the first entry at or after where the rerun began, so the
-    /// rerun injects the same actions again.
-    fn collect_due(&mut self, position: ReplayPosition, due: &mut Vec<TraceEntry>) {
-        let rewound_to = if position.rewinds != self.last_rewinds {
-            Some(position.rewind_target_elapsed_ms)
-        } else if position.elapsed_ms < self.last_elapsed_ms {
-            Some(position.elapsed_ms)
-        } else {
-            None
-        };
-        if let Some(start_elapsed_ms) = rewound_to {
-            self.next_index = self
-                .entries
-                .partition_point(|entry| entry.replay_elapsed_ms < start_elapsed_ms);
-            self.executed_this_pass.clear();
-        }
-        self.last_rewinds = position.rewinds;
-        self.last_elapsed_ms = position.elapsed_ms;
-        while let Some(entry) = self.entries.get(self.next_index)
-            && entry.replay_elapsed_ms <= position.elapsed_ms
-        {
-            if !self.executed_this_pass.contains(&entry.sequence.get()) {
-                due.push(entry.clone());
-            }
-            self.next_index += 1;
-        }
-    }
-
-    /// An action this run just recorded to the sidecar joins the walk in
-    /// replay-time order, marked as executed on this pass: the next rerun
-    /// replays it, this one does not inject it back.
-    fn record_this_pass(&mut self, entry: TraceEntry) {
-        let key = (entry.replay_elapsed_ms, entry.sequence.get());
-        let position = self
-            .entries
-            .partition_point(|other| (other.replay_elapsed_ms, other.sequence.get()) < key);
-        if position < self.next_index {
-            self.next_index += 1;
-        }
-        self.executed_this_pass.push(entry.sequence.get());
-        self.entries.insert(position, entry);
-    }
-}
-
-/// Read a session's sidecar for re-injection, naming an unreadable or an
-/// unfinished trace in the log: either way that run is not a fixture.
-fn load_trace_for_reinjection(session_path: &std::path::Path) -> TraceReplay {
-    let loaded = match TraceReplay::load(session_path) {
-        Ok(loaded) => loaded,
-        Err(error) => {
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_TRACE_UNREADABLE",
-                error = %error,
-                "the replay's control trace could not be read; the run is not a fixture"
-            );
-            TraceReplay::default()
-        }
-    };
-    if !loaded.is_complete() {
-        tracing::warn!(
-            target: "quantick::control",
-            event_code = "CONTROL_TRACE_INCOMPLETE",
-            incomplete = ?loaded.incomplete,
-            "the replay's control trace has unfinished intents; the run is not a fixture"
-        );
-    }
-    loaded
 }
 
 #[derive(Clone)]
@@ -671,101 +549,6 @@ impl ControlAccess {
         }
     }
 
-    /// Each frame: every recording a tab is playing with a control trace
-    /// beside it re-injects the recorded actions at their logical replay
-    /// time (contract §11). The trace is loaded once per recording and walked
-    /// forward by the tab that loaded it; a restart or seek rewinds the walk
-    /// so the rerun injects the same actions again, switching tabs neither
-    /// repeats nor skips an injection, and a second tab on the same
-    /// recording adds nothing. A live tab costs one comparison. Runs whether
-    /// or not local access is enabled: replay determinism does not depend on
-    /// a client being connected.
-    pub(crate) fn service_replay_trace(&mut self, app: &mut QuantickApp) {
-        // The entries that came due this frame. The Vec allocates only when
-        // one did, a human gesture's worth of times per session.
-        let mut due: Vec<TraceEntry> = Vec::new();
-        {
-            let tabs = app.control_tabs();
-            if !self.trace_reinjection.is_empty() {
-                self.trace_reinjection.retain(|path, _| {
-                    tabs.iter().any(|tab| {
-                        tab.replay
-                            .as_ref()
-                            .is_some_and(|link| link.session.path == *path)
-                    })
-                });
-            }
-            for tab in tabs {
-                let Some(link) = tab.replay.as_ref() else {
-                    continue;
-                };
-                let position = ReplayPosition::of(&link.status);
-                let path = &link.session.path;
-                match self.trace_reinjection.get_mut(path) {
-                    Some(state) if state.owner_tab_id == tab.id => {
-                        state.collect_due(position, &mut due);
-                    }
-                    // One walk per recording: the tab that loaded it drives.
-                    // Another tab on the same file adopts the walk only once
-                    // the owner let go of the session.
-                    Some(state) => {
-                        let owner_still_plays_it = tabs.iter().any(|other| {
-                            other.id == state.owner_tab_id
-                                && other
-                                    .replay
-                                    .as_ref()
-                                    .is_some_and(|link| link.session.path == *path)
-                        });
-                        if !owner_still_plays_it {
-                            state.owner_tab_id = tab.id;
-                            state.collect_due(position, &mut due);
-                        }
-                    }
-                    None => {
-                        let loaded = load_trace_for_reinjection(path);
-                        // Trace sequences continue where the sidecar left
-                        // off, so a later run appending to the same file
-                        // never reuses one.
-                        self.next_trace_sequence = self
-                            .next_trace_sequence
-                            .max(loaded.max_sequence.saturating_add(1));
-                        let mut state = TraceReinjection {
-                            owner_tab_id: tab.id,
-                            entries: loaded.completed,
-                            next_index: 0,
-                            last_elapsed_ms: i64::MIN,
-                            last_rewinds: position.rewinds,
-                            executed_this_pass: Vec::new(),
-                        };
-                        state.collect_due(position, &mut due);
-                        self.trace_reinjection.insert(path.clone(), state);
-                    }
-                }
-            }
-        }
-        for entry in due {
-            if let Err(error) = self.invoke_local_action(
-                app,
-                entry.capability_id.as_str(),
-                entry.capability_version,
-                entry.canonical_input,
-                ActionOrigin::TraceReplay(Box::new(RecordedActor {
-                    actor_kind: entry.actor_kind,
-                    client_name: entry.client_name.clone(),
-                })),
-            ) {
-                tracing::warn!(
-                    target: "quantick::control",
-                    event_code = "CONTROL_TRACE_REPLAY_REFUSED",
-                    capability = %entry.capability_id,
-                    version = entry.capability_version,
-                    code = %error.code,
-                    "a traced action was refused on replay"
-                );
-            }
-        }
-    }
-
     #[cfg(test)]
     pub fn journal(&self) -> &EventJournal {
         &self.journal
@@ -776,16 +559,6 @@ impl ControlAccess {
     /// acting actor is the author.
     pub(crate) fn recorded_author(&self) -> Option<&RecordedActor> {
         self.replayed_author.as_ref()
-    }
-
-    /// The actor a launch hook acts as: an agent, named for what it is, so
-    /// nothing it places can pass for the trader's own hand and a screenshot
-    /// shows exactly what a connected assistant would have produced.
-    pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
-        self.identity.as_ref()?;
-        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
-        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
-        Some(actor)
     }
 
     /// Whether this actor may interrupt the trader once more.
@@ -809,277 +582,6 @@ impl ControlAccess {
 
     pub fn journal_mut(&mut self) -> &mut EventJournal {
         &mut self.journal
-    }
-
-    /// The trusted actor context for an action taken in this window by the
-    /// human (`HumanUi`) or replayed from a control trace (`Automation`).
-    fn local_actor(&mut self, actor_kind: ActorKind, reason: Option<String>) -> ActorContext {
-        let identity = self
-            .identity
-            .as_ref()
-            .expect("local actions need the process identity");
-        let request_id = RequestId::new(format!("ui-{}", self.next_ui_request))
-            .expect("generated request ID is valid");
-        self.next_ui_request = self.next_ui_request.saturating_add(1);
-        ActorContext {
-            actor_kind,
-            principal_id: identity.ui_actor.principal_id.clone(),
-            client_name: UI_ACTOR_CLIENT_NAME.to_owned(),
-            connection_id: identity.ui_actor.connection_id.clone(),
-            request_id,
-            reason,
-            requested_at_unix_ms: metrics::wall_clock_ms(),
-        }
-    }
-
-    /// Invoke one registered action from inside the application — the hotkey,
-    /// the `QUANTICK_CONTROL_MARK` hook, a test, or a replayed trace entry.
-    /// Validates the input and the result against the action's schemas, and
-    /// during a replay appends the intent and the result to the session's
-    /// control trace before and after the handler runs (contract §11).
-    pub(crate) fn invoke_local_action(
-        &mut self,
-        app: &mut QuantickApp,
-        capability_id: &str,
-        capability_version: u32,
-        input: Value,
-        origin: ActionOrigin,
-    ) -> Result<Value, ControlError> {
-        let actor_kind = origin.actor_kind();
-        if self.identity.is_none() {
-            return Err(known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                "local actions need a process identity, which failed to generate",
-                false,
-            ));
-        }
-        let action = self
-            .actions
-            .lookup(capability_id, capability_version)
-            .ok_or_else(|| {
-                known_error(
-                    codes::CAPABILITY_UNKNOWN,
-                    "capability ID or version is not a registered action",
-                    false,
-                )
-            })?;
-        let descriptor = &action.descriptor;
-        let actor = match &origin {
-            // A remote caller's actor is what the connection proved at the
-            // handshake, so an agent cannot sign an action as the trader.
-            ActionOrigin::Remote(actor) => (**actor).clone(),
-            ActionOrigin::Human => self.local_actor(actor_kind, None),
-            ActionOrigin::TraceReplay(_) => self.local_actor(
-                actor_kind,
-                Some("replayed from the control trace".to_owned()),
-            ),
-        };
-        // What the caller asked becomes what will happen, before the intent
-        // line is written: a trace entry names the bar that was marked, not
-        // "wherever the pointer is". A replayed entry is already resolved and
-        // is validated against that same shape instead.
-        let input = if origin.is_trace_replay() {
-            action
-                .canonical
-                .validate(&input)
-                .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-            input
-        } else {
-            action
-                .input
-                .validate(&input)
-                .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-            let resolved = (action.resolve)(app, &actor, input)?;
-            action.canonical.validate(&resolved).map_err(|error| {
-                known_error(
-                    codes::CAPABILITY_UNAVAILABLE,
-                    format!("the action resolved an input it cannot record: {error}"),
-                    false,
-                )
-            })?;
-            resolved
-        };
-
-        // The trace: a replaying tab records the action at its logical time;
-        // a live tab has nothing to record. Opening the sidecar is rare and
-        // off the hot path (an action is a human gesture).
-        let replaying = {
-            let tabs = app.control_tabs();
-            let active = &tabs[app
-                .control_active_tab_index()
-                .min(tabs.len().saturating_sub(1))];
-            active
-                .replay
-                .as_ref()
-                .map(|link| (link.session.path.clone(), link.status.elapsed_ms()))
-        };
-        // A replayed entry is the trace speaking; recording it again would
-        // double the sidecar on every run.
-        let mut trace: Box<dyn ControlTrace> = match &replaying {
-            Some(_) if origin.is_trace_replay() => Box::new(NoTrace),
-            Some((session_path, _)) => {
-                Box::new(ReplayTraceFile::open(session_path).map_err(|error| {
-                    known_error(
-                        codes::CAPABILITY_UNAVAILABLE,
-                        format!("the replay's control trace cannot be written: {error}"),
-                        true,
-                    )
-                })?)
-            }
-            None => Box::new(NoTrace),
-        };
-        let replay_elapsed_ms = replaying.as_ref().map_or(0, |(_, elapsed)| *elapsed);
-        let trace_sequence = WireU64::new(self.next_trace_sequence);
-        self.next_trace_sequence = self.next_trace_sequence.saturating_add(1);
-        let mut entry = TraceEntry {
-            trace_version: TRACE_VERSION,
-            replay_elapsed_ms,
-            sequence: trace_sequence,
-            actor_kind,
-            client_name: actor.client_name.clone(),
-            capability_id: descriptor.id.clone(),
-            capability_version: descriptor.version,
-            canonical_input: input.clone(),
-            expected_revisions: Vec::new(),
-            result_code: None,
-            result_digest: None,
-        };
-        trace.append_intent(&entry).map_err(|error| {
-            known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                format!("the action could not be recorded before it ran: {error}"),
-                true,
-            )
-        })?;
-
-        // A rerun attributes what it produces to the operator the recorded
-        // run named, so a replayed session carries the same authorship the
-        // original did. Set here rather than earlier, and cleared immediately
-        // after: every refusal above returns without running a handler, and a
-        // stale author left behind would sign the *next* action's object with
-        // the recorded run's operator — or, when that operator was the trader,
-        // leave an agent's object carrying no author at all.
-        self.replayed_author = match &origin {
-            ActionOrigin::TraceReplay(recorded) => Some((**recorded).clone()),
-            ActionOrigin::Human | ActionOrigin::Remote(_) => None,
-        };
-        let outcome = (action.handler)(app, self, &actor, &input).and_then(|result| {
-            action
-                .output
-                .validate(&result)
-                .map(|()| result)
-                .map_err(|error| ControlError::invalid_request(error.to_string()))
-        });
-        self.replayed_author = None;
-        entry.result_code = Some(match &outcome {
-            Ok(_) => quantick_control::id::ErrorCode::new("control.ok")
-                .expect("static result code is valid"),
-            Err(error) => error.code.clone(),
-        });
-        entry.result_digest = outcome.as_ref().ok().and_then(result_digest);
-        match trace.append_result(&entry) {
-            Err(error) => tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_TRACE_RESULT_FAILED",
-                error = %error,
-                "the control trace did not record an action's result"
-            ),
-            // Recorded: the walk of this recording learns the action now, so
-            // an in-session restart replays it like a fresh process would.
-            Ok(()) => {
-                // Whoever acted, the entry is on disk and belongs to this
-                // pass: an in-session restart must replay exactly what a
-                // fresh process would. Only the trace's own re-injection is
-                // excluded, and it never reaches here.
-                if let Some((session_path, _)) = &replaying
-                    && !origin.is_trace_replay()
-                    && let Some(state) = self.trace_reinjection.get_mut(session_path)
-                {
-                    state.record_this_pass(entry);
-                }
-            }
-        }
-        outcome
-    }
-
-    /// Invoke one registered *read* from inside the application — a launch
-    /// hook, or a test.
-    ///
-    /// The same door a remote client comes through: the same
-    /// [`ObserverContract::prepare`], the same permission check against the
-    /// scopes the trader configured, the same invocation, the same
-    /// serialization. Only the socket is missing. A read reachable one way
-    /// from the outside and another way from the inside would be two
-    /// implementations of one contract, and the second would be the one
-    /// nobody tests.
-    ///
-    /// The gateway does not have to be enabled: a read costs nothing until it
-    /// is asked for, and refusing it because no door is open would make the
-    /// hook prove something other than what a client would see.
-    pub(crate) fn invoke_local_read(
-        &mut self,
-        app: &QuantickApp,
-        capability_id: &str,
-        input: Value,
-    ) -> Result<Value, ControlError> {
-        let Some(identity) = self.identity.as_ref() else {
-            return Err(known_error(
-                codes::INSTANCE_GONE,
-                "the running instance has no control identity",
-                false,
-            ));
-        };
-        let instance_id = identity.instance_id.clone();
-        let session = identity.session();
-        let envelope = RequestEnvelope {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            request_id: RequestId::new(format!("ui-read-{}", self.next_ui_request))
-                .expect("generated request ID is valid"),
-            instance_id: instance_id.clone(),
-            capability_id: quantick_control::id::CapabilityId::new(capability_id).map_err(
-                |error| ControlError::invalid_request(format!("invalid capability ID: {error}")),
-            )?,
-            capability_version: 1,
-            expected_revisions: Vec::new(),
-            idempotency_key: None,
-            dry_run: false,
-            reason: None,
-            payload: input,
-        };
-        self.next_ui_request = self.next_ui_request.saturating_add(1);
-        let prepared = self.contract.prepare(envelope, &self.configured_scopes)?;
-        let profile = self.configured_profile();
-        match &prepared.dispatch {
-            PreparedDispatch::Worker(_) => prepared
-                .dispatch
-                .execute_worker(
-                    &self.contract,
-                    &instance_id,
-                    &profile,
-                    &self.configured_scopes,
-                    &ProtocolLimits::default(),
-                )
-                .expect("a worker dispatch always answers on the worker path"),
-            PreparedDispatch::Ui(_) => {
-                let execution = prepared.dispatch.execute_ui(UiReadContext {
-                    projections: &mut self.projections,
-                    journal: &self.journal,
-                    app,
-                    instance_id: &instance_id,
-                    session: &session,
-                    evidence: &self.evidence,
-                    screenshot: &mut self.screenshot,
-                })?;
-                execution
-                    .into_serialized()
-                    .map(|serialized| serialized.result)
-            }
-            PreparedDispatch::Parked(_) | PreparedDispatch::Action(_) => Err(known_error(
-                codes::CAPABILITY_UNAVAILABLE,
-                "only registered reads are invoked from inside the application",
-                false,
-            )),
-        }
     }
 
     /// One request on the application thread: the authority checks the
