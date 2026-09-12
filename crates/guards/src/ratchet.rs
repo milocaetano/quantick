@@ -37,12 +37,12 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 
 /// What a guard's own walk measured, summed.
 ///
-/// One owner for the arithmetic, three one-line callers that each name their
-/// own `measure`. The three copies this replaces were byte-identical, in a
-/// change that elsewhere removed a duplicated constant for exactly this
-/// reason — and the failure they invited is quiet: a guard summing its counts
-/// differently from its siblings makes [`crate::report`] print three totals
-/// that are not comparable, with nothing to fail.
+/// One owner for the arithmetic; each guard's `measured` reaches it through
+/// [`complete_total`] over its own `measure`. The copies this replaced were
+/// byte-identical, in a change that elsewhere removed a duplicated constant
+/// for exactly this reason — and the failure they invited is quiet: a guard
+/// summing its counts differently from its siblings makes [`crate::report`]
+/// print totals that are not comparable, with nothing to fail.
 ///
 /// Deliberately the *measurement* and not [`Baseline::recorded`]. The budget
 /// caps what the repository has signed for; this is what its files actually

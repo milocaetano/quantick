@@ -123,7 +123,7 @@ const TRUNK_CRATE: &str = "app";
 /// Deterministic by construction: every section sorts before it prints, the
 /// only paths are workspace-relative with forward slashes, and nothing here
 /// reads a clock, an environment variable or a random number. Two calls
-/// against the same tree return equal strings, which is the property
+/// against the same tree return equal tables, which is the property
 /// `report_is_byte_identical_across_runs` pins.
 pub fn render(root: &Path) -> Rendered {
     let sizes = size::measure(root);
