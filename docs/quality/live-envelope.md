@@ -50,6 +50,12 @@ overstate one pane's rate. A replay played fast is `above` by design.
 | Feed depth channel | 8,192, tokio | as above | `book_queue_len` |
 | Depth drain per frame (`tab.rs`) | `BURST_DEPTH_UPDATES_PER_FRAME` = 2,048 | the rest waits for the next frame | `book_queue_len` |
 
+The retry points are per frame for every tab: `drain_tabs` reads every
+pane's indicator events each frame, background tabs included. A background
+tab's book view reads its mailbox when it syncs, so its parked commands are
+retried on that pane's next send — every print or depth event — or when it is
+shown; `worker_parked` counts them meanwhile.
+
 A worker that is gone turns every parked command into a counted
 `failed_sends` and the existing `INDICATOR_WORKER_DOWN` / `HEATMAP_WORKER_DOWN`
 error; nothing vanishes uncounted.
