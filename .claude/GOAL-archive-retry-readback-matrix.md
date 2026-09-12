@@ -254,6 +254,44 @@ choice (kept, and stated in the tests' documentation).
   `sh .claude/hooks/guardrails_test.sh` (227 passed), each run on its own;
   the retry tests 8/8 green while the full app suite ran alongside.
 
+## Review record
+
+Round 1, over `52e35a1b..ccdd8f67`: `arch-review` step 0 (`code-review` at
+`medium`, effort-first, no reuse notice) returned five findings, all
+confirmed; the independent AP4 reassessment at `e1c3b5ff` (code-identical)
+scored AP4 5/5 (narrow) and gate 5 PASS, and named overlapping weaknesses.
+Repair batch 1 (one batch, one attempt per finding):
+
+- **F1 / W1** — "Proven by" named a family test for rows it never called.
+  Closed: `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`
+  runs a keyed call and its retry for every reachable `optional` row and
+  reads each row's field back; the rows name it.
+- **F2** — an unnoted `attention.mark.create` matches any other unnoted mark,
+  the trader's shortcut included. Closed: the row (and the `notify.*` rows)
+  say the reconciling value must be unique to the call.
+- **F3** — `drift` checked only snapshot rows. Closed: `Drift::ReadShape`
+  refuses a journal row with no event kind, a selector on the wrong read, and
+  any read without a readback grammar, with a fixture; the module docs say
+  journal fields are proven by the transport tests, not a schema.
+- **F4 / W7** — `GRANTABLE_PROFILE_IDS` sat under two orphaned doc comments.
+  Closed: each item has its own doc again.
+- **F5 / W7** — a run of spaces in an assertion message. Closed.
+- **W5** — no transport test refused a key on a forbidden *action*. Closed:
+  `every_reachable_forbidden_row_refuses_a_key_before_the_application`.
+- The schema walk's hop bound is now the named `MAX_SCHEMA_HOPS`.
+
+Found by the new table-driven test, **not fixed here** because the fix is a
+wire-schema change D1 forbids: `LayoutResult.fraction` is an `f64` and the
+codec refuses floating-point JSON, so `layout.focus.set`, `layout.pane.collapse`,
+`layout.pane.expand`, `layout.pane.move` and `layout.preset.apply` (and any
+successful `layout.pane.resize`) act, record their success, and then answer
+the client a non-retryable `control.capability_unavailable` ("response could
+not be encoded under the negotiated protocol rules"); `ResizeInput.fraction`
+is an `f64` too, so a client can only send 0 or 1. The matrix's readback is
+what reconciles those calls today. Carried to the handoff as a
+`human_decision`: change `fraction` to a canonical decimal on both sides
+(a published-schema change) in a follow-up.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS and records its marker.

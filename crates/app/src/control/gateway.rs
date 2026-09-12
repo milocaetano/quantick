@@ -362,10 +362,6 @@ impl ClientRateLimiter {
     }
 }
 
-/// Whether a permission belongs to the annotate tier — the `annotate` floor
-/// itself or one of its scopes.
-/// Whether a permission belongs to the trade tier — see the access
-/// panel's read-scope filter for why it is excluded from every section.
 /// Every ceiling [`ControlAccess::configured_profile`] can hand a connection,
 /// whatever the trader ticks.
 ///
@@ -380,11 +376,15 @@ pub(crate) const GRANTABLE_PROFILE_IDS: [&str; 3] = [
     COCKPIT_PROFILE_ID,
 ];
 
+/// Whether a permission belongs to the trade tier — see the access
+/// panel's read-scope filter for why it is excluded from every section.
 pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
     permission.as_str() == super::trade::TRADE_PERMISSION_ID
         || permission.as_str().starts_with("trade.")
 }
 
+/// Whether a permission belongs to the annotate tier — the `annotate` floor
+/// itself or one of its scopes.
 pub(super) fn is_annotate_permission(permission: &PermissionId) -> bool {
     permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
 }

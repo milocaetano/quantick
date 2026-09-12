@@ -175,6 +175,26 @@ fn a_readback_the_registry_lacks_or_that_acts_is_drift() {
     );
 }
 
+/// A read with the wrong kind of selector is a row no client can follow: a
+/// journal read with no event kind, a snapshot read handed an event kind, and
+/// a read that has no readback grammar at all.
+#[test]
+fn a_read_with_a_selector_it_does_not_take_is_drift() {
+    let expected = |read: &str| Drift::ReadShape {
+        capability: "notify.popup".to_owned(),
+        read: read.to_owned(),
+    };
+    let no_kind = with_row("notify.popup", |row| row.event = None);
+    assert_finds(&no_kind, &expected("events.read"));
+    let snapshot_with_kind = with_row("notify.popup", |row| {
+        row.read = SNAPSHOT_CAPABILITY_ID;
+        row.scope = Some(workspace::SCOPE_ID);
+    });
+    assert_finds(&snapshot_with_kind, &expected(SNAPSHOT_CAPABILITY_ID));
+    let other_read = with_row("notify.popup", |row| row.read = "scene.read");
+    assert_finds(&other_read, &expected("scene.read"));
+}
+
 /// The named readback scope, the other half of the assessor's fixture.
 #[test]
 fn a_scope_the_registry_lacks_is_drift() {

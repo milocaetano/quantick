@@ -489,6 +489,185 @@ fn a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once() {
     std::fs::remove_dir_all(directory).ok();
 }
 
+/// A valid input for each reachable `optional` row — valid, because the
+/// contract validates a payload before it looks at the key, and a call
+/// refused on its input never reaches the store this test is about.
+fn replay_payload(capability: &str) -> Value {
+    match capability {
+        "layout.focus.set" => json!({ "pane": "0" }),
+        "layout.pane.collapse"
+        | "layout.pane.expand"
+        | "layout.tab.create"
+        | "layout.tab.switch"
+        | "feed.reconnect"
+        | "feed.reload" => json!({}),
+        "layout.pane.move" => json!({ "from": "1", "to": "2" }),
+        // `fraction` is an `f64`, and the wire refuses floating-point JSON, so
+        // a client can send only the integers 0 or 1 — a defect in the input
+        // schema reported with this change, not fixed by it. 1 leaves no room
+        // for the context column, so the handler refuses it, and a refusal is
+        // replayed like any terminal answer.
+        "layout.pane.resize" => json!({ "fraction": 1 }),
+        "layout.pane.set_interval" => json!({ "pane": "1", "interval_ms": 60_000 }),
+        "layout.preset.apply" => {
+            json!({ "preset_id": crate::canvas_layout::LAYOUT_PRESETS[0].id })
+        }
+        "layout.tab.rename" => json!({ "new_name": "Renamed on retry" }),
+        other => panic!("`{other}` is a reachable optional row with no replay input here; add one"),
+    }
+}
+
+/// Every reachable `optional` row, not one per family: a keyed call, its
+/// answer dropped, and the retry under the same key. The retry is the first
+/// outcome, readdressed; the application began the call once; and the row's
+/// named field reads back over the socket. A refusal the handler makes is
+/// terminal too, and is replayed the same way — which is what the key
+/// promises for it.
+#[test]
+fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("retry-every-optional");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout,cockpit.recover");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let cockpit = options("cockpit", &["cockpit", "cockpit.layout", "cockpit.recover"]);
+    let rows: Vec<_> = retry_matrix::READBACKS
+        .iter()
+        .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Optional)
+        .filter(|row| retry_matrix::reachable_by_a_grant(row.capability))
+        .collect();
+    assert!(!rows.is_empty());
+
+    for row in &rows {
+        // A connection per row: each call's records, rate and reservations
+        // are its own, so one row cannot mask another.
+        let mut client = connect(&directory, &cockpit);
+        let payload = replay_payload(row.capability);
+        let key = format!("replay-{}", row.capability);
+        if row.capability.starts_with("feed.") {
+            // No venue socket from a test; see the feed test above.
+            app.active_tab_mut().feed_id = "retired-feed".to_owned();
+        }
+        let (lost, first) = keyed_call(
+            &mut app,
+            &mut client,
+            "first",
+            row.capability,
+            payload.clone(),
+            &key,
+        );
+        let (retry, second) = keyed_call(
+            &mut app,
+            &mut client,
+            "second",
+            row.capability,
+            payload,
+            &key,
+        );
+        assert_eq!(
+            first.len(),
+            1,
+            "{}: the call reached the application",
+            row.capability
+        );
+        assert!(
+            first[0].began,
+            "{}: and got past every refusal",
+            row.capability
+        );
+        assert!(
+            second.is_empty(),
+            "{}: the retry never reached it",
+            row.capability
+        );
+        assert_eq!(
+            retry.outcome, lost.outcome,
+            "{}: the first answer",
+            row.capability
+        );
+        assert_eq!(retry.request_id.as_str(), "second");
+        // Whatever the answer said, the row's readback has to be there to
+        // settle it — and for five of these rows today the answer is wrong:
+        // `LayoutResult.fraction` is an `f64` the wire refuses to encode, so a
+        // call that acted answers `control.capability_unavailable` (reported
+        // with this change; fixing it is a schema change). The readback is how
+        // a client learns the call applied anyway.
+        assert!(
+            !readback(&mut app, &ctx, &mut client, row.capability).is_empty(),
+            "{}: `{}` reads back",
+            row.capability,
+            row.field
+        );
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// Every reachable `forbidden` row refuses a key on the socket, before the
+/// application sees the call: the descriptor says a retry would act twice,
+/// and the gateway will not pretend otherwise by accepting one.
+#[test]
+fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("retry-every-forbidden");
+    grant_annotate_for_test(&mut app, "all-reads,annotate-tier");
+    enable_test_gateway(&mut app, &ctx, &directory, 8);
+    let mut client = connect(&directory, &options("annotator", ANNOTATE_SCOPES));
+    let anchors = two_anchors(&app);
+    let script = "//@version=5\nindicator(\"agent ema\")\nplot(close)\n";
+    let rows: Vec<_> = retry_matrix::READBACKS
+        .iter()
+        .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Forbidden)
+        .filter(|row| retry_matrix::reachable_by_a_grant(row.capability))
+        .collect();
+    assert!(!rows.is_empty());
+
+    for (index, row) in rows.iter().enumerate() {
+        let payload = match row.capability {
+            "annotate.label.create" => json!({ "anchors": [anchors[1].clone()], "text": "k" }),
+            "annotate.arrow.create" | "annotate.zone.create" => json!({ "anchors": anchors }),
+            "annotate.remove" => json!({ "annotation_id": "1" }),
+            "attention.mark.create" => json!({ "note": "keyed" }),
+            "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
+            "indicator.script.detach" => json!({ "slot_id": "1" }),
+            "notify.popup" | "notify.toast" | "notify.sound" => json!({ "message": "keyed" }),
+            other => panic!("`{other}` is a reachable forbidden row with no input here; add one"),
+        };
+        let (response, served) = keyed_call(
+            &mut app,
+            &mut client,
+            &format!("forbidden-{index}"),
+            row.capability,
+            payload,
+            &format!("forbidden-key-{index}"),
+        );
+        assert!(
+            served.is_empty(),
+            "{} reached the application",
+            row.capability
+        );
+        let error = response_error(&response);
+        assert_eq!(
+            error.code.as_str(),
+            codes::INVALID_REQUEST,
+            "{}",
+            row.capability
+        );
+        assert!(
+            error.message.contains("forbids idempotency keys"),
+            "{} is refused for its key, not its input: {}",
+            row.capability,
+            error.message
+        );
+        assert!(!error.retryable, "{}", row.capability);
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
 // ---------------------------------------------------------------------------
 // The unknown outcome
 // ---------------------------------------------------------------------------

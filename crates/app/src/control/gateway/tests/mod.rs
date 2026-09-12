@@ -383,7 +383,8 @@ mod cockpit_tier_tests {
             let ceiling = access.configured_profile();
             assert!(
                 GRANTABLE_PROFILE_IDS.contains(&ceiling.as_str()),
-                "granting `{scopes}` handed out `{ceiling}`, which the retry matrix                  believes no grant reaches"
+                "granting `{scopes}` handed out `{ceiling}`, which the retry matrix \
+                 believes no grant reaches"
             );
         }
     }

@@ -27,10 +27,13 @@
 //! honest against the derived half — a mutable capability with no row, a row
 //! for nothing, a declared policy the descriptor no longer publishes, a
 //! readback capability or scope the registry does not carry or that can
-//! change state, a field the scope's own published schema does not have, or a
-//! readback the caller's own ceiling could not read. The generator refuses to
-//! render while any of those stands, so the committed document cannot
-//! describe a registry that does not exist.
+//! change state, a read with a scope or event kind it does not take, a
+//! snapshot field the scope's own published schema does not have, or a
+//! readback a caller granted the capability could not read. The generator
+//! refuses to render while any of those stands. A journal row's field has no
+//! published schema to check against — event payloads are not registered —
+//! so it is proven where it is used instead: the transport tests read every
+//! journal row's field back from a real event.
 //!
 //! # Cost
 //!
@@ -104,6 +107,12 @@ pub(crate) struct Readback {
 }
 
 const LAYOUT_TEST: &str = "a_dropped_layout_answer_is_replayed_and_the_layout_is_made_once";
+/// Every reachable `optional` row, one keyed call and its retry each.
+const EVERY_OPTIONAL_TEST: &str =
+    "every_reachable_optional_row_replays_a_dropped_answer_and_begins_once";
+/// Every reachable `forbidden` row, one keyed call each.
+const EVERY_FORBIDDEN_TEST: &str =
+    "every_reachable_forbidden_row_refuses_a_key_before_the_application";
 const UNKNOWN_OUTCOME_TEST: &str =
     "a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by_readback";
 const FEED_TEST: &str = "a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once";
@@ -157,7 +166,7 @@ const fn journal(
     }
 }
 
-const LAYOUT_PROOF: &[&str] = &[LAYOUT_TEST];
+const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str =
     "a drawing authored by the caller that the pre-call reading lacked is there";
 
@@ -170,7 +179,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",
         CREATED_BY_CALLER,
-        &[ANNOTATION_TEST],
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
         "annotate.label.create",
@@ -178,7 +187,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",
         CREATED_BY_CALLER,
-        &[ANNOTATION_TEST],
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
         "annotate.remove",
@@ -186,7 +195,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].drawing_id",
         "the named `annotation_id` is no longer listed",
-        &[ANNOTATION_TEST],
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
         "annotate.zone.create",
@@ -194,15 +203,15 @@ pub(crate) const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",
         CREATED_BY_CALLER,
-        &[ANNOTATION_TEST],
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     journal(
         "attention.mark.create",
         Forbidden,
         MARK_EVENT_KIND,
         "payload.note",
-        "an event after the pre-call cursor carries the caller's `note`",
-        &[MARK_TEST],
+        "an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other",
+        &[MARK_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
         "feed.reconnect",
@@ -210,7 +219,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         feed::SCOPE_ID,
         "tabs[].connection_state",
         "the tab's feed is connecting or connected again",
-        &[FEED_TEST],
+        &[FEED_TEST, EVERY_OPTIONAL_TEST],
     ),
     snapshot(
         "feed.reload",
@@ -218,7 +227,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         feed::SCOPE_ID,
         "tabs[].connection_state",
         "the tab's feed is connecting or connected again",
-        &[FEED_TEST],
+        &[FEED_TEST, EVERY_OPTIONAL_TEST],
     ),
     // The journal rather than `analysis.indicators`: that scope carries the
     // trader's input values and needs `observe.user_text`, which a caller
@@ -229,7 +238,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         SCRIPT_ATTACHED_EVENT_KIND,
         "payload.script.slot_id",
         "an event after the pre-call cursor names a new `slot_id`",
-        &[SCRIPT_TEST],
+        &[SCRIPT_TEST, EVERY_FORBIDDEN_TEST],
     ),
     journal(
         "indicator.script.detach",
@@ -237,7 +246,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         SCRIPT_DETACHED_EVENT_KIND,
         "payload.script.slot_id",
         "an event after the pre-call cursor names the `slot_id` asked for",
-        &[SCRIPT_TEST],
+        &[SCRIPT_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
         "layout.focus.set",
@@ -301,7 +310,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         workspace::SCOPE_ID,
         "layouts[].name",
         "one more layout than the pre-call reading listed",
-        &[LAYOUT_TEST, UNKNOWN_OUTCOME_TEST],
+        &[LAYOUT_TEST, EVERY_OPTIONAL_TEST, UNKNOWN_OUTCOME_TEST],
     ),
     snapshot(
         "layout.tab.rename",
@@ -324,24 +333,24 @@ pub(crate) const READBACKS: &[Readback] = &[
         Forbidden,
         NOTIFICATION_EVENT_KIND,
         "payload.message",
-        "an event after the pre-call cursor carries the caller's `message`",
-        &[NOTIFY_TEST],
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
     ),
     journal(
         "notify.sound",
         Forbidden,
         NOTIFICATION_EVENT_KIND,
         "payload.message",
-        "an event after the pre-call cursor carries the caller's `message`",
-        &[NOTIFY_TEST],
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
     ),
     journal(
         "notify.toast",
         Forbidden,
         NOTIFICATION_EVENT_KIND,
         "payload.message",
-        "an event after the pre-call cursor carries the caller's `message`",
-        &[NOTIFY_TEST],
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
     ),
     journal(
         "trade.instrument.set_money",
@@ -429,6 +438,11 @@ pub(crate) enum Drift {
     /// The row names a snapshot scope the registry does not register, or
     /// reads `snapshot.read` without naming one.
     UnknownScope { capability: String, scope: String },
+    /// The row's read and its scope or event kind do not fit together: a
+    /// snapshot needs a scope, the journal needs an event kind, neither takes
+    /// the other's, and no other read has a readback grammar a client (or the
+    /// transport tests) could follow.
+    ReadShape { capability: String, read: String },
     /// The scope's published schema has no such field.
     FieldMissing {
         capability: String,
@@ -477,6 +491,12 @@ impl fmt::Display for Drift {
             Self::UnknownScope { capability, scope } => write!(
                 f,
                 "the row for `{capability}` names snapshot scope `{scope}`, which is not registered"
+            ),
+            Self::ReadShape { capability, read } => write!(
+                f,
+                "the row for `{capability}` reads back through `{read}` with a scope or event \
+                 kind that read does not take: `snapshot.read` names a scope, `events.read` an \
+                 event kind, and nothing else is a readback"
             ),
             Self::FieldMissing {
                 capability,
@@ -611,6 +631,17 @@ fn row_drift(
             read: row.read.to_owned(),
         });
     }
+    let shape_fits = match row.read {
+        SNAPSHOT_CAPABILITY_ID => row.event.is_none(),
+        EVENTS_READ_CAPABILITY_ID => row.scope.is_none() && row.event.is_some(),
+        _ => false,
+    };
+    if !shape_fits {
+        findings.push(Drift::ReadShape {
+            capability: capability.clone(),
+            read: row.read.to_owned(),
+        });
+    }
     let mut needed = read.required_permissions.clone();
     if row.read == SNAPSHOT_CAPABILITY_ID {
         let scope_id = row.scope.unwrap_or("");
@@ -717,8 +748,13 @@ pub(crate) fn schema_has_path(schema: &Value, path: &str) -> bool {
 
 /// `node` with its `$ref` resolved and its combinators flattened. Bounded, so
 /// a recursive schema cannot loop.
+/// How many `$ref` and combinator hops the schema walk follows before it
+/// gives up. The published scope schemas nest a handful deep; the bound exists
+/// only so a recursive schema cannot loop, not to fit any real one.
+const MAX_SCHEMA_HOPS: usize = 16;
+
 fn branches<'a>(root: &'a Value, node: &'a Value, depth: usize) -> Vec<&'a Value> {
-    if depth > 16 {
+    if depth > MAX_SCHEMA_HOPS {
         return Vec::new();
     }
     if let Some(reference) = node.get("$ref").and_then(Value::as_str) {
@@ -951,6 +987,20 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
         );
     }
     out
+}
+
+/// Whether a grant the gateway can hand out reaches `capability` — the rows
+/// the transport tests iterate over, decided the way the document decides
+/// them rather than by a prefix a test would have to keep in step.
+#[cfg(test)]
+pub(crate) fn reachable_by_a_grant(capability: &str) -> bool {
+    let contract = standard_contract().expect("the registry builds");
+    contract
+        .registry()
+        .capabilities()
+        .find(|descriptor| descriptor.id.as_str() == capability)
+        .and_then(|descriptor| holder(&contract, descriptor))
+        .is_some_and(|holder| holder.grantable)
 }
 
 #[cfg(test)]
