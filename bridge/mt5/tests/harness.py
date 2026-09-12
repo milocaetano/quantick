@@ -146,9 +146,16 @@ def patch_bridge(name: str, value) -> None:
     module's attribute would leave the others reading the real thing, so a
     test that fakes a name has to say so everywhere the name is read.
     """
+    patched = 0
     for module in bridge_modules():
         if hasattr(module, name):
             setattr(module, name, value)
+            patched += 1
+    # A name no module holds is a rename this helper silently slept through,
+    # and the suite would then assert against the real thing rather than the
+    # fake. Say so here, where the cause is, not three assertions later.
+    if patched == 0:
+        raise AssertionError(f"no bridge module binds `{name}`; was it renamed?")
 
 
 class FakeArgs:

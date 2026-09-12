@@ -38,7 +38,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import select  # noqa: F401  (re-exported: the suites patch `select.select` here)
+# Imported for re-export, not for use: the `select.select` call itself lives
+# in `quantick_bridge_transport`. The suites stub it by reaching the shared
+# standard-library module through `quantick_bridge.select`.
+import select  # noqa: F401
 import socket
 import time
 from pathlib import Path
