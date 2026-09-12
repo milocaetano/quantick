@@ -78,6 +78,10 @@ produce against a historical revision, but no Rust source change.
   test's line from the contention skip list." (4) The skip list and the issue
   links are stated in the PR body and in the doc. (5) Recorded here with the
   coordinator's message as its source. No test source is edited.
+  Applied to every test the calibration and proof runs found: #408, #409,
+  #410, #411, #413, #415, #416, #417. The residual red rate at the tip (about
+  one run in five, falling) was reported back to the coordinator before
+  readiness.
 - **D6** — `gh pr ready` once, cd-prefixed from the Bash tool, after reviews,
   markers and green CI. Never merge; never touch `main`.
 
@@ -108,8 +112,8 @@ produce against a historical revision, but no Rust source change.
   core and every 2- and 3-core config caught nothing; on 4 cores, 24 copies
   caught #403's test before its fix in 3 of 9 runs and 20 copies in 1 of 3.
   24 is kept for the heavier contention per run; its step took 2:34 to 5:00
-  over eighteen runs, 20's 2:06 to 3:54, the measured fallback. K = 4 is every vCPU the runner has,
-  so `taskset` there only states the mask; N = 24 > K keeps D1's shape, and a
+  over twenty-four runs, 20's 2:06 to 3:54, the measured fallback. K = 4 is
+  every vCPU the runner has, so `taskset` there only states the mask; N = 24 > K keeps D1's shape, and a
   larger runner is still pinned to 4. Safe to assume: D1 delegates the scaling,
   and the table is in the doc.
 

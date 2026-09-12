@@ -6,7 +6,7 @@
 # step. The normal `Test` step still runs every test listed here; only the
 # contention copies skip them. The PR that fixes a test removes its line.
 #
-# All seven were found by the step's own calibration (campaign #367, child
+# All eight were found by the step's own calibration (campaign #367, child
 # Q9, #407) at test sources identical to the campaign tip.
 app::tests::control_plane_tests::gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed #408
 app::tests::control_plane_tests::attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was #409
@@ -15,3 +15,4 @@ app::tests::control_plane_tests::gateway_rejects_a_duplicate_request_id_while_a_
 app::tests::screenshot_evidence_tests::synthetic_fractional_geometry_round_trips_original_png_and_clipped_regions #413
 app::tests::control_plane_tests::an_operator_cannot_detach_the_traders_own_indicator #415
 app::tests::control_plane_tests::a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image #416
+app::tests::control_plane_tests::a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind #417

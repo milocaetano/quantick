@@ -77,11 +77,11 @@ With 4 cores, 24 copies caught it in 3 of 9 runs and 20 copies in 1 of 3,
 about the same rate on samples this small.
 `CONTENTION_CORES` is 4 because that is all the runner has, so there `taskset`
 only states the mask. On a larger machine the copies are still held to 4
-cores. Over eighteen runs, each whole step at 24 × 4 took 2 min 34 s to 5 min 0 s:
+cores. Over twenty-four runs, each whole step at 24 × 4 took 2 min 34 s to 5 min 0 s:
 at the five-minute target, not comfortably under it. 20 × 4 took 2 min 6 s
 to 3 min 54 s. The step keeps 24 because more copies is more contention on
 every run, and because the extra minute stayed within the target in all
-eighteen; if the target tightens, 20 is the measured fallback.
+twenty-four; if the target tightens, 20 is the measured fallback.
 `timeout-minutes: 8` caps the step.
 
 It catches a load-sensitive test often, not always: about one run in three
@@ -108,7 +108,7 @@ The proof runs (the skip-list logic, #403's test never skipped):
 
 ## The skip list
 
-Calibration found seven more load-sensitive tests. Their sources are identical
+Calibration found eight more load-sensitive tests. Their sources are identical
 at the campaign tip. Fixing them is outside #407, so the copies skip them.
 **`Test` still runs every one**, so nothing leaves the ordinary suite. Each
 line in `tools/ci/contention-known-issues.txt` is an exact name and its issue.
@@ -126,8 +126,16 @@ At landing the list held:
 | `screenshot_evidence_tests::synthetic_fractional_geometry_round_trips_original_png_and_clipped_regions` (`:92`) | #413 | 24 × 4 |
 | `control_plane_tests::an_operator_cannot_detach_the_traders_own_indicator` (`:2910`) | #415 | 24 × 4 |
 | `control_plane_tests::a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image` (`:4231`) | #416 | 24 × 4 |
+| `control_plane_tests::a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind` (`:4628`) | #417 | 24 × 4 |
 
 The file is the current list; this table is only the landing record.
+
+The list had not converged at landing. Each batch of runs at the campaign tip
+found one more test: 1 of 3 jobs red with five tests skipped, 1 of 4 with five,
+1 of 6 with seven. Expect roughly one run in five to go red on a test that was
+already there, until the list stops growing or its issues are fixed. #413,
+#416 and #417 share one symptom, an evidence bundle whose `capture_revision` is
+missing under load, which may be one cause rather than three.
 
 ## When the step goes red
 
