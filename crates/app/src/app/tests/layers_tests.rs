@@ -557,11 +557,28 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
             output.shapes.len()
         })
     };
+    // The two counts may differ only by the switch, so both are taken from
+    // a chart that has finished converging, and that takes two trips
+    // through the order-flow worker, each landing whenever its thread gets
+    // a core. The live lane is laid out only once the worker has published
+    // the newest print it recorded; and a draw paints the projection the
+    // draw *before* it asked for. Under load the "on" count caught the lane
+    // laid out over a projection requested without it, and the "off" count
+    // caught the finished chart — 224 shapes against 309 — so the marks
+    // looked as if they kept painting. The fixture's prints are in the
+    // worker before the first draw, and every count waits for the worker
+    // to publish what the draw before it asked for.
+    app.active_tab_mut().tape_mut().flush_for_test();
+    let settled = |app: &mut QuantickApp| {
+        let _ = shapes(app);
+        app.active_tab_mut().tape_mut().flush_for_test();
+        shapes(app)
+    };
     // One frame to settle the ranges a draw computes for the next one.
     let _ = shapes(&mut app);
-    let marks_on = shapes(&mut app);
+    let marks_on = settled(&mut app);
     switch_layer(&mut app, ChartLayer::TradePaint, false);
-    let marks_off = shapes(&mut app);
+    let marks_off = settled(&mut app);
     assert!(
         marks_off < marks_on,
         "the marks kept painting with their layer off ({marks_off} vs {marks_on})"
