@@ -204,7 +204,31 @@
 # eleven longest of those reads now wrap where they used to fit. A path that
 # says which module owns a field costs a line where it crosses 100 columns --
 # the one price this regroup charges, paid by the file that shrank.
-!budget 35488
+#
+# Then lowered by 5,384 -- the whole of `pane.rs`'s entry -- by the cut the
+# note above promised: `handle_navigation` and `draw_chart` got a shape rather
+# than a new address. The input frame stays in `pane.rs` as the orchestrator
+# and its arms went to `pane/context_menu.rs` (the secondary click),
+# `pane/primary_button.rs` (paper's claim on the button, then the pointer
+# tool) and `pane/axes_and_panes.rs` (the axes, the lane divider and the
+# indicator panes' handles, with the `pane_*_gesture` helpers only they
+# call). The paint frame went whole to `pane/draw_chart.rs`, because the
+# slices of `self.state` it borrows for the frame forbid a `&mut self` arm,
+# and its read-only painters to `pane/layer_painters.rs` as `&self` methods
+# over one borrowed `DrawFrame`. The rest of the file left by owner:
+# `layers.rs`, `series.rs`, `shared_marks.rs`, `drawing_paint.rs`,
+# `pointer_hit.rs`, `tape_switch.rs` and `canvas_split.rs`, plus two impl
+# blocks appended to `context_menu.rs` and `strategies.rs`. Every body moved
+# at the same indentation; the multiset proof is in PR #368's body.
+#
+# `pane.rs` itself is 1,256 production lines and takes no entry: it is under
+# the threshold, and the largest sibling (`draw_chart.rs`, 770) is under it
+# by a wider margin. `--tighten` first wrote 1,256 and 41,377; the entry is
+# removed by hand because a sub-threshold file with a recorded ceiling is a
+# permission nobody spends, and the budget follows it down by the same
+# 1,256. 45,739 - 5,384 = 40,355; what the guard measures the sum at today
+# is 40,121, and the line below is that sum, not the arithmetic.
+!budget 30104
 
 crates/app/src/app.rs 769
 
@@ -316,12 +340,6 @@ crates/app/src/app.rs 769
 # Pure moves, with `the_journal_bytes_are_fixed` and
 # `the_report_numbers_are_fixed` unchanged on both sides of it.
 
-# Lowered by 2,153 by `--tighten` after the four sidecar moves described in
-# the budget note above. The +14 this entry used to carry -- the strategy
-# badge's repair to `badge_text_for` -- is not undone: those lines moved to
-# `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
-# simply not here.
-crates/app/src/pane.rs 5384
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
