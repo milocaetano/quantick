@@ -34,9 +34,9 @@ pub(super) struct HealthCounters {
     /// Live trades taken in since the last perf summary, across every tab —
     /// what the window is ingesting, not what one market prints.
     pub(super) trades_since_summary: u64,
-    /// The window-wide deferred-command count the last summary reported, so
-    /// the next one can tell a new overflow from an old one.
-    pub(super) worker_deferred_at_summary: u64,
+    /// What the last summary said about the live envelope, so its warnings
+    /// speak once per event.
+    pub(super) envelope: envelope::EnvelopeWatch,
     pub(super) last_summary: Instant,
     // Whether the status bar shows the perf readings (View → perf readings).
     pub(super) show_perf: bool,
@@ -51,7 +51,7 @@ impl HealthCounters {
             cpu_frames: FrameStats::new(120),
             last_frame: None,
             trades_since_summary: 0,
-            worker_deferred_at_summary: 0,
+            envelope: envelope::EnvelopeWatch::default(),
             last_summary: Instant::now(),
         }
     }
@@ -305,7 +305,7 @@ impl QuantickApp {
             );
         }
 
-        envelope::warn(&envelope, &mut self.health.worker_deferred_at_summary);
+        self.health.envelope.warn(&envelope);
         self.health.trades_since_summary = 0;
         self.active_tab_mut().tape_mut().reset_summary_counters();
         self.health.last_summary = now;

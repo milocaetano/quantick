@@ -41,19 +41,24 @@ pub(crate) enum Admitted {
 }
 
 /// The worker is gone. Nothing parked can ever be delivered, so the buffer
-/// was emptied; `lost` is how many commands that discarded.
+/// was emptied; `lost` is how many commands that discarded, and `sent` how
+/// many had entered the channel before the disconnect was seen — accepted,
+/// and to be counted as such.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Disconnected {
     pub lost: usize,
+    pub sent: usize,
 }
 
 /// The worker is gone and the offered command comes back to its owner,
 /// together with the count of parked commands the disconnect discarded
-/// (the returned command is not among them).
+/// (the returned command is not among them) and of those that entered the
+/// channel before it was seen.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Refused<T> {
     pub command: T,
     pub lost: usize,
+    pub sent: usize,
 }
 
 /// Commands accepted from the owner that the queue has not taken yet.
@@ -89,6 +94,7 @@ impl<T> Parked<T> {
                 return Err(Refused {
                     command,
                     lost: gone.lost,
+                    sent: gone.sent,
                 });
             }
         };
@@ -98,7 +104,11 @@ impl<T> Parked<T> {
         match sender.try_send(command) {
             Ok(()) => Ok((Admitted::Queued, drained)),
             Err(TrySendError::Full(command)) => Ok((self.park(command), drained)),
-            Err(TrySendError::Disconnected(command)) => Err(Refused { command, lost: 0 }),
+            Err(TrySendError::Disconnected(command)) => Err(Refused {
+                command,
+                lost: 0,
+                sent: drained,
+            }),
         }
     }
 
@@ -132,7 +142,7 @@ impl<T> Parked<T> {
                 Err(TrySendError::Disconnected(_)) => {
                     let lost = self.commands.len() + 1;
                     self.commands.clear();
-                    return Err(Disconnected { lost });
+                    return Err(Disconnected { lost, sent });
                 }
             }
         }
@@ -211,7 +221,8 @@ mod tests {
             parked.offer(&tx, 4),
             Err(Refused {
                 command: 4,
-                lost: 2
+                lost: 2,
+                sent: 0
             })
         );
         assert_eq!(parked.len(), 0);
@@ -219,7 +230,8 @@ mod tests {
             parked.offer(&tx, 5),
             Err(Refused {
                 command: 5,
-                lost: 0
+                lost: 0,
+                sent: 0
             })
         );
         assert_eq!(parked.drain(&tx), Ok(0));

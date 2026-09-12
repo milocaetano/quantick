@@ -32,10 +32,12 @@ WDOU26 session recorded on this host ([tape-rates.txt](live-envelope/tape-rates.
 | `INDICATOR_COMMAND_QUEUE` | 1,024 | derived | a tick:1 pane sends one closed bar per print plus one forming-bar update: 513 at the peak frame; twice the burst frame |
 | `BOOK_COMMAND_QUEUE` | 4,096 | derived | one command per depth event (≤ 2,048) and per print (≤ 512) plus one layout request: 2,561; next power of two, and the trade channel every venue feed already sizes itself to |
 
-The health summary classes the window's measured ingest against these rates:
+The health summary classes the measured ingest against these rates:
 `live_rate` is `inside` (≤ sustained trades and ≤ depth rate), `burst`
-(≤ burst trades) or `above`. The window's rate sums every tab, so it can only
-overstate one pane's rate. A replay played fast is `above` by design.
+(≤ burst trades) or `above`. Two scopes, the two rates the summary has: the
+trade rate is the window's, summed over every tab, so it can only overstate
+one pane's rate; the depth rate is the active tab's, the book the rest of the
+line describes. A replay played fast is `above` by design.
 
 ## Queues on the live path: cap and overflow policy
 
@@ -56,6 +58,8 @@ tab's book view reads its mailbox when it syncs, so its parked commands are
 retried on that pane's next send — every print or depth event — or when it is
 shown; `worker_parked` counts them meanwhile.
 
+`LIVE_QUEUE_DEFERRED` compares each worker's own count with the last summary's, so a busier pane that closed cannot hide a new overflow elsewhere.
+
 A worker that is gone turns every parked command into a counted
 `failed_sends` and the existing `INDICATOR_WORKER_DOWN` / `HEATMAP_WORKER_DOWN`
 error; nothing vanishes uncounted.
@@ -64,7 +68,7 @@ error; nothing vanishes uncounted.
 
 | History | Cap | Past it |
 | --- | --- | --- |
-| A pane's tape (`ChartState::trades`, `state.rs`) | none in code; `RETAINED_TRADES_PER_PANE` = 3,960,000 is the envelope | nothing is evicted. `retained_trades` on the health line reports the largest pane; `LIVE_ENVELOPE_EXCEEDED` warns at summary cadence with the excess. An evicting cap is a product decision (below) |
+| A pane's tape (`ChartState::trades`, `state.rs`) | none in code; `RETAINED_TRADES_PER_PANE` = 3,960,000 is the envelope | nothing is evicted. `retained_trades` on the health line reports the largest pane; `LIVE_ENVELOPE_EXCEEDED` warns once when a pane crosses the envelope (again if another pane becomes the one past it, or after the tape is back inside), with the excess. An evicting cap is a product decision (below) |
 | A pane's bars (`ChartState::bars`) | none; 79,200 at tick:50 at the envelope's edge | nothing is evicted |
 | Heatmap aggressions and liquidity runs (`crates/orderflow/src/history.rs`, `HeatmapConfig`) | existing caps: 30 min retention, 100,000 aggressions, 500,000 runs, 64 MiB | the oldest leave the canvas; counted in `HistoryCounters.{aggressions_evicted, runs_evicted}` (not yet on the health line) |
 

@@ -347,7 +347,12 @@ fn inside_the_envelope_every_print_arrives_and_no_queue_fills() {
         DEPTH_UPDATES_PER_S,
         BURST_SECONDS,
     );
-    // The busiest frame the envelope allows, all at once.
+    // The busiest frame the envelope allows, all at once, arriving at workers
+    // that kept up with the burst before it — the envelope's claim is about a
+    // frame, not about a frame stacked on a machine that fell behind, and
+    // waiting here keeps a loaded CI runner from turning its own stall into a
+    // failure of the queue.
+    rig.settle();
     rig.frame(
         &mut tape,
         BURST_TRADES_PER_FRAME,

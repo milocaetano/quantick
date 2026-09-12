@@ -332,7 +332,10 @@ impl<T> ObservedSender<T> {
                 Ok(())
             }
             Err(refused) => {
-                // The parked commands the disconnect discarded, plus this one.
+                // Commands that entered the channel before the disconnect was
+                // seen were accepted; the parked ones it discarded, plus this
+                // one, are failed sends.
+                self.progress.record_admission(None, refused.sent, 0);
                 self.progress.record_lost(refused.lost + 1);
                 Err(SendError(refused.command))
             }
@@ -348,7 +351,10 @@ impl<T> ObservedSender<T> {
         }
         match parked.drain(&self.sender) {
             Ok(drained) => self.progress.record_admission(None, drained, parked.len()),
-            Err(gone) => self.progress.record_lost(gone.lost),
+            Err(gone) => {
+                self.progress.record_admission(None, gone.sent, 0);
+                self.progress.record_lost(gone.lost);
+            }
         }
     }
     pub(crate) fn snapshot(&self) -> ProgressSnapshot {
