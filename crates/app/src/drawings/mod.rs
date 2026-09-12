@@ -26,9 +26,6 @@ mod collection;
 mod placement;
 mod tool;
 
-pub use tool::DrawingTool;
-use tool::DrawingToolImpl;
-
 use std::any::Any;
 use std::fmt;
 
@@ -37,6 +34,11 @@ use smallvec::SmallVec;
 
 use crate::chart::PriceScale;
 use crate::theme;
+
+/// The handle every caller outside this module holds a tool by; the port it
+/// implements stays inside the subsystem.
+pub use tool::DrawingTool;
+use tool::DrawingToolImpl;
 
 /// The screen-space grab points of one selected object. Six covers every tool
 /// in the registry — the channel is the widest, with a corner and a centre on
