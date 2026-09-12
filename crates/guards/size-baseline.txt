@@ -204,7 +204,7 @@
 # eleven longest of those reads now wrap where they used to fit. A path that
 # says which module owns a field costs a line where it crosses 100 columns --
 # the one price this regroup charges, paid by the file that shrank.
-!budget 22308
+!budget 20025
 
 crates/app/src/app.rs 769
 
@@ -322,7 +322,7 @@ crates/app/src/app.rs 769
 # slice ends up answering a press the trader made.
 crates/app/src/tab.rs 1661
 crates/app/src/control/gateway.rs 1696
-crates/app/src/drawings/mod.rs 2283
+# +2: the `QUANTICK_FOOTPRINT_DEBUG` declaration. See the budget note above.
 # Raised for the same branch: an `Mt5Event::OpeningPage` variant and one
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
