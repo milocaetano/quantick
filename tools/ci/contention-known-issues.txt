@@ -1,0 +1,15 @@
+# Tests the contention step's copies skip because they are already known to
+# fail under CPU load. Read by tools/ci/contention.sh.
+#
+# One exact libtest name per line, then the issue tracking its fix. A line
+# without an issue number, or a name the test binary no longer has, fails the
+# step. The normal `Test` step still runs every test listed here; only the
+# contention copies skip them. The PR that fixes a test removes its line.
+#
+# All five were found by the step's own calibration (campaign #367, child Q9,
+# #407) at test sources identical to the campaign tip 52e35a1b.
+app::tests::control_plane_tests::gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed #408
+app::tests::control_plane_tests::attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was #409
+app::tests::control_plane_tests::a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free #410
+app::tests::control_plane_tests::gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked #411
+app::tests::screenshot_evidence_tests::synthetic_fractional_geometry_round_trips_original_png_and_clipped_regions #413
