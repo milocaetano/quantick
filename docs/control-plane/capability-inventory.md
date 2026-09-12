@@ -35,6 +35,7 @@ capability that cannot change application state.
 | `events.wait` | 1 | `events` | yes | `observe`, `observe.events` |
 | `evidence.capture` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
 | `evidence.read` | 1 | `evidence` | yes | `observe`, `observe.evidence` |
+| `feed.deal_recording.set` | 1 | `feed` | no | `cockpit` |
 | `feed.reconnect` | 1 | `feed` | no | `cockpit` |
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
@@ -45,6 +46,7 @@ capability that cannot change application state.
 | `layout.pane.expand` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.move` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.set_bar_spec` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_interval` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.preset.apply` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.tab.create` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -63,4 +65,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-38 capabilities registered.
+40 capabilities registered.

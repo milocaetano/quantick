@@ -46,6 +46,7 @@ const COLLAPSE_CAPABILITY_ID: &str = "layout.pane.collapse";
 const EXPAND_CAPABILITY_ID: &str = "layout.pane.expand";
 const FOCUS_CAPABILITY_ID: &str = "layout.focus.set";
 const INTERVAL_CAPABILITY_ID: &str = "layout.pane.set_interval";
+const BAR_SPEC_CAPABILITY_ID: &str = "layout.pane.set_bar_spec";
 const TAB_SWITCH_CAPABILITY_ID: &str = "layout.tab.switch";
 const TAB_CREATE_CAPABILITY_ID: &str = "layout.tab.create";
 const TAB_RENAME_CAPABILITY_ID: &str = "layout.tab.rename";
@@ -107,6 +108,18 @@ pub(crate) struct IntervalInput {
     pub pane: WireU64,
     /// The interval in milliseconds.
     pub interval_ms: i64,
+}
+
+/// Set any pane's complete alternative-bar rule.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub(crate) struct BarSpecInput {
+    #[serde(flatten)]
+    pub target: TabTarget,
+    /// The pane's address (`0` is the flow pane).
+    pub pane: WireU64,
+    /// The same stable spelling configuration and workspace files use, such
+    /// as `tick:50`, `time:60000`, or `trades:2000`.
+    pub spec: String,
 }
 
 /// Which layout tab a call is about: by id, by name, or — omitted — the
@@ -289,6 +302,15 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
             generated_schema::<IntervalInput>(),
         ),
         set_interval,
+    )?;
+    registry.register(
+        descriptor(
+            BAR_SPEC_CAPABILITY_ID,
+            "Set a chart's bar rule",
+            "Sets one pane's complete alternative-bar rule through the same recut path the toolbar and recording popover use.",
+            generated_schema::<BarSpecInput>(),
+        ),
+        set_bar_spec,
     )?;
     registry.register(
         tab_descriptor(
@@ -748,5 +770,29 @@ fn set_interval(
     let asked = crate::state::BarSpec::Time(input.interval_ms);
     let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
     chart.spec.set(asked);
+    result(app, index, changed)
+}
+
+fn set_bar_spec(
+    app: &mut QuantickApp,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: BarSpecInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let spec = crate::state::BarSpec::parse(&input.spec)
+        .map_err(|error| ControlError::invalid_request(format!("invalid bar spec: {error}")))?;
+    let index = tab_index(app, input.target)?;
+    let pane = input.pane.get() as usize;
+    let tab = app
+        .control_tab_at_mut(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    if tab.pane_at(pane).is_none() {
+        return Err(ControlError::invalid_request(format!(
+            "this tab has no pane at address {pane}"
+        )));
+    }
+    let changed = tab.set_pane_bar_spec(pane, spec);
     result(app, index, changed)
 }

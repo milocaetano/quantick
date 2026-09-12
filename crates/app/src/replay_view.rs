@@ -1211,7 +1211,7 @@ fn clock_text(position_ms: i64, timezone: UtcOffset) -> String {
 /// A plain space, not a narrow no-break one: egui's bundled fonts have no glyph
 /// for U+202F and draw the missing-character box instead, which turns a count
 /// into `231□190`.
-fn thousands(value: usize) -> String {
+pub(crate) fn thousands(value: usize) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, ch) in digits.chars().enumerate() {

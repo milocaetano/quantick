@@ -1342,6 +1342,12 @@ impl ChartPane {
         }
     }
 
+    /// Re-cut every retained print from the retained deal-counter readings.
+    pub fn rebuild_bars(&mut self) {
+        self.state.rebuild_bars();
+        self.bump_pagination_revision();
+    }
+
     /// Revision protecting the closed-bar prefix exposed through paginated
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]
@@ -2246,6 +2252,12 @@ impl ChartPane {
     /// ([`Self::settle_pending_reanchor`]). The re-anchor waits for bars to
     /// exist, because an empty series can answer nothing.
     pub fn reset_series(&mut self) {
+        self.reset_series_with(false);
+    }
+
+    /// Reset the tape while optionally retaining deal-counter readings for a
+    /// rebuild of the same market.
+    pub fn reset_series_with(&mut self, keep_readings: bool) {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
@@ -2254,7 +2266,11 @@ impl ChartPane {
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
-        self.state = ChartState::new(self.current_spec());
+        if keep_readings {
+            self.state.reset_series(self.current_spec());
+        } else {
+            self.state = ChartState::new(self.current_spec());
+        }
         self.lane.reset();
         self.publish_partial();
         self.bump_pagination_revision();
@@ -2276,10 +2292,16 @@ impl ChartPane {
     /// market already holds, keeping the backfill/live boundary where it was:
     /// a trade that was streamed live must not become "history" just because
     /// this view was opened late.
-    pub fn seed_from(&mut self, trades: &[quantick_engine::Trade], backfill_count: usize) {
+    pub fn seed_from(
+        &mut self,
+        trades: &[quantick_engine::Trade],
+        backfill_count: usize,
+        deal_samples: &[quantick_engine::DealSample],
+    ) {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
+        self.state.observe_deals_batch(deal_samples);
         let split = backfill_count.min(trades.len());
         self.state.ingest_backfill(&trades[..split]);
         for trade in &trades[split..] {

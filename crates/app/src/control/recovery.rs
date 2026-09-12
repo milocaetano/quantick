@@ -165,7 +165,7 @@ fn recover(
 }
 
 /// Which tab a call named, or the one the trader is looking at.
-fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<usize, ControlError> {
+pub(crate) fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<usize, ControlError> {
     let Some(id) = tab_id else {
         return Ok(app.control_active_tab_index());
     };

@@ -372,6 +372,12 @@ pub(crate) struct Harness {
     /// popup egui owns, so the hook asks for it through the same call the
     /// click makes rather than faking the surface.
     layout_picker_autostart: bool,
+    /// `QUANTICK_DEAL_RECORDING`: `on`/`off` override the default a tab's
+    /// deal recorder opens on; `menu` opens the REC popover once.
+    deal_recording: Option<crate::deal_recording::RecordingHook>,
+    /// `QUANTICK_BARS_MENU`: open the bar-kind combo on the first frame,
+    /// once, for a capture of the entries a source cannot offer.
+    bars_menu: bool,
     /// `QUANTICK_WINDOW_MAXIMIZED`: maximise on the first frame that has a
     /// window to maximise.
     maximize: bool,
@@ -502,6 +508,12 @@ impl Harness {
     pub(crate) fn from_env() -> Self {
         Self {
             layout_picker_autostart: flag("QUANTICK_LAYOUT_PICKER"),
+            deal_recording: crate::deal_recording::RecordingHook::parse(
+                std::env::var(crate::deal_recording::RECORDING_HOOK_ENV)
+                    .ok()
+                    .as_deref(),
+            ),
+            bars_menu: flag("QUANTICK_BARS_MENU"),
             maximize: flag("QUANTICK_WINDOW_MAXIMIZED"),
             footprint: flag("QUANTICK_FOOTPRINT_AUTOSTART"),
             candle_width: read("QUANTICK_CANDLE_WIDTH")
@@ -598,6 +610,32 @@ impl Harness {
     /// one shot, so a trader's click can close it.
     pub(crate) fn take_layout_picker_autostart(&mut self) -> bool {
         std::mem::take(&mut self.layout_picker_autostart)
+    }
+
+    /// The recording default the launch imposed, if it imposed one.
+    pub(crate) fn deal_recording_default(&self) -> Option<bool> {
+        self.deal_recording.and_then(|hook| hook.default_override())
+    }
+
+    /// Whether the launch asked for the bar-kind combo open and the combo
+    /// has not opened yet.
+    pub(crate) fn bars_menu_pending(&self) -> bool {
+        self.bars_menu
+    }
+
+    /// The combo opened: the request is spent.
+    pub(crate) fn clear_bars_menu(&mut self) {
+        self.bars_menu = false;
+    }
+
+    /// Whether the launch asked for the REC popover, once.
+    pub(crate) fn take_deal_recording_menu(&mut self) -> bool {
+        if self.deal_recording == Some(crate::deal_recording::RecordingHook::Menu) {
+            self.deal_recording = None;
+            true
+        } else {
+            false
+        }
     }
 
     /// Whether the window should maximise itself, once.
@@ -1000,6 +1038,7 @@ fn parse_history_note(token: String) -> Option<Budgeted<CampaignEnd>> {
 
 crate::hooks::declare_hooks![
     "QUANTICK_AVWAP_DEMO",
+    "QUANTICK_BARS_MENU",
     "QUANTICK_CANDLE_WIDTH",
     "QUANTICK_CONTEXT_MENU",
     "QUANTICK_DRAWINGS_DEMO",

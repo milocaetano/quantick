@@ -306,12 +306,16 @@ crates/app/src/paper_trading.rs 4589
 # badge's repair to `badge_text_for` -- is not undone: those lines moved to
 # `pane/strategy_badges.rs` with the rest of the badge, and are still counted,
 # simply not here.
-crates/app/src/pane.rs 5384
+# Raised by 14 lines for the pane's generic rebuild/reset hooks that preserve
+# deal readings across same-market timeline resets.
+crates/app/src/pane.rs 5398
 # Raised for the same branch: the opening block's own arm in `drain_feed`,
 # which is deliberately not the reply path with a flag -- the two differ in
 # the two lines that matter, and a branch inside the reply arm is how a
 # slice ends up answering a press the trader made.
-crates/app/src/tab.rs 1661
+# Raised by 15 lines for the deal-recorder field and the shared recut path;
+# feature behavior remains in `deal_recording_tab.rs`.
+crates/app/src/tab.rs 1676
 crates/app/src/control/gateway.rs 1696
 crates/app/src/orderflow_render.rs 3075
 crates/app/src/orderflow_view.rs 2485
@@ -322,7 +326,9 @@ crates/app/src/footprint_render.rs 2236
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
-crates/feed-mt5/src/stream.rs 2200
+# Raised by 24 lines to stamp the venue counter on the exact fetched round;
+# sampling policy remains in `deals.rs`.
+crates/feed-mt5/src/stream.rs 2224
 crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718

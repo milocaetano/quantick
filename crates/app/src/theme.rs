@@ -71,6 +71,12 @@ pub const SEAM_LABEL: Color32 = Color32::from_rgba_premultiplied(0x50, 0x50, 0x5
 /// `warn` — threshold breaches and errors.
 pub const WARN: Color32 = Color32::from_rgb(0xFF, 0x63, 0x47);
 
+/// The recording red: the REC control while the venue's deal counter is
+/// being written down. Distinct from [`SELL`] on purpose — a sell candle
+/// and a recorder are not the same kind of fact — and from [`WARN`], because
+/// recording is the healthy state.
+pub const REC: Color32 = Color32::from_rgb(0xFF, 0x4D, 0x4D);
+
 /// `gap/line` — the dashed mark where the tape has a hole a reconnect left.
 ///
 /// Louder than [`SEAM_LINE`] and quieter than [`AMBER`], because it sits

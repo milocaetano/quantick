@@ -460,6 +460,21 @@ def _cache_write(symbol: str, offset_s: int) -> None:
 # --------------------------------------------------------------------------
 
 
+def declares_deal_counter(tape: str, session_deals) -> bool:
+    """Whether a session stamps its live ticks with the deal counter.
+
+    Only a trades tape: a quoted CFD prints no deals, and a counter there
+    would count something other than what the chart calls a deal. And only
+    when the terminal reports the field at all — an older terminal build
+    answers `None` and gets no stamp. A field that reads 0 is declared and
+    stamped: before the open the counter *is* 0, and a broker that never
+    counts leaves it there all day, which the chart shows as a counter that
+    never moves rather than as a session with no deals — the honest shape
+    for a fact this bridge cannot tell apart from the terminal's answer.
+    """
+    return tape == "trades" and session_deals is not None
+
+
 class Session:
     """One connection to quantick: framing, cursors and message building."""
 
@@ -485,6 +500,10 @@ class Session:
         # What this venue prints, decided once at hello and reused by the
         # candle block to choose an honest volume source.
         self.tape = "trades"
+        # Whether live ticks are stamped with the venue's session deal
+        # counter. Decided at hello: a trades tape whose terminal reports
+        # `session_deals`. See `declares_deal_counter` and PROTOCOL.md `deals`.
+        self.deal_counter = False
         # Cursor: MT5 ticks share milliseconds, so it takes both the newest
         # millisecond sent and how many ticks at that millisecond already went.
         self.cursor_msc = 0
@@ -592,6 +611,9 @@ class Session:
         self.offset_s = offset_s
         self.digits = int(info.digits)
         self.tape = self.detect_tape()
+        self.deal_counter = declares_deal_counter(
+            self.tape, getattr(info, "session_deals", None)
+        )
 
         hello = {
             "type": "hello",
@@ -603,6 +625,9 @@ class Session:
             "digits": self.digits,
             "server_utc_offset_s": offset_s,
             "tape": self.tape,
+            # Whether live ticks carry the session deal counter. Absent means
+            # no, so a feed reading an older bridge expects no stamp.
+            "deal_counter": self.deal_counter,
         }
         # Candle history is announced only when this session will really send
         # it, so a feed knows immediately whether a time pane has anything
@@ -1579,8 +1604,26 @@ class Session:
             fell_back_to_tick_volume=fell_back,
         )
 
-    def send_tick(self, tick, sent_ms: int) -> None:
+    def session_deals(self) -> int | None:
+        """The venue's session deal counter, as the terminal has it now.
+
+        `SYMBOL_SESSION_DEALS` is the one deal count MetaTrader keeps: the
+        ticks it stores are already folded several deals to one, and nothing
+        in them says how many. Read once per pump round, *after* the round's
+        ticks were fetched, so the reading is never behind the prints it
+        stamps. `None` when the terminal cannot answer.
+        """
+        info = mt5.symbol_info(self.symbol)
+        deals = None if info is None else getattr(info, "session_deals", None)
+        return None if deals is None else int(deals)
+
+    def send_tick(self, tick, sent_ms: int, deals: int | None = None) -> None:
         """Queue one tick, stamped with when this bridge handed it over.
+
+        `deals` is the session deal counter read for this pump round, stamped
+        on live ticks only: a history tick has no reading of its own, and
+        stamping today's total on yesterday's print would be a lie the chart
+        cannot detect. Absent means "no reading", never zero.
 
         `sent_ms` is on the same server clock as `time_ms`, so the reader can
         split one end-to-end delay into the part spent inside the terminal
@@ -1603,6 +1646,7 @@ class Session:
                 "last": self.price(float(tick["last"])),
                 "volume": int(tick["volume"]),
                 "flags": int(tick["flags"]),
+                **({} if deals is None else {"deals": deals}),
             }
         )
         self.ticks_sent += 1
@@ -1663,6 +1707,9 @@ class Session:
             )
             if ticks is None or not len(ticks):
                 return
+            # One reading per round, taken after the ticks it will stamp were
+            # fetched: the counter is then at or past every print in hand.
+            deals = self.session_deals() if self.deal_counter else None
             at_cursor_seen = 0
             forwarded = 0
             for tick in ticks:
@@ -1673,11 +1720,11 @@ class Session:
                     at_cursor_seen += 1
                     if at_cursor_seen <= self.sent_at_cursor:
                         continue
-                    self.send_tick(tick, sent_ms)
+                    self.send_tick(tick, sent_ms, deals)
                     self.sent_at_cursor += 1
                     forwarded += 1
                 else:
-                    self.send_tick(tick, sent_ms)
+                    self.send_tick(tick, sent_ms, deals)
                     self.cursor_msc = msc
                     self.sent_at_cursor = 1
                     at_cursor_seen = 0

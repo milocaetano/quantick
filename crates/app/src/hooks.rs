@@ -108,6 +108,10 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
     ("crates/app/src/chart_layers.rs", crate::chart_layers::HOOKS),
     ("crates/app/src/config.rs", crate::config::HOOKS),
     (
+        "crates/app/src/deal_recording.rs",
+        crate::deal_recording::HOOKS,
+    ),
+    (
         "crates/app/src/drawings/presets.rs",
         crate::drawings::presets::HOOKS,
     ),

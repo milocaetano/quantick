@@ -467,7 +467,8 @@ impl Tab {
                         live = true;
                     }
                 }
-                Ok(FeedEvent::Reset) => self.reset_market_state(),
+                Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
+                Ok(FeedEvent::Reset) => self.reset_market_state(true),
                 Ok(FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
@@ -495,6 +496,7 @@ impl Tab {
         for pane in self.panes_mut() {
             pane.settle_pending_reanchor();
         }
+        self.tick_deal_recording();
     }
 
     /// Take the newest feed notice, if the feed sent any this frame.
@@ -765,7 +767,8 @@ impl Tab {
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
         self.tape_mut().set_enabled(false, generation);
-        self.reset_market_state();
+        self.stash_deal_readings();
+        self.reset_market_state(false);
     }
 
     /// Leave replay and put the live feed back.
@@ -790,7 +793,7 @@ impl Tab {
         let Some(provider) = config.provider_of(&self.feed_id) else {
             // The configuration changed under us; there is nothing to go back
             // to, so the chart stays as it is rather than dying.
-            self.reset_market_state();
+            self.reset_market_state(false);
             return;
         };
         // Same ordering rule as open_replay: the flatten of a replay
@@ -800,7 +803,8 @@ impl Tab {
         self.paper.on_timeline_reset();
         let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
-        self.reset_market_state();
+        self.reset_market_state(false);
+        self.restore_deal_readings();
     }
 
     /// Respawn the transport and keep everything the chart has built:
@@ -888,7 +892,7 @@ impl Tab {
         self.resume_floor_ms = None;
         let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
-        self.reset_market_state();
+        self.reset_market_state(true);
         // The live market is back and it can stream depth again; start
         // recording immediately rather than waiting for the map to be opened.
         self.ensure_book_capture(config);

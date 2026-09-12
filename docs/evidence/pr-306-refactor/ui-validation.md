@@ -1,0 +1,3 @@
+# UI validation
+
+The refactor makes no visible layout change relative to pull request 306. It preserves the `REC` control and trades-bar selector while adapting them to current owners. `Show as trades` now applies and recuts immediately through the same `Tab::set_pane_bar_spec` path used by the typed `layout.pane.set_bar_spec` capability, instead of relying on a later toolbar sync. The hook registry remains byte-for-byte valid; `DEAL_RECORDING`, `DEALS_DIR`, and `BARS_MENU` remain declared. The existing visible state is unchanged, so fresh screenshots are not required for this structural repair.

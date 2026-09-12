@@ -135,7 +135,7 @@ fn producer_prepend_rewind_and_repeated_rebuild_seed_the_recut_partial_once() {
     pane.reset_series();
     assert_eq!(retained(&pane), 0, "rewind discards the previous epoch");
     assert_eq!(publish(&mut pane), 0);
-    pane.seed_from(&[print(1, 1), print(2, 2)], 1);
+    pane.seed_from(&[print(1, 1), print(2, 2)], 1, &[]);
     assert_eq!(
         retained(&pane),
         2,

@@ -148,6 +148,16 @@ pub struct FeedConfig {
     /// existed.
     #[serde(default)]
     pub default_bars: Option<String>,
+    /// Whether a tab on this feed records the venue's session deal counter
+    /// as soon as the bridge declares one, without a click on REC.
+    ///
+    /// MetaTrader feeds only — the counter is a MetaTrader fact — and a
+    /// default rather than a command: the trader's saved choice in the
+    /// workspace overrides it, and REC always can. Off unless the config
+    /// says so, so a config written before the recorder existed writes
+    /// nothing to disk.
+    #[serde(default)]
+    pub record_deals: bool,
 }
 
 impl FeedConfig {
@@ -161,6 +171,17 @@ impl FeedConfig {
             .map(String::as_str)
             .or(self.bubble_preset.as_deref())
     }
+}
+
+/// Deal-recording options (`[deals]` in the TOML).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default)]
+pub struct DealsSettings {
+    /// Where recordings go, one folder per symbol. Relative paths resolve
+    /// against quantick's working directory; the `QUANTICK_DEALS_DIR`
+    /// environment variable overrides this for one run. Absent, recordings
+    /// live under `deals/` in the cockpit home (`Documents/Quantick`).
+    pub dir: Option<String>,
 }
 
 /// Paper-trading options (`[paper]` in the TOML).
@@ -296,6 +317,9 @@ pub struct AppConfig {
     /// Paper-trading settings; defaults apply when the section is absent.
     #[serde(default)]
     pub paper: PaperSettings,
+    /// Deal-recording settings; defaults apply when the section is absent.
+    #[serde(default)]
+    pub deals: DealsSettings,
     /// How far a *load older* press reaches; defaults apply when the section
     /// is absent.
     #[serde(default)]
@@ -405,6 +429,18 @@ impl AppConfig {
     #[must_use]
     pub fn provider_of(&self, id: &str) -> Option<ProviderKind> {
         self.feed(id).map(|f| f.provider)
+    }
+
+    /// Whether feed `id` asks its tabs to record the deal counter unasked.
+    #[must_use]
+    pub fn records_deals(&self, id: &str) -> bool {
+        self.feed(id).is_some_and(|f| f.record_deals)
+    }
+
+    /// The configured recording directory, if the config names one.
+    #[must_use]
+    pub fn deals_dir(&self) -> Option<&str> {
+        self.deals.dir.as_deref()
     }
 
     /// The bar spec feed `id` declares its tabs open on, if it declares one.
@@ -568,9 +604,26 @@ impl AppConfig {
             // and the only symptom of a typo here would be a silently
             // factory-default chart.
             if let Some(bars) = &feed.default_bars {
-                crate::state::BarSpec::parse(bars).map_err(|message| {
+                let spec = crate::state::BarSpec::parse(bars).map_err(|message| {
                     format!("feed '{}' has an invalid default_bars: {message}", feed.id)
                 })?;
+                // A deal bar needs the venue's deal counter, which only a
+                // provider that may carry one can declare. Refused here rather
+                // than opened on a chart that would never cut a bar.
+                if spec.kind().needs_deal_counter() && !feed.provider.may_count_deals() {
+                    return Err(format!(
+                        "feed '{}' opens on '{bars}', but trades bars need a deal counter and \
+                         only MetaTrader feeds carry one",
+                        feed.id
+                    ));
+                }
+            }
+            if feed.record_deals && !feed.provider.may_count_deals() {
+                return Err(format!(
+                    "feed '{}' sets record_deals, but only MetaTrader feeds carry a deal \
+                     counter to record",
+                    feed.id
+                ));
             }
         }
         // Needs the catalog, so it waits until the catalog is known good.
@@ -1206,6 +1259,7 @@ mod tests {
                 book_capture: true,
                 history_paging: false,
                 traded_volume: true,
+                deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
             }
@@ -1842,6 +1896,54 @@ mod tests {
         }
         assert_eq!(DeclaredLayout::parse("grid"), None);
         assert_eq!(DeclaredLayout::parse(" time "), Some(DeclaredLayout::Time));
+    }
+
+    /// A deal bar needs the venue's deal counter, and only a MetaTrader
+    /// session declares one: `trades:N` and `record_deals` are refused on
+    /// any other provider, naming the feed, and accepted on MetaTrader.
+    #[test]
+    fn trades_bars_and_deal_recording_are_metatrader_only() {
+        let config = |provider: &str, key: &str| {
+            format!(
+                r#"
+                default_feed = "f"
+                default_symbol = "AAA"
+                [[feeds]]
+                id = "f"
+                name = "F"
+                provider = "{provider}"
+                symbols = ["AAA"]
+                {key}
+            "#
+            )
+        };
+        for key in [r#"default_bars = "trades:2000""#, "record_deals = true"] {
+            let err = parse(
+                &config("binance", key),
+                ConfigSource::Embedded,
+                &AddedSymbols::default(),
+            )
+            .expect_err(key);
+            let message = err.to_string();
+            assert!(message.contains("'f'"), "the feed is named: {message}");
+            assert!(
+                message.contains("MetaTrader"),
+                "the reason is named: {message}"
+            );
+            let ok = parse(
+                &config("metatrader", key),
+                ConfigSource::Embedded,
+                &AddedSymbols::default(),
+            )
+            .unwrap_or_else(|error| panic!("{key} on MetaTrader: {error}"));
+            assert_eq!(ok.records_deals("f"), key.starts_with("record_deals"));
+            if key.starts_with("default_bars") {
+                assert_eq!(
+                    ok.startup_spec_for("f"),
+                    Some(crate::state::BarSpec::Trades(2000))
+                );
+            }
+        }
     }
 
     /// A `default_bars` no control could produce is refused at load, naming

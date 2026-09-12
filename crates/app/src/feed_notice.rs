@@ -51,20 +51,20 @@ use quantick_feed::stall::{Recovery, Stall};
 pub const OFFLINE_LABEL: &str = "offline";
 
 /// Height of the chip, in pixels. A pill inside the canvas' bottom margin.
-const CHIP_HEIGHT_PX: f32 = 22.0;
+pub(crate) const CHIP_HEIGHT_PX: f32 = 22.0;
 /// Padding inside the chip, left and right, in pixels.
-const CHIP_PAD_PX: f32 = 9.0;
+pub(crate) const CHIP_PAD_PX: f32 = 9.0;
 /// Diameter of the chip's state dot, in pixels.
-const CHIP_DOT_DIAMETER_PX: f32 = 8.0;
+pub(crate) const CHIP_DOT_DIAMETER_PX: f32 = 8.0;
 /// Gap between the chip's dot and its word, in pixels.
-const CHIP_DOT_GAP_PX: f32 = 7.0;
+pub(crate) const CHIP_DOT_GAP_PX: f32 = 7.0;
 /// The chip's font size, in points.
-const CHIP_LABEL_PT: f32 = 11.0;
+pub(crate) const CHIP_LABEL_PT: f32 = 11.0;
 /// How far the chip sits from the chart's bottom-right corner, in pixels.
 ///
 /// Far enough not to touch the axis furniture, close enough that it reads as
 /// belonging to the corner rather than floating in the chart.
-const CHIP_MARGIN_PX: f32 = 10.0;
+pub(crate) const CHIP_MARGIN_PX: f32 = 10.0;
 
 /// Width of the popup, in pixels.
 ///

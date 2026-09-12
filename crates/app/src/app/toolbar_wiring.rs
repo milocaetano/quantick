@@ -121,6 +121,10 @@ impl QuantickApp {
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
         let layout_picker_autostart = self.harness.take_layout_picker_autostart();
+        let deal_recording = self.active_tab().deal_recording_view();
+        let deal_recording_menu =
+            deal_recording.is_some() && self.harness.take_deal_recording_menu();
+        let mut bars_menu = self.harness.bars_menu_pending();
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -138,6 +142,9 @@ impl QuantickApp {
             symbol: &mut tab.symbol,
             replay,
             spec: &mut pane.spec,
+            deal_recording,
+            deal_recording_menu,
+            bars_menu: &mut bars_menu,
             history_step: &mut tab.history_step,
             history_menu_rect: &mut history_menu_rect,
             history_reach_span_minutes: &mut history_reach_span_minutes,
@@ -170,6 +177,9 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
+        if !bars_menu {
+            self.harness.clear_bars_menu();
+        }
         self.set_history_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
@@ -224,6 +234,9 @@ impl QuantickApp {
             ToolbarAction::LoadOlder => {
                 let (tab, config) = self.active_with_config();
                 tab.request_older_history(config);
+            }
+            ToolbarAction::DealRecording(action) => {
+                self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => {
                 // Read before the tab is borrowed mutably — and the capability

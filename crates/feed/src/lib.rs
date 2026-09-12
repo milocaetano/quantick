@@ -151,6 +151,14 @@ pub enum FeedEvent {
     /// per-trade channel message for each is pure overhead on both ends. The UI
     /// treats a batch exactly as the trades in it, in order.
     LiveBatch(Vec<Trade>),
+    /// A new reading of the venue's session deal counter, on the tape's own
+    /// clock, sent ahead of the prints it stamps.
+    ///
+    /// Consumed by the chart's deal bars ([`quantick_engine::DealBarBuilder`]
+    /// joins prints to readings by time) and by the deal recorder; every
+    /// other consumer ignores it. Only a feed whose capabilities say
+    /// `deal_counter` ever sends one.
+    DealCounter(quantick_engine::DealSample),
     /// Discard everything loaded and start over from an empty chart.
     ///
     /// Sent when a source rewinds — seeking a replay backwards, for instance.

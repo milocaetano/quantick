@@ -233,6 +233,12 @@ pub struct ToolbarModel<'a> {
     /// variant it is on, through [`SpecSelector::active_mut`], so an eighth
     /// bar kind adds an arm to [`draw_bar_param`] and nothing here.
     pub spec: &'a mut SpecSelector,
+    /// The deal recorder shown beside the symbol, when supported.
+    pub deal_recording: Option<crate::deal_recording::RecordingView>,
+    /// Open the REC popover through the launch hook.
+    pub deal_recording_menu: bool,
+    /// Open the bar-kind popup through the launch hook.
+    pub bars_menu: &'a mut bool,
     /// Where the history menu's own button ended up, written back by the draw.
     ///
     /// Published for the same reason the Workspace menu's rect is: a menu is a
@@ -348,6 +354,8 @@ pub enum ToolbarAction {
     SetLayout(&'static crate::canvas_layout::LayoutPreset),
     /// Fetch and prepend one page of older trades.
     LoadOlder,
+    /// What the REC control beside the symbol asked for.
+    DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
     ///
     /// The trade twin above and this one are two different records — a page of
@@ -412,14 +420,19 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 .inner_margin(egui::Margin::symmetric(8.0, 0.0)),
         )
         .show(ctx, |ui| {
+            let rec_width = if model.deal_recording.is_some() {
+                crate::deal_recording_ui::REC_BUTTON_MIN_WIDTH_PX + ui.spacing().item_spacing.x
+            } else {
+                0.0
+            };
             let plan = collapse_plan(
-                ui.available_width(),
+                ui.available_width() - rec_width,
                 trade_width(&model.paper),
                 param_width(model.spec.kind),
             );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                draw_source(ui, model, plan);
+                draw_source(ui, model, plan, &mut actions);
                 ui.separator();
                 draw_bars(ui, model, plan);
                 if plan.history_inline {
@@ -471,7 +484,12 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
 }
 
 /// SOURCE: feed + symbol combos, or the amber session label during replay.
-fn draw_source(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
+fn draw_source(
+    ui: &mut egui::Ui,
+    model: &mut ToolbarModel,
+    plan: CollapsePlan,
+    actions: &mut Vec<ToolbarAction>,
+) {
     if let Some(replay) = &model.replay {
         ui.label(egui::RichText::new("source:").color(theme::TEXT_MUTED));
         ui.label(
@@ -509,6 +527,16 @@ fn draw_source(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) 
                 ui.selectable_value(model.symbol, symbol.clone(), symbol);
             }
         });
+    if let Some(view) = &model.deal_recording
+        && let Some(action) = crate::deal_recording_ui::draw_button(
+            ui,
+            view,
+            model.spec.kind,
+            model.deal_recording_menu,
+        )
+    {
+        actions.push(ToolbarAction::DealRecording(action));
+    }
 }
 
 /// BARS: the kind combo, with the parameter beside it or merged into its
@@ -521,6 +549,17 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
         format!("{} · {}", model.spec.kind.label(), param_summary(model))
     };
     let traded_volume = model.capabilities.traded_volume;
+    let deal_counter = model.capabilities.deal_counter;
+    let deal_count_available = model
+        .deal_recording
+        .as_ref()
+        .is_some_and(crate::deal_recording::RecordingView::deal_count_available);
+    if std::mem::take(model.bars_menu) {
+        let popup = ui
+            .make_persistent_id(egui::Id::new("bar_kind"))
+            .with("popup");
+        ui.memory_mut(|memory| memory.open_popup(popup));
+    }
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
@@ -528,13 +567,18 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
                 // A rule that counts traded size is offered only where size is
                 // real. On a quote-driven feed it would silently become a tick
                 // bar under another name.
-                let usable = traded_volume || !kind.needs_traded_volume();
-                ui.add_enabled_ui(usable, |ui| {
+                let disabled_reason = crate::bar_kind_reason::disabled_reason(
+                    kind,
+                    &crate::bar_kind_reason::BarInputAvailability {
+                        traded_volume,
+                        deal_counter,
+                        deal_count: deal_count_available,
+                    },
+                );
+                ui.add_enabled_ui(disabled_reason.is_none(), |ui| {
                     let item = ui.selectable_value(&mut model.spec.kind, kind, kind.label());
-                    if !usable {
-                        item.on_disabled_hover_text(
-                            "this source quotes prices but prints no traded volume",
-                        );
+                    if let Some(reason) = disabled_reason {
+                        item.on_disabled_hover_text(reason);
                     }
                 });
             }
@@ -553,8 +597,12 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
     let traded_volume = model.capabilities.traded_volume;
     match model.spec.active_mut() {
         BarSpec::Tick(n) => {
-            ui.label("N trades");
+            ui.label("N ticks");
             ui.add(egui::DragValue::new(n).range(1.0..=5000.0));
+        }
+        BarSpec::Trades(n) => {
+            ui.label("N deals");
+            ui.add(egui::DragValue::new(n).range(1.0..=100_000.0).speed(50.0));
         }
         BarSpec::Volume(units) => {
             ui.label("units");
@@ -659,6 +707,7 @@ fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
 fn param_summary(model: &ToolbarModel) -> String {
     match model.spec.retained(model.spec.kind) {
         BarSpec::Tick(n) => n.to_string(),
+        BarSpec::Trades(n) => n.to_string(),
         BarSpec::Volume(units) => format!("{:.1}", dec_to_f64(*units)),
         BarSpec::Dollar(notional) => format!("{:.0}", dec_to_f64(*notional)),
         BarSpec::Time(ms) => crate::state::fmt_time_interval(*ms),
@@ -1007,6 +1056,17 @@ fn draw_history_menu(
             "{} 1-minute venue candles held",
             model.history_candles
         ));
+    }
+    if let Some(view) = &model.deal_recording
+        && !view.days.is_empty()
+    {
+        ui.separator();
+        ui.label("recorded deals");
+        let mut action = None;
+        crate::deal_recording_ui::draw_days(ui, view, &mut action);
+        if let Some(action) = action {
+            actions.push(ToolbarAction::DealRecording(action));
+        }
     }
 }
 
@@ -1662,6 +1722,9 @@ mod tests {
                             hover: "Replaying a recorded session".to_owned(),
                         }),
                         spec: &mut selector,
+                        deal_recording: None,
+                        deal_recording_menu: false,
+                        bars_menu: &mut false,
                         history_step: &mut history_step,
                         history_reach_span_minutes: &mut span_minutes,
                         history_menu_rect: &mut history_menu_rect,
@@ -1674,6 +1737,7 @@ mod tests {
                             book_capture: !replaying,
                             history_paging: !replaying,
                             traded_volume: true,
+                            deal_counter: false,
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
                         },
@@ -1750,6 +1814,9 @@ mod tests {
                     symbol: &mut symbol,
                     replay: None,
                     spec: &mut selector,
+                    deal_recording: None,
+                    deal_recording_menu: false,
+                    bars_menu: &mut false,
                     history_step: &mut history_step,
                     history_reach_span_minutes: &mut span_minutes,
                     history_menu_rect: &mut history_menu_rect,
@@ -1762,6 +1829,7 @@ mod tests {
                         book_capture: true,
                         history_paging: true,
                         traded_volume: true,
+                        deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },
@@ -1829,6 +1897,9 @@ mod tests {
                         symbol: &mut symbol,
                         replay: None,
                         spec: &mut selector,
+                        deal_recording: None,
+                        deal_recording_menu: false,
+                        bars_menu: &mut false,
                         history_step: &mut history_step,
                         history_reach_span_minutes: &mut span_minutes,
                         history_menu_rect: &mut history_menu_rect,
@@ -1841,6 +1912,7 @@ mod tests {
                             book_capture: false,
                             history_paging: false,
                             traded_volume: false,
+                            deal_counter: false,
                             ohlcv_history: false,
                             ohlcv_generation: 0,
                         },
@@ -1899,6 +1971,9 @@ mod tests {
                     symbol: &mut symbol,
                     replay: None,
                     spec: &mut selector,
+                    deal_recording: None,
+                    deal_recording_menu: false,
+                    bars_menu: &mut false,
                     history_step: &mut history_step,
                     history_reach_span_minutes: &mut span_minutes,
                     history_menu_rect: &mut history_menu_rect,
@@ -1911,6 +1986,7 @@ mod tests {
                         book_capture: true,
                         history_paging: true,
                         traded_volume: true,
+                        deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
                     },

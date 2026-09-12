@@ -21,6 +21,7 @@ use crate::canvas_layout::PaneIdAllocator;
 mod chart_layers_wiring;
 mod chrome;
 mod control_host;
+pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 mod drawing_chrome_wiring;
 mod drawing_input;
@@ -417,6 +418,7 @@ impl QuantickApp {
             harness: Harness::from_env(),
             next_tab_id: FIRST_TAB_ID + 1,
             chrome: chrome::ChromeState {
+                record_deals: None,
                 layout_picker_open: false,
                 layout_rename: None,
                 layout_delete_confirm: None,

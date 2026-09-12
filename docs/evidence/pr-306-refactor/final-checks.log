@@ -1,0 +1,20 @@
+Input identity: commit e8f591cbbe1f1eecfd15fc3a3f751d45e3f4eb57, parent origin/main e8eb23e5. Worktree: refactor-pr-306-merge-ready. QUANTICK_BUBBLES removed from the test process.
+
+2026-09-11 cargo fmt --all -- --check: exit 0.
+2026-09-11 cargo clippy --workspace --all-targets: exit 0; finished dev profile.
+2026-09-11 cargo build --workspace: exit 0; app, MCP, and backtest compiled.
+2026-09-11 cargo test --workspace: exit 0; 2,031 app tests passed, 7 ignored, followed by every workspace crate and doctest with zero failures.
+2026-09-11 Git Bash .claude/hooks/guardrails_test.sh: exit 0; 225 passed, 0 failed.
+2026-09-11 ruff check --select F tools/mt5/ bridge/mt5/: exit 0; all checks passed.
+2026-09-11 bridge/mt5/tests/test_*.py: exit 0; all four suites passed.
+
+The complete command stream was observed in the mission session. GitHub Actions run 34659625082 independently repeats guardrails, Python checks, supply-chain policy, format, lint, build, workspace test, and Windows transport authority against the pushed commit.
+
+AI-review repair verification, 2026-09-12, input identity d17d0071:
+cargo fmt --all -- --check: exit 0.
+cargo clippy --workspace --all-targets: exit 0.
+cargo build --workspace: exit 0.
+cargo test --workspace: exit 0; 2,041 app tests plus every workspace crate and doctest completed with zero failures.
+The same four commands are repeated after the mission archive establishes the immutable review head.
+
+Final base refresh: origin/main advanced to 57767f25 and merged without conflict. The four commands are repeated on the resulting archived review head before any review marker is recorded.

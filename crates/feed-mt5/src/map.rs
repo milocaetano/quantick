@@ -481,6 +481,7 @@ mod tests {
             last: last.to_string(),
             volume,
             flags: flags::LAST | flags::VOLUME | 1024 | aggressor_bits,
+            deals: None,
         }
     }
 
@@ -574,6 +575,7 @@ mod tests {
             last: "0".to_string(),
             volume: 0,
             flags: flags::BID | flags::ASK, // no LAST
+            deals: None,
         };
         assert_eq!(m.map(&quote), MapOutcome::QuoteOnly);
         assert_eq!(m.stats.quote_only, 1);
@@ -611,6 +613,7 @@ mod tests {
             last: "0.00".to_string(),
             volume: 0,
             flags: flags::BID | flags::ASK,
+            deals: None,
         }
     }
 

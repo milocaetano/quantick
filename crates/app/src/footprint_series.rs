@@ -104,6 +104,20 @@ impl FootprintSeries {
         }
     }
 
+    /// Close the ladder for `bar` without folding `trade`: the print that
+    /// ended it belongs to no bar — a deal builder left it uncounted — so
+    /// the ladder closes on what it held and nothing opens the next one.
+    pub fn close_without(&mut self, bar: &Bar) {
+        debug_assert!(
+            bar.trade_count == self.pending,
+            "footprint trade counter drifted from the bar builder's"
+        );
+        if let Some(ladder) = self.builder.close() {
+            self.closed.push(ladder);
+        }
+        self.pending = 0;
+    }
+
     /// One ladder per closed bar, same indices as `ChartState::bars()`.
     #[must_use]
     pub fn closed(&self) -> &[BarFootprint] {
