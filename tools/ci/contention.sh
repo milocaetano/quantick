@@ -21,6 +21,8 @@
 #   CONTENTION_CORES    cores they share, from core 0   (default 4)
 #   CONTENTION_TIMEOUT  seconds before a copy is killed (default 360)
 #   CONTENTION_LOGS     where each copy's output goes   (default target/contention)
+#   CONTENTION_ROUNDS   batches run back to back, stopping at the first red
+#                       one; the copies' logs are the last round's (default 1)
 #   CONTENTION_KNOWN_ISSUES  the skip list              (default: beside this script)
 #
 # The skip list, `contention-known-issues.txt`, names tests already known to
@@ -49,6 +51,7 @@ target=${2:-}
 copies=${CONTENTION_COPIES:-24}
 cores=${CONTENTION_CORES:-4}
 limit=${CONTENTION_TIMEOUT:-360}
+rounds=${CONTENTION_ROUNDS:-1}
 logs=${CONTENTION_LOGS:-target/contention}
 known=${CONTENTION_KNOWN_ISSUES:-$(dirname "$0")/contention-known-issues.txt}
 
@@ -61,6 +64,7 @@ command -v taskset >/dev/null 2>&1 || die "taskset not found (util-linux); this 
 command -v timeout >/dev/null 2>&1 || die "timeout not found (coreutils)"
 [ "$copies" -gt "$cores" ] 2>/dev/null || die "CONTENTION_COPIES ($copies) must exceed CONTENTION_CORES ($cores), or nothing contends"
 [ "$cores" -ge 1 ] || die "CONTENTION_CORES must be at least 1"
+[ "$rounds" -ge 1 ] 2>/dev/null || die "CONTENTION_ROUNDS must be at least 1"
 online=$(nproc)
 [ "$cores" -le "$online" ] || die "CONTENTION_CORES ($cores) exceeds the $online online cores"
 
@@ -119,55 +123,60 @@ echo "contention: $copies copies of $binary on cores 0-$last of $online, ${limit
 echo "contention: logs in $logs"
 
 started=$(date +%s)
-i=1
-while [ "$i" -le "$copies" ]; do
-    (
-        cd "$workdir" &&
-            exec timeout --kill-after=10 "$limit" taskset -c "0-$last" "$binary" "$@"
-    ) >"$logs/copy-$i.log" 2>&1 &
-    eval "pid_$i=$!"
-    i=$((i + 1))
-done
-
+round=1
 failed=0
-i=1
-while [ "$i" -le "$copies" ]; do
-    eval "pid=\$pid_$i"
-    wait "$pid"
-    status=$?
-    log="$logs/copy-$i.log"
-    if [ "$status" -eq 0 ] && grep -q '^test result: ok\.' "$log"; then
+while [ "$round" -le "$rounds" ] && [ "$failed" -eq 0 ]; do
+    [ "$rounds" -gt 1 ] && echo "contention: round $round of $rounds"
+    i=1
+    while [ "$i" -le "$copies" ]; do
+        (
+            cd "$workdir" &&
+                exec timeout --kill-after=10 "$limit" taskset -c "0-$last" "$binary" "$@"
+        ) >"$logs/copy-$i.log" 2>&1 &
+        eval "pid_$i=$!"
         i=$((i + 1))
-        continue
-    fi
-    failed=$((failed + 1))
-    echo
-    case "$status" in
-        124 | 137) echo "== copy $i of $copies: TIMED OUT after ${limit}s (exit $status)" ;;
-        0) echo "== copy $i of $copies: exited 0 without a passing test summary" ;;
-        *) echo "== copy $i of $copies: FAILED (exit $status)" ;;
-    esac
-    # The names, one per line, as libtest prints them while running.
-    grep -E '^test .* \.\.\. FAILED$' "$log" | sed 's/^test \(.*\) \.\.\. FAILED$/   failed: \1/'
-    # A hung test is announced but never finishes.
-    grep -E 'has been running for over' "$log" | sed 's/^/   /'
-    # libtest's own failure report: every failing test's captured output and
-    # panic message, then the list of names.
-    sed -n '/^failures:$/,/^test result:/p' "$log"
-    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-        tail -n 20 "$log"
-    fi
-    i=$((i + 1))
-done
+    done
 
+    i=1
+    while [ "$i" -le "$copies" ]; do
+        eval "pid=\$pid_$i"
+        wait "$pid"
+        status=$?
+        log="$logs/copy-$i.log"
+        if [ "$status" -eq 0 ] && grep -q '^test result: ok\.' "$log"; then
+            i=$((i + 1))
+            continue
+        fi
+        failed=$((failed + 1))
+        echo
+        case "$status" in
+            124 | 137) echo "== copy $i of $copies: TIMED OUT after ${limit}s (exit $status)" ;;
+            0) echo "== copy $i of $copies: exited 0 without a passing test summary" ;;
+            *) echo "== copy $i of $copies: FAILED (exit $status)" ;;
+        esac
+        # The names, one per line, as libtest prints them while running.
+        grep -E '^test .* \.\.\. FAILED$' "$log" | sed 's/^test \(.*\) \.\.\. FAILED$/   failed: \1/'
+        # A hung test is announced but never finishes.
+        grep -E 'has been running for over' "$log" | sed 's/^/   /'
+        # libtest's own failure report: every failing test's captured output and
+        # panic message, then the list of names.
+        sed -n '/^failures:$/,/^test result:/p' "$log"
+        if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            tail -n 20 "$log"
+        fi
+        i=$((i + 1))
+    done
+
+    round=$((round + 1))
+done
 elapsed=$(($(date +%s) - started))
 echo
 if [ "$failed" -eq 0 ]; then
-    echo "contention: all $copies copies passed on $cores core(s) in ${elapsed}s"
+    echo "contention: all $copies copies passed on $cores core(s), $rounds round(s) in a row, in ${elapsed}s"
     exit 0
 fi
 
-echo "contention: $failed of $copies copies failed on $cores core(s) in ${elapsed}s"
+echo "contention: round $((round - 1)) of $rounds: $failed of $copies copies failed on $cores core(s) in ${elapsed}s"
 names=$(cat "$logs"/copy-*.log | grep -E '^test .* \.\.\. FAILED$' |
     sed 's/^test \(.*\) \.\.\. FAILED$/\1/')
 if [ -z "$names" ]; then

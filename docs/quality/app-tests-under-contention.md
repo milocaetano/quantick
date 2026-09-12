@@ -41,7 +41,8 @@ sh tools/ci/contention.sh                      # 24 copies on 4 cores
 CONTENTION_COPIES=12 CONTENTION_CORES=2 sh tools/ci/contention.sh
 ```
 
-Other knobs: `CONTENTION_TIMEOUT` and `CONTENTION_LOGS`, plus
+Other knobs: `CONTENTION_TIMEOUT`, `CONTENTION_LOGS`, `CONTENTION_ROUNDS`
+(see *Landing condition*), plus
 `CONTENTION_KNOWN_ISSUES` to point at another skip list. A package with more
 than one test target (a crate with `tests/*.rs` binaries) takes the target's
 name as a second argument: `sh tools/ci/contention.sh quantick-engine
@@ -136,6 +137,36 @@ found one more test: 1 of 3 jobs red with five tests skipped, 1 of 4 with five,
 already there, until the list stops growing or its issues are fixed. #413,
 #416 and #417 share one symptom, an evidence bundle whose `capture_revision` is
 missing under load, which may be one cause rather than three.
+
+## Landing condition
+
+The coordinator of campaign #367 (decision D19) holds this step's merge into
+`campaign/lean-a-plus` until it is expected green on unrelated pull requests.
+At `2452e577`, with seven tests skipped, 1 run in 6 was still red on a test
+that was already there (earlier batches: 1 in 4 and 1 in 3 with five
+skipped). That is about one run in five. The test it found, #417, is now
+skipped too, and the rate with all eight skipped has not been measured. The
+condition:
+
+1. A follow-up mission fixes #408–#411 and #413, #415–#417, removing each
+   test's line from the skip list.
+2. This branch is rebased onto that tip.
+3. The contention harness shows 10 consecutive green runs there.
+
+`CONTENTION_ROUNDS` makes the third step one command. It runs the batch that
+many times back to back, stops at the first red round, and says which round
+it was:
+
+```sh
+cargo test --workspace && CONTENTION_ROUNDS=10 sh tools/ci/contention.sh
+```
+
+On the CI runner shape, push the rebased tip to a throwaway branch that
+carries a push-triggered workflow running the same command, with
+`timeout-minutes: 60`: at the measured 154–300 seconds a round, ten rounds
+take 26–50 minutes. Delete the branch afterwards. The proof branches for
+#407 (`tmp/q9-proof-*`) were built that way. The regular `ci.yml` step stays
+at one round, since it runs on every push.
 
 ## When the step goes red
 

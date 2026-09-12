@@ -107,6 +107,12 @@ check "failures are counted per test" 1 "1 a::flaky" \
     env FAKE_MODE=fail_once sh "$harness"
 check "a hung copy is killed and reported" 1 "TIMED OUT after 2s" \
     env FAKE_MODE=hang_once CONTENTION_TIMEOUT=2 sh "$harness"
+check "rounds run back to back when every one passes" 0 "3 round(s) in a row" \
+    env CONTENTION_ROUNDS=3 sh "$harness"
+check "a red round stops the rounds and says which" 1 "round 1 of 3: 1 of 3 copies failed" \
+    env FAKE_MODE=fail_once CONTENTION_ROUNDS=3 sh "$harness"
+check "zero rounds is refused" 2 "CONTENTION_ROUNDS must be at least 1" \
+    env CONTENTION_ROUNDS=0 sh "$harness"
 check "a skip-list line with no issue stops the harness" 2 "every line is" \
     env CONTENTION_KNOWN_ISSUES="$work/no-issue.txt" sh "$harness"
 check "a skip-list name the binary lacks stops the harness" 2 "no test named a::gone" \

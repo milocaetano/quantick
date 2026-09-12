@@ -82,6 +82,20 @@ produce against a historical revision, but no Rust source change.
   #410, #411, #413, #415, #416, #417. The residual red rate at the tip (about
   one run in five, falling) was reported back to the coordinator before
   readiness.
+- **D19** — (coordinator decision, SendMessage to this child after the
+  residual-rate report, 2026-09-12; refines D14) Keep D14's design. (1) Stop
+  hunting after #417: add its line, no more exploratory batches. (2) Finish
+  reviews, markers and CI at the final head, run `gh pr ready` once, and hand
+  off. (3) The PR body and the doc state the measured residual rate (about one
+  run in five red on a pre-existing unlisted test at `2452e577`) and the
+  landing condition. (4) Landing condition, enforced by the coordinator: after
+  a follow-up mission (Q10) fixes #408–#417 and removes their lines, the
+  branch is rebased and shows 10 consecutive green contention runs at the tip
+  before the merge; this child makes that cheap and says how
+  (`CONTENTION_ROUNDS`). (5) #413, #416 and #417 say plainly that a Null
+  `capture_revision` under load may be a product race in the evidence
+  bundle, so the fix mission investigates the product path first. No test
+  source is edited.
 - **D6** — `gh pr ready` once, cd-prefixed from the Bash tool, after reviews,
   markers and green CI. Never merge; never touch `main`.
 
@@ -162,6 +176,13 @@ produce against a historical revision, but no Rust source change.
       *Evidence:* the file; the script's shim exercise (no-issue, stale,
       missing list); `git diff` of the `Test` step (none); issue URLs.
       → PR body. *(R7, R8)*
+- [ ] **A11** — Per D19: `CONTENTION_ROUNDS` runs the batch back to back and
+      stops at the first red round; the doc and PR body state the residual
+      rate and the landing condition, with the ten-round command; #413, #416
+      and #417 say plainly that the Null `capture_revision` may be a product
+      race.
+      *Evidence:* `tools/ci/contention_test.sh` rounds cases; the doc's
+      *Landing condition*; the three issue bodies. → PR body. *(R7, R10)*
 - [ ] **A8** — Every required check is green at the final PR head, the new
       step included.
       *Evidence:* `gh pr checks` at the head. → PR body, handoff. *(R8, R10)*
