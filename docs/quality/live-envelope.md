@@ -79,8 +79,8 @@ One pane, `tick:50`, 3,960,000 prints at the mean rate, from
 
 | Footprint | Tape (computed) | Bars (computed) | Working set (OS) | Ingest ns/print, first → last 100k | Slowest single ingest |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| off | 211.5 MiB | 9.1 MiB | +220.7 MiB | 146 → 135 | 21.2 ms at print 2,097,152 |
-| on | 211.5 MiB | 9.1 MiB | +569.6 MiB | 214 → 197 | 21.2 ms at print 2,097,152 |
+| off | 211.5 MiB | 9.1 MiB | +220.8 MiB | 109 → 98 | 21.4 ms at print 2,097,152 |
+| on | 211.5 MiB | 9.1 MiB | +569.5 MiB | 192 → 164 | 19.8 ms at print 2,097,152 |
 
 Heatmap history at its own caps: 99,000 aggressions (6.8 MiB) after 30 minutes
 at 55 prints/s; at 300 prints/s the 100,000-aggression count binds after about
@@ -96,7 +96,7 @@ Reading the table:
   tab keeps its own copy of the tape.
 - **The tape's growth has one stall per doubling.** `Vec<Trade>` reallocates
   when it doubles; the copy runs on the UI thread. The largest inside the
-  envelope is 21 ms at print 2,097,152 (a 112 MiB copy) — one dropped frame,
+  envelope is about 20 ms at print 2,097,152 (a 112 MiB copy) — one dropped frame,
   once, about 10.6 hours into two sessions of the mean rate. The next (a
   224 MiB copy, about twice as long) would come at 4,194,304 prints, just
   outside the envelope. Within a single
@@ -126,7 +126,9 @@ pane feeds them. Output: [burst-test.txt](live-envelope/burst-test.txt).
 - **Inside**: tick:1 (the command-heaviest chart), 300 prints/s for 5 s, then
   2,000 prints/s for 3 s, with 1,000 depth updates/s throughout, then the peak
   frame (512 prints and 2,048 depth updates in one frame). Every print is in a
-  bar, the indicator has one row per closed bar, its last row equals the
+  bar (each frame is sent once the previous one was admitted, so the
+  assertion does not depend on the machine's load; the harness above
+  measures how often a frame had to wait), the indicator has one row per closed bar, its last row equals the
   cumulative delta computed independently from the prints, the book retained
   one aggression per print and applied every depth update, and `deferred`,
   `parked` and `coalesced_parked` stay 0 on both workers.
@@ -136,6 +138,18 @@ pane feeds them. Output: [burst-test.txt](live-envelope/burst-test.txt).
   `coalesced_parked` > 0), nothing is refused; released, the parked commands
   drain frame by frame and every count above holds again, including the lane's
   forming run, which proves the folded forming-bar updates lost no print.
+
+### Queue depth and keep-up
+
+`measure.txt` block 4 plays tick:1 (one indicator command per print) at 300
+prints/s for 20 s and 2,000 prints/s for 5 s, 1,000 depth updates/s
+throughout, one frame per 16.7 ms of wall time, and records per second the
+deepest each queue got and how many frames found the previous frame not yet
+taken by a worker. At most one frame's worth was ever queued (6 and 35
+indicator commands, 23 and 52 book commands, against caps of 1,024 and
+4,096), nothing parked, and no frame was late after the first (which waits
+for the pane's setup commands). The peak frame — 512 prints and 2,048 depth
+updates — was sent in under 4 ms on the UI side.
 
 ## Frame timing before and after
 

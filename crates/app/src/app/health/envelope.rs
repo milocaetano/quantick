@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use super::worker_diagnostics::pane_workers;
 use crate::live_envelope::{
     BURST_TRADES_PER_S, DEPTH_UPDATES_PER_S, RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S,
 };
@@ -108,9 +109,8 @@ pub(in crate::app) fn observe(
     };
     for tab in tabs {
         for (pane, _side) in tab.panes() {
-            reading.add(&pane.indicator_worker.progress());
-            if let Some(view) = &pane.orderflow {
-                reading.add(&view.worker_progress());
+            for (_kind, progress) in pane_workers(pane) {
+                reading.add(&progress);
             }
             let retained = pane.state.trades().len();
             if reading.retained_owner.is_none() || retained > reading.retained_trades {

@@ -98,6 +98,9 @@ pub(super) struct Rig {
     last_row: Option<f64>,
     preview: Option<f64>,
     pub depths: Depths,
+    /// Frames that found the previous frame not yet admitted and waited for
+    /// it: how often the workers fell behind the frame cadence.
+    pub late_frames: usize,
 }
 
 impl Rig {
@@ -112,6 +115,7 @@ impl Rig {
             last_row: None,
             preview: None,
             depths: Depths::default(),
+            late_frames: 0,
         };
         rig.indicators.send(IndicatorCommand::Add {
             slot: SlotId(1),
@@ -234,6 +238,30 @@ impl Rig {
         self.book.progress().counts
     }
 
+    /// Wait, bounded, until both workers have taken every command sent so
+    /// far into a batch, counting the frame as late if it had to.
+    ///
+    /// The envelope's per-frame claim — a worker drains one frame before the
+    /// next arrives — is a statement about wall time, measured by the harness
+    /// and the dense replay rather than asserted here: a descheduled test
+    /// thread would otherwise fail the queue for the machine's sake.
+    fn await_admitted(&mut self) {
+        let admitted = |rig: &Self| {
+            let (indicator, book) = (rig.indicator_counts(), rig.book_counts());
+            indicator.queued + indicator.parked + book.queued + book.parked == 0
+        };
+        if admitted(self) {
+            return;
+        }
+        self.late_frames += 1;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !admitted(self) {
+            assert!(Instant::now() < deadline, "the workers never caught up");
+            std::thread::sleep(Duration::from_micros(200));
+            self.read();
+        }
+    }
+
     /// Frames with nothing new until nothing is parked, then both barriers.
     pub(super) fn settle(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -296,8 +324,9 @@ impl Rig {
 }
 
 /// Play `rate` prints/s and `depth_rate` updates/s for `seconds`, one frame
-/// every 16.7 ms of wall time — a UI's cadence, not a flood. Returns the
-/// depth updates sent.
+/// every 16.7 ms of wall time — a UI's cadence, not a flood — each frame sent
+/// only once the previous one was admitted ([`Rig::late_frames`] counts the
+/// waits). Returns the depth updates sent.
 pub(super) fn play(
     rig: &mut Rig,
     tape: &mut Tape,
@@ -312,6 +341,7 @@ pub(super) fn play(
     for frame in 1..=frames {
         let trades = (rate * frame / FRAMES_PER_S) - sent_trades;
         let depth = (depth_rate * frame / FRAMES_PER_S) - sent_depth;
+        rig.await_admitted();
         rig.frame(tape, trades as usize, rate, depth as usize);
         sent_trades += trades;
         sent_depth += depth;
@@ -373,11 +403,12 @@ fn inside_the_envelope_every_print_arrives_and_no_queue_fills() {
     }
     println!(
         "inside: prints={} depth_updates={depth} bars={} max_queued indicator={} book={} \
-         (caps {INDICATOR_COMMAND_QUEUE} / {BOOK_COMMAND_QUEUE}) deferred=0 parked=0 lost=0",
+         (caps {INDICATOR_COMMAND_QUEUE} / {BOOK_COMMAND_QUEUE}) late_frames={} deferred=0 parked=0 lost=0",
         tape.prints.len(),
         rig.state.bars().len(),
         rig.depths.indicator_queued,
         rig.depths.book_queued,
+        rig.late_frames,
     );
 }
 

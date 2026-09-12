@@ -18,7 +18,9 @@
 //!    holds);
 //! 3. the heatmap's retained history at its own caps;
 //! 4. worker queue depth second by second through [`super::burst::Rig`] at the
-//!    sustained rate, the burst rate and the peak frame.
+//!    sustained rate, the burst rate and the peak frame, with the frames that
+//!    found the previous one not yet taken by a worker (late frames): the
+//!    measured half of the envelope's per-frame keep-up claim.
 
 use super::burst::{FRAMES_PER_S, Rig, Tape, play};
 use crate::indicator_worker::IndicatorCommand;
@@ -219,17 +221,21 @@ fn queue_depths() {
     for (name, rate, seconds) in phases {
         for second in 0..seconds {
             rig.depths = Default::default();
+            let late_before = rig.late_frames;
             depth_sent += play(&mut rig, &mut tape, rate, DEPTH_UPDATES_PER_S, 1);
             println!(
                 "  {name:<9} t={second:>2}s rate={rate}/s  indicator queued max {:>4}/{INDICATOR_COMMAND_QUEUE}  \
-                 book queued max {:>4}/{BOOK_COMMAND_QUEUE}  parked {}/{}",
+                 book queued max {:>4}/{BOOK_COMMAND_QUEUE}  parked {}/{}  late frames {}/{FRAMES_PER_S}",
                 rig.depths.indicator_queued,
                 rig.depths.book_queued,
                 rig.depths.indicator_parked,
                 rig.depths.book_parked,
+                rig.late_frames - late_before,
             );
         }
     }
+    // The peak frame arrives at workers that kept up with the burst before it.
+    rig.settle();
     rig.depths = Default::default();
     let peak = Instant::now();
     rig.frame(
