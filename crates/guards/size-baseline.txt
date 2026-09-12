@@ -208,6 +208,16 @@
 
 crates/app/src/app.rs 769
 
+# ## Three entries that no longer exist
+#
+# Everything from here to the note that closes this block is the history of
+# `paper_report.rs`, `paper_account.rs` and `paper_trading.rs` - the two
+# earlier cuts and the allowances they carried, including the `+11` for the
+# eight `QUANTICK_PAPER_*` hooks. None of it attaches to a live entry any
+# more: the third cut took all three under the threshold and their entries
+# are gone. It is kept because the reasoning still explains why the code is
+# shaped the way it is, and deleting it would leave the shape unexplained.
+#
 # The five entries below `pane.rs` were invisible to the first version of this
 # guard, which stopped counting at the first `#[cfg(test)]` of any kind:
 # `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221 of 2,283.
