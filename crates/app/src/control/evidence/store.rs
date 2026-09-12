@@ -65,15 +65,69 @@ struct StoreState {
     epoch: u64,
 }
 
+/// One capture's bytes, as the store retains and pages them.
+///
+/// The fields are private and [`RetainedBundle::new`] is the only way in,
+/// because three of them are facts *about* the bytes rather than inputs: the
+/// digest, the byte count and the chunking. `insert`, `expire`,
+/// `evict_to_bounds` and `read` all rely on `encoded_bytes` being the sum of
+/// the chunk lengths and on `content_digest` being the hash of their
+/// concatenation. When a producer built the struct literal itself, those
+/// invariants were established outside the file that depends on them, and the
+/// next producer — a second capture kind, an import — would have had to repeat
+/// the chunking and the digest by hand, where a stale byte count silently
+/// corrupts the store's accounting.
 pub(super) struct RetainedBundle {
-    pub(super) evidence_id: EvidenceId,
-    pub(super) resource_id: ResourceId,
-    pub(super) capture_revision: WireU64,
-    pub(super) expires_at_unix_ms: i64,
-    pub(super) content_digest: Sha256Digest,
-    pub(super) encoded_bytes: usize,
-    pub(super) source_scopes: BTreeSet<PermissionId>,
-    pub(super) chunks: Vec<Vec<u8>>,
+    evidence_id: EvidenceId,
+    resource_id: ResourceId,
+    capture_revision: WireU64,
+    expires_at_unix_ms: i64,
+    content_digest: Sha256Digest,
+    encoded_bytes: usize,
+    source_scopes: BTreeSet<PermissionId>,
+    chunks: Vec<Vec<u8>>,
+}
+
+impl RetainedBundle {
+    /// A bundle of `bytes`, digested, counted and chunked at
+    /// [`CONTROL_EVIDENCE_CHUNK_BYTES`] here rather than by the caller.
+    pub(super) fn new(
+        evidence_id: EvidenceId,
+        resource_id: ResourceId,
+        capture_revision: WireU64,
+        expires_at_unix_ms: i64,
+        source_scopes: BTreeSet<PermissionId>,
+        bytes: &[u8],
+    ) -> Self {
+        Self {
+            evidence_id,
+            resource_id,
+            capture_revision,
+            expires_at_unix_ms,
+            content_digest: raw_sha256(bytes),
+            encoded_bytes: bytes.len(),
+            source_scopes,
+            chunks: bytes
+                .chunks(CONTROL_EVIDENCE_CHUNK_BYTES)
+                .map(<[u8]>::to_vec)
+                .collect(),
+        }
+    }
+
+    /// The digest of the whole bundle, as its manifest publishes it.
+    pub(super) fn content_digest(&self) -> &Sha256Digest {
+        &self.content_digest
+    }
+
+    /// The bundle's length in bytes, as its manifest publishes it.
+    pub(super) fn encoded_bytes(&self) -> usize {
+        self.encoded_bytes
+    }
+
+    /// The digest of each chunk in order, as its manifest publishes them.
+    pub(super) fn chunk_digests(&self) -> Vec<Sha256Digest> {
+        self.chunks.iter().map(|chunk| raw_sha256(chunk)).collect()
+    }
 }
 
 impl Default for EvidenceStore {
@@ -351,20 +405,14 @@ mod tests {
         captured_at_unix_ms: i64,
         retention_ms: i64,
     ) -> RetainedBundle {
-        let payload = vec![b'q'; bytes];
-        RetainedBundle {
-            evidence_id: evidence_id(seed),
-            resource_id: ResourceId::from_bytes([seed; 16]),
-            capture_revision: WireU64::new(u64::from(seed)),
-            expires_at_unix_ms: captured_at_unix_ms + retention_ms,
-            content_digest: raw_sha256(&payload),
-            encoded_bytes: payload.len(),
-            source_scopes: scopes(&["observe", EVIDENCE_PERMISSION_ID]),
-            chunks: payload
-                .chunks(CONTROL_EVIDENCE_CHUNK_BYTES)
-                .map(<[u8]>::to_vec)
-                .collect(),
-        }
+        RetainedBundle::new(
+            evidence_id(seed),
+            ResourceId::from_bytes([seed; 16]),
+            WireU64::new(u64::from(seed)),
+            captured_at_unix_ms + retention_ms,
+            scopes(&["observe", EVIDENCE_PERMISSION_ID]),
+            &vec![b'q'; bytes],
+        )
     }
 
     #[test]

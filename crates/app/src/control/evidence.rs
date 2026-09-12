@@ -77,7 +77,7 @@ mod store;
 use image::encode_screenshot;
 pub(crate) use image::{RawScreenshot, ScreenshotPixels};
 pub(crate) use store::EvidenceStore;
-use store::{RetainedBundle, raw_sha256};
+use store::RetainedBundle;
 
 /// The module that owns both evidence capabilities.
 pub(crate) const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -781,37 +781,27 @@ impl EvidenceCapture {
             .screenshot
             .as_ref()
             .map(|image| image.descriptor.clone());
-        let content_digest = raw_sha256(&canonical);
-        let bytes = canonical;
-        let encoded_bytes = bytes.len();
-        let chunks = bytes
-            .chunks(CONTROL_EVIDENCE_CHUNK_BYTES)
-            .map(<[u8]>::to_vec)
-            .collect::<Vec<_>>();
-        let chunk_digests = chunks
-            .iter()
-            .map(|chunk| raw_sha256(chunk))
-            .collect::<Vec<_>>();
-        let chunk_count = chunks.len();
-
         let retention_ms = self.store.retention_ms();
         let expires_at_unix_ms = self
             .captured_at_unix_ms
             .saturating_add(i64::try_from(retention_ms).unwrap_or(i64::MAX));
-        self.store.insert(
-            RetainedBundle {
-                evidence_id: self.evidence_id.clone(),
-                resource_id: self.resource_id.clone(),
-                capture_revision,
-                expires_at_unix_ms,
-                content_digest: content_digest.clone(),
-                encoded_bytes,
-                source_scopes: self.source_scopes.clone(),
-                chunks,
-            },
-            self.store_epoch,
-            self.captured_at_unix_ms,
-        )?;
+        // The bundle computes its own digest, length and chunking; the
+        // manifest reads them back rather than computing them a second time
+        // beside it, so the two cannot describe different bytes.
+        let bundle = RetainedBundle::new(
+            self.evidence_id.clone(),
+            self.resource_id.clone(),
+            capture_revision,
+            expires_at_unix_ms,
+            self.source_scopes.clone(),
+            &canonical,
+        );
+        let content_digest = bundle.content_digest().clone();
+        let encoded_bytes = bundle.encoded_bytes();
+        let chunk_digests = bundle.chunk_digests();
+        let chunk_count = chunk_digests.len();
+        self.store
+            .insert(bundle, self.store_epoch, self.captured_at_unix_ms)?;
 
         Ok((
             EvidenceManifest {
