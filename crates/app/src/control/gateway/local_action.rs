@@ -16,18 +16,18 @@ use quantick_control::{
     error::{ControlError, codes},
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
     id::RequestId,
-    wire::{RequestEnvelope, WireU64},
+    wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
 };
 use serde_json::Value;
 
-use crate::app::QuantickApp;
+use crate::{app::QuantickApp, metrics};
 
 use super::super::{
     contract::{PreparedDispatch, UiReadContext},
     trace::{ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, result_digest},
     types::known_error,
 };
-use super::{ActionOrigin, ControlAccess};
+use super::{ActionOrigin, ControlAccess, HOOK_ACTOR_CLIENT_NAME, UI_ACTOR_CLIENT_NAME};
 
 impl ControlAccess {
     /// Invoke one registered action from inside the application — the hotkey,
@@ -279,6 +279,37 @@ impl ControlAccess {
                 "only registered reads are invoked from inside the application",
                 false,
             )),
+        }
+    }
+
+    /// The actor a launch hook acts as: an agent, named for what it is, so
+    /// nothing it places can pass for the trader's own hand and a screenshot
+    /// shows exactly what a connected assistant would have produced.
+    pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
+        self.identity.as_ref()?;
+        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
+        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
+        Some(actor)
+    }
+
+    /// The trusted actor context for an action taken in this window by the
+    /// human (`HumanUi`) or replayed from a control trace (`Automation`).
+    fn local_actor(&mut self, actor_kind: ActorKind, reason: Option<String>) -> ActorContext {
+        let identity = self
+            .identity
+            .as_ref()
+            .expect("local actions need the process identity");
+        let request_id = RequestId::new(format!("ui-{}", self.next_ui_request))
+            .expect("generated request ID is valid");
+        self.next_ui_request = self.next_ui_request.saturating_add(1);
+        ActorContext {
+            actor_kind,
+            principal_id: identity.ui_actor.principal_id.clone(),
+            client_name: UI_ACTOR_CLIENT_NAME.to_owned(),
+            connection_id: identity.ui_actor.connection_id.clone(),
+            request_id,
+            reason,
+            requested_at_unix_ms: metrics::wall_clock_ms(),
         }
     }
 }

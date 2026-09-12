@@ -15,7 +15,7 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 use quantick_control::{
     error::{ControlError, codes},
-    id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId, RequestId},
+    id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
     limits::{
         CONTROL_CLIENT_BURST, CONTROL_CLIENT_RATE_PER_SECOND, CONTROL_HANDSHAKE_TIMEOUT_MS,
         CONTROL_MAX_CONNECTIONS, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION,
@@ -561,16 +561,6 @@ impl ControlAccess {
         self.replayed_author.as_ref()
     }
 
-    /// The actor a launch hook acts as: an agent, named for what it is, so
-    /// nothing it places can pass for the trader's own hand and a screenshot
-    /// shows exactly what a connected assistant would have produced.
-    pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
-        self.identity.as_ref()?;
-        let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));
-        actor.client_name = HOOK_ACTOR_CLIENT_NAME.to_owned();
-        Some(actor)
-    }
-
     /// Whether this actor may interrupt the trader once more.
     ///
     /// Budgeted per connection, not per capability: three toasts and three
@@ -592,27 +582,6 @@ impl ControlAccess {
 
     pub fn journal_mut(&mut self) -> &mut EventJournal {
         &mut self.journal
-    }
-
-    /// The trusted actor context for an action taken in this window by the
-    /// human (`HumanUi`) or replayed from a control trace (`Automation`).
-    fn local_actor(&mut self, actor_kind: ActorKind, reason: Option<String>) -> ActorContext {
-        let identity = self
-            .identity
-            .as_ref()
-            .expect("local actions need the process identity");
-        let request_id = RequestId::new(format!("ui-{}", self.next_ui_request))
-            .expect("generated request ID is valid");
-        self.next_ui_request = self.next_ui_request.saturating_add(1);
-        ActorContext {
-            actor_kind,
-            principal_id: identity.ui_actor.principal_id.clone(),
-            client_name: UI_ACTOR_CLIENT_NAME.to_owned(),
-            connection_id: identity.ui_actor.connection_id.clone(),
-            request_id,
-            reason,
-            requested_at_unix_ms: metrics::wall_clock_ms(),
-        }
     }
 
     /// One request on the application thread: the authority checks the

@@ -74,8 +74,8 @@ mod store;
 
 // Re-exported at the visibility they had: the gateway hands a frame over as
 // `RawScreenshot`, and the contract and the gateway share the store by path.
+use image::encode_screenshot;
 pub(crate) use image::{RawScreenshot, ScreenshotPixels};
-use image::{encode_screenshot, region_gap};
 pub(crate) use store::EvidenceStore;
 use store::{RetainedBundle, raw_sha256};
 
@@ -874,12 +874,12 @@ fn screenshot_gap(reason: &str) -> EvidenceGap {
     }
 }
 
-/// What `bytes` bytes cost once base64 has had them.
-///
-/// The size that actually matters for anything travelling the wire or sitting
-/// inside the document: four characters for every three bytes, rounded up.
-const fn base64_len(bytes: usize) -> usize {
-    bytes.div_ceil(3).saturating_mul(4)
+/// Why this bundle's image carries no control regions.
+fn region_gap(reason: &str) -> EvidenceGap {
+    EvidenceGap {
+        subject: "screenshot.control_regions".to_owned(),
+        reason: reason.to_owned(),
+    }
 }
 
 /// What no bundle in this tier carries, whatever was asked for.

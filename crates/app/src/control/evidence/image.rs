@@ -18,8 +18,7 @@ use super::super::{
     types::{canonical_f32, canonical_f64, wire_usize},
 };
 use super::{
-    EvidenceControlRegion, EvidenceGap, EvidenceImage, EvidenceScreenshot, base64_len,
-    screenshot_gap,
+    EvidenceControlRegion, EvidenceGap, EvidenceImage, EvidenceScreenshot, screenshot_gap,
 };
 // The one thing this file borrows from the other side of the seam: the
 // digest helper, so an image and a chunk are hashed the same way.
@@ -34,6 +33,14 @@ const SCREENSHOT_FORMAT: &str = "png";
 /// fractional places per rectangle would inflate every bundle that has a
 /// screenshot for precision no reader can use.
 const REGION_DECIMAL_PLACES: u32 = 2;
+
+/// What `bytes` bytes cost once base64 has had them.
+///
+/// The size that actually matters for anything travelling the wire or sitting
+/// inside the document: four characters for every three bytes, rounded up.
+const fn base64_len(bytes: usize) -> usize {
+    bytes.div_ceil(3).saturating_mul(4)
+}
 
 // ---------------------------------------------------------------------------
 // The screenshot, before it is encoded
@@ -182,14 +189,6 @@ pub(super) fn encode_screenshot(
         image_base64: Base64Bytes::from_bytes(&png),
         descriptor,
     })
-}
-
-/// Why this bundle's image carries no control regions.
-pub(super) fn region_gap(reason: &str) -> EvidenceGap {
-    EvidenceGap {
-        subject: "screenshot.control_regions".to_owned(),
-        reason: reason.to_owned(),
-    }
 }
 
 fn region_of(
