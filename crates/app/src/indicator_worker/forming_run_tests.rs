@@ -134,12 +134,13 @@ fn a_cut_run_starts_its_prefixes_again_from_its_own_first_print() {
 }
 
 /// The limit itself: whatever the forming bar's length, a walk folds at most
-/// `CHECKPOINT_SPACING - 1` prints per rung, and appending folds each new
+/// `CHECKPOINT_SPACING - 1` prints per rung and never more than the run holds
+/// — the single pass the unbounded fold made — and appending folds each new
 /// print once.
 #[test]
 fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
     let per_rung = (CHECKPOINT_SPACING - 1) as u64;
-    for length in [1_000_usize, 1_000_000] {
+    for length in [1_usize, 7, 50, 63, 64, 65, 1_000, 1_000_000] {
         let mut run = FormingRun::default();
         let tape: Vec<Trade> = (1..=length as u64).map(synthetic).collect();
         for batch in tape.chunks(5) {
@@ -151,14 +152,14 @@ fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
                 batch.len()
             );
         }
-        for rungs in [1_usize, 16, MAX_LANE_RUNGS] {
+        for rungs in [1_usize, 16, 50, MAX_LANE_RUNGS] {
             let before = folds_on_this_thread();
             let prefixes = run.prefixes(rungs);
             let walked = folds_on_this_thread() - before;
+            let budget = (rungs as u64 * per_rung).min(length as u64);
             assert!(
-                walked <= rungs as u64 * per_rung,
-                "{length} prints, {rungs} rungs: the walk folded {walked}, budget {}",
-                rungs as u64 * per_rung
+                walked <= budget,
+                "{length} prints, {rungs} rungs: the walk folded {walked}, budget {budget}"
             );
             assert_eq!(
                 prefixes.last().map(|bar| bar.trade_count),

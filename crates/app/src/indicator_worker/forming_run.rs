@@ -13,12 +13,13 @@
 //! hour on a dense tape (a `time:1h` chart, a large dollar bar) folded a
 //! million prints sixty times a second. The run now carries its fold: a
 //! running bar, extended once per appended print, and a checkpoint — the
-//! exact fold so far — every [`CHECKPOINT_SPACING`] prints. A rung starts from
-//! the checkpoint at or below its position and folds at most
+//! exact fold so far — every [`CHECKPOINT_SPACING`] prints. A walk folds
+//! forward from rung to rung and jumps to the checkpoint at or below a rung
+//! whenever that lies past where it stands, so a rung folds at most
 //! `CHECKPOINT_SPACING - 1` prints; the last rung is the running bar itself.
-//! A walk of `r` rungs therefore folds at most `r × (CHECKPOINT_SPACING - 1)`
-//! prints whatever the run's length, and appending
-//! folds each print once. [`Bar::extend`] is a sequential fold over plain
+//! A walk of `r` rungs over `len` prints therefore folds at most
+//! `min(len, 63 r)` prints — never more than the single pass it replaced —
+//! and appending folds each print once. [`Bar::extend`] is a sequential fold over plain
 //! data, so a checkpoint is the same intermediate state the unbounded fold
 //! passed through and every prefix is the same bar, byte for byte
 //! (`forming_run_tests` holds the old fold as the oracle).
@@ -96,25 +97,6 @@ impl FormingRun {
         self.trades.capacity()
     }
 
-    /// The fold of the run's first `end` prints (`1 ≤ end ≤ len`), from the
-    /// checkpoint at or below `end`.
-    fn prefix(&self, end: usize) -> Bar {
-        let full = end / CHECKPOINT_SPACING;
-        let (mut bar, from) = match full.checked_sub(1) {
-            Some(index) => (self.checkpoints[index].clone(), full * CHECKPOINT_SPACING),
-            None => (Bar::opened_by(&self.trades[0]), 1),
-        };
-        debug_assert!(
-            end - from < CHECKPOINT_SPACING,
-            "a rung folds past its checkpoint"
-        );
-        for trade in &self.trades[from..end] {
-            bar.extend(trade);
-        }
-        count_folds(end - from + usize::from(full == 0));
-        bar
-    }
-
     /// The run's forming-bar prefixes, at most `rungs` of them, oldest first.
     ///
     /// The trades are the forming bar's own, in occurrence order, so folding
@@ -133,9 +115,35 @@ impl FormingRun {
         }
         let step = len.div_ceil(rungs.min(len)).max(1);
         let mut prefixes = Vec::with_capacity(len.div_ceil(step) + 1);
+        // The fold walks forward from rung to rung and jumps to a checkpoint
+        // whenever one lies past where it stands, so a rung folds at most
+        // `step` prints and never more than `CHECKPOINT_SPACING - 1`: a short
+        // run costs the one pass it always did, a long one the budget.
+        let mut folded: Option<(Bar, usize)> = None;
         let mut end = step;
         while end < len {
-            prefixes.push(self.prefix(end));
+            let base = end - end % CHECKPOINT_SPACING;
+            let (mut bar, from) = match folded.take() {
+                Some((bar, at)) if at >= base => (bar, at),
+                _ if base > 0 => (
+                    self.checkpoints[base / CHECKPOINT_SPACING - 1].clone(),
+                    base,
+                ),
+                _ => {
+                    count_folds(1);
+                    (Bar::opened_by(&self.trades[0]), 1)
+                }
+            };
+            debug_assert!(
+                end - from < CHECKPOINT_SPACING,
+                "a rung folds past its checkpoint"
+            );
+            for trade in &self.trades[from..end] {
+                bar.extend(trade);
+            }
+            count_folds(end - from);
+            prefixes.push(bar.clone());
+            folded = Some((bar, end));
             end += step;
         }
         prefixes.push(running.clone());
