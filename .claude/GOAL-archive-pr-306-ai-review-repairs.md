@@ -51,9 +51,6 @@ No new trader decision was required. The decisions already recorded in `.claude/
 - [ ] **G4** — Full high-tier `arch-review` finishes with every Blocker and Should-fix resolved or explicitly deferred in the pull request body.
   *Evidence:* final arch-review verdict and marker.
   → pull request #306 and the branch git dir marker.
-- [ ] **G5** — Full `delivery-review` returns PASS over the archived mission and the final branch head.
-  *Evidence:* final delivery-review verdict and marker.
-  → pull request #306 and the branch git dir marker.
 - [x] **G6** — Any user-visible behavior changed by the refactor remains hook-reachable and passes `visual-qa` and `trader-ux-review` with no unresolved Blocker.
   *Evidence:* UI harness inventory and review reports, or a diff-backed statement that no visible behavior changed.
   → `docs/evidence/pr-306-refactor/ui-validation.md`.
@@ -72,7 +69,7 @@ No new trader decision was required. The decisions already recorded in `.claude/
 
 ## Closing steps
 
-- **C1** — `delivery-review` returns PASS over the final archived mission.
+- **C1** — `delivery-review` returns PASS over the final archived mission and records its current marker. This closing step was initially duplicated as `G5`; the delivery review correctly required the source-map correction because reviews are closing steps, never acceptance criteria.
 - **C2** — Pull request #306 is updated, open, mergeable, and green in GitHub.
 
 ## Request as received
