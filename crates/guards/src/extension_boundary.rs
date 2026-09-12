@@ -218,8 +218,14 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 /// The root production lines today, or why the scan could not count them.
 /// Never `0` for a failed scan (#365): zero is the best number this ratchet
 /// can print, and a failure has to read as one.
-pub fn measured(root: &Path) -> Result<usize, String> {
-    inventory(root).map(|inventory| crate::ratchet::total(&inventory.counts))
+pub fn measured(root: &Path) -> Result<usize, crate::ratchet::Unmeasured> {
+    match inventory(root) {
+        Ok(inventory) => Ok(crate::ratchet::total(&inventory.counts)),
+        // The inventory stops at its first failure, so it names one path.
+        Err(reason) => Err(crate::ratchet::Unmeasured {
+            missed: vec![format!("  {reason}")],
+        }),
+    }
 }
 
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {

@@ -158,7 +158,7 @@ pub struct Ratchet {
     ///
     /// An error when the walk could not measure every path it tracks, never a
     /// smaller number: see [`ratchet::complete_total`].
-    pub measured: fn(&Path) -> Result<usize, String>,
+    pub measured: fn(&Path) -> Result<usize, ratchet::Unmeasured>,
 }
 
 /// One guard, so the binary and the tests name the same things in the same

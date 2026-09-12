@@ -460,7 +460,7 @@ fn collect_sources(
 ///
 /// An error rather than a smaller total when the walk missed anything, as
 /// for the other ratchets.
-pub fn measured(root: &Path) -> Result<usize, String> {
+pub fn measured(root: &Path) -> Result<usize, ratchet::Unmeasured> {
     let found = measure(root);
     ratchet::complete_total(&found.counts, &found.unreadable)
 }

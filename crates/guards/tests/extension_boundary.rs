@@ -461,7 +461,11 @@ fn a_failed_scan_is_not_measured_as_zero() {
 
     fs::write(root.join("crates/app/src/app.rs"), b"\xff").unwrap();
     let failure = boundary::measured(&root).expect_err("an unreadable source has no count");
-    assert!(failure.contains("unreadable source"), "{failure}");
+    assert_eq!(failure.missed.len(), 1, "{failure}");
+    assert!(
+        failure.missed[0].starts_with("  crates/app/src/app.rs: unreadable source"),
+        "{failure}"
+    );
     let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
         .env("QUANTICK_GUARDS_ROOT", root.path())
         .arg("--report")
@@ -481,12 +485,18 @@ fn a_failed_scan_is_not_measured_as_zero() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("extension-boundary: crates/app/src/app.rs: unreadable source"),
+        stderr.contains(
+            "extension-boundary: 1 path(s) could not be measured:
+  crates/app/src/app.rs: unreadable source"
+        ),
         "{stderr}"
     );
     assert!(!output.status.success());
 
     let missing = ScratchDir::new("extension-measured-missing-root");
     let failure = boundary::measured(&missing).expect_err("no source is not zero lines");
-    assert!(failure.contains("unreadable source directory"), "{failure}");
+    assert!(
+        failure.missed[0].contains("unreadable source directory"),
+        "{failure}"
+    );
 }

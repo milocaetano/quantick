@@ -60,15 +60,36 @@ pub fn total(counts: &[(String, usize)]) -> usize {
 /// "excellent" and cannot be told apart from "measured nothing". Each line of
 /// `missed` names one path or directory the walk could not measure; any at
 /// all turns the total into a failure the caller has to print as one.
-pub fn complete_total(counts: &[(String, usize)], missed: &[String]) -> Result<usize, String> {
+pub fn complete_total(counts: &[(String, usize)], missed: &[String]) -> Result<usize, Unmeasured> {
     if missed.is_empty() {
         return Ok(total(counts));
     }
-    Err(format!(
-        "{} path(s) could not be measured:\n{}",
-        missed.len(),
-        missed.join("\n")
-    ))
+    Err(Unmeasured {
+        missed: missed.to_vec(),
+    })
+}
+
+/// A measurement that could not be taken, and why.
+///
+/// Typed rather than a message so a caller can enumerate what was missed —
+/// tell a missing root from one unreadable file — without parsing prose;
+/// [`Display`](std::fmt::Display) gives the sentence `--report` prints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unmeasured {
+    /// One `"  <path>: <reason>"` line per path or directory the walk could
+    /// not measure, in the order the walk met them.
+    pub missed: Vec<String>,
+}
+
+impl std::fmt::Display for Unmeasured {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} path(s) could not be measured:\n{}",
+            self.missed.len(),
+            self.missed.join("\n")
+        )
+    }
 }
 
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
@@ -690,9 +711,15 @@ mod tests {
         assert_eq!(complete_total(&counts, &[]), Ok(12));
         let missed = ["  src/c.md: could not be read: denied".to_owned()];
         let failure = complete_total(&counts, &missed).expect_err("a missed path is a failure");
-        assert!(
-            failure.contains("1 path(s)") && failure.contains("src/c.md"),
-            "the failure names what was missed: {failure}"
+        assert_eq!(
+            failure.missed,
+            missed.to_vec(),
+            "the failure lists what was missed"
+        );
+        assert_eq!(
+            failure.to_string(),
+            "1 path(s) could not be measured:
+  src/c.md: could not be read: denied"
         );
     }
 }

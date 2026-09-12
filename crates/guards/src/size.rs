@@ -412,7 +412,7 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
 /// An error rather than a smaller total when the walk missed anything: an
 /// unlistable directory (a missing `crates/` included), an unreadable file,
 /// or one that does not decode and so carries no count.
-pub fn measured(root: &Path) -> Result<usize, String> {
+pub fn measured(root: &Path) -> Result<usize, ratchet::Unmeasured> {
     let found = measure(root);
     let mut missed = found.unreadable;
     missed.extend(
@@ -1296,13 +1296,20 @@ mod tests {
         fs::write(root.join("crates/probe/src/latin.rs"), b"// caf\xe9\n")
             .expect("scratch source is writable");
         let failure = measured(&root).expect_err("an undecodable file is a missed one");
-        assert!(
-            failure.contains("crates/probe/src/latin.rs"),
-            "the failure names the file: {failure}"
+        assert_eq!(
+            failure.missed,
+            vec!["  crates/probe/src/latin.rs: does not decode as UTF-8".to_owned()],
+            "the failure names the file"
         );
 
         let missing = crate::scratch_dir::ScratchDir::new("measured-missing-sources");
         let failure = measured(&missing).expect_err("a missing crates/ is not zero lines");
-        assert!(failure.contains("crates/"), "{failure}");
+        assert!(
+            failure
+                .missed
+                .iter()
+                .all(|line| line.starts_with("  crates/: ")),
+            "{failure}"
+        );
     }
 }

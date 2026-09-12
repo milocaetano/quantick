@@ -293,7 +293,7 @@ fn relative_to(root: &Path, path: &Path) -> String {
 /// includes an instruction directory that is not there at all, which
 /// [`measure`] skips in silence: [`check`] and [`tighten`] both refuse that
 /// tree, and a report that summed it anyway would print the flattering half.
-pub fn measured(root: &Path) -> Result<usize, String> {
+pub fn measured(root: &Path) -> Result<usize, ratchet::Unmeasured> {
     let mut missed: Vec<String> = INSTRUCTION_DIRS
         .iter()
         .filter(|directory| !root.join(directory).is_dir())
@@ -803,9 +803,9 @@ mod tests {
         assert_eq!(measured(&root), Ok(22_000));
         fs::remove_dir_all(root.join("docs/workflow")).expect("scratch dir is removable");
         let failure = measured(&root).expect_err("a missing directory is not zero bytes");
-        assert!(
-            failure.contains("  docs/workflow/: not a readable"),
-            "{failure}"
+        assert_eq!(
+            failure.missed,
+            vec!["  docs/workflow/: not a readable directory".to_owned()]
         );
     }
 
