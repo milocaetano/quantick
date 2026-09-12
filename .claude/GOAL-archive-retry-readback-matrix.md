@@ -544,6 +544,14 @@ refusal message, from a lost line continuation; closed. v1's identical
 pre-existing message gap in `layout.rs` is left as it is, since v1 is kept
 unchanged, and named as a follow-up.
 
+Round 7 (step 0 at `08aec200`) found that `analysis.drawings` lists at
+most 512 drawings per pane, so on a busy pane the annotate readbacks can
+neither show a new drawing nor prove a removal. Narrowed, like M2/M3: the
+rows tell a client to check `drawings_truncated` and, when it is set, to
+reconcile through the untruncated journal (`annotate.object.created`, and
+`annotate.object.removed`, which is journaled only for a removal that
+happened).
+
 The map correction at `686ee81e` (A10, the CI half of G2 and the
 `ai-review` half of G4 moved to closing steps C3–C5; A6 ticked with its
 URLs) was checked independently: FAITHFUL.

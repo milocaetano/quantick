@@ -179,7 +179,7 @@ const LAYOUT_COLLAPSE_PROOF: &[&str] =
     &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
 /// The layout-tab calls have one version and are not called by the v2 test.
 const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
-const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";
+const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
 /// rendered in the registry's order.
@@ -205,7 +205,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         Forbidden,
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].drawing_id",
-        "the named `annotation_id` is no longer listed",
+        "the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened",
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
