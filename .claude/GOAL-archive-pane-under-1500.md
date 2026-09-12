@@ -272,6 +272,21 @@ the handoff.
   and the verifier's candidate 1) and slimming `DrawFrame` / carrying
   `axis_x`, `clip`, `half`, `content_half`, `candles` in it (C-5).
   Four checks green at `d14a7afc`, each run alone.
+- **Batch 2** (after step 0 round 2, `code-review medium 383` on `4c6bccbb`:
+  8 findings, 0 correctness, count flat — the last round D8 allows):
+  `DrawFrame` and `AxisChips` moved to `pane/draw_frame.rs` so
+  `draw_chart.rs` and `layer_painters.rs` no longer import each other
+  (F-3, closed); the baseline note names `drawing_gestures.rs` (800) as the
+  largest sibling (F-8, closed). Named follow-ups, not repaired here:
+  per-sibling test modules replacing the `#[cfg(test)]` re-import shim in
+  `pane.rs` (F-1; D2 made test moves optional, and `CLAUDE.md`'s "a surface
+  that moves out takes its tests with it" is the rule the follow-up serves);
+  an index-only `DrawFrame` so the writing steps of `draw_chart` can become
+  `&mut self` methods (F-2, with F-7's derivable fields and `axis_x` /
+  `nothing_in_view` accessors); a `CandleDressing` value and the
+  under-candles carve beside its over-candles twin (F-4);
+  `SharedPointer: Copy` carrying `pointer_delta` and the paper claim (F-5,
+  F-6). Four checks green after batch 2, each run alone.
 
 ## Closing steps
 
