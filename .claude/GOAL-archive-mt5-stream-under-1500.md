@@ -166,6 +166,12 @@ but the change is far too big for `small`.
 
 - **C1** — `delivery-review` returns a completeness pass (tier `medium`).
 - **C2** — the PR is open against `campaign/lean-a-plus` and marked ready.
+- **C3** — the handoff block returns to the coordinator: issue, branch,
+  worktree, PR URL, head SHA, base tip, the size table before and after, the
+  review verdicts and their URLs, markers, the CI run and its conclusion,
+  findings closed and open, repair batches, whether ready was accepted, any
+  `human_decision`, and the coordinator's next action. A campaign child ends
+  at its coordinator, not at the trader.
 
 ## Not applicable
 
