@@ -23,7 +23,12 @@ from quantick_bridge_core import (
 
 
 class RatesMixin:
-    """The session's candle block."""
+    """The session's candle block.
+
+    Mixed into `Session`, which owns everything read here. State: `args`,
+    `symbol`, `tape`, `offset_s`. Behaviour from a sibling: `send`, `price`
+    (`TransportMixin`).
+    """
 
     @staticmethod
     def rates_error_code() -> int:

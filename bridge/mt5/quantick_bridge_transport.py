@@ -23,7 +23,13 @@ from quantick_bridge_core import (
 
 
 class TransportMixin:
-    """The session's socket: buffering, flushing, and reading commands back."""
+    """The session's socket: buffering, flushing, and reading commands back.
+
+    Mixed into `Session`, which owns everything read here. State:
+    `sock`, `outbox`, `inbox`, `symbol`, `digits`, `offset_s`,
+    `book_subscribed`. Behaviour from a sibling: `serve_load_older`
+    (`HistoryMixin`).
+    """
 
     def send(self, message: dict) -> None:
         """Queue one line. The socket is written by `flush`.

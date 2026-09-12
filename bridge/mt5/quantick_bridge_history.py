@@ -28,7 +28,14 @@ from quantick_bridge_core import (
 
 
 class HistoryMixin:
-    """Everything a session does with ticks older than the one just printed."""
+    """Everything a session does with ticks older than the one just printed.
+
+    Mixed into `Session`, which owns everything read here. State:
+    `args`, `symbol`, `cursor_msc`, `sent_at_cursor`, `offset_s`,
+    `pending_opening`, `earliest_ms`, `earliest_known`. Behaviour from
+    siblings: `send`, `flush`, `server_now_ms` (`TransportMixin`),
+    `send_tick`, `tick_flags`, `maybe_heartbeat` (`TicksMixin`).
+    """
 
     def backfill(self) -> None:
         """The session the tape is in, whole, whatever the clock reads.

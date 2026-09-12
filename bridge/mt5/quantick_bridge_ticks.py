@@ -22,7 +22,15 @@ from quantick_bridge_core import (
 
 
 class TicksMixin:
-    """The live half of a session: ticks, the book, and the heartbeat."""
+    """The live half of a session: ticks, the book, and the heartbeat.
+
+    Mixed into `Session`, which owns everything read here. State:
+    `args`, `symbol`, `tape`, `seq`, `cursor_msc`, `sent_at_cursor`,
+    `ticks_sent`, `offset_s`, `last_heartbeat`, `pump_round_limits`,
+    `book_subscribed`, `book_sent`, `book_seq`, `book_skipped`,
+    `last_book_body`, `last_book_ms`. Behaviour from siblings: `send`,
+    `flush`, `price`, `server_now_ms` (`TransportMixin`).
+    """
 
     def detect_tape(self) -> str:
         """Does this venue print trades for the symbol, or only quote it?
