@@ -1,17 +1,20 @@
 //! The read model of a projection: the normalized primitives a renderer
-//! draws, and the two halves of a frame they arrive in.
+//! draws, the two halves of a frame they arrive in, and the three rules a
+//! reader of those primitives shares with the pipeline that built them — how
+//! a quantity maps to intensity, how it maps to area, and which reduction
+//! markers survive the frame's safety cap.
 //!
-//! Nothing here walks the tape or the book. The pipeline in the parent
-//! module builds these values; [`SettledProjection::with_live`] is the one
-//! operation they carry themselves, because joining the two halves is a
-//! statement about the frame's shape, not about how either half was built.
+//! Nothing here walks the tape or the book. The pipeline in the parent module
+//! builds these values; [`SettledProjection::with_live`] is the one operation
+//! they carry themselves, because joining the two halves is a statement about
+//! the frame's shape, not about how either half was built.
 
+use std::cmp::Reverse;
 use std::sync::Arc;
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use super::cap_events;
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
@@ -448,4 +451,63 @@ impl SettledProjection {
             dropped_liquidity_events,
         }
     }
+}
+
+/// How the safety cap ranks reductions, wherever it is applied: aligned
+/// evidence first, because it is what a bubble points at, then the biggest
+/// reduction, then time and id so the same book always yields the same markers.
+pub(super) fn event_cap_key(
+    evidence: LiquidityEvidence,
+    removed: Decimal,
+    timestamp_ms: i64,
+    event_id: u64,
+) -> (Reverse<bool>, Reverse<Decimal>, i64, u64) {
+    (
+        Reverse(matches!(evidence, LiquidityEvidence::AggressionAligned)),
+        Reverse(removed),
+        timestamp_ms,
+        event_id,
+    )
+}
+
+/// Keep the strongest `limit` reductions of a whole frame.
+fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
+    if events.len() <= limit {
+        return;
+    }
+    events.sort_by_key(|event| {
+        event_cap_key(
+            event.evidence,
+            event.removed,
+            event.timestamp_ms,
+            event.event_id,
+        )
+    });
+    events.truncate(limit);
+}
+
+/// Shared with the live strip in the chart, which normalizes its
+/// depth rows against the same reference the heatmap cells used, so one wall
+/// reads with one colour on both sides of the chart edge.
+pub fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
+    if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
+        return 0.0;
+    }
+    let ratio = (quantity / reference).to_f64().unwrap_or(0.0).max(0.0);
+    let logarithmic = ((1.0 + 9.0 * ratio).ln() / 10.0_f64.ln()).clamp(0.0, 1.0);
+    logarithmic.powf(f64::from(gamma)) as f32
+}
+
+/// Shared with the live strip's aggression histogram, which sizes its bars by
+/// the same square-root area rule the bubbles use — twice the quantity reads
+/// as twice the ink, on both.
+pub fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
+    if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
+        return 0.0;
+    }
+    (quantity / reference)
+        .to_f64()
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0)
+        .sqrt() as f32
 }

@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use super::{AggressionPrimitive, normalized_area_size};
+use super::model::{AggressionPrimitive, normalized_area_size};
 use crate::config::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
 };

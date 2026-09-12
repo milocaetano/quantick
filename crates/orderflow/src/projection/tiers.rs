@@ -9,7 +9,7 @@
 
 use rust_decimal::Decimal;
 
-use super::{AggressionPrimitive, PriceWindow, normalized_area_size};
+use super::model::{AggressionPrimitive, PriceWindow, normalized_area_size};
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
 use crate::history::{CoverageSegment, LiquidityHistory};

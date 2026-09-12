@@ -203,7 +203,7 @@ pub enum BubbleRenderMode {
 ///
 /// Four is past the precision any pixel radius or alpha carries, and well
 /// inside what `f32` represents exactly enough to survive a round trip.
-pub(super) const SERIALIZED_FLOAT_PLACES: i32 = 4;
+const SERIALIZED_FLOAT_PLACES: i32 = 4;
 
 /// Serialize an `f32` as a short decimal.
 ///
@@ -494,5 +494,176 @@ impl BubbleStyle {
     pub fn fixed_reference_decimal(&self) -> Option<Decimal> {
         Decimal::from_f64_retain(self.size_reference_quantity)
             .filter(|value| *value > Decimal::ZERO)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_default_bubble_never_hollows_a_print_or_smears_the_book() {
+        let bubbles = BubbleStyle::default();
+        assert!(
+            !bubbles.hollow_small_buys,
+            "a small print is a solid disc: hollowing it spends the disc's own area \
+             to say something the luminance gap and the side nudge already say"
+        );
+        assert_eq!(
+            bubbles.trail_length, 0.0,
+            "the trail painted over the strip of heat map that answers the question \
+             it raised — whether the level refilled"
+        );
+        assert!(
+            !bubbles.show_impact_ring,
+            "the crown already says the print ate; a closed ring on top of it \
+             restates the fact in the one shape that blurs the disc's own edge"
+        );
+    }
+
+    #[test]
+    fn the_default_radii_are_rungs_of_one_golden_ladder() {
+        let bubbles = BubbleStyle::default();
+        // The rungs really are successive powers of φ, not four numbers that
+        // merely look related.
+        for (power, inverse) in [
+            (1, INV_PHI),
+            (2, INV_PHI_2),
+            (3, INV_PHI_3),
+            (4, INV_PHI_3 / PHI),
+        ] {
+            assert!(
+                (inverse * PHI.powi(power) - 1.0).abs() < 1e-5,
+                "1/φ^{power} = {inverse} is not the reciprocal of φ^{power}"
+            );
+        }
+        // The defaults are those rungs rounded to the precision the presets
+        // file stores, so the tolerance is that rounding step and nothing
+        // looser: this is what stops a literal from quietly becoming a number
+        // nobody can derive.
+        let tolerance = 0.5 * 10_f32.powi(-SERIALIZED_FLOAT_PLACES);
+        for (label, actual, expected) in [
+            (
+                "min radius",
+                bubbles.min_radius,
+                bubbles.max_radius * INV_PHI_3 / PHI,
+            ),
+            (
+                "detail radius",
+                bubbles.detail_min_radius,
+                bubbles.max_radius * INV_PHI_3,
+            ),
+            (
+                "readable radius",
+                bubbles.readable_min_radius,
+                bubbles.max_radius * INV_PHI_2,
+            ),
+            ("front length scale", bubbles.front_length_scale, INV_PHI),
+        ] {
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{label} {actual} is not the φ rung {expected} at file precision"
+            );
+        }
+        assert!(bubbles.min_radius < bubbles.detail_min_radius);
+        assert!(bubbles.detail_min_radius < bubbles.readable_min_radius);
+        assert!(bubbles.readable_min_radius < bubbles.max_radius);
+    }
+
+    #[test]
+    fn a_preset_written_before_the_crown_still_loads_and_gains_it() {
+        // Exactly the shape every shipped preset had before this change: the
+        // old boolean switch, and no `consumption_mark` key at all.
+        let legacy = "
+            min_radius = 2.0
+            max_radius = 15.0
+            show_consumption_front = true
+            front_width = 3.0
+            front_length_scale = 2.1
+            hollow_small_buys = true
+        ";
+        let style: BubbleStyle = toml::from_str(legacy).expect("a legacy preset still parses");
+        assert_eq!(style.max_radius, 15.0, "its own values survive");
+        assert_eq!(style.front_width, 3.0);
+        assert!(
+            style.hollow_small_buys,
+            "a preset that asked for hollow buys keeps them"
+        );
+        assert_eq!(
+            style.consumption_mark,
+            ConsumptionMark::Crown,
+            "the key it never carried takes the new default"
+        );
+    }
+
+    #[test]
+    fn sphere_fields_sanitize_and_round_trip_through_toml() {
+        let mut style = BubbleStyle {
+            render_mode: BubbleRenderMode::Sphere,
+            sphere_shading: f32::NAN,
+            sphere_highlight: 7.0,
+            ..BubbleStyle::default()
+        };
+        style.sanitize();
+        assert_eq!(style.render_mode, BubbleRenderMode::Sphere);
+        assert_eq!(style.sphere_shading, DEFAULT_SPHERE_SHADING);
+        assert_eq!(style.sphere_highlight, 1.0);
+
+        let text = toml::to_string(&style).expect("serialize");
+        assert!(text.contains("render_mode = \"sphere\""));
+        let parsed: BubbleStyle = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed, style);
+
+        // A presets file that predates the mode adopts the shipped default,
+        // which is now the shaded sphere: it is what keeps piled bubbles
+        // countable where their rims coincide.
+        let old: BubbleStyle = toml::from_str("max_radius = 30.0").expect("parse old file");
+        assert_eq!(old.render_mode, BubbleRenderMode::Sphere);
+        assert_eq!(old.max_radius, 30.0);
+    }
+
+    #[test]
+    fn bubble_style_sanitizes_invalid_geometry() {
+        let mut style = BubbleStyle {
+            min_radius: f32::NAN,
+            max_radius: -3.0,
+            opacity: 12.0,
+            front_width: 0.0,
+            trail_length: f32::INFINITY,
+            side_offset: -5.0,
+            min_quantity: -1.0,
+            size_reference_quantity: 0.0,
+            ..BubbleStyle::default()
+        };
+        style.sanitize();
+        assert_eq!(style.min_radius, DEFAULT_BUBBLE_MIN_RADIUS);
+        assert!(style.max_radius >= style.min_radius);
+        assert_eq!(style.opacity, 1.0);
+        assert_eq!(style.front_width, 0.5);
+        assert_eq!(style.trail_length, 0.0);
+        assert_eq!(style.side_offset, 0.0);
+        assert_eq!(style.min_quantity, 0.0);
+        assert_eq!(style.size_reference_quantity, 100.0);
+    }
+
+    #[test]
+    fn bubble_style_round_trips_through_toml() {
+        // Presets are stored as TOML, so an unserializable field (a bare
+        // `None`, say) would break saving at runtime instead of at build time.
+        let style = BubbleStyle {
+            buy_color: Some([1, 2, 3]),
+            size_reference: BubbleSizeReference::Fixed,
+            min_quantity: 2.5,
+            ..BubbleStyle::default()
+        };
+        let text = toml::to_string(&style).expect("serialize");
+        let parsed: BubbleStyle = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed, style);
+        assert!(!text.contains("sell_color"), "absent overrides stay absent");
+
+        // A partial document keeps every untouched field at its default.
+        let partial: BubbleStyle = toml::from_str("max_radius = 30.0").expect("parse partial");
+        assert_eq!(partial.max_radius, 30.0);
+        assert_eq!(partial.min_radius, BubbleStyle::default().min_radius);
     }
 }

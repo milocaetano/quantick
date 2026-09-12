@@ -1,11 +1,10 @@
 //! Renderer-independent projection of RLE history into normalized primitives.
 
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use rust_decimal::prelude::FromPrimitive as _;
 
 use super::config::{DisplayGrouping, HeatmapConfig, IntensityMode};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
@@ -20,10 +19,12 @@ mod tiers;
 
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
+    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
+    normalized_log_intensity,
 };
 
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
+use model::event_cap_key;
 use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier_primitives};
 
 #[derive(Debug)]
@@ -713,39 +714,6 @@ fn filter_events(
     dropped
 }
 
-/// How the safety cap ranks reductions, wherever it is applied: aligned
-/// evidence first, because it is what a bubble points at, then the biggest
-/// reduction, then time and id so the same book always yields the same markers.
-fn event_cap_key(
-    evidence: LiquidityEvidence,
-    removed: Decimal,
-    timestamp_ms: i64,
-    event_id: u64,
-) -> (Reverse<bool>, Reverse<Decimal>, i64, u64) {
-    (
-        Reverse(matches!(evidence, LiquidityEvidence::AggressionAligned)),
-        Reverse(removed),
-        timestamp_ms,
-        event_id,
-    )
-}
-
-/// Keep the strongest `limit` reductions of a whole frame.
-fn cap_events(events: &mut Vec<LiquidityEventPrimitive>, limit: usize) {
-    if events.len() <= limit {
-        return;
-    }
-    events.sort_by_key(|event| {
-        event_cap_key(
-            event.evidence,
-            event.removed,
-            event.timestamp_ms,
-            event.event_id,
-        )
-    });
-    events.truncate(limit);
-}
-
 /// Place reductions on the chart.
 fn event_primitives(
     events: Vec<LiquidityEvent>,
@@ -817,32 +785,6 @@ fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
     positive.sort_unstable();
     let rank = (99 * positive.len()).div_ceil(100);
     positive[rank.saturating_sub(1)]
-}
-
-/// Shared with the live strip in the chart, which normalizes its
-/// depth rows against the same reference the heatmap cells used, so one wall
-/// reads with one colour on both sides of the chart edge.
-pub fn normalized_log_intensity(quantity: Decimal, reference: Decimal, gamma: f32) -> f32 {
-    if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
-        return 0.0;
-    }
-    let ratio = (quantity / reference).to_f64().unwrap_or(0.0).max(0.0);
-    let logarithmic = ((1.0 + 9.0 * ratio).ln() / 10.0_f64.ln()).clamp(0.0, 1.0);
-    logarithmic.powf(f64::from(gamma)) as f32
-}
-
-/// Shared with the live strip's aggression histogram, which sizes its bars by
-/// the same square-root area rule the bubbles use — twice the quantity reads
-/// as twice the ink, on both.
-pub fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
-    if quantity <= Decimal::ZERO || reference <= Decimal::ZERO {
-        return 0.0;
-    }
-    (quantity / reference)
-        .to_f64()
-        .unwrap_or(0.0)
-        .clamp(0.0, 1.0)
-        .sqrt() as f32
 }
 
 #[cfg(test)]
