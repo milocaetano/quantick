@@ -176,9 +176,13 @@ coordinator's decisions), the full shape pass, a `medium` bug pass and
       arm and a not-applied arm and resolves each through the row's readback;
       `trade.*` is proven unreachable by any production grant, keyed or not.
       *Evidence:* the named tests, green. → PR body. *(R5)*
-- [ ] **A6** — An independent read-only AP4 reassessment at the reviewed head
+- [x] **A6** — An independent read-only AP4 reassessment at the reviewed head
       is posted with the earned score and `file:line` evidence. *Evidence:*
-      the comment URL. → a comment on issue #378, linked from the PR body:
+      https://github.com/milocaetano/quantick/issues/378#issuecomment-5648245043
+      (`a9e202d7`: AP4 5/5, gate 5 PASS) and its delta follow-up at
+      `323ea505`,
+      https://github.com/milocaetano/quantick/issues/378#issuecomment-5648300940
+      (5/5, PASS). → a comment on issue #378, linked from the PR body:
       in this repository `gh pr create` waits for both review markers, so no
       PR exists to comment on when the reassessment runs. *(R6, R11)*
 - [x] **A7** — `RetainedBundle`'s fields are private, `RetainedBundle::new`
@@ -199,22 +203,25 @@ coordinator's decisions), the full shape pass, a `medium` bug pass and
 - [x] **A9** — The matrix document states the per-connection limit (#362) and
       that a reconnect falls back to readback. *Evidence:* the quoted
       paragraph. → PR body. *(R9)*
-- [ ] **A10** — The PR targets exactly `campaign/lean-a-plus` and is handed to
-      the coordinator ready for its authorized merge. *Evidence:* `gh pr view`
-      base; the handoff block. → handoff. *(R10)*
+- **A10** — *Moved to closing step C3 (map correction, delivery-review r3):*
+      opening the PR on `campaign/lean-a-plus` is sequencing that can only
+      follow this review's marker, not a product criterion. *(R10)*
 
 ## Gates
 
 - [x] **G1** — Every artifact English; conventional commits. `CLAUDE.md`;
       `arch-review` dimension 8; `crates/guards/src/language.rs`.
-- [ ] **G2** — `cargo fmt --all -- --check`, `cargo clippy --workspace
+- [x] **G2** — `cargo fmt --all -- --check`, `cargo clippy --workspace
       --all-targets`, `cargo build --workspace`, `cargo test --workspace` green
-      at the final head, run one at a time; full CI green. `CLAUDE.md`.
+      at the final head, run one at a time. `CLAUDE.md`. *(Full CI green at
+      the final head moved to closing step C4 — map correction,
+      delivery-review r3: CI runs only on a PR.)*
 - [x] **G3** — Performance declared per touched path by rate in the PR body;
       nothing per-frame, per-trade or per-depth grows. D5; issue G4.
-- [ ] **G4** — `arch-review` over the exact diff against the campaign base with
+- [x] **G4** — `arch-review` over the exact diff against the campaign base with
       `code-review` at `medium`; every Blocker and Should-fix resolved or
-      deferred in the PR body. `ai-review` completion recorded. D6.
+      deferred in the PR body. D6. *(`ai-review` completion moved to closing
+      step C5 — map correction, delivery-review r3: it posts to the PR.)*
 - [x] **G5** — No new file over 1,500 production lines, no touched file crosses
       it; `cargo test -p quantick-guards` green; context ratchet green. D8.
 - [x] **G6** — Adds something an operator does? No new capability — D15 adds
@@ -535,6 +542,13 @@ collapse. Resumed batch 3:
 - **C1** — `delivery-review` returns PASS and records its marker.
 - **C2** — The draft PR is open against `campaign/lean-a-plus`, CI green, and
   `gh pr ready` attempted once.
+- **C3** — (was A10) The PR base is exactly `campaign/lean-a-plus`, handed to
+  the coordinator for its authorized merge; *evidence:* `gh pr view` base,
+  the handoff block.
+- **C4** — (from G2) Full CI green at the final head; *evidence:* the run
+  URL.
+- **C5** — (from G4) `ai-review` completion recorded and zero unresolved
+  threads; *evidence:* the PR report and the marker.
 
 ## Not applicable
 
@@ -545,7 +559,7 @@ collapse. Resumed batch 3:
 - *Adds a capability* — none. The gate's classes (feed, bar type, indicator,
   layer, panel, crate) do not include a new *version* of a control
   capability, and its intent holds anyway: layout v2 docks as one new file
-  plus one registration line, v1 stays the default nobody has to change.
+  plus one registration line, and v1 stays registered, unchanged.
 - *Engine / determinism territory* — nothing under `crates/engine`.
 
 ## The request as received
