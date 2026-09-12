@@ -93,6 +93,16 @@ gate table, `code-review` at `medium` inside `arch-review`, and
 - **D8** — `gh pr ready` runs once, cd-prefixed, through the Bash tool after
   reviews, markers and green CI. Never PowerShell for `gh pr`, never merge,
   never touch `main`.
+- **D9** — *(coordinator, after the draft PR opened)* The campaign tip moved
+  twice after the cut (#392, then #395) and both sides rewrote the `!budget`
+  line of `size-baseline.txt`, so the PR conflicted and GitHub ran no CI on
+  it. Decision: rebase onto the current `origin/campaign/lean-a-plus`; on the
+  baseline conflict take the tip's version whole, remove only this mission's
+  two entries, add this mission's note before the budget line, and set
+  `!budget` to the sum of the remaining entries; `--tighten` must then change
+  nothing. Force-with-lease push; CI, reviews and markers at the new key;
+  rebase again the same way if the tip moves before the final push. This
+  supersedes D6's "do not rebase" for this mission.
 
 ## Assumptions
 
@@ -118,6 +128,12 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   fourth sibling because `with_live` (read model) calls `cap_events` while
   `event_primitives` builds a read-model type: as siblings the two would form
   a cycle, and a child reaching its parent's private function is not one.
+  *Outcome, recorded after step 0:* the bug pass read that back-edge as a
+  seam defect — the read model importing its parent's private function — so
+  the repair batch at `70d23d65` moved `event_cap_key`, `cap_events` and the
+  two normalisers into `projection/model.rs` (re-exported from the root, so
+  `projection::normalized_*` still resolves); `tiers.rs` and `fold.rs` now
+  depend on `model` alone. The cut is as written above otherwise.
 - **S3** — Moved `pub` items are re-exported from each root with `pub use`
   lines, and the child modules stay private (`mod bubbles;`, not `pub mod`),
   so the public path set of the crate is byte-identical: `config::X`,
@@ -130,6 +146,14 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   root no longer imports (only the fold reads them now), and reaches the
   sibling functions it calls through `use super::*`, which sees the root's
   own imports of them. No assertion or expectation changes.
+  *Outcome, recorded after step 0:* the bug pass pointed at CLAUDE.md's "a
+  surface that moves out takes its tests with it": the six bubble-only and
+  eight lane-only tests moved with their families into `#[cfg(test)] mod
+  tests` blocks of `config/bubbles.rs` and `config/lane.rs` at `70d23d65`,
+  byte-for-byte (test-code multiset 1,189 = 1,189), which let
+  `SERIALIZED_FLOAT_PLACES` go back to private and removed the two imports
+  above. The sidecar's one `use` line stands; still no assertion or
+  expectation changes.
 - **S5** — Two intra-doc links inside moved doc comments name items relative
   to the old parent (`super::reserved_span_ms`, `HeatmapConfig::…`) and
   would dangle from `config/lane.rs`; their link targets are retargeted in
@@ -142,6 +166,10 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   outside this mission's ownership (a file more than 200 lines below its
   ceiling on the base), that line is reverted and reported rather than
   shipped, because R9 forbids touching sibling entries.
+  *Outcome:* `--tighten` lowered the two entries to the files' new sizes
+  rather than removing them, and touched nothing else; the two lines were
+  removed by hand and the budget lowered by the two ceilings, after which
+  `--tighten` reports nothing left in the size ratchet.
 
 ## Acceptance criteria
 
