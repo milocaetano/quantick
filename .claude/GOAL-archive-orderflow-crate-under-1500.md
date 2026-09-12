@@ -152,8 +152,15 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   tests` blocks of `config/bubbles.rs` and `config/lane.rs` at `70d23d65`,
   byte-for-byte (test-code multiset 1,189 = 1,189), which let
   `SERIALIZED_FLOAT_PLACES` go back to private and removed the two imports
-  above. The sidecar's one `use` line stands; still no assertion or
-  expectation changes.
+  above. *Second outcome, after step 0's second round:* the one fold-only
+  test in the projection sidecar (`the_tape_budget_follows_the_room_the_tape_was_given`)
+  moved into a `#[cfg(test)] mod tests` in `projection/fold.rs`, which made the
+  sidecar's one added `use` line unnecessary — `projection/tests/mod.rs` now
+  differs from the base only by that departed test, deletions and nothing
+  added — and the one bubble-family test still in `config.rs`
+  (`bubble_defaults_separate_the_two_sides_and_stay_bounded`) joined the six
+  in `config/bubbles.rs`. Still no assertion or expectation changes; the
+  test-code multisets are the proof.
 - **S5** — Two intra-doc links inside moved doc comments name items relative
   to the old parent (`super::reserved_span_ms`, `HeatmapConfig::…`) and
   would dangle from `config/lane.rs`; their link targets are retargeted in
@@ -193,8 +200,10 @@ gate table, `code-review` at `medium` inside `arch-review`, and
       the `git diff -U0` of the test files showing only `use` lines. → PR
       body, A3 section; CI run. *(R3, R4)*
 - [ ] **A4** — `crates/guards/size-baseline.txt` carries no entry for either
-      file; `!budget` is exactly 3,373 lower than on the base (20,025 →
-      16,652); `--tighten` reports nothing left; `cargo test -p quantick-guards`
+      file; `!budget` is exactly 3,373 lower than on the base (12,473 →
+      9,100 on the tip the branch was rebased onto per D9; it was 20,025 →
+      16,652 against the tip it was cut from — corrected after step 0's second
+      round caught the stale pair); `--tighten` reports nothing left; `cargo test -p quantick-guards`
       passes; `cycle.rs` and `graph.rs` are unchanged and green.
       *Evidence:* the baseline diff and the guards run. → PR body, size
       section. *(R5)*

@@ -500,6 +500,7 @@ impl BubbleStyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::HeatmapConfig;
 
     #[test]
     fn the_default_bubble_never_hollows_a_print_or_smears_the_book() {
@@ -665,5 +666,22 @@ mod tests {
         let partial: BubbleStyle = toml::from_str("max_radius = 30.0").expect("parse partial");
         assert_eq!(partial.max_radius, 30.0);
         assert_eq!(partial.min_radius, BubbleStyle::default().min_radius);
+    }
+
+    #[test]
+    fn bubble_defaults_separate_the_two_sides_and_stay_bounded() {
+        let bubbles = HeatmapConfig::default().bubbles;
+        assert!(bubbles.max_radius > bubbles.min_radius);
+        assert!(
+            bubbles.side_offset > 0.0,
+            "buy and sell must not stack on the same row by default"
+        );
+        assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);
+        assert_eq!(bubbles.size_reference, BubbleSizeReference::VisibleP99);
+        assert_eq!(bubbles.min_quantity, 0.0, "nothing is hidden by default");
+        assert_eq!(bubbles.min_quantity_decimal(), None);
+        assert_eq!(bubbles.render_mode, BubbleRenderMode::Sphere);
+        assert!((0.0..=1.0).contains(&bubbles.sphere_shading));
+        assert!((0.0..=1.0).contains(&bubbles.sphere_highlight));
     }
 }
