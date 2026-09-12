@@ -89,6 +89,17 @@ earned, not optional.
 - **D8** — tier `high`: `arch-review` with `code-review` at `medium`, full
   shape pass; `ai-review` completion; `delivery-review` in full; at most two
   step-0 rounds; remaining minor findings ship as named PR follow-ups.
+- **D9** — (coordinator, 2026-09-11; source: the coordinator's ruling message
+  after the delivery follow-up escalation reported to them, and that
+  escalation report on PR #383) the appended `impl ChartPane` blocks in the
+  pre-existing siblings `crates/app/src/pane/context_menu.rs` and
+  `crates/app/src/pane/strategies.rs` are **within the grant**: D3 directed
+  the moves into the sibling modules "as the previous four cuts did", the file
+  fence existed to keep this mission off the two parallel missions' files
+  (paper trading, `worker_progress`, `control_plane_tests`), and no other
+  mission owns anything under `pane/`. A9 grades DELIVERED. The
+  `drawing_gestures.rs` header edit stays reverted (follow-up 5): the ruling
+  covers the two appended blocks, and the revert had already landed.
 
 ## Assumptions
 
@@ -195,9 +206,10 @@ earned, not optional.
       mission owns. *Amended at review time:* repair batch 1 had reworded four
       header lines of the pre-existing `pane/drawing_gestures.rs` (a step-0
       finding); the delivery review's criteria pass read R12 narrowly and
-      graded it PARTIAL, and it is right — the brief says "Do not edit any
-      other file" and only the coordinator can widen that. Batch 3 reverts
-      the file to the base byte for byte; the stale header is follow-up 5.
+      graded it PARTIAL; batch 3 reverted the file to the base byte for byte
+      and the stale header is follow-up 5. The coordinator then ruled (D9)
+      that the two appended `impl ChartPane` blocks in `context_menu.rs` and
+      `strategies.rs` are within the grant: **DELIVERED**.
       *Evidence:* `git diff --name-status <base>...HEAD` in the PR body lists
       only `crates/app/src/pane.rs`, `crates/app/src/pane/*`,
       `crates/guards/size-baseline.txt` and `.claude/GOAL-archive-*.md`.
@@ -317,6 +329,26 @@ the handoff.
   header edit for whoever next owns that file. Prose-only delta: fmt check,
   `cargo check -p quantick-app`, `cargo test -p quantick-guards` run; CI at
   the head is the full proof.
+
+## Deferred
+
+Granted deferrals of review findings — no `A` or `G` line is deferred; every
+criterion is delivered. Grant: the coordinator's messages of 2026-09-11 for
+S1 ("Close the two open AI threads ... by a documented, in-scope deferral
+recorded on the thread and in the PR body"; the D9 ruling), under the mission's
+D1 (no shape change to a moved body in this PR) and D2 (test moves optional).
+
+- **F-1 / AI thread `PRRT_kwDOTfuoRs6hroph`** — tests reach the moved owners
+  through the `#[cfg(test)]` re-import shim in `pane.rs`. Follow-up 1:
+  per-sibling test modules, then delete the shim.
+- **F-2, F-7** — index-only `DrawFrame`, derivable fields dropped, `axis_x()`
+  / `nothing_in_view()` accessors. Follow-up 2.
+- **F-4 / AI thread `PRRT_kwDOTfuoRs6hroqH`** — `CandleDressing` value and
+  the under-candles carve beside its twin. Follow-up 3.
+- **F-5, F-6 / the same thread** — `SharedPointer: Copy` carrying
+  `pointer_delta` and the paper claim. Follow-up 4.
+- **C-7 (residual)** — `drawing_gestures.rs:12-15` header still names the old
+  home of `interact_shared`; reverted for ownership. Follow-up 5.
 
 ## Closing steps
 
