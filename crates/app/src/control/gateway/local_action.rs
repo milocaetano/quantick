@@ -214,6 +214,8 @@ impl ControlAccess {
     /// The gateway does not have to be enabled: a read costs nothing until it
     /// is asked for, and refusing it because no door is open would make the
     /// hook prove something other than what a client would see.
+    ///
+    /// [`ObserverContract::prepare`]: crate::control::contract::ObserverContract::prepare
     pub(crate) fn invoke_local_read(
         &mut self,
         app: &QuantickApp,

@@ -42,12 +42,22 @@ use super::super::{
     types::known_error,
 };
 use super::{
-    CAPABILITY_VERSION, ChartWindowInput, CompiledCapabilitySchemas, DeferredUiRead, EmptyInput,
-    NO_CONFIRMATION_ID, OBSERVE_EFFECT_ID, ObserverContract, ParkedWait, PrepareHandler,
-    PreparedCapability, PreparedDispatch, PreparedUiRead, PreparedWorkerRead, SerializedUiRead,
-    SnapshotReadInput, UI_BOUNDED_COST_ID, UiReadContext, UiReadExecution, confirmation, effect,
-    module, permission, serialization_failed,
+    ChartWindowInput, CompiledCapabilitySchemas, DeferredUiRead, EmptyInput, NO_CONFIRMATION_ID,
+    OBSERVE_EFFECT_ID, ObserverContract, ParkedWait, PrepareHandler, PreparedCapability,
+    PreparedDispatch, PreparedUiRead, PreparedWorkerRead, SerializedUiRead, SnapshotReadInput,
+    UiReadContext, UiReadExecution, confirmation, effect, module, permission,
 };
+
+const UI_BOUNDED_COST_ID: &str = "ui_bounded";
+const CAPABILITY_VERSION: u32 = 1;
+
+fn serialization_failed(what: &str) -> ControlError {
+    known_error(
+        codes::CAPABILITY_UNAVAILABLE,
+        format!("{what} could not be serialized"),
+        false,
+    )
+}
 
 struct DescribeInvocation;
 

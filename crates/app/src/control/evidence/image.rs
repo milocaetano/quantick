@@ -18,9 +18,22 @@ use super::super::{
     types::{canonical_f32, canonical_f64, wire_usize},
 };
 use super::{
-    EvidenceControlRegion, EvidenceGap, EvidenceImage, EvidenceScreenshot, REGION_DECIMAL_PLACES,
-    SCREENSHOT_FORMAT, base64_len, raw_sha256, screenshot_gap,
+    EvidenceControlRegion, EvidenceGap, EvidenceImage, EvidenceScreenshot, base64_len,
+    screenshot_gap,
 };
+// The one thing this file borrows from the other side of the seam: the
+// digest helper, so an image and a chunk are hashed the same way.
+use super::store::raw_sha256;
+
+/// The image format a bundle carries.
+const SCREENSHOT_FORMAT: &str = "png";
+/// Places a pixel coordinate is reported to.
+///
+/// Deliberately coarser than a control's own `SCREEN_DECIMAL_PLACES`: a region
+/// of an image is only ever compared against whole pixels, and carrying three
+/// fractional places per rectangle would inflate every bundle that has a
+/// screenshot for precision no reader can use.
+const REGION_DECIMAL_PLACES: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // The screenshot, before it is encoded

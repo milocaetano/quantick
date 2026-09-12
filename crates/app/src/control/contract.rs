@@ -119,8 +119,6 @@ pub(crate) const SCENE_CAPABILITY_ID: &str = "scene.read";
 pub(crate) const OBSERVE_PERMISSION_ID: &str = "observe";
 const OBSERVE_EFFECT_ID: &str = "observe";
 const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
-const CAPABILITY_VERSION: u32 = 1;
 
 pub(crate) const SAFE_DEFAULT_SCOPE_IDS: &[&str] = &[
     "observe.system",
@@ -310,14 +308,6 @@ pub(crate) trait DeferredUiRead: Send {
 }
 
 pub(crate) type UiReadExecution = Box<dyn DeferredUiRead>;
-
-fn serialization_failed(what: &str) -> ControlError {
-    known_error(
-        codes::CAPABILITY_UNAVAILABLE,
-        format!("{what} could not be serialized"),
-        false,
-    )
-}
 
 /// An action's result, on its way off the application thread. It is already
 /// a value; the wrapper only lets it travel the same channel a capture does.
