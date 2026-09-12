@@ -110,6 +110,11 @@ by the coordinator's decisions D1–D8), the full gate table, `code-review` at
   check that fits locally, let CI at the PR head run the build and the
   workspace tests, and report the frame measurement as blocked by the
   environment for a human decision rather than fabricate or skip it.
+  *Outcome, recorded at delivery review:* the host regained 9 GB mid-mission,
+  so the four checks, the two release builds and ten interleaved
+  `APP_HEALTH_SUMMARY` runs all ran locally and A7's primary branch was
+  taken; the fallback was never used. Kept as written above rather than
+  rewritten, because the assumption stood when the work started.
 
 ## Acceptance criteria
 
@@ -125,10 +130,15 @@ by the coordinator's decisions D1–D8), the full gate table, `code-review` at
       *Evidence:* the proof command and its result in the PR body; the raw
       whole-file multiset taken at cut time. → PR body, A2 section. *(R2)*
 - [ ] **A3** — Every pinned or golden test in `quantick-app` passes unchanged
-      and no test expectation was edited: the only test-file changes are
-      `use` lines.
-      *Evidence:* `git diff` of the test files showing `use` lines only; the
-      workspace test run at the PR head. → PR body, A3 section; CI run. *(R4)*
+      and no test expectation was edited: no assertion, fixture, golden text
+      or expectation line changes in any test file.
+      *Evidence:* `git diff` of the test files showing only `use` lines and
+      — after step 0's repair batch at `4dcb2a42` — the rewritten header
+      comment of `orderflow_render/tests/mod.rs`; the workspace test run at
+      the PR head. → PR body, A3 section; CI run. *(R4)*
+      *(Evidence clause amended at delivery review: it originally read "the
+      only test-file changes are `use` lines", written before the step-0
+      batch rewrote that sidecar's header. The outcome is unchanged.)*
 - [ ] **A4** — `crates/guards/size-baseline.txt` carries no entry for the
       three files and `!budget` did not rise.
       *Evidence:* the baseline diff (three entries removed, `!budget`
@@ -181,6 +191,14 @@ by the coordinator's decisions D1–D8), the full gate table, `code-review` at
       markers. → PR body, review section; git dir markers.
 - [ ] **G4** — Hot path: evidence that performance is flat, not a belief
       (see A7). *Evidence:* as A7. → PR body.
+- [ ] **G5** — CI at the PR head is watched bounded; a failure on one of the
+      known load flakes (the four the brief names, or one of the same
+      contention class) is reported and the job rerun at most once per head;
+      a second failure on the same head stops the mission rather than a
+      second rerun. *Evidence:* the CI section of the PR body naming the
+      dropped test and the one rerun per head, with the run URLs. → PR body,
+      CI section. *(Added at delivery review: the brief's "report, rerun the
+      job once at most" had evidence but no gate line.)*
 
 ## Not applicable, and why
 
@@ -202,6 +220,13 @@ by the coordinator's decisions D1–D8), the full gate table, `code-review` at
 - **C3** — Draft PR open against `campaign/lean-a-plus`; CI green at the head;
   one `gh pr ready` attempt.
 - **C4** — Handoff block returned to the coordinator.
+- **C5** — `GOAL.md` archived as the mission's last commit before either
+  review ran (`2aa644e3`, ahead of the step-0 repair `4dcb2a42` that the
+  reviews were re-graded at); after that, the archive changes only for a
+  record correction, and every such change is followed by a current verdict
+  before a marker is re-recorded. *(Added at delivery review: the brief's
+  "archive ... as the last commit before reviews" had evidence in `git log`
+  but no closing-step line.)*
 
 ## The request as received
 
