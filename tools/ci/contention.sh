@@ -2,7 +2,10 @@
 # Run one crate's already-built test binary as many concurrent copies pinned to
 # fewer cores than copies, and fail if any copy fails.
 #
-#   sh tools/ci/contention.sh [package]        # default: quantick-app
+#   sh tools/ci/contention.sh [package [target]]   # default: quantick-app
+#
+# `target` names one test target when the package has several (a crate with
+# `tests/*.rs` binaries); without it the package must have exactly one.
 #
 # Why: a test that assumes a worker thread keeps up with the thread asserting
 # on it passes on a quiet machine and fails on a loaded one. CI's `Test` step
@@ -42,6 +45,7 @@
 set -u
 
 package=${1:-quantick-app}
+target=${2:-}
 copies=${CONTENTION_COPIES:-24}
 cores=${CONTENTION_CORES:-4}
 limit=${CONTENTION_TIMEOUT:-360}
@@ -66,8 +70,13 @@ online=$(nproc)
 # whose `executable` is a path rather than null.
 artifacts=$(cargo test --workspace --no-run --message-format=json) || die "cargo test --no-run failed"
 matches=$(printf '%s\n' "$artifacts" | grep "\"reason\":\"compiler-artifact\"" | grep -E "(#$package@|/$package#)" | grep '"executable":"')
+if [ -n "$target" ]; then
+    # `"name"` appears once per artifact line, inside its `target`.
+    matches=$(printf '%s\n' "$matches" | grep -F "\"name\":\"$target\"")
+fi
 count=$(printf '%s\n' "$matches" | grep -c '"executable":"')
-[ "$count" -eq 1 ] || die "expected exactly one test executable for $package, found $count"
+[ "$count" -eq 1 ] ||
+    die "expected exactly one test executable for $package${target:+ target $target}, found $count; name one as the second argument"
 binary=$(printf '%s\n' "$matches" | sed 's/.*"executable":"\([^"]*\)".*/\1/')
 manifest=$(printf '%s\n' "$matches" | sed 's/.*"manifest_path":"\([^"]*\)".*/\1/')
 [ -x "$binary" ] || die "not executable: $binary"

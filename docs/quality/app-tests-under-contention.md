@@ -42,8 +42,15 @@ CONTENTION_COPIES=12 CONTENTION_CORES=2 sh tools/ci/contention.sh
 ```
 
 Other knobs: `CONTENTION_TIMEOUT` and `CONTENTION_LOGS`, plus
-`CONTENTION_KNOWN_ISSUES` to point at another skip list. Exit status is 0 when
-every copy passed, 1 when any copy failed, and 2 when the harness could not run.
+`CONTENTION_KNOWN_ISSUES` to point at another skip list. A package with more
+than one test target (a crate with `tests/*.rs` binaries) takes the target's
+name as a second argument: `sh tools/ci/contention.sh quantick-engine
+golden_tick`. Exit status is 0 when every copy passed, 1 when any copy failed,
+and 2 when the harness could not run.
+
+`tools/ci/contention_test.sh` tests every one of those exit paths with shims
+for cargo, `taskset` and the test binary. CI runs it early, in the
+`Contention harness tests` step.
 
 ## Choosing 24 copies on 4 cores
 
