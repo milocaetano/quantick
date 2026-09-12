@@ -172,7 +172,10 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
     for columns in table_rows(&matrix, 8) {
         let id = columns[0].trim().trim_matches('`').to_owned();
         let readback = columns[4].split('`').nth(1).unwrap_or_default().to_owned();
-        if !registered.contains(&readback) {
+        // `none: send it again` names no read: the app-side guard owns when
+        // that is allowed, and there is no identifier here to compare.
+        let resends = columns[4].trim().starts_with("none");
+        if !resends && !registered.contains(&readback) {
             findings.push(Finding::new(
                 format!(
                     "{RETRY_MATRIX_PATH}: the row for `{id}` reads back through `{readback}`, \

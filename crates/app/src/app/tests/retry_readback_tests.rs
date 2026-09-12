@@ -489,40 +489,81 @@ fn a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once() {
     std::fs::remove_dir_all(directory).ok();
 }
 
-/// A valid input for each reachable `optional` row — valid, because the
-/// contract validates a payload before it looks at the key, and a call
-/// refused on its input never reaches the store this test is about.
-fn replay_payload(capability: &str) -> Value {
-    match capability {
-        "layout.focus.set" => json!({ "pane": "0" }),
-        "layout.pane.collapse"
-        | "layout.pane.expand"
-        | "layout.tab.create"
-        | "layout.tab.switch"
-        | "feed.reconnect"
-        | "feed.reload" => json!({}),
-        "layout.pane.move" => json!({ "from": "1", "to": "2" }),
-        // `fraction` is an `f64`, and the wire refuses floating-point JSON, so
+/// What a row's readback must do across its call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Readback {
+    /// The call acts: the field reads differently afterwards.
+    Moves,
+    /// The handler refuses the call: the field reads the same afterwards.
+    Stays,
+    /// The field shows the goal state, not this call's trace (feed recovery).
+    Resolves,
+    /// No read shows the effect; the row says to send the call again, so the
+    /// test proves the effect landed and that sending it again changes
+    /// nothing further.
+    Resend,
+}
+
+/// Every reachable `optional` row, in an order where each call really acts:
+/// the preset first gives the tab two context charts for the pane calls to
+/// work on. Inputs are valid because the contract validates a payload before
+/// it looks at the key, and a call refused on its input never reaches the
+/// store this test is about.
+fn replay_plan() -> Vec<(&'static str, Value, Readback)> {
+    vec![
+        (
+            "layout.preset.apply",
+            json!({ "preset_id": "time+time+flow" }),
+            Readback::Moves,
+        ),
+        ("layout.focus.set", json!({ "pane": "2" }), Readback::Moves),
+        (
+            "layout.pane.set_interval",
+            json!({ "pane": "1", "interval_ms": 7_200_000 }),
+            Readback::Moves,
+        ),
+        (
+            "layout.pane.move",
+            json!({ "from": "1", "to": "2" }),
+            Readback::Moves,
+        ),
+        ("layout.pane.collapse", json!({}), Readback::Resend),
+        ("layout.pane.expand", json!({}), Readback::Resend),
+        // `fraction` is an `f64` and the wire refuses floating-point JSON, so
         // a client can send only the integers 0 or 1 — a defect in the input
         // schema reported with this change, not fixed by it. 1 leaves no room
-        // for the context column, so the handler refuses it, and a refusal is
-        // replayed like any terminal answer.
-        "layout.pane.resize" => json!({ "fraction": 1 }),
-        "layout.pane.set_interval" => json!({ "pane": "1", "interval_ms": 60_000 }),
-        "layout.preset.apply" => {
-            json!({ "preset_id": crate::canvas_layout::LAYOUT_PRESETS[0].id })
-        }
-        "layout.tab.rename" => json!({ "new_name": "Renamed on retry" }),
-        other => panic!("`{other}` is a reachable optional row with no replay input here; add one"),
-    }
+        // for the context column, so the handler refuses it: the readback
+        // has to stay where it was, and the refusal is replayed like any
+        // terminal answer.
+        (
+            "layout.pane.resize",
+            json!({ "fraction": 1 }),
+            Readback::Stays,
+        ),
+        ("layout.tab.create", json!({}), Readback::Moves),
+        (
+            "layout.tab.rename",
+            json!({ "new_name": "Renamed on retry" }),
+            Readback::Moves,
+        ),
+        // Filled in when it runs: the layout that was active before the create.
+        ("layout.tab.switch", Value::Null, Readback::Moves),
+        ("feed.reconnect", json!({}), Readback::Resolves),
+        ("feed.reload", json!({}), Readback::Resolves),
+    ]
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
 /// answer dropped, and the retry under the same key. The retry is the first
 /// outcome, readdressed; the application began the call once; and the row's
-/// named field reads back over the socket. A refusal the handler makes is
-/// terminal too, and is replayed the same way — which is what the key
-/// promises for it.
+/// named field moves when the call acted and stays when it was refused — the
+/// readback separating applied from not applied, which is the claim the
+/// matrix makes for it.
+///
+/// Five of the calls that act here answer `control.capability_unavailable`
+/// today: `LayoutResult.fraction` is an `f64` the wire refuses to encode
+/// (reported with this change; fixing it is a schema change). Their readback
+/// moving anyway is exactly how a client learns such a call applied.
 #[test]
 fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let ctx = egui::Context::default();
@@ -532,76 +573,139 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout,cockpit.recover");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options("cockpit", &["cockpit", "cockpit.layout", "cockpit.recover"]);
-    let rows: Vec<_> = retry_matrix::READBACKS
+    let reachable: BTreeSet<&str> = retry_matrix::READBACKS
         .iter()
         .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Optional)
         .filter(|row| retry_matrix::reachable_by_a_grant(row.capability))
+        .map(|row| row.capability)
         .collect();
-    assert!(!rows.is_empty());
+    let plan = replay_plan();
+    assert_eq!(
+        plan.iter()
+            .map(|(capability, ..)| *capability)
+            .collect::<BTreeSet<_>>(),
+        reachable,
+        "the plan covers every reachable optional row, and nothing else"
+    );
+    let mut first_layout = Value::Null;
 
-    for row in &rows {
+    for (capability, payload, expected) in plan {
         // A connection per row: each call's records, rate and reservations
         // are its own, so one row cannot mask another.
         let mut client = connect(&directory, &cockpit);
-        let payload = replay_payload(row.capability);
-        let key = format!("replay-{}", row.capability);
-        if row.capability.starts_with("feed.") {
+        let row = retry_matrix::readback(capability).expect("the matrix has a row");
+        let payload = match capability {
+            "layout.tab.switch" => json!({ "name": first_layout }),
+            _ => payload,
+        };
+        if expected == Readback::Resend {
+            replay_and_resend(&mut app, &mut client, capability, &payload);
+            continue;
+        }
+        let before = readback(&mut app, &ctx, &mut client, capability);
+        if capability == "layout.tab.create" {
+            first_layout = before.first().cloned().expect("a layout is open");
+        }
+        if capability.starts_with("feed.") {
             // No venue socket from a test; see the feed test above.
             app.active_tab_mut().feed_id = "retired-feed".to_owned();
         }
+        let key = format!("replay-{capability}");
         let (lost, first) = keyed_call(
             &mut app,
             &mut client,
             "first",
-            row.capability,
+            capability,
             payload.clone(),
             &key,
         );
-        let (retry, second) = keyed_call(
-            &mut app,
-            &mut client,
-            "second",
-            row.capability,
-            payload,
-            &key,
-        );
+        let (retry, second) =
+            keyed_call(&mut app, &mut client, "second", capability, payload, &key);
         assert_eq!(
             first.len(),
             1,
-            "{}: the call reached the application",
-            row.capability
+            "{capability}: the call reached the application"
         );
-        assert!(
-            first[0].began,
-            "{}: and got past every refusal",
-            row.capability
-        );
+        assert!(first[0].began, "{capability}: and got past every refusal");
         assert!(
             second.is_empty(),
-            "{}: the retry never reached it",
-            row.capability
+            "{capability}: the retry never reached it"
         );
         assert_eq!(
             retry.outcome, lost.outcome,
-            "{}: the first answer",
-            row.capability
+            "{capability}: the first answer"
         );
         assert_eq!(retry.request_id.as_str(), "second");
-        // Whatever the answer said, the row's readback has to be there to
-        // settle it — and for five of these rows today the answer is wrong:
-        // `LayoutResult.fraction` is an `f64` the wire refuses to encode, so a
-        // call that acted answers `control.capability_unavailable` (reported
-        // with this change; fixing it is a schema change). The readback is how
-        // a client learns the call applied anyway.
-        assert!(
-            !readback(&mut app, &ctx, &mut client, row.capability).is_empty(),
-            "{}: `{}` reads back",
-            row.capability,
-            row.field
-        );
+        // A readback may trail its call by a rebuild — `chart.summary` reports
+        // the bars as built, and they follow a new interval a frame or more
+        // later — so a row that should move is read until it does.
+        let deadline = Instant::now() + GATEWAY_TEST_WAIT;
+        let mut after = readback(&mut app, &ctx, &mut client, capability);
+        while expected == Readback::Moves && after == before && Instant::now() < deadline {
+            run_frame(&mut app, &ctx);
+            std::thread::sleep(Duration::from_millis(5));
+            after = readback(&mut app, &ctx, &mut client, capability);
+        }
+        match expected {
+            Readback::Moves => assert_ne!(
+                after, before,
+                "{capability}: `{}` shows the call applied (answer: {:?})",
+                row.field, lost.outcome
+            ),
+            Readback::Stays => assert_eq!(
+                after, before,
+                "{capability}: `{}` shows the refused call did not apply",
+                row.field
+            ),
+            Readback::Resolves => assert!(!after.is_empty(), "{capability}: `{}`", row.field),
+            Readback::Resend => unreachable!("handled above"),
+        }
     }
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
+}
+
+/// A row the matrix reconciles by resending: the keyed call and its retry
+/// replay as every optional row does, the effect lands (read off the tab,
+/// since no scope carries it — which is the row's point), and the same call
+/// sent again with no key, as a reconnected client would, leaves it there.
+fn replay_and_resend(
+    app: &mut QuantickApp,
+    client: &mut LocalClient,
+    capability: &str,
+    payload: &Value,
+) {
+    let wanted = capability == "layout.pane.collapse";
+    let key = format!("replay-{capability}");
+    let (lost, first) = keyed_call(app, client, "first", capability, payload.clone(), &key);
+    let (retry, second) = keyed_call(app, client, "second", capability, payload.clone(), &key);
+    assert_eq!(
+        first.len(),
+        1,
+        "{capability}: the call reached the application"
+    );
+    assert!(first[0].began, "{capability}: and got past every refusal");
+    assert!(
+        second.is_empty(),
+        "{capability}: the retry never reached it"
+    );
+    assert_eq!(
+        retry.outcome, lost.outcome,
+        "{capability}: the first answer"
+    );
+    assert_eq!(
+        app.active_tab().context_collapsed,
+        wanted,
+        "{capability} applied (answer: {:?})",
+        lost.outcome
+    );
+    let (_, resent) = unkeyed_call(app, client, capability, payload.clone());
+    assert_eq!(resent.len(), 1, "{capability}: the resend is a new call");
+    assert_eq!(
+        app.active_tab().context_collapsed,
+        wanted,
+        "{capability}: sending it again leaves the same state"
+    );
 }
 
 /// Every reachable `forbidden` row refuses a key on the socket, before the

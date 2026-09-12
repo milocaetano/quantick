@@ -195,6 +195,23 @@ fn a_read_with_a_selector_it_does_not_take_is_drift() {
     assert_finds(&other_read, &expected("scene.read"));
 }
 
+/// Resending is a reconciliation only an `optional` call can offer: a
+/// forbidden one acts twice.
+#[test]
+fn resending_a_call_that_is_not_optional_is_drift() {
+    let rows = with_row("notify.toast", |row| {
+        row.read = RESEND;
+        row.event = None;
+        row.field = "";
+    });
+    assert_finds(
+        &rows,
+        &Drift::ResendNotSafe {
+            capability: "notify.toast".to_owned(),
+        },
+    );
+}
+
 /// The named readback scope, the other half of the assessor's fixture.
 #[test]
 fn a_scope_the_registry_lacks_is_drift() {
@@ -306,7 +323,7 @@ fn every_row_carries_policy_enforcement_reach_readback_and_proof() {
             assert!(!column.trim().is_empty(), "column {index} is empty: {row}");
         }
         assert!(
-            columns[4].trim().starts_with('`'),
+            columns[4].trim().starts_with('`') || columns[4].trim() == "none: send it again",
             "no readback capability: {row}"
         );
     }

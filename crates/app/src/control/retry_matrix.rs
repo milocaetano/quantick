@@ -166,9 +166,33 @@ const fn journal(
     }
 }
 
+/// The `read` of a row whose effect no read shows. Allowed only for an
+/// `optional` capability, whose end state is the same however often it runs:
+/// a client that cannot tell whether its call applied sends it again. Every
+/// such row is a readback still owed, and names what it is waiting for.
+pub(crate) const RESEND: &str = "resend";
+
+/// A row with no readback: the effect is reconciled by sending the call again.
+const fn resend(
+    capability: &'static str,
+    policy: IdempotencyPolicy,
+    applied_when: &'static str,
+    proven_by: &'static [&'static str],
+) -> Readback {
+    Readback {
+        capability,
+        policy,
+        read: RESEND,
+        scope: None,
+        event: None,
+        field: "",
+        applied_when,
+        proven_by,
+    }
+}
+
 const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
-const CREATED_BY_CALLER: &str =
-    "a drawing authored by the caller that the pre-call reading lacked is there";
+const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
 /// rendered in the registry's order.
@@ -218,7 +242,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         Optional,
         feed::SCOPE_ID,
         "tabs[].connection_state",
-        "the tab's feed is connecting or connected again",
+        "the goal state, not this call's trace: a connected feed needs nothing more, and the call ends in the same state however often it runs, so a feed still stalled is the cue to send it again",
         &[FEED_TEST, EVERY_OPTIONAL_TEST],
     ),
     snapshot(
@@ -226,7 +250,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         Optional,
         feed::SCOPE_ID,
         "tabs[].connection_state",
-        "the tab's feed is connecting or connected again",
+        "the goal state, not this call's trace: a connected feed needs nothing more, and the call ends in the same state however often it runs, so a feed still stalled is the cue to send it again",
         &[FEED_TEST, EVERY_OPTIONAL_TEST],
     ),
     // The journal rather than `analysis.indicators`: that scope carries the
@@ -252,32 +276,32 @@ pub(crate) const READBACKS: &[Readback] = &[
         "layout.focus.set",
         Optional,
         workspace::SCOPE_ID,
-        "tabs[].focused_pane",
-        "the tab's focused pane is the one asked for",
+        "tabs[].panes[].focused",
+        "the pane at the address asked for is the focused one (per pane: two context charts share a side)",
         LAYOUT_PROOF,
     ),
-    snapshot(
+    // No read projects the context column's collapse: `tabs[].panes[].visible`
+    // counts a collapsed chart as shown, and the only other carrier is the
+    // call's own answer. Collapsing twice leaves it collapsed, so the call is
+    // its own reconciliation until a scope carries the state.
+    resend(
         "layout.pane.collapse",
         Optional,
-        workspace::SCOPE_ID,
-        "tabs[].panes[].visible",
-        "the context panes are not visible",
+        "no read shows the collapse yet; collapsing twice leaves it collapsed, so send it again",
         LAYOUT_PROOF,
     ),
-    snapshot(
+    resend(
         "layout.pane.expand",
         Optional,
-        workspace::SCOPE_ID,
-        "tabs[].panes[].visible",
-        "the context panes are visible",
+        "no read shows the collapse yet; expanding twice leaves it expanded, so send it again",
         LAYOUT_PROOF,
     ),
     snapshot(
         "layout.pane.move",
         Optional,
         workspace::SCOPE_ID,
-        "tabs[].panes[].pane_index",
-        "the moved pane's `pane_id` sits at the index asked for",
+        "tabs[].panes[].pane_id",
+        "the moved pane's `pane_id` is listed at the address asked for",
         LAYOUT_PROOF,
     ),
     snapshot(
@@ -438,6 +462,10 @@ pub(crate) enum Drift {
     /// The row names a snapshot scope the registry does not register, or
     /// reads `snapshot.read` without naming one.
     UnknownScope { capability: String, scope: String },
+    /// The row reconciles by sending the call again, and its policy does not
+    /// make that safe: only an `optional` call ends in the same state however
+    /// often it runs.
+    ResendNotSafe { capability: String },
     /// The row's read and its scope or event kind do not fit together: a
     /// snapshot needs a scope, the journal needs an event kind, neither takes
     /// the other's, and no other read has a readback grammar a client (or the
@@ -491,6 +519,11 @@ impl fmt::Display for Drift {
             Self::UnknownScope { capability, scope } => write!(
                 f,
                 "the row for `{capability}` names snapshot scope `{scope}`, which is not registered"
+            ),
+            Self::ResendNotSafe { capability } => write!(
+                f,
+                "the row for `{capability}` reconciles by resending, which only an `optional` \
+                 capability can do safely"
             ),
             Self::ReadShape { capability, read } => write!(
                 f,
@@ -613,6 +646,13 @@ fn row_drift(
             expected: row.policy,
             published: descriptor.idempotency,
         });
+    }
+    if row.read == RESEND {
+        let safe = row.policy == IdempotencyPolicy::Optional && row.scope.is_none();
+        if !safe || row.event.is_some() || !row.field.is_empty() {
+            findings.push(Drift::ResendNotSafe { capability });
+        }
+        return findings;
     }
     let Some(read) = contract
         .registry()
@@ -746,13 +786,13 @@ pub(crate) fn schema_has_path(schema: &Value, path: &str) -> bool {
     true
 }
 
-/// `node` with its `$ref` resolved and its combinators flattened. Bounded, so
-/// a recursive schema cannot loop.
 /// How many `$ref` and combinator hops the schema walk follows before it
 /// gives up. The published scope schemas nest a handful deep; the bound exists
 /// only so a recursive schema cannot loop, not to fit any real one.
 const MAX_SCHEMA_HOPS: usize = 16;
 
+/// `node` with its `$ref` resolved and its combinators flattened, bounded by
+/// [`MAX_SCHEMA_HOPS`].
 fn branches<'a>(root: &'a Value, node: &'a Value, depth: usize) -> Vec<&'a Value> {
     if depth > MAX_SCHEMA_HOPS {
         return Vec::new();
@@ -814,6 +854,11 @@ struct RenderedRow<'a> {
 }
 
 fn render(contract: &ObserverContract) -> String {
+    let registered = contract
+        .registry()
+        .capabilities()
+        .filter(|descriptor| !descriptor.read_only)
+        .count();
     let rows: Vec<RenderedRow<'_>> = contract
         .registry()
         .capabilities()
@@ -835,9 +880,12 @@ fn render(contract: &ObserverContract) -> String {
     out.push_str(&table(contract, &rows));
     let _ = write!(
         out,
-        "\n{} mutable capabilities registered, {} with a readback.\n",
+        "\n{registered} mutable capabilities registered, {} with a row, {} of them with a \
+         readback.\n",
         rows.len(),
-        rows.len()
+        rows.iter()
+            .filter(|rendered| rendered.row.read != RESEND)
+            .count()
     );
     out
 }
@@ -894,7 +942,10 @@ const PREAMBLE: &str = concat!(
     "instead, and its row says which further scope its readback needs.\n",
     "**Readback** is the read that shows the effect — a `snapshot.read` scope,\n",
     "or `events.read` filtered to one journal event kind — and **Field** the\n",
-    "path within it, `[]` stepping into an array. **Applied when** says what the\n",
+    "path within it, `[]` stepping into an array. *none: send it again* marks\n",
+    "an `optional` capability no read shows yet: its end state is the same\n",
+    "however often it runs, so a client that cannot tell sends it again, and\n",
+    "the row is a readback still owed. **Applied when** says what the\n",
     "field shows if the call took effect. **Proven by** names the transport\n",
     "tests, in `crates/app/src/app/tests/retry_readback_tests.rs`, that exercise\n",
     "the row through the real local gateway.\n",
@@ -954,6 +1005,7 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
             format!("none (`{}` ceiling)", rendered.holder.profile)
         };
         let mut source = match (row.scope, row.event) {
+            _ if row.read == RESEND => "none: send it again".to_owned(),
             (Some(scope), _) => format!("`{}` `{scope}`", row.read),
             (None, Some(event)) => format!("`{}` `{event}`", row.read),
             (None, None) => format!("`{}`", row.read),
@@ -973,15 +1025,20 @@ fn table(contract: &ObserverContract, rows: &[RenderedRow<'_>]) -> String {
             .map(|test| format!("`{test}`"))
             .collect::<Vec<_>>()
             .join(", ");
+        let field = if row.field.is_empty() {
+            "—".to_owned()
+        } else {
+            format!("`{}`", row.field)
+        };
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | `{}` | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
             rendered.descriptor.id.as_str(),
             policy_name(rendered.descriptor.idempotency),
             enforced(rendered.descriptor.idempotency, rendered.holder.grantable),
             reach,
             source,
-            row.field,
+            field,
             row.applied_when,
             proof,
         );

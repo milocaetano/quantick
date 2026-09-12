@@ -292,6 +292,40 @@ what reconciles those calls today. Carried to the handoff as a
 `human_decision`: change `fraction` to a canonical decimal on both sides
 (a published-schema change) in a follow-up.
 
+Round 2, over `52e35a1b..daedc49f`: step 0 (`code-review` at `medium`,
+effort-first, no reuse notice) returned three findings and two minor notes,
+all confirmed. Repair batch 2 (second batch; each finding's first attempt):
+
+- **R2-1** — the `feed.*` readback cannot tell whether *this* call ran: a
+  reload normally hits a connected feed and reads `connected` either way.
+  Closed as a documentation fix — nothing in the scopes changes per respawn,
+  and adding a counter is a wire change D1 forbids. The rows now say they
+  show the goal state; since the call ends in the same state however often it
+  runs, a feed still stalled is the cue to send it again. The counter is a
+  handoff `human_decision`.
+- **R2-2** — the optional-row test only checked that a field existed.
+  Closed: it now runs the rows in an order where each call really acts, and
+  asserts each row's readback *moves* when the call applied (read until a
+  rebuild lands) and *stays* when the handler refused it
+  (`layout.pane.resize`). That surfaced two readback gaps, both closed:
+  `tabs[].focused_pane` is a side, and two context charts share one, so
+  `layout.focus.set` now reads the per-pane `tabs[].panes[].focused`, and
+  `layout.pane.move` reads the `pane_id` order instead of `pane_index`.
+  The third gap cannot be closed without a wire change: **no read projects
+  the context column's collapse** (`tabs[].panes[].visible` counts a
+  collapsed chart as shown). `layout.pane.collapse` / `layout.pane.expand`
+  now declare *none: send it again*, a row kind `drift` allows only for an
+  `optional` capability (`Drift::ResendNotSafe`, with a fixture), rendered as
+  a readback still owed, and the test proves the effect lands and that
+  sending it again changes nothing further. Projecting the collapse state is
+  a handoff `human_decision`.
+- **R2-3** — the annotate create rows identified the caller's drawing by an
+  unauthenticated name. Narrowed: the rows also name the call's `tool_id`
+  and say to keep one create per tool in flight; a request-scoped id in the
+  event would be a wire change.
+- Minor: the `branches` doc sat on `MAX_SCHEMA_HOPS` (fixed); the footer now
+  counts rows and readbacks separately (29 rows, 27 readbacks).
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS and records its marker.
