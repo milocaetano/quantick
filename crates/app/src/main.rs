@@ -47,6 +47,7 @@ mod layouts;
 mod live_strip;
 mod loading;
 mod metrics;
+mod operability;
 mod order_strategies;
 mod orderflow_render;
 mod orderflow_view;
@@ -179,6 +180,10 @@ fn run_dump_subcommand(argument: &str) -> bool {
         }
         "--dump-hook-registry" => {
             emit(hooks::hook_registry_markdown());
+            true
+        }
+        "--dump-ui-behaviour-matrix" => {
+            emit(Ok(operability::matrix::ui_behaviour_matrix_markdown()));
             true
         }
         _ => false,
