@@ -533,6 +533,20 @@ impl LiquidityHistory {
         self.aggressions.iter()
     }
 
+    /// Retained aggressive executions from the first one a caller cutting at
+    /// `from_ms` must look at: every print at or after `from_ms` is in it, and
+    /// the caller still filters by time.
+    pub fn aggressions_since(&self, from_ms: i64) -> impl Iterator<Item = &Aggression> {
+        let _ = from_ms;
+        self.aggressions.range(..)
+    }
+
+    /// How many aggressive executions are retained.
+    #[must_use]
+    pub fn aggression_count(&self) -> usize {
+        self.aggressions.len()
+    }
+
     /// Quantity that maps to a full-size bubble, on the session print scale.
     ///
     /// The automatic modes read the scale accumulated since the session (or
@@ -1664,5 +1678,54 @@ mod tests {
             side: Side::Buy,
         });
         assert_eq!(history.tape_age(), None);
+    }
+
+    /// The live projection cuts the tape at the live seam every frame. Prints
+    /// arrive in time order on every venue this app reads, so the cut starts
+    /// at the seam instead of walking every retained print — the walk that
+    /// grew with the session until the 100,000-print cap bound it.
+    #[test]
+    #[ignore = "red until the cut stops walking the prints before the seam"]
+    fn a_cut_in_time_order_starts_at_the_seam() {
+        let mut history = LiquidityHistory::new(enabled_config());
+        for id in 1..=10 {
+            history.record_aggression(&trade(id, id as i64 * 10, Side::Buy));
+        }
+        let cut: Vec<u64> = history.aggressions_since(55).map(|a| a.agg_id).collect();
+        assert_eq!(cut, vec![6, 7, 8, 9, 10]);
+        assert_eq!(history.aggressions_since(i64::MIN).count(), 10);
+        assert_eq!(history.aggressions_since(1_000).count(), 0);
+        assert_eq!(history.aggression_count(), 10);
+    }
+
+    /// A print that arrives older than the one before it breaks the order the
+    /// cut relies on, so the cut falls back to every retained print — never
+    /// skipping one that belongs to it — and becomes exact again once the
+    /// out-of-order pair has left the history.
+    #[test]
+    #[ignore = "red until the cut stops walking the prints before the seam"]
+    fn an_out_of_order_print_makes_the_cut_walk_everything_until_it_leaves() {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            max_aggressions: 4,
+            ..enabled_config()
+        });
+        for (id, at) in [(1, 10), (2, 30), (3, 20), (4, 40)] {
+            history.record_aggression(&trade(id, at, Side::Sell));
+        }
+        let late: Vec<u64> = history.aggressions_since(25).map(|a| a.agg_id).collect();
+        assert!(
+            late.contains(&2) && late.contains(&4),
+            "every print at or after the cut is walked: {late:?}"
+        );
+        assert_eq!(late.len(), 4, "out of order: nothing is skipped");
+
+        // Push the out-of-order pair (30 then 20) out through the cap.
+        for (id, at) in [(5, 50), (6, 60), (7, 70)] {
+            history.record_aggression(&trade(id, at, Side::Sell));
+        }
+        let ids: Vec<u64> = history.aggressions().map(|a| a.agg_id).collect();
+        assert_eq!(ids, vec![4, 5, 6, 7]);
+        let cut: Vec<u64> = history.aggressions_since(55).map(|a| a.agg_id).collect();
+        assert_eq!(cut, vec![6, 7], "in order again: the cut is exact");
     }
 }
