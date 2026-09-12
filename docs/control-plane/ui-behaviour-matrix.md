@@ -190,8 +190,9 @@ disagree with.
 | `menu_entry` | `Tools` | a top-level menu; it holds entries and performs nothing |
 | `menu_entry` | `Help` | a top-level menu; it holds entries and performs nothing |
 | `menu_entry` | `Layouts` | a submenu holding the layout tabs and the three edits the strip's own menu holds; each of those is a row of its own |
+| `rail_tool` | `Drawing` | the rail's slot for the drawing registry rather than a tool of its own; every drawing tool behind it is a `tool.*` row |
 | `notice_action` | `None` | the feed notice's "nothing was clicked" variant: an absence, not a behaviour |
 | `scripted_menu` | `workspace` | a capture hook that opens the Workspace menu so a screenshot can see it. It performs nothing the menu's own entries do not |
 | `scripted_menu` | `history` | a capture hook that opens the toolbar's history caret. The behaviour behind it is `history.reach.set` |
 
-9 entries.
+10 entries.

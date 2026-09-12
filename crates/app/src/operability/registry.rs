@@ -630,7 +630,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "tool.crosshair",
         title: "Arm the crosshair",
         reach: "tool rail, key 2",
-        keys: &[(Source::RailTool, "crosshair")],
+        keys: &[(Source::RailTool, "Crosshair")],
         mapping: excluded!(
             PendingCapability,
             "arming a tool changes what the next click does, and no capability arms one. \
@@ -641,7 +641,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         id: "tool.pointer",
         title: "Arm the pointer — pan, zoom, select and move",
         reach: "tool rail, key 1, Escape",
-        keys: &[(Source::RailTool, "pointer")],
+        keys: &[(Source::RailTool, "Pointer")],
         mapping: excluded!(
             PendingCapability,
             "arming a tool changes what the next click does, and no capability arms one. \
@@ -997,6 +997,11 @@ pub(crate) const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
         "Layouts",
         "a submenu holding the layout tabs and the three edits the strip's own menu holds; \
          each of those is a row of its own",
+    ),
+    (
+        Source::RailTool,
+        "Drawing",
+        "the rail's slot for the drawing registry rather than a tool of its own; every drawing tool behind it is a `tool.*` row",
     ),
     (
         Source::NoticeAction,

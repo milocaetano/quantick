@@ -91,6 +91,14 @@ pub(crate) struct UiBehaviour {
 ///
 /// The variant names the registry, never the file: a registry that moves
 /// keeps its name here and the rows keep claiming it.
+///
+/// Closed rather than a trait, and on purpose: a source is not a thing this
+/// module dispatches on — `sources::registered` walks each one differently and
+/// has to, because a `BTreeMap` of tools and a text scan for `const` lines
+/// share no shape. A trait would buy a uniform call and cost the one property
+/// that matters here, which is that adding a registry to the interface without
+/// telling this enum is a compile error in `as_str` rather than a silently
+/// unwalked registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Source {
     /// A `toolbar::ToolbarAction` variant — what the toolbar asks the app to
@@ -303,6 +311,18 @@ pub(crate) enum Drift {
         /// The row.
         behaviour: &'static str,
     },
+    /// One entry is both claimed by a row and excused as not a behaviour, so
+    /// the two lists contradict each other. Without this the contradiction is
+    /// invisible: the entry is skipped for being claimed, and the excuse sits
+    /// there forever saying the opposite.
+    ClaimedAndExcused {
+        /// The registry.
+        source: Source,
+        /// The entry both lists name.
+        key: String,
+        /// The row claiming it.
+        behaviour: &'static str,
+    },
 }
 
 #[cfg(test)]
@@ -347,6 +367,14 @@ impl Drift {
             Self::DuplicateBehaviour { id } => {
                 format!("two rows share the behaviour id `{id}`")
             }
+            Self::ClaimedAndExcused {
+                source,
+                key,
+                behaviour,
+            } => format!(
+                "`{}` entry `{key}` is claimed by behaviour `{behaviour}` and also listed in `NOT_A_BEHAVIOUR`. Drop whichever of the two is wrong",
+                source.as_str()
+            ),
             Self::AuthoredClaim { behaviour } => format!(
                 "behaviour `{behaviour}` claims an `authored` key; `authored` means no registry \
                  stands behind the row, so it carries no key"
@@ -413,15 +441,21 @@ pub(crate) fn drift(
         .map(|(source, key, _)| (*source, *key))
         .collect();
     for entry in registered {
-        if claims.contains_key(&(entry.source, entry.key.as_str()))
-            || excused_keys.contains(&(entry.source, entry.key.as_str()))
-        {
-            continue;
+        let key = (entry.source, entry.key.as_str());
+        let claimed = claims.get(&key);
+        let excused = excused_keys.contains(&key);
+        match (claimed, excused) {
+            (Some(behaviour), true) => findings.push(Drift::ClaimedAndExcused {
+                source: entry.source,
+                key: entry.key.clone(),
+                behaviour,
+            }),
+            (Some(_), false) | (None, true) => {}
+            (None, false) => findings.push(Drift::Unclaimed {
+                source: entry.source,
+                key: entry.key.clone(),
+            }),
         }
-        findings.push(Drift::Unclaimed {
-            source: entry.source,
-            key: entry.key.clone(),
-        });
     }
     for (source, key) in &excused_keys {
         if !registered

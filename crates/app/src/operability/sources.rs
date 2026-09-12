@@ -28,7 +28,6 @@
 //! meaningless in a shipped binary, and the generated matrix is a function of
 //! the table alone.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::{Registered, Source};
@@ -125,8 +124,17 @@ fn app_sources() -> Vec<PathBuf> {
 /// that two functions turn into `Ctrl+N` and `Alt+N` shortcuts, so the array's
 /// name stands for both families — `layout.preset.apply` claims it, and
 /// `layout.tab.switch` names the other family in its reach.
+///
+/// A name is collected once per declaration rather than folded into a set:
+/// the same constant name bound in two files is an ambiguous key, and the
+/// duplicate check in `registered` says so rather than quietly keeping one.
+///
+/// Known limit: the scan skips test trees and `*_tests.rs`, not a
+/// `#[cfg(test)]` module inside a production file. A shortcut declared in one
+/// of those would be asked for a row it does not deserve — loudly, which is
+/// the safe direction for a parity guard to fail in.
 fn hotkey_constants() -> Vec<String> {
-    let mut names = BTreeSet::new();
+    let mut names = Vec::new();
     for path in app_sources() {
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
@@ -150,7 +158,7 @@ fn hotkey_constants() -> Vec<String> {
                 .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
                 .collect();
             if !name.is_empty() {
-                names.insert(name);
+                names.push(name);
             }
         }
     }
@@ -158,7 +166,7 @@ fn hotkey_constants() -> Vec<String> {
         !names.is_empty(),
         "no keyboard shortcut constants found; the scan is broken"
     );
-    names.into_iter().collect()
+    names
 }
 
 /// How many menu-bar entries carry a label the source computes rather than
@@ -251,11 +259,12 @@ pub(crate) fn registered() -> Vec<Registered> {
     for tool in crate::drawings::DRAWING_TOOLS {
         entries.push(Registered::new(Source::DrawingTool, tool.id()));
     }
-    for tool in [
-        crate::toolrail::Tool::Pointer,
-        crate::toolrail::Tool::Crosshair,
-    ] {
-        entries.push(Registered::new(Source::RailTool, tool.id()));
+    // By variant name, out of the `Tool` enum itself. A literal
+    // `[Tool::Pointer, Tool::Crosshair]` here would let a third non-drawing
+    // tool ship unclaimed with this guard green, which is the failure the
+    // guard exists to catch.
+    for variant in enum_variants("crates/app/src/toolrail.rs", "Tool") {
+        entries.push(Registered::new(Source::RailTool, variant));
     }
     for preset in crate::canvas_layout::LAYOUT_PRESETS {
         entries.push(Registered::new(Source::LayoutPreset, preset.id));
@@ -279,6 +288,59 @@ pub(crate) fn registered() -> Vec<Registered> {
     }
 
     entries.sort();
-    entries.dedup();
+    let duplicates = duplicate_keys(&entries);
+    assert!(
+        duplicates.is_empty(),
+        "two registrations share a source and a key, so the matrix cannot tell the two doors apart: {duplicates:?}. Give one of them a distinguishable name"
+    );
     entries
+}
+
+/// Registrations that share a source and a key, in a sorted list.
+///
+/// Reported, never collapsed. Two such registrations are two doors the matrix
+/// cannot tell apart — the same label drawn in two menus, the same constant
+/// name bound in two files — and a row can only claim one of them. A `dedup`
+/// here would hide the second from the guard instead of sending its author to
+/// give it a distinguishable name.
+fn duplicate_keys(sorted: &[Registered]) -> Vec<String> {
+    sorted
+        .windows(2)
+        .filter(|pair| pair[0] == pair[1])
+        .map(|pair| format!("{}:{}", pair[0].source.as_str(), pair[0].key))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two doors that look identical to the walk are named, not folded into
+    /// one. Without this the second door is invisible: only one row can claim
+    /// the key, and the guard would call that complete coverage.
+    #[test]
+    fn two_registrations_sharing_a_key_are_reported() {
+        let mut entries = vec![
+            Registered::new(Source::MenuEntry, "Delete"),
+            Registered::new(Source::MenuEntry, "Delete"),
+            Registered::new(Source::MenuEntry, "Open"),
+        ];
+        entries.sort();
+        assert_eq!(
+            duplicate_keys(&entries),
+            vec!["menu_entry:Delete".to_owned()]
+        );
+    }
+
+    /// And a walk with no repeats reports nothing, so the check above is
+    /// measuring the repeat rather than the list.
+    #[test]
+    fn distinct_registrations_are_not_reported() {
+        let mut entries = vec![
+            Registered::new(Source::MenuEntry, "Delete"),
+            Registered::new(Source::Hotkey, "DELETE_SHORTCUT"),
+        ];
+        entries.sort();
+        assert!(duplicate_keys(&entries).is_empty());
+    }
 }

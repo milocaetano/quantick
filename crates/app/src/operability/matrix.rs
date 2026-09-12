@@ -330,6 +330,39 @@ mod tests {
         );
     }
 
+    /// An entry that is both claimed by a row and excused as not a behaviour
+    /// is a contradiction between the two lists, and it has to be named.
+    ///
+    /// Without this it is the one drift the guard cannot see: the entry is
+    /// skipped for being claimed, and the excuse sits beside it forever saying
+    /// the opposite.
+    #[test]
+    fn an_entry_both_claimed_and_excused_is_drift() {
+        let capabilities = registered_capability_ids().expect("the inventory parses");
+        let mut excused = NOT_A_BEHAVIOUR.to_vec();
+        excused.push((
+            Source::Hotkey,
+            "MARK_SHORTCUT",
+            "a fixture contradiction: a real row already claims this hotkey",
+        ));
+
+        let findings = drift(
+            UI_BEHAVIOURS,
+            &sources::registered(),
+            &excused,
+            &capabilities,
+        );
+        assert_eq!(
+            findings,
+            vec![Drift::ClaimedAndExcused {
+                source: Source::Hotkey,
+                key: "MARK_SHORTCUT".to_owned(),
+                behaviour: "attention.mark.create",
+            }],
+            "excusing an entry a row already claims has to be the only finding, and has to be one"
+        );
+    }
+
     /// Every row is legible on its own: an identifier that reads like a
     /// capability id, a title, a reach, and — where it is excluded — a reason
     /// long enough to argue with.
