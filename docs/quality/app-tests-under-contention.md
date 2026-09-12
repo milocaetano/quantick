@@ -62,23 +62,27 @@ campaign tip `52e35a1b`. The two trees differ in the app only in that test.
 | 24 × 3 | 2 / 2 | 0 of 2 | 305–337 s |
 | 16 × 4 | 2 / 2 | 0 of 2 | 100–199 s |
 | 20 × 4 | 3 / 3 | 1 of 3 | 125–234 s |
-| **24 × 4** | **5 / 5** | **3 of 5** | **182–300 s** |
+| **24 × 4** | **9 / 9** | **3 of 9** | **154–300 s** |
 
 So the harness needs every copy to be parallel as well as outnumbered. One
 test thread per copy (20 × 1) never caught it, and neither did 2 or 3 cores.
-With 4 cores, 24 copies was the only setting that caught it in most runs.
+With 4 cores, 24 copies caught it in 3 of 9 runs and 20 copies in 1 of 3,
+about the same rate on samples this small.
 `CONTENTION_CORES` is 4 because that is all the runner has, so there `taskset`
 only states the mask. On a larger machine the copies are still held to 4
-cores. Over ten runs, each whole step at 24 × 4 took 3 min 2 s to 5 min 0 s:
+cores. Over eighteen runs, each whole step at 24 × 4 took 2 min 34 s to 5 min 0 s:
 at the five-minute target, not comfortably under it. 20 × 4 took 2 min 6 s
-to 3 min 54 s but caught #403's test in only 1 of 3 runs, so the extra copies
-earn the minute. `timeout-minutes: 8` caps the step.
+to 3 min 54 s. The step keeps 24 because more copies is more contention on
+every run, and because the extra minute stayed within the target in all
+eighteen; if the target tightens, 20 is the measured fallback.
+`timeout-minutes: 8` caps the step.
 
-It catches most, not all. One green run is not proof that a test is immune to
-load. The step raises the odds that a load-sensitive test fails in its own pull
-request, where before it only failed later, on an unrelated one.
+It catches a load-sensitive test often, not always: about one run in three
+for #403's. One green run is not proof that a test is immune to load. The step
+raises the odds that such a test fails in its own pull request, where before it
+only failed later, on an unrelated one, and every run that does fail names it.
 
-The proof runs (final script and skip list, #403's test not skipped):
+The proof runs (the skip-list logic, #403's test never skipped):
 
 - Before, https://github.com/milocaetano/quantick/actions/runs/34710577586:
   red in 1 of 3 jobs at 24 × 4. It named
@@ -86,12 +90,18 @@ The proof runs (final script and skip list, #403's test not skipped):
   at `layers_tests.rs:565`, the CI assertion #403 recorded. It was also red in
   1 of 3 jobs at 20 × 4.
 - Tip, https://github.com/milocaetano/quantick/actions/runs/34710578514: that
-  test passed in every job. One job failed on a fifth test found by the step
-  itself, now #413 (below).
+  test passed in every job. One job failed on a test found by the step itself,
+  now #413 (below).
+- The committed script with its CI defaults, four jobs each:
+  before, https://github.com/milocaetano/quantick/actions/runs/34712034171,
+  and tip, https://github.com/milocaetano/quantick/actions/runs/34712035367.
+  #403's test did not fail in these four, and each revision had one job red on
+  a further new test, now #415 and #416. The failing job's
+  `contention-logs-2` artifact holds all 24 copies' logs.
 
 ## The skip list
 
-Calibration found five more load-sensitive tests. Their sources are identical
+Calibration found seven more load-sensitive tests. Their sources are identical
 at the campaign tip. Fixing them is outside #407, so the copies skip them.
 **`Test` still runs every one**, so nothing leaves the ordinary suite. Each
 line in `tools/ci/contention-known-issues.txt` is an exact name and its issue.
@@ -107,6 +117,8 @@ At landing the list held:
 | `control_plane_tests::a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free` (`:5435`) | #410 | 24 × 4, and locally on Windows |
 | `control_plane_tests::gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked` (`:2702`) | #411 | 24 × 4, and locally on Windows |
 | `screenshot_evidence_tests::synthetic_fractional_geometry_round_trips_original_png_and_clipped_regions` (`:92`) | #413 | 24 × 4 |
+| `control_plane_tests::an_operator_cannot_detach_the_traders_own_indicator` (`:2910`) | #415 | 24 × 4 |
+| `control_plane_tests::a_bundle_with_a_screenshot_maps_every_named_control_to_a_region_of_the_image` (`:4231`) | #416 | 24 × 4 |
 
 The file is the current list; this table is only the landing record.
 

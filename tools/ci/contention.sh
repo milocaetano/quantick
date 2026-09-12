@@ -78,7 +78,11 @@ workdir=$(dirname "$manifest")
 # The skip list becomes libtest arguments: `--exact` makes every `--skip`
 # match one whole test name rather than any name containing it.
 [ -r "$known" ] || die "cannot read the skip list $known"
-listed=$(cd "$workdir" && "$binary" --list 2>/dev/null | sed -n 's/: test$//p') || die "cannot list the tests in $binary"
+# Two steps, so a binary that cannot list is reported as that, rather than as
+# a skip-list line naming a test that no longer exists.
+listing=$(cd "$workdir" && "$binary" --list 2>/dev/null) || die "cannot list the tests in $binary"
+listed=$(printf '%s\n' "$listing" | sed -n 's/: test$//p')
+[ -n "$listed" ] || die "$binary --list named no tests"
 set -- --exact
 skipped=0
 cr=$(printf '\r')

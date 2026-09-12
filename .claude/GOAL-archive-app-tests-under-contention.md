@@ -105,8 +105,10 @@ produce against a historical revision, but no Rust source change.
   one edit.
 - **S4** — N = 24, K = 4. D1 says start from #404's 20 copies on one core and
   scale to the runner and the budget. Measured on the 4-vCPU runner, 20 on 1
-  core and every 2- and 3-core config caught nothing, and only 24 copies on 4
-  cores caught #403's test before its fix. K = 4 is every vCPU the runner has,
+  core and every 2- and 3-core config caught nothing; on 4 cores, 24 copies
+  caught #403's test before its fix in 3 of 9 runs and 20 copies in 1 of 3.
+  24 is kept for the heavier contention per run; its step took 2:34 to 5:00
+  over eighteen runs, 20's 2:06 to 3:54, the measured fallback. K = 4 is every vCPU the runner has,
   so `taskset` there only states the mask; N = 24 > K keeps D1's shape, and a
   larger runner is still pinned to 4. Safe to assume: D1 delegates the scaling,
   and the table is in the doc.

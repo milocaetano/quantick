@@ -134,7 +134,7 @@ jobs:
         # The script's defaults: 24 copies sharing 4 cores, each copy at
         # libtest's default thread count, which follows the affinity mask, so
         # 96 test threads and their workers on 4 vCPUs. Against the tree
-        # before #403's fix it named that test in 3 of 5 runs; 2 or 3 cores,
+        # before #403's fix it named that test in 3 of 9 runs; 2 or 3 cores,
         # and #404's 20 copies on 1 core, never did. The step took 3 to 5
         # minutes over ten runs; `timeout-minutes` caps it at 8.
         # The table is in `docs/quality/app-tests-under-contention.md`.
