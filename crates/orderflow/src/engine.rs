@@ -1285,7 +1285,7 @@ impl BookEngine {
             ask_levels: self.history.book().ask_count(),
             active_levels: self.history.active_level_count(),
             archived_runs: self.history.archived_run_count(),
-            aggression_count: self.history.aggressions().count(),
+            aggression_count: self.history.aggression_count(),
             history_bytes: self.history.approximate_history_bytes(),
             projection_cells: self.last_projection_cells,
             projection_aggressions: self.last_projection_aggressions,

@@ -86,7 +86,9 @@ pub(super) fn cluster_tier(
     } = cut;
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
-    for trade in history.aggressions() {
+    // A per-frame cut starts at its seam rather than walking every retained
+    // print; the `from` test below stays, so the cut is the same either way.
+    for trade in history.aggressions_since(from_ms.unwrap_or(i64::MIN)) {
         if from_ms.is_some_and(|from| trade.timestamp_ms < from)
             || until_ms.is_some_and(|until| trade.timestamp_ms >= until)
         {

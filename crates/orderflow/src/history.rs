@@ -269,6 +269,11 @@ pub struct LiquidityHistory {
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
+    /// Adjacent pairs in `aggressions` where the later print is older than
+    /// the one before it. Zero means the retained prints are in time order,
+    /// which is what lets [`Self::aggressions_since`] start at a cut instead
+    /// of walking every print.
+    aggressions_out_of_order: usize,
     scale: SessionScale,
     summary_scale: SummaryScale,
     coverage: VecDeque<CoverageSegment>,
@@ -295,6 +300,7 @@ impl LiquidityHistory {
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
+            aggressions_out_of_order: 0,
             coverage: VecDeque::new(),
             gaps: VecDeque::new(),
             pending_gap: None,
@@ -536,9 +542,21 @@ impl LiquidityHistory {
     /// Retained aggressive executions from the first one a caller cutting at
     /// `from_ms` must look at: every print at or after `from_ms` is in it, and
     /// the caller still filters by time.
+    ///
+    /// In time order — every venue this app reads sends prints that way — it
+    /// starts at the first print at or after `from_ms`, found by bisection,
+    /// so a per-frame cut costs what it keeps rather than what is retained.
+    /// While any retained print arrived older than the one before it, it
+    /// walks every print: skipping by bisection there could drop a print the
+    /// cut owns.
     pub fn aggressions_since(&self, from_ms: i64) -> impl Iterator<Item = &Aggression> {
-        let _ = from_ms;
-        self.aggressions.range(..)
+        let start = if self.aggressions_out_of_order == 0 {
+            self.aggressions
+                .partition_point(|trade| trade.timestamp_ms < from_ms)
+        } else {
+            0
+        };
+        self.aggressions.range(start..)
     }
 
     /// How many aggressive executions are retained.
@@ -694,6 +712,13 @@ impl LiquidityHistory {
             .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
         self.summary_scale
             .record(trade.timestamp_ms, trade.price, trade.quantity);
+        if self
+            .aggressions
+            .back()
+            .is_some_and(|last| trade.timestamp_ms < last.timestamp_ms)
+        {
+            self.aggressions_out_of_order += 1;
+        }
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -744,6 +769,7 @@ impl LiquidityHistory {
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
+        self.aggressions_out_of_order = 0;
         self.coverage.clear();
         self.gaps.clear();
         self.pending_gap = None;
@@ -946,7 +972,14 @@ impl LiquidityHistory {
     }
 
     fn pop_aggression_front(&mut self) {
-        if self.aggressions.pop_front().is_some() {
+        if let Some(evicted) = self.aggressions.pop_front() {
+            if self
+                .aggressions
+                .front()
+                .is_some_and(|next| next.timestamp_ms < evicted.timestamp_ms)
+            {
+                self.aggressions_out_of_order -= 1;
+            }
             self.counters.aggressions_evicted += 1;
         }
     }
@@ -1685,7 +1718,6 @@ mod tests {
     /// at the seam instead of walking every retained print — the walk that
     /// grew with the session until the 100,000-print cap bound it.
     #[test]
-    #[ignore = "red until the cut stops walking the prints before the seam"]
     fn a_cut_in_time_order_starts_at_the_seam() {
         let mut history = LiquidityHistory::new(enabled_config());
         for id in 1..=10 {
@@ -1703,7 +1735,6 @@ mod tests {
     /// skipping one that belongs to it — and becomes exact again once the
     /// out-of-order pair has left the history.
     #[test]
-    #[ignore = "red until the cut stops walking the prints before the seam"]
     fn an_out_of_order_print_makes_the_cut_walk_everything_until_it_leaves() {
         let mut history = LiquidityHistory::new(HeatmapConfig {
             max_aggressions: 4,
