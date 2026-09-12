@@ -2654,6 +2654,9 @@ mod incremental_lane_tests {
 mod forming_run;
 
 #[cfg(test)]
+pub(crate) use forming_run::CHECKPOINT_SPACING;
+
+#[cfg(test)]
 mod forming_run_tests;
 
 #[cfg(test)]

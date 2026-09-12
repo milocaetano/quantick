@@ -170,7 +170,13 @@ reserved at load to twice what it holds, the capacity that push would have
 grown it to, and `prepend_history` sizes its joined tape the same way
 (`the_first_live_print_after_a_backfill_copies_nothing`, red before the
 change: 560,000 bytes copied of a 560,000-byte tape). `trade.chart.backfilled`
-reads 0 copy bytes at the edge.
+reads 0 copy bytes at the edge. The cost, for a pane that goes live, is
+nothing: it holds the capacity one print earlier. A pane that never receives
+a live print — a paused replay, a closed market, history paged back — keeps
+the unused half reserved: one more tape's worth of *committed* memory (about
+222 MB at the envelope's edge), in pages never touched, so the working set
+does not grow. Unlike reserving the envelope up front, it is proportional to
+what was loaded and taken only at a load.
 
 Why the doubling stall is reported rather than fixed here: a contiguous
 `Vec` must copy when it outgrows its block, so removing the copy means either

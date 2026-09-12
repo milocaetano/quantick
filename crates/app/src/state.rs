@@ -553,6 +553,11 @@ pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
 /// capacity is the one that push would have reached, taken in the load frame
 /// instead of one frame later. `prepend_history` sizes its joined tape the
 /// same way.
+///
+/// The cost: a tape that never receives a live print — a paused replay, a
+/// closed market, history paged back — keeps the unused half reserved, one
+/// more tape's worth of committed memory per pane. Its pages are never
+/// touched, so the working set does not grow; the commit charge does.
 fn extend_tape(tape: &mut Vec<Trade>, trades: &[Trade]) {
     let held = tape.len() + trades.len();
     tape.reserve((2 * held).saturating_sub(tape.len()));
@@ -1575,7 +1580,7 @@ mod tests {
             );
             assert!(
                 s.trades.capacity() <= 2 * s.trades.len(),
-                "no more is held than the push would have grown to"
+                "no more is reserved than that push would have grown the tape to"
             );
         };
         s.ingest_backfill(&history);
