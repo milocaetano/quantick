@@ -527,6 +527,22 @@ collapse. Resumed batch 3:
   the capability.
 - The v1-refusal test is now cited on `layout.pane.collapse` only.
 
+Review of the resumed scope, round 5 (step 0 at `686ee81e`, `medium`,
+effort-first, no reuse notice): one finding, confirmed and closed.
+
+- **M5** — v1's width-floor check runs only once the tab has drawn a
+  canvas, so v2 `layout.pane.resize` on a tab not drawn yet (a background
+  tab after a restore) would have stored any share, including one under the
+  floor, which the trader's next divider nudge collapses. v1 could only send
+  0 or 1 there. Closed: v2 refuses a resize until the tab has been shown,
+  and `layout_v2_answers_with_the_exact_share_and_v1_is_still_there` proves
+  the refusal leaves the share untouched (through a `#[cfg(test)]`
+  `Tab::forget_canvas_width_for_test`, the state a tab opens in).
+
+The map correction at `686ee81e` (A10, the CI half of G2 and the
+`ai-review` half of G4 moved to closing steps C3–C5; A6 ticked with its
+URLs) was checked independently: FAITHFUL.
+
 ## Handoff `human_decision`s
 
 - **N1 — the MCP adapter's default version.** `quantick_invoke` falls back

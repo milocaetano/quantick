@@ -233,6 +233,21 @@ fn resize(
             "a share is between 0 and 1; {fraction} is not"
         )));
     }
+    // The width floor a drag is held to is checked against the canvas the tab
+    // last drew, and a tab not drawn yet — a background tab after a restore —
+    // has none. v1 could only send 0 or 1 there; v2 can send any share, and
+    // one under the floor would be stored as a width no drag can reach, which
+    // the trader's next nudge then collapses. So v2 refuses until the tab has
+    // been shown.
+    let index = super::tab_index(app, input.target)?;
+    let drawn = app
+        .control_tab_at(index)
+        .is_some_and(|tab| tab.last_canvas_width() > 0.0);
+    if !drawn {
+        return Err(ControlError::invalid_request(
+            "this tab has not been drawn yet, so no share can be held to the floor a drag is              held to; resize it once the tab is shown",
+        ));
+    }
     let share = fraction
         .to_f64()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;

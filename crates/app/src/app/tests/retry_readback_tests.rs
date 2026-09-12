@@ -750,6 +750,26 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
         vec![json!("0.4")],
         "is the share the workspace reads back"
     );
+    // On a tab not drawn yet no floor can be checked, so any share is refused
+    // there rather than stored as a width no drag can reach.
+    app.active_tab_mut().forget_canvas_width_for_test();
+    let (undrawn, served) = unkeyed_call_at(
+        &mut app,
+        &mut client,
+        "layout.pane.resize",
+        LAYOUT_V2,
+        json!({ "fraction": "0.01" }),
+    );
+    assert_eq!(error_code(&undrawn), Some(codes::INVALID_REQUEST));
+    assert!(
+        served.len() == 1 && served[0].began,
+        "the handler refused it"
+    );
+    assert_eq!(
+        readback(&mut app, &ctx, &mut client, "layout.pane.resize"),
+        vec![json!("0.4")],
+        "and the share is untouched"
+    );
     // A share outside 0..1 is refused rather than clamped into a different
     // one, and the workspace keeps the share it had.
     for outside in ["1.5", "-0.2"] {
