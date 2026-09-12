@@ -782,6 +782,37 @@ fn a_new_generation_replaces_a_block_already_held() {
     );
 }
 
+/// Connect with a descriptor the gateway must refuse, and report the refusal
+/// code it answered with. A handshake that misses its deadline on a loaded
+/// machine fails at the transport level with `control.instance_gone`, which
+/// says nothing about the credential that was offered. That outcome is retried
+/// a bounded number of times and, if it never clears, reported as the transport
+/// failure it is — never as the wrong refusal code.
+fn refused_handshake_code(
+    credential: &str,
+    descriptor: &quantick_control::descriptor::InstanceDescriptor,
+    options: &quantick_control_local::client::ConnectOptions,
+) -> String {
+    use quantick_control::error::codes;
+    const ATTEMPTS: usize = 4;
+    for attempt in 1..=ATTEMPTS {
+        match quantick_control_local::client::LocalClient::connect(descriptor.clone(), options) {
+            Ok(_) => panic!("the gateway accepted {credential}, which it must refuse"),
+            Err(error) if error.code.as_str() == codes::INSTANCE_GONE => {
+                if attempt < ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            Err(error) => return error.code.as_str().to_owned(),
+        }
+    }
+    panic!(
+        "the handshake offering {credential} never completed: all {ATTEMPTS} attempts failed at \
+         the transport level with {}, so the gateway never stated a refusal reason",
+        codes::INSTANCE_GONE
+    );
+}
+
 #[test]
 fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     use quantick_control::{
@@ -807,37 +838,49 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     let descriptor = client.descriptor().clone();
     let mut wrong_token = descriptor.clone();
     wrong_token.bearer_token = BearerToken::from_bytes([0xEE; 32]);
-    let error =
-        quantick_control_local::client::LocalClient::connect(wrong_token, &gateway_test_options())
-            .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong bearer token",
+            &wrong_token,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut wrong_instance = descriptor.clone();
     wrong_instance.instance_id = InstanceId::from_bytes([0xDD; 16]);
-    let error = quantick_control_local::client::LocalClient::connect(
-        wrong_instance,
-        &gateway_test_options(),
-    )
-    .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong instance id",
+            &wrong_instance,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut wrong_nonce = descriptor.clone();
     wrong_nonce.process_nonce = ProcessNonce::from_bytes([0xCC; 16]);
-    let error =
-        quantick_control_local::client::LocalClient::connect(wrong_nonce, &gateway_test_options())
-            .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong process nonce",
+            &wrong_nonce,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut non_overlapping_version = descriptor;
     non_overlapping_version.protocol_versions =
         ProtocolVersionRange::new(CURRENT_PROTOCOL_VERSION + 1, CURRENT_PROTOCOL_VERSION + 1)
             .unwrap();
-    let error = quantick_control_local::client::LocalClient::connect(
-        non_overlapping_version,
-        &gateway_test_options(),
-    )
-    .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::VERSION_UNSUPPORTED);
+    assert_eq!(
+        refused_handshake_code(
+            "a protocol range this build does not speak",
+            &non_overlapping_version,
+            &gateway_test_options()
+        ),
+        codes::VERSION_UNSUPPORTED
+    );
 
     let request_id = client
         .send(
@@ -848,16 +891,10 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
         )
         .unwrap();
     wait_for_queued_gateway_requests(&app, 1);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test(),
-        0,
-        "the application frame must drain the queued gateway request"
-    );
+    // Application frames drain the queue; the socket thread never does. Under
+    // a 250-microsecond per-frame budget a loaded machine can need more than
+    // one frame, which is the budget working, not the drain failing.
+    drain_gateway_requests(&mut app, &ctx);
     let response = client.read().unwrap();
     assert_eq!(response.request_id, request_id);
     let first_revisions = response.module_revisions.clone();
@@ -887,7 +924,7 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
         )
         .unwrap();
     wait_for_queued_gateway_requests(&app, 1);
-    run_frame(&mut app, &ctx);
+    drain_gateway_requests(&mut app, &ctx);
     let repeated = client.read().unwrap();
     assert_eq!(repeated.request_id, again);
     assert_eq!(

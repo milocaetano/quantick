@@ -1891,7 +1891,8 @@ fn wait_for_test_gateway_descriptor(
     app: &mut QuantickApp,
     ctx: &egui::Context,
 ) -> std::path::PathBuf {
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
         run_frame(app, ctx);
         if let Some(path) = app
             .control
@@ -1901,13 +1902,23 @@ fn wait_for_test_gateway_descriptor(
         {
             return path;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "test gateway did not publish discovery within {GATEWAY_TEST_WAIT:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("test gateway did not publish discovery");
 }
 
+/// How long a test waits for another thread to reach a state. A fixed number
+/// of short sleeps is not a clock: on a loaded machine the iterations run out
+/// long before the work they are waiting for had its chance, and the wait then
+/// reports a defect where there is only contention.
+const GATEWAY_TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
         if app
             .control
             .control_access
@@ -1918,9 +1929,44 @@ fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
         {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "gateway request queue did not reach {expected} within {GATEWAY_TEST_WAIT:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("gateway request queue did not reach {expected}");
+}
+
+/// Run application frames until the gateway request queue is empty, and report
+/// how many frames that took. A frame admits up to
+/// `CONTROL_UI_MAX_REQUESTS_PER_FRAME` requests, but only inside
+/// `CONTROL_UI_BUDGET_US`; on a loaded machine the frame's other work can spend
+/// that budget before the drain even starts, and the queue then empties over
+/// several frames. The property a caller asserts is that application frames
+/// drain the queue — the socket thread never does — so how many frames the
+/// budget needed is reported rather than asserted.
+fn drain_gateway_requests(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    let mut frames = 0;
+    loop {
+        run_frame(app, ctx);
+        frames += 1;
+        if app
+            .control
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .queued_requests_for_test()
+            == 0
+        {
+            return frames;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "application frames did not drain the queued gateway requests within \
+             {GATEWAY_TEST_WAIT:?} ({frames} frames)"
+        );
+    }
 }
 
 fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
@@ -1929,7 +1975,8 @@ fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
         .as_mut()
         .expect("control access is installed")
         .disable_for_test();
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
         run_frame(app, ctx);
         if app
             .control
@@ -1940,9 +1987,12 @@ fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
         {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "test gateway did not stop cleanly within {GATEWAY_TEST_WAIT:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("test gateway did not stop cleanly");
 }
 
 fn response_error(

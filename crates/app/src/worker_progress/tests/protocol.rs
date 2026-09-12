@@ -64,8 +64,32 @@ pub(crate) fn delayed_bookkeeping<T>(
     first.release();
     publication.reached();
     clock.at(180);
+    // Park the worker in the Idle callback that closes this cycle, before it
+    // can acknowledge the flush or receive anything else. Every send later in
+    // this schedule is made against a parked worker; S2 below was the one that
+    // was not, which left the producer's acceptance of ticket 2 racing the
+    // worker's admission of it and made `last_sampled_ticket` a coin flip.
+    let parked = clock.hold(Phase::Idle);
     publication.release();
-    acknowledge(a1); // Successful-send accounting is still delayed here.
+    parked.reached();
+    // The cycle is complete — applied, published, retired and counted — while
+    // the producer has recorded no acceptance at all: the real flush waits on
+    // nothing the producer still owes. The reader is momentarily incomplete
+    // for exactly that reason (one admitted command, zero accepted), so the
+    // core() invariants do not hold here and are not claimed.
+    let unaccounted = p.snapshot();
+    assert!(!unaccounted.valid);
+    assert_eq!(unaccounted.phase, Phase::Idle);
+    assert_eq!(unaccounted.counts.accepted, 0);
+    assert_eq!(unaccounted.counts.retired, 1);
+    assert_eq!(
+        (
+            unaccounted.counts.cycles,
+            unaccounted.counts.mailbox_replacements
+        ),
+        (1, 1)
+    );
+    evidence("S1-cycle-completed-unaccounted", &unaccounted);
     clock.at(200);
     commands.progress.record_send(true);
 
@@ -85,7 +109,14 @@ pub(crate) fn delayed_bookkeeping<T>(
     let idle = clock.hold(Phase::Idle);
     clock.at(260);
     let (tx, a2) = channel();
+    // The producer's whole ordinary send — enqueue then acceptance — completes
+    // while the worker is still parked above, so ticket 2 meets a slot that
+    // still holds the unobserved ticket 1 and is never sampled. Releasing the
+    // park afterwards is what lets the worker admit both under one ledger, and
+    // the acknowledgement the delayed accounting never blocked arrives with it.
     assert!(commands.send(flush(tx)).is_ok());
+    parked.release();
+    acknowledge(a1);
     second.reached();
     let s = p.snapshot();
     core(&s, instance, [2, 0, 1, 1, 0, 0]);
