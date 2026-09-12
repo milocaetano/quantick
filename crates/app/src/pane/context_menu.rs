@@ -12,8 +12,7 @@
 
 use eframe::egui;
 
-use crate::bands::{self, Band, Bands};
-use crate::chart::PriceScale;
+use crate::bands::{self, Bands};
 use crate::drawings::{self, ChartPoint};
 use crate::plot_area::PlotAreas;
 
@@ -57,17 +56,18 @@ impl ChartPane {
     /// opens, and the rename an outside click commits when the menu closes.
     ///
     /// One arm of [`ChartPane::handle_navigation`], called once per frame.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_context_menu(
         &mut self,
         chart: &egui::Response,
         areas: &PlotAreas,
         bands: &Bands,
-        total: usize,
-        price_band: &Band,
-        drawing_scale: Option<PriceScale>,
         chrome: &mut PaneChrome<'_>,
     ) {
+        let total = self.slots();
+        // The paper lines and the right-click price live on the candles, and
+        // only there: an order is a price, not a value on someone's oscillator.
+        let price_band = &bands[0];
+        let drawing_scale = price_band.scale;
         // The price under a right-click, remembered before the menu eats
         // the pointer: the trade section places orders at it.
         if chart.secondary_clicked()

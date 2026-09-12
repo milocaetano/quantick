@@ -32,9 +32,31 @@ use quantick_orderflow::engine::VisibleOrderflow;
 use super::draw_chart::DrawFrame;
 use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
 use super::{
-    ChartPane, DrawPass, EMPTY_VIEW_FONT_SIZE, PaneChrome, PointerCompass, PriceAxisLevel,
-    SIDEBAR_BODY_FRAC, draw_live_chip, live_chip_rect,
+    ChartPane, DrawPass, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
 };
+
+/// Font size, in points, of the "nothing in view" line drawn where the candles
+/// would be. Matches the "connecting…" line: same voice, same weight.
+const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
+
+/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
+/// half-lane.
+///
+/// Seven tenths, so the body reads as a body and the wick still shows either
+/// side of it. Derived from the lane rather than fixed, so widening the lane
+/// widens the candle instead of leaving a wider gap around the same sliver.
+const SIDEBAR_BODY_FRAC: f32 = 0.35;
+
+/// What one frame's axes stand aside for, as `axis_claims` decides it.
+///
+/// Three fields with names rather than a tuple: the two claim lists are the
+/// same type, and a tuple would let the price axis's chips and the time
+/// strip's be swapped by a `let` that still compiles.
+pub(super) struct AxisChips {
+    pub(super) compass: Option<PointerCompass>,
+    pub(super) price: pointer_compass::AxisClaims,
+    pub(super) time: pointer_compass::AxisClaims,
+}
 
 impl ChartPane {
     /// What the axes stand aside for this frame: the pointer compass, the
@@ -42,15 +64,7 @@ impl ChartPane {
     ///
     /// Decided once, before either axis labels itself, so the two surfaces
     /// cannot disagree about where a chip lands.
-    pub(super) fn axis_claims(
-        &self,
-        frame: &DrawFrame<'_>,
-        chrome: &PaneChrome<'_>,
-    ) -> (
-        Option<PointerCompass>,
-        pointer_compass::AxisClaims,
-        pointer_compass::AxisClaims,
-    ) {
+    pub(super) fn axis_claims(&self, frame: &DrawFrame<'_>, chrome: &PaneChrome<'_>) -> AxisChips {
         let &DrawFrame {
             painter,
             areas,
@@ -107,7 +121,11 @@ impl ChartPane {
         {
             price_claims.extend(on_axis(scale.y(price)));
         }
-        (compass, price_claims, time_claims)
+        AxisChips {
+            compass,
+            price: price_claims,
+            time: time_claims,
+        }
     }
 
     /// The candles' own pass: the heat cleared behind each body, the
@@ -454,7 +472,7 @@ impl ChartPane {
         }
         // Last of the canvas marks, so the answer the trader is asking for by
         // holding the mouse where they are holding it is on top of the ones
-        // the chart volunteers. Decided far above, where the axes read it too.
+        // the chart volunteers. Decided in `axis_claims`, where the axes read it too.
         if let Some(compass) = compass.as_ref() {
             self.draw_pointer_compass(painter, compass, axis_x, areas.time_strip, chrome);
         }

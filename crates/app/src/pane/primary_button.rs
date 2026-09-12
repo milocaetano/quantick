@@ -13,7 +13,6 @@
 use eframe::egui;
 
 use crate::bands::{self, Bands};
-use crate::chart::PriceScale;
 use crate::chart_layers::ChartLayer;
 use crate::drawings;
 use crate::indicator_render;
@@ -34,7 +33,6 @@ impl ChartPane {
     /// One arm of [`ChartPane::handle_navigation`], called once per frame with
     /// the pointer the frame already read. Returns whether paper took the
     /// gesture, which is what keeps the chart from panning under a held line.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_paper_input(
         &self,
         ui: &egui::Ui,
@@ -43,8 +41,9 @@ impl ChartPane {
         bands: &Bands,
         pointer: &SharedPointer,
         tool_armed: bool,
-        drawing_scale: Option<PriceScale>,
     ) -> bool {
+        // Orders are placed at a price, so the scale is the candles' own.
+        let drawing_scale = bands[0].scale;
         let &SharedPointer {
             position: pointer_position,
             area: drawing_area,
@@ -98,7 +97,7 @@ impl ChartPane {
         // Per-frame path, so it costs nothing on a frame with no modifier
         // down: the aim cannot exist without one, and only then is the
         // pick worth running — the same bounded, visible-objects-only
-        // handle pick the drag initiation below performs, so an
+        // handle pick the drag initiation in `handle_pointer_tool` performs, so an
         // *unselected* object's handle keeps its pixel too.
         let modifiers = ui.input(|input| input.modifiers);
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
@@ -118,8 +117,8 @@ impl ChartPane {
             });
         let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         // The wheel over the plot, offered to the paper layer first: with an
-        // aim up it belongs to the ruler, and the chart's zoom is told below
-        // to leave that frame's travel alone.
+        // aim up it belongs to the ruler, and the chart's zoom is told in
+        // `handle_navigation` to leave that frame's travel alone.
         let paper_scroll = pointer_position
             .filter(|position| drawing_area.contains(*position))
             .map_or(0.0, |_| {
@@ -161,7 +160,7 @@ impl ChartPane {
             false
         };
         // The paper lines announce their grabbability (audit paper M3/M4):
-        // drawings get hover cursors below, and a draggable stop must not
+        // drawings get hover cursors in `handle_pointer_tool`, and a draggable stop must not
         // feel deader than an annotation — nor may the entry line's blocked
         // band refuse a pan with no explanation at all.
         // The layer gate lives inside `hover_cursor` itself, next to the

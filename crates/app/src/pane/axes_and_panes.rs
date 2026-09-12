@@ -17,10 +17,14 @@ use crate::indicators::{MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::plot_area::{PlotAreas, split_time_strip};
 use crate::price_view::PriceView;
 
-use super::{
-    ChartPane, LANE_HANDLE_HALF_WIDTH_PX, LANE_ZOOM_DRAG_PX, PaneChrome, SCROLL_ZOOM_PX,
-    live_chip_rect,
-};
+use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
+
+/// Pixels of drag on the lane's own time strip that double or halve its window.
+///
+/// Matches the candles' own feel: dragging the time axis zooms it by
+/// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
+/// though they are zooming different things.
+const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
 /// Half-height of the grab band over a pane's top edge, in pixels.
 ///
@@ -244,8 +248,8 @@ impl ChartPane {
         ui: &egui::Ui,
         areas: &PlotAreas,
         chrome: &mut PaneChrome<'_>,
-        auto: Option<(f64, f64)>,
     ) {
+        let auto = self.frame.auto_range;
         // The lane's divider, as a resize handle. Registered after the chart
         // body so it takes the drag that would otherwise pan the candles
         // behind it, and it is the only place the pointer changes shape: the
@@ -394,8 +398,8 @@ impl ChartPane {
         areas: &PlotAreas,
         chrome: &mut PaneChrome<'_>,
         primary_free: bool,
-        total: usize,
     ) {
+        let total = self.slots();
         // The same gesture, once per pane, over the gutter band beside it.
         // Keyed by slot *and* pane id: slots are allocated per pane, so a
         // split's two charts can hold the same slot number and a slot-only id

@@ -14,7 +14,17 @@ use crate::chart::PriceScale;
 use crate::drawings::{self, DrawingBand};
 use crate::indicator_worker::SlotId;
 
-use super::{ChartPane, PLOT_PICK_TOLERANCE_PX};
+use super::ChartPane;
+
+/// How near an overlay's plotted line a double click has to land to be read as
+/// a click on *that line* rather than on the chart behind it.
+///
+/// The same order as the drawings' own pick tolerance, and for the same
+/// reason: a one-pixel line needs a grab band wider than itself or it can only
+/// be hit by luck. Kept modest so that a double click in open chart still means
+/// "back to the live edge" — the gesture only changes meaning where a curve
+/// actually is.
+pub(super) const PLOT_PICK_TOLERANCE_PX: f32 = 5.0;
 
 /// One drawing resolved under the pointer for an on-demand control capture.
 #[derive(Debug, Clone, PartialEq, Eq)]

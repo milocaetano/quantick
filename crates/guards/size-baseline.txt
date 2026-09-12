@@ -219,10 +219,10 @@
 # `layers.rs`, `series.rs`, `shared_marks.rs`, `drawing_paint.rs`,
 # `pointer_hit.rs`, `tape_switch.rs` and `canvas_split.rs`, plus two impl
 # blocks appended to `context_menu.rs` and `strategies.rs`. Every body moved
-# at the same indentation; the multiset proof is in PR #368's body.
+# at the same indentation; the multiset proof is in PR #383's body.
 #
 # `pane.rs` itself is 1,256 production lines and takes no entry: it is under
-# the threshold, and the largest sibling (`draw_chart.rs`, 770) is under it
+# the threshold, and the largest sibling (`draw_chart.rs`, 769) is under it
 # by a wider margin. `--tighten` first wrote 1,256 and 41,377; the entry is
 # removed by hand because a sub-threshold file with a recorded ceiling is a
 # permission nobody spends, and the budget follows it down by the same

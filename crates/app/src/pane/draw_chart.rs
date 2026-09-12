@@ -22,11 +22,16 @@ use crate::plot_area::{PlotAreas, split_time_strip};
 use crate::theme;
 use quantick_orderflow::reserved_span_ms;
 
+use super::layer_painters::AxisChips;
 use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
 use super::{
-    ChartPane, DrawPass, LIVE_LADDER_REFRESH_S, PaneChrome, PriceAxisClaims, background_color,
-    grid_color, lane_rungs,
+    ChartPane, DrawPass, PaneChrome, PriceAxisClaims, background_color, grid_color, lane_rungs,
 };
+
+/// How often the forming bar's footprint ladder is re-snapshotted for
+/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
+/// digits, and a layout that repaints per print reflows under the pointer.
+const LIVE_LADDER_REFRESH_S: f64 = 0.1;
 
 /// What one paint frame has resolved by the time the layers go down: the
 /// geometry, the visible slices of both series and the price scale.
@@ -422,7 +427,11 @@ impl ChartPane {
             },
         );
 
-        let (compass, price_claims, time_claims) = self.axis_claims(&frame, chrome);
+        let AxisChips {
+            compass,
+            price: price_claims,
+            time: time_claims,
+        } = self.axis_claims(&frame, chrome);
         // Gathered once, read twice: the axis stands aside for these just
         // below, and the same list is what gets painted onto the gutter
         // further down. Borrowed out of the pane so the container survives

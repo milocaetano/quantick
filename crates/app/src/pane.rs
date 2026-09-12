@@ -50,10 +50,16 @@ use crate::indicator_render;
 use crate::plot_area::split_time_strip;
 #[cfg(test)]
 use crate::toolrail::Tool;
+#[cfg(test)]
+use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 
 mod axes_and_chrome;
 mod axes_and_panes;
-mod canvas_split;
+// `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns
+// `TimePaneAreas`, which nothing outside names yet, so a `pub use` of it is an
+// unused import under the workspace's deny-warnings policy while a public
+// module keeps it nameable as `pane::canvas_split::TimePaneAreas`.
+pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod drawing_gestures;
@@ -99,13 +105,6 @@ pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 /// the magnet to take the anchor. Generous enough to catch the swing you
 /// aimed at, tight enough to still draw a free diagonal between bars.
 const MAGNET_REACH_PX: f32 = 12.0;
-/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
-/// half-lane.
-///
-/// Seven tenths, so the body reads as a body and the wick still shows either
-/// side of it. Derived from the lane rather than fixed, so widening the lane
-/// widens the candle instead of leaving a wider gap around the same sliver.
-const SIDEBAR_BODY_FRAC: f32 = 0.35;
 /// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
 /// never lets go, however far the pointer floats from the candle.
 const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
@@ -158,10 +157,6 @@ const LAST_PRICE_GAP_PX: f32 = 4.0;
 /// Ink on the last-price chip. The chip is filled with a saturated candle
 /// colour, so its text is the one place on the chrome that goes dark.
 const LAST_PRICE_CHIP_TEXT: egui::Color32 = egui::Color32::from_rgb(0x0E, 0x12, 0x1A);
-
-/// Font size, in points, of the "nothing in view" line drawn where the candles
-/// would be. Matches the "connecting…" line: same voice, same weight.
-const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
 
 /// Dash length, in pixels, of the venue↔prints seam marker. Long enough to
 /// read as deliberate beside the solid backfill divider, short enough not to
@@ -242,34 +237,12 @@ fn lane_rungs(lane_width_px: f32) -> usize {
     rungs.clamp(1, MAX_LANE_RUNGS)
 }
 
-/// How near an overlay's plotted line a double click has to land to be read as
-/// a click on *that line* rather than on the chart behind it.
-///
-/// The same order as the drawings' own pick tolerance, and for the same
-/// reason: a one-pixel line needs a grab band wider than itself or it can only
-/// be hit by luck. Kept modest so that a double click in open chart still means
-/// "back to the live edge" — the gesture only changes meaning where a curve
-/// actually is.
-const PLOT_PICK_TOLERANCE_PX: f32 = 5.0;
-
 /// Wheel travel that doubles or halves what a time axis shows.
 ///
 /// One number for the candles, the lane and every pane body, so a scroll means
 /// the same amount of zoom wherever the pointer happens to be resting. It was
 /// already one number — written out four times.
 const SCROLL_ZOOM_PX: f32 = 300.0;
-
-/// How often the forming bar's footprint ladder is re-snapshotted for
-/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
-/// digits, and a layout that repaints per print reflows under the pointer.
-const LIVE_LADDER_REFRESH_S: f64 = 0.1;
-
-/// Pixels of drag on the lane's own time strip that double or halve its window.
-///
-/// Matches the candles' own feel: dragging the time axis zooms it by
-/// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
-/// though they are zooming different things.
-const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
 /// Width of the jump-to-live chip on the time strip, in pixels.
 const LIVE_CHIP_WIDTH_PX: f32 = 56.0;
@@ -999,16 +972,7 @@ impl ChartPane {
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
-        let drawing_scale = price_band.scale;
-        self.handle_context_menu(
-            &chart,
-            &areas,
-            &bands,
-            total,
-            price_band,
-            drawing_scale,
-            chrome,
-        );
+        self.handle_context_menu(&chart, &areas, &bands, chrome);
         let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = price_band.rect;
         let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
@@ -1040,15 +1004,8 @@ impl ChartPane {
             total,
             magnet,
         };
-        let paper_gesture = self.handle_paper_input(
-            ui,
-            chrome,
-            &areas,
-            &bands,
-            &pointer,
-            tool_armed,
-            drawing_scale,
-        );
+        let paper_gesture =
+            self.handle_paper_input(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let drawing_drag_consumes_gesture = self.handle_pointer_tool(
             ui,
             chrome,
@@ -1165,9 +1122,9 @@ impl ChartPane {
             }
         }
 
-        self.handle_axis_gestures(ui, &areas, chrome, auto);
+        self.handle_axis_gestures(ui, &areas, chrome);
 
-        self.handle_indicator_pane_gestures(ui, &areas, chrome, primary_free, total);
+        self.handle_indicator_pane_gestures(ui, &areas, chrome, primary_free);
     }
 
     /// The HUD anchor cached by the last draw, if the paper layer was
