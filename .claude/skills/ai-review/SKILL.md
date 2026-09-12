@@ -84,35 +84,25 @@ Readiness/merge require `ai-review-complete` at every tier. Completed reviews
 with published findings may record it; unresolved threads still block.
 Without a PR, print the report and record nothing.
 
-Before review, capture the worktree and all `REVIEWED_*` values using the
-identity commands below; save them outside the repository. Require clean
-status and matching PR head SHA/branch and base ref/tip readbacks. Resolve all
-commands in that worktree and review that exact diff under the rules above.
+Before review, capture the clean worktree, branch, HEAD, base ref/tip, review
+key and matching PR identity in the dossier. Review that exact diff. After all
+six dimensions and required finding publications complete, repeat those reads;
+any changed or unavailable value invalidates the review.
 
-After all six dimensions and required finding publications complete, repeat
-the identity reads and compare every value and clean status. Publish the
-report above with `gh pr comment PR --body-file REPORT_PATH`; retain its URL
-in the dossier. Recheck PR identity after publication too. Any changed value,
-failed read or incomplete publication means no marker: reconcile and rerun.
-
-Only then write the projection. Set `WT` and all `REVIEWED_*` variables from
-the saved dossier in this same shell call; variables do not survive tool calls.
-Never recalculate them from changed code to force a match.
+Write the complete report to `REPORT_PATH`, including every required identity
+field and a final line exactly equal to `AI-REVIEW: COMPLETE`. Then publish
+and record from the clean reviewed worktree:
 
 ```sh
 cd "$WT" &&
-  test "$(git symbolic-ref --quiet --short HEAD)" = "$REVIEWED_BRANCH" &&
-  test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD" &&
-  test "$(sh .claude/hooks/campaign_context.sh base "$WT")" = "$REVIEWED_BASE" &&
-  test "$(git rev-parse "$REVIEWED_BASE")" = "$REVIEWED_BASE_TIP" &&
-  test "$(sh .claude/hooks/campaign_context.sh key "$WT")" = "$REVIEWED_KEY" &&
-  RECHECK_STATUS=$(git status --porcelain=v1 --untracked-files=all) &&
-  test -z "$RECHECK_STATUS" &&
-  printf '%s %s\n' "$REVIEWED_BRANCH" "$REVIEWED_KEY" \
-    > "$(git rev-parse --absolute-git-dir)/ai-review-complete"
+  sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_PATH"
 ```
 
-The one LF-terminated line is `<branch> <shared-review-key>`. Branch/diff or
-campaign ref/tip changes stale it; same-branch rewords retain the key. Never
-copy another worktree's record or restamp after fixes without review. This
-projection proves recording, not quality or GitHub provenance; authority is unchanged.
+The shared producer repeats the identity checks before and after publication,
+reads the durable report back, and only then records `ai-review-complete` as
+`<branch> <shared-review-key>`. A manual file, a copied worktree record, or a
+stale marker has no matching current receipt and cannot pass readiness.
+Branch/diff or campaign ref/tip changes require a current review; same-branch
+rewords retain the key. This completion remains separate from finding
+disposition, so final readiness and mission/ship completion still require
+`ai_review_threads.sh list` to return no open thread.
