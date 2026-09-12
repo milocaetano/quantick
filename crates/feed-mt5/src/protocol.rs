@@ -669,7 +669,7 @@ mod tests {
         // Same treatment as the batch bound below: the wire name lives on both
         // sides, and a rename on one side would look like a bridge that ignores
         // the trader's clicks rather than like a protocol break.
-        let bridge = include_str!("../../../bridge/mt5/quantick_bridge.py");
+        let bridge = include_str!("../../../bridge/mt5/quantick_bridge_core.py");
         let declared = bridge
             .lines()
             .find_map(|line| line.strip_prefix("LOAD_OLDER_TYPE = "))
@@ -694,7 +694,7 @@ mod tests {
         // opened, and the failure would look like a network problem. So the two
         // constants are asserted equal, not assumed — the same treatment the
         // tracked-vs-embedded presets file gets in `bubble_presets.rs`.
-        let bridge = include_str!("../../../bridge/mt5/quantick_bridge.py");
+        let bridge = include_str!("../../../bridge/mt5/quantick_bridge_core.py");
         let declared = bridge
             .lines()
             .find_map(|line| line.strip_prefix("MAX_BARS_PER_RATE_LINE = "))

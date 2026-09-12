@@ -119,10 +119,36 @@ def load_bridge(terminal: FakeTerminal):
     module.last_error = terminal.last_error
     sys.modules["MetaTrader5"] = module
     sys.path.insert(0, str(BRIDGE_DIR))
-    sys.modules.pop("quantick_bridge", None)
+    # Every bridge module, not just the entry point: the session's behaviour
+    # lives in sibling mixins that bind this stub at import time, and one left
+    # in `sys.modules` would serve the previous test's terminal.
+    for name in [name for name in sys.modules if name.startswith("quantick_bridge")]:
+        sys.modules.pop(name, None)
     import quantick_bridge  # noqa: PLC0415  (deliberately late, after the stub)
 
     return quantick_bridge
+
+
+def bridge_modules():
+    """Every loaded bridge module, entry point first."""
+    return [
+        module
+        for name, module in sorted(sys.modules.items())
+        if name.startswith("quantick_bridge")
+    ]
+
+
+def patch_bridge(name: str, value) -> None:
+    """Rebind a module-level name across every bridge module that has it.
+
+    The bridge is several modules now, and each binds the shared names —
+    `time`, `log`, the tuning constants — into its own globals. Setting one
+    module's attribute would leave the others reading the real thing, so a
+    test that fakes a name has to say so everywhere the name is read.
+    """
+    for module in bridge_modules():
+        if hasattr(module, name):
+            setattr(module, name, value)
 
 
 class FakeArgs:
@@ -182,8 +208,9 @@ def session_at(bridge, terminal, now_s: int, **args):
     it, and freezing that would be a different lie.
     """
     session = session_for(bridge, terminal, **args)
-    bridge.time = types.SimpleNamespace(
-        time=lambda: float(now_s), monotonic=time.monotonic
+    patch_bridge(
+        "time",
+        types.SimpleNamespace(time=lambda: float(now_s), monotonic=time.monotonic),
     )
     session.offset_s = 0
     return session

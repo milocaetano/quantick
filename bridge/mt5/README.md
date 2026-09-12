@@ -44,6 +44,12 @@ that is not yours:
 python bridge/mt5/quantick_bridge.py --symbol WINQ26
 ```
 
+`quantick_bridge.py` is the only file to run. Beside it sit the modules it
+assembles a session from — `quantick_bridge_core.py` (the dials, the log line
+and the terminal itself), then `_transport`, `_ticks`, `_history` and
+`_rates`, one per responsibility. They are found next to the script, so a copy
+of the folder still runs; a copy of the one file alone does not.
+
 Options worth knowing:
 `--port` (default 9100), `--backfill-minutes` (720 — the width of the opening
 block's *first* ask, not its reach), `--backfill-max-ticks` (4 000 000, a bound
