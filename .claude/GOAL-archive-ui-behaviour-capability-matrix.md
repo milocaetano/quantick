@@ -139,6 +139,29 @@ The coordinator answered step 3's questions before work started.
 
 - **C1** — `delivery-review` returns PASS (completeness pass, at this tier).
 - **C2** — The PR is open against `campaign/lean-a-plus` and marked ready.
+- **C3** — The handoff block returns to the coordinator carrying every field the
+  request names: issue, branch, worktree, PR URL, head SHA, base tip, the
+  coverage table, the drift-fixture proof, the AP1 self-assessment against the
+  rubric anchors, the review verdicts with URLs, markers, the CI run and its
+  conclusion, findings closed and open, repair batches, whether ready was
+  accepted, any `human_decision`, and the coordinator's next action.
+  *Added by the completeness pass: the request asks for this block field by
+  field and the first map had no line for it.*
+- **C4** — The merge into `campaign/lean-a-plus` and its read-back — the second
+  half of issue #381's A4 — belong to the coordinator, not to this child: the
+  integration contract reserves every merge to it. Recorded here so the ask is
+  visible rather than silently out of scope.
+  *Added by the completeness pass.*
+
+## Deviations from a recorded decision
+
+- **D6** said at most two `arch-review` step-0 rounds. Three ran, over the
+  branch's three heads, because each new head carried substantial new guard
+  code rather than another attempt at the same findings — and the third round
+  found a real one (`summary()` and `appendix()` inferring "no registry stands
+  behind this" from an empty key list), fixed in `850b8874`. Reported to the
+  coordinator rather than absorbed: the decision said two, and the third round
+  was taken on this session's judgement, not on the trader's.
 
 ## The request as received
 
