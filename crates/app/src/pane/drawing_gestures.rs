@@ -9,10 +9,10 @@
 //! system: a fractional bar slot on the x axis and the band's own scale on the
 //! y, so a drawing follows pan and zoom instead of sticking to a screen pixel.
 //!
-//! `ChartPane::interact_shared` lives in `shared_marks.rs`, not here. It
+//! [`super::ChartPane::interact_shared`] stays in the parent deliberately. It
 //! reads like a gesture, but it is cross-pane shared-mark work — its answers
 //! leave in market time and price so neither pane learns the other's bar space
-//! — and its one caller is the pointer-tool arm in `primary_button.rs`.
+//! — and its only caller is `handle_navigation`, which does not move.
 
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;

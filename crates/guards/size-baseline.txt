@@ -222,7 +222,7 @@
 # at the same indentation; the multiset proof is in PR #383's body.
 #
 # `pane.rs` itself is 1,212 production lines and takes no entry: it is under
-# the threshold, and the largest new sibling (`draw_chart.rs`, 778) is under it
+# the threshold, and the largest new sibling (`draw_chart.rs`, 746) is under it
 # by a wider margin, as is the largest of all of them, the untouched
 # `drawing_gestures.rs` at 800. `--tighten` first wrote 1,256 and 41,377 (the
 # review's seam repairs then took it to 1,212); the entry is removed by hand

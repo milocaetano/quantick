@@ -192,7 +192,12 @@ earned, not optional.
       *Evidence:* `gh pr view 383 --json baseRefName,isDraft,body`. → PR #383.
       *(R10, R11)*
 - [x] **A9** — every write landed in this worktree and only in the files the
-      mission owns.
+      mission owns. *Amended at review time:* repair batch 1 had reworded four
+      header lines of the pre-existing `pane/drawing_gestures.rs` (a step-0
+      finding); the delivery review's criteria pass read R12 narrowly and
+      graded it PARTIAL, and it is right — the brief says "Do not edit any
+      other file" and only the coordinator can widen that. Batch 3 reverts
+      the file to the base byte for byte; the stale header is follow-up 5.
       *Evidence:* `git diff --name-status <base>...HEAD` in the PR body lists
       only `crates/app/src/pane.rs`, `crates/app/src/pane/*`,
       `crates/guards/size-baseline.txt` and `.claude/GOAL-archive-*.md`.
@@ -300,6 +305,18 @@ the handoff.
   `SharedPointer: Copy` carrying `pointer_delta` and the paper claim (F-5,
   F-6). Four checks green after batch 2 (`e8a7432d`), each run alone;
   `pane.rs` measures 1,212 production lines at the final head.
+- **Batch 3** (after the delivery review's criteria pass): the
+  `drawing_gestures.rs` header edit reverted (A9, ownership — see the
+  amendment on A9); the baseline note's `draw_chart.rs` count corrected to
+  746 after `DrawFrame` left it (a stale fact the pass caught); the PR body
+  names the receiver re-derivations (`let price_band = &bands[0];`,
+  `let total = self.slots();`) as their own residual category. Follow-up 5:
+  `drawing_gestures.rs:12-15` still says `interact_shared` "stays in the
+  parent" and "its only caller is `handle_navigation`"; it lives in
+  `shared_marks.rs` and is called from `primary_button.rs` — a four-line
+  header edit for whoever next owns that file. Prose-only delta: fmt check,
+  `cargo check -p quantick-app`, `cargo test -p quantick-guards` run; CI at
+  the head is the full proof.
 
 ## Closing steps
 
