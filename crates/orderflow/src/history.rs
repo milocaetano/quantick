@@ -269,11 +269,14 @@ pub struct LiquidityHistory {
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
-    /// Adjacent pairs in `aggressions` where the later print is older than
-    /// the one before it. Zero means the retained prints are in time order,
-    /// which is what lets [`Self::aggressions_since`] start at a cut instead
-    /// of walking every print.
-    aggressions_out_of_order: usize,
+    /// Index-aligned with `aggressions`: the newest timestamp among that
+    /// print and every print recorded before it. Non-decreasing even where
+    /// the tape is not, so [`Self::aggressions_since`] can bisect it; an
+    /// evicted print only ever makes an entry larger than the retained
+    /// prints alone would, which can make a cut walk more, never less. Eight
+    /// bytes a print (800 KB at the 100,000-print cap), left out of
+    /// `approximate_history_bytes` so the byte cap evicts exactly as before.
+    aggression_max_ms: VecDeque<i64>,
     scale: SessionScale,
     summary_scale: SummaryScale,
     coverage: VecDeque<CoverageSegment>,
@@ -300,7 +303,7 @@ impl LiquidityHistory {
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
-            aggressions_out_of_order: 0,
+            aggression_max_ms: VecDeque::new(),
             coverage: VecDeque::new(),
             gaps: VecDeque::new(),
             pending_gap: None,
@@ -543,19 +546,17 @@ impl LiquidityHistory {
     /// `from_ms` must look at: every print at or after `from_ms` is in it, and
     /// the caller still filters by time.
     ///
-    /// In time order — every venue this app reads sends prints that way — it
-    /// starts at the first print at or after `from_ms`, found by bisection,
-    /// so a per-frame cut costs what it keeps rather than what is retained.
-    /// While any retained print arrived older than the one before it, it
-    /// walks every print: skipping by bisection there could drop a print the
-    /// cut owns.
+    /// It starts at the first print whose running newest timestamp reaches
+    /// `from_ms`, found by bisection: every print before it is older than the
+    /// cut *and* older than every print before it, so none of them can belong
+    /// to the cut. The tape is only almost in time order, and this is why a
+    /// print delivered late can neither hide a print behind it nor turn the
+    /// bisection off — it just rides along, and the caller's time test drops
+    /// it. A per-frame cut costs what it keeps, not what is retained.
     pub fn aggressions_since(&self, from_ms: i64) -> impl Iterator<Item = &Aggression> {
-        let start = if self.aggressions_out_of_order == 0 {
-            self.aggressions
-                .partition_point(|trade| trade.timestamp_ms < from_ms)
-        } else {
-            0
-        };
+        let start = self
+            .aggression_max_ms
+            .partition_point(|&newest| newest < from_ms);
         self.aggressions.range(start..)
     }
 
@@ -712,13 +713,11 @@ impl LiquidityHistory {
             .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
         self.summary_scale
             .record(trade.timestamp_ms, trade.price, trade.quantity);
-        if self
-            .aggressions
+        let newest = self
+            .aggression_max_ms
             .back()
-            .is_some_and(|last| trade.timestamp_ms < last.timestamp_ms)
-        {
-            self.aggressions_out_of_order += 1;
-        }
+            .map_or(trade.timestamp_ms, |&newest| newest.max(trade.timestamp_ms));
+        self.aggression_max_ms.push_back(newest);
         self.aggressions.push_back(Aggression {
             agg_id: trade.agg_id,
             timestamp_ms: trade.timestamp_ms,
@@ -769,7 +768,7 @@ impl LiquidityHistory {
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
-        self.aggressions_out_of_order = 0;
+        self.aggression_max_ms.clear();
         self.coverage.clear();
         self.gaps.clear();
         self.pending_gap = None;
@@ -972,14 +971,8 @@ impl LiquidityHistory {
     }
 
     fn pop_aggression_front(&mut self) {
-        if let Some(evicted) = self.aggressions.pop_front() {
-            if self
-                .aggressions
-                .front()
-                .is_some_and(|next| next.timestamp_ms < evicted.timestamp_ms)
-            {
-                self.aggressions_out_of_order -= 1;
-            }
+        if self.aggressions.pop_front().is_some() {
+            self.aggression_max_ms.pop_front();
             self.counters.aggressions_evicted += 1;
         }
     }
@@ -1730,33 +1723,59 @@ mod tests {
         assert_eq!(history.aggression_count(), 10);
     }
 
-    /// A print that arrives older than the one before it breaks the order the
-    /// cut relies on, so the cut falls back to every retained print — never
-    /// skipping one that belongs to it — and becomes exact again once the
-    /// out-of-order pair has left the history.
+    /// The retained tape is only *almost* in time order: a print can arrive
+    /// older than the one before it. Such a print must never hide one the cut
+    /// owns, and must not turn the seam cut off for as long as it is retained
+    /// — up to a whole retention window.
     #[test]
-    fn an_out_of_order_print_makes_the_cut_walk_everything_until_it_leaves() {
+    fn a_late_print_neither_hides_a_print_from_the_cut_nor_turns_it_off() {
         let mut history = LiquidityHistory::new(HeatmapConfig {
-            max_aggressions: 4,
+            max_aggressions: 6,
             ..enabled_config()
         });
-        for (id, at) in [(1, 10), (2, 30), (3, 20), (4, 40)] {
+        let owned = |history: &LiquidityHistory, from: i64| -> Vec<u64> {
+            let mut ids: Vec<u64> = history
+                .aggressions_since(from)
+                .filter(|a| a.timestamp_ms >= from)
+                .map(|a| a.agg_id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let every = |history: &LiquidityHistory, from: i64| -> Vec<u64> {
+            let mut ids: Vec<u64> = history
+                .aggressions()
+                .filter(|a| a.timestamp_ms >= from)
+                .map(|a| a.agg_id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        for (id, at) in [(1, 10), (2, 30), (3, 20), (4, 40), (5, 50), (6, 60)] {
             history.record_aggression(&trade(id, at, Side::Sell));
         }
-        let late: Vec<u64> = history.aggressions_since(25).map(|a| a.agg_id).collect();
-        assert!(
-            late.contains(&2) && late.contains(&4),
-            "every print at or after the cut is walked: {late:?}"
+        for from in [0, 15, 20, 25, 30, 35, 55, 61] {
+            assert_eq!(
+                owned(&history, from),
+                every(&history, from),
+                "cut at {from}"
+            );
+        }
+        assert_eq!(
+            history.aggressions_since(55).count(),
+            1,
+            "the late print (3 at 20) does not make a cut at 55 walk the tape"
         );
-        assert_eq!(late.len(), 4, "out of order: nothing is skipped");
 
-        // Push the out-of-order pair (30 then 20) out through the cap.
-        for (id, at) in [(5, 50), (6, 60), (7, 70)] {
-            history.record_aggression(&trade(id, at, Side::Sell));
+        // A late print at the newest end, then the cap evicts from the front.
+        history.record_aggression(&trade(7, 15, Side::Buy));
+        for from in [0, 15, 16, 55, 61] {
+            assert_eq!(
+                owned(&history, from),
+                every(&history, from),
+                "cut at {from}"
+            );
         }
-        let ids: Vec<u64> = history.aggressions().map(|a| a.agg_id).collect();
-        assert_eq!(ids, vec![4, 5, 6, 7]);
-        let cut: Vec<u64> = history.aggressions_since(55).map(|a| a.agg_id).collect();
-        assert_eq!(cut, vec![6, 7], "in order again: the cut is exact");
+        assert!(history.aggressions_since(55).count() <= 2);
     }
 }

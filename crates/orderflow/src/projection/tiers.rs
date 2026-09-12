@@ -63,13 +63,14 @@ pub(super) struct TierClusters {
 
 /// Cluster the retained prints timestamped inside `range`, as `[from, until)`.
 ///
-/// The whole retained tape is walked, but the range is tested first and it is
-/// two integer comparisons: the half that runs every frame pays the per-print
-/// cost — locating it, placing it, clustering it — only for its own prints.
-/// The walk is deliberately linear rather than a search inward from the newest
-/// print: the retained tape is only *almost* ordered by timestamp, and one
-/// print delivered out of order must not be able to hide every print behind
-/// it.
+/// The walk starts where [`LiquidityHistory::aggressions_since`] says a cut at
+/// `from` can first own a print, and the range is still tested per print: two
+/// integer comparisons, so the half that runs every frame pays the per-print
+/// cost — locating it, placing it, clustering it — only for its own prints,
+/// and walks only the prints since its seam rather than the whole retained
+/// tape. The tape is only *almost* ordered by timestamp; the start is found on
+/// the running newest timestamp, so one print delivered out of order can
+/// neither hide a print behind it nor send the walk back to the oldest print.
 pub(super) fn cluster_tier(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
@@ -86,8 +87,6 @@ pub(super) fn cluster_tier(
     } = cut;
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
-    // A per-frame cut starts at its seam rather than walking every retained
-    // print; the `from` test below stays, so the cut is the same either way.
     for trade in history.aggressions_since(from_ms.unwrap_or(i64::MIN)) {
         if from_ms.is_some_and(|from| trade.timestamp_ms < from)
             || until_ms.is_some_and(|until| trade.timestamp_ms >= until)
