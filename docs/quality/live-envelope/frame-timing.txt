@@ -1,44 +1,29 @@
-# command: pwsh/powershell tools/live_envelope/run_replay.ps1 -Exe <build> -Label <run> -Root <scratch>, ten runs interleaved in the order below, then
+# command: powershell tools/live_envelope/run_replay.ps1 -Exe <build> -Label <run> -Root <scratch>, ten runs interleaved in the order below, then
 #          python tools/live_envelope/frame_timing.py <scratch>
-# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base = release build of c1b4002e (campaign base), head = release build of this branch
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base = release build of c1b4002e (campaign base), head = release build of commit 5311d6f7 of feat/live-workload-envelope
 # replay: WINV26 2026-08-25 (1.70 M prints) at speed 60, book + bubbles + footprint + live strip on, 1500x900, 45 s per run
 
 | Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| base-1 | 21 | 59 / 59.29 | 16.654 | 2.443 | 2.449 | 33.31 | 4,710 | n/a | n/a | 0 |
-| head-1 | 21 | 58 / 59.33 | 16.694 | 2.603 | 2.583 | 76.85 | 4,696 | 0 | 156 | 0 |
-| base-2 | 21 | 59 / 59.43 | 16.667 | 2.658 | 2.630 | 33.29 | 4,709 | n/a | n/a | 0 |
-| head-2 | 21 | 59 / 59.24 | 16.694 | 2.710 | 2.645 | 52.92 | 4,705 | 0 | 123 | 0 |
-| head-3 | 21 | 58 / 59.24 | 16.720 | 2.741 | 2.619 | 74.71 | 4,712 | 0 | 388 | 0 |
-| base-3 | 21 | 57 / 59.14 | 16.738 | 2.716 | 2.617 | 130.74 | 4,704 | n/a | n/a | 0 |
-| head-4 | 21 | 56 / 59.00 | 16.786 | 2.683 | 2.579 | 148.19 | 4,700 | 4544 | 316 | 0 |
-| base-4 | 21 | 49 / 58.81 | 16.852 | 2.706 | 2.547 | 455.44 | 4,707 | n/a | n/a | 1 |
-| head-5 | 21 | 59 / 59.24 | 16.687 | 2.370 | 2.317 | 45.18 | 4,685 | 0 | 143 | 0 |
-| base-5 | 21 | 59 / 59.19 | 16.674 | 2.314 | 2.264 | 49.29 | 4,680 | n/a | n/a | 0 |
-- **base**: 5 runs; fps min 49; frame_avg 16.717 ms; frame_cpu mean 2.567 ms (per run 2.44, 2.66, 2.72, 2.71, 2.31; stdev 0.180); worst steady frame 455.44 ms; APP_SLOW_FRAMES lines 1
-- **head**: 5 runs; fps min 56; frame_avg 16.716 ms; frame_cpu mean 2.621 ms (per run 2.60, 2.71, 2.74, 2.68, 2.37; stdev 0.149); worst steady frame 148.19 ms; APP_SLOW_FRAMES lines 0
+| base-1 | 21 | 59 / 59.29 | 16.665 | 1.692 | 1.608 | 32.05 | 4,686 | n/a | n/a | 0 |
+| head-1 | 21 | 59 / 59.24 | 16.660 | 2.103 | 2.127 | 18.72 | 4,678 | 0 | 232 | 0 |
+| base-2 | 21 | 59 / 59.38 | 16.667 | 2.296 | 2.288 | 32.95 | 4,682 | n/a | n/a | 0 |
+| head-2 | 21 | 59 / 59.29 | 16.667 | 2.055 | 2.053 | 33.36 | 4,692 | 0 | 169 | 0 |
+| head-3 | 20 | 59 / 59.20 | 16.667 | 2.082 | 2.083 | 33.23 | 4,770 | 406 | 420 | 1 |
+| base-3 | 20 | 59 / 59.45 | 16.664 | 1.921 | 1.899 | 33.26 | 4,803 | n/a | n/a | 1 |
+| head-4 | 20 | 59 / 59.40 | 16.667 | 2.211 | 2.181 | 33.26 | 4,799 | 566 | 279 | 1 |
+| base-4 | 21 | 59 / 59.33 | 16.667 | 1.809 | 1.785 | 33.30 | 4,674 | n/a | n/a | 0 |
+| head-5 | 21 | 59 / 59.19 | 16.667 | 1.779 | 1.748 | 33.28 | 4,683 | 0 | 148 | 0 |
+| base-5 | 21 | 59 / 59.33 | 16.667 | 1.784 | 1.774 | 33.29 | 4,681 | n/a | n/a | 0 |
+- **base**: 5 runs; fps min 59; frame_avg 16.666 ms; frame_cpu mean 1.900 ms (per run 1.69, 2.30, 1.92, 1.81, 1.78; stdev 0.236); worst steady frame 33.30 ms; APP_SLOW_FRAMES lines 1
+- **head**: 5 runs; fps min 59; frame_avg 16.666 ms; frame_cpu mean 2.046 ms (per run 2.10, 2.06, 2.08, 2.21, 1.78; stdev 0.161); worst steady frame 33.36 ms; APP_SLOW_FRAMES lines 2
 
-## head-4: the one run whose load overflowed a queue (APP_HEALTH_SUMMARY envelope fields, every line)
-15:50:01 fps=53 worst_ms=213.0 trades_per_s=18269 live_rate=above worker_backlog=242 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=36592
-  LIVE_QUEUE_DEFERRED deferred_since_summary=4544 worker_parked=0 action=inspect_worker_cost
-15:50:03 fps=59 worst_ms=17.2 trades_per_s=9325 live_rate=above worker_backlog=316 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=55400
-15:50:05 fps=60 worst_ms=17.2 trades_per_s=8680 live_rate=above worker_backlog=70 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=72901
-15:50:07 fps=59 worst_ms=17.0 trades_per_s=5547 live_rate=above worker_backlog=40 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=84088
-15:50:09 fps=60 worst_ms=17.1 trades_per_s=7150 live_rate=above worker_backlog=55 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=98505
-15:50:11 fps=59 worst_ms=17.1 trades_per_s=5096 live_rate=above worker_backlog=15 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=108698
-15:50:13 fps=59 worst_ms=17.2 trades_per_s=3993 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=116685
-15:50:15 fps=60 worst_ms=17.2 trades_per_s=3414 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=123570
-15:50:17 fps=59 worst_ms=17.0 trades_per_s=2582 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=128735
-15:50:19 fps=59 worst_ms=17.4 trades_per_s=2182 live_rate=above worker_backlog=3 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=133137
-15:50:21 fps=60 worst_ms=17.2 trades_per_s=3580 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=140356
-15:50:23 fps=58 worst_ms=91.1 trades_per_s=3775 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=147969
-15:50:25 fps=56 worst_ms=148.2 trades_per_s=4798 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=157646
-15:50:27 fps=59 worst_ms=17.1 trades_per_s=4558 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=166839
-15:50:29 fps=57 worst_ms=116.6 trades_per_s=3435 live_rate=above worker_backlog=109 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=173765
-15:50:31 fps=60 worst_ms=33.5 trades_per_s=8232 live_rate=above worker_backlog=70 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=190365
-15:50:33 fps=59 worst_ms=17.0 trades_per_s=3199 live_rate=above worker_backlog=62 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=196763
-15:50:35 fps=59 worst_ms=17.3 trades_per_s=3890 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=204607
-15:50:37 fps=59 worst_ms=17.1 trades_per_s=3607 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=211822
-15:50:39 fps=59 worst_ms=36.1 trades_per_s=3163 live_rate=above worker_backlog=207 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=218201
-15:50:41 fps=60 worst_ms=17.2 trades_per_s=5447 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=229183
-15:50:43 fps=59 worst_ms=17.1 trades_per_s=3043 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=4544 worker_coalesced=0 retained_trades=235270
+## the two head runs whose load overflowed a queue (first three APP_HEALTH_SUMMARY lines and the warnings between them)
+head-3 summary 1 17:37:22 fps=48 worst_ms=235.0 trades_per_s=18670 live_rate=above worker_backlog=193 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+  LIVE_QUEUE_DEFERRED deferred_since_summary=406 output_blocked_since_summary=0 worker_parked=0
+head-3 summary 2 17:37:24 fps=59 worst_ms=17.0 trades_per_s=9527 live_rate=above worker_backlog=420 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+head-3 summary 3 17:37:26 fps=60 worst_ms=20.3 trades_per_s=8201 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+head-4 summary 1 17:39:13 fps=44 worst_ms=403.4 trades_per_s=17590 live_rate=above worker_backlog=99 worker_parked=0 worker_deferred=566 worker_output_blocked=0
+  LIVE_QUEUE_DEFERRED deferred_since_summary=566 output_blocked_since_summary=0 worker_parked=0
+head-4 summary 2 17:39:15 fps=59 worst_ms=17.3 trades_per_s=9316 live_rate=above worker_backlog=131 worker_parked=0 worker_deferred=566 worker_output_blocked=0
+head-4 summary 3 17:39:17 fps=60 worst_ms=17.2 trades_per_s=8988 live_rate=above worker_backlog=110 worker_parked=0 worker_deferred=566 worker_output_blocked=0

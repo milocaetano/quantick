@@ -1,11 +1,11 @@
 # command: env -u QUANTICK_BUBBLES cargo test -p quantick-app live_envelope -- --nocapture --test-threads=1
-# host: DESKTOP-BTVJFFR (i5-12400F, Windows 11 Pro); base c1b4002e + this branch (see live-envelope.md)
+# host: DESKTOP-BTVJFFR (i5-12400F, Windows 11 Pro); run at commit 5311d6f7 of feat/live-workload-envelope
 running 5 tests
 test live_envelope::envelope_doc_tests::grouping_matches_the_documents_rendering ... ok
 test live_envelope::envelope_doc_tests::the_document_renders_every_envelope_constant_with_the_codes_value ... ok
 test live_envelope_tests::burst::above_the_envelope_a_stalled_worker_parks_and_folds_and_loses_nothing ... above: prints=71313 depth_updates=34576 bars=1426 indicator parked_max=2121 deferred=2802 coalesced=681 | book parked_max=103962 deferred=104193 coalesced=231 | lost=0
 ok
-test live_envelope_tests::burst::inside_the_envelope_every_print_arrives_and_no_queue_fills ... inside: prints=8012 depth_updates=10048 bars=8012 max_queued indicator=35 book=2140 (caps 1024 / 4096) late_frames=1 deferred=0 parked=0 lost=0
+test live_envelope_tests::burst::inside_the_envelope_every_print_arrives_and_no_queue_fills ... inside: prints=8012 depth_updates=10048 bars=8012 max_queued indicator=35 book=52 (caps 1024 / 4096) late_frames=1 deferred=0 parked=0 lost=0
 ok
 test live_envelope_tests::measure::measure ... ignored, measurement harness; run with --ignored --nocapture, see the module docs
-test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 2008 filtered out; finished in 8.12s
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 2010 filtered out; finished in 8.14s

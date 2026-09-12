@@ -1,16 +1,17 @@
 # command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app live_envelope_tests::measure -- --ignored --nocapture --test-threads=1
-# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base c1b4002e + this branch (see live-envelope.md)
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit 5311d6f7 of feat/live-workload-envelope
 running 1 test
 test live_envelope_tests::measure::measure ... ## 1. element sizes and queue preallocation
 Trade 56 B, Bar 120 B
 IndicatorCommand 160 B x 1024 = 0.2 MiB per pane (slot + stamp, std array channel)
 BookCommand 320 B x 4096 = 1.3 MiB per pane with order flow
+IndicatorEvent 240 B x 4096 = 1.0 MiB per pane
 ## 2. one pane's retained state at the envelope's edge: 3960000 prints (55/s x 10 h x 2 sessions)
-footprint=false: 3960000 prints, 79200 bars (tick:50) in 0.42 s; tape 211.5 MiB + bars 9.1 MiB (computed, len x size; capacity may be up to 2x)
-  ingest ns/print: first 100k 109, last 100k 98, median chunk 96; slowest single ingest 21.35 ms at print 2097152
+footprint=false: 3960000 prints, 79200 bars (tick:50) in 0.49 s; tape 211.5 MiB + bars 9.1 MiB (computed, len x size; capacity may be up to 2x)
+  ingest ns/print: first 100k 122, last 100k 101, median chunk 113; slowest single ingest 21.40 ms at print 2097152
   working set (OS): 8.5 MiB before, 229.3 MiB after, +220.8 MiB
-footprint=true: 3960000 prints, 79200 bars (tick:50) in 0.71 s; tape 211.5 MiB + bars 9.1 MiB (computed, len x size; capacity may be up to 2x)
-  ingest ns/print: first 100k 192, last 100k 164, median chunk 170; slowest single ingest 19.76 ms at print 2097152
+footprint=true: 3960000 prints, 79200 bars (tick:50) in 0.82 s; tape 211.5 MiB + bars 9.1 MiB (computed, len x size; capacity may be up to 2x)
+  ingest ns/print: first 100k 199, last 100k 181, median chunk 196; slowest single ingest 22.18 ms at print 2097152
   working set (OS): 8.7 MiB before, 578.2 MiB after, +569.5 MiB
 ## 3. heatmap retained history (existing caps): retention 30 min, max_aggressions 100000, max_history_runs 500000, max_history_bytes 64.0 MiB
   30 min at 55/s (99000 prints): 99000 aggressions retained, history 6.8 MiB
@@ -23,7 +24,7 @@ footprint=true: 3960000 prints, 79200 bars (tick:50) in 0.71 s; tape 211.5 MiB +
   sustained t= 4s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
   sustained t= 5s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
   sustained t= 6s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
-  sustained t= 7s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
+  sustained t= 7s rate=300/s  indicator queued max    6/1024  book queued max   22/4096  parked 0/0  late frames 0/60
   sustained t= 8s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
   sustained t= 9s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
   sustained t=10s rate=300/s  indicator queued max    6/1024  book queued max   23/4096  parked 0/0  late frames 0/60
@@ -41,7 +42,7 @@ footprint=true: 3960000 prints, 79200 bars (tick:50) in 0.71 s; tape 211.5 MiB +
   burst     t= 2s rate=2000/s  indicator queued max   35/1024  book queued max   52/4096  parked 0/0  late frames 0/60
   burst     t= 3s rate=2000/s  indicator queued max   35/1024  book queued max   52/4096  parked 0/0  late frames 0/60
   burst     t= 4s rate=2000/s  indicator queued max   35/1024  book queued max   52/4096  parked 0/0  late frames 0/60
-  peak frame: 512 prints + 2048 depth sent in 3.90 ms on the UI side; indicator queued max 0  book queued max 1806  parked 0/0
+  peak frame: 512 prints + 2048 depth sent in 1.79 ms on the UI side; indicator queued max 0  book queued max 1738  parked 0/0
   settled: 16512 prints, 1501 frames at 60 fps; deferred 0/0, lost 0
 ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2012 filtered out; finished in 27.21s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2014 filtered out; finished in 27.54s

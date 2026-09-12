@@ -7,8 +7,11 @@ page renders the same numbers with the measurement behind each one;
 constant there disagree.
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)
-on the tree of the commit that adds this page — the campaign base `c1b4002e`
-plus this branch; each raw output below names the command that reproduces it.
+each raw output below names the command that reproduces it and the commit it
+was measured at: `measure.txt`, `burst-test.txt` and `frame-timing.txt` at
+`5311d6f7` of `feat/live-workload-envelope` (the campaign base `c1b4002e` plus
+this branch, the last commit that changed code); `tape-rates.txt` depends only
+on the recordings and the script.
 
 ## The envelope
 
@@ -98,8 +101,8 @@ One pane, `tick:50`, 3,960,000 prints at the mean rate, from
 
 | Footprint | Tape (computed) | Bars (computed) | Working set (OS) | Ingest ns/print, first → last 100k | Slowest single ingest |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| off | 211.5 MiB | 9.1 MiB | +220.8 MiB | 109 → 98 | 21.4 ms at print 2,097,152 |
-| on | 211.5 MiB | 9.1 MiB | +569.5 MiB | 192 → 164 | 19.8 ms at print 2,097,152 |
+| off | 211.5 MiB | 9.1 MiB | +220.8 MiB | 122 → 101 | 21.4 ms at print 2,097,152 |
+| on | 211.5 MiB | 9.1 MiB | +569.5 MiB | 199 → 181 | 22.2 ms at print 2,097,152 |
 
 Heatmap history at its own caps: 99,000 aggressions (6.8 MiB) after 30 minutes
 at 55 prints/s; at 300 prints/s the 100,000-aggression count binds after about
@@ -168,38 +171,44 @@ taken by a worker. At most one frame's worth was ever queued (6 and 35
 indicator commands, 23 and 52 book commands, against caps of 1,024 and
 4,096), nothing parked, and no frame was late after the first (which waits
 for the pane's setup commands). The peak frame — 512 prints and 2,048 depth
-updates — was sent in under 4 ms on the UI side.
+updates — was sent in under 4 ms on the UI side. The three bounded channels
+preallocate 0.2 MiB (indicator commands), 1.0 MiB (indicator events) and
+1.3 MiB (book commands) per pane.
 
 ## Frame timing before and after
 
-The worker send path changed (a bounded channel and a parked-buffer check per
+The worker send path changed (bounded channels and a parked-buffer check per
 command), so it was measured the way PR #388 measured: `APP_HEALTH_SUMMARY` on
 the WINV26 2026-08-25 replay (1.70 M prints) at speed 60 with the book,
 bubbles, footprint and live strip on, a release build of the campaign base
-`c1b4002e` against a release build of this branch, five 45 s runs each,
+`c1b4002e` against a release build of `5311d6f7`, five 45 s runs each,
 interleaved, every store pointed at a scratch directory
 (`tools/live_envelope/run_replay.ps1`, summarised by
-`tools/live_envelope/frame_timing.py`). Raw table and the one overflow trace:
+`tools/live_envelope/frame_timing.py`). Raw table and the overflow traces:
 [frame-timing.txt](live-envelope/frame-timing.txt).
 
 | Side | fps min | frame_avg ms | frame_cpu ms mean (per run) | stdev | worst steady frame | `APP_SLOW_FRAMES` |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| base | 49 | 16.717 | 2.567 (2.44, 2.66, 2.72, 2.71, 2.31) | 0.180 | 455 ms | 1 |
-| head | 56 | 16.716 | 2.621 (2.60, 2.71, 2.74, 2.68, 2.37) | 0.149 | 148 ms | 0 |
+| base | 59 | 16.666 | 1.900 (1.69, 2.30, 1.92, 1.81, 1.78) | 0.236 | 33.30 ms | 1 |
+| head | 59 | 16.666 | 2.046 (2.10, 2.06, 2.08, 2.21, 1.78) | 0.161 | 33.36 ms | 2 |
 
-frame_cpu differs by 0.05 ms (2 %), a third of either side's run-to-run
-spread: no regression outside noise. Per print, the send path allocates less
-than before, not more: `sync_channel` is an array preallocated once per pane
-(0.2 MiB indicator, 1.3 MiB book), where the unbounded channel allocated a
-block every 31 messages; the parked buffer allocates only while a queue is
-full.
+frame_avg is identical and fps never dropped below 59 on either side. frame_cpu
+differs by 0.15 ms (7.7 %); the standard error of that difference over five
+runs a side is 0.13 ms (t ≈ 1.1), and the base's own runs span 1.69–2.30 ms, so
+the gap is inside the run-to-run noise rather than a measured regression. An
+earlier pair of five-run sets at `6b9bd34a` gave 2.567 against 2.621 ms (+0.05).
+Every `APP_SLOW_FRAMES` line on both sides is on a run's load. Per print, the
+send path allocates less than before, not more: `sync_channel` is an array
+preallocated once per pane, where the unbounded channel allocated a block every
+31 messages; the parked buffer allocates only while a queue is full.
 
-The replay ran at 4,700 prints/s, `live_rate=above` throughout. In nine runs
-of ten `worker_deferred` stayed 0. In one (head-4) the load frame took 213 ms
-while the replay caught up at 18,269 prints/s — nine times the burst rate —
-and the book queue filled: 4,544 commands were parked, `LIVE_QUEUE_DEFERRED`
-said so once, `worker_parked` was back to 0 by the next summary two seconds
-later, and nothing was refused or dropped. That is the overflow policy doing
+The replay ran at 4,700 prints/s, `live_rate=above` throughout. In three head
+runs of five `worker_deferred` stayed 0. In two (head-3, head-4) the load frame
+took 235 and 403 ms while the replay caught up at 18,670 and 17,590 prints/s —
+about nine times the burst rate — and the book queue filled: 406 and 566
+commands were parked, `LIVE_QUEUE_DEFERRED` said so once, `worker_parked` was
+back to 0 by the next summary, and nothing was refused or dropped.
+`worker_output_blocked` stayed 0 in every run. That is the overflow policy doing
 its job on the real app, above the envelope.
 
 ## Reproduce
