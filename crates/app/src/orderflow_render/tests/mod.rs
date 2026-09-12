@@ -3,11 +3,28 @@
 // for.
 //
 // They stay a child module of `crate::orderflow_render` rather than moving to an
-// integration test: a child sees its ancestor's private items, so the move
-// widens no visibility in production code, and the `use super::*` below is
-// the line the module already had inline.
+// integration test: a child sees its ancestor's private items and, through
+// `use super::*`, the root's own. The renderer has since been split into
+// sibling modules, and an item a test names in one of them is `pub(super)`
+// so this sidecar can still reach it - `bubbles::crown_geometry`,
+// `heatmap::gap_marks`, `legend::flow_layout` and their like have no
+// production caller outside their own file and carry that visibility for
+// these tests alone. The five glob imports below are how the sidecar sees
+// them; nothing here is `pub(crate)` or wider.
 
+use super::bubbles::*;
+use super::heatmap::*;
+use super::layout::*;
+use super::legend::*;
+use super::preview::*;
 use super::*;
+use crate::viewport::Viewport;
+use quantick_engine::Side;
+use quantick_orderflow::{
+    AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
+    INV_PHI_2, LiquidityEvidence,
+};
+use rust_decimal::Decimal;
 
 /// The dust threshold is defined by inverting this module's radius
 /// mapping, but lives in `config` beside the style it reads. This pins the
