@@ -1,33 +1,33 @@
 # command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
-# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit 10b87d90 of perf/hot-path-session-length, the last commit that changed code
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured at commit df40008e of perf/hot-path-session-length, the last commit that changed code; CPU time is the median lap per unit (Instant resolution 100 ns on this host)
 test app::tests::session_length_tests::long ... # session-length long variant
-sha: 10b87d90f2c4bbc05e2b3712bcc4d75b10f86552
+sha: df40008e8ce5f7f9e27ea2ecf3833c8c4fa76764
 host: DESKTOP-BTVJFFR
 command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
 sessions: 18000 and 3960000 prints at 300/s; window 1800 frames x 5 prints, 30000 depth updates; tolerance counts +10%, time +50%
-| path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | ns/unit |
+| path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trade.chart.backfilled | 18000 | 9000 | 0.287 | 110.7 | 9.6 | 61440 | 0.00 | 0.90 | 155 |
-| trade.chart.backfilled | 3960000 | 9000 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 164 |
-| trade.chart.live | 18000 | 9000 | 0.287 | 110.7 | 9.6 | 61440 | 0.00 | 0.90 | 227 |
-| trade.chart.live | 3960000 | 9000 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 155 |
-| trade.book | 18000 | 9000 | 0.010 | 3.2 | 0.0 | 61440 | 0.00 | 0.00 | 341 |
-| trade.book | 3960000 | 9000 | 0.010 | 3.2 | 0.0 | 0 | 0.00 | 0.00 | 354 |
-| depth.book | 18000 | 30000 | 19.110 | 6720.6 | 314.6 | 9437184 | 0.00 | 0.00 | 9485 |
-| depth.book | 3960000 | 30000 | 19.110 | 6720.6 | 0.0 | 0 | 0.00 | 0.00 | 7997 |
-| frame.book | 18000 | 1800 | 2128.414 | 4761780.0 | 2887076.0 | 2621440 | 0.00 | 0.00 | 8140657 |
-| frame.book | 3960000 | 1800 | 2128.409 | 4761753.6 | 2887076.0 | 2621440 | 0.00 | 0.00 | 7079951 |
-| frame.app.tick50 | 18000 | 1800 | 2897.522 | 855503.8 | 1276746.8 | 381696 | 0.00 | 4.50 | 1515985 |
-| frame.app.tick50 | 3960000 | 1800 | 2896.213 | 855610.1 | 1277052.4 | 382080 | 0.00 | 4.50 | 1490572 |
+| trade.chart.backfilled | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 140 |
+| trade.chart.backfilled | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 140 |
+| trade.chart.live | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 120 |
+| trade.chart.live | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 120 |
+| trade.book | 18000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| trade.book | 3960000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| depth.book | 18000 | 30000 | 19.110 | 6720.6 | 332.0 | 9437184 | 0.00 | 0.00 | 7000 |
+| depth.book | 3960000 | 30000 | 19.110 | 6720.6 | 17.5 | 262144 | 0.00 | 0.00 | 7100 |
+| frame.book | 18000 | 1800 | 2128.415 | 4761780.0 | 2887094.2 | 2621440 | 0.00 | 0.00 | 243900 |
+| frame.book | 3960000 | 1800 | 2128.410 | 4761753.6 | 2887094.2 | 2621440 | 0.00 | 0.00 | 311000 |
+| frame.app.tick50 | 18000 | 1800 | 2896.755 | 854968.9 | 1276679.6 | 381696 | 0.00 | 4.50 | 1537200 |
+| frame.app.tick50 | 3960000 | 1800 | 2896.156 | 855372.7 | 1277069.3 | 382080 | 0.00 | 4.50 | 1598000 |
 | frame.worker.tick50 | 18000 | 1800 | 55.502 | 4918.2 | 460.9 | 36864 | 26.10 | 0.00 | 0 |
-| frame.worker.tick50 | 3960000 | 1800 | 55.502 | 4918.2 | 435.9 | 2240 | 26.10 | 0.00 | 0 |
-| frame.app.time1d | 18000 | 1800 | 1482.301 | 302096.4 | 812954.5 | 202944 | 0.00 | 5.00 | 711004 |
-| frame.app.time1d | 3960000 | 1800 | 1442.852 | 293849.8 | 816505.0 | 187872 | 0.00 | 5.00 | 714601 |
+| frame.worker.tick50 | 3960000 | 1800 | 55.501 | 4918.1 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 1800 | 1455.255 | 297483.0 | 810305.4 | 187872 | 0.00 | 5.00 | 696300 |
+| frame.app.time1d | 3960000 | 1800 | 1424.983 | 290319.2 | 807272.1 | 187872 | 0.00 | 5.00 | 686500 |
 | frame.worker.time1d | 18000 | 1800 | 139.002 | 11913.3 | 0.0 | 0 | 1923.17 | 0.00 | 0 |
 | frame.worker.time1d | 3960000 | 1800 | 139.002 | 11913.3 | 0.0 | 0 | 1916.47 | 0.00 | 0 |
 | tape built live to | copy bytes/print over the session | largest single copy |
 | ---: | ---: | ---: |
 | 18000 | 106.7 | 917504 |
 | 3960000 | 64.9 | 117440512 |
-verdict: within budget (143 s)
+verdict: within budget (146 s)
 ok

@@ -7,7 +7,7 @@ the evidence for rubric criterion SE6 and, beside
 [the live envelope](live-envelope.md), for A+ gate 6.
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)
-at `10b87d90` of `perf/hot-path-session-length`, the last commit that changed
+at `df40008e` of `perf/hot-path-session-length`, the last commit that changed
 code; each raw output below names its command and commit.
 
 ## The harness
@@ -33,10 +33,14 @@ where an O(forming prints) fold shows; tick:50 is the trader's footprint chart.
 allocated, and bytes a reallocation may copy — through `crate::work_meter`, a
 counting allocator compiled into the app's test binary only; prints folded by
 the forming-run walk; prints copied to the worker by the lane transport; and
-CPU nanoseconds. Counting is deterministic where a stopwatch is not, so the
-fast variant asserts counts only and cannot flake under load. A loop that
-walks history *without allocating* is invisible to the counts: the long
-variant's time ratio is what bounds it.
+CPU time, the median lap per unit (a lap is one frame, print or depth update;
+the timer's resolution on this host is 100 ns). Both sessions of a path are
+built first and take their window in six alternating rounds — short, long,
+long, short, … — so load on a shared host lands on both alike. Counting is
+deterministic where a stopwatch is not, so the fast variant asserts counts
+only and cannot flake under load. A loop that walks history *without
+allocating* is invisible to the counts: the long variant's time ratio is what
+bounds it, and it found one (below).
 
 **Budgets**, declared as constants with their reasons at the top of the
 module: an absolute ceiling per unit for every path, and a growth tolerance —
@@ -62,29 +66,29 @@ failing on the real regression this mission removed (below).
 
 ## Per-unit work at both lengths
 
-The long variant at `10b87d90`, [long.txt](session-length/long.txt) (the fast
-variant's numbers are in [fast.txt](session-length/fast.txt)). *Largest copy*
-is the largest single reallocation inside the window — a stall, not a rate;
-on the worker it is the largest since the previous probe.
+The long variant at `df40008e`, [long.txt](session-length/long.txt) (the fast
+variant's numbers are in [fast.txt](session-length/fast.txt)). *Copy bytes*
+count every reallocation inside the window's laps; the largest single one is
+in the raw file — a stall, not a rate.
 
-| Path | Session | allocs/unit | bytes/unit | copy bytes/unit | folds/unit | lane entries/unit | ns/unit |
+| Path | Session | allocs/unit | bytes/unit | copy bytes/unit | folds/unit | lane entries/unit | median ns/unit |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `trade.chart.backfilled` | 18,000 | 0.287 | 110.7 | 9.6 | — | 0.90 | 155 |
-| `trade.chart.backfilled` | 3,960,000 | 0.287 | 110.7 | 0.0 | — | 0.90 | 164 |
-| `trade.chart.live` | 18,000 | 0.287 | 110.7 | 9.6 | — | 0.90 | 227 |
-| `trade.chart.live` | 3,960,000 | 0.287 | 110.7 | 0.0 | — | 0.90 | 155 |
-| `trade.book` | 18,000 | 0.010 | 3.2 | 0.0 | — | — | 341 |
-| `trade.book` | 3,960,000 | 0.010 | 3.2 | 0.0 | — | — | 354 |
-| `depth.book` | 18,000 | 19.110 | 6,720.6 | 314.6 | — | — | 9,485 |
-| `depth.book` | 3,960,000 | 19.110 | 6,720.6 | 0.0 | — | — | 7,997 |
-| `frame.book` | 18,000 | 2,128.4 | 4,761,780 | 2,887,076 | — | — | 8,140,657 |
-| `frame.book` | 3,960,000 | 2,128.4 | 4,761,754 | 2,887,076 | — | — | 7,079,951 |
-| `frame.app.tick50` | 18,000 | 2,897.5 | 855,504 | 1,276,747 | — | 4.50 | 1,515,985 |
-| `frame.app.tick50` | 3,960,000 | 2,896.2 | 855,610 | 1,277,052 | — | 4.50 | 1,490,572 |
+| `trade.chart.backfilled` | 18,000 | 0.287 | 110.7 | 13.2 | — | 0.90 | 140 |
+| `trade.chart.backfilled` | 3,960,000 | 0.287 | 110.7 | 3.6 | — | 0.90 | 140 |
+| `trade.chart.live` | 18,000 | 0.287 | 110.7 | 13.2 | — | 0.90 | 120 |
+| `trade.chart.live` | 3,960,000 | 0.287 | 110.7 | 3.6 | — | 0.90 | 120 |
+| `trade.book` | 18,000 | 0.010 | 3.2 | 29.1 | — | — | 400 |
+| `trade.book` | 3,960,000 | 0.010 | 3.2 | 29.1 | — | — | 400 |
+| `depth.book` | 18,000 | 19.110 | 6,720.6 | 332.0 | — | — | 7,000 |
+| `depth.book` | 3,960,000 | 19.110 | 6,720.6 | 17.5 | — | — | 7,100 |
+| `frame.book` | 18,000 | 2,128.4 | 4,761,780 | 2,887,094 | — | — | 243,900 |
+| `frame.book` | 3,960,000 | 2,128.4 | 4,761,754 | 2,887,094 | — | — | 311,000 |
+| `frame.app.tick50` | 18,000 | 2,896.8 | 854,969 | 1,276,680 | — | 4.50 | 1,537,200 |
+| `frame.app.tick50` | 3,960,000 | 2,896.2 | 855,373 | 1,277,069 | — | 4.50 | 1,598,000 |
 | `frame.worker.tick50` | 18,000 | 55.5 | 4,918 | 460.9 | 26.10 | — | n/a |
-| `frame.worker.tick50` | 3,960,000 | 55.5 | 4,918 | 435.9 | 26.10 | — | n/a |
-| `frame.app.time1d` | 18,000 | 1,482.3 | 302,096 | 812,955 | — | 5.00 | 711,004 |
-| `frame.app.time1d` | 3,960,000 | 1,442.9 | 293,850 | 816,505 | — | 5.00 | 714,601 |
+| `frame.worker.tick50` | 3,960,000 | 55.5 | 4,918 | 436.0 | 26.10 | — | n/a |
+| `frame.app.time1d` | 18,000 | 1,455.3 | 297,483 | 810,305 | — | 5.00 | 696,300 |
+| `frame.app.time1d` | 3,960,000 | 1,425.0 | 290,319 | 807,272 | — | 5.00 | 686,500 |
 | `frame.worker.time1d` | 18,000 | 139.0 | 11,913 | 0.0 | 1,923 | — | n/a |
 | `frame.worker.time1d` | 3,960,000 | 139.0 | 11,913 | 0.0 | 1,916 | — | n/a |
 
@@ -93,19 +97,31 @@ Verdict: within budget on every path, counts and time.
 Reading it:
 
 - **Every count is flat across a 220x longer session.** The largest move is
-  `frame.app.time1d` allocating 2.7 % *less* at the edge. The short-session
-  copy bytes on `trade.chart` and `depth.book` are one ordinary doubling of a
-  still-small buffer falling inside that window.
-- **CPU time is flat within the +50 % bound**; the one visible move,
-  `trade.chart.live` at 227 against 155 ns, is the *short* session and is noise
-  in a 1.4 ms window (the backfilled row, same code, reads 155).
+  `frame.app.time1d` allocating 2.1 % *less* at the edge. The short-session
+  copy bytes on `trade.chart`, `trade.book` and `depth.book` are ordinary
+  doublings of still-small buffers falling inside that window.
+- **CPU time is flat within the +50 % bound** on every path but one, and that
+  one is inside it only because of a cap: `frame.book` reads 244 µs at the
+  short session and 311 µs at the edge (+28 %). Its counts are identical, so
+  the growth is a walk that allocates nothing: the live half of the heatmap
+  projection visits **every retained aggression** each frame
+  (`crates/orderflow/src/projection/tiers.rs:89`, `for trade in
+  history.aggressions()`, filtered by time). It grows with the session until
+  the aggression history's own cap (100,000, or 30 minutes) binds, then stops:
+  18,000 retained at the short session, 100,000 at the edge, about 0.8 ns per
+  aggression. Not fixed here: aggressions are kept in arrival order, not
+  guaranteed time order (`history.rs:683`), so a binary search could skip
+  prints and change what the bubbles draw. It is a follow-up in the
+  `orderflow` crate, outside this mission's files.
 - **Worker-thread rows carry no stopwatch** of their own; their work is the
   counts, and the UI frame that waits on them is timed.
 - **Costs that are flat but large**, recorded because the table shows them,
   not because they grow: a depth update allocates 19 times (6.7 KiB), and a
-  heatmap projection of 120 bars allocates 4.5 MiB and takes about 8 ms on the
-  book worker in the harness's unthrottled loop. Both sit on the book worker,
-  never on the UI thread, and neither moves with the session.
+  heatmap projection of 120 bars allocates 4.5 MiB per call on the book
+  worker. The median call serves the settled half from its cache; the full
+  rebuild behind it, once per projection interval, took about 8 ms in the
+  harness's unthrottled loop (the mean at `10b87d90`). Neither moves with the
+  session.
 
 ## The forming-run fold
 
@@ -153,14 +169,14 @@ Folds per frame, from the harness:
 | Walk | tick:50, 18k | tick:50, 180k | time:1d, 18k | time:1d, 180k | time:1d, 3.96M |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | unbounded (`2452e577`), [fold-unbounded.txt](session-length/fold-unbounded.txt) | 27.0 | 27.0 | 18,908 | 180,908 | — |
-| bounded (`10b87d90`) | 26.1 | 26.1 | 1,930 | 1,889 | 1,916 |
+| bounded (`df40008e`) | 26.1 | 26.1 | 1,930 | 1,889 | 1,916 |
 
 ## The tape's reallocation stall (D3)
 
 Q3 measured a ~21 ms UI stall when the tape's `Vec<Trade>` doubles at
-2,097,152 prints. At `10b87d90`, Q3's harness re-run
-([envelope-measure.txt](session-length/envelope-measure.txt)) reads **24.18 ms
-at print 2,097,152** (25.01 ms with the footprint on): still there. The
+2,097,152 prints. At `df40008e`, Q3's harness re-run
+([envelope-measure.txt](session-length/envelope-measure.txt)) reads **25.05 ms
+at print 2,097,152** (21.36 ms with the footprint on): still there. The
 harness reads the same event as work: building a tape live to 3,960,000
 prints copies 64.9 bytes per print on average but **117,440,512 bytes in one
 reallocation** (2,097,152 × 56). It is one dropped frame, once, about 10.6
@@ -197,26 +213,28 @@ mission's files. Both are named as a follow-up in the PR.
 
 `APP_HEALTH_SUMMARY` on the WINV26 2026-08-25 replay at speed 60 with the
 book, bubbles, footprint and live strip on, release builds of the campaign
-base `2452e577` and of `10b87d90`, five 45 s runs a side, interleaved, every
+base `2452e577` and of `df40008e`, five 45 s runs a side, interleaved, every
 store pointed at a scratch directory (`tools/live_envelope/run_replay.ps1`,
 summarised by `tools/live_envelope/frame_timing.py`); raw table in
 [frame-timing.txt](session-length/frame-timing.txt).
 
 | Side | fps min | frame_avg ms | frame_cpu ms mean (per run) | stdev | worst steady frame | `APP_SLOW_FRAMES` |
 | --- | ---: | ---: | --- | ---: | ---: | ---: |
-| base | 59 | 16.668 | 2.227 (2.06, 2.01, 2.42, 2.38, 2.27) | 0.182 | 47.40 ms | 0 |
-| head | 59 | 16.668 | 2.246 (1.80, 2.40, 2.41, 2.41, 2.21) | 0.264 | 34.77 ms | 0 |
+| base | 59 | 16.667 | 1.631 (1.63, 1.64, 1.63, 1.61, 1.64) | 0.012 | 33.36 ms | 0 |
+| head | 59 | 16.667 | 1.634 (1.66, 1.63, 1.60, 1.66, 1.62) | 0.026 | 33.45 ms | 0 |
 
 frame_avg is identical and fps never fell below 59. frame_cpu differs by
-0.019 ms (0.9 %) against a standard error of the difference of 0.143 ms
-(t ≈ 0.13): no measurable change. `worker_deferred` stayed 0 in every run.
+0.004 ms (0.2 %) against a standard error of the difference of 0.013 ms
+(t ≈ 0.31): no measurable change. `worker_deferred` stayed 0 in every run. An
+earlier set at `10b87d90`, taken while sibling agents' builds shared the host,
+agreed (2.227 against 2.246 ms, t ≈ 0.13); both are in the raw file.
 
 ## Gate 6 at one SHA
 
 Gate 6: *scalability claims for supported live workloads have current
 measurements, stated rates and bounded-state evidence at the assessed
 revision*. The interim assessment blocked it on five findings; each, and what
-answers it at `10b87d90`:
+answers it at `df40008e`:
 
 | Finding (interim assessment, gate 6) | Answered by | Where |
 | --- | --- | --- |
