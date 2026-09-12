@@ -447,6 +447,25 @@ gone, because no row needs it; round-3 follow-ups F3-1 and F3-2 are moot
 with it. The guards inventory footer check now counts table rows rather
 than identifiers, since a capability registers one row per version.
 
+Review of the resumed scope, round 1, over `2452e577..376e4c00`: step 0
+(`code-review` at `medium`, effort-first, no reuse notice) returned three
+findings, all low and all confirmed.
+
+- **N2** — `layout.pane.resize` v2 accepted a share outside 0..1, which the
+  v1 body clamps into a different share. Closed: v2 refuses it, with a
+  regression in `layout_v2_answers_with_the_exact_share_and_v1_is_still_there`.
+- **N3** — the `layout.tab.rename` / `layout.tab.switch` rows named the v2
+  test, which never calls them. Closed: they name only the optional-row
+  test.
+- **N1** — the MCP adapter's `quantick_invoke` falls back to
+  `FIRST_CAPABILITY_VERSION` when no version is given, so an MCP client that
+  omits the version still meets v1's unencodable answer. **Not changed.**
+  Which version an MCP call defaults to is part of that tool's published
+  behaviour, in a crate this child does not own. Per the coordinator's
+  instruction it is reported as a contract question for the coordinator,
+  not decided here. The matrix preamble tells clients to call the newest
+  version, and the v2 descriptions say why.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS and records its marker.

@@ -224,6 +224,15 @@ fn resize(
              one read back is the one sent"
         )));
     }
+    // The v1 body clamps to 0..1 and only its canvas-width floor would refuse
+    // an out-of-range share — a floor it skips on a tab not drawn yet. v1
+    // could never carry anything but 0 or 1; v2 can, so it refuses here what
+    // clamping would otherwise quietly rewrite into a different share.
+    if fraction < Decimal::ZERO || fraction > Decimal::ONE {
+        return Err(ControlError::invalid_request(format!(
+            "a share is between 0 and 1; {fraction} is not"
+        )));
+    }
     let share = fraction
         .to_f64()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;

@@ -750,6 +750,27 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
         vec![json!("0.4")],
         "is the share the workspace reads back"
     );
+    // A share outside 0..1 is refused rather than clamped into a different
+    // one, and the workspace keeps the share it had.
+    for outside in ["1.5", "-0.2"] {
+        let (refused, _) = unkeyed_call_at(
+            &mut app,
+            &mut client,
+            "layout.pane.resize",
+            LAYOUT_V2,
+            json!({ "fraction": outside }),
+        );
+        assert_eq!(
+            error_code(&refused),
+            Some(codes::INVALID_REQUEST),
+            "{outside} is refused"
+        );
+        assert_eq!(
+            readback(&mut app, &ctx, &mut client, "layout.pane.resize"),
+            vec![json!("0.4")],
+            "and the share is untouched"
+        );
+    }
     for (capability, payload) in [
         (
             "layout.preset.apply",

@@ -171,6 +171,8 @@ const fn journal(
 }
 
 const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST];
+/// The layout-tab calls have one version and are not called by the v2 test.
+const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
@@ -323,7 +325,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         workspace::SCOPE_ID,
         "layouts[].name",
         "the layout carries the name asked for",
-        LAYOUT_PROOF,
+        LAYOUT_TAB_PROOF,
     ),
     snapshot(
         "layout.tab.switch",
@@ -331,7 +333,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         workspace::SCOPE_ID,
         "layouts[].active",
         "the layout asked for is the active one",
-        LAYOUT_PROOF,
+        LAYOUT_TAB_PROOF,
     ),
     journal(
         "notify.popup",
