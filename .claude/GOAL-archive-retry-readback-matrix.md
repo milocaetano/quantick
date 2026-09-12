@@ -539,6 +539,11 @@ effort-first, no reuse notice): one finding, confirmed and closed.
   the refusal leaves the share untouched (through a `#[cfg(test)]`
   `Tab::forget_canvas_width_for_test`, the state a tab opens in).
 
+Round 6 (step 0 at `721113b9`) found only a run of spaces inside M5's new
+refusal message, from a lost line continuation; closed. v1's identical
+pre-existing message gap in `layout.rs` is left as it is, since v1 is kept
+unchanged, and named as a follow-up.
+
 The map correction at `686ee81e` (A10, the CI half of G2 and the
 `ai-review` half of G4 moved to closing steps C3–C5; A6 ticked with its
 URLs) was checked independently: FAITHFUL.

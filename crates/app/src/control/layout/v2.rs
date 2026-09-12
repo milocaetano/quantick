@@ -245,7 +245,7 @@ fn resize(
         .is_some_and(|tab| tab.last_canvas_width() > 0.0);
     if !drawn {
         return Err(ControlError::invalid_request(
-            "this tab has not been drawn yet, so no share can be held to the floor a drag is              held to; resize it once the tab is shown",
+            "this tab has not been drawn yet, so no share can be held to the floor a drag is held to; resize it once the tab is shown",
         ));
     }
     let share = fraction
