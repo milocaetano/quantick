@@ -199,7 +199,9 @@ all twelve cores.
 | #361 `delayed_producer_bookkeeping…` | after | 200 | 0 | — |
 | #364 `gateway_client_reads…` | before | 200 | 1 | `control_plane_tests.rs:852`, "the application frame must drain the queued gateway request", left 1 right 0 |
 | #364 `gateway_client_reads…` | after, first repair | 200 | 1 | `mod.rs:1970`, "test gateway did not stop cleanly" |
-| #364 `gateway_client_reads…` | after, final | 200 | 0 | — |
+| #364 `gateway_client_reads…` | after, repaired | 200 | 0 | — |
+| #361 `delayed_producer_bookkeeping…` | final head | 200 | 0 | — |
+| #364 `gateway_client_reads…` | final head | 200 | 0 | — |
 
 Whole `quantick-app` test binary, 26 runs of each binary, same machine:
 
