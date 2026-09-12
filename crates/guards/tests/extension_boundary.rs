@@ -449,3 +449,44 @@ fn corrupt_or_unreadable_inputs_are_findings() {
             .any(|f| f.line.contains("unreadable source directory"))
     );
 }
+
+/// #365 item 3: a scan that fails is reported as a failure, not as 0 root
+/// lines. The fixture measures its literal caps; a source that does not
+/// decode, or a root with no source at all, has no measurement, and
+/// `--report` prints `failed` with the scan's own reason.
+#[test]
+fn a_failed_scan_is_not_measured_as_zero() {
+    let root = fixture();
+    assert_eq!(boundary::measured(&root), Ok(8));
+
+    fs::write(root.join("crates/app/src/app.rs"), b"\xff").unwrap();
+    let failure = boundary::measured(&root).expect_err("an unreadable source has no count");
+    assert!(failure.contains("unreadable source"), "{failure}");
+    let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env("QUANTICK_GUARDS_ROOT", root.path())
+        .arg("--report")
+        .output()
+        .unwrap();
+    let table = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        table
+            .lines()
+            .any(|line| line == "ratchet.extension-boundary.measured\tfailed"),
+        "{table}"
+    );
+    assert!(
+        !table
+            .lines()
+            .any(|line| line == "ratchet.extension-boundary.measured\t0")
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("extension-boundary: crates/app/src/app.rs: unreadable source"),
+        "{stderr}"
+    );
+    assert!(!output.status.success());
+
+    let missing = ScratchDir::new("extension-measured-missing-root");
+    let failure = boundary::measured(&missing).expect_err("no source is not zero lines");
+    assert!(failure.contains("unreadable source directory"), "{failure}");
+}

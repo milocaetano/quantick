@@ -52,6 +52,25 @@ pub fn total(counts: &[(String, usize)]) -> usize {
     counts.iter().map(|(_, count)| count).sum()
 }
 
+/// [`total`], refused when the walk did not measure every path it tracks.
+///
+/// A sum over a walk that skipped something is smaller than the tree, and
+/// smaller is the flattering direction: `--report` printed 0 root lines for
+/// the extension boundary whenever its scan failed (#365), which reads as
+/// "excellent" and cannot be told apart from "measured nothing". Each line of
+/// `missed` names one path or directory the walk could not measure; any at
+/// all turns the total into a failure the caller has to print as one.
+pub fn complete_total(counts: &[(String, usize)], missed: &[String]) -> Result<usize, String> {
+    if missed.is_empty() {
+        return Ok(total(counts));
+    }
+    Err(format!(
+        "{} path(s) could not be measured:\n{}",
+        missed.len(),
+        missed.join("\n")
+    ))
+}
+
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
 /// rewrite it.
 #[derive(Debug)]
@@ -660,5 +679,20 @@ mod tests {
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 10 measured plus the 10 the vanished entry still holds.
         assert!(text.contains("!budget 20"), "{text}");
+    }
+
+    /// A walk that missed a path has no total. The sum of what it did see is
+    /// the flattering number, and returning it is how `--report` came to print
+    /// 0 for a scan that had failed outright.
+    #[test]
+    fn a_walk_that_missed_a_path_has_no_total() {
+        let counts = [("src/a.md".to_owned(), 7), ("src/b.md".to_owned(), 5)];
+        assert_eq!(complete_total(&counts, &[]), Ok(12));
+        let missed = ["  src/c.md: could not be read: denied".to_owned()];
+        let failure = complete_total(&counts, &missed).expect_err("a missed path is a failure");
+        assert!(
+            failure.contains("1 path(s)") && failure.contains("src/c.md"),
+            "the failure names what was missed: {failure}"
+        );
     }
 }

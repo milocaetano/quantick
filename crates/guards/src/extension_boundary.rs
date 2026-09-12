@@ -215,10 +215,11 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     }
 }
 
-pub fn measured(root: &Path) -> usize {
-    inventory(root)
-        .map(|inventory| inventory.counts.iter().map(|(_, count)| count).sum())
-        .unwrap_or(0)
+/// The root production lines today, or why the scan could not count them.
+/// Never `0` for a failed scan (#365): zero is the best number this ratchet
+/// can print, and a failure has to read as one.
+pub fn measured(root: &Path) -> Result<usize, String> {
+    inventory(root).map(|inventory| crate::ratchet::total(&inventory.counts))
 }
 
 pub fn tighten(root: &Path) -> Result<Vec<String>, String> {

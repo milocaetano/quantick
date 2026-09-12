@@ -288,8 +288,20 @@ fn relative_to(root: &Path, path: &Path) -> String {
 /// What every tracked path measures today, summed, for
 /// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
 /// walk it sums, which is the one thing that differs per guard.
-pub fn measured(root: &Path) -> usize {
-    ratchet::total(&measure(root).counts)
+///
+/// An error rather than a smaller total when the walk missed anything. That
+/// includes an instruction directory that is not there at all, which
+/// [`measure`] skips in silence: [`check`] and [`tighten`] both refuse that
+/// tree, and a report that summed it anyway would print the flattering half.
+pub fn measured(root: &Path) -> Result<usize, String> {
+    let mut missed: Vec<String> = INSTRUCTION_DIRS
+        .iter()
+        .filter(|directory| !root.join(directory).is_dir())
+        .map(|directory| format!("  {directory}: not a readable directory"))
+        .collect();
+    let found = measure(root);
+    missed.extend(found.unreadable);
+    ratchet::complete_total(&found.counts, &missed)
 }
 
 /// Byte counts for every context file, sorted by path.
@@ -780,6 +792,21 @@ mod tests {
         fs::write(&note, "x".repeat(3_000)).expect("scratch reference is writable");
         assert!(!check(&root).is_empty(), "3,000 bytes is not churn");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A tree missing an instruction directory measures as less, silently —
+    /// `measure` skips an absent directory — so the total is refused rather
+    /// than reported, for the reason `check` and `tighten` refuse the tree.
+    #[test]
+    fn measured_is_a_failure_when_an_instruction_directory_is_missing() {
+        let root = scratch("measured-missing-dir", 12_000, 10_000, 22_000);
+        assert_eq!(measured(&root), Ok(22_000));
+        fs::remove_dir_all(root.join("docs/workflow")).expect("scratch dir is removable");
+        let failure = measured(&root).expect_err("a missing directory is not zero bytes");
+        assert!(
+            failure.contains("  docs/workflow/: not a readable"),
+            "{failure}"
+        );
     }
 
     /// A scratch workspace whose baseline names two skill files, so a raise on

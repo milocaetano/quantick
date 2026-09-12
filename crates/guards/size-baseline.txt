@@ -1,385 +1,91 @@
-# The recorded ceiling, in production lines, for every file over the
-# threshold. One `path ceiling` pair per line; `#` starts a comment.
+# The size ratchet's exceptions: one `path ceiling` pair per line, plus the
+# one `!budget` directive capping their sum. `#` starts a comment.
 #
-# These are sizes, not targets: each entry is debt, and the only direction one
-# should ever move is down. `app.rs` at the top of the list is the reason the
-# guard exists.
+# ## The rule
 #
-# This is a data file rather than a Rust `const` for two reasons. Raising a
-# ceiling is then a data diff instead of an edit to a source file full of
-# prose, which is what two worktrees conflict over; and `--tighten` can
-# rewrite a line-oriented file safely, where rewriting a Rust array by machine
-# is the kind of clever nobody should have to review.
-
-# `app.rs` is the reason this guard exists. Tightened three times now. The
-# guard's own change took the agent popup, the acknowledgement toast and the
-# Save-as box out to `src/surfaces/`; the second batch took the
-# indicator-preview watermark, the appearance window, the footprint settings
-# window, the market dialog and the arming dialog with its alarm section -
-# 403 production lines and nine struct fields - and gave back the environment
-# the port hands them instead, plus the review's fixes and the
-# `QUANTICK_TOAST=paper` hook that photographs the converged acknowledgement
-# lane.
+# Every production source file is at or under 1,500 production lines, as
+# `crates/guards/src/size.rs` counts them (top-level `#[cfg(test)]` items and
+# `tests/` excluded). This file therefore holds no entry and `!budget 0`, and a
+# file that crosses the threshold fails `cargo test -p quantick-guards`. The
+# fix the failure asks for is to give the new code its own module, as
+# `new-extension` describes. An exception is still possible, and it is two
+# edits in the same change, both reviewed: a signed `path ceiling` entry with
+# a comment saying why, and a raise of the `!budget` line by as much. The
+# budget never goes up on its own: `--tighten` only lowers it, so every raise
+# is a number a person wrote and a reviewer can argue with.
 #
-# The third batch was the drawing chrome: the context bar, the on-chart note
-# editor, the inspector in both its hosts and the object manager, with the
-# title bar, the body, the placement rule and the action applier they share.
-# 1,548 production lines and twenty-one struct fields, out to
-# `src/surfaces/drawing_chrome/` as one member - they are one subsystem, and
-# four members would have left the state they share behind. The number below
-# is what that left, not a target: this file is still six times the threshold.
+# A data file rather than a Rust `const`, so that a raise is a one-line data
+# diff instead of an edit to a source file, and so that `--tighten` can
+# rewrite it line by line without eating the comments beside an entry.
 #
-# Raised again by the risk-per-trade work, for the three things only this file
-# can do: reading the sidecar into every tab on boot, the save-and-fan-out
-# when a ticket changes the risk, and handing a newly opened tab the settings
-# the one beside it is using. All three have the shapes
-# `persist_order_strategies` and `set_cmd_trading` beside them already have,
-# and none can move - they reach `self.tabs`, which is what this file is. The
-# last of them came out of that branch's own review: the toolbar's entry pair
-# reads the same lock the ticket does, because gating one and not the other
-# left a button lit while the order behind it was already refused.
-# Raised for the MT5 session-history branch: one window-level setting (the
-# `by time` reach's span) in the six places such settings live, plus the
-# `ScriptedMenu` registry that replaced a string equality so a capture can
-# open the history menu at all.
-# ## The debt budget
+# ## Why the budget exists
 #
-# The sum of every ceiling below may not exceed this number. Per-file ceilings
-# alone could not answer the question that matters -- is this repository's
-# largest code getting better or worse? -- because eighteen entries each raised
-# "for this branch" read as eighteen reasonable decisions and one lost trunk.
-# That is not hypothetical: the entry for `app.rs` went from 9,775 to 9,890 in
-# commit 2dcf062, on PR #271, signed, with nothing extracted in return.
+# Per-file ceilings alone could not answer whether the largest code was
+# getting better or worse: eighteen entries each raised "for this branch" read
+# as eighteen reasonable decisions and one lost trunk. The entry for `app.rs`
+# went from 9,775 to 9,890 in commit 2dcf062, on PR #271, signed, with nothing
+# extracted in return. So the budget caps the sum of every ceiling, and growth
+# is pay-as-you-go: raising one ceiling means lowering another, or raising
+# this line in plain view.
 #
-# So growth is pay-as-you-go. Raising a ceiling means lowering another by as
-# much, in the same change -- extract a surface into its own module and both
-# numbers fall on their own. Nothing is blocked: raising this line is still
-# allowed and is the escape hatch on purpose, because it is one number, in one
-# place, that a reviewer watches move.
+# ## How this file reached zero
 #
-# It only ever goes down on its own: `--tighten` lowers it to match the
-# ceilings and will never raise it, or the failure message would be
-# recommending its own bypass.
-# Raised by 458 for the report extraction below, and this is the whole of
-# that raise: `paper_trading.rs` fell 2,842 and `paper_report.rs` arrived
-# at 3,300. The difference is the seam - the environment the report is
-# handed, the response it answers with, the one state struct, and the
-# wrappers that keep every control-plane and harness name where its callers
-# already look. Paid here, in the one number a reviewer watches, rather
-# than hidden inside a signed entry: a reader of the budget alone should be
-# able to see that this branch cost 458 lines and ask whether the money
-# path being auditable was worth them.
-# Raised by 13 for the hook self-declaration, and this is the whole of that
-# raise: `paper_trading.rs` +11 and `footprint_render.rs` +2, one line per
-# hook those two files read plus one for the call. Every other owning module
-# absorbed its own within an existing ceiling.
+# `app.rs` is the reason the guard exists: it grew to over 36,000 lines in
+# five weeks, and the sprints before campaign #367 cut it to 769 production
+# lines by moving `impl QuantickApp` groups to siblings under
+# `crates/app/src/app/` and its 56 fields into six owner structs. The
+# reasoning behind each of those cuts, and behind the raises signed along the
+# way, is in this file's git history and in the PR bodies it cites.
 #
-# What the 13 lines buy is that the hook registry can no longer lie. It was a
-# hand-kept file that had drifted both ways -- six hooks the application reads
-# had no row, and one row named `QUANTICK_DRAWING_MANAGER`, which nothing has
-# ever read, so a capture run setting it got a window that simply did not open
-# and read as a defect in the surface. Each module now declares the hooks it
-# reads beside the reads, one `declare_hooks!` line, and the registry is
-# generated from those declarations fused with the prose. A hook read but not
-# described, or described but not read, fails `cargo test -p quantick-guards`.
+# Campaign #367 opened with twenty entries, 45,505 recorded lines under a
+# budget of 45,739, and closed with none. Each entry left the same way: its
+# file was split into owned siblings under its own directory by pure moves -
+# every body unchanged, the only widenings `pub(super)` marks - until the root
+# and every sibling sat under the threshold, and the entry was then removed
+# by hand, because a recorded ceiling on a file under 1,500 is a permission
+# nobody spends. Each PR body carries the statement-line multiset proving
+# nothing was lost or duplicated.
 #
-# Paid here rather than hidden in the two signed entries, because a reader of
-# the budget alone should be able to see that this branch cost 13 lines and ask
-# whether an index that cannot drift was worth them. Nothing was extracted in
-# return, and that is the honest shape of it: this is a raise, not a trade.
-#
-# Then lowered by 1,863 -- the whole of `app.rs`'s fall from 9,362 to 7,499 --
-# by `--tighten` after four `impl QuantickApp` groups moved to siblings under
-# `crates/app/src/app/`: the harness demo appliers, the drawing input, the
-# health summary and the workspace restore. None of the four files reaches
-# the 1,500-line threshold, so none of them takes an entry here and the fall
-# is a trade of nothing for 1,863: the lines still exist, they are simply no
-# longer in the file the ratchet was written for. The first cut of this
-# sprint that moves this number down rather than sideways.
-#
-# Then lowered by 2,153 more, the same way and for the same reason: `pane.rs`
-# fell from 7,771 to 5,618 when four `impl ChartPane` groups moved to siblings
-# under `crates/app/src/pane/` -- the context menus, the strategy badges and
-# their lifecycle, the drawing gestures, and the axes and chrome painters.
-# None of the four reaches the 1,500-line threshold, so again no new entry is
-# taken and the fall is a trade of nothing for 2,153. The two functions that
-# are the pane, `handle_navigation` and `draw_chart`, stayed put on purpose:
-# they are the next cut, and they need a shape rather than a new address.
-#
-# Then lowered by 2,149 more -- `app.rs` from 7,499 to 5,350 -- after the third
-# cut of the same sprint moved three `impl QuantickApp` groups to siblings
-# under `crates/app/src/app/`: the workspace store's write half, the indicator
-# manager and the chart-layer wiring. Same trade as the two cuts before it and
-# the same reason it costs nothing here: `workspace_save.rs` (1,124 lines),
-# `indicator_manager.rs` (835) and `chart_layers_wiring.rs` (270) are each
-# under the 1,500-line threshold, so none takes an entry. None of the three
-# carries a test module, so those are production counts entire.
-#
-# `--tighten` first wrote 5,339. The eleven lines between that and the number
-# above are `attach_surface` and the blank line above it, which the mission
-# brief listed with the workspace
-# store because it sits in the middle of that line range. It is a two-line
-# setter for the window handle, called once from `main`, and it has nothing to
-# do with saving a workspace; the pre-PR review sent it back to `app.rs` rather
-# than let `workspace_save.rs`'s name lie about what is in it. Recorded here
-# because a ceiling that moved for a reason should say the reason, even when
-# the reason made it ten lines worse.
-#
-# The budget arithmetic is done by hand, as the two briefs agreed it would be:
-# `pane.rs` and `app.rs` were cut in parallel, both lower this line, and the
-# second to land subtracts its own fall from the first's number rather than
-# from the one it measured against. 57,394 - 2,149 = 55,245.
-#
-# Then lowered by 3,456 -- `app.rs` from 5,388 to 1,932 -- by the final cut of
-# the same campaign, which moved the last seven `impl QuantickApp` groups to
-# siblings under `crates/app/src/app/`: the control host, the tab lifecycle,
-# the toolbar wiring, the menu bar, the drawing chrome, the replay/history/
-# alarm appliers and `draw_frame`. Same trade as the three cuts before it, and
-# it costs nothing here for the same reason: `menu_bar.rs` (778 production
-# lines), `frame.rs` (732), `replay_and_history.rs` (518), `control_host.rs`
-# (496), `drawing_chrome_wiring.rs` (430), `tabs.rs` (375) and
-# `toolbar_wiring.rs` (307) are each under the 1,500-line threshold, so none
-# takes an entry. They come to 3,636 against a fall of 3,456; the 180
-# difference is seven module headers, seven import blocks and the
-# `impl QuantickApp` wrappers -- the price of seven addresses, paid once.
-# 55,595 - 3,456 = 52,139.
-#
-# What is left in `app.rs` is the window's definition and nothing else: the
-# struct, `new`, `new_with_workspace`, the pickers and `persist_*`,
-# `adopt_tab`, `arm_strategy_instance`, `attach_surface`, the `eframe::App`
-# impl and `declare_hooks!`. Those stayed on purpose -- they are the regions
-# the paper-policy branch was editing in parallel, and moving them would have
-# turned that branch's edits into modify/delete conflicts. It has since landed,
-# so giving the constructor a shape is the next cut's job, not this one's.
-#
-# Then lowered by 1,143 -- `app.rs` from 1,932 to 789 -- by that next cut,
-# which took the two regions the paragraph above named. The 721-line launch-
-# hook sequence left `new_with_workspace` for `app/launch_hooks.rs` as
-# `apply_launch_hooks`, split into ten appliers by surface in the order they
-# were read; the paper wiring -- the trades-dir pickers, `persist_*`,
-# `adopt_tab` and `arm_strategy_instance` -- left for `app/paper_wiring.rs` as
-# a pure move. `declare_hooks!` followed the reads, because `hooks::OWNERS`
-# names the file a reader should open and the guard checks the two agree.
-# Same trade, same price: `launch_hooks.rs` (880 production lines) and
-# `paper_wiring.rs` (392) are both under the 1,500-line threshold, so neither
-# takes an entry. They come to 1,272 against a fall of 1,143; the 129
-# difference is two module headers, two import blocks and two
-# `impl QuantickApp` wrappers -- the price of two addresses, paid once.
-# 52,139 - 1,143 = 50,996.
-#
-# What is left in `app.rs` is now the window's definition and nothing else:
-# the struct, `new`, `new_with_workspace`, `attach_surface`, the `eframe::App`
-# impl and `mod tests`. The 56 fields are the next cut's job.
-#
-# Then lowered by 2,446 -- `control/gateway.rs` from 4,142 to 1,696 -- by
-# splitting it along the thread boundary it already had. The gateway thread's
-# free functions left for `control/gateway/server.rs`, the frame emitter and
-# its keys for `semantic.rs`, the parked screenshot arc for `screenshot.rs`,
-# the egui panel for `panel.rs`, and both test modules for `tests/mod.rs`.
-# Every body moved unchanged; the only widenings are the `pub(super)` marks a
-# child module needs to be called by its parent.
-# Same trade, same price: at 1,445, 591, 278 and 278 lines on disk the four
-# siblings are all under the 1,500-line threshold, so none takes an entry, and
-# the 450 lines of tests are untracked either way. `server.rs` is the one to
-# watch: 55 lines of headroom, spent partly on naming its imports instead of
-# globbing them. The connection session and the two dispatchers are where the
-# next cut goes rather than a signed raise.
-# 48,185 - 2,446 = 45,739.
-#
-# What is left in `gateway.rs` is the UI thread's half and nothing else: the
-# options and identities, the lifecycle, the local actions, and the frame
-# service the screenshot arc is armed against. `invoke_local_action` at 164
-# lines and `service_replay_trace` are the next cut's job.
-#
-# The 56 fields became 24: six owner structs, declared in the sidecar that
-# owns each, replacing 38 flat fields. `app.rs` falls 789 -> 625 production
-# lines, because every moved field took its doc comment with it. Nothing was
-# deleted -- the prose moved to `indicator_manager.rs`, `control_host.rs`, a
-# new `chrome.rs`, `tabs.rs`, `health.rs` and `replay_and_history.rs`, all of
-# them under the 1,500-line threshold, so none takes an entry.
-#
-# `layout_wiring.rs` is raised 1,557 -> 1,577 and `app.rs` lowered 789 -> 769
-# to pay for it, so the budget line does not move. The 20 lines are not new
-# code: `self.pending_styles` became `self.indicators.pending_styles`, and the
-# eleven longest of those reads now wrap where they used to fit. A path that
-# says which module owns a field costs a line where it crosses 100 columns --
-# the one price this regroup charges, paid by the file that shrank.
-#
-# Then lowered by 5,384 -- the whole of `pane.rs`'s entry -- by the cut the
-# note above promised: `handle_navigation` and `draw_chart` got a shape rather
-# than a new address. The input frame stays in `pane.rs` as the orchestrator
-# and its arms went to `pane/context_menu.rs` (the secondary click),
-# `pane/primary_button.rs` (paper's claim on the button, then the pointer
-# tool) and `pane/axes_and_panes.rs` (the axes, the lane divider and the
-# indicator panes' handles, with the `pane_*_gesture` helpers only they
-# call). The paint frame went whole to `pane/draw_chart.rs`, because the
-# slices of `self.state` it borrows for the frame forbid a `&mut self` arm,
-# and its read-only painters to `pane/layer_painters.rs` as `&self` methods
-# over one borrowed `DrawFrame`. The rest of the file left by owner:
-# `layers.rs`, `series.rs`, `shared_marks.rs`, `drawing_paint.rs`,
-# `pointer_hit.rs`, `tape_switch.rs` and `canvas_split.rs`, plus two impl
-# blocks appended to `context_menu.rs` and `strategies.rs`. Every body moved
-# at the same indentation; the multiset proof is in PR #383's body.
-#
-# `pane.rs` itself is 1,212 production lines and takes no entry: it is under
-# the threshold, and the largest new sibling (`draw_chart.rs`, 746) is under it
-# by a wider margin, as is the largest of all of them, the untouched
-# `drawing_gestures.rs` at 800. `--tighten` first wrote 1,256 and 41,377 (the
-# review's seam repairs then took it to 1,212); the entry is removed by hand
-# because a sub-threshold file with a recorded ceiling is a
-# permission nobody spends, and the budget follows it down by the same
-# 1,256. 45,739 - 5,384 = 40,355; what the guard measures the sum at today
-# is 40,121, and the line below is that sum, not the arithmetic.
-#
-# `toolrail.rs`, `tab.rs` and `layout_wiring.rs` left this file entirely.
-# Each was split into owned siblings under its own directory -- the rail's
-# state, favourites band and family flyout; the tab's pane addressing and its
-# layout/spec persistence; the layout wiring's indicator mirrors and its
-# layout strip -- by pure moves, so all three fell under the 1,500-line
-# threshold and stopped being tracked. The entry for `tab.rs` took the
-# `drain_feed` opening-block note with it: that arm is in `tab/feed.rs` and
-# was never what this entry paid for. Nothing was deleted; the budget falls
-# by the three ceilings.
-# +2: the `QUANTICK_FOOTPRINT_DEBUG` declaration. See the budget note above.
-#
-# `eval.rs` and `compile.rs` left this file entirely. The interpreter's
-# built-in families moved out of the evaluator core -- `eval/kernels.rs` (the
-# stateful `ta.*` kernels), `eval/pure.rs` (the pure math, colour and string
-# built-ins) and `eval/objects.rs` (`line.new` / `box.new` / `label.new`, the
-# argument coercions a drawing takes and the `handle.set_*` methods) -- and
-# the compiler's lowering passes out of the driver: `compile/declarations.rs`
-# (pass 1, the `indicator()` header, the plot registry and `fill()`),
-# `compile/fold.rs` (pass 4's constant folder with `Const` and the member
-# constants) and `compile/resolve.rs` (passes 2/3/5/6, the one resolved walk).
-# Pure moves, so both roots fell under the 1,500-line threshold and stopped
-# being tracked; the largest new sibling is `compile/resolve.rs` at 608.
-# `--tighten` first wrote 974 and 323; the two entries are removed by hand
-# because a sub-threshold file with a recorded ceiling is a permission nobody
-# spends, and the budget follows them down by the same 1,297. Nothing was
-# deleted; the multiset proof is in PR #399's body.
-# Raised for the same branch: an `Mt5Event::OpeningPage` variant and one
-# branch in the block state machine deciding whether a block settles a
-# request. The session loop is the only place that knows what a
-# `history_start` opened; the slicing itself lives in the bridge.
-#
-# `projection.rs` and `config.rs` in `crates/orderflow` left this file too.
-# The projection's read model, print tiers and budget fold went to
-# `projection/{model,tiers,fold}.rs`, the bubble and live-lane config
-# families to `config/{bubbles,lane}.rs`, by pure moves (the multiset proof
-# is in PR #396's body); the roots are 778 and 514 production lines, the
-# largest sibling 557, so none of the seven files is tracked. `--tighten`
-# lowered the two entries rather than removing them; they are removed by hand
-# for the reason `pane.rs`'s note gives, and the budget falls by the two
-# ceilings: 9,264 - 1,850 - 1,523 = 5,891, which is the sum below.
-!budget 769
-
-crates/app/src/app.rs 769
-
-# ## Three entries that no longer exist
-#
-# Everything from here to the note that closes this block is the history of
-# `paper_report.rs`, `paper_account.rs` and `paper_trading.rs` - the two
-# earlier cuts and the allowances they carried, including the `+11` for the
-# eight `QUANTICK_PAPER_*` hooks. None of it attaches to a live entry any
-# more: the third cut took all three under the threshold and their entries
-# are gone. It is kept because the reasoning still explains why the code is
-# shaped the way it is, and deleting it would leave the shape unexplained.
-#
-# The five entries below `pane.rs` were invisible to the first version of this
-# guard, which stopped counting at the first `#[cfg(test)]` of any kind:
-# `gateway.rs` scored 72 lines of its 4,142, `drawings/mod.rs` 221 of 2,283.
-# They are recorded at today's true size, not at a target. `paper_trading.rs`
-# came down two lines when its private toast - a second acknowledgement lane
-# in the same place on a different clock - was converged onto the window's
-# `ToastSurface`; what left was mostly drawing code, and what stayed is the
-# outbox that replaced it.
-#
-# Then raised by the risk-per-trade work. The capability itself docked as
-# `src/risk_sizing.rs` - the policy half of the arithmetic, the sentences, the
-# whole RISK block, the sidecar records and the launch hook, around 1,300
-# production lines that never entered this file. What is recorded here is the
-# seam that could not leave: the settings the ticket holds, the accessors the
-# control plane reads through, the three placement sites where the lock is
-# enforced, the quantity field turning derived, and one call that draws the
-# block. They reach this struct's private state - `aim_bracket`,
-# `quantity_preview`, `parse_quantity`, `show_toast`, `venue` - so moving them
-# would mean widening five private items to a sibling module, which trades a
-# number in this table for a hole in the type's encapsulation. The two-pass
-# sizing *did* move, behind a closure, once it was clear it was logic rather
-# than registration. Argue with these numbers rather than with their absence.
-# The performance report and the trades ledger came out of
-# `paper_trading.rs` as `paper_report.rs` - the reading half of paper
-# trading, split from the writing half. The point was not tidiness: that
-# file places orders, projects brackets, sizes risk against capital and
-# writes the trades journal, and every line of calendar tinting and
-# equity-curve plotting sitting in it was a line an auditor asking "was the
-# stop placed at the right price?" had to read past.
-#
-# 2,842 production lines and twenty-one struct fields left, against 3,300
-# arriving here - so the budget rises by 458 rather than falling, and that
-# is the honest number. What the difference bought: a `ReportEnv` the
-# report is *handed* instead of a host it reaches into, a `ReportResponse`
-# for what it cannot do itself, one `ReportState` in place of the
-# twenty-one fields, and the wrappers that keep every control-plane and
-# harness name exactly where its callers already look. The report's own
-# tests went with it, and the ten that drive a real journal stayed with the
-# host that writes one.
-#
-# The numbers are pinned, not merely moved: `the_report_numbers_are_fixed`
-# asserts a fixed journal's whole report byte for byte, across two cuts. It
-# was written against the old code in its old home and its expected text
-# did not change - same SHA-256 before and after.
-
-# +11: the eight `QUANTICK_PAPER_*` hooks this file reads, declared beside
-# them. See the budget note above.
-# The money path came out of `paper_trading.rs` as `paper_account.rs` - the
-# deciding half of paper trading, split from the drawing half, exactly as
-# `paper_report.rs` was the reading half. That file placed orders, projected
-# brackets, sized risk against capital and wrote the trades journal *and* drew
-# the ticket, and an auditor asking "was the stop placed at the right price?"
-# had to read through drawing code to answer.
-#
-# 1,818 production lines left, against 2,128 arriving here, plus 2 in `tab.rs`
-# and 38 in `app.rs` for the receivers the split moved to `account()` - a
-# `tab.paper.set_risk_settings(..)` becoming
-# `tab.paper.account_mut().set_risk_settings(..)` wraps where it used to fit.
-# So the sum of ceilings rises by 350.
-#
-# The mission allowed +300 and this is 50 over, granted by the trader with the
-# measurement in front of them. Its own two criteria pull against each other:
-# it asked for twenty-one named functions on the account AND a rise under 300,
-# and a function moved across a seam pays for its signature twice - once where
-# it lives, once where the ticket resolves its text before calling it. At
-# seventeen moved the rise was 297; the last four - `market`, `settle`,
-# `on_trade`, `set_symbol`, all named in the brief - cost the rest. Reverting
-# them would buy the number and lose the delivery.
-#
-# Eleven lines were already returned from real duplication the move exposed:
-# `push_toast` against `set_toast` (two doors into a one-slot outbox),
-# `has_toast` against `peek_toast`, and one explanation written into both
-# halves of `set_symbol`. What remains is signatures, and shaving a doc comment
-# to reach a round number would buy the number and lose the reason.
-#
-# It also closes the note below. The five private items that entry said would
-# have to be widened were why the risk seam stopped short; each has landed on
-# exactly one side. `aim_bracket` moved (arithmetic, and its only tie to the
-# ticket was the ruler, which now arrives as two resolved prices) and so did
-# `venue`; `show_toast`, `parse_quantity` and `quantity_preview` stayed,
-# because each reads a text box or writes the ticket's one-slot outbox.
-#
-# The numbers are pinned, not merely moved: `the_journal_bytes_are_fixed`
-# asserts a fixed tape's whole journal byte for byte over four round trips - a
-# manual long, a manual short, a stop-out and a target. It was written against
-# the old code in its old home and its expected text did not change - same
-# SHA-256 before and after,
-# ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6.
-#
-# The three paper files came under the 1,500-line threshold in one cut, so
-# their entries are gone rather than lowered: `paper_trading.rs` gave the
-# ticket, the chart paint, the pointer, CMD entry, the ruler and the order
-# strategies their own modules; `paper_report.rs` gave the ledger, its rows,
-# the equity curve, the tables and the window theirs; `paper_account.rs` gave
-# risk sizing, order placement, import/export and the report seam theirs.
-# Pure moves, with `the_journal_bytes_are_fixed` and
-# `the_report_numbers_are_fixed` unchanged on both sides of it.
-
+# - #384: `paper_trading.rs`, `paper_account.rs` and `paper_report.rs`. The
+#   ticket, chart paint, pointer, CMD entry, ruler and order strategies; the
+#   ledger, equity curve and tables; risk sizing, placement and the report
+#   seam each got a module. `the_journal_bytes_are_fixed` and
+#   `the_report_numbers_are_fixed` kept their expected bytes across the cut.
+# - #383: `pane.rs`. `handle_navigation` and `draw_chart` got a shape rather
+#   than a new address: the input frame stayed as the orchestrator with its
+#   arms in `pane/context_menu.rs`, `pane/primary_button.rs` and
+#   `pane/axes_and_panes.rs`; the paint frame went whole to
+#   `pane/draw_chart.rs`, its painters to `pane/layer_painters.rs`.
+# - #388: `orderflow_render.rs`, `orderflow_view.rs` and
+#   `footprint_render.rs`, into `orderflow_render/` (bubbles, heatmap,
+#   layout, legend, preview), `orderflow_view/` (frame, settings) and
+#   `footprint_render/` (bar, heat).
+# - #390: `drawings/mod.rs`, into `drawings/collection.rs`,
+#   `drawings/placement.rs` and `drawings/tool.rs`.
+# - #391: the control plane, `control/gateway.rs`, `control/contract.rs` and
+#   `control/evidence.rs`, all at once and nothing raised in return. The
+#   action door (`invoke_local_action`, `invoke_local_read` and the local
+#   actor they mint) went to `gateway/local_action.rs` and the trace walk with
+#   `service_replay_trace` to `gateway/trace_replay.rs`; the contract's
+#   per-capability prepare handlers and the invocations they build went to
+#   `contract/reads.rs`, leaving the permission ceilings and the refusal
+#   sequence in the root; the evidence store with its grant-rechecking read
+#   went to `evidence/store.rs` and the screenshot encoding to
+#   `evidence/image.rs`.
+# - #392: the chrome, `toolrail.rs`, `tab.rs` and `app/layout_wiring.rs`: the
+#   rail's state, favourites band and family flyout; the tab's pane addressing
+#   and layout persistence; the layout wiring's indicator mirrors and strip.
+# - #395: `feed-mt5/src/stream.rs`, into `stream/` (blocks, connection,
+#   events, ports, publish, reader). The `Mt5Event::OpeningPage` decision
+#   the entry was once raised for now lives in `stream/connection.rs`.
+# - #399: `pine/src/eval.rs` and `pine/src/compile.rs`: the built-in families
+#   into `eval/kernels.rs`, `eval/pure.rs` and `eval/objects.rs`; the lowering
+#   passes into `compile/declarations.rs`, `compile/fold.rs` and
+#   `compile/resolve.rs`.
+# - #396: `orderflow/src/projection.rs` and `orderflow/src/config.rs`: the
+#   read model, print tiers and budget fold into `projection/`, the bubble and
+#   live-lane config families into `config/`.
+# - #377: `app.rs` itself, whose 769 had been under the threshold since the
+#   field regroup and was kept only as history. Its entry was retired with the
+#   rest and the budget set to 0.
+!budget 0

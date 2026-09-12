@@ -457,8 +457,12 @@ fn collect_sources(
 /// What every tracked path measures today, summed, for
 /// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
 /// walk it sums, which is the one thing that differs per guard.
-pub fn measured(root: &Path) -> usize {
-    ratchet::total(&measure(root).counts)
+///
+/// An error rather than a smaller total when the walk missed anything, as
+/// for the other ratchets.
+pub fn measured(root: &Path) -> Result<usize, String> {
+    let found = measure(root);
+    ratchet::complete_total(&found.counts, &found.unreadable)
 }
 
 /// Cycle counts for every crate in the workspace, sorted by crate path.
@@ -468,8 +472,16 @@ pub fn measure(root: &Path) -> Measured {
         cycles: BTreeMap::new(),
         unreadable: Vec::new(),
     };
-    let Ok(entries) = fs::read_dir(root.join("crates")) else {
-        return found;
+    let entries = match fs::read_dir(root.join("crates")) {
+        Ok(entries) => entries,
+        // Named rather than returned empty: an empty measurement is zero
+        // cycles, which is the best number this ratchet can print.
+        Err(e) => {
+            found
+                .unreadable
+                .push(format!("  crates/: directory could not be listed: {e}"));
+            return found;
+        }
     };
     let mut dirs: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
     dirs.sort();
