@@ -141,6 +141,16 @@ pass at `low`, and a `delivery-review` completeness pass.
 - **C1** — `delivery-review` returns PASS (completeness pass at `medium`).
 - **C2** — the draft PR is open against `campaign/lean-a-plus`, with the
   evidence in its body.
+- **C3** — `gh pr ready <n>` is attempted once from the worktree through the
+  Bash tool, and its outcome — accepted or denied — is reported rather than
+  worked around. The hook that runs is the main checkout's, so a denial is the
+  expected result until this branch merges. The gated commands are never run
+  through the PowerShell tool. *(Added by the completeness pass: an operational
+  obligation of this mission that the first map carried no `C` line for.)*
+- **C4** — the coordinator receives the handoff block: issue, branch, worktree,
+  PR URL, head SHA, base tip, review verdicts, markers, CI, suite results,
+  findings closed/open, the `gh pr ready` outcome and the next action.
+  *(Added by the completeness pass, same reason.)*
 
 ## The request as received
 
