@@ -101,9 +101,11 @@ the risk as high, so the full interrogation budget, the full shape pass, a
   file's own section banners draw these lines already.
 - **S3** — *`invoke_local_read` travels with `invoke_local_action`.* The two are
   the same door (the in-process invocation of a registered capability), and
-  the baseline note names the action as the next cut. `local_actor` stays in
-  the root because `hook_agent_actor` also calls it, which keeps the widening
-  count down. Safe to assume: file placement with a conventional default.
+  the baseline note names the action as the next cut. The split commit left
+  `local_actor` in the root to keep the widening count down; step 0 round two
+  showed the move needs no widening (a child reads the root's private
+  constants), so repair batch 2 moved `local_actor` and `hook_agent_actor`
+  with the door. Safe to assume: file placement with a conventional default.
 - **S4** — *Re-exports keep every external path.* `RawScreenshot`,
   `ScreenshotPixels`, `EvidenceStore` and `EventsReadInvocation` are
   re-exported from their roots at their existing `pub(crate)` visibility,
@@ -230,18 +232,33 @@ the risk as high, so the full interrogation budget, the full shape pass, a
   `register_reads` table in `reads.rs` (arguably not a pure move), and the
   `docs/architecture/foundation.md:28` link to `invoke_local_action`, which
   R8 keeps this child out of — one-line docs fix at integration.
-- Integration note: the campaign tip moved twice while this child ran
-  (#383, then #390 → `caa2adb4`), and #383 rewrote the same region of
-  `size-baseline.txt`, which also stopped GitHub from creating
-  `pull_request` runs for the conflicted PR. On the coordinator's
-  instruction the branch was rebased onto `caa2adb4` with its resolution
-  rule: the tip's baseline, minus the three entries (no comment block was
-  attached to any of them), plus the note paragraph, `!budget` set to the sum
-  of the nine remaining entries — 20,025 − 5,122 = 14,903 — and the orphaned
-  `QUANTICK_FOOTPRINT_DEBUG` line (its entry left with #388) removed.
-  `--tighten` then changes nothing and the guards are green. The earlier
-  figures in this file (45,739 → 40,383) were the budget at the original base
-  `e8eb23e5`; the diff over the tip is the same ten files.
+- Integration note: the campaign tip moved four times while this child ran
+  (#383, #390, #394, #392), and #383 and #392 rewrote the region of
+  `size-baseline.txt` this child edits, which also stopped GitHub from
+  creating `pull_request` runs for the conflicted PR. On the coordinator's
+  instruction the branch was rebased each time (last onto `f574857b`) with
+  its resolution rule: the tip's baseline, minus the three entries (no
+  comment block was attached to any of them), plus the note paragraph,
+  `!budget` set to the sum of the remaining entries — six, 14,673 − 5,122 =
+  9,551. `--tighten` then changes nothing and the guards are green. The
+  earlier figures in this file (45,739 → 40,383) were the budget at the
+  original base `e8eb23e5`; the diff over the tip is the same ten files.
+
+## Deferral requested — NOT granted
+
+- **G4, the "zero open threads" half.** One `ai-review` thread is open:
+  https://github.com/milocaetano/quantick/pull/391#discussion_r3995299951
+  (`evidence/store.rs:68`, WEAK — `RetainedBundle`'s eight `pub(super)`
+  fields leave the store's invariants to its caller). The fix is one
+  constructor, `RetainedBundle::new`, computing digest, byte count and chunks;
+  it relocates chunking out of `into_manifest`, a call-shape change D1 of this
+  mission forbids. The coordinator assigned the fix to the AP4 mission (Q2,
+  #378) and instructed this child to leave the thread open for the trader's
+  acceptance rather than resolve it (reply on the thread:
+  https://github.com/milocaetano/quantick/pull/391#discussion_r3995613780).
+  Until the trader accepts, G4 grades PARTIAL, `delivery-review-ok` is not
+  recorded and `gh pr ready` is denied by the gate — the intended state.
+  Everything else in A1–A8 and G1–G3 graded DELIVERED at `57840dfc`.
 
 ## Closing steps
 
