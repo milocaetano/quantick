@@ -572,7 +572,7 @@ fn ctrl_c_then_ctrl_v_pastes_the_copied_drawing_not_the_current_selection() {
     );
     assert_eq!(
         app.active_tab().flow_pane.drawings.items(),
-        &[original.clone()]
+        std::slice::from_ref(&original)
     );
     assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
     assert_eq!(
@@ -648,7 +648,7 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
 
     assert_eq!(
         app.active_tab().pane(PaneSide::Time(0)).drawings.items(),
-        &[source.clone()],
+        std::slice::from_ref(&source),
         "paste leaves the source pane untouched"
     );
     let pasted = app.active_tab().pane(PaneSide::Flow).drawings.items();
