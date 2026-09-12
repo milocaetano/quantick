@@ -178,9 +178,12 @@ the risk as high, so the full interrogation budget, the full shape pass, a
 
 ## Evidence at archive time
 
-- A1: production lines (script over `size.rs`'s law): contract.rs 1,718 → 1,261,
-  evidence.rs 1,708 → 1,221, gateway.rs 1,686 → 1,219; reads.rs 514, store.rs
-  327, image.rs 219, local_action.rs 282, trace_replay.rs 234. Named tests:
+- A1: production lines (script over `size.rs`'s law), at the reviewed head:
+  contract.rs 1,718 → 1,251, evidence.rs 1,708 → 1,211, gateway.rs 1,686 →
+  1,188; reads.rs 524, store.rs 328, image.rs 231, local_action.rs 315,
+  trace_replay.rs 234. (The split commit alone measured 1,261 / 1,221 /
+  1,219 and 514 / 327 / 219 / 282 / 234; the repair batches below moved the
+  rest.) Named tests:
   `cargo test -p quantick-app -- control::contract:: control::evidence::
   control::gateway:: published_observer_schemas_remain_compatible …` → 72
   passed, 0 failed; `cargo test -p quantick-control --test
@@ -206,6 +209,32 @@ the risk as high, so the full interrogation budget, the full shape pass, a
   contract.rs was truncated and regenerated from the split script); the
   coordinator was told, space was freed outside this mission, nothing outside
   this worktree's own `target/` was deleted by it.
+
+## Repair batches (phase two)
+
+- Batch 1 (`2fa2ac51`), from step 0 round one: the eight `EvidenceStore` tests
+  and their fixtures moved into `evidence/store.rs` (so `StoreState`,
+  `total_bytes` and `lock()` are private again); `serialization_failed`,
+  `UI_BOUNDED_COST_ID`, `CAPABILITY_VERSION` to `contract/reads.rs`;
+  `SCREENSHOT_FORMAT`, `REGION_DECIMAL_PLACES` to `evidence/image.rs`;
+  `image.rs` names its one cross-seam borrow; the `ObserverContract::prepare`
+  doc link in `local_action.rs` resolves again.
+- Batch 2 (this head), from step 0 round two: `local_actor` and
+  `hook_agent_actor` to `gateway/local_action.rs` (no widening); `region_gap`
+  back to the evidence root, private; `base64_len` to `image.rs`. Counts in
+  A1 and in the baseline note refreshed to this head. Statement multisets
+  unchanged: 1,320 / 1,192 (three test-only lines: the copied `instance()`
+  fixture and a `mod tests {`) / 975. `pub(super)` marks: 25.
+- Deferred by name (two step-0 rounds is the budget): `RetainedBundle::new`
+  (ai-review thread on `store.rs:68`; a redesign D1 forbids), a
+  `register_reads` table in `reads.rs` (arguably not a pure move), and the
+  `docs/architecture/foundation.md:28` link to `invoke_local_action`, which
+  R8 keeps this child out of — one-line docs fix at integration.
+- Integration note: the campaign tip moved to `537beca3` (#383) while this
+  child ran, and #383 rewrote the same region of `size-baseline.txt`. The
+  coordinator rebases at integration (per its instruction, not this child)
+  and re-runs `cargo run -p quantick-guards -- --tighten` there; the three
+  entries to drop and the note above carry over unchanged.
 
 ## Closing steps
 
