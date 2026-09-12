@@ -5015,6 +5015,20 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
         "{}",
         missing.message
     );
+    let atomic = call(
+        &mut app,
+        serde_json::json!({
+            "load_day": "1999-01-01",
+            "record_by_default": true
+        }),
+    )
+    .expect_err("a refused compound call changes no durable default");
+    assert!(atomic.message.contains("1999-01-01"));
+    assert_eq!(
+        recorder(&app)["record_by_default"],
+        false,
+        "validation must finish before the default is saved"
+    );
     let loaded = call(&mut app, serde_json::json!({ "load_day": "2026-09-02" })).unwrap();
     assert_eq!(
         loaded["recording"]["loaded_days"],
@@ -5026,6 +5040,21 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
         app.active_tab().flow_pane.state.deal_samples().len(),
         3,
         "the live reading and the file's two"
+    );
+
+    let changed = app
+        .control_action(
+            "layout.pane.set_bar_spec",
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({ "pane": "0", "spec": "trades:2500" }),
+        )
+        .unwrap();
+    assert_eq!(changed["changed"], true);
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec(),
+        &BarSpec::Trades(2_500),
+        "the named call reaches the same pane rule the REC popover changes"
     );
 }
 

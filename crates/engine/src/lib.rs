@@ -38,7 +38,7 @@ mod trade;
 mod volume;
 
 pub use bar::Bar;
-pub use builder::{BarBuilder, BarProgress};
+pub use builder::{BarBuilder, BarBuilderDiagnostics, BarProgress, DealCounterInput};
 pub use deals::{DealBarBuilder, DealSample, READING_MAX_AGE_MS};
 pub use dollar::{DollarBarBuilder, DollarMeasure};
 pub use footprint::{

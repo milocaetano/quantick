@@ -61,7 +61,7 @@ use std::collections::VecDeque;
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, BarBuilder, BarProgress, Trade};
+use crate::{Bar, BarBuilder, BarBuilderDiagnostics, BarProgress, DealCounterInput, Trade};
 
 /// How long a reading holds for the prints after it. The terminal refreshes
 /// the counter about every 31 seconds, so ten minutes of prints under one
@@ -179,6 +179,17 @@ impl DealBarBuilder {
     #[must_use]
     pub fn rate(&self) -> Option<Decimal> {
         self.rate
+    }
+
+    /// Hand this deal-counted builder one venue reading directly. Consumers
+    /// that erase the builder type use [`BarBuilder::deal_counter_input`].
+    pub fn observe_deals(&mut self, sample: DealSample) {
+        DealCounterInput::observe(self, sample);
+    }
+
+    #[must_use]
+    pub fn uncounted_trades(&self) -> u64 {
+        self.uncounted
     }
 
     /// The first multiple of `n` strictly above `reading`.
@@ -379,7 +390,19 @@ impl BarBuilder for DealBarBuilder {
         })
     }
 
-    fn observe_deals(&mut self, sample: DealSample) {
+    fn deal_counter_input(&mut self) -> Option<&mut dyn DealCounterInput> {
+        Some(self)
+    }
+
+    fn diagnostics(&self) -> BarBuilderDiagnostics {
+        BarBuilderDiagnostics {
+            uncounted_trades: self.uncounted,
+        }
+    }
+}
+
+impl DealCounterInput for DealBarBuilder {
+    fn observe(&mut self, sample: DealSample) {
         if let Some(newest) = self.newest
             && sample.time_ms < newest.time_ms
         {
@@ -387,10 +410,6 @@ impl BarBuilder for DealBarBuilder {
         }
         self.newest = Some(sample);
         self.pending.push_back(sample);
-    }
-
-    fn uncounted_trades(&self) -> u64 {
-        self.uncounted
     }
 }
 
@@ -1002,11 +1021,11 @@ mod tests {
     }
 
     #[test]
-    fn the_default_builders_ignore_samples_and_count_nothing_uncounted() {
+    fn print_only_builders_expose_no_deal_counter_port() {
         let mut tick = crate::TickBarBuilder::new(2);
-        tick.observe_deals(sample(1, 1));
+        assert!(tick.deal_counter_input().is_none());
         assert!(tick.push(&trade(1, 1, "100")).is_none());
-        assert_eq!(tick.uncounted_trades(), 0);
+        assert_eq!(tick.diagnostics().uncounted_trades, 0);
         assert!(
             tick.push(&trade(2, 2, "100")).is_some(),
             "a tick bar counts ticks"

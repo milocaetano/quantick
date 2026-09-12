@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::app::QuantickApp;
+use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
 use super::{
@@ -228,22 +229,18 @@ fn set(
             tab.id
         )));
     }
-    if let Some(on) = input.record_by_default {
-        // The standing choice, after every refusal: a call refused changes
-        // nothing. It reaches every tab's recorder, this one included, so
-        // the tab is let go of and taken again.
-        let _ = tab;
-        crate::app::deal_recording_wiring::set_default(app, on);
-    }
-    let (tab, _config) = app
-        .control_tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    // Only where a REC control would be drawn: a feed with no counter is
-    // reported as such, never started into writing nothing.
-    if let Some(view) = tab.deal_recording_view() {
-        if let Some(day) = &input.load_day {
-            let index = view
-                .days
+    // Resolve every data-dependent refusal before changing the durable
+    // default. A call is atomic with respect to that setting: bad day, replay,
+    // or unsupported start leaves the workspace untouched.
+    let day_index = if let Some(day) = &input.load_day {
+        let view = tab.deal_recording_view().ok_or_else(|| {
+            ControlError::invalid_request(format!(
+                "no recorded day '{day}' for {}; feed.status lists the recorded days",
+                tab.symbol
+            ))
+        })?;
+        Some(
+            view.days
                 .iter()
                 .position(|recorded| recorded.day == *day)
                 .ok_or_else(|| {
@@ -251,17 +248,34 @@ fn set(
                         "no recorded day '{day}' for {}; feed.status lists the recorded days",
                         tab.symbol
                     ))
-                })?;
-            tab.apply_deal_recording(DealRecordingAction::LoadDay(index));
-        }
-        if let Some(enabled) = input.enabled {
-            tab.apply_deal_recording(if enabled {
-                DealRecordingAction::Start
-            } else {
-                DealRecordingAction::Stop
-            });
+                })?,
+        )
+    } else {
+        None
+    };
+    let _ = tab;
+    let (tab, _config) = app
+        .control_tab_with_config(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    if let Some(index) = day_index {
+        tab.load_recorded_day_checked(index)
+            .map_err(recording_error)?;
+    }
+    if let Some(enabled) = input.enabled {
+        if enabled {
+            tab.start_deal_recording_checked(crate::metrics::wall_clock_ms())
+                .map_err(recording_error)?;
+        } else {
+            tab.apply_deal_recording(DealRecordingAction::Stop);
         }
     }
+    let _ = tab;
+    if let Some(on) = input.record_by_default {
+        crate::app::deal_recording_wiring::set_default(app, on);
+    }
+    let (tab, _config) = app
+        .control_tab_with_config(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let result = DealRecordingResult {
         tab_id: WireU64::new(tab.id),
         symbol: tab.symbol.clone(),
@@ -272,6 +286,18 @@ fn set(
             "the deal recording result could not be encoded: {error}"
         ))
     })
+}
+
+fn recording_error(error: DealRecordingError) -> ControlError {
+    use quantick_control::{error::codes, id::ErrorCode};
+
+    let retryable = matches!(error, DealRecordingError::Storage(_));
+    ControlError::new(
+        ErrorCode::new(codes::CAPABILITY_UNAVAILABLE)
+            .expect("the control error code is registered"),
+        error.to_string(),
+        retryable,
+    )
 }
 
 #[cfg(test)]

@@ -41,14 +41,14 @@
 //! the `[deals] dir` config key, then `deals/` in the cockpit home
 //! (`Documents/Quantick`).
 
-use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
 
 use quantick_engine::DealSample;
+#[cfg(test)]
+use quantick_replay::deals::HEADER;
 
 /// One-run override of the recording directory.
 pub const DEALS_DIR_ENV: &str = "QUANTICK_DEALS_DIR";
@@ -69,18 +69,6 @@ pub const FLUSH_EVERY_MS: i64 = 1_000;
 /// A day whose first reading is below this counted from the open: the
 /// counter had barely started when the recording did.
 pub const FROM_OPEN_MAX_DEALS: u64 = 1_000;
-const HEADER: &str = "# quantick-deals v1";
-const EXTENSION: &str = "deals";
-
-/// Whether the file's first line ends in a newline. A header the crash cut
-/// short does not, and is nothing to resume from rather than a header to
-/// refuse.
-fn first_line_terminated(path: &Path) -> io::Result<bool> {
-    let mut reader = BufReader::new(File::open(path)?);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    Ok(line.ends_with('\n'))
-}
 
 /// Where recordings go this run.
 ///
@@ -155,6 +143,37 @@ pub enum DealRecordingAction {
     LoadDay(usize),
 }
 
+/// A recorder operation refused before it could deliver its requested state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DealRecordingError {
+    NotConfigured,
+    CounterUnavailable,
+    UnknownDay(usize),
+    ActiveDay(String),
+    Storage(String),
+}
+
+impl std::fmt::Display for DealRecordingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotConfigured => {
+                f.write_str("the recorder is not configured for this market yet")
+            }
+            Self::CounterUnavailable => {
+                f.write_str("this source declares no deal counter; nothing to record")
+            }
+            Self::UnknownDay(index) => write!(f, "no recorded day exists at index {index}"),
+            Self::ActiveDay(day) => write!(
+                f,
+                "{day} is the day being recorded; its readings are already on the chart"
+            ),
+            Self::Storage(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for DealRecordingError {}
+
 /// The word every surface uses for the recorder's state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecState {
@@ -214,314 +233,32 @@ impl RecordedDay {
     }
 }
 
-/// The file being written, and the little state the delta encoding needs.
-#[derive(Debug)]
-struct Recording {
-    day: String,
-    path: PathBuf,
-    writer: BufWriter<File>,
-    /// The last line written, which the next delta is against.
-    last: Option<DealSample>,
-    written: u64,
-    /// The file's first reading, resumed or written: with `last` and the
-    /// counts, what the day list shows, without reading the file back.
-    first: Option<DealSample>,
-    /// Readings the file held when it was opened.
-    held: u64,
-    /// When the first unflushed line was written.
-    dirty_since_ms: Option<i64>,
+type Recording = quantick_replay::deals::DealRecordingWriter;
+/// Read one recording through the headless replay-owned codec.
+pub fn read_file(path: &Path) -> io::Result<quantick_replay::deals::DealFile> {
+    quantick_replay::deals::read_file(path)
 }
 
-impl Recording {
-    /// Open (or create) the day's file for appending, reading back what it
-    /// already holds so a restart resumes rather than starts over.
-    fn open(
-        dir: &Path,
-        symbol: &str,
-        day: &str,
-        tz_minutes: i32,
-    ) -> io::Result<(Self, Vec<DealSample>)> {
-        let folder = dir.join(crate::paper_chrome::sanitize_symbol(symbol));
-        fs::create_dir_all(&folder)?;
-        let path = folder.join(format!("{day}.{EXTENSION}"));
-        // A file that exists but is empty is a header write that failed —
-        // disk full, a lock — and is fresh again, not a day that refuses to
-        // open until someone deletes it by hand.
-        let len = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        // A header the crash cut short — no newline after it yet — is a torn
-        // line with nothing before it: the file starts over, as an empty one
-        // does, rather than reading as a bad header for the rest of the day.
-        let torn_header = len > 0 && !first_line_terminated(&path)?;
-        let (existing, complete_bytes) = if torn_header {
-            (Vec::new(), Some(0))
-        } else if len > 0 {
-            let file = read_file(&path)?;
-            (file.samples, Some(file.complete_bytes))
-        } else {
-            (Vec::new(), None)
-        };
-        if let Some(complete_bytes) = complete_bytes {
-            // A torn last line is cut away before anything is appended after
-            // it; a file that read whole is untouched by this.
-            let file = OpenOptions::new().write(true).open(&path)?;
-            if file.metadata()?.len() != complete_bytes {
-                file.set_len(complete_bytes)?;
-            }
-        }
-        // Fresh means no header yet: a header-only file is a day that has
-        // not printed, and must not gain a second header — while a header
-        // torn mid-line was just cut away, and needs one.
-        let fresh = complete_bytes.unwrap_or(0) == 0;
-        let mut writer = BufWriter::new(OpenOptions::new().create(true).append(true).open(&path)?);
-        if fresh {
-            writeln!(
-                writer,
-                "{HEADER} symbol={symbol} day={day} tz_minutes={tz_minutes}"
-            )?;
-            writer.flush()?;
-        }
-        let last = existing.last().copied();
-        Ok((
-            Self {
-                day: day.to_owned(),
-                path,
-                writer,
-                last,
-                written: 0,
-                first: existing.first().copied(),
-                held: existing.len() as u64,
-                dirty_since_ms: None,
-            },
-            existing,
-        ))
-    }
+/// Cache entries use the same headless day metadata every consumer sees.
+pub type DayCache = quantick_replay::deals::DayCache;
 
-    fn append(&mut self, sample: DealSample, now_ms: i64) -> io::Result<()> {
-        match self.last {
-            // The very reading the file ends on (a resumed day re-delivering
-            // where it stopped) is already covered. A reading older than the
-            // last line is not skipped: a bridge restarted with another clock
-            // offset stamps behind the file for a while, the chart keeps
-            // those readings, and the file must hold what the chart cut from
-            // — the delta goes negative, and the reader accepts it.
-            Some(last) if sample == last => return Ok(()),
-            Some(last) => writeln!(
-                self.writer,
-                "+{} {}{}",
-                sample.time_ms.saturating_sub(last.time_ms),
-                if sample.session_deals >= last.session_deals {
-                    "+"
-                } else {
-                    "-"
-                },
-                sample.session_deals.abs_diff(last.session_deals)
-            )?,
-            None => writeln!(self.writer, "{} {}", sample.time_ms, sample.session_deals)?,
-        }
-        self.last = Some(sample);
-        self.first.get_or_insert(sample);
-        self.written += 1;
-        self.dirty_since_ms.get_or_insert(now_ms);
-        Ok(())
-    }
-
-    fn flush_if_due(&mut self, now_ms: i64) -> io::Result<()> {
-        if self
-            .dirty_since_ms
-            .is_some_and(|since| now_ms - since >= FLUSH_EVERY_MS)
-        {
-            self.flush()?;
-        }
-        Ok(())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()?;
-        self.dirty_since_ms = None;
-        Ok(())
-    }
-}
-
-/// A `.deals` file, read back.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DealFile {
-    pub symbol: String,
-    pub day: String,
-    pub samples: Vec<DealSample>,
-    /// Bytes up to the end of the last complete line. A file cut mid-line
-    /// by a crash reads back to here, and a writer resumes from here rather
-    /// than after the torn line.
-    pub complete_bytes: u64,
-}
-
-/// Read one recording. A line the format does not describe is an error
-/// naming the line, never a sample guessed around it — except a torn last
-/// line, which is what a crash mid-write leaves and carries no sample: the
-/// file reads back to the line before it, and [`DealFile::complete_bytes`]
-/// says where a writer resumes.
-pub fn read_file(path: &Path) -> io::Result<DealFile> {
-    let mut reader = BufReader::new(File::open(path)?);
-    let bad = |line_no: usize, what: &str| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{}: line {line_no}: {what}", path.display()),
-        )
-    };
-    let mut buf = String::new();
-    let mut header_bytes = reader.read_line(&mut buf)?;
-    if header_bytes == 0 {
-        return Err(bad(1, "empty file"));
-    }
-    let header = buf.trim_end_matches(['\r', '\n']).to_owned();
-    let Some(fields) = header.strip_prefix(HEADER) else {
-        return Err(bad(1, "not a quantick-deals v1 file"));
-    };
-    let mut symbol = None;
-    let mut day = None;
-    for field in fields.split_whitespace() {
-        match field.split_once('=') {
-            Some(("symbol", value)) => symbol = Some(value.to_owned()),
-            Some(("day", value)) => day = Some(value.to_owned()),
-            _ => {}
-        }
-    }
-    let (Some(symbol), Some(day)) = (symbol, day) else {
-        return Err(bad(1, "header names no symbol or day"));
-    };
-    if !buf.ends_with('\n') {
-        header_bytes = 0;
-    }
-    let mut complete_bytes = header_bytes as u64;
-    let mut samples: Vec<DealSample> = Vec::new();
-    let mut line_no = 1;
-    let mut torn: Option<io::Error> = None;
-    loop {
-        buf.clear();
-        let read = reader.read_line(&mut buf)?;
-        if read == 0 {
-            break;
-        }
-        line_no += 1;
-        if let Some(error) = torn.take() {
-            // A bad line followed by another line is corruption, not a torn
-            // tail.
-            return Err(error);
-        }
-        let line = buf.trim();
-        let terminated = buf.ends_with('\n');
-        if line.is_empty() || line.starts_with('#') {
-            if terminated {
-                complete_bytes += read as u64;
-            }
-            continue;
-        }
-        let parsed = parse_sample_line(line, samples.last()).map_err(|what| bad(line_no, what));
-        match parsed {
-            Ok(sample) if terminated => {
-                samples.push(sample);
-                complete_bytes += read as u64;
-            }
-            // An unterminated last line is a torn write even when it parses:
-            // its digits may be half of the number. A terminated line that
-            // does not parse was written whole, and is corruption.
-            Ok(_) => torn = Some(bad(line_no, "unterminated line")),
-            Err(error) if !terminated => torn = Some(error),
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(DealFile {
-        symbol,
-        day,
-        samples,
-        complete_bytes,
-    })
-}
-
-/// One data line, absolute or a delta against `previous`.
-fn parse_sample_line(
-    line: &str,
-    previous: Option<&DealSample>,
-) -> Result<DealSample, &'static str> {
-    let Some((time, deals)) = line.split_once(' ') else {
-        return Err("expected two fields");
-    };
-    if let Some(delta_t) = time.strip_prefix('+') {
-        let Some(last) = previous else {
-            return Err("a delta line before any absolute line");
-        };
-        let dt: i64 = delta_t.parse().map_err(|_| "bad time delta")?;
-        let (sign, magnitude) = match deals.split_at_checked(1) {
-            Some(("+", rest)) => (1_i64, rest),
-            Some(("-", rest)) => (-1_i64, rest),
-            _ => return Err("bad deal delta"),
-        };
-        let dd: i64 = magnitude.parse().map_err(|_| "bad deal delta")?;
-        let deals = i64::try_from(last.session_deals)
-            .ok()
-            .and_then(|d| d.checked_add(sign * dd))
-            .and_then(|d| u64::try_from(d).ok())
-            .ok_or("deal delta out of range")?;
-        Ok(DealSample {
-            time_ms: last.time_ms.saturating_add(dt),
-            session_deals: deals,
-        })
-    } else {
-        Ok(DealSample {
-            time_ms: time.parse().map_err(|_| "bad time")?,
-            session_deals: deals.parse().map_err(|_| "bad deal count")?,
-        })
-    }
-}
-
-/// What a scan remembers per file, so a stop re-reads only the file it
-/// closed: a day file is a million delta lines, and a folder holds a
-/// month of them.
-pub type DayCache = BTreeMap<PathBuf, (u64, Option<SystemTime>, RecordedDay)>;
-
-/// Every recorded day under `dir/symbol`, oldest first. Unreadable files are
-/// left out rather than shown as days with numbers nobody can trust. A file
-/// whose size and modification time the cache already knows is not parsed
-/// again.
+/// Every recorded day under \`dir/symbol\`, oldest first.
 #[must_use]
 pub fn scan_days(dir: &Path, symbol: &str, cache: &mut DayCache) -> Rc<[RecordedDay]> {
-    // The paper journal's own mapping of a symbol to a folder name, so the
-    // two never disagree about where a symbol lives.
-    let Ok(entries) = fs::read_dir(dir.join(crate::paper_chrome::sanitize_symbol(symbol))) else {
-        return Rc::from(Vec::new());
-    };
-    let mut days = BTreeMap::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some(EXTENSION) {
-            continue;
-        }
-        let stamp = entry
-            .metadata()
-            .map(|meta| (meta.len(), meta.modified().ok()))
-            .unwrap_or((0, None));
-        let day = match cache.get(&path) {
-            Some((len, modified, day)) if (*len, *modified) == stamp => day.clone(),
-            _ => {
-                let Ok(file) = read_file(&path) else { continue };
-                let (Some(first), Some(last)) = (file.samples.first(), file.samples.last()) else {
-                    continue;
-                };
-                let day = RecordedDay {
-                    day: file.day,
-                    first: *first,
-                    last: *last,
-                    samples: file.samples.len() as u64,
-                    path: path.clone(),
-                };
-                cache.insert(path, (stamp.0, stamp.1, day.clone()));
-                day
-            }
-        };
-        days.insert(day.day.clone(), day);
-    }
-    Rc::from(days.into_values().collect::<Vec<_>>())
+    let folder = dir.join(crate::paper_chrome::sanitize_symbol(symbol));
+    Rc::from(
+        quantick_replay::deals::scan_days(&folder, cache)
+            .into_iter()
+            .map(|day| RecordedDay {
+                day: day.day,
+                first: day.first,
+                last: day.last,
+                samples: day.samples,
+                path: day.path,
+            })
+            .collect::<Vec<_>>(),
+    )
 }
-
 /// The recorder for one asset: what it is doing, and what it wrote.
 #[derive(Debug)]
 pub struct DealRecorder {
@@ -733,6 +470,28 @@ impl DealRecorder {
         resumed
     }
 
+    /// Start recording and report a refusal as a typed result for non-visual
+    /// callers. The ordinary UI still reads the same sticky error from the
+    /// view, while a control call cannot mistake failure for success.
+    pub fn start_checked(&mut self, now_ms: i64) -> Result<Vec<DealSample>, DealRecordingError> {
+        if !self.configured {
+            return Err(DealRecordingError::NotConfigured);
+        }
+        if !self.available {
+            return Err(DealRecordingError::CounterUnavailable);
+        }
+        let was_enabled = self.enabled;
+        let resumed = self.start(now_ms);
+        if !was_enabled && !self.enabled {
+            return Err(DealRecordingError::Storage(
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "the recording could not be started".to_owned()),
+            ));
+        }
+        Ok(resumed)
+    }
+
     /// Stop recording and flush. The file stays; the day is partial.
     pub fn stop(&mut self) {
         self.auto_started = true;
@@ -743,7 +502,10 @@ impl DealRecorder {
 
     fn open_day(&mut self, day: &str) -> Vec<DealSample> {
         self.close_recording();
-        match Recording::open(&self.dir, &self.symbol, day, self.tz_minutes) {
+        let folder = self
+            .dir
+            .join(crate::paper_chrome::sanitize_symbol(&self.symbol));
+        match Recording::open(&folder, &self.symbol, day, self.tz_minutes) {
             Ok((recording, existing)) => {
                 // A resumed day is the recording, not a loaded one: its
                 // readings reach the panes, and a later Stop leaves the chart
@@ -772,7 +534,7 @@ impl DealRecorder {
                 let stamp = fs::metadata(&recording.path)
                     .map(|meta| (meta.len(), meta.modified().ok()))
                     .unwrap_or((0, None));
-                let day = RecordedDay {
+                let day = quantick_replay::deals::RecordedDealDay {
                     day: recording.day.clone(),
                     first,
                     last,
@@ -841,7 +603,7 @@ impl DealRecorder {
     /// Reach the disk once a second while recording.
     pub fn flush_if_due(&mut self, now_ms: i64) {
         if let Some(recording) = self.recording.as_mut()
-            && let Err(error) = recording.flush_if_due(now_ms)
+            && let Err(error) = recording.flush_if_due(now_ms, FLUSH_EVERY_MS)
         {
             self.error = Some(format!("cannot write the recording: {error}"));
         }
@@ -877,6 +639,29 @@ impl DealRecorder {
                 Vec::new()
             }
         }
+    }
+
+    /// Load a day and preserve refusal/failure as a typed result for control
+    /// clients instead of asking them to inspect a sticky display field.
+    pub fn load_day_checked(
+        &mut self,
+        index: usize,
+    ) -> Result<Vec<DealSample>, DealRecordingError> {
+        let Some(day) = self.days.get(index) else {
+            return Err(DealRecordingError::UnknownDay(index));
+        };
+        if self
+            .recording
+            .as_ref()
+            .is_some_and(|open| open.day == day.day)
+        {
+            return Err(DealRecordingError::ActiveDay(day.day.clone()));
+        }
+        let loaded = self.load_day(index);
+        if let Some(error) = &self.error {
+            return Err(DealRecordingError::Storage(error.clone()));
+        }
+        Ok(loaded)
     }
 
     /// The state, judged on the tape's own clock: `latest_trade_ms` is the
@@ -1202,7 +987,8 @@ mod tests {
     #[test]
     fn a_rotation_into_an_existing_day_hands_its_readings_back() {
         let dir = scratch("rotate-existing");
-        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-04", -180).unwrap();
+        let (mut earlier, _) =
+            Recording::open(&dir.path().join("WINV26"), "WINV26", "2026-09-04", -180).unwrap();
         earlier
             .append(sample(LATE_EVENING_BRT_MS + 4 * 3_600_000, 7), 0)
             .unwrap();
@@ -1274,7 +1060,8 @@ mod tests {
     #[test]
     fn a_reading_behind_the_last_line_is_written() {
         let dir = scratch("behind-last");
-        let (mut recording, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        let (mut recording, _) =
+            Recording::open(&dir.path().join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         recording.append(sample(1_000_000, 10), 0).unwrap();
         recording.append(sample(100_000, 12), 0).unwrap();
         recording.flush().unwrap();
@@ -1290,7 +1077,8 @@ mod tests {
     #[test]
     fn a_loaded_day_beside_a_live_counter_is_not_recorded() {
         let dir = scratch("loaded-beside-live");
-        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        let (mut earlier, _) =
+            Recording::open(&dir.path().join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         earlier.append(sample(1_788_436_800_000, 10), 0).unwrap();
         earlier.flush().unwrap();
         drop(earlier);
@@ -1348,7 +1136,8 @@ mod tests {
     fn a_stop_after_a_resume_is_off_not_recorded() {
         let dir = scratch("resume-stop");
         let day = day_of(LATE_EVENING_BRT_MS, -180);
-        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", &day, -180).unwrap();
+        let (mut earlier, _) =
+            Recording::open(&dir.path().join("WINV26"), "WINV26", &day, -180).unwrap();
         earlier.append(sample(LATE_EVENING_BRT_MS, 10), 0).unwrap();
         earlier.flush().unwrap();
         drop(earlier);
@@ -1398,7 +1187,8 @@ mod tests {
     #[test]
     fn a_recorded_day_opens_with_no_counter_declared() {
         let dir = scratch("offline-day");
-        let (mut earlier, _) = Recording::open(dir.path(), "WINV26", "2026-09-03", -180).unwrap();
+        let (mut earlier, _) =
+            Recording::open(&dir.path().join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         earlier.append(sample(1_788_436_800_000, 10), 0).unwrap();
         earlier.flush().unwrap();
         drop(earlier);
@@ -1433,7 +1223,7 @@ mod tests {
     fn a_file_round_trips_through_the_delta_encoding() {
         let dir = scratch("roundtrip");
         let (mut recording, existing) =
-            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         assert!(existing.is_empty());
         let written = [
             sample(1_788_436_967_023, 1_990),
@@ -1551,6 +1341,18 @@ mod tests {
     }
 
     #[test]
+    fn checked_start_names_an_unavailable_counter_instead_of_reporting_success() {
+        let dir = scratch("checked-unavailable");
+        let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
+
+        assert_eq!(
+            rec.start_checked(0),
+            Err(DealRecordingError::CounterUnavailable)
+        );
+        assert_eq!(rec.state(None), RecState::Unsupported);
+    }
+
+    #[test]
     fn the_states_say_what_every_surface_says() {
         let dir = scratch("states");
         let mut rec = DealRecorder::new("WINV26", dir.path().to_path_buf(), false);
@@ -1603,10 +1405,12 @@ mod tests {
         fs::create_dir_all(dir.join("WINV26")).unwrap();
         let path = dir.join("WINV26").join("2026-09-03.deals");
         fs::write(&path, "").unwrap();
-        let (recording, existing) = Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        let (recording, existing) =
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         assert!(existing.is_empty());
         drop(recording);
-        let (recording, _) = Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        let (recording, _) =
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         drop(recording);
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text.matches(HEADER).count(), 1, "{text}");
@@ -1625,7 +1429,7 @@ mod tests {
         let path = dir.join("WINV26").join("2026-09-03.deals");
         fs::write(&path, "# quantick-de").unwrap();
         let (mut recording, existing) =
-            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         assert!(existing.is_empty());
         recording.append(sample(100, 10), 0).unwrap();
         recording.flush().unwrap();
@@ -1642,7 +1446,7 @@ mod tests {
         let path = dir.join("WINV26").join("2026-09-03.deals");
         fs::write(&path, "# quantick-deals v1 symbol=WINV26 day=2026-09-0").unwrap();
         let (mut recording, existing) =
-            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         assert!(existing.is_empty());
         recording.append(sample(100, 10), 0).unwrap();
         recording.flush().unwrap();
@@ -1704,7 +1508,7 @@ mod tests {
         let file = read_file(&path).unwrap();
         assert_eq!(file.samples, vec![sample(100, 10), sample(120, 15)]);
         let (mut recording, existing) =
-            Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         assert_eq!(existing.len(), 2);
         recording.append(sample(140, 21), 0).unwrap();
         recording.flush().unwrap();
@@ -1718,7 +1522,8 @@ mod tests {
     #[test]
     fn two_readings_at_one_millisecond_are_both_written() {
         let dir = scratch("same-ms");
-        let (mut recording, _) = Recording::open(&dir, "WINV26", "2026-09-03", -180).unwrap();
+        let (mut recording, _) =
+            Recording::open(&dir.join("WINV26"), "WINV26", "2026-09-03", -180).unwrap();
         recording.append(sample(100, 10), 0).unwrap();
         recording.append(sample(100, 10), 0).unwrap();
         recording.append(sample(100, 13), 0).unwrap();

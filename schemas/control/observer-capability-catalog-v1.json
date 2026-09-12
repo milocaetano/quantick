@@ -5759,6 +5759,127 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets one pane's complete alternative-bar rule through the same recut path the toolbar and recording popover use.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.set_bar_spec",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Set any pane's complete alternative-bar rule.",
+        "properties": {
+          "pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane's address (`0` is the flow pane)."
+          },
+          "spec": {
+            "description": "The same stable spelling configuration and workspace files use, such\nas `tick:50`, `time:60000`, or `trades:2000`.",
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "required": [
+          "pane",
+          "spec"
+        ],
+        "title": "BarSpecInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Set a chart's bar rule",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets one context chart's interval, the same value its own header selector writes.",
       "destructive": false,
       "dry_run_supported": false,

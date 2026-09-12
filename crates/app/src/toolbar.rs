@@ -569,9 +569,11 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
                 // bar under another name.
                 let disabled_reason = crate::bar_kind_reason::disabled_reason(
                     kind,
-                    traded_volume,
-                    deal_counter,
-                    deal_count_available,
+                    &crate::bar_kind_reason::BarInputAvailability {
+                        traded_volume,
+                        deal_counter,
+                        deal_count: deal_count_available,
+                    },
                 );
                 ui.add_enabled_ui(disabled_reason.is_none(), |ui| {
                     let item = ui.selectable_value(&mut model.spec.kind, kind, kind.label());

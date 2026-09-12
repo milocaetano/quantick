@@ -56,6 +56,7 @@
 
 pub mod clock;
 pub mod context;
+pub mod deals;
 pub mod format;
 pub mod library;
 #[cfg(test)]

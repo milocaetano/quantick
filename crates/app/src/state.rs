@@ -21,6 +21,15 @@ use rust_decimal::Decimal;
 
 use crate::footprint_series::{self, FootprintSeries};
 
+fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
+    let Some(input) = builder.deal_counter_input() else {
+        return;
+    };
+    for sample in samples {
+        input.observe(*sample);
+    }
+}
+
 /// Which alternative bar type the chart is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarKind {
@@ -640,10 +649,10 @@ fn fold_print<B: BarBuilder + ?Sized>(
     footprint_enabled: bool,
     trade: &Trade,
 ) -> Option<Bar> {
-    let uncounted_before = builder.uncounted_trades();
+    let uncounted_before = builder.diagnostics().uncounted_trades;
     let closed = builder.push(trade);
     if footprint_enabled {
-        let uncounted = builder.uncounted_trades() != uncounted_before;
+        let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
         match (&closed, uncounted) {
             (_, false) => footprints.observe(trade, closed.as_ref()),
             // A rollover ended the bar and this print counts for nothing:
@@ -724,7 +733,9 @@ impl ChartState {
             Some(last) if *last == sample => {}
             _ => {
                 self.deal_samples.push(sample);
-                self.builder.observe_deals(sample);
+                if let Some(input) = self.builder.deal_counter_input() {
+                    input.observe(sample);
+                }
             }
         }
     }
@@ -781,9 +792,7 @@ impl ChartState {
         // Into the fresh builder too, ahead of the prints that will come:
         // the retained series is what a rebuild replays, and the live path
         // feeds the builder as each reading arrives.
-        for sample in &readings {
-            self.builder.observe_deals(*sample);
-        }
+        seed_deal_counter(&mut *self.builder, &readings);
         self.deal_samples = readings;
     }
 
@@ -803,7 +812,7 @@ impl ChartState {
     /// before its first counter reading. Zero for every other rule.
     #[must_use]
     pub fn uncounted_trades(&self) -> u64 {
-        self.builder.uncounted_trades()
+        self.builder.diagnostics().uncounted_trades
     }
 
     /// Ingest the backfilled history as one batch (call once, before any live
@@ -915,9 +924,7 @@ impl ChartState {
         // Readings first, prints after: the builder joins each print to the
         // newest reading strictly before it, so the order between the two
         // streams is immaterial as long as every reading is in hand.
-        for sample in &self.deal_samples {
-            builder.observe_deals(*sample);
-        }
+        seed_deal_counter(&mut *builder, &self.deal_samples);
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
@@ -1116,9 +1123,7 @@ impl ChartState {
         // Readings first, as `rebuild` does: a deal bar with no readings
         // counts every print as uncounted, and the ladders would be empty
         // under bars that are not.
-        for sample in &self.deal_samples {
-            builder.observe_deals(*sample);
-        }
+        seed_deal_counter(&mut *builder, &self.deal_samples);
         for trade in &self.trades {
             fold_print(&mut *builder, &mut self.footprints, true, trade);
         }

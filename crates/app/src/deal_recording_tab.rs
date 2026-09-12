@@ -7,10 +7,11 @@
 
 use quantick_engine::DealSample;
 
-use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
+use crate::deal_recording::{DealRecordingAction, DealRecordingError, RecState, RecordingView};
 use crate::deal_recording_ui::{self, DealChip};
 use crate::metrics;
 use crate::state::BarKind;
+use crate::state::BarSpec;
 use crate::tab::Tab;
 
 impl Tab {
@@ -46,6 +47,15 @@ impl Tab {
         self.retain_deal_samples(&resumed);
     }
 
+    pub(crate) fn start_deal_recording_checked(
+        &mut self,
+        now_ms: i64,
+    ) -> Result<(), DealRecordingError> {
+        let resumed = self.deal_recorder.start_checked(now_ms)?;
+        self.retain_deal_samples(&resumed);
+        Ok(())
+    }
+
     /// Before a replay replaces the tape: the live market's readings are put
     /// aside, to come back with it. A replay is another day's prints, and
     /// the reset that clears the panes for it drops the readings with the
@@ -66,6 +76,15 @@ impl Tab {
     pub fn load_recorded_day(&mut self, index: usize) {
         let loaded = self.deal_recorder.load_day(index);
         self.retain_deal_samples(&loaded);
+    }
+
+    pub(crate) fn load_recorded_day_checked(
+        &mut self,
+        index: usize,
+    ) -> Result<(), DealRecordingError> {
+        let loaded = self.deal_recorder.load_day_checked(index)?;
+        self.retain_deal_samples(&loaded);
+        Ok(())
     }
 
     pub(crate) fn retain_deal_samples(&mut self, samples: &[DealSample]) {
@@ -108,13 +127,46 @@ impl Tab {
             // up a frame later by the same spec sync a toolbar click goes
             // through.
             DealRecordingAction::ShowAsTrades => {
-                self.focused_pane_mut().spec.kind = BarKind::Trades;
+                let index = self.focused_side().index();
+                let deals = self.pane_at(index).map_or_else(
+                    || match BarKind::Trades.default_spec() {
+                        BarSpec::Trades(n) => n,
+                        _ => unreachable!("the trades kind owns a trades spec"),
+                    },
+                    |pane| match pane.spec.retained(BarKind::Trades) {
+                        BarSpec::Trades(n) => *n,
+                        _ => unreachable!("the selector retains one spec per kind"),
+                    },
+                );
+                self.set_pane_bar_spec(index, BarSpec::Trades(deals));
             }
             DealRecordingAction::OpenFolder => {
                 crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
             }
             DealRecordingAction::LoadDay(index) => self.load_recorded_day(index),
         }
+    }
+
+    /// Apply one complete rule through the shared selector-and-recut path.
+    /// The toolbar, REC popover, and control plane all land here.
+    pub(crate) fn set_pane_bar_spec(&mut self, index: usize, spec: BarSpec) -> bool {
+        let Some(pane) = self.pane_at(index) else {
+            return false;
+        };
+        let spec = spec.clamped();
+        if pane.current_spec() == spec && pane.state.spec() == &spec {
+            return false;
+        }
+        self.pane_at_mut(index)
+            .expect("pane checked above")
+            .spec
+            .set(spec.clone());
+        self.recut_pane_with(
+            index,
+            quantick_strategy::DisarmReason::BarSpecChanged,
+            |pane| pane.set_spec(spec),
+        );
+        true
     }
 
     /// The recorder as the chrome sees it now, or none on a feed with no
