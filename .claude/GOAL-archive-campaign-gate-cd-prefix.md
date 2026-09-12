@@ -124,6 +124,12 @@ pass at `low`, and a `delivery-review` completeness pass.
   `README.md` / `integration.md` paid for by trimming prose in the same files
   rather than raising a ceiling, or the raise named explicitly.
   *Evidence:* the guards report and, if raised, the signed baseline entry.
+- **G5** — the branch writes only inside its own worktree, and only the files
+  this child owns: `.claude/hooks/guardrails.sh`, the two hook test scripts,
+  `.claude/hooks/README.md`, `docs/campaign/integration.md`, plus the goal
+  archive the mission's step 8 mandates. Three sibling missions run in
+  parallel. *(Added by the completeness pass.)*
+  *Evidence:* `git diff origin/campaign/lean-a-plus...HEAD --stat`.
 
 ### Not applicable, and why
 
@@ -135,6 +141,13 @@ pass at `low`, and a `delivery-review` completeness pass.
 - **Something a trader does** — the gate is an agent-facing guardrail, not a
   trader action.
 - **Engine / determinism** — no engine code is touched.
+- **Issue #386's A4** — "merged into `campaign/lean-a-plus` through a PR whose
+  base is exactly that branch, with the merge read back". The PR's base is that
+  branch, which is this mission's half; the merge itself is not. The campaign
+  integration contract gives the merge to the coordinator, and this mission is
+  instructed never to merge, so A4 stays **pending with the coordinator** and
+  is not gradeable here. *(Named by the completeness pass, which found it in
+  the retained request with no line behind it.)*
 
 ## Closing steps
 
