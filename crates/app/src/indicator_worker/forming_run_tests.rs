@@ -137,7 +137,6 @@ fn a_cut_run_starts_its_prefixes_again_from_its_own_first_print() {
 /// `CHECKPOINT_SPACING - 1` prints per rung, and appending folds each new
 /// print once.
 #[test]
-#[ignore = "red until the walk is bounded: the unbounded fold visits the whole run"]
 fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
     let per_rung = (CHECKPOINT_SPACING - 1) as u64;
     for length in [1_000_usize, 1_000_000] {

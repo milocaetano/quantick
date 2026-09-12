@@ -943,7 +943,9 @@ fn run_observed(
 
         // The ladder is walked here, on the worker's own cadence, for the same
         // reason previews are: the cost is per drained batch, never per print
-        // and never on the render thread. The fold still costs O(forming trades).
+        // and never on the render thread. The run carries its own fold, so a
+        // walk folds at most `rungs × (CHECKPOINT_SPACING - 1)` prints however
+        // long the bar has been forming (see `forming_run`).
         let mut lane = lane_request
             .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
