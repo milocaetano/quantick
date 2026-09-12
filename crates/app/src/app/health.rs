@@ -34,9 +34,27 @@ pub(super) struct HealthCounters {
     /// Live trades taken in since the last perf summary, across every tab —
     /// what the window is ingesting, not what one market prints.
     pub(super) trades_since_summary: u64,
+    /// What the last summary said about the live envelope, so its warnings
+    /// speak once per event.
+    pub(super) envelope: envelope::EnvelopeWatch,
     pub(super) last_summary: Instant,
     // Whether the status bar shows the perf readings (View → perf readings).
     pub(super) show_perf: bool,
+}
+
+impl HealthCounters {
+    /// A window that has measured nothing yet, perf readings shown.
+    pub(super) fn new() -> Self {
+        Self {
+            show_perf: true,
+            frames: FrameStats::new(120),
+            cpu_frames: FrameStats::new(120),
+            last_frame: None,
+            trades_since_summary: 0,
+            envelope: envelope::EnvelopeWatch::default(),
+            last_summary: Instant::now(),
+        }
+    }
 }
 
 impl QuantickApp {
@@ -76,15 +94,12 @@ impl QuantickApp {
         let rate = self.health.trades_since_summary as f64 / elapsed.as_secs_f64();
         let lag = self.active_tab().trade_arrival_ms();
         let avg = self.health.frames.avg_ms().unwrap_or(0.0);
-        let cpu_avg = self.health.cpu_frames.avg_ms().unwrap_or(0.0);
-        let worst = self.health.frames.worst_ms().unwrap_or(0.0);
-        let fps = self.health.frames.fps().unwrap_or(0.0);
         let book = self.active_tab_mut().tape_mut().health();
         let book_lag = book.arrival_latency_ms;
         let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
-        let book_queue_len = self.active_tab().book_events.len();
         let candle_preset =
             CandlePreset::detect(&self.style.candles).map_or("custom", CandlePreset::log_value);
+        let envelope = envelope::observe(&self.tabs, rate, book_rate);
 
         tracing::info!(
             target: "quantick::app",
@@ -94,13 +109,20 @@ impl QuantickApp {
             // below is the *active* tab's, which is what is on screen.
             tabs = self.tabs.len(),
             tab = self.active_tab().id,
-            fps = fps as i64,
+            fps = self.health.frames.fps().unwrap_or(0.0) as i64,
             frame_avg_ms = avg,
-            frame_cpu_ms = cpu_avg,
-            frame_worst_ms = worst,
+            frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),
+            frame_worst_ms = self.health.frames.worst_ms().unwrap_or(0.0),
             feed_arrival_ms = lag,
             trades_per_s = rate,
             live_trades = self.active_tab().live_trades,
+            worker_backlog = envelope.backlog,
+            worker_parked = envelope.parked,
+            worker_deferred = envelope.deferred,
+            worker_coalesced = envelope.coalesced,
+            worker_output_blocked = envelope.output_blocked,
+            retained_trades = envelope.retained_trades,
+            live_rate = envelope.live_rate,
             bar_spec = self.active_tab().flow_pane.state.spec().summary(),
             // Both facts the tape states about its own prices — the grid they
             // land on and the magnitude they land at — and the row width the
@@ -172,7 +194,7 @@ impl QuantickApp {
             }),
             book_updates_per_s = book_rate,
             book_updates_total = book.depth_updates,
-            book_queue_len,
+            book_queue_len = self.active_tab().book_events.len(),
             book_channel_closed = self.active_tab().book_channel_closed_reported,
             book_bid_levels = book.bid_levels,
             book_ask_levels = book.ask_levels,
@@ -195,6 +217,8 @@ impl QuantickApp {
             heatmap_config_revision = book.config_revision,
             heatmap_snapshots = book.snapshots,
             heatmap_gaps = book.gaps,
+            heatmap_aggressions_evicted = book.aggressions_evicted,
+            heatmap_runs_evicted = book.runs_evicted,
             candle_style_revision = self.style_revision,
             candle_preset,
             candle_body_mode = ?self.style.candles.body_mode,
@@ -281,6 +305,7 @@ impl QuantickApp {
             );
         }
 
+        self.health.envelope.warn(&envelope);
         self.health.trades_since_summary = 0;
         self.active_tab_mut().tape_mut().reset_summary_counters();
         self.health.last_summary = now;
@@ -345,4 +370,5 @@ impl QuantickApp {
     }
 }
 
+mod envelope;
 mod worker_diagnostics;

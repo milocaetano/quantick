@@ -1,4 +1,5 @@
 //! Internal owner attribution at the existing health-summary cadence.
+use crate::pane::ChartPane;
 use crate::tab::Tab;
 use crate::worker_progress::ProgressSnapshot;
 
@@ -14,25 +15,25 @@ pub(super) fn emit_if_due(tabs: &[Tab], elapsed: std::time::Duration) -> bool {
     }
     for tab in tabs {
         for (pane, side) in tab.panes() {
-            record(
-                tab.id,
-                pane.id,
-                side.index(),
-                "indicator",
-                pane.indicator_worker.progress(),
-            );
-            if let Some(view) = &pane.orderflow {
-                record(
-                    tab.id,
-                    pane.id,
-                    side.index(),
-                    "orderflow",
-                    view.worker_progress(),
-                );
+            for (kind, progress) in pane_workers(pane) {
+                record(tab.id, pane.id, side.index(), kind, progress);
             }
         }
     }
     true
+}
+
+/// Every worker a pane owns, by kind, with its progress now. The one list
+/// both this diagnostic and the live-envelope figures read, so a worker added
+/// to a pane cannot be observed by one and missed by the other.
+pub(super) fn pane_workers(
+    pane: &ChartPane,
+) -> impl Iterator<Item = (&'static str, ProgressSnapshot)> + '_ {
+    std::iter::once(("indicator", pane.indicator_worker.progress())).chain(
+        pane.orderflow
+            .as_ref()
+            .map(|view| ("orderflow", view.worker_progress())),
+    )
 }
 
 fn record(tab: u64, pane: u64, side: usize, kind: &str, progress: ProgressSnapshot) {

@@ -187,7 +187,7 @@ fn terminal_schedule(branch: Terminal) {
     let p = producer.observer().clone();
     let instance = p.snapshot().instance;
     assert!(instance.is_some_and(|id| id > 0));
-    let (tx, rx) = channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let observed = producer.consumer();
     let tx = producer.bind(tx);
     let (done_tx, done_rx) = channel();

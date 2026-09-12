@@ -62,7 +62,6 @@ use crate::indicator_worker::SlotId;
 use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
 use crate::indicators::state_file;
-use crate::metrics::FrameStats;
 use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
 use crate::state::BarSpec;
@@ -475,14 +474,7 @@ impl QuantickApp {
             },
             style: ChartStyle::default(),
             style_revision: 0,
-            health: health::HealthCounters {
-                show_perf: true,
-                frames: FrameStats::new(120),
-                cpu_frames: FrameStats::new(120),
-                last_frame: None,
-                trades_since_summary: 0,
-                last_summary: Instant::now(),
-            },
+            health: health::HealthCounters::new(),
             history: tabs::HistorySettings {
                 progressive_history: true,
                 history_reach: history_reach::HistoryReach::default(),

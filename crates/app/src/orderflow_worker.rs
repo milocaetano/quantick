@@ -1,8 +1,10 @@
 //! Background thread that owns the [`BookEngine`].
 //!
 //! The UI thread never touches book state directly: it sends commands through
-//! an unbounded channel and reads the latest [`BookPublished`] snapshot from a
-//! shared mailbox. Projection requests are coalesced latest-wins — when the
+//! a channel bounded by [`BOOK_COMMAND_QUEUE`] and reads the latest
+//! [`BookPublished`] snapshot from a shared mailbox. A full queue parks
+//! commands on the UI side, in order, and folds only superseded layouts
+//! ([`fold_parked`]); nothing blocks and nothing is dropped. Projection requests are coalesced latest-wins — when the
 //! worker falls behind (a dense book can take tens of milliseconds per
 //! projection), intermediate layouts are dropped and only the newest one is
 //! built. The UI keeps drawing the last published frame, so a slow projection
@@ -12,10 +14,11 @@
 //! dropped. The UI repaints on its own ~60 fps cadence, so no egui handle is
 //! needed here.
 
+use crate::live_envelope::BOOK_COMMAND_QUEUE;
 use crate::worker_progress::{
     Coalescing, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -78,7 +81,7 @@ impl BookWorker {
     }
 
     pub(crate) fn spawn_with_progress(symbol: &str, progress: WorkerProgress) -> Self {
-        let (tx, rx) = channel::<BookCommand>();
+        let (tx, rx) = sync_channel::<BookCommand>(BOOK_COMMAND_QUEUE);
         let published = Arc::new(Mutex::new(BookPublished::initial()));
         let shared = Arc::clone(&published);
         let engine_symbol = symbol.to_owned();
@@ -88,14 +91,14 @@ impl BookWorker {
             .spawn(move || run(BookEngine::new(engine_symbol), &rx, &shared, observed))
             .expect("spawn book worker thread");
         Self {
-            commands: progress.bind(tx),
+            commands: progress.bind_merging(tx, fold_parked),
             published,
         }
     }
 
-    /// Queue one command. A send failure means the worker died (a bug worth a
-    /// log line), never a full queue: the channel is unbounded and command
-    /// volume is bounded by feed cadence.
+    /// Queue one command, or park it when the bounded queue is full; either
+    /// way it reaches the worker and the caller never waits. A send failure
+    /// means the worker died (a bug worth a log line).
     pub(crate) fn send(&self, command: BookCommand) {
         if self.commands.send(command).is_err() {
             tracing::error!(
@@ -113,8 +116,12 @@ impl BookWorker {
     }
 
     /// Latest snapshot published by the worker.
+    ///
+    /// Read every frame, so it is also the retry point for commands parked
+    /// behind a full queue: one length read when nothing is parked.
     #[must_use]
     pub(crate) fn published(&self) -> BookPublished {
+        self.commands.pump();
         self.published
             .lock()
             .expect("book published mailbox poisoned")
@@ -128,6 +135,8 @@ impl BookWorker {
     /// published state — a ladder and a projected frame — to read one
     /// `Decimal` would be paying for the map in order to size a ladder.
     pub(crate) fn published_base_grouping(&self) -> Decimal {
+        // Read every frame even with every layer off, so it pumps too.
+        self.commands.pump();
         self.published
             .lock()
             .expect("book published mailbox poisoned")
@@ -138,9 +147,37 @@ impl BookWorker {
     /// published. Tests use this to make the async pipeline deterministic.
     #[cfg(test)]
     pub(crate) fn flush(&self) {
-        let (ack_tx, ack_rx) = channel();
+        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
         self.send(BookCommand::Flush(ack_tx));
-        let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(10));
+        // A test is its own frame loop: pump what a full queue parked, or a
+        // parked barrier would wait on a queue nobody refills.
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while Instant::now() < deadline {
+            self.commands.pump();
+            if ack_rx
+                .recv_timeout(std::time::Duration::from_millis(5))
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+}
+
+/// The superseding rule for commands parked behind a full queue: only a
+/// layout request folds, into a layout request parked right before it —
+/// the batch loop builds only the newest layout anyway. Prints and depth
+/// events keep their place and their order (parked prints *are* the kept
+/// batch the next frame retries); configuration changes keep theirs too,
+/// because applying one can prune retained history that the next one would
+/// not have.
+pub(crate) fn fold_parked(older: &mut BookCommand, newer: BookCommand) -> Option<BookCommand> {
+    match (&mut *older, newer) {
+        (BookCommand::Project(request), BookCommand::Project(next)) => {
+            *request = next;
+            None
+        }
+        (_, newer) => Some(newer),
     }
 }
 
@@ -231,6 +268,9 @@ fn run(
         }
     }
 }
+
+#[cfg(test)]
+mod fold_tests;
 
 #[cfg(test)]
 mod progress_tests;
