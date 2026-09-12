@@ -155,7 +155,10 @@ pub struct Ratchet {
     /// the recorded ceilings to show the debt still to be written off, and
     /// asking the registry for it is what keeps a fourth ratchet from
     /// appearing in `--tighten` and nowhere else.
-    pub measured: fn(&Path) -> usize,
+    ///
+    /// An error when the walk could not measure every path it tracks, never a
+    /// smaller number: see [`ratchet::complete_total`].
+    pub measured: fn(&Path) -> Result<usize, ratchet::Unmeasured>,
 }
 
 /// One guard, so the binary and the tests name the same things in the same

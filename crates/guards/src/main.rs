@@ -76,7 +76,9 @@ usage: quantick-guards (--file <path> | --tighten | --report | --blast-radius)
 
 The four modes are alternatives; they cannot be combined.
 Exit code 1 means a guard found something. --report and --blast-radius exit 0:
-they measure, they do not judge.";
+they measure, they do not judge. The one exception is a --report measurement
+that could not be taken: its row reads `failed`, the reason goes to stderr,
+and the exit code is 1.";
 
 fn main() -> ExitCode {
     // A set-but-empty variable is not a root. `var_os` hands back
@@ -92,13 +94,22 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         None => run_guards(&root, None),
         Some("--tighten") if args.len() == 1 => tighten(&root),
-        // Printed rather than returned as findings, and always exit 0. These
-        // numbers describe the tree; none of them is ratcheted, and a
-        // measurement that can fail a build is one people negotiate with
-        // instead of reading.
+        // Printed rather than returned as findings. These numbers describe
+        // the tree; none of them is ratcheted, and a measurement that can
+        // fail a build is one people negotiate with instead of reading. A
+        // measurement that could not be *taken* is different: the report is
+        // then not describing the tree, and a script trusting exit 0 would
+        // read `failed` rows as a clean run (#365).
         Some("--report") if args.len() == 1 => {
-            print!("{}", report::render(&root));
-            ExitCode::SUCCESS
+            let rendered = report::render(&root);
+            print!("{}", rendered.table);
+            if rendered.failures.is_empty() {
+                return ExitCode::SUCCESS;
+            }
+            for failure in &rendered.failures {
+                eprintln!("{failure}");
+            }
+            ExitCode::FAILURE
         }
         // Report-only for the same reason `--report` is, and it reads its
         // subject from stdin rather than measuring the tree: the diff a

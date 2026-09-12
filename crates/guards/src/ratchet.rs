@@ -37,12 +37,12 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 
 /// What a guard's own walk measured, summed.
 ///
-/// One owner for the arithmetic, three one-line callers that each name their
-/// own `measure`. The three copies this replaces were byte-identical, in a
-/// change that elsewhere removed a duplicated constant for exactly this
-/// reason — and the failure they invited is quiet: a guard summing its counts
-/// differently from its siblings makes [`crate::report`] print three totals
-/// that are not comparable, with nothing to fail.
+/// One owner for the arithmetic; each guard's `measured` reaches it through
+/// [`complete_total`] over its own `measure`. The copies this replaced were
+/// byte-identical, in a change that elsewhere removed a duplicated constant
+/// for exactly this reason — and the failure they invited is quiet: a guard
+/// summing its counts differently from its siblings makes [`crate::report`]
+/// print totals that are not comparable, with nothing to fail.
 ///
 /// Deliberately the *measurement* and not [`Baseline::recorded`]. The budget
 /// caps what the repository has signed for; this is what its files actually
@@ -50,6 +50,46 @@ pub const BUDGET_DIRECTIVE: &str = "!budget";
 /// write off.
 pub fn total(counts: &[(String, usize)]) -> usize {
     counts.iter().map(|(_, count)| count).sum()
+}
+
+/// [`total`], refused when the walk did not measure every path it tracks.
+///
+/// A sum over a walk that skipped something is smaller than the tree, and
+/// smaller is the flattering direction: `--report` printed 0 root lines for
+/// the extension boundary whenever its scan failed (#365), which reads as
+/// "excellent" and cannot be told apart from "measured nothing". Each line of
+/// `missed` names one path or directory the walk could not measure; any at
+/// all turns the total into a failure the caller has to print as one.
+pub fn complete_total(counts: &[(String, usize)], missed: &[String]) -> Result<usize, Unmeasured> {
+    if missed.is_empty() {
+        return Ok(total(counts));
+    }
+    Err(Unmeasured {
+        missed: missed.to_vec(),
+    })
+}
+
+/// A measurement that could not be taken, and why.
+///
+/// Typed rather than a message so a caller can enumerate what was missed —
+/// tell a missing root from one unreadable file — without parsing prose;
+/// [`Display`](std::fmt::Display) gives the sentence `--report` prints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unmeasured {
+    /// One `"  <path>: <reason>"` line per path or directory the walk could
+    /// not measure, in the order the walk met them.
+    pub missed: Vec<String>,
+}
+
+impl std::fmt::Display for Unmeasured {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} path(s) could not be measured:\n{}",
+            self.missed.len(),
+            self.missed.join("\n")
+        )
+    }
 }
 
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
@@ -660,5 +700,26 @@ mod tests {
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 10 measured plus the 10 the vanished entry still holds.
         assert!(text.contains("!budget 20"), "{text}");
+    }
+
+    /// A walk that missed a path has no total. The sum of what it did see is
+    /// the flattering number, and returning it is how `--report` came to print
+    /// 0 for a scan that had failed outright.
+    #[test]
+    fn a_walk_that_missed_a_path_has_no_total() {
+        let counts = [("src/a.md".to_owned(), 7), ("src/b.md".to_owned(), 5)];
+        assert_eq!(complete_total(&counts, &[]), Ok(12));
+        let missed = ["  src/c.md: could not be read: denied".to_owned()];
+        let failure = complete_total(&counts, &missed).expect_err("a missed path is a failure");
+        assert_eq!(
+            failure.missed,
+            missed.to_vec(),
+            "the failure lists what was missed"
+        );
+        assert_eq!(
+            failure.to_string(),
+            "1 path(s) could not be measured:
+  src/c.md: could not be read: denied"
+        );
     }
 }
