@@ -204,7 +204,43 @@
 # eleven longest of those reads now wrap where they used to fit. A path that
 # says which module owns a field costs a line where it crosses 100 columns --
 # the one price this regroup charges, paid by the file that shrank.
-!budget 20025
+#
+# Then lowered by 5,384 -- the whole of `pane.rs`'s entry -- by the cut the
+# note above promised: `handle_navigation` and `draw_chart` got a shape rather
+# than a new address. The input frame stays in `pane.rs` as the orchestrator
+# and its arms went to `pane/context_menu.rs` (the secondary click),
+# `pane/primary_button.rs` (paper's claim on the button, then the pointer
+# tool) and `pane/axes_and_panes.rs` (the axes, the lane divider and the
+# indicator panes' handles, with the `pane_*_gesture` helpers only they
+# call). The paint frame went whole to `pane/draw_chart.rs`, because the
+# slices of `self.state` it borrows for the frame forbid a `&mut self` arm,
+# and its read-only painters to `pane/layer_painters.rs` as `&self` methods
+# over one borrowed `DrawFrame`. The rest of the file left by owner:
+# `layers.rs`, `series.rs`, `shared_marks.rs`, `drawing_paint.rs`,
+# `pointer_hit.rs`, `tape_switch.rs` and `canvas_split.rs`, plus two impl
+# blocks appended to `context_menu.rs` and `strategies.rs`. Every body moved
+# at the same indentation; the multiset proof is in PR #383's body.
+#
+# `pane.rs` itself is 1,212 production lines and takes no entry: it is under
+# the threshold, and the largest new sibling (`draw_chart.rs`, 746) is under it
+# by a wider margin, as is the largest of all of them, the untouched
+# `drawing_gestures.rs` at 800. `--tighten` first wrote 1,256 and 41,377 (the
+# review's seam repairs then took it to 1,212); the entry is removed by hand
+# because a sub-threshold file with a recorded ceiling is a
+# permission nobody spends, and the budget follows it down by the same
+# 1,256. 45,739 - 5,384 = 40,355; what the guard measures the sum at today
+# is 40,121, and the line below is that sum, not the arithmetic.
+#
+# `toolrail.rs`, `tab.rs` and `layout_wiring.rs` left this file entirely.
+# Each was split into owned siblings under its own directory -- the rail's
+# state, favourites band and family flyout; the tab's pane addressing and its
+# layout/spec persistence; the layout wiring's indicator mirrors and its
+# layout strip -- by pure moves, so all three fell under the 1,500-line
+# threshold and stopped being tracked. The entry for `tab.rs` took the
+# `drain_feed` opening-block note with it: that arm is in `tab/feed.rs` and
+# was never what this entry paid for. Nothing was deleted; the budget falls
+# by the three ceilings.
+!budget 14673
 
 crates/app/src/app.rs 769
 
@@ -316,23 +352,15 @@ crates/app/src/app.rs 769
 # Pure moves, with `the_journal_bytes_are_fixed` and
 # `the_report_numbers_are_fixed` unchanged on both sides of it.
 
-# Raised for the same branch: the opening block's own arm in `drain_feed`,
-# which is deliberately not the reply path with a flag -- the two differ in
-# the two lines that matter, and a branch inside the reply arm is how a
-# slice ends up answering a press the trader made.
-crates/app/src/tab.rs 1661
 crates/app/src/control/gateway.rs 1696
-# +2: the `QUANTICK_FOOTPRINT_DEBUG` declaration. See the budget note above.
 # Raised for the same branch: an `Mt5Event::OpeningPage` variant and one
 # branch in the block state machine deciding whether a block settles a
 # request. The session loop is the only place that knows what a
 # `history_start` opened; the slicing itself lives in the bridge.
 crates/feed-mt5/src/stream.rs 2200
-crates/app/src/toolrail.rs 2114
 crates/orderflow/src/projection.rs 1850
 crates/app/src/control/contract.rs 1718
 crates/app/src/control/evidence.rs 1708
 crates/pine/src/eval.rs 1669
-crates/app/src/app/layout_wiring.rs 1577
 crates/pine/src/compile.rs 1540
 crates/orderflow/src/config.rs 1523
