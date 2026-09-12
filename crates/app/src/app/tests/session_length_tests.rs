@@ -451,6 +451,13 @@ impl Acc {
         out
     }
 
+    /// Add `work`'s heap work to the path's without timing it.
+    fn count(&mut self, work: impl FnOnce()) {
+        let before = work_meter::tally();
+        work();
+        self.heap = add(self.heap, work_meter::tally().since(before));
+    }
+
     fn per_unit(self, units_per_lap: usize, folds: u64) -> PerUnit {
         let units = self.laps.len() * units_per_lap;
         PerUnit::over(
@@ -561,12 +568,8 @@ impl ChartRig {
     fn frames(&mut self, frames: usize, inject: &dyn Fn(&ChartState)) {
         for _ in 0..frames {
             let mut acc = std::mem::take(&mut self.acc);
-            let entries = acc.lap(|| {
-                let copied = self.send(PRINTS_PER_FRAME);
-                inject(&self.state);
-                copied
-            });
-            acc.entries += entries;
+            acc.entries += acc.lap(|| self.send(PRINTS_PER_FRAME));
+            acc.count(|| inject(&self.state));
             self.acc = acc;
         }
     }

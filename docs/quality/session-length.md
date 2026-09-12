@@ -8,7 +8,8 @@ the evidence for rubric criterion SE6 and, beside
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)
 at `df40008e` of `perf/hot-path-session-length`, the last commit that changed
-code; each raw output below names its command and commit.
+measured code (a later test-only commit moved the checker's planted cost out of
+the lap clock; the measured paths plant nothing); each raw output below names its command and commit.
 
 ## The harness
 
