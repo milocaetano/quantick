@@ -794,13 +794,18 @@ fn refused_handshake_code(
     options: &quantick_control_local::client::ConnectOptions,
 ) -> String {
     use quantick_control::error::codes;
+    /// Enough attempts that a machine busy for a moment still gets its answer,
+    /// few enough that a gateway which never answers stays loud.
     const ATTEMPTS: usize = 4;
+    /// Long enough to outlast the scheduling hiccup that cost the last attempt,
+    /// short enough that four of them do not dominate the test's runtime.
+    const BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
     for attempt in 1..=ATTEMPTS {
         match quantick_control_local::client::LocalClient::connect(descriptor.clone(), options) {
             Ok(_) => panic!("the gateway accepted {credential}, which it must refuse"),
             Err(error) if error.code.as_str() == codes::INSTANCE_GONE => {
                 if attempt < ATTEMPTS {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    std::thread::sleep(BACKOFF);
                 }
             }
             Err(error) => return error.code.as_str().to_owned(),

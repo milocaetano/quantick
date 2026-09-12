@@ -1887,6 +1887,12 @@ fn enable_test_gateway_with_limits(
     wait_for_test_gateway_descriptor(app, ctx)
 }
 
+/// How long a test waits for another thread to reach a state. A fixed number
+/// of short sleeps is not a clock: on a loaded machine the iterations run out
+/// long before the work they are waiting for had its chance, and the wait then
+/// reports a defect where there is only contention.
+const GATEWAY_TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn wait_for_test_gateway_descriptor(
     app: &mut QuantickApp,
     ctx: &egui::Context,
@@ -1910,12 +1916,6 @@ fn wait_for_test_gateway_descriptor(
     }
 }
 
-/// How long a test waits for another thread to reach a state. A fixed number
-/// of short sleeps is not a clock: on a loaded machine the iterations run out
-/// long before the work they are waiting for had its chance, and the wait then
-/// reports a defect where there is only contention.
-const GATEWAY_TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
-
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
     loop {
@@ -1937,15 +1937,14 @@ fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
     }
 }
 
-/// Run application frames until the gateway request queue is empty, and report
-/// how many frames that took. A frame admits up to
-/// `CONTROL_UI_MAX_REQUESTS_PER_FRAME` requests, but only inside
+/// Run application frames until the gateway request queue is empty. A frame
+/// admits up to `CONTROL_UI_MAX_REQUESTS_PER_FRAME` requests, but only inside
 /// `CONTROL_UI_BUDGET_US`; on a loaded machine the frame's other work can spend
 /// that budget before the drain even starts, and the queue then empties over
-/// several frames. The property a caller asserts is that application frames
-/// drain the queue — the socket thread never does — so how many frames the
-/// budget needed is reported rather than asserted.
-fn drain_gateway_requests(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+/// several frames. What a caller asserts by calling this is that application
+/// frames drain the queue — the socket thread never does — so how many frames
+/// the budget needed is reported only when the wait gives up.
+fn drain_gateway_requests(app: &mut QuantickApp, ctx: &egui::Context) {
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
     let mut frames = 0;
     loop {
@@ -1959,7 +1958,7 @@ fn drain_gateway_requests(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
             .queued_requests_for_test()
             == 0
         {
-            return frames;
+            return;
         }
         assert!(
             std::time::Instant::now() < deadline,
