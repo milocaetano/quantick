@@ -140,6 +140,12 @@ lane draws. Campaign child of #367 (Q4) under `campaign/lean-a-plus`, issue
 - A5 — the synthetic comparison runs after every irregular append batch along 1..=600 and 1..=20,000 prints, not at every single length; the golden tapes are compared at every length they pass through.
 - `depth.book` and `frame.book` ceilings were re-declared after the calibration run (first guesses below the paths' existing cost); the growth tolerance was never changed. Recorded in the module and the evidence page.
 
+## Amendments (review repairs)
+
+- ai-review (PR #419, thread `PRRT_kwDOTfuoRs6hzSBp`, question 4 WEAK): `FormingRun` needed only engine types but lived in the app, so no test of it ran below `app`, and the next consumer of a forming bar's prefixes would have written a second fold, which `crates/engine/src/bar.rs:52-57` warns against. It moved, logic unchanged, to `crates/engine/src/forming_run.rs` with its tests to `crates/engine/tests/forming_run.rs` (golden fixtures read from the engine's own `tests/fixtures/`); the worker's cross-run fold counter is a `cfg(test)` thread-local beside `cut`. A4 and A5's evidence paths move with it.
+- G9 amended: "no headless crate is edited" becomes "nothing wall-clock or non-deterministic reaches a headless crate": `quantick-engine` gains one additive, deterministic module (plain data, a `Cell<u64>` work counter, no clock, no map); `guards/src/headless.rs` green. The worktree ownership list did not name `crates/engine/src`; no sibling owns it, and the change is one new file plus one `pub mod` line.
+- arch-review step 0 (`state.rs:557`, low): the load-time reservation's cost for a pane that never goes live is now stated in code and on the evidence page.
+
 ## Request as received (verbatim, attributed quotation from the campaign coordinator's dispatch)
 
 > You are executing campaign child mission **Q4** of campaign #367 (https://github.com/milocaetano/quantick/issues/367) for milocaetano/quantick: prove per-trade, per-depth and per-frame work is independent of session length on dense fixtures, bound the forming-run fold, and make that a maintained regression check. This earns rubric criterion SE6 (4 → 5) and, together with the already-integrated envelope work (Q3, PR #405), should let A+ gate 6 pass at the campaign SHA. You are a subagent: you cannot ask the trader; decisions D1..Dn below answer the mission's step-3 questions. A doubt that would need a new decision becomes a `human_decision` in your handoff, never a guess or a silent behaviour change.

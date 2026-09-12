@@ -85,7 +85,7 @@ caps predate this page and are listed so the inventory is whole:
 
 | State | Cap | Where |
 | --- | --- | --- |
-| The indicator lane's forming run | the forming bar's own prints plus one checkpoint bar per `CHECKPOINT_SPACING` = 64 prints; freed when the bar closes; the ladder walks at most `MAX_LANE_RUNGS` = 64 rungs, and a walk folds at most 63 prints per rung whatever the run's length ([session-length.md](session-length.md)) | `crates/app/src/indicator_worker/forming_run.rs` |
+| The indicator lane's forming run | the forming bar's own prints plus one checkpoint bar per `CHECKPOINT_SPACING` = 64 prints; freed when the bar closes; the ladder walks at most `MAX_LANE_RUNGS` = 64 rungs, and a walk folds at most 63 prints per rung whatever the run's length ([session-length.md](session-length.md)) | `crates/engine/src/forming_run.rs`, held by `crates/app/src/indicator_worker.rs` |
 | Indicator draw objects | `MAX_OBJECTS_PER_KIND` = 500 per kind; the oldest goes, as in Pine | `crates/indicators/src/objects.rs` |
 | Trade paint marks | `TRADE_PAINT_LIMIT` = 200 | `crates/app/src/trade_paint.rs` |
 | Drawing undo history | `UNDO_HISTORY_LIMIT` = 64 | `crates/app/src/drawings/mod.rs` |

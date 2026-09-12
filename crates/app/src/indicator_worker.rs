@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 
-use forming_run::FormingRun;
+use quantick_engine::forming_run::FormingRun;
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
@@ -757,13 +757,13 @@ fn run_observed(
                     host.rebuild(&bars, None);
                     rebuilt = true;
                     // The retired epoch must not retain its peak allocation.
-                    lane_run = FormingRun::default();
+                    cut(&mut lane_run);
                     partial_update = None;
                     lane_request = None;
                 }
                 IndicatorCommand::BarClosed(bar) => {
                     host.push_closed_bar(&bar);
-                    lane_run = FormingRun::default();
+                    cut(&mut lane_run);
                     partial_update = None;
                     lane_request = None;
                 }
@@ -773,7 +773,7 @@ fn run_observed(
                     rungs,
                 } => {
                     if partial.is_none() || rungs == 0 {
-                        lane_run = FormingRun::default();
+                        cut(&mut lane_run);
                     } else {
                         lane_run.extend(run);
                     }
@@ -791,7 +791,7 @@ fn run_observed(
                     // series.
                     partial_update = None;
                     lane_request = None;
-                    lane_run = FormingRun::default();
+                    cut(&mut lane_run);
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -957,7 +957,7 @@ fn run_observed(
                     let _ = ack.send(LaneProbe {
                         len: lane_run.len(),
                         capacity: lane_run.capacity(),
-                        folds: forming_run::folds_on_this_thread(),
+                        folds: RETIRED_FOLDS.with(std::cell::Cell::get) + lane_run.folds(),
                         heap: crate::work_meter::tally(),
                     });
                     // The next probe reports the largest copy since this one.
@@ -974,7 +974,7 @@ fn run_observed(
         // reason previews are: the cost is per drained batch, never per print
         // and never on the render thread. The run carries its own fold, so a
         // walk folds at most `rungs × (CHECKPOINT_SPACING - 1)` prints however
-        // long the bar has been forming (see `forming_run`).
+        // long the bar has been forming (see `quantick_engine::forming_run`).
         let mut lane = lane_request
             .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
@@ -986,6 +986,22 @@ fn run_observed(
             let _ = ack.send(());
         }
     }
+}
+
+/// Cut the forming run: the bar closed, the series was rebuilt, or the lane
+/// went away. The run's storage goes with it.
+fn cut(run: &mut FormingRun) {
+    #[cfg(test)]
+    RETIRED_FOLDS.with(|folds| folds.set(folds.get() + run.folds()));
+    *run = FormingRun::default();
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Prints folded by runs this thread has already cut, so the worker's
+    /// probe reports its work across the runs a tick chart cuts at every
+    /// close.
+    static RETIRED_FOLDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Sample every slot's plots across the forming bar's run, oldest rung first.
@@ -2650,14 +2666,6 @@ mod incremental_lane_tests {
         }
     }
 }
-
-mod forming_run;
-
-#[cfg(test)]
-pub(crate) use forming_run::CHECKPOINT_SPACING;
-
-#[cfg(test)]
-mod forming_run_tests;
 
 #[cfg(test)]
 mod event_backpressure_tests;

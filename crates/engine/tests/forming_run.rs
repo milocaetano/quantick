@@ -1,17 +1,19 @@
-//! [`FormingRun`]: the lane ladder's prefixes, and what a walk may cost.
+//! [`FormingRun`]: a forming bar's prefixes, and what a walk may cost.
 //!
-//! The oracle is the fold as it shipped before the walk was bounded, kept
-//! verbatim: every prefix the bounded walk returns must equal the one the
-//! oracle returns, byte for byte, on the engine's golden tapes and on
+//! The oracle is the app's lane fold as it shipped before the walk was
+//! bounded, kept verbatim: every prefix the bounded walk returns must equal
+//! the one the oracle returns, byte for byte, on the golden tapes and on
 //! synthetic runs appended in irregular batches.
 
-use super::forming_run::{CHECKPOINT_SPACING, FormingRun, folds_on_this_thread};
-use super::*;
-use quantick_engine::{Side, fixture::parse_trades};
+use quantick_engine::forming_run::{CHECKPOINT_SPACING, FormingRun};
+use quantick_engine::{Bar, Side, Trade, fixture::parse_trades};
 use rust_decimal::Decimal;
 
-/// `lane_prefixes` as it stood at `2452e577` (`indicator_worker.rs`), before
-/// the fold was bounded. It folds the whole run on every call.
+/// Rungs a chart's live lane walks at most (`MAX_LANE_RUNGS` in the app).
+const MAX_LANE_RUNGS: usize = 64;
+
+/// `lane_prefixes` as it stood at `2452e577` (`crates/app/src/indicator_worker.rs`),
+/// before the fold was bounded. It folds the whole run on every call.
 fn oracle(run: &[Trade], rungs: usize) -> Vec<Bar> {
     if run.is_empty() || rungs == 0 {
         return Vec::new();
@@ -35,12 +37,12 @@ fn oracle(run: &[Trade], rungs: usize) -> Vec<Bar> {
 /// The engine's golden trade tapes, and all of them end to end.
 fn golden_tapes() -> Vec<Vec<Trade>> {
     let files = [
-        include_str!("../../../engine/tests/fixtures/sample_trades.csv"),
-        include_str!("../../../engine/tests/fixtures/tick_trades.csv"),
-        include_str!("../../../engine/tests/fixtures/time_trades.csv"),
-        include_str!("../../../engine/tests/fixtures/volume_trades.csv"),
-        include_str!("../../../engine/tests/fixtures/dollar_trades.csv"),
-        include_str!("../../../engine/tests/fixtures/imbalance_trades.csv"),
+        include_str!("fixtures/sample_trades.csv"),
+        include_str!("fixtures/tick_trades.csv"),
+        include_str!("fixtures/time_trades.csv"),
+        include_str!("fixtures/volume_trades.csv"),
+        include_str!("fixtures/dollar_trades.csv"),
+        include_str!("fixtures/imbalance_trades.csv"),
     ];
     let mut tapes: Vec<Vec<Trade>> = files
         .iter()
@@ -144,18 +146,18 @@ fn a_walk_folds_a_bounded_number_of_prints_whatever_the_runs_length() {
         let mut run = FormingRun::default();
         let tape: Vec<Trade> = (1..=length as u64).map(synthetic).collect();
         for batch in tape.chunks(5) {
-            let before = folds_on_this_thread();
+            let before = run.folds();
             run.extend(batch.to_vec());
             assert!(
-                folds_on_this_thread() - before <= batch.len() as u64,
+                run.folds() - before <= batch.len() as u64,
                 "appending {} prints folds each once",
                 batch.len()
             );
         }
         for rungs in [1_usize, 16, 50, MAX_LANE_RUNGS] {
-            let before = folds_on_this_thread();
+            let before = run.folds();
             let prefixes = run.prefixes(rungs);
-            let walked = folds_on_this_thread() - before;
+            let walked = run.folds() - before;
             let budget = (rungs as u64 * per_rung).min(length as u64);
             assert!(
                 walked <= budget,

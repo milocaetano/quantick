@@ -195,7 +195,7 @@ const FRAME_APP: Budget = Budget {
     slack_bytes: 65_536.0,
 };
 /// One frame's batch on the indicator worker: the lane walk and the deltas.
-/// The walk is bounded by `forming_run`: at most `CHECKPOINT_SPACING - 1`
+/// The walk is bounded by `quantick_engine::forming_run`: at most `CHECKPOINT_SPACING - 1`
 /// folds per rung over `MAX_LANE_RUNGS` rungs, plus one per print appended.
 const FRAME_WORKER: Budget = Budget {
     path: "frame.worker",
@@ -203,7 +203,7 @@ const FRAME_WORKER: Budget = Budget {
     bytes: 1_048_576.0,
     copy_bytes: 1_048_576.0,
     folds: (crate::indicator_worker::MAX_LANE_RUNGS
-        * (crate::indicator_worker::CHECKPOINT_SPACING - 1)
+        * (quantick_engine::forming_run::CHECKPOINT_SPACING - 1)
         + PRINTS_PER_FRAME) as f64,
     entries: 0.0,
     slack_allocs: 20.0,

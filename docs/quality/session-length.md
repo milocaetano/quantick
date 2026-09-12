@@ -112,8 +112,10 @@ Reading it:
 The indicator worker walked the live lane's ladder by folding every rung's
 prefix from the forming run's first print: O(forming prints) on every drained
 batch, so a bar that formed for an hour on a dense tape folded a million
-prints sixty times a second. `crates/app/src/indicator_worker/forming_run.rs`
-now carries the fold: a running bar extended once per appended print and a
+prints sixty times a second. `FormingRun`
+(`crates/engine/src/forming_run.rs`, beside `Bar::extend` in the engine, so
+the next consumer that needs a forming bar's prefixes reuses it rather than
+writing a second fold) now carries the fold: a running bar extended once per appended print and a
 checkpoint (the exact fold so far) every `CHECKPOINT_SPACING` = 64 prints. A
 walk folds forward from rung to rung and jumps to the checkpoint at or below a
 rung when that lies past where it stands, so:
@@ -127,7 +129,7 @@ rung when that lies past where it stands, so:
   held, freed with the run when the bar closes.
 - **output identity** — `Bar::extend` is a sequential fold over plain data, so
   a checkpoint is the same intermediate state the old fold passed through.
-  `forming_run_tests` keeps the old `lane_prefixes` verbatim as the oracle and
+  `crates/engine/tests/forming_run.rs` keeps the old `lane_prefixes` verbatim as the oracle and
   requires byte-identical prefixes for every rung count 0..=70 on every golden
   trade tape in `crates/engine/tests/fixtures/` (and all of them joined), on a
   600-print synthetic run whose prices, sides, decimal quantities and repeated
@@ -141,7 +143,10 @@ committed the oracle, the identity tests and the limit test ignored and red
 (1,000 prints, one rung: 1,000 folds against a budget of 63); `00846de3`
 bounded the walk and un-ignored it; `10b87d90` made the walk fold forward
 between rungs, after the harness showed the first bound folding 349 prints per
-frame on tick:50 where the old single pass folded 27.
+frame on tick:50 where the old single pass folded 27. After the AI review the
+type and its tests moved, unchanged in logic, from the indicator worker into
+the engine (`quantick-engine`), where `cargo test -p quantick-engine --test
+forming_run` runs them below the app.
 
 Folds per frame, from the harness:
 
@@ -215,7 +220,7 @@ answers it at `10b87d90`:
 
 | Finding (interim assessment, gate 6) | Answered by | Where |
 | --- | --- | --- |
-| The forming fold is O(forming trades) (`indicator_worker.rs:867`) | bounded to `min(len, 63 r)` folds per walk, byte-identical output, limit and identity tests; the harness holds `frame.worker.time1d` flat from 18,000 to 3,960,000 prints | `forming_run.rs`, `forming_run_tests.rs`, [long.txt](session-length/long.txt) |
+| The forming fold is O(forming trades) (`indicator_worker.rs:867`) | bounded to `min(len, 63 r)` folds per walk, byte-identical output, limit and identity tests; the harness holds `frame.worker.time1d` flat from 18,000 to 3,960,000 prints | `crates/engine/src/forming_run.rs`, `crates/engine/tests/forming_run.rs`, [long.txt](session-length/long.txt) |
 | Unbounded `std::sync::mpsc` command channels (`indicator_worker.rs`, `orderflow_worker.rs`) | Q3 (#405): `sync_channel`s sized from the envelope, park-and-fold overflow, counted and tested; queue depth re-measured at this SHA | `live_envelope.rs`, [envelope-measure.txt](session-length/envelope-measure.txt) block 4 |
 | The tape grows with no cap (`state.rs`) | Q3: stated as `RETAINED_TRADES_PER_PANE` = 3,960,000 with `LIVE_ENVELOPE_EXCEEDED` past it, memory re-measured at this SHA; an evicting cap is Q3's pending product decision; the one doubling stall inside the envelope is above | [live-envelope.md](live-envelope.md), [envelope-measure.txt](session-length/envelope-measure.txt) block 2 |
 | No stated or measured live envelope at the SHA | Q3's envelope, its harness re-run here; this page's per-unit work at both lengths | [envelope-measure.txt](session-length/envelope-measure.txt), [long.txt](session-length/long.txt) |
@@ -232,7 +237,7 @@ env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
     session_length_tests::long -- --ignored --nocapture --test-threads=1
 
 # The fold's limit and output identity:
-env -u QUANTICK_BUBBLES cargo test -p quantick-app forming_run_tests
+cargo test -p quantick-engine --test forming_run
 
 # Q3's envelope harness, re-run at this SHA:
 env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
