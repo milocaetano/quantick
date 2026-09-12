@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::config::{BubbleSizeReference, BubbleStyle, DisplayGrouping, LiveLaneStyle};
+use crate::config::{DEFAULT_LIVE_LANE_SHARE, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE};
 use crate::history::LiquidityHistory;
 use quantick_engine::{Bar, Side, Trade};
 use quantick_orderbook::BookSide;
