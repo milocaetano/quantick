@@ -27,6 +27,7 @@ from harness import (  # noqa: E402  (deliberately after the path insert)
     block_ticks,
     check,
     load_bridge,
+    patch_bridge,
     run_tests,
     session_at,
     session_ending_at,
@@ -493,7 +494,7 @@ def test_an_endless_tape_gives_the_thread_back():
     term = FakeTerminal(0, NOW)
     bridge = load_bridge(term)
     session = session_for(bridge, term)
-    bridge.TICKS_PER_PUMP_ROUND = 8
+    patch_bridge("TICKS_PER_PUMP_ROUND", 8)
 
     produced = {"next_msc": 1_000}
 

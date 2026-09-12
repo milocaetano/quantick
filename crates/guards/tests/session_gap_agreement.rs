@@ -67,7 +67,7 @@ fn python_constant(source: &str, name: &str) -> i64 {
         .unwrap_or_else(|| {
             panic!(
                 "`{name}` is not assigned at the module level of \
-                 bridge/mt5/quantick_bridge.py. If it was renamed, rename it here too — \
+                 bridge/mt5/quantick_bridge_core.py. If it was renamed, rename it here too — \
                  that is what this test is for."
             )
         });
@@ -76,7 +76,7 @@ fn python_constant(source: &str, name: &str) -> i64 {
         .next()
         .expect("a split always yields a first part")
         .trim();
-    product_of_literals(expression, name, "bridge/mt5/quantick_bridge.py")
+    product_of_literals(expression, name, "bridge/mt5/quantick_bridge_core.py")
 }
 
 /// The value assigned to `pub const NAME` in a Rust source.
@@ -141,7 +141,7 @@ fn product_of_literals(expression: &str, name: &str, file: &str) -> i64 {
 #[test]
 fn the_bridge_and_the_app_measure_a_session_the_same_way() {
     let root = repo_root();
-    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge_core.py"))
         .expect("the MetaTrader bridge is part of this repository");
     let rust_source = std::fs::read_to_string(root.join("crates/feed/src/history_reach.rs"))
         .expect("the chart's history reach is part of this repository");
@@ -200,7 +200,7 @@ fn the_shipped_config_default_agrees_with_the_bridge_too() {
     // to pass its gap to the bridge it launches; until then this is a known
     // and recorded divergence rather than an assumed impossibility.
     let root = repo_root();
-    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+    let source = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge_core.py"))
         .expect("the MetaTrader bridge is part of this repository");
     let bridge_gap_ms = python_constant(&source, "SESSION_GAP_MS");
 
@@ -237,10 +237,10 @@ fn the_slice_cap_matches_what_the_feed_will_accept() {
     // on — a quiet cut of the trader's morning — and the bridge's own comment
     // says this test is what stops that. It was not, until it existed.
     let root = repo_root();
-    let bridge = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge.py"))
+    let bridge = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge_core.py"))
         .expect("the MetaTrader bridge is part of this repository");
-    let stream = std::fs::read_to_string(root.join("crates/feed-mt5/src/stream.rs"))
-        .expect("the feed's stream is part of this repository");
+    let stream = std::fs::read_to_string(root.join("crates/feed-mt5/src/stream/connection.rs"))
+        .expect("the feed's session loop is part of this repository");
 
     let bridge_cap = python_constant(&bridge, "MAX_SLICE_TICKS_THE_FEED_ACCEPTS");
     let feed_cap = rust_constant(&stream, "MAX_TRADES_PER_PAGE");
@@ -291,7 +291,7 @@ fn the_fill_progress_is_on_the_wire_and_is_optional() {
 
 #[test]
 fn the_walk_budget_is_derived_from_the_span_it_bounds() {
-    let source = std::fs::read_to_string(repo_root().join("bridge/mt5/quantick_bridge.py"))
+    let source = std::fs::read_to_string(repo_root().join("bridge/mt5/quantick_bridge_core.py"))
         .expect("the MetaTrader bridge is part of this repository");
     let span = python_constant(&source, "SESSION_WALK_MAX_SPAN_MS");
     let gap = python_constant(&source, "SESSION_GAP_MS");
