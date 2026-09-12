@@ -4822,7 +4822,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 46);
+    assert_eq!(documents.len(), 48);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");
@@ -5354,10 +5354,10 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
 /// It does **not** exercise `UiRequest::started`. The application answers
 /// here, refusing the request on its deadline, so `settle` gets a real
 /// outcome and never consults the flag. The flag decides only the case where
-/// the application began an action and had still not answered a window later,
-/// and forcing that needs an action a test can hold open past the deadline,
-/// which the gateway has no hook for. That branch is covered by the unit
-/// tests over `settle` and by reading, not by this.
+/// the application began an action and had still not answered a window later;
+/// that branch is proven end to end by
+/// `retry_readback_tests::a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by_readback`,
+/// which holds the action's answer through a `#[cfg(test)]` seam.
 #[test]
 fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free() {
     use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};

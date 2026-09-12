@@ -42,6 +42,7 @@ use super::{
     types::known_error,
 };
 
+mod encode_refusal;
 mod idempotency;
 mod local_action;
 mod panel;
@@ -362,8 +363,20 @@ impl ClientRateLimiter {
     }
 }
 
-/// Whether a permission belongs to the annotate tier — the `annotate` floor
-/// itself or one of its scopes.
+/// Every ceiling [`ControlAccess::configured_profile`] can hand a connection,
+/// whatever the trader ticks.
+///
+/// The `trader` profile is deliberately absent: it is the ceiling of the
+/// `trade.*` tier, and no grant reaches it (see `control::trade`). The retry
+/// matrix reads this list to say which capabilities an agent can reach at all,
+/// and a gateway test pins `configured_profile` to it, so a branch that starts
+/// handing out another ceiling fails there before the matrix can go stale.
+pub(crate) const GRANTABLE_PROFILE_IDS: [&str; 3] = [
+    OBSERVER_PROFILE_ID,
+    ANNOTATOR_PROFILE_ID,
+    COCKPIT_PROFILE_ID,
+];
+
 /// Whether a permission belongs to the trade tier — see the access
 /// panel's read-scope filter for why it is excluded from every section.
 pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
@@ -371,6 +384,8 @@ pub(super) fn is_trade_permission(permission: &PermissionId) -> bool {
         || permission.as_str().starts_with("trade.")
 }
 
+/// Whether a permission belongs to the annotate tier — the `annotate` floor
+/// itself or one of its scopes.
 pub(super) fn is_annotate_permission(permission: &PermissionId) -> bool {
     permission.as_str() == ANNOTATE_PERMISSION_ID || is_annotate_scope(permission)
 }
@@ -836,7 +851,8 @@ impl ControlAccess {
                 .any(|permission| permission.as_str() == COCKPIT_PERMISSION_ID)
     }
 
-    /// The ceiling the next connection is given.
+    /// The ceiling the next connection is given — always one of
+    /// [`GRANTABLE_PROFILE_IDS`].
     ///
     /// A profile no code path constructs is a tier nothing can reach: the
     /// seven `layout.*` capabilities shipped registered, catalogued and
@@ -863,6 +879,19 @@ impl ControlAccess {
     }
 
     fn request_enable(&mut self, ctx: &eframe::egui::Context, options: GatewayOptions) {
+        let ceiling = self.configured_profile();
+        self.request_enable_under(ctx, options, ceiling);
+    }
+
+    /// [`Self::request_enable`] with the ceiling named rather than derived
+    /// from the grant. Production reaches it only through `request_enable`;
+    /// the one other caller is a `#[cfg(test)]` seam in `retry_seams`.
+    fn request_enable_under(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        options: GatewayOptions,
+        profile_ceiling: ProfileId,
+    ) {
         if !matches!(self.state, AccessState::Disabled) {
             return;
         }
@@ -873,7 +902,7 @@ impl ControlAccess {
         let cancellation = Arc::new(AtomicBool::new(false));
         let start = GatewayStart {
             identity,
-            profile_ceiling: self.configured_profile(),
+            profile_ceiling,
             granted_scopes: self.configured_scopes.clone(),
             grant_generation: self.grant_generation,
             options,
@@ -1186,5 +1215,13 @@ impl Drop for ControlAccess {
     }
 }
 
+// Declared here, beside the test module, rather than with the production
+// modules at the top: `operability::sources` reads a file up to its first
+// `#[cfg(test)]` module, and a seam declared above the shortcuts would hide
+// `MARK_SHORTCUT` from the behaviour matrix's walk.
+#[cfg(test)]
+mod retry_seams;
+#[cfg(test)]
+pub(crate) use retry_seams::ServedRequest;
 #[cfg(test)]
 mod tests;

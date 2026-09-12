@@ -48,6 +48,18 @@ pub(crate) struct FeedTabSnapshot {
     /// a build with no reach campaigns was in fact reporting.
     #[serde(default)]
     pub history_reach_running: bool,
+    /// How many feed sessions this tab has taken over since it opened. It
+    /// advances by one on every respawn — a reconnect, a reload, a market
+    /// switch, a replay opened or closed — and never otherwise.
+    ///
+    /// The readback for `feed.reconnect` and `feed.reload`: `connection_state`
+    /// says whether the feed is healthy, not whether a call respawned it,
+    /// and a reload normally lands on a connected feed. A client that lost
+    /// the answer compares this with its reading from before the call.
+    /// `#[serde(default)]` for the same reason as `history_reach_running`:
+    /// an optional field is an additive change to the v1 payload.
+    #[serde(default = "no_feed_generation")]
+    pub feed_generation: WireU64,
     /// Slices of the opening session still to arrive, while a source is
     /// filling the chart in behind what it first painted.
     ///
@@ -153,6 +165,12 @@ pub(crate) struct FeedNoticeSnapshot {
     pub text_availability: String,
 }
 
+/// What a v1 payload recorded before `feed_generation` existed reads as: no
+/// session counted, which is what a build without the field was reporting.
+fn no_feed_generation() -> WireU64 {
+    WireU64::new(0)
+}
+
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(
@@ -249,6 +267,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                         u64::try_from(tab.history_trades).unwrap_or(u64::MAX),
                     ),
                     history_reach_running: tab.history_reach_running(),
+                    feed_generation: WireU64::new(tab.feed_generation()),
                     opening_slices_remaining: tab.opening_slices_remaining().map(WireU64::new),
                     history_reach_note: tab.history_note().map(str::to_owned),
                     live_trade_count: WireU64::new(tab.live_trades),

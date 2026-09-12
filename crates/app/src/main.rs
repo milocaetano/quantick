@@ -182,6 +182,10 @@ fn run_dump_subcommand(argument: &str) -> bool {
             emit(control::inventory::capability_inventory_markdown());
             true
         }
+        "--dump-retry-matrix" => {
+            emit(control::retry_matrix::retry_matrix_markdown());
+            true
+        }
         "--dump-hook-registry" => {
             emit(hooks::hook_registry_markdown());
             true

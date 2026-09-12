@@ -36,6 +36,10 @@ use super::{
     gateway::ControlAccess,
 };
 
+mod v2;
+#[cfg(test)]
+pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
+
 /// The module every layout capability belongs to.
 pub(crate) const LAYOUT_MODULE_ID: &str = "layout";
 
@@ -323,7 +327,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     // yet (`contract.rs`, `allows_destructive: false` on all three). The
     // trader deletes from the strip or the View menu; the operator gets the
     // call the day the contract grows a confirmed-destructive effect.
-    Ok(())
+    v2::register(registry)
 }
 
 fn tab_descriptor(

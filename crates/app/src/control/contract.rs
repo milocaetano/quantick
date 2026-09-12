@@ -1091,6 +1091,14 @@ impl ObserverContract {
             .collect()
     }
 
+    /// One registered snapshot scope, by id — what the retry matrix checks a
+    /// named readback against.
+    pub fn snapshot_scope(&self, id: &str) -> Option<&SnapshotScopeDescriptor> {
+        self.snapshot_scopes
+            .iter()
+            .find(|descriptor| descriptor.id.as_str() == id)
+    }
+
     pub fn selectable_permissions(&self) -> impl Iterator<Item = &PermissionDescriptor> {
         self.permissions
             .iter()
