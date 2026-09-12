@@ -554,6 +554,136 @@ fn ctrl_d_duplicates_the_selection_offset_and_selected() {
 }
 
 #[test]
+fn ctrl_c_then_ctrl_v_pastes_the_copied_drawing_not_the_current_selection() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    let original = app.active_tab().flow_pane.drawings.items()[0].clone();
+    let undo_before_copy = app.active_tab().flow_pane.drawings.undo_depth();
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items(),
+        &[original.clone()]
+    );
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), Some(0));
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.undo_depth(),
+        undo_before_copy,
+        "copy is not a chart edit"
+    );
+
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("vertical-line")));
+    click_chart(&mut app, &ctx, egui::pos2(760.0, 360.0));
+    let other = app.active_tab().flow_pane.drawings.items()[1].clone();
+    assert_ne!(other.tool, original.tool, "the current selection differs");
+    let undo_before_paste = app.active_tab().flow_pane.drawings.undo_depth();
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    let drawings = &app.active_tab().flow_pane.drawings;
+    assert_eq!(drawings.items().len(), 3);
+    assert_eq!(drawings.selected(), Some(2), "the pasted copy is selected");
+    let pasted = &drawings.items()[2];
+    assert_ne!(pasted.id, original.id, "paste allocates a fresh identity");
+    assert_eq!(
+        pasted.tool, original.tool,
+        "paste uses the clipboard snapshot"
+    );
+    assert_eq!(pasted.style, original.style);
+    assert_eq!(
+        pasted.points[0].bar,
+        original.points[0].bar + DUPLICATE_OFFSET_BARS
+    );
+    assert!(!pasted.locked, "a pasted drawing is editable");
+    assert_eq!(
+        pasted.name, None,
+        "a pasted drawing has no ambiguous copied name"
+    );
+    assert_eq!(
+        drawings.undo_depth(),
+        undo_before_paste + 1,
+        "paste is exactly one undo entry"
+    );
+}
+
+#[test]
+fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    place_level(&mut app, PaneSide::Time(0), 101.0);
+    app.active_tab_mut().focus = PaneSide::Time(0);
+    let source = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    let flow = pane_point(&app, PaneSide::Flow);
+    click_chart(&mut app, &ctx, flow);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+    for _ in 0..2 {
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+    }
+
+    assert_eq!(
+        app.active_tab().pane(PaneSide::Time(0)).drawings.items(),
+        &[source.clone()],
+        "paste leaves the source pane untouched"
+    );
+    let pasted = app.active_tab().pane(PaneSide::Flow).drawings.items();
+    assert_eq!(pasted.len(), 2);
+    assert_eq!(pasted[0].tool, source.tool);
+    assert_eq!(pasted[1].tool, source.tool);
+    assert_eq!(
+        pasted[0].points[0].bar,
+        source.points[0].bar + DUPLICATE_OFFSET_BARS
+    );
+    assert_eq!(
+        pasted[1].points[0].bar,
+        source.points[0].bar + DUPLICATE_OFFSET_BARS * 2.0,
+        "each paste advances from the clipboard source"
+    );
+}
+
+#[test]
+fn ctrl_v_before_copy_is_a_no_op() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    assert_eq!(app.active_tab().flow_pane.drawings.undo_depth(), 0);
+}
+
+#[test]
 fn arrow_nudges_move_the_selection_and_shift_multiplies_by_ten() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
