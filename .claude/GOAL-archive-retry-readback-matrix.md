@@ -326,6 +326,51 @@ all confirmed. Repair batch 2 (second batch; each finding's first attempt):
 - Minor: the `branches` doc sat on `MAX_SCHEMA_HOPS` (fixed); the footer now
   counts rows and readbacks separately (29 rows, 27 readbacks).
 
+## Delivery review — FAIL, escalated (head `a9d1eb32`)
+
+Full mode. Checklist: this archive (source 1). The completeness pass ran on
+the strong model, the criteria pass on `sonnet`, and a head-pinned AP4
+reassessment ran independently. The branch and markers were unchanged
+across the review.
+
+- **Completeness:** no outcome gap. Traceability-only: the handoff block's
+  field list and "archive before reviews" live only in the quoted request.
+- **Criteria:** A1–A5, A7–A9, G1, G3, G5, G6, G7 DELIVERED. A6 PARTIAL: the
+  reassessment it cited was at `e1c3b5ff`; it is superseded by
+  https://github.com/milocaetano/quantick/issues/378#issuecomment-5647735628
+  at `a9d1eb32`. A10 MISSING, G2 and G4 PARTIAL: sequencing only, because
+  `gh pr create` waits for both markers, so there is no PR, CI or `ai-review`
+  yet. The strong-model re-grade of those lines was not dispatched: no
+  re-grade could turn this verdict into PASS, and the review re-runs in full
+  after the decision below.
+- **Ledger:** R1 PARTLY COVERED — 27 of 29 rows name a readback, and
+  `layout.pane.collapse` / `layout.pane.expand` have none. R11 NOT MET — the
+  head reassessment scores **AP4 4/5, gate 5 BLOCKED**. Every other R is
+  COVERED.
+
+**Why it is an escalation, not a repair round:** the gap is the
+pre-existing wire defect this branch's tests surfaced. `LayoutResult.fraction`
+is an `f64` the codec refuses to encode, so five reachable layout calls answer
+a false non-retryable failure after acting, and no read projects the collapse
+state. Both fixes change the published wire schema, which D1 forbids. Closing
+the gap contradicts a recorded decision, so it goes to the coordinator
+immediately (delivery contract, *Escalate immediately*).
+
+## Deferral requested — NOT granted
+
+- **R1 / A1 (`layout.pane.collapse`, `layout.pane.expand` readback)** and
+  **R11 (AP4 5 and gate 5 PASS)** are unmet at this head because of the
+  `LayoutResult.fraction` / `ResizeInput.fraction` float defect and the
+  missing collapse projection. Two routes need a decision from the trader or
+  the coordinator's delegated authority:
+  1. Authorize a wire change: `fraction` becomes a canonical decimal on both
+     types and `workspace.summary` carries the collapse state. This can be
+     done here (widening D1) or as a follow-up mission that this PR waits on.
+  2. Grant a deferral of R1/R11 for those two capabilities, and accept that
+     this PR ships with AP4 at 4 and gate 5 BLOCKED on them.
+
+  No grant exists; nothing here is recorded as deferred.
+
 ## Closing steps
 
 - **C1** — `delivery-review` returns PASS and records its marker.
