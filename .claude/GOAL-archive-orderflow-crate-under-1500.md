@@ -102,7 +102,10 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   `!budget` to the sum of the remaining entries; `--tighten` must then change
   nothing. Force-with-lease push; CI, reviews and markers at the new key;
   rebase again the same way if the tip moves before the final push. This
-  supersedes D6's "do not rebase" for this mission.
+  supersedes D6's "do not rebase" for this mission. *Applied twice:* onto
+  `216010ef` (after #392 and #395; 12,473 → 9,100) and, when #399 landed
+  while the delivery review ran, onto `c1b4002e` (9,264 → 5,891, four
+  entries left); each time the only conflict was the budget line.
 
 ## Assumptions
 
@@ -196,14 +199,20 @@ gate table, `code-review` at `medium` inside `arch-review`, and
       `engine` passes unchanged, `profile_fold_parity` included, with the
       counts named; no test expectation was edited; `git diff` contains no
       added `HashMap`.
-      *Evidence:* the two test runs' result lines, the `HashMap` grep, and
-      the `git diff -U0` of the test files showing only `use` lines. → PR
-      body, A3 section; CI run. *(R3, R4)*
+      *Evidence:* the two test runs' result lines, the `HashMap` grep over
+      the diff's Rust hunks, and the test-code multisets (1,189/1,189 and
+      3,086/3,086 with the tests included) proving the moved tests kept their
+      bodies; the sidecar's diff is deletions only. → PR body, A3 section; CI
+      run. *(R3, R4)* *(Evidence clause amended at delivery review: it
+      originally read "the `git diff -U0` of the test files showing only
+      `use` lines", written before step 0 moved fifteen tests to their
+      families; the outcome — no expectation edited — is unchanged.)*
 - [ ] **A4** — `crates/guards/size-baseline.txt` carries no entry for either
-      file; `!budget` is exactly 3,373 lower than on the base (12,473 →
-      9,100 on the tip the branch was rebased onto per D9; it was 20,025 →
-      16,652 against the tip it was cut from — corrected after step 0's second
-      round caught the stale pair); `--tighten` reports nothing left; `cargo test -p quantick-guards`
+      file; `!budget` is exactly 3,373 lower than on the base (9,264 →
+      5,891 on the tip the branch was last rebased onto per D9 — `c1b4002e`,
+      after #399; it was 12,473 → 9,100 on the first rebase's tip and
+      20,025 → 16,652 against the tip it was cut from); `--tighten` reports
+      nothing left; `cargo test -p quantick-guards`
       passes; `cycle.rs` and `graph.rs` are unchanged and green.
       *Evidence:* the baseline diff and the guards run. → PR body, size
       section. *(R5)*
@@ -273,7 +282,11 @@ gate table, `code-review` at `medium` inside `arch-review`, and
   recorded with the shared key; `ai-review-complete` recorded.
 - **C3** — Draft PR open against `campaign/lean-a-plus`; CI green at the
   head; one `gh pr ready` attempt.
-- **C4** — Handoff block returned to the coordinator.
+- **C4** — Handoff block returned to the coordinator. Issue #375's A6 (the
+  merge into `campaign/lean-a-plus`, read back and recorded on the issue) is
+  the coordinator's step at integration, per D8's "never merge"; this child
+  hands over a ready PR and stops. *(Clause added at delivery review: the
+  completeness pass found the ownership implied but unstated.)*
 - **C5** — `GOAL.md` archived as the mission's last commit before either
   review runs.
 
