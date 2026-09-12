@@ -1924,10 +1924,15 @@ fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
 
 /// [`wait_for_queued_gateway_requests`] for a caller that only needs the
 /// requests to have arrived, not to be the only ones there. Exact equality is
-/// a trap once more than one request is outstanding: the queue can also shrink
-/// on its own — the response worker answers a request that missed its deadline
-/// without any frame running — and a wait that insists on the peak then never
-/// sees it and reports a defect where there is only a slow machine.
+/// a trap once anything else can be in flight: one extra request from another
+/// connection, or one left over from an earlier step, and a wait that insists
+/// on its own number never sees it.
+///
+/// What it does not buy: tolerance of the queue shrinking under the caller.
+/// The response worker answers a request that missed its deadline without any
+/// frame running, and a set that loses one of its own members never reaches
+/// its depth under either comparison. A caller that waits for a whole backlog
+/// is relying on that deadline being far away, not on this spelling.
 fn wait_for_at_least_queued_gateway_requests(app: &QuantickApp, expected: usize) {
     wait_for_queue_depth(app, &format!("reach {expected} or more"), |queued| {
         queued >= expected
