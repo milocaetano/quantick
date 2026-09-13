@@ -179,6 +179,9 @@ const LAYOUT_COLLAPSE_PROOF: &[&str] =
     &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
 /// The layout-tab calls have one version and are not called by the v2 test.
 const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+/// `layout.pane.set_bar_spec` has a v2, which the every-optional-row test
+/// drives; the v2 test predates it and does not call it.
+const BAR_SPEC_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
@@ -323,7 +326,7 @@ pub(crate) const READBACKS: &[Readback] = &[
         chart::SCOPE_ID,
         "panes[].bar_spec",
         "the pane's bar spec is the rule asked for; it is the spec the bars were built with, which follows the call once the pane is re-cut, so read until it settles",
-        LAYOUT_TAB_PROOF,
+        BAR_SPEC_PROOF,
     ),
     snapshot(
         "layout.preset.apply",
