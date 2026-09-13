@@ -1333,7 +1333,7 @@ mod tests {
     /// and move it again on the agent's retry. The caller gets describe's own
     /// refusal, retryable as the gateway said, and nothing is invoked.
     #[test]
-    fn a_refused_describe_leaves_the_first_version_rather_than_its_error() {
+    fn a_refused_describe_is_returned_and_nothing_is_invoked() {
         for by_transport in [false, true] {
             let mut link = DescribeRefused {
                 by_transport,
