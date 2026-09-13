@@ -56,13 +56,21 @@ mod window;
 use ledger::LedgerTotals;
 /// The ledger's vocabulary, named by the ticket that hosts the tab.
 pub(crate) use ledger::{LedgerAction, LedgerScope};
+/// Named by the ticket's own tests, which drive a real journal folder.
+#[cfg(test)]
+pub(crate) use quantick_paper::report::load_history;
 /// The report's numbers — the journal read back, cut and walked — live in
 /// the paper account's crate, so a backtest gets the answer this window
 /// paints. Re-exported where the window's callers already look.
 pub(crate) use quantick_paper::report::{HistoryRow, LoadedHistory, ReportView, SourceFilter};
-/// Named by the ticket's own tests, which drive a real journal folder.
+
+/// Aggregate loaded history rows — the ticket tests' shortcut from a journal
+/// on disk to a report.
 #[cfg(test)]
-pub(crate) use quantick_paper::report::{load_history, report_from_history};
+pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
+    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
+    PerformanceReport::from_trades(&trades)
+}
 use window::{ReportPeriod, ReportWindow};
 
 /// What the report and the ledger read about the trading session they

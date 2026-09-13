@@ -359,3 +359,96 @@ fn export_rows_remember_the_source_each_trade_closed_under() {
         "a trade keeps the source it closed under, not the current one"
     );
 }
+
+/// A journaled close raises the flag the host re-reads its report on, once:
+/// the host takes it, and a print that closes nothing does not raise it
+/// again.
+#[test]
+fn a_journaled_close_tells_the_host_once() {
+    let dir = ScratchDir::new("account-journal-flag");
+    let mut account = account(&dir, "FLAG");
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    assert!(!account.take_journal_changed(), "an entry journals nothing");
+    let events = account.dispatch(Command::ClosePosition);
+    account.handle_events(events);
+    account.on_trade(&print(2, 101));
+    assert!(
+        account.take_journal_changed(),
+        "the close reached the journal"
+    );
+    assert!(!account.take_journal_changed(), "and the flag was taken");
+    account.on_trade(&print(3, 102));
+    assert!(
+        !account.take_journal_changed(),
+        "a quiet print raises nothing"
+    );
+}
+
+/// A launch hook's risk stands from construction and says so, and the
+/// money it declared lands on the first symbol the host names.
+#[test]
+fn a_risk_hook_is_told_rather_than_read() {
+    let dir = ScratchDir::new("account-risk-hook");
+    let hook = crate::risk_sizing::parse_hook("100:0.20:1:BRL").expect("a valid hook spec");
+    let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf()).with_risk_hook(hook);
+    assert!(
+        account.risk_from_hook(),
+        "the host must not restore over it"
+    );
+    assert_eq!(account.risk_settings().amount, Decimal::from(100));
+    assert!(
+        account.instrument_money().is_empty(),
+        "no symbol to key it by yet"
+    );
+    account.set_symbol("WIN$N");
+    assert_eq!(
+        account
+            .instrument_money()
+            .get("WIN$N")
+            .map(|money| money.point_value),
+        Some(Decimal::new(20, 2)),
+        "the hook's money landed on the first symbol"
+    );
+    account.set_symbol("WDO$N");
+    assert!(
+        !account.instrument_money().contains_key("WDO$N"),
+        "and only on the first"
+    );
+}
+
+/// A timeline reset flattens at the last mark, journals the forced close,
+/// ends the session file and says what it swept.
+#[test]
+fn a_timeline_reset_journals_the_forced_close_and_ends_the_file() {
+    let dir = ScratchDir::new("account-reset");
+    let mut account = account(&dir, "RESET");
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    account.on_trade(&print(2, 103));
+    assert!(account.journal_path().is_none(), "nothing closed yet");
+
+    let reset = account.reset_timeline();
+
+    assert_eq!(
+        reset,
+        TimelineReset {
+            had_position: true,
+            had_orders: false,
+            all_saved: true,
+        }
+    );
+    assert!(account.is_flat(), "the position flattened");
+    assert_eq!(account.session_trades().len(), 1, "at the last mark");
+    assert!(
+        account.journal_path().is_none(),
+        "the reset ended the session file, so the next close opens a new one"
+    );
+    assert_eq!(
+        account.session_journal_paths().len(),
+        1,
+        "the close was journaled"
+    );
+}

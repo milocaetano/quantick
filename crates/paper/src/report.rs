@@ -172,13 +172,6 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
     }
 }
 
-/// Aggregate loaded history rows — the tests' shortcut from a journal on
-/// disk to a report.
-pub fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
-    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
-    PerformanceReport::from_trades(&trades)
-}
-
 /// The report's period filter, measured back from the newest saved trade
 /// in scope — never from a wall clock. The engine has no clock, and a
 /// replayed session's trades may be years old; a wall-clock "7 days" would

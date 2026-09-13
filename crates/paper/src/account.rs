@@ -415,8 +415,11 @@ impl PaperAccount {
         self.outbox.toast = Some(message);
     }
 
-    /// The acknowledgement waiting, if any, left where it is. A question
-    /// rather than a field, which is what keeps the outbox private.
+    /// The acknowledgement waiting, if any, left where it is.
+    ///
+    /// Test support, published on purpose: a host's tests assert on what
+    /// the account said without draining the slot the host's own frame
+    /// loop drains. Production reads the outbox with [`Self::take_toast`].
     #[must_use]
     pub fn peek_toast(&self) -> Option<&String> {
         self.outbox.toast.as_ref()
@@ -434,9 +437,12 @@ impl PaperAccount {
     }
 
     /// Point the journal at `dir` without acknowledging it or restarting the
-    /// session file — for a host that chooses the folder after construction
-    /// (a test's scratch folder, a capture run's). A trader's own pick goes
-    /// through [`Self::set_trades_dir`], which says so.
+    /// session file.
+    ///
+    /// Test support, published on purpose: a host's tests aim a freshly built
+    /// account at a scratch folder, and an acknowledgement there would sit in
+    /// the one toast slot the test is about to assert on. A trader's own pick
+    /// goes through [`Self::set_trades_dir`], which says so.
     pub fn redirect_history_dir(&mut self, dir: PathBuf) {
         self.dir = dir;
     }
