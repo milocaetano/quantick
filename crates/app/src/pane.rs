@@ -52,6 +52,7 @@ mod footprint;
 mod frame;
 mod gestures;
 mod menus;
+mod quick_range;
 mod strategies;
 mod strategy_badges;
 
@@ -960,17 +961,14 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
-/// What a pane borrows from the window around it for one frame.
-///
-/// All of it is single-instance chrome: there is one toolbox, one preset
-/// store, one appearance and one timezone however many panes are on screen —
-/// and, per tab, one simulator, because one market holds one position.
-/// The input pass takes this by `&mut` because placing a drawing re-arms the
-/// tool; the draw pass takes it by `&`, which is what stops a paint from
-/// arming anything.
+/// Window chrome borrowed by one pane for input and paint. Mutable because a
+/// tool or the tab-level simulator can change during the input pass.
 pub struct PaneChrome<'a> {
+    pub tab: u64,
+    pub side: PaneSide,
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
+    pub drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     /// Raised when a tool whose content is words was just placed, so the
     /// host puts the caret in the object it just made.
     ///
@@ -2633,6 +2631,8 @@ impl ChartPane {
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
         let drawing_scale = price_band.scale;
+        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+        self.handle_quick_range(ui, price_band, history_right, total, magnet, chrome);
         // The price under a right-click, remembered before the menu eats
         // the pointer: the trade section places orders at it.
         if chart.secondary_clicked()
@@ -2701,7 +2701,6 @@ impl ChartPane {
                 }
             }
         }
-        let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
         let drawing_area = price_band.rect;
         let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
             .input(|input| {
@@ -4290,6 +4289,7 @@ impl ChartPane {
         for (index, band) in carved.iter().enumerate() {
             self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
+        self.draw_quick_range(painter, &carved, right, total, chrome);
         self.frame.bands = carved;
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top

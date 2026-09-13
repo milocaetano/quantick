@@ -173,6 +173,33 @@ pub fn bar_size(slots: &[Slot]) -> egui::Vec2 {
     egui::vec2(2.0f32.mul_add(BAR_PAD_X_PX, content + gaps), BAR_HEIGHT_PX)
 }
 
+/// Size of a contextual bar containing one ordinary icon action.
+///
+/// The temporary-range surface uses the same frame and touch target as this
+/// bar, so the two pieces of chart chrome cannot drift apart.
+#[must_use]
+pub(crate) fn single_action_bar_size() -> egui::Vec2 {
+    egui::vec2(
+        2.0f32.mul_add(BAR_PAD_X_PX, TOOLRAIL_ICON.hit),
+        BAR_HEIGHT_PX,
+    )
+}
+
+/// The shared floating context-bar frame.
+pub(crate) fn floating_frame() -> egui::Frame {
+    egui::Frame::none()
+        .fill(theme::CHROME)
+        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
+        .rounding(egui::Rounding::same(CORNER_RADIUS_PX))
+        .shadow(egui::epaint::Shadow {
+            offset: egui::vec2(0.0, 2.0),
+            blur: 12.0,
+            spread: 0.0,
+            color: theme::FLOAT_SHADOW,
+        })
+        .inner_margin(egui::Margin::symmetric(BAR_PAD_X_PX, BAR_PAD_Y_PX))
+}
+
 /// Where the bar opens for an object whose screen bounding box is `bbox`.
 ///
 /// Above the object and aligned to the *left* of its box — not centred.
@@ -582,17 +609,7 @@ pub fn show(
         FADE_SECONDS,
     );
 
-    let frame = egui::Frame::none()
-        .fill(theme::CHROME)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-        .rounding(egui::Rounding::same(CORNER_RADIUS_PX))
-        .shadow(egui::epaint::Shadow {
-            offset: egui::vec2(0.0, 2.0),
-            blur: 12.0,
-            spread: 0.0,
-            color: theme::FLOAT_SHADOW,
-        })
-        .inner_margin(egui::Margin::symmetric(BAR_PAD_X_PX, BAR_PAD_Y_PX));
+    let frame = floating_frame();
 
     egui::Area::new(egui::Id::new("drawing_context_bar"))
         .order(egui::Order::Foreground)
