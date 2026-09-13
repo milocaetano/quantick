@@ -32,24 +32,16 @@
 use std::path::Path;
 
 use eframe::egui;
-use quantick_engine::Side;
 use rust_decimal::Decimal;
 
 use crate::theme;
 
-/// The open position, read-only, as every chrome surface reports it — the
-/// HUD, the dock badge and the status cell all describe the same trade.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PositionSummary {
-    /// Which way the position points.
-    pub side: Side,
-    /// Contracts/units held.
-    pub quantity: Decimal,
-    /// Average entry price.
-    pub avg_price: Decimal,
-    /// Open profit at the current mark; `None` before any mark exists.
-    pub open_points: Option<Decimal>,
-}
+// The spelling the account itself writes into its acknowledgements and its
+// journal moved into `quantick_paper::format`; re-exported so this module stays
+// the one vocabulary every paper surface imports.
+pub(crate) use quantick_paper::format::{
+    PositionSummary, fmt_decimal, fmt_points, fmt_signed_points, position_word, sanitize_symbol,
+};
 
 /// Uppercase section caption — the ledger's group labels and column header.
 pub(crate) fn caption(text: &str) -> egui::RichText {
@@ -90,61 +82,12 @@ pub(crate) fn fmt_duration_ms(ms: i64) -> String {
     }
 }
 
-/// `LONG`/`SHORT` — shared with the HUD so every surface uses one register.
-pub(crate) fn position_word(side: Side) -> &'static str {
-    match side {
-        Side::Buy => "LONG",
-        Side::Sell => "SHORT",
-    }
-}
-
 /// Green gains, red losses, muted zero — shared with the HUD.
 pub(crate) fn points_color(points: Decimal) -> egui::Color32 {
     match points.cmp(&Decimal::ZERO) {
         std::cmp::Ordering::Greater => theme::BUY,
         std::cmp::Ordering::Less => theme::SELL,
         std::cmp::Ordering::Equal => theme::TEXT_MUTED,
-    }
-}
-
-/// Exact value, trailing zeros stripped — prices and quantities.
-pub(crate) fn fmt_decimal(value: Decimal) -> String {
-    value.normalize().to_string()
-}
-
-/// Points rounded to two places for display (the stored value stays exact).
-pub(crate) fn fmt_points(value: Decimal) -> String {
-    value.round_dp(2).normalize().to_string()
-}
-
-/// Signed points: an explicit `+` on gains so a green `12` can never be
-/// misread as a count.
-pub(crate) fn fmt_signed_points(value: Decimal) -> String {
-    if value > Decimal::ZERO {
-        format!("+{}", fmt_points(value))
-    } else {
-        fmt_points(value)
-    }
-}
-
-/// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
-/// recognizable); anything else becomes `_` so a symbol can never traverse
-/// paths.
-pub(crate) fn sanitize_symbol(symbol: &str) -> String {
-    let cleaned: String = symbol
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || "-_.$#".contains(character) {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "_".to_owned()
-    } else {
-        cleaned
     }
 }
 
@@ -165,21 +108,6 @@ pub(crate) fn list_symbol_folders(dir: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn symbols_sanitize_without_losing_venue_spellings() {
-        assert_eq!(sanitize_symbol("WDO$"), "WDO$");
-        assert_eq!(sanitize_symbol("BTCUSDT"), "BTCUSDT");
-        assert_eq!(sanitize_symbol("../evil"), ".._evil");
-        assert_eq!(sanitize_symbol(""), "_");
-    }
-
-    #[test]
-    fn signed_points_always_carry_their_sign() {
-        assert_eq!(fmt_signed_points(Decimal::from(12)), "+12");
-        assert_eq!(fmt_signed_points(Decimal::from(-3)), "-3");
-        assert_eq!(fmt_signed_points(Decimal::ZERO), "0");
-    }
 
     #[test]
     fn durations_format_by_magnitude() {

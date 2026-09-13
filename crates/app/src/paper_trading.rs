@@ -16,9 +16,7 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use quantick_engine::{Side, Trade};
-use quantick_sim::{
-    Bracket, BracketTarget, ClosedTrade, EntryKind, OrderId, OrderIntent, VenueEvent,
-};
+use quantick_sim::{Bracket, BracketTarget, ClosedTrade, EntryKind, OrderId, OrderIntent};
 // The journal's own format, and the command type the sim takes, are named
 // only by the tests that drive one; the writing moved to `paper_account`.
 #[cfg(test)]
@@ -31,10 +29,10 @@ pub(crate) use crate::paper_account::{
     ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings, Leg, PaperControl, side_word,
 };
 // The report's anchor date is formatted only under test.
-#[cfg(test)]
-use crate::paper_calendar::civil_utc;
 use crate::paper_chrome::{PositionSummary, fmt_decimal};
 use crate::theme;
+#[cfg(test)]
+use quantick_paper::civil::civil_utc;
 
 // The report and the ledger moved to `paper_report`; these names did not.
 // The control plane, the dock and the harness hooks all reach them through
@@ -842,7 +840,7 @@ impl PaperTrading {
         let Some(rungs) = self.orders_demo else {
             return;
         };
-        let Some(mark) = self.account.venue.mark_price() else {
+        let Some(mark) = self.account.venue().mark_price() else {
             return;
         };
         let tick = Decimal::ONE
@@ -905,12 +903,12 @@ impl PaperTrading {
                 };
                 let events = self
                     .account
-                    .venue
+                    .venue_mut()
                     .submit(OrderIntent::limit(side, quantity, price).with_bracket(bracket));
                 self.account.handle_events(events);
             }
         }
-        if self.account.venue.working_orders().is_empty() {
+        if self.account.venue().working_orders().is_empty() {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -928,27 +926,15 @@ impl PaperTrading {
     /// restart): pending orders are swept and the position flattens at the
     /// last mark, labeled `reset` — never silently.
     pub fn on_timeline_reset(&mut self) {
-        let had_position = self.account.venue.position().is_some();
-        let had_orders =
-            !self.account.venue.working_orders().is_empty() || self.account.venue.in_flight() > 0;
-        let events = self.account.venue.reset();
-        let mut all_saved = true;
-        for event in &events {
-            if let VenueEvent::Closed(trade) = event {
-                all_saved &= self.account.journal(&trade.clone());
-            }
-        }
-        // A reset ends the tape session, so it ends the file session too:
-        // the next close opens a fresh file (same venue stamp lands as
-        // `.rerun-N`). Without this, replaying the same recording again
-        // without leaving replay appended run 2 into run 1's file.
-        self.account.journal_path = None;
+        // The account sweeps, flattens, journals and forgets the session
+        // file and the bot buffer; what is left here is the pointer state
+        // and the sentence.
+        let reset = self.account.reset_timeline();
         self.account.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
-        // The instances disarm on the same reset; events from the torn-down
-        // timeline must not leak into their next life.
-        self.account.bot_events.clear();
+        let (had_position, had_orders, all_saved) =
+            (reset.had_position, reset.had_orders, reset.all_saved);
         if had_position && all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),

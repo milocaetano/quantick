@@ -22,6 +22,9 @@ quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-orderflow = { path = "../orderflow" }
+# The paper account: orders, sizing, the journal and the report numbers. This
+# crate keeps the ticket that draws it and the host wiring around it.
+quantick-paper = { path = "../paper" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }

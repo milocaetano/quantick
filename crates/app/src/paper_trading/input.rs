@@ -50,7 +50,7 @@ impl PaperTrading {
         // nothing — the handles would stay unreachable on exactly the pane
         // the capture was pointed at.
         self.account
-            .venue
+            .venue()
             .working_orders()
             .iter()
             .filter_map(|order| order.price)
@@ -160,7 +160,7 @@ impl PaperTrading {
                     self.account.amend_rung(order, index, leg, None);
                 }
                 PaperControl::CancelOrder(id) => {
-                    let events = self.account.venue.cancel(id);
+                    let events = self.account.venue_mut().cancel(id);
                     self.account.handle_events(events);
                 }
                 PaperControl::Handle { owner, leg } => {
@@ -243,7 +243,7 @@ impl PaperTrading {
                         self.account.amend_leg(owner, leg, Some(price));
                     }
                     PaperDrag::Order(id) => {
-                        let events = self.account.venue.amend_price(id, price);
+                        let events = self.account.venue_mut().amend_price(id, price);
                         self.account.handle_events(events);
                     }
                     PaperDrag::Rung { order, index, leg } => {
@@ -278,7 +278,7 @@ impl PaperTrading {
             (y >= chart.top() && y <= chart.bottom())
                 .then(|| clamp_tag_center(y, chart.top(), chart.bottom()))
         };
-        for order in self.account.venue.working_orders().iter().rev() {
+        for order in self.account.venue().working_orders().iter().rev() {
             // A tag that paints no ✕ offers none: the press reads the very
             // value the paint read, rather than recomputing a predicate
             // from a different pointer and a different rect.
@@ -347,7 +347,7 @@ impl PaperTrading {
                 }
             }
         }
-        let position = self.account.venue.position()?;
+        let position = self.account.venue().position()?;
         let entry_center = visible_center(position.avg_price)?;
         if close_button_rect(tag_right, entry_center).contains(pointer) {
             return Some(PaperControl::ClosePosition);
@@ -412,7 +412,7 @@ impl PaperTrading {
         let Some(scale) = input.scale else {
             return;
         };
-        for order in self.account.venue.working_orders() {
+        for order in self.account.venue().working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -446,7 +446,7 @@ impl PaperTrading {
     /// Turn a pending entry-line press into the leg the pull chose, once it
     /// travelled far enough to mean it.
     fn decide_pending_leg(&mut self, pointer_y: f32, scale: &PriceScale) {
-        let Some(position) = self.account.venue.position() else {
+        let Some(position) = self.account.venue().position() else {
             self.drag = PaperDrag::Blocked;
             return;
         };
@@ -528,7 +528,7 @@ impl PaperTrading {
             let y = scale.y(price.to_f64().unwrap_or_default());
             (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
         };
-        for order in self.account.venue.working_orders().iter().rev() {
+        for order in self.account.venue().working_orders().iter().rev() {
             if let Some(level) = order.price
                 && near(level)
             {
@@ -540,7 +540,7 @@ impl PaperTrading {
         // template and this order carries a copy of it.
         for entry in self
             .account
-            .venue
+            .venue()
             .working_orders()
             .iter()
             .rev()
@@ -576,7 +576,7 @@ impl PaperTrading {
                 }
             }
         }
-        let position = self.account.venue.position()?;
+        let position = self.account.venue().position()?;
         if near(position.avg_price) {
             let creatable = position.stop_loss.is_none() || position.take_profit.is_none();
             return Some(if creatable {

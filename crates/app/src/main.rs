@@ -10,6 +10,9 @@ use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
 use quantick_feed as feed;
+// The kept exit ladders moved into the paper account's crate; the name stays
+// at the crate root so every `crate::order_strategies::…` still resolves.
+use quantick_paper::order_strategies;
 
 use crate::state::BarSpec;
 
@@ -55,7 +58,6 @@ mod live_strip;
 mod loading;
 mod metrics;
 mod operability;
-mod order_strategies;
 mod orderflow_render;
 mod orderflow_view;
 mod orderflow_worker;

@@ -60,7 +60,7 @@ impl PaperTrading {
     /// beside it is where a bad one is refused.
     #[must_use]
     pub(crate) fn ruler_step(&self) -> Decimal {
-        if let Some(step) = self.ruler_steps.get(&self.account.symbol)
+        if let Some(step) = self.ruler_steps.get(self.account.symbol())
             && *step > Decimal::ZERO
         {
             return *step;
@@ -73,10 +73,11 @@ impl PaperTrading {
     pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
         match step.filter(|value| *value > Decimal::ZERO) {
             Some(value) => {
-                self.ruler_steps.insert(self.account.symbol.clone(), value);
+                self.ruler_steps
+                    .insert(self.account.symbol().to_owned(), value);
             }
             None => {
-                self.ruler_steps.remove(&self.account.symbol);
+                self.ruler_steps.remove(self.account.symbol());
             }
         }
     }
@@ -91,7 +92,7 @@ impl PaperTrading {
         self.ruler_steps = steps;
         self.ruler_step_text = self
             .ruler_steps
-            .get(&self.account.symbol)
+            .get(self.account.symbol())
             .map(|step| fmt_decimal(*step))
             .unwrap_or_default();
     }

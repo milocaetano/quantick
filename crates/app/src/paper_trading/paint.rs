@@ -61,7 +61,7 @@ impl PaperTrading {
             pointer,
         };
 
-        for order in self.account.venue.working_orders() {
+        for order in self.account.venue().working_orders() {
             let Some(level) = order.price else { continue };
             let dragged = self.drag == PaperDrag::Order(order.id);
             let price = if dragged {
@@ -155,7 +155,7 @@ impl PaperTrading {
         // written inside the block below, read by the bracket paint after
         // it, because the tag's rect is only known once it is drawn.
         let mut position_reveal = false;
-        if let Some(position) = self.account.venue.position().cloned() {
+        if let Some(position) = self.account.venue().position().cloned() {
             let color = theme::side_color(position.side);
             let entry_y = ctx.scale.y(position.avg_price.to_f64().unwrap_or_default());
             if ctx.in_range(entry_y) {
@@ -168,7 +168,7 @@ impl PaperTrading {
                 );
                 let points = self
                     .account
-                    .venue
+                    .venue()
                     .mark_price()
                     .map(|mark| position.open_points(mark))
                     .map(|open| {
