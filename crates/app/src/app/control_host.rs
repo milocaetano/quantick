@@ -58,6 +58,17 @@ pub(super) struct ControlState {
     pub(super) pending_control_mark: Option<String>,
 }
 
+/// The temporary range's visible action button, if the current frame has laid
+/// it out. A free read port keeps this extension out of the protected
+/// `QuantickApp` implementation root.
+pub(crate) fn control_quick_range(
+    app: &QuantickApp,
+) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
+    app.surfaces
+        .drawing_chrome
+        .quick_range_control(app.tabs[app.active_tab].id)
+}
+
 impl QuantickApp {
     /// The active tab beside the config it reads.
     ///

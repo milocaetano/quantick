@@ -1149,6 +1149,7 @@ fn drive_navigation(
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = crate::chart_layers::LayerActions::default();
+    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),
@@ -1160,8 +1161,11 @@ fn drive_navigation(
     let _ = ctx.run(input, |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut chrome = PaneChrome {
+                tab: 1,
+                side: PaneSide::Flow,
                 toolrail: &mut toolrail,
                 presets: &presets,
+                drawing_chrome: &mut drawing_chrome,
                 begin_text_edit: &mut begin_text_edit,
                 style: &style,
                 tz: crate::timezone::TzOffset::default(),
@@ -1201,9 +1205,13 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = crate::chart_layers::LayerActions::default();
+    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     body(&mut PaneChrome {
+        tab: 1,
+        side: PaneSide::Flow,
         toolrail: &mut toolrail,
         presets: &presets,
+        drawing_chrome: &mut drawing_chrome,
         begin_text_edit: &mut begin_text_edit,
         style: &style,
         tz: crate::timezone::TzOffset::default(),
@@ -1515,6 +1523,29 @@ fn right_click_menu(pane: &mut ChartPane, ctx: &egui::Context, pos: egui::Pos2) 
     }
     // The frame the open menu is laid out on.
     let _ = drive_navigation(pane, ctx, TEST_PLOT, Vec::new());
+}
+
+/// The lane divider is last frame's: after a layout change it can sit left of
+/// the price band's new edge. A right-drag clamps its pointer between the two,
+/// and an inverted clamp is a panic, not an empty range.
+#[test]
+fn a_right_drag_survives_a_stale_divider_left_of_the_band() {
+    let ctx = egui::Context::default();
+    let mut pane = pane_with_timed_bars(200);
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    let areas = test_areas(&pane, TEST_PLOT);
+    pane.frame.lane_divider_x = Some(areas.chart.left() - 40.0);
+    let pos = areas.chart.center();
+    let events = vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        },
+    ];
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, events);
 }
 
 /// Each axis carries the switch for the mark it wears, because that is

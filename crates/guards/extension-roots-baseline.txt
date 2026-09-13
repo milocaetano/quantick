@@ -6,6 +6,9 @@
 # Synchronized into campaign #367 from main d8de9a1b (X2): measured over the
 # campaign's split and written by `--tighten`, ChartState 426 + 159 and
 # QuantickApp 10239 + 2 -- the same growth #306 recorded on main, and no more.
-!budget 10826
+# Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
+# by 1, #433's net change to the root's measured lines, as on main
+# (10242 -> 10241 there).
+!budget 10825
 ChartState 585
-QuantickApp 10241
+QuantickApp 10240

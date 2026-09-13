@@ -28,6 +28,7 @@ use crate::toolrail::ToolRail;
 pub struct CanvasChrome<'a> {
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a crate::drawings::presets::PresetStore,
+    pub drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     /// See [`PaneChrome::begin_text_edit`].
     pub begin_text_edit: &'a mut bool,
     pub style: &'a ChartStyle,
@@ -258,8 +259,11 @@ impl Tab {
                 focused,
             );
             let mut chrome = PaneChrome {
+                tab: self.id,
+                side: PaneSide::Flow,
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
+                drawing_chrome: chrome.drawing_chrome,
                 begin_text_edit: chrome.begin_text_edit,
                 style: chrome.style,
                 tz: chrome.tz,
@@ -288,6 +292,7 @@ impl Tab {
                 .map(|(slot, (pane, chart))| (pane, chart, slot + 1));
             let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
             for (pane, rect, side) in context.chain(flow) {
+                chrome.side = PaneSide::from_index(side);
                 chrome.paper_takes_input = side == trading_pane;
                 // The HUD is one card and follows focus, so it does not
                 // flicker from pane to pane as the hand crosses them.

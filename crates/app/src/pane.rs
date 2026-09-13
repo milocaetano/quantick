@@ -73,6 +73,7 @@ mod layers;
 mod menus;
 mod pointer_hit;
 mod primary_button;
+mod quick_range;
 mod series;
 mod shared_marks;
 mod strategies;
@@ -443,17 +444,14 @@ fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
-/// What a pane borrows from the window around it for one frame.
-///
-/// All of it is single-instance chrome: there is one toolbox, one preset
-/// store, one appearance and one timezone however many panes are on screen —
-/// and, per tab, one simulator, because one market holds one position.
-/// The input pass takes this by `&mut` because placing a drawing re-arms the
-/// tool; the draw pass takes it by `&`, which is what stops a paint from
-/// arming anything.
+/// Window chrome borrowed by one pane for input and paint. Mutable because a
+/// tool or the tab-level simulator can change during the input pass.
 pub struct PaneChrome<'a> {
+    pub tab: u64,
+    pub side: PaneSide,
     pub toolrail: &'a mut ToolRail,
     pub presets: &'a drawings::presets::PresetStore,
+    pub drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
     /// Raised when a tool whose content is words was just placed, so the
     /// host puts the caret in the object it just made.
     ///
@@ -979,8 +977,9 @@ impl ChartPane {
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
-        self.handle_context_menu(&chart, &areas, &bands, chrome);
         let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
+        self.handle_quick_range(ui, price_band, history_right, total, magnet, chrome);
+        self.handle_context_menu(&chart, &areas, &bands, chrome);
         let drawing_area = price_band.rect;
         let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
             .input(|input| {
@@ -1046,8 +1045,18 @@ impl ChartPane {
         // across the band is not one of them — the tape does not pan, it is
         // pinned to the live edge, so a drag there had no second meaning to
         // protect.
+        //
+        // Primary only: egui's `dragged()` counts every button, and the
+        // secondary drag is the quick range's (`pane/quick_range.rs`) — a pan
+        // under it keeps the same bar beneath the pointer and collapses the
+        // range onto its first anchor. The middle button pans below, in its
+        // own block; answering it here as well doubled its speed.
         let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
-        if total > 0 && chart.dragged() && !grabbing_divider && primary_free {
+        if total > 0
+            && chart.dragged_by(egui::PointerButton::Primary)
+            && !grabbing_divider
+            && primary_free
+        {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto
