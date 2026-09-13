@@ -1,4 +1,4 @@
-# A5: generated artifacts, dumped from the branch binary at 23f0f1df and compared byte for byte (cmp) with the committed files
+# A5: generated artifacts, dumped from the branch binary built from the review-repair tree (base c29ce130) and compared byte for byte (cmp) with the committed files
 quantick-app --dump-capability-inventory vs docs/control-plane/capability-inventory.md: identical (sha256 ddf436e1112d2bbe)
 quantick-app --dump-retry-matrix vs docs/control-plane/retry-matrix.md: identical (sha256 dc4c2435ea3990b6)
 quantick-app --dump-ui-behaviour-matrix vs docs/control-plane/ui-behaviour-matrix.md: identical (sha256 ebbed6e4019f9d26)

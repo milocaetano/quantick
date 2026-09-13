@@ -23,9 +23,11 @@ use quantick_control::{
     },
     wire::{ModuleRevision, RequestEnvelope, WireU64},
 };
-use quantick_control_host::admission::{
-    self, CompiledCapabilitySchemas, admit_capability, admit_payload, admit_scopes,
-    register_capability,
+use quantick_control_host::{
+    admission::{
+        self, CompiledCapabilitySchemas, TierPolicy, admit_capability, register_capability,
+    },
+    catalogue,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -238,7 +240,7 @@ pub(crate) struct DescribeResult {
     pub snapshot_scopes: Vec<SnapshotScopeDescriptor>,
 }
 
-pub(crate) use quantick_control_host::admission::SnapshotScopeDescriptor;
+pub(crate) use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),
@@ -835,7 +837,7 @@ impl ObserverContract {
         })?;
 
         let (scope_permissions, snapshot_scopes) =
-            admission::snapshot_scope_catalogue(projections.inner(), &permissions)?;
+            catalogue::snapshot_scope_catalogue(projections.inner(), &permissions)?;
 
         let mut handlers: BTreeMap<(CapabilityId, u32), PrepareHandler> = BTreeMap::new();
         let mut input_validators = CompiledCapabilitySchemas::new();
@@ -1059,7 +1061,7 @@ impl ObserverContract {
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
     /// here or in whatever asked.
     pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
-        admission::readable_scopes(&self.snapshot_scopes, grant)
+        catalogue::readable_scopes(&self.snapshot_scopes, grant)
     }
 
     /// One registered snapshot scope, by id — what the retry matrix checks a
@@ -1106,18 +1108,19 @@ impl ObserverContract {
         envelope: RequestEnvelope,
         effective_scopes: &BTreeSet<PermissionId>,
     ) -> Result<PreparedRequest, ControlError> {
-        let descriptor = admit_capability(&self.registry, &envelope, effective_scopes)?;
+        let admitted = admit_capability(&self.registry, &envelope, effective_scopes)?;
         let action = self
             .actions
-            .lookup(descriptor.id.as_str(), descriptor.version);
+            .lookup(admitted.id().as_str(), admitted.version());
         // An action validates against its own compiled schema — the same
         // one the hotkey's call passes — so the two paths cannot drift.
-        admit_payload(
-            descriptor,
+        let admitted = admitted.admit_payload(
             &envelope,
             action.as_ref().map(|action| &action.input),
             &self.input_validators,
+            TierPolicy::STRICT,
         )?;
+        let descriptor = admitted.descriptor();
         if action.is_some() {
             let dispatch = PreparedDispatch::Action(PreparedAction {
                 capability_id: descriptor.id.clone(),
@@ -1146,7 +1149,7 @@ impl ObserverContract {
             dynamic_permissions,
         } = handler(self, &envelope.payload)?;
 
-        admit_scopes(&dynamic_permissions, effective_scopes)?;
+        admitted.admit_scopes(&dynamic_permissions, effective_scopes)?;
 
         let mut required_permissions = descriptor.required_permissions.clone();
         required_permissions.extend(dynamic_permissions);

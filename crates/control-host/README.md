@@ -8,7 +8,10 @@ that needs no UI:
   state its projectors read, with scope validation, revision tracking and the
   capture budget;
 - `admission` — capability registration with compiled schemas, and the fixed
-  order of admission checks every request passes before a handler runs;
+  order of admission checks every request passes before a handler runs, each
+  step returning the only value the next accepts;
+- `catalogue` — the snapshot scopes a projection registry declares, as the
+  contract publishes them;
 - `idempotency` — the per-connection store that replays a keyed call's
   recorded outcome instead of executing it twice;
 - `journal` — the bounded semantic event journal and its change signal;

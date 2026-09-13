@@ -142,9 +142,21 @@ the full round would have asked is an assumption below marked *wanted to ask*.
 - **S12** — **Admission is proved inside its own crate.** Found by the shape
   pass: the moved checks were covered only by `app`'s tests, so a change to
   them could not be tested without building `app` — against R11.
-  `crates/control-host/tests/admission_contract.rs` (9 tests over
-  `quantick_control::fake`'s reference registry) proves the order and every
-  refusal from outside the crate.
+  `crates/control-host/tests/admission_contract.rs` (12 tests over
+  `quantick_control::fake`'s reference registry, docked through
+  `register_capability` itself) proves the order and every refusal from
+  outside the crate; `catalogue.rs` and `projection.rs` gained the refusal
+  tests below `app` the AI review asked for.
+- **S13** — **AI-review repairs, behaviour unchanged.** The admission checks
+  became a typestate — `admit_capability` returns the only value
+  `admit_payload` accepts, which returns the only value that dispatches and
+  runs `admit_scopes` — so a second host cannot skip or reorder a check. The
+  dry-run / expected-revision refusal is now a `TierPolicy` the host passes;
+  `app` passes `TierPolicy::STRICT`, today's behaviour, so the refusal and its
+  message are unchanged. The snapshot-scope catalogue moved from `admission.rs`
+  to its own `catalogue.rs`. The caller still owns the registry and the three
+  tables: moving them into one struct would force edits to `contract.rs`'s own
+  unit tests, which reach those fields, and R4 keeps those tests unchanged.
 - **S11** — **`contract.rs`'s own test module is untouched.** The tests reach
   `json!` through `use super::*`; production no longer uses it, so the
   import is kept under `#[cfg(test)]` rather than editing the tests.

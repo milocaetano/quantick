@@ -557,6 +557,49 @@ mod tests {
     }
 
     #[test]
+    fn registration_refuses_what_the_contract_could_not_publish() {
+        let mut registry = registry(1);
+        let register = |registry: &mut ProjectionRegistry<Host>,
+                        scope: &str,
+                        module: &str,
+                        version,
+                        permissions: &[&str]| {
+            registry.register_scope(
+                SnapshotScopeId::new(scope).unwrap(),
+                ModuleId::new(module).unwrap(),
+                version,
+                "Price",
+                "The price the host holds.",
+                permissions,
+                |host: &Host, _| PriceDto { price: host.price },
+            )
+        };
+
+        assert_eq!(
+            register(&mut registry, "quote.price", "quote", 1, &["observe"]),
+            Err(ProjectionRegistryError::DuplicateScope(
+                SnapshotScopeId::new("quote.price").unwrap()
+            ))
+        );
+        assert_eq!(
+            register(&mut registry, "depth.price", "depth", 1, &["observe"]),
+            Err(ProjectionRegistryError::UnknownModule(
+                ModuleId::new("depth").unwrap()
+            ))
+        );
+        for (scope, version, permissions) in [
+            ("quote.zero", 0, &["observe"][..]),
+            ("depth.price", 1, &["observe"][..]),
+            ("quote.none", 1, &[][..]),
+        ] {
+            assert!(matches!(
+                register(&mut registry, scope, "quote", version, permissions),
+                Err(ProjectionRegistryError::InvalidDescriptor(_))
+            ));
+        }
+    }
+
+    #[test]
     fn a_module_revision_moves_only_when_the_host_state_does() {
         let mut registry = registry(1);
         let revision = |registry: &mut ProjectionRegistry<Host>, price| {
