@@ -692,7 +692,19 @@ impl ControlAccess {
     }
 
     pub fn begin_frame(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
-        let frame_started = Instant::now();
+        self.begin_frame_since(app, ctx, Instant::now());
+    }
+
+    /// [`Self::begin_frame`], timed from `frame_started` rather than from the
+    /// call. Production passes the call's own instant; the test seam passes
+    /// one far enough back that the frame's request budget is already spent,
+    /// which is what a loaded machine's frame prelude does.
+    fn begin_frame_since(
+        &mut self,
+        app: &mut QuantickApp,
+        ctx: &eframe::egui::Context,
+        frame_started: Instant,
+    ) {
         self.poll_lifecycle();
         let statuses_have_more = self.poll_statuses(frame_started);
         let (requests, generation) = match &self.state {
@@ -1168,6 +1180,22 @@ impl ControlAccess {
             ..GatewayOptions::default()
         };
         self.request_enable(ctx, options);
+    }
+
+    /// One frame whose request budget was spent before the frame service ran,
+    /// as a loaded machine's frame prelude spends it. Everything the frame
+    /// does after that is the production path, unchanged.
+    #[cfg(test)]
+    pub(crate) fn begin_frame_over_budget_for_test(
+        &mut self,
+        app: &mut QuantickApp,
+        ctx: &eframe::egui::Context,
+    ) {
+        let spent = Duration::from_micros(CONTROL_UI_BUDGET_US + 1);
+        let started = Instant::now()
+            .checked_sub(spent)
+            .expect("the monotonic clock reaches back one frame budget");
+        self.begin_frame_since(app, ctx, started);
     }
 
     #[cfg(test)]
