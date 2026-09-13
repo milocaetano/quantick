@@ -82,8 +82,8 @@ const CHANNEL_PROPERTY: &str = "channel";
 /// Every first-generation observer capability is registered at version 1.
 /// The named tools stay on it, since the schemas they embed are the v1
 /// documents. `quantick_invoke` falls back to it only for an ID the
-/// instance's registry does not list, or when that registry cannot be read,
-/// so the call itself meets the instance's refusal exactly as before.
+/// instance's registry does not list, so the call itself meets the
+/// instance's `control.capability_unknown`.
 const FIRST_CAPABILITY_VERSION: u32 = 1;
 
 const INSTANCE_ID_PROPERTY: &str = "instance_id";
@@ -519,16 +519,17 @@ pub fn call(
                 // D20: an omitted version is the newest the instance
                 // registers, read from its own registry — never a table here.
                 // The call then goes to the instance that answered, so the
-                // version and the answer come from one registry. A describe
-                // that fails leaves the first version, and the call itself
-                // meets and reports whatever stopped it.
+                // version and the answer come from one registry. A refused
+                // describe is the caller's answer, code and `retryable` as
+                // given: guessing version 1 instead would, for `layout.*`,
+                // apply the change and then report it unavailable.
                 None => match described(link, target.as_ref()) {
                     Ok((answered_by, document)) => {
                         target = Some(answered_by);
                         newest_registered_version(&document, &capability_id)
                             .unwrap_or(FIRST_CAPABILITY_VERSION)
                     }
-                    Err(_) => FIRST_CAPABILITY_VERSION,
+                    Err(refused) => return Ok(refused),
                 },
                 Some(value) => value
                     .as_u64()

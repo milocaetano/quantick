@@ -461,7 +461,9 @@ unavailable through `invoke`.
 
 An omitted version resolves to the newest version the instance registers for
 that ID, read from its `control.describe` registry at call time; the result
-names the `capability_version` that answered. An explicit version is sent
+names the `capability_version` that answered. A refused `control.describe`
+is itself the answer, with its code and `retryable` flag unchanged; no
+version is guessed and nothing is invoked. An explicit version is sent
 unchanged, and an ID the instance does not register is refused as unknown
 either way. Clients that depend on one version's shape pass it explicitly.
 
