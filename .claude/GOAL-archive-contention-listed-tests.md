@@ -60,9 +60,15 @@ Campaign child of #367 (Q10). Base: `campaign/lean-a-plus`. Issue: #418.
   ID is released) is outside D2's evidence-path authorization; #411 is fixed at
   the test layer under D3 and the product ordering is raised as a
   `human_decision`. Safe: no product behaviour changes without a decision.
-- **S3** — A `#[cfg(test)]` seam in `control/gateway.rs` that runs one frame
-  whose budget is already spent is part of the evidence regression test, not a
-  production change. Safe: compiled into the test build only.
+- **S3** — The evidence regression test needs one frame whose budget is
+  already spent. That frame is `begin_frame`'s, which lives in
+  `control/gateway.rs`, so the seam goes there: a `#[cfg(test)]`
+  `begin_frame_over_budget_for_test`, plus a production refactor that splits
+  `begin_frame` into a private `begin_frame_since(frame_started)`.
+  `begin_frame` calls it with `Instant::now()`, so the frame does identical
+  work. That refactor is production code outside the owned file list (see
+  G5). Safe to assume rather than ask: it changes no behaviour, and D2
+  requires "a real-gateway regression test that forces the interleaving".
 
 - **S4** — A ninth test with #415's exact mechanism,
   `an_operator_detaching_its_own_slot_leaves_the_traders_slot_of_the_same_number`
@@ -105,6 +111,19 @@ Campaign child of #367 (Q10). Base: `campaign/lean-a-plus`. Issue: #418.
   Blocker/Should-fix resolved or deferred in the PR body; `ai-review` complete
   with zero unresolved threads.
 - **G4** — Final-head CI green.
+- **G5** — Write scope (the coordinator's prompt, *Worktree*): write only in
+  this worktree. The files this child owns are the control-plane test
+  modules under `crates/app/src/app/tests/`, `screenshot_evidence_tests.rs`
+  and, because D2 found a product race, `control/evidence*` and
+  `gateway/screenshot.rs`. `crates/mcp/*` belongs to Q11, and
+  `tools/ci/contention.sh` is not committed (it lands with #414). Edits to
+  the shared `tests/mod.rs` are avoided unless indispensable, and said so.
+  *Evidence:* the diff's file list. `mod.rs` holds only the park-wait
+  helper, which `capture_with_screenshot` needs; the PR body says why.
+  Neither `crates/mcp` nor `tools/ci` is touched. One file is outside the
+  owned list: `control/gateway.rs` (the `begin_frame_since` split and the
+  test seam, S3), justified under D2 and raised in the handoff for the
+  coordinator to accept or send back. No open campaign PR touches it.
 
 ## Closing steps
 
