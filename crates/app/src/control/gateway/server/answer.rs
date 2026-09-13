@@ -15,17 +15,17 @@ use super::ConnectionSlots;
 
 /// Test build only: called on the answering thread once an answer that
 /// released a request ID is written, with that ID and whether it was still
-/// in flight when the frame went out (it never should be). A test holds the
-/// thread here, which is where a preempted thread used to sit with the ID
-/// still in flight after its client had read the answer (#425).
+/// in flight just before the frame was written (it never should be). A test
+/// holds the thread here, which is where a preempted thread used to sit with
+/// the ID still in flight after its client had read the answer (#425).
 #[cfg(test)]
 pub(crate) type AnswerWritten = Arc<dyn Fn(&RequestId, bool) + Send + Sync>;
 
 /// A request ID this connection holds in flight (contract §5.2): a duplicate
 /// is refused for as long as this lives. The one way to release it with an
-/// answer is [`answer_and_release`]; dropped unanswered (a closed
-/// connection, a worker that could not start) it releases the ID all the
-/// same, so no path can leave an ID held for the rest of the connection.
+/// answer is [`answer_and_release`]; dropped unanswered (a wait whose
+/// connection closed) it releases the ID all the same, so no path can leave
+/// an ID held for the rest of the connection.
 pub(super) struct InFlightId {
     slots: Arc<ConnectionSlots>,
     request_id: RequestId,
@@ -38,6 +38,13 @@ impl InFlightId {
             slots: Arc::clone(slots),
             request_id: request_id.clone(),
         }
+    }
+
+    /// Take the ID out of a hand-over slot, if nobody took it yet.
+    pub(super) fn take(slot: &Mutex<Option<Self>>) -> Option<Self> {
+        slot.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 }
 
@@ -97,14 +104,14 @@ pub(super) fn send_response(
     write_answer(writer, codec, response, || {}, || {});
 }
 
-/// `release` runs under the writer lock before the frame is written;
-/// `written` runs under the same lock once it has been.
+/// `release` runs under the writer lock, then `before_write`, then the
+/// frame is written, still under the lock.
 fn write_answer(
     writer: &Arc<Mutex<TcpStream>>,
     codec: &BoundedCodec,
     mut response: ResponseEnvelope,
     release: impl FnOnce(),
-    written: impl FnOnce(),
+    before_write: impl FnOnce(),
 ) {
     let frame = match codec.encode(FrameRole::Response, &response) {
         Ok(frame) => Some(frame),
@@ -121,6 +128,7 @@ fn write_answer(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     release();
+    before_write();
     // An answer not even the refusal can encode writes nothing; its ID is
     // released all the same, since no answer will ever carry it. A write
     // that fails part-way has already put a truncated frame on the wire:
@@ -132,5 +140,4 @@ fn write_answer(
     {
         let _ = stream.shutdown(Shutdown::Both);
     }
-    written();
 }

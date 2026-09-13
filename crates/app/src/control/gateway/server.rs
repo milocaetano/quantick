@@ -1048,6 +1048,10 @@ fn dispatch_prepared(
 
     let envelope = prepared.envelope.clone();
     let in_flight = in_flight.unwrap_or_else(|| InFlightId::track(slots, &envelope.request_id));
+    // Handed over through a slot the worker takes it from, so a worker that
+    // cannot start leaves it here, to be released with the refusal.
+    let handoff = Arc::new(Mutex::new(Some(in_flight)));
+    let worker_in_flight = Arc::clone(&handoff);
     let (response_tx, response_rx) = bounded(1);
     let deadline = Instant::now() + authority.options.request_timeout;
     let response_writer = Arc::clone(writer);
@@ -1089,7 +1093,8 @@ fn dispatch_prepared(
             if let Some(ticket) = response_ticket.as_ref() {
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
-            answer_and_release(&response_writer, &response_codec, response, Some(in_flight));
+            let in_flight = InFlightId::take(&worker_in_flight);
+            answer_and_release(&response_writer, &response_codec, response, in_flight);
             // Answer out: shared slots back now, ours after the wait below.
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
@@ -1104,11 +1109,9 @@ fn dispatch_prepared(
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
-        // The closure, and the `InFlightId` it owned, are gone: the ID is
-        // already released.
         slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        send_response(
+        answer_and_release(
             writer,
             codec,
             failure_response(
@@ -1119,6 +1122,7 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
+            InFlightId::take(&handoff),
         );
         return;
     }

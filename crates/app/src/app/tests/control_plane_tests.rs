@@ -2405,7 +2405,9 @@ fn gateway_rejects_a_duplicate_request_id_while_the_first_is_in_flight() {
         response_error(&rejected).code.as_str(),
         codes::INVALID_REQUEST
     );
-    run_frame(&mut app, &ctx);
+    // Frames serve the first; how many that takes is the frame budget's
+    // business (the #364 class, as in #430).
+    drain_gateway_requests(&mut app, &ctx);
     let served = client.read().unwrap();
     assert_eq!(served.request_id, first);
     assert!(matches!(
@@ -2753,10 +2755,10 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
 
 /// #425: an answer releases its request ID before it is written, so a client
 /// that has read the answer may reuse the ID at once. The gateway reports
-/// whether the ID was still in flight when the answer's frame went out, and
-/// the thread that wrote it is held right after the write, which is where a
-/// preempted thread used to sit with the ID still in flight: the reuse sent
-/// the moment the answer is read must still be admitted.
+/// whether the ID was still in flight just before the answer's frame was
+/// written, and the thread that wrote it is held right after the write,
+/// which is where a preempted thread used to sit with the ID still in
+/// flight: the reuse sent the moment the answer is read must be admitted.
 #[test]
 fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
     use std::sync::{
