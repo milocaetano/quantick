@@ -459,6 +459,12 @@ not bypass availability, permission, confirmation, revision, idempotency, or
 audit checks. A capability unavailable to the current profile remains
 unavailable through `invoke`.
 
+An omitted version resolves to the newest version the instance registers for
+that ID, read from its `control.describe` registry at call time; the result
+names the `capability_version` that answered. An explicit version is sent
+unchanged, and an ID the instance does not register is refused as unknown
+either way. Clients that depend on one version's shape pass it explicitly.
+
 High-frequency workflows may earn a named tool after usage evidence. The first
 planned write tools are `quantick_annotate`, `quantick_notify`, and
 `quantick_attach_script`; each still resolves to the same registry entry that
