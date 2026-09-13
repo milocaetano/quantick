@@ -2752,10 +2752,11 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
 }
 
 /// #425: an answer releases its request ID before it is written, so a client
-/// that has read the answer may reuse the ID at once. The thread that wrote
-/// the answer is held right after the write, which is where a preempted
-/// thread used to sit with the ID still in flight, and the reuse sent the
-/// moment the answer is read must still be admitted.
+/// that has read the answer may reuse the ID at once. The gateway reports
+/// whether the ID was still in flight when the answer's frame went out, and
+/// the thread that wrote it is held right after the write, which is where a
+/// preempted thread used to sit with the ID still in flight: the reuse sent
+/// the moment the answer is read must still be admitted.
 #[test]
 fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
     use std::sync::{
@@ -2774,9 +2775,9 @@ fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
         let request_id = request_id.clone();
         // Only the first answer under this ID is held; the reuse's own answer
         // passes through.
-        move |answered: &quantick_control::id::RequestId| {
+        move |answered: &quantick_control::id::RequestId, in_flight_when_written: bool| {
             if *answered == request_id && !held.swap(true, Ordering::AcqRel) {
-                let _ = written_tx.send(());
+                let _ = written_tx.send(in_flight_when_written);
                 let _ = released.recv_timeout(GATEWAY_TEST_WAIT);
             }
         }
@@ -2815,9 +2816,13 @@ fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
         "the first request is answered: {:?}",
         answer.outcome
     );
-    written
+    let in_flight_when_written = written
         .recv_timeout(GATEWAY_TEST_WAIT)
         .expect("the thread that wrote the answer is held after its write");
+    assert!(
+        !in_flight_when_written,
+        "the ID was released before its answer's frame was written"
+    );
 
     // The reuse, sent the moment the answer is read, while that thread is
     // still held.

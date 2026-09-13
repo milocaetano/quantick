@@ -70,7 +70,7 @@ use super::{
 mod answer;
 #[cfg(test)]
 pub(super) use answer::AnswerWritten;
-use answer::{answer_and_release, send_response};
+use answer::{InFlightId, answer_and_release, send_response};
 
 /// Microseconds spent since `started`, saturating.
 ///
@@ -910,6 +910,7 @@ fn connection_session(
         dispatch_prepared(
             prepared,
             ticket,
+            None,
             &connection_id,
             &remote_actor,
             &accepted,
@@ -961,6 +962,7 @@ pub(super) fn activity_status_high_watermark(max_connections: usize) -> usize {
 fn dispatch_prepared(
     prepared: PreparedRequest,
     ticket: Option<IdempotencyTicket>,
+    in_flight: Option<InFlightId>,
     connection_id: &ConnectionId,
     remote_actor: &RemoteActor,
     handshake: &quantick_control::handshake::HandshakeResponse,
@@ -984,9 +986,9 @@ fn dispatch_prepared(
         );
         return;
     }
-    // Every terminal path below answers through `answer_and_release`: a wait
-    // that parked under this ID is in flight until its read is answered or
-    // refused, and the answer releases it before it is written.
+    // A wait that parked under this ID hands its `in_flight` here: the ID
+    // stays in flight until its read is answered or refused, and every
+    // terminal path below releases it with its answer.
     if !try_reserve_in_flight(
         &authority.global_in_flight,
         CONTROL_MAX_BUFFERED_RESPONSE_SLOTS,
@@ -1002,7 +1004,7 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
-            slots,
+            in_flight,
         );
         return;
     }
@@ -1019,7 +1021,7 @@ fn dispatch_prepared(
                 .idempotency
                 .record(ticket, &response, metrics::wall_clock_ms());
         }
-        answer_and_release(writer, codec, response, slots);
+        answer_and_release(writer, codec, response, in_flight);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
         return;
     }
@@ -1039,13 +1041,13 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
-            slots,
+            in_flight,
         );
         return;
     }
 
     let envelope = prepared.envelope.clone();
-    slots.track(&envelope.request_id);
+    let in_flight = in_flight.unwrap_or_else(|| InFlightId::track(slots, &envelope.request_id));
     let (response_tx, response_rx) = bounded(1);
     let deadline = Instant::now() + authority.options.request_timeout;
     let response_writer = Arc::clone(writer);
@@ -1087,7 +1089,7 @@ fn dispatch_prepared(
             if let Some(ticket) = response_ticket.as_ref() {
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
-            answer_and_release(&response_writer, &response_codec, response, &response_slots);
+            answer_and_release(&response_writer, &response_codec, response, Some(in_flight));
             // Answer out: shared slots back now, ours after the wait below.
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
@@ -1102,9 +1104,11 @@ fn dispatch_prepared(
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
+        // The closure, and the `InFlightId` it owned, are gone: the ID is
+        // already released.
         slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        answer_and_release(
+        send_response(
             writer,
             codec,
             failure_response(
@@ -1115,7 +1119,6 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
-            slots,
         );
         return;
     }
@@ -1208,6 +1211,7 @@ fn dispatch_parked_wait(
             to_read(false),
             // `events.wait` declares `Forbidden`, so no key survived `prepare`.
             None,
+            None,
             connection_id,
             remote_actor,
             handshake,
@@ -1270,7 +1274,7 @@ fn dispatch_parked_wait(
         return;
     }
     // Parked: the ID is in flight until the read is answered (contract §5.2).
-    slots.track(&envelope.request_id);
+    let in_flight = InFlightId::track(slots, &envelope.request_id);
     let thread_authority = Arc::clone(authority);
     let thread_connection_id = connection_id.clone();
     let thread_remote_actor = remote_actor.clone();
@@ -1289,10 +1293,8 @@ fn dispatch_parked_wait(
             thread_slots.parked.fetch_sub(1, Ordering::AcqRel);
             match reason {
                 // Nobody is listening: release the ID and write nothing.
-                WakeReason::Disconnected => thread_slots.forget(&thread_envelope.request_id),
-                _ if thread_slots.closed.load(Ordering::Acquire) => {
-                    thread_slots.forget(&thread_envelope.request_id);
-                }
+                WakeReason::Disconnected => drop(in_flight),
+                _ if thread_slots.closed.load(Ordering::Acquire) => drop(in_flight),
                 WakeReason::Shutdown => answer_and_release(
                     &thread_writer,
                     &thread_codec,
@@ -1304,12 +1306,13 @@ fn dispatch_parked_wait(
                             true,
                         ),
                     ),
-                    &thread_slots,
+                    Some(in_flight),
                 ),
                 WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
                     to_read(reason == WakeReason::TimedOut),
                     // Same read, same `Forbidden` declaration.
                     None,
+                    Some(in_flight),
                     &thread_connection_id,
                     &thread_remote_actor,
                     &thread_handshake,
@@ -1321,10 +1324,10 @@ fn dispatch_parked_wait(
             }
         });
     if spawned.is_err() {
-        // The closure and its wake receiver are gone, so the manager's wake
-        // will fail harmlessly; the slots and the ID are released here and
-        // the client hears the refusal instead of waiting for a reply nobody
-        // would write.
+        // The closure, its wake receiver and its `InFlightId` are gone, so
+        // the manager's wake will fail harmlessly and the ID is released;
+        // the slots are released here and the client hears the refusal
+        // instead of waiting for a reply nobody would write.
         authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
         slots.parked.fetch_sub(1, Ordering::AcqRel);
         tracing::warn!(
@@ -1332,7 +1335,7 @@ fn dispatch_parked_wait(
             event_code = "CONTROL_WAIT_THREAD_FAILED",
             "could not create a parked-wait thread"
         );
-        answer_and_release(
+        send_response(
             writer,
             codec,
             failure_response(
@@ -1343,7 +1346,6 @@ fn dispatch_parked_wait(
                     true,
                 ),
             ),
-            slots,
         );
     }
 }

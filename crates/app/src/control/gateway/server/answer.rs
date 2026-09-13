@@ -8,19 +8,46 @@ use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc, Mutex};
 
 use quantick_control::codec::{BoundedCodec, FrameRole};
+use quantick_control::id::RequestId;
 use quantick_control::wire::{ResponseEnvelope, ResponseOutcome};
 
 use super::ConnectionSlots;
 
-/// Test build only: called on the answering thread with the request ID an
-/// answer released, once that answer is written. A test holds the thread
-/// here, which is where a preempted thread used to sit with the ID still in
-/// flight after its client had read the answer (#425).
+/// Test build only: called on the answering thread once an answer that
+/// released a request ID is written, with that ID and whether it was still
+/// in flight when the frame went out (it never should be). A test holds the
+/// thread here, which is where a preempted thread used to sit with the ID
+/// still in flight after its client had read the answer (#425).
 #[cfg(test)]
-pub(crate) type AnswerWritten = Arc<dyn Fn(&quantick_control::id::RequestId) + Send + Sync>;
+pub(crate) type AnswerWritten = Arc<dyn Fn(&RequestId, bool) + Send + Sync>;
 
-/// Write the terminal answer to a request whose ID may be in flight on this
-/// connection, releasing the ID.
+/// A request ID this connection holds in flight (contract §5.2): a duplicate
+/// is refused for as long as this lives. The one way to release it with an
+/// answer is [`answer_and_release`]; dropped unanswered (a closed
+/// connection, a worker that could not start) it releases the ID all the
+/// same, so no path can leave an ID held for the rest of the connection.
+pub(super) struct InFlightId {
+    slots: Arc<ConnectionSlots>,
+    request_id: RequestId,
+}
+
+impl InFlightId {
+    pub(super) fn track(slots: &Arc<ConnectionSlots>, request_id: &RequestId) -> Self {
+        slots.track(request_id);
+        Self {
+            slots: Arc::clone(slots),
+            request_id: request_id.clone(),
+        }
+    }
+}
+
+impl Drop for InFlightId {
+    fn drop(&mut self) {
+        self.slots.forget(&self.request_id);
+    }
+}
+
+/// Write the terminal answer to a request, releasing its ID if it holds one.
 ///
 /// The release happens under the writer lock, immediately before the frame
 /// is written. A client learns that the ID is free only by reading this
@@ -32,31 +59,52 @@ pub(super) fn answer_and_release(
     writer: &Arc<Mutex<TcpStream>>,
     codec: &BoundedCodec,
     response: ResponseEnvelope,
-    slots: &ConnectionSlots,
+    in_flight: Option<InFlightId>,
 ) {
-    let request_id = response.request_id.clone();
-    write_answer(writer, codec, response, || slots.forget(&request_id));
     #[cfg(test)]
-    if let Some(written) = &slots.answer_written {
-        written(&request_id);
+    let observed = in_flight
+        .as_ref()
+        .map(|held| (Arc::clone(&held.slots), held.request_id.clone()));
+    #[cfg(test)]
+    let mut in_flight_when_written = false;
+    write_answer(
+        writer,
+        codec,
+        response,
+        move || drop(in_flight),
+        || {
+            #[cfg(test)]
+            if let Some((slots, request_id)) = &observed {
+                in_flight_when_written = slots.is_in_flight(request_id);
+            }
+        },
+    );
+    #[cfg(test)]
+    if let Some((slots, request_id)) = &observed
+        && let Some(written) = &slots.answer_written
+    {
+        written(request_id, in_flight_when_written);
     }
 }
 
-/// Write an answer that releases nothing: a refusal the reader sends for a
-/// request it never tracked.
+/// Write an answer that releases nothing: a refusal for a request this
+/// connection never tracked.
 pub(super) fn send_response(
     writer: &Arc<Mutex<TcpStream>>,
     codec: &BoundedCodec,
     response: ResponseEnvelope,
 ) {
-    write_answer(writer, codec, response, || {});
+    write_answer(writer, codec, response, || {}, || {});
 }
 
+/// `release` runs under the writer lock before the frame is written;
+/// `written` runs under the same lock once it has been.
 fn write_answer(
     writer: &Arc<Mutex<TcpStream>>,
     codec: &BoundedCodec,
     mut response: ResponseEnvelope,
     release: impl FnOnce(),
+    written: impl FnOnce(),
 ) {
     let frame = match codec.encode(FrameRole::Response, &response) {
         Ok(frame) => Some(frame),
@@ -73,16 +121,16 @@ fn write_answer(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     release();
-    // Not even the refusal encodes: nothing is written, and the ID is
-    // released all the same, since no answer will ever carry it.
-    let Some(frame) = frame else {
-        return;
-    };
-    // A write that fails part-way has already put a truncated frame on the
-    // wire: every byte after it would be read as that frame's payload. The
+    // An answer not even the refusal can encode writes nothing; its ID is
+    // released all the same, since no answer will ever carry it. A write
+    // that fails part-way has already put a truncated frame on the wire:
+    // every byte after it would be read as that frame's payload. The
     // connection cannot be recovered, so it is closed rather than left
     // writing garbage the client will parse as answers.
-    if stream.write_all(&frame).is_err() {
+    if let Some(frame) = frame
+        && stream.write_all(&frame).is_err()
+    {
         let _ = stream.shutdown(Shutdown::Both);
     }
+    written();
 }
