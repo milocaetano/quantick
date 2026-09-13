@@ -1902,6 +1902,16 @@ fn enable_test_gateway_with_limits(
 /// reports a defect where there is only contention.
 const GATEWAY_TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Wait one interval of the connection's request rate limit before a retry.
+/// A retry loop that runs faster than the limit is answered by the limiter's
+/// `control.backpressure` once its burst is spent, and the refusal a test was
+/// waiting out is then mistaken for another. Derived from the limit, so a
+/// lower limit slows the loops rather than breaking them.
+fn pause_one_request_interval() {
+    let per_second = quantick_control::limits::CONTROL_CLIENT_RATE_PER_SECOND;
+    std::thread::sleep(std::time::Duration::from_secs(1) / per_second);
+}
+
 fn wait_for_test_gateway_descriptor(
     app: &mut QuantickApp,
     ctx: &egui::Context,
