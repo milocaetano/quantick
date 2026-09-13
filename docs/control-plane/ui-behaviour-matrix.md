@@ -47,7 +47,7 @@ The three exclusion classes are closed:
 | Excluded: `pending_capability` | 62 |
 | **Total** | **99** |
 
-80 of the 99 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 19 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 99 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 18 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -174,7 +174,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 19 |
+| `authored` | 18 |
 
 ## Appendix: rows no registry stands behind
 
@@ -199,7 +199,6 @@ declares nothing here is a guard failure.
 | `trade.ticket.risk.set` | the Trading panel risk field |
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
-| `feed.deal_recording.set` | the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry in the menu registry; `record_by_default` is the same choice as a call |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
 | `drawing.duplicate` | the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |

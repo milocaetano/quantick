@@ -636,14 +636,11 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
                 trades bars",
         reach: "the REC control beside the symbol and its popover; the Tools menu's \
                 `Record deals by default` checkbox",
-        keys: &[
-            (Source::ToolbarAction, "DealRecording"),
-            (
-                Source::Authored,
-                "the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry \
-                 in the menu registry; `record_by_default` is the same choice as a call",
-            ),
-        ],
+        // One registry key: the matrix counts a row carrying an `Authored` key
+        // as one no registry stands behind. The Tools menu checkbox is drawn by
+        // `app/deal_recording_wiring.rs`, not an entry in the menu registry;
+        // the call's `record_by_default` is the same choice.
+        keys: &[(Source::ToolbarAction, "DealRecording")],
         // `ShowAsTrades` is the popover's shortcut to the `trades` rule, the
         // same recut `layout.pane.set_bar_spec` drives; `OpenFolder` reveals
         // the recording directory in the OS file browser, a hand-only

@@ -104,7 +104,9 @@ Campaign synchronization X2 of #367. Base: `campaign/lean-a-plus` at
       *Evidence:* named test runs. → PR body. *(R2)*
 - [ ] **A5** — The size guard passes with `crates/guards/size-baseline.txt`
       holding no entry and `!budget 0`; extension roots at the measured
-      585/10241 with the reason recorded.
+      585/10241 with the reason recorded; the extension shapes baseline
+      carries both `ChartState` amendments (#423's `TradeTape`, #306's
+      `deal_samples` and `readings_held`), each commented.
       *Evidence:* `cargo test -p quantick-guards` and `--report`.
       → PR body. *(R3)*
 - [ ] **A6** — The chunked tape's invariants hold:
