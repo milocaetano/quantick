@@ -28,6 +28,7 @@ use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 
 use quantick_engine::forming_run::FormingRun;
+use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
@@ -247,7 +248,13 @@ impl LaneTransport {
         changed
     }
 
-    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &[Trade]) -> IndicatorCommand {
+    /// The forming-bar update for this frame: the partial, and the forming
+    /// run's prints not yet sent.
+    ///
+    /// Rate: **per frame**. The copy is the unsent suffix of the tape only —
+    /// the prints since the previous command, or the forming bar's whole run
+    /// after a reset — taken chunk slice by chunk slice, never the tape.
+    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &TradeTape) -> IndicatorCommand {
         let count = partial
             .as_ref()
             .filter(|_| self.rungs > 0)
@@ -257,7 +264,10 @@ impl LaneTransport {
                     .min(trades.len())
             });
         let start = trades.len() - count + self.sent.min(count);
-        let run = trades[start..].to_vec();
+        let mut run = Vec::with_capacity(trades.len() - start);
+        for slice in trades.slices(start..) {
+            run.extend_from_slice(slice);
+        }
         self.sent = count;
         IndicatorCommand::PartialUpdated {
             partial,

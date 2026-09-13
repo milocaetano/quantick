@@ -13,6 +13,7 @@
 /// Re-exported so every consumer of the bar vocabulary finds the imbalance
 /// unit next to [`BarSpec`], not off in the engine.
 pub use quantick_engine::ImbalanceUnit;
+use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{
     Bar, BarBuilder, BarFootprint, BarProgress, DollarBarBuilder, ImbalanceBarBuilder, PriceGrid,
     TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
@@ -544,26 +545,6 @@ pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
 /// a speed that made an hour a short drag would make a second unreachable.
 pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
 
-/// Append a loaded batch to the tape, sized to what the next live push would
-/// grow it to — twice what it then holds — so that push copies nothing.
-///
-/// Filled exactly, the tape made the first live print after a load reallocate
-/// the whole loaded session on the UI thread: about 95 MB for a recovered
-/// 1.7 M-print day, one dropped frame the moment the chart went live. The
-/// capacity is the one that push would have reached, taken in the load frame
-/// instead of one frame later. `prepend_history` sizes its joined tape the
-/// same way.
-///
-/// The cost: a tape that never receives a live print — a paused replay, a
-/// closed market, history paged back — keeps the unused half reserved, one
-/// more tape's worth of committed memory per pane. Its pages are never
-/// touched, so the working set does not grow; the commit charge does.
-fn extend_tape(tape: &mut Vec<Trade>, trades: &[Trade]) {
-    let held = tape.len() + trades.len();
-    tape.reserve((2 * held).saturating_sub(tape.len()));
-    tape.extend_from_slice(trades);
-}
-
 pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
@@ -572,7 +553,7 @@ pub struct ChartState {
     /// [`Self::series_revision`].
     series_revision: u64,
     builder: Box<dyn BarBuilder>,
-    trades: Vec<Trade>,
+    trades: TradeTape,
     backfill_trade_count: usize,
     backfill_done: bool,
     bars: Vec<Bar>,
@@ -620,7 +601,7 @@ impl ChartState {
             timeline_revision: 0,
             series_revision: 0,
             builder,
-            trades: Vec::new(),
+            trades: TradeTape::new(),
             backfill_trade_count: 0,
             backfill_done: false,
             bars: Vec::new(),
@@ -633,11 +614,11 @@ impl ChartState {
         }
     }
 
-    /// Ingest the backfilled history as one batch (call once, before any live
-    /// trades), then mark the boundary.
-    pub fn ingest_backfill(&mut self, trades: &[Trade]) {
-        extend_tape(&mut self.trades, trades);
-        for trade in trades {
+    /// Ingest backfilled history (a slice, or another chart's tape) as one
+    /// batch — once, before any live trades — then mark the boundary.
+    pub fn ingest_backfill<'a>(&mut self, trades: impl IntoIterator<Item = &'a Trade> + Clone) {
+        self.trades.extend(trades.clone());
+        for trade in trades.clone() {
             self.observe_price(trade.price);
         }
         self.backfill_trade_count = self.trades.len();
@@ -679,10 +660,7 @@ impl ChartState {
         for trade in trades {
             self.observe_price(trade.price);
         }
-        let mut combined = Vec::with_capacity(2 * (trades.len() + self.trades.len()));
-        combined.extend_from_slice(trades);
-        combined.append(&mut self.trades);
-        self.trades = combined;
+        self.trades.prepend(trades);
         self.backfill_trade_count += trades.len();
         self.rebuild();
         self.bars.len().saturating_sub(bars_before)
@@ -929,7 +907,7 @@ impl ChartState {
     /// Every trade this chart still holds, oldest first — what a rebuild
     /// replays, and what a second view of the same market is seeded from.
     #[must_use]
-    pub fn trades(&self) -> &[Trade] {
+    pub fn trades(&self) -> &TradeTape {
         &self.trades
     }
 
@@ -994,6 +972,9 @@ impl ChartState {
         Some((self.builder.progress()?, self.spec.kind().progress_unit()))
     }
 }
+
+#[cfg(test)]
+mod tape_identity_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1559,11 +1540,11 @@ mod tests {
 
     /// The first live print after a backfill must not copy the backfill.
     ///
-    /// `extend_from_slice` into an empty tape sizes it exactly, so the next
-    /// push reallocated the whole loaded session on the UI thread — about
-    /// 95 MB for a recovered 1.7 M-print day, one dropped frame the moment the
-    /// chart went live. The tape is sized at load to the capacity that push
-    /// would have grown it to, so nothing is copied and nothing more is held.
+    /// Filled exactly, a contiguous tape made the next push reallocate the
+    /// whole loaded session on the UI thread — about 95 MB for a recovered
+    /// 1.7 M-print day, one dropped frame the moment the chart went live. The
+    /// chunked tape never moves a print it holds, so that push copies
+    /// nothing, and it holds at most one chunk it does not use.
     #[test]
     fn the_first_live_print_after_a_backfill_copies_nothing() {
         let history: Vec<Trade> = (5_001..=15_000).map(trade).collect();
@@ -1579,13 +1560,13 @@ mod tests {
                 "the first live print copied {copied} bytes of a {tape_bytes}-byte tape"
             );
             assert!(
-                s.trades.capacity() <= 2 * s.trades.len(),
-                "no more is reserved than that push would have grown the tape to"
+                s.trades.capacity() - s.trades.len() < quantick_engine::trade_tape::CHUNK_TRADES,
+                "no more than one chunk is held unused"
             );
         };
         s.ingest_backfill(&history);
         first_live(&mut s, 15_001);
-        // Paging older history in joins a new tape: sized the same way.
+        // Paging older history in joins a new tape: chunked the same way.
         s.prepend_history(&older);
         first_live(&mut s, 15_002);
     }

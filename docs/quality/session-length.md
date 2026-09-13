@@ -185,6 +185,14 @@ Folds per frame, from the harness:
 
 ## The tape's reallocation stall (D3)
 
+> **Since removed.** Q12 (#423) stores the tape in fixed-size chunks, so an
+> append never copies it: the slowest ingest within 1,024 prints of 2^21 and
+> of 2^22 is now under 0.12 ms, every consumer's output byte-identical, and
+> the fast variant asserts that building its session live never copies more
+> than one chunk. [The chunked trade tape](chunked-tape.md) has the design,
+> the identity proof and the measurements. The section below is the record
+> of what Q4 found.
+
 Q3 measured a ~21 ms UI stall when the tape's `Vec<Trade>` doubles at
 2,097,152 prints. At `3013f342`, Q3's harness re-run
 ([envelope-measure.txt](session-length/envelope-measure.txt)) reads **24.79 ms

@@ -1,0 +1,32 @@
+# command: env -u QUANTICK_BUBBLES cargo test -p quantick-app -- session_length_tests --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base eb60ed41 with only the stall probe added to the test module (dev profile, the one CI's Test step builds)
+running 4 tests
+test app::tests::session_length_tests::hot_path_work_is_independent_of_session_length ... | path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 180 |
+| trade.chart.backfilled | 180000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 200 |
+| trade.chart.live | 18000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 260 |
+| trade.chart.live | 180000 | 1500 | 0.288 | 110.8 | 5.4 | 4096 | 0.00 | 0.90 | 260 |
+| trade.book | 18000 | 1500 | 0.011 | 3.5 | 21.8 | 16384 | 0.00 | 0.00 | 800 |
+| trade.book | 180000 | 1500 | 0.011 | 3.5 | 21.8 | 16384 | 0.00 | 0.00 | 700 |
+| depth.book | 18000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9800 |
+| depth.book | 180000 | 4998 | 19.110 | 6720.5 | 26.2 | 65536 | 0.00 | 0.00 | 9700 |
+| frame.book | 18000 | 300 | 2236.427 | 5156823.5 | 2553069.5 | 1310720 | 0.00 | 0.00 | 199800 |
+| frame.book | 180000 | 300 | 2236.403 | 5156799.1 | 2553069.9 | 1310720 | 0.00 | 0.00 | 196200 |
+| frame.app.tick50 | 18000 | 300 | 2533.343 | 751325.2 | 1035158.0 | 319488 | 0.00 | 4.50 | 2102000 |
+| frame.app.tick50 | 180000 | 300 | 2532.167 | 751429.9 | 1034674.1 | 320640 | 0.00 | 4.50 | 2001000 |
+| frame.worker.tick50 | 18000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
+| frame.worker.tick50 | 180000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 300 | 1352.517 | 275354.3 | 742107.7 | 187872 | 0.00 | 5.00 | 992700 |
+| frame.app.time1d | 180000 | 300 | 1391.060 | 282347.1 | 750757.7 | 187872 | 0.00 | 5.00 | 964200 |
+| frame.worker.time1d | 18000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1929.91 | 0.00 | 0 |
+| frame.worker.time1d | 180000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 1889.48 | 0.00 | 0 |
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 106.7 | 917504 |
+| 180000 | 85.4 | 7340032 |
+ok
+test app::tests::session_length_tests::long ... ignored, long variant: minutes and gigabytes; run with --ignored, see the module docs
+test app::tests::session_length_tests::tape_growth_stalls ... ignored, stall probe: builds a 4.26 M-print tape twice; run with --ignored, see the doc
+test app::tests::session_length_tests::the_check_fails_a_path_whose_work_grows_with_the_session ... ok
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 2064 filtered out; finished in 17.40s

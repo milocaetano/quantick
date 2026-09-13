@@ -443,13 +443,17 @@ impl ChartPane {
     /// market already holds, keeping the backfill/live boundary where it was:
     /// a trade that was streamed live must not become "history" just because
     /// this view was opened late.
-    pub fn seed_from(&mut self, trades: &[quantick_engine::Trade], backfill_count: usize) {
+    pub fn seed_from(
+        &mut self,
+        trades: &quantick_engine::trade_tape::TradeTape,
+        backfill_count: usize,
+    ) {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
         let split = backfill_count.min(trades.len());
-        self.state.ingest_backfill(&trades[..split]);
-        for trade in &trades[split..] {
+        self.state.ingest_backfill(trades.range(..split));
+        for trade in trades.since(split) {
             self.state.ingest_live(trade);
         }
         // One rebuild rather than one command per trade: the worker is being

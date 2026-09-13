@@ -24,7 +24,7 @@
 //! time — and it costs nothing on a market that never closes, where there is
 //! simply no gap and the campaign ends on its span cap instead.
 
-use quantick_engine::Trade;
+use quantick_engine::trade_tape::TradeSeq;
 
 /// A stretch with no prints longer than this reads as the market having been
 /// closed rather than as a quiet patch.
@@ -447,7 +447,8 @@ impl Campaign {
 
     /// Decide what to do now that a page has landed.
     ///
-    /// `trades` is everything the chart holds, oldest first; `can_page` is the
+    /// `trades` is everything the chart holds, oldest first — the chart's
+    /// chunked tape, or any slice, read by position; `can_page` is the
     /// feed's own answer to whether another request could be served — it goes
     /// false the moment a venue reports its record exhausted, and asking a
     /// feed that has said so would spin against a wall.
@@ -457,7 +458,7 @@ impl Campaign {
     /// break, so the usual cost is the page that just arrived; only a tape
     /// with no break in it at all is scanned whole, and that is the case the
     /// span cap ends.
-    pub fn advance(&mut self, trades: &[Trade], can_page: bool) -> CampaignStep {
+    pub fn advance<T: TradeSeq + ?Sized>(&mut self, trades: &T, can_page: bool) -> CampaignStep {
         if !can_page {
             return CampaignStep::Stop(CampaignEnd::Exhausted);
         }
@@ -550,8 +551,8 @@ impl Campaign {
 ///
 /// Rate: **rare** — once per history reply.
 #[must_use]
-pub fn traded_span_before(
-    trades: &[Trade],
+pub fn traded_span_before<T: TradeSeq + ?Sized>(
+    trades: &T,
     anchor_ms: i64,
     session_gap_ms: i64,
     want_ms: i64,
@@ -561,8 +562,8 @@ pub fn traded_span_before(
     let end = trades.partition_point(|trade| trade.timestamp_ms < anchor_ms);
     let mut covered: i64 = 0;
     let mut newer = anchor_ms;
-    for trade in trades[..end].iter().rev() {
-        let older = trade.timestamp_ms;
+    for older in (0..end).rev().filter_map(|index| trades.get(index)) {
+        let older = older.timestamp_ms;
         let step = newer.saturating_sub(older);
         if step < session_gap_ms {
             covered = covered.saturating_add(step);
@@ -591,7 +592,11 @@ pub fn traded_span_before(
 /// would grow by a page on every reply and make the run quadratic in pages:
 /// the same answer, arrived at the expensive way round.
 #[must_use]
-pub fn last_close_before(trades: &[Trade], anchor_ms: i64, session_gap_ms: i64) -> Option<i64> {
+pub fn last_close_before<T: TradeSeq + ?Sized>(
+    trades: &T,
+    anchor_ms: i64,
+    session_gap_ms: i64,
+) -> Option<i64> {
     // Pairs are (i, i + 1), and only the older side has to sit before the
     // anchor — the break between the previous session and the anchor's own is
     // exactly the one whose newer side is the anchor.
@@ -600,8 +605,8 @@ pub fn last_close_before(trades: &[Trade], anchor_ms: i64, session_gap_ms: i64) 
         .partition_point(|trade| trade.timestamp_ms < anchor_ms)
         .min(last_pair);
     (0..before_anchor).rev().find_map(|index| {
-        let earlier = trades[index].timestamp_ms;
-        let later = trades[index + 1].timestamp_ms;
+        let earlier = trades.get(index)?.timestamp_ms;
+        let later = trades.get(index + 1)?.timestamp_ms;
         (later.saturating_sub(earlier) > session_gap_ms).then_some(earlier)
     })
 }
@@ -609,7 +614,7 @@ pub fn last_close_before(trades: &[Trade], anchor_ms: i64, session_gap_ms: i64) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_engine::Side;
+    use quantick_engine::{Side, Trade};
     use rust_decimal::Decimal;
 
     /// A print at `ms`. Only the stamp matters here — the reach is arithmetic
@@ -1073,7 +1078,7 @@ mod tests {
         let mut campaign =
             Campaign::new(0, 1, ReachBounds::default(), HistoryReach::PreviousSession);
         assert_eq!(
-            campaign.advance(&[], true),
+            campaign.advance(&[] as &[Trade], true),
             CampaignStep::Stop(CampaignEnd::NothingCharted),
             "a reset between two replies leaves nothing to page back from"
         );
@@ -1200,5 +1205,67 @@ mod tests {
                 .contains("press again"),
             "a spent record must not invite a press that cannot be served"
         );
+    }
+
+    /// The chart hands the reach its chunked tape rather than a slice: every
+    /// answer over it is the one the slice gave, on a tape of three sessions
+    /// whose breaks and anchors sit either side of chunk boundaries.
+    #[test]
+    fn the_reach_reads_a_chunked_tape_as_it_read_a_slice() {
+        use quantick_engine::trade_tape::{CHUNK_TRADES, TradeTape};
+        let mut tape = run(0, 1_000, CHUNK_TRADES + 500);
+        let first_close = tape.last().expect("not empty").timestamp_ms;
+        tape.extend(run(first_close + 14 * HOUR, 1_000, CHUNK_TRADES - 300));
+        let second_close = tape.last().expect("not empty").timestamp_ms;
+        tape.extend(run(second_close + 14 * HOUR, 1_000, 900));
+        let chunked: TradeTape = tape.iter().cloned().collect();
+        let mut anchors: Vec<i64> = [0, CHUNK_TRADES - 1, CHUNK_TRADES, CHUNK_TRADES + 1]
+            .iter()
+            .chain(&[
+                CHUNK_TRADES + 500,
+                2 * CHUNK_TRADES + 199,
+                2 * CHUNK_TRADES + 200,
+            ])
+            .map(|&index| tape[index.min(tape.len() - 1)].timestamp_ms)
+            .collect();
+        anchors.extend([first_close + HOUR, second_close + 1, i64::MAX, i64::MIN]);
+        for anchor in anchors {
+            for gap in [SESSION_GAP_MS, ReachBounds::default().session_gap_ms] {
+                assert_eq!(
+                    last_close_before(&chunked, anchor, gap),
+                    last_close_before(&tape, anchor, gap),
+                    "last close before {anchor}"
+                );
+                for want in [MINUTE, HOUR, 10 * HOUR, 40 * HOUR, i64::MAX] {
+                    assert_eq!(
+                        traded_span_before(&chunked, anchor, gap, want),
+                        traded_span_before(&tape, anchor, gap, want),
+                        "span before {anchor}, want {want}"
+                    );
+                }
+            }
+        }
+        // A run paging back through the tape: each reply shows one more
+        // stretch of older prints, and both campaigns take the same steps.
+        let anchor = tape[tape.len() - 900].timestamp_ms;
+        for reach in [
+            HistoryReach::Page,
+            HistoryReach::Span,
+            HistoryReach::PreviousSession,
+        ] {
+            let bounds = span_bounds(90);
+            let mut over_slice = Campaign::new(anchor, 900, bounds, reach);
+            let mut over_tape = Campaign::new(anchor, 900, bounds, reach);
+            for shown in (900..=tape.len()).rev().step_by(9_973).chain([0]) {
+                let held = &tape[shown..];
+                let chunked: TradeTape = held.iter().cloned().collect();
+                assert_eq!(
+                    over_tape.advance(&chunked, true),
+                    over_slice.advance(held, true),
+                    "{reach:?} with {} prints held",
+                    held.len()
+                );
+            }
+        }
     }
 }

@@ -135,11 +135,118 @@ fn producer_prepend_rewind_and_repeated_rebuild_seed_the_recut_partial_once() {
     pane.reset_series();
     assert_eq!(retained(&pane), 0, "rewind discards the previous epoch");
     assert_eq!(publish(&mut pane), 0);
-    pane.seed_from(&[print(1, 1), print(2, 2)], 1);
+    pane.seed_from(&[print(1, 1), print(2, 2)].into_iter().collect(), 1);
     assert_eq!(
         retained(&pane),
         2,
         "a pane opened mid-session seeds the whole partial"
     );
     assert_eq!(publish(&mut pane), 0);
+}
+
+/// `LaneTransport` as it stood at `eb60ed41`, over the contiguous tape it
+/// sliced, kept verbatim as the oracle for the chunked one.
+#[derive(Default)]
+struct SliceLane {
+    rungs: usize,
+    sent: usize,
+}
+
+impl SliceLane {
+    fn reset(&mut self) {
+        self.sent = 0;
+    }
+
+    fn set_rungs(&mut self, rungs: usize) -> bool {
+        let changed = self.rungs != rungs;
+        if rungs == 0 {
+            self.reset();
+        }
+        self.rungs = rungs;
+        changed
+    }
+
+    fn command(&mut self, partial: Option<quantick_engine::Bar>, trades: &[Trade]) -> Vec<Trade> {
+        let count = partial
+            .as_ref()
+            .filter(|_| self.rungs > 0)
+            .map_or(0, |bar| {
+                usize::try_from(bar.trade_count)
+                    .unwrap_or(usize::MAX)
+                    .min(trades.len())
+            });
+        let start = trades.len() - count + self.sent.min(count);
+        let run = trades[start..].to_vec();
+        self.sent = count;
+        run
+    }
+}
+
+/// The lane transport sends the worker exactly what it sent when the tape
+/// was one slice: frame after frame of live prints, bar closes, a lane
+/// switched off and on, and a forming bar whose run spans several chunks
+/// sent whole after a reset.
+#[test]
+fn the_chunked_tape_sends_the_worker_what_the_slice_sent() {
+    use quantick_engine::trade_tape::CHUNK_TRADES;
+    for spec in [BarSpec::Tick(50), BarSpec::Time(86_400_000)] {
+        let mut state = crate::state::ChartState::new(spec.clone());
+        let mut contiguous: Vec<Trade> = Vec::new();
+        let mut lane = LaneTransport::default();
+        let mut oracle = SliceLane::default();
+        assert_eq!(lane.set_rungs(16), oracle.set_rungs(16));
+        let mut next = 0_u64;
+        let mut frame = 0_u64;
+        let mut crossed = 0_usize;
+        while contiguous.len() < 3 * CHUNK_TRADES + 1_000 {
+            frame += 1;
+            // Mostly a handful of prints; now and then a burst that crosses
+            // a chunk boundary inside one frame; and a frame that ends just
+            // past each boundary, so a short run straddles it too.
+            let to_boundary = CHUNK_TRADES - contiguous.len() % CHUNK_TRADES;
+            let prints = if frame.is_multiple_of(4_999) {
+                CHUNK_TRADES / 2 + 3
+            } else if to_boundary <= 20 {
+                to_boundary + 3
+            } else {
+                (frame * 7_919 % 23) as usize
+            };
+            let mut closed = false;
+            for _ in 0..prints {
+                let trade = print(next + 1, 1_720_051_200_000 + next as i64);
+                next += 1;
+                let before = state.bars().len();
+                state.ingest_live(&trade);
+                contiguous.push(trade);
+                closed |= state.bars().len() > before;
+            }
+            if closed {
+                lane.reset();
+                oracle.reset();
+            }
+            // The lane switched off for a few frames now and then.
+            if frame % 211 < 2 {
+                let rungs = if frame.is_multiple_of(211) { 0 } else { 16 };
+                assert_eq!(lane.set_rungs(rungs), oracle.set_rungs(rungs));
+            }
+            let want = oracle.command(state.partial().cloned(), &contiguous);
+            match lane.command(state.partial().cloned(), state.trades()) {
+                crate::indicator_worker::IndicatorCommand::PartialUpdated { run, .. } => {
+                    assert_eq!(
+                        format!("{run:?}"),
+                        format!("{want:?}"),
+                        "{spec:?}, frame {frame}"
+                    );
+                    let start = contiguous.len() - run.len();
+                    if !run.is_empty()
+                        && start / CHUNK_TRADES != (contiguous.len() - 1) / CHUNK_TRADES
+                    {
+                        crossed += 1;
+                    }
+                }
+                _ => unreachable!("the lane transport only builds forming-bar updates"),
+            }
+        }
+        assert!(crossed > 0, "{spec:?}: some run spans a chunk boundary");
+    }
 }

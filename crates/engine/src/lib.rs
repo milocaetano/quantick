@@ -22,6 +22,7 @@
 pub mod fixture;
 pub mod forming_run;
 pub mod golden;
+pub mod trade_tape;
 
 mod bar;
 mod builder;
