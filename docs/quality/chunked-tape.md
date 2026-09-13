@@ -235,6 +235,14 @@ envelope harness reads the working set the same (+221.0 MiB against +220.8
 at the base, footprint off; +569.9 against +569.5 on)
 ([envelope-measure-head.txt](chunked-tape/envelope-measure-head.txt)).
 
+The other end of the same bound: a short tape reserves a whole chunk. A
+pane's first print allocates 3.5 MiB, where a `Vec` held a few bytes. The
+pages past the prints are never touched, so the working set does not grow,
+but the commit charge does — up to 3.5 MiB per pane holding any print, about
+10 MiB for a tab with a flow pane and two time panes. That is the price of
+never copying, and it is less than the extra the base committed for any tape
+of more than 65,536 prints loaded at once (it reserved twice what it held).
+
 ## Frame timing
 
 `APP_HEALTH_SUMMARY` on the WINV26 2026-08-25 replay at speed 60 with the

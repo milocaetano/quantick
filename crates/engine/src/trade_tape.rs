@@ -23,7 +23,12 @@
 //! one chunk it does not use, where a doubling vector reserves up to the
 //! whole tape again. The newest chunk, the one appends write to, sits in the
 //! tape itself; the others are listed in a directory of one pointer triple
-//! each — 60 of them at the live envelope's 3,960,000 prints.
+//! each — 60 of them at the live envelope's 3,960,000 prints. The other end
+//! of the bound: the first print allocates a whole chunk, 3.5 MiB, so a
+//! short tape reserves more than a vector of its length would. Its untouched
+//! pages cost commit charge, not working set; growing the first chunk
+//! geometrically instead would copy it, which is what this type exists not
+//! to do.
 
 use std::iter::FusedIterator;
 use std::ops::{Bound, Index, RangeBounds};
@@ -213,11 +218,13 @@ impl TradeTape {
     fn bounds(&self, range: &impl RangeBounds<usize>) -> (usize, usize) {
         let start = match range.start_bound() {
             Bound::Included(&start) => start,
-            Bound::Excluded(&start) => start + 1,
+            Bound::Excluded(&start) => start
+                .checked_add(1)
+                .expect("tape range start overflows usize"),
             Bound::Unbounded => 0,
         };
         let end = match range.end_bound() {
-            Bound::Included(&end) => end + 1,
+            Bound::Included(&end) => end.checked_add(1).expect("tape range end overflows usize"),
             Bound::Excluded(&end) => end,
             Bound::Unbounded => self.len(),
         };

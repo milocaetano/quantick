@@ -443,3 +443,10 @@ fn a_stretch_comes_back_as_one_slice_per_chunk() {
         }
     }
 }
+
+#[test]
+#[should_panic(expected = "overflows usize")]
+fn an_inclusive_range_to_the_largest_position_panics_rather_than_wrapping() {
+    let tape: TradeTape = (0..3).map(trade).collect();
+    let _ = tape.range(..=usize::MAX);
+}
