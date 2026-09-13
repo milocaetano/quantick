@@ -2431,19 +2431,7 @@ fn capture_with_screenshot(
     // wait for one that never comes. Asserted rather than assumed, so a
     // machine slow enough to break the precondition says so here instead
     // of failing later on a confusing assertion about the manifest.
-    let parked = (0..PARK_WAIT_FRAMES).any(|_| {
-        run_frame(app, ctx);
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .awaiting_screenshot_for_test()
-            > 0
-    });
-    assert!(
-        parked,
-        "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
-    );
+    run_frames_until_capture_parks(app, ctx);
     let mut access = app
         .control
         .control_access
@@ -2462,12 +2450,34 @@ fn capture_with_screenshot(
     response
 }
 
-/// Frames a test spends waiting for a capture to park on an image.
+/// Run application frames until a capture has parked on an image, and return
+/// how many are parked.
 ///
-/// Generous: the request crosses a socket and two threads, and these tests
-/// run alongside every other crate's test binary. The gateways they use
-/// have their request timeout raised for the same reason.
-const PARK_WAIT_FRAMES: usize = 600;
+/// Bounded by time, not by frames. The request crosses a socket and the
+/// gateway's reader thread before any frame can park it, and on a loaded
+/// machine a fixed count of back-to-back frames runs out before that thread
+/// has run at all (#416). The sleep between frames hands it the core.
+fn run_frames_until_capture_parks(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
+        run_frame(app, ctx);
+        let parked = app
+            .control
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .awaiting_screenshot_for_test();
+        if parked > 0 {
+            return parked;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the capture did not park for an image within {GATEWAY_TEST_WAIT:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Frames a test spends waiting for the gateway's reply.
 const REPLY_WAIT_FRAMES: usize = 600;
 
