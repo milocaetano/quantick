@@ -253,6 +253,16 @@ run. Three earlier sets agreed on no regression — `dcea6d77`, 1.669 against
 
 ## Gate 6 at one SHA
 
+> **Re-measured at the campaign tip `124cdf0d`.** After main was synchronized
+> into the campaign (#437, which rewrote `state.rs`), all four gate-6
+> measurements — this page's long variant, the tape-growth stall probe, Q3's
+> envelope harness and the dense-replay frame timing — were re-run on release
+> builds of `124cdf0d` on a clean tree, and each passed its condition.
+> [gate6-124cdf0d/](gate6-124cdf0d/README.md) has the table, the host and the
+> raw outputs; it supersedes the `3013f342` files cited below as the evidence
+> at the assessed revision. The table below is the record of what answered the
+> interim assessment's findings.
+
 Gate 6: *scalability claims for supported live workloads have current
 measurements, stated rates and bounded-state evidence at the assessed
 revision*. The interim assessment blocked it on five findings; each, and what
