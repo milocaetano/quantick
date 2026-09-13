@@ -1049,7 +1049,8 @@ impl ChartPane {
         // Primary only: egui's `dragged()` counts every button, and the
         // secondary drag is the quick range's (`pane/quick_range.rs`) — a pan
         // under it keeps the same bar beneath the pointer and collapses the
-        // range onto its first anchor. The middle button pans below.
+        // range onto its first anchor. The middle button pans below, in its
+        // own block; answering it here as well doubled its speed.
         let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
         if total > 0
             && chart.dragged_by(egui::PointerButton::Primary)

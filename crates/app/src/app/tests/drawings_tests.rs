@@ -180,6 +180,45 @@ fn hiding_the_pane_that_owns_a_range_takes_its_action_bar_away() {
     );
 }
 
+/// The middle button pans in its own block; the body's drag pan answered it
+/// too (egui's `dragged()` counts every button), so the chart ran at twice
+/// the pointer's speed. Primary-only, the middle drag follows the hand.
+#[test]
+fn a_middle_drag_pans_with_the_pointer_not_twice_as_far() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, _) = quick_range_ends(&app);
+    let middle = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Middle,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(start), middle(start, true)],
+    );
+    for step in 1..=10_u8 {
+        let position = start - egui::vec2(10.0 * f32::from(step), 0.0);
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(position)]);
+    }
+    let end = start - egui::vec2(100.0, 0.0);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(end), middle(end, false)],
+    );
+    let (_, after, _) = quick_range_ends(&app);
+    assert!(
+        (after.x - end.x).abs() < 0.5,
+        "bar 80.5 follows a 100 px middle drag to {}, not {}",
+        end.x,
+        after.x
+    );
+}
+
 /// A right-click whose hand slips a few pixels is still a click to egui,
 /// which opens the chart menu for it; the range must not start as well, or
 /// the trader gets a one-bar range, its action bar and the menu at once.
