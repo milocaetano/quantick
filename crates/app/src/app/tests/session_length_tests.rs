@@ -959,8 +959,9 @@ fn growth_violations(session: usize, growth: Growth) -> Vec<String> {
 fn building_the_tape_live_never_copies_more_than_one_chunk() {
     let rig = ChartRig::new(FAST_LONG_SESSION, Load::Live);
     println!(
-        "{}",
-        growth_table(FAST_LONG_SESSION, [Growth::default(), rig.growth])
+        "tape built live to {FAST_LONG_SESSION} prints: {:.1} copy bytes/print, largest single \
+         copy {} bytes (bound: one chunk, {LARGEST_GROWTH_COPY} bytes)",
+        rig.growth.copy_per_print, rig.growth.largest_copy
     );
     let found = growth_violations(FAST_LONG_SESSION, rig.growth);
     assert!(found.is_empty(), "{}", found.join("\n"));
