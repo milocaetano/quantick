@@ -64,8 +64,31 @@ fn code_naming_either_ui_identifier_makes_a_file_ui_code() {
 fn an_identifier_inside_a_longer_word_is_not_the_ui_library() {
     assert!(!names_ui(&["let timeframe = Timeframe::M1;"]));
     assert!(!names_ui(&["fn set_regui() {}"]));
-    assert!(names_ui(&["use egui_extras::TableBuilder;"]));
     assert!(names_ui(&["let x = (egui::Pos2::ZERO, 1);"]));
+}
+
+/// One list and one matcher: every entry the headless guard forbids as the
+/// UI toolkit makes a file UI code here, and no other entry does. A UI crate
+/// added to that list is then UI code to both guards, with no edit here.
+#[test]
+fn the_ui_library_is_exactly_the_headless_guards_ui_toolkit() {
+    for forbidden in crate::headless::FORBIDDEN {
+        let line = format!("let x = {}::Thing;", forbidden.identifiers.join("::"));
+        assert_eq!(
+            names_ui(&[line.as_str()]),
+            forbidden.because == crate::headless::UI_TOOLKIT,
+            "{}",
+            forbidden.name
+        );
+    }
+}
+
+/// A `//` inside a string is not a comment, so a name after it still counts.
+#[test]
+fn a_comment_marker_inside_a_string_does_not_hide_a_later_name() {
+    assert!(names_ui(&[
+        "let u = \"http://x\"; let c = egui::Color32::RED;"
+    ]));
 }
 
 /// A comment is not a reference to the library. Were it one, `// egui` at
@@ -313,6 +336,32 @@ fn a_tree_without_app_source_has_no_measurement_and_tightens_nothing() {
     let text = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline readable");
     assert!(
         text.contains(&format!("crates/app {}", 7 + SLACK + 1)),
+        "{text}"
+    );
+}
+
+/// A source that does not decode carries no line count, so dropping it would
+/// shrink the total — and `--tighten` would then write a ceiling the real
+/// tree is already over. It is a measurement failure, never a smaller sum.
+#[test]
+fn a_source_that_does_not_decode_has_no_measurement_and_tightens_nothing() {
+    let root = tree(&[("free.rs", ui_free(10))], 10 + SLACK + 1, "");
+    fs::write(root.join("crates/app/src/bad.rs"), [0x66, 0x6e, 0xff, 0xfe]).expect("writable");
+    let unmeasured = measured(&root).expect_err("an undecodable source is not measured");
+    assert!(
+        unmeasured
+            .missed
+            .iter()
+            .any(|line| line.contains("crates/app/src/bad.rs")),
+        "{unmeasured}"
+    );
+    let findings = check(&root);
+    assert_eq!(findings.len(), 1, "{}", lines(&findings));
+    assert_eq!(findings[0].remedy, UNMEASURED_REMEDY);
+    assert!(tighten(&root).is_err());
+    let text = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline readable");
+    assert!(
+        text.contains(&format!("crates/app {}", 10 + SLACK + 1)),
         "{text}"
     );
 }

@@ -25,12 +25,18 @@
 //! the library — which would have capped the size of the UI crate rather than
 //! the logic hiding in it.
 //!
-//! # What does not count as naming the library
+//! # What counts as naming the library
 //!
-//! A comment. `//! drawn with egui elsewhere` is prose about a module, and if
-//! it counted, one comment line would take a whole file off the books. The
-//! test is over [`size::production_source`], so a UI name only a test module
-//! carries does not make a file UI code either.
+//! Exactly what the headless guard forbids below `app` for the UI toolkit,
+//! asked through its own matcher ([`headless::forbidden_on`], entries marked
+//! [`headless::UI_TOOLKIT`]): a whole identifier, comments stripped with
+//! quotes respected. One list and one matcher, so the two guards cannot
+//! disagree — this one never tells an author to move a file into a headless
+//! crate that the other would reject. So `timeframe` is not `eframe`, and a
+//! comment is not a reference: `//! drawn with egui elsewhere` is prose, and
+//! if it counted, one comment line would take a whole file off the books.
+//! The test is over [`size::production_source`], so a UI name only a test
+//! module carries does not make a file UI code either.
 //!
 //! The rule errs toward charging: a UI file that reaches the library only
 //! through a re-export (`use crate::prelude::Ui`) is counted as UI-free. That
@@ -47,7 +53,7 @@ use std::path::Path;
 
 use crate::Finding;
 use crate::ratchet::{Baseline, Policy, Unmeasured};
-use crate::size;
+use crate::{headless, size};
 
 /// The recorded ceiling and its budget.
 pub const BASELINE_FILE: &str = "crates/guards/ui-free-baseline.txt";
@@ -67,14 +73,11 @@ const SOURCE: &str = "crates/app/src/";
 /// every unrelated change into a baseline conflict.
 pub const SLACK: usize = 200;
 
-/// The identifiers that make a line a reference to the UI library.
-pub const UI_IDENTIFIERS: [&str; 2] = ["egui", "eframe"];
-
 /// What the guard asks for when the total is over, or far under, its ceiling.
 pub const REMEDY: &str = "Over the ceiling, the UI crate gained code that never names the UI \
-    library. Such code belongs in a headless crate below `app`, where the headless guard scans it and backtest and \
-    the bot can reuse it — move it there, or move as many UI-free lines out of crates/app in the \
-    same change. A file only `app` can hold is exempted by one line in \
+    library. Such code belongs in a headless crate below `app`, where the headless guard scans \
+    it and backtest and the bot can reuse it — move it there, or move as many UI-free lines out \
+    of crates/app in the same change. A file only `app` can hold is exempted by one line in \
     crates/guards/ui-free-exemptions.txt with its reason; a deliberate raise is the `crates/app` \
     entry and the !budget in crates/guards/ui-free-baseline.txt, both raised and signed in the \
     same change. A total that fell needs no argument: `cargo run -p quantick-guards -- \
@@ -123,32 +126,13 @@ pub const POLICY: Policy = Policy {
     baseline_remedy: BASELINE_REMEDY,
 };
 
-/// Whether any code of this production source names the UI library.
-///
-/// Everything from a `//` on is prose, not a reference, whether the comment
-/// has the line to itself or trails code. Cutting at a `//` inside a string
-/// literal loses a real name, which errs toward charging the file.
+/// Whether any code of this production source names the UI library, as the
+/// headless guard's matcher reads it (see the module doc).
 pub fn names_ui(production: &[&str]) -> bool {
     production.iter().any(|line| {
-        let code = line.split("//").next().unwrap_or_default();
-        UI_IDENTIFIERS
+        headless::forbidden_on(line)
             .iter()
-            .any(|identifier| starts_a_word(code, identifier))
-    })
-}
-
-/// Whether `identifier` occurs in `line` at the start of a word.
-///
-/// Only the front is bounded. `timeframe` is not `eframe`, which a bare
-/// substring test said it was — and the repository names timeframes in
-/// hundreds of UI-free lines. The back stays open so `egui_extras` and
-/// `egui_plot` are the library too.
-fn starts_a_word(line: &str, identifier: &str) -> bool {
-    line.match_indices(identifier).any(|(at, _)| {
-        !line[..at]
-            .chars()
-            .next_back()
-            .is_some_and(|before| before.is_alphanumeric() || before == '_')
+            .any(|forbidden| forbidden.because == headless::UI_TOOLKIT)
     })
 }
 
