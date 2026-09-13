@@ -1053,8 +1053,13 @@ stub_root=${QUANTICK_COMPLETION_FIXTURE:?}
 if [ "${1:-} ${2:-}" = "pr view" ]; then
     case " $* " in
         *' --json body '*) cat "$stub_root/pr-body" ;;
+        *' --json baseRefName,'*) cat "$stub_root/pr-context" ;;
         *) cat "$stub_root/pr-identity" ;;
     esac
+    exit 0
+fi
+if [ "${1:-} ${2:-}" = "issue view" ]; then
+    cat "$stub_root/issue-body"
     exit 0
 fi
 if [ "${1:-} ${2:-}" = "pr checks" ]; then
@@ -1104,7 +1109,7 @@ run_completion() {
     completion_want=${4:-}
     completion_out=$(QUANTICK_COMPLETION_FIXTURE="$root/completion" \
         PATH="$root/bin:$PATH" \
-        sh "$MISSION_SHIP_GATE" "$completion_mode" 42 "$root/wt" 2>&1)
+        sh "$MISSION_SHIP_GATE" "$completion_mode" 42 "${completion_wt:-$root/wt}" 2>&1)
     completion_status=$?
 
     if [ "$completion_expect" = pass ] && [ "$completion_status" -eq 0 ]; then
@@ -1244,6 +1249,154 @@ head_sha=$(git -C "$root/wt" rev-parse HEAD)
 set_tier "$root/wt" ""
 set_marker delivery-review-ok "$(marker_key "$root/wt")"
 printf 'current\n' > "$root/completion/reports"
+
+# --- completion by PR kind (#439) -------------------------------------------
+#
+# PR #437, a main synchronization, carried five archives main had merged, and
+# a consolidated campaign PR carries every child's. Neither can hold the single
+# goal a mission PR must, so the gate tells the three kinds apart from the
+# head, the base and main. The campaign here holds two child archives and main
+# advances by two of its own before the synchronizations are cut.
+main_first=$(git -C "$root/mainco" rev-parse origin/main)
+kind_commit() { git -C "$1" add -A && git -C "$1" commit -qm "$2"; }
+own_goal() { cp "$root/wt/.claude/GOAL-archive-fixture.md" "$1/.claude/GOAL-archive-$2.md"; }
+
+git -C "$root/mainco" worktree add -q -b campaign/demo "$root/camp" "$main_first" >/dev/null 2>&1
+mkdir -p "$root/camp/.claude"
+own_goal "$root/camp" child-one
+own_goal "$root/camp" child-two
+kind_commit "$root/camp" 'two integrated children'
+git -C "$root/mainco" update-ref refs/remotes/origin/campaign/demo "$(git -C "$root/camp" rev-parse HEAD)"
+
+git -C "$root/mainco" worktree add -q -b main-next "$root/mainnext" "$main_first" >/dev/null 2>&1
+mkdir -p "$root/mainnext/.claude"
+echo main > "$root/mainnext/.claude/GOAL-archive-main-one.md"
+echo main > "$root/mainnext/.claude/GOAL-archive-main-two.md"
+kind_commit "$root/mainnext" 'main merges two missions'
+git -C "$root/mainco" update-ref refs/remotes/origin/main "$(git -C "$root/mainnext" rev-parse HEAD)"
+
+# kind_pr <worktree> <PR base ref> [campaign parent URL] - reviewed markers at
+# the worktree's current key and a PR identity matching its head and base.
+kind_pr() {
+    kind_git=$(git -C "$1" rev-parse --absolute-git-dir)
+    kind_branch=$(git -C "$1" symbolic-ref --short HEAD)
+    if [ -n "${3:-}" ]; then
+        printf '%s origin/%s %s none\n' "$kind_branch" "$2" "$3" > "$kind_git/mission-base"
+    fi
+    kind_key=$(sh "$root/hooks/campaign_context.sh" key "$1")
+    kind_head=$(git -C "$1" rev-parse HEAD)
+    kind_tip=$(git -C "$1" rev-parse "origin/$2")
+    set_marker_in "$kind_git" arch-review-ok "$kind_key"
+    set_marker_in "$kind_git" delivery-review-ok "$kind_key"
+    set_marker_in "$kind_git" ai-review-complete "$kind_branch $kind_key"
+    printf '%s %s %s %s OPEN false MERGEABLE CLEAN https://github.com/owner/repo/pull/42 false\n' \
+        "$kind_branch" "$kind_head" "$2" "$kind_tip" > "$root/completion/pr-identity"
+    printf '%s %s %s OPEN false false %s CLEAN\n' \
+        "$2" "$kind_branch" "$kind_head" "$kind_tip" > "$root/completion/pr-context"
+}
+# kind_report <case> <text> - the published reconciliation names the goal the
+# gate actually chose, so a pass cannot come from the wrong archive.
+kind_report() {
+    if grep -qF -- "$2" "$root/completion/published-report" 2>/dev/null; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s: the published report does not say "%s"\n' "$1" "$2"
+        failed=$((failed + 1))
+    fi
+}
+parent=https://github.com/owner/repo/issues/7
+: > "$root/completion/pr-body"
+
+# A mission child of the campaign stays a mission after main moves on.
+git -C "$root/mainco" worktree add -q -b feat/child "$root/child" origin/campaign/demo >/dev/null 2>&1
+completion_wt=$root/child
+echo child > "$root/child/src/a.txt"
+kind_commit "$root/child" 'child code without its archive'
+kind_pr "$root/child" campaign/demo "$parent"
+run_completion "a campaign mission child with no archive still fails" \
+    ship fail 'Exactly one archived mission goal'
+own_goal "$root/child" child-three
+kind_commit "$root/child" 'archive the child mission'
+kind_pr "$root/child" campaign/demo
+rm -f "$root/completion/published-report"
+run_completion "a campaign mission child with one archive completes" ship pass
+kind_report "the mission child's report" 'Archived goal: .claude/GOAL-archive-child-three.md'
+own_goal "$root/child" child-four
+kind_commit "$root/child" 'a second archive'
+kind_pr "$root/child" campaign/demo
+run_completion "a campaign mission child with two archives still fails" \
+    ship fail 'Exactly one archived mission goal'
+
+# A sync/* branch: main's archives are not its own, whatever their number.
+git -C "$root/mainco" worktree add -q -b sync/main-demo "$root/sync" origin/campaign/demo >/dev/null 2>&1
+completion_wt=$root/sync
+git -C "$root/sync" merge -q --no-ff --no-edit origin/main
+kind_pr "$root/sync" campaign/demo "$parent"
+rm -f "$root/completion/published-report"
+run_completion "a sync carrying only main's two archives completes" ship pass
+kind_report "the goal-less sync's report" 'no archived goal of its own'
+own_goal "$root/sync" sync-demo
+kind_commit "$root/sync" 'archive the sync mission'
+kind_pr "$root/sync" campaign/demo
+rm -f "$root/completion/published-report"
+run_completion "a sync with main's archives and its own goal completes" mission pass
+kind_report "the sync's report" 'Main synchronization. Archived goal: .claude/GOAL-archive-sync-demo.md'
+sed -i '/G-AI2/d' "$root/sync/.claude/GOAL-archive-sync-demo.md"
+kind_commit "$root/sync" 'drop a required gate from the sync goal'
+kind_pr "$root/sync" campaign/demo
+run_completion "a sync's own goal still needs the four canonical AI gates" \
+    ship fail 'does not literally contain the four canonical AI-review gates'
+own_goal "$root/sync" sync-demo
+own_goal "$root/sync" sync-extra
+kind_commit "$root/sync" 'a second own archive'
+kind_pr "$root/sync" campaign/demo
+run_completion "a sync with two archives of its own fails" \
+    ship fail 'at most one archived goal of its own'
+
+# Not the name: a branch carrying main commits its campaign base lacks is a sync.
+git -C "$root/mainco" worktree add -q -b feat/main-into-demo "$root/merged" origin/campaign/demo >/dev/null 2>&1
+completion_wt=$root/merged
+git -C "$root/merged" merge -q --no-ff --no-edit origin/main
+own_goal "$root/merged" merged-sync
+kind_commit "$root/merged" 'archive the unnamed sync'
+kind_pr "$root/merged" campaign/demo "$parent"
+rm -f "$root/completion/published-report"
+run_completion "a sync detected by its main merge, not its name, completes" ship pass
+kind_report "the unnamed sync's report" 'Main synchronization. Archived goal: .claude/GOAL-archive-merged-sync.md'
+
+# The consolidated campaign PR: every child's archive, verified against the
+# parent charter it names instead of one goal.
+completion_wt=$root/camp
+kind_pr "$root/camp" main
+printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
+run_completion "a consolidated campaign PR without its parent fails" \
+    ship fail 'Campaign-parent: <issue URL in this repository>'
+printf 'Campaign-parent: https://github.com/other/repo/issues/7\n' > "$root/completion/pr-body"
+run_completion "a consolidated campaign PR naming another repository's parent fails" \
+    ship fail 'Campaign-parent: <issue URL in this repository>'
+printf 'Campaign #7.\nCampaign-parent: %s\n' "$parent" > "$root/completion/pr-body"
+printf 'Exact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
+run_completion "a consolidated campaign PR whose parent is no charter fails" \
+    ship fail 'not a campaign charter'
+printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo-2`.\n' > "$root/completion/issue-body"
+run_completion "a consolidated campaign PR whose charter names another branch fails" \
+    ship fail 'does not name `campaign/demo`'
+printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
+rm -f "$root/completion/published-report"
+run_completion "a consolidated campaign PR with two child archives completes" ship pass
+kind_report "the consolidated report" "Consolidated campaign: charter $parent names \`campaign/demo\`"
+set_threads 3
+run_completion "a consolidated campaign PR still needs zero AI-review threads" \
+    ship fail '3 unresolved AI-review threads'
+set_threads 0
+printf 'fail\n' > "$root/completion/checks"
+run_completion "a consolidated campaign PR still needs green exact-head CI" \
+    ship fail 'not green'
+printf 'pass\n' > "$root/completion/checks"
+
+completion_wt=
+: > "$root/completion/pr-body"
+git -C "$root/mainco" update-ref refs/remotes/origin/main "$main_first"
 
 # --- commit-reminder --------------------------------------------------------
 
