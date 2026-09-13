@@ -232,7 +232,7 @@ head `sync/*` or carrying main commits the base lacks) counts only archives
 absent from `origin/main`, zero or one, since it carries every archive main
 merged. A consolidated `campaign/*` PR into main has no single goal: its body
 names `Campaign-parent: <issue URL>` in the same repository, whose charter
-must carry `<!-- quantick-campaign:v1 -->` and the branch in backticks. Every
+must carry `<!-- quantick-campaign:v1 -->` and the branch as a whole ref name. Every
 other check applies to all three. It then writes report URLs and the review key into the
 PR body, reads the canonical `What done means` block, publishes each clause with its
 evidence, reads that report back, and only then prints

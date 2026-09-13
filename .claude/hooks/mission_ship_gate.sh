@@ -130,7 +130,11 @@ if [ "$kind" = campaign ]; then
     charter=$(cd "$worktree" && gh issue view "$parent" --json body --jq .body) ||
         fail 'GitHub could not read the campaign parent charter.'
     case "$charter" in *'<!-- quantick-campaign:v1 -->'*) ;; *) fail 'Campaign-parent is not a campaign charter.' ;; esac
-    case "$charter" in *"\`$branch\`"*) ;; *) fail "The campaign charter does not name \`$branch\`." ;; esac
+    # The branch must appear as a whole ref token, in backticks or plain text:
+    # split on characters a ref cannot hold and drop a sentence's final dot,
+    # so campaign/x-2 never stands for campaign/x.
+    printf '%s\n' "$charter" | tr -c 'A-Za-z0-9._/-' '\n' | sed 's/\.*$//' | grep -Fxq -- "$branch" ||
+        fail "The campaign charter does not name \`$branch\`."
     goal_note="Consolidated campaign: charter $parent names \`$branch\`; delivery-review grades its criteria."
 fi
 

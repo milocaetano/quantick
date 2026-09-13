@@ -125,6 +125,12 @@ crate file, no hot path, no UI. Campaign child: base `origin/campaign/lean-a-plu
   more cases): `sh .claude/hooks/guardrails_test.sh` 275 passed, 0 failed; the
   pre-repair regex accepted `owner/reXpo` for a PR in `owner/re.po`.
 
+- ai-review thread 4000092270 repair (the branch matches as a whole ref token,
+  in backticks or plain text; two more cases): `sh .claude/hooks/guardrails_test.sh`
+  277 passed, 0 failed; `cargo test -p quantick-guards` green at the repaired
+  tree. No Rust input changed after d88c27e9, so the four cargo checks from
+  that tree are reused; CI runs them again at the final head.
+
 ## Closing steps
 
 - **C1** — `delivery-review` completeness pass, inline (medium).

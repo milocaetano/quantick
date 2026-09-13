@@ -1390,6 +1390,12 @@ run_completion "a consolidated campaign PR whose parent is no charter fails" \
 printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo-2`.\n' > "$root/completion/issue-body"
 run_completion "a consolidated campaign PR whose charter names another branch fails" \
     ship fail 'does not name `campaign/demo`'
+printf '<!-- quantick-campaign:v1 -->\nBranches: campaign/demo-2, campaign/demo/next.\n' > "$root/completion/issue-body"
+run_completion "a charter naming only plain-text look-alike branches fails" \
+    ship fail 'does not name `campaign/demo`'
+# The state contract fixes no format for the branch, so plain text counts too.
+printf '<!-- quantick-campaign:v1 -->\nExact branch: campaign/demo.\n' > "$root/completion/issue-body"
+run_completion "a charter naming the branch in plain text completes" ship pass
 printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
 rm -f "$root/completion/published-report"
 run_completion "a consolidated campaign PR with two child archives completes" ship pass
