@@ -17,7 +17,8 @@ file). A new crate, a dependency-graph edge, a money path moved across a crate
 boundary, and two byte-pinned goldens that must not move: a full bug pass and
 a full delivery review are owed. Not `max`: no new behaviour, and no decision
 here is the trader's money or safety — the fill rules, the risk lock and the
-journal format are carried over byte for byte.
+journal format are carried over byte for byte. (Two small trader-visible
+deltas were found and kept in review; S11 records them.)
 
 ## Request ledger
 
@@ -65,7 +66,10 @@ is an `S` line, and the ones step 3 would have asked are marked *wanted to ask*.
   walk and the cut (`ReportView`), plus the civil-date law (`CivilDate`,
   `DateRange`, `civil_utc`, `TzOffset`). The window, the calendar grid, the
   ledger rows and every colour stay in `app`, which re-exports the moved names
-  at their old paths. *Wanted to ask*: whether the trader meant only the
+  at their old paths. So do two display-side tallies that are not the report's
+  numbers and no golden pins: the calendar's per-day index
+  (`paper_calendar::DayIndex`) and the ledger strip's totals
+  (`paper_report::LedgerTotals`), both drawn only by the window. *Wanted to ask*: whether the trader meant only the
   2,330 lines he measured; the wider reading is the one R5 can be met under,
   and it narrows nothing he asked for.
 - **S3** — **`TzOffset` moves into `quantick_paper::civil`** and `app`'s
@@ -74,7 +78,8 @@ is an `S` line, and the ones step 3 would have asked are marked *wanted to ask*.
   `app` needs the same offset, lifting `civil` into its own crate is a
   follow-up, not this mission's.
   *Amended in review (AI-review thread PRRT_kwDOTfuoRs6h7rs7, commit
-  `a61aa969`):* the follow-up was taken now. Q17's headless control host
+  `a61aa969`); wanted to ask, since it adds a second crate and a second word
+  to `CLAUDE.md`'s headless sentence:* the follow-up was taken now. Q17's headless control host
   uses `TzOffset` too, so leaving it in `paper` would have handed that crate
   an edge into the paper account for a timezone. `civil` became
   `quantick-civil`, a dependency-free crate below `paper` and `app`, listed in
@@ -173,9 +178,13 @@ decision; S9 fixes the load format so two readers agree on it.
 - [x] **A4** — Incremental rebuild time for a one-line change in the account,
       before and after, three runs each, median reported, load stated.
       *Evidence:* the table of runs. → PR body, "A4". *(R7, R10)*
-- [ ] **A5** — The PR's base is exactly `campaign/lean-a-plus`; it is left
-      ready for the coordinator's merge.
-      *Evidence:* `gh pr view --json baseRefName`. → PR body. *(R9)*
+- [x] **A5** — The PR's base is exactly `campaign/lean-a-plus`, and this
+      mission never merges it (S7). *Amended after the first delivery-review
+      pass:* marking the PR ready is closing step C2, which waits on that
+      review, so it no longer sits inside this criterion.
+      *Evidence:* `gh pr view 453 --json baseRefName` recorded in the
+      delivery-review dossier and the PR body; no `gh pr merge` in this
+      branch's session. *(R9)*
 - [x] **A6** — The graph is one-way: `ALLOWED` gives `paper` exactly
       `engine` and `sim` (amended by S3's review note: and `civil`, whose own
       row is empty), `backtest` gains `paper`, nothing gains `app`, and
@@ -194,9 +203,9 @@ decision; S9 fixes the load format so two readers agree on it.
       are line-local hunks.
       *Evidence:* `git diff --stat <base>... -- crates/app/src/control` empty,
       and the hunk list of the four shared files. → PR body, "A8". *(R11)*
-- [x] **A9** — Behaviour is unchanged: every test that existed at base still
-      passes, in `app` or in the crate it moved to, and no expected value was
-      edited to make it pass.
+- [x] **A9** — Behaviour is unchanged apart from the two deltas S11 records:
+      every test that existed at base still passes, in `app` or in the crate
+      it moved to, and no expected value was edited to make it pass.
       *Evidence:* test counts per crate at base and at head, and the full
       workspace test run. → PR body, "A9". *(R4, R5)*
 
@@ -221,6 +230,11 @@ decision; S9 fixes the load format so two readers agree on it.
       (workspace member, graph row, headless list, map row), defaults
       preserve today's behaviour, blast radius stated in the PR body.
 
+- [x] **G7** — The coordinator's "record them in the goal file and PR body":
+      every judgment call is an `S` line here and appears in the PR body's
+      "Other recorded choices" section. *Added after the first
+      delivery-review pass (traceability).* → PR body.
+
 <!-- required-ai-review-goal-gates:v1 -->
 - [ ] **G-AI1** — AI review is executed for the current PR review.
 - [ ] **G-AI2** — A durable AI-review report is published on the PR.
@@ -234,10 +248,15 @@ the `ai_review_threads.sh list` output quoted in the PR body, and the private
 
 ### Not applicable
 
-- **Touches anything user-visible** — no surface changes; every string the
-  account raises is moved verbatim, and the goldens pin the journal and the
-  report. `visual-qa` and `trader-ux-review` would photograph an unchanged
-  chart.
+- **Touches anything user-visible** — no surface changes. Every string the
+  account raises is moved verbatim except the one S11 names: the risk-lock
+  refusal toast loses 18 stray spaces. The other S11 delta changes when an
+  open report re-reads (after a seek), not what it draws. Neither adds,
+  moves or restyles a surface, so `visual-qa` and `trader-ux-review` would
+  photograph the same chart; the refusal text is asserted in
+  `a_refusal_is_typed_for_a_caller_and_worded_for_the_trader`, and the
+  report re-read after a reset in
+  `a_timeline_reset_journals_the_forced_close_and_ends_the_file`.
 - **Adds something a trader does** — no new action; the control plane is
   untouched (R11).
 
@@ -248,7 +267,9 @@ numbers with the review verdicts beside them.
 
 - **A2** — SHA-256 recomputed from the moved constants at head: journal
   `ab748594…94d6`, report `c90b6f97…fe25`, both equal to base `317772a5`.
-  `cargo test -p quantick-paper`: 59 passed, both goldens among them.
+  `cargo test -p quantick-paper`: 59 passed at `f2547ab3`, both goldens
+  among them; after the review split `civil` out, 53 in `quantick-paper`
+  plus 12 in `quantick-civil` at `ebc92b7a`.
 - **A3** — `the_backtest_drives_the_same_paper_account_the_chart_trades_through`
   passes: identical closed trades (a manual close and a target), the same
   open position at the end, and a journal that parses back to them.
@@ -258,7 +279,12 @@ numbers with the review verdicts beside them.
   quantick-app --no-run` 30.3 s; after, `cargo test -p quantick-paper
   --no-run` 1.6 s, `cargo build -p quantick-app` 9.3 s, `cargo test -p
   quantick-app --no-run` 12.9 s. A first before-series under a load of 6-10
-  processes read 26.4 s and 51.6 s.
+  processes read 26.4 s and 51.6 s. Re-measured at `ebc92b7a`, after the
+  review moved `civil` out: `cargo test -p quantick-paper --no-run` 1.6 s
+  (1.8 / 1.6 / 1.6), `cargo build -p quantick-app` 9.6 s (14.4 / 9.6 / 9.3),
+  `cargo test -p quantick-app --no-run` 13.2 s (12.2 / 14.3 / 13.2; an earlier
+  series read 150.1 / 17.5 / 12.3, its first run rebuilding a test binary
+  another cargo invocation had left stale).
 - **A9** — 57 `#[test]` functions left `app`, every one present by the same
   name in `quantick-paper` (script over `git show 317772a5` against head);
   app 2076 passed / 10 ignored, whole workspace green.
