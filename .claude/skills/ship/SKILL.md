@@ -45,9 +45,8 @@ for the base, review key and authorized merge command; normal tasks use main.
 3. **Publish the draft.** Push the owned task branch and create/reuse its draft
    PR with explicit base and linked issue. Follow the PR template; name the
    mission tier and precisely label local, reused and CI verification. Open it
-   with `gh pr create --draft --body-file -` and a heredoc: `--draft` is what
-   `pr-gate` exempts, and a heredoc starts its own segment where the matcher
-   can see it. A draft is not permission to merge.
+   with `gh pr create --draft --body-file -` and a heredoc, the form `pr-gate`
+   sees and exempts. A draft is not permission to merge.
    Campaign bases require explicit issue closure only after integration proof;
    `Closes #N` does not close an issue on an intermediate campaign merge.
 
@@ -84,7 +83,9 @@ for the base, review key and authorized merge command; normal tasks use main.
    `sh .claude/hooks/mission_ship_gate.sh ship <n>` from that worktree. This
    shared gate revalidates the current PR/head, every applicable review and
    durable report, exact-head CI, and the literal mission `What done means`
-   clauses; it publishes and verifies the final reconciliation. Refuse
+   clauses; it publishes and verifies the final reconciliation. Goal check by PR
+   kind: mission, one archive; main sync, zero or one not on main; consolidated,
+   the `Campaign-parent:` charter (integration steps 6-7). Refuse
    delivery unless it prints `MISSION-COMPLETION:PASS`. Then report the PR URL and exact-head
    CI. The user alone merges to main: no
    auto-merge, queue, direct push or protection override. An authorized campaign
