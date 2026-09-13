@@ -95,7 +95,7 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "description": "What a chart annotation takes. The anchor count is the tool's (one for a\nlabel, two for the ranged tools) and is checked against the registry rather\nthan restated here.",
         "properties": {
           "anchors": {
             "items": {
@@ -261,6 +261,262 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Folds traded volume over the market-time range between two chart coordinates and places the result as an attributed drawing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.fixed_range_profile.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One anchor, in the coordinates the cursor and the chart window report:\nmarket time and price. Screen pixels are deliberately not accepted — they\nmean nothing a frame later, and an agent that read a bar knows its time.",
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "What a chart annotation takes. The anchor count is the tool's (one for a\nlabel, two for the ranged tools) and is checked against the registry rather\nthan restated here.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/AnnotationAnchor"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The name the object manager and the inspector show.",
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "description": "The words a label carries. Ignored by the tools that have none.",
+            "maxLength": 280,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "AnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What an annotation returns: the object's stable id, where it actually\nlanded, and the authorship the trader sees on it.",
+        "properties": {
+          "anchors": {
+            "description": "Where each anchor landed after resolution: the slot it fell on and the\nmarket time of that slot, which is not always the time asked for.",
+            "items": {
+              "$ref": "#/$defs/ResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "AnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a fixed-range volume profile",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Places an anchored note at one chart coordinate, attributed to its author and removable in one action.",
       "destructive": false,
       "dry_run_supported": false,
@@ -351,7 +607,7 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "description": "What a chart annotation takes. The anchor count is the tool's (one for a\nlabel, two for the ranged tools) and is checked against the registry rather\nthan restated here.",
         "properties": {
           "anchors": {
             "items": {
@@ -691,7 +947,7 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+        "description": "What a chart annotation takes. The anchor count is the tool's (one for a\nlabel, two for the ranged tools) and is checked against the registry rather\nthan restated here.",
         "properties": {
           "anchors": {
             "items": {

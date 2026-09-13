@@ -1019,7 +1019,9 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     for (index, row) in rows.iter().enumerate() {
         let payload = match row.capability {
             "annotate.label.create" => json!({ "anchors": [anchors[1].clone()], "text": "k" }),
-            "annotate.arrow.create" | "annotate.zone.create" => json!({ "anchors": anchors }),
+            "annotate.arrow.create"
+            | "annotate.zone.create"
+            | "annotate.fixed_range_profile.create" => json!({ "anchors": anchors }),
             "annotate.remove" => json!({ "annotation_id": "1" }),
             "attention.mark.create" => json!({ "note": "keyed" }),
             "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
@@ -1203,6 +1205,10 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
         ),
         (
             "annotate.zone.create",
+            json!({ "anchors": anchors.clone() }),
+        ),
+        (
+            "annotate.fixed_range_profile.create",
             json!({ "anchors": anchors.clone() }),
         ),
     ] {

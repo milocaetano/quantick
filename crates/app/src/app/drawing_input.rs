@@ -98,6 +98,50 @@ fn paste_copied_drawing(tab: &mut Tab, clipboard: &mut DrawingChromeSurface) {
     let _ = tab.pane_mut(focused).drawings.paste(&drawing, offset_bars);
 }
 
+/// Apply the temporary range's response through the registered annotation
+/// action. Kept outside `impl QuantickApp`: the drawing-chrome response is the
+/// port, and growing the application root for an extension would bypass it.
+fn apply_quick_range(
+    app: &mut QuantickApp,
+    ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+    now: Instant,
+) {
+    if ask.dismiss_quick_range {
+        app.surfaces.drawing_chrome.dismiss_quick_range();
+    }
+    let Some(request) = ask.place_quick_range_profile.take() else {
+        return;
+    };
+    let Some(input) = crate::control::fixed_range_profile_input(
+        request.owner.tab,
+        request.owner.side,
+        request.anchors,
+    ) else {
+        return;
+    };
+    match app.control_action(
+        crate::control::PROFILE_CAPABILITY_ID,
+        crate::control::PROFILE_CAPABILITY_VERSION,
+        crate::control::ActionOrigin::Human,
+        input,
+    ) {
+        Ok(_) => app.surfaces.drawing_chrome.dismiss_quick_range(),
+        Err(error) => {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "QUICK_RANGE_PROFILE_REFUSED",
+                code = %error.code,
+                error = %error.message,
+                "the quick-range profile could not be placed"
+            );
+            app.surfaces.toast.note(
+                "The volume profile could not be placed; the temporary range is still available.",
+                now,
+            );
+        }
+    }
+}
+
 impl QuantickApp {
     /// Keyboard grammar for drawings. Any focused widget wins: while an input
     /// owns the keyboard, chart shortcuts stay suspended.
@@ -107,21 +151,15 @@ impl QuantickApp {
         }
         let keys = DrawingKeys::read(ctx);
         // The escape stack: rail drag → paper interaction → pending
-        // confirmation → draft → selection → Pointer, one layer per press.
+        // confirmation → temporary range → draft → selection → Pointer, one
+        // layer per press.
         // Paper trading's armed placement / grabbed line reads Escape here,
         // in the single stack — what keeps one press from firing two
         // cancels at once.
         //
-        // The context bar's parked position is deliberately *not* a layer of
-        // this stack. It is a preference, not a gesture left half-finished:
-        // a trader who moved the bar out of the way wants it to stay out of
-        // the way, and Escape is a key they press many times an hour to drop
-        // a selection. Spending it on the parked point would undo, several
-        // times a session and without being asked, the very thing parking it
-        // was for. The way back is the grip's double-click, which is aimed at
-        // the bar and at nothing else — and, for an operator with no hand on
-        // the mouse, `ContextBar::clear_manual`, which is what that
-        // double-click calls rather than reimplements.
+        // A manually parked context bar is a preference, not a gesture layer,
+        // so Escape never moves it. Its grip's double-click calls
+        // `ContextBar::clear_manual`, which is also the no-mouse way back.
         if keys.escape {
             if self.toolrail.drag_active() {
                 // The rail consumes this Esc to abort its dock drag.
@@ -132,6 +170,8 @@ impl QuantickApp {
                 // no pointer over it to arm or grab with.
             } else if self.surfaces.drawing_chrome.delete_confirm() {
                 self.surfaces.drawing_chrome.set_delete_confirm(false);
+            } else if self.surfaces.drawing_chrome.take_quick_range() {
+                // A secondary-drag choice is temporary by definition.
             } else if self.inline_text_editing().is_some() {
                 // A note being typed is its own layer, and it has to be one:
                 // egui clears widget focus at the top of the frame Escape
@@ -236,9 +276,10 @@ impl QuantickApp {
     /// object they describe.
     pub(super) fn apply_drawing_chrome(
         &mut self,
-        ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
+        mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
+        apply_quick_range(self, &mut ask, now);
         if let Some(edited) = ask.edited {
             // Through the selection, never `items_mut`: that hatch is
             // documented for derived-state refresh only, and a style or a

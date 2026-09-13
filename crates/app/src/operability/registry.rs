@@ -38,14 +38,15 @@ macro_rules! excluded {
 
 /// A drawing tool the rail arms, for which no capability places the object.
 ///
-/// `annotate.label.create`, `annotate.arrow.create` and `annotate.zone.create`
-/// place the text, arrow and rectangle respectively; the other nineteen
-/// registered tools have no counterpart, so an operator can draw three of the
-/// twenty-two shapes a trader can.
+/// `annotate.label.create`, `annotate.arrow.create`, `annotate.zone.create` and
+/// `annotate.fixed_range_profile.create` place the text, arrow, rectangle and
+/// fixed-range volume profile respectively; the other eighteen registered tools
+/// have no counterpart, so an operator can draw four of the twenty-two shapes a
+/// trader can.
 const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
     class: ExclusionClass::PendingCapability,
-    reason: "no `annotate.*` capability places this shape; only the text, arrow and rectangle \
-             tools have one. Tracked in issue 401",
+    reason: "no `annotate.*` capability places this shape; only the text, arrow, rectangle and \
+             fixed-range volume profile tools have one. Tracked in issue 401",
 };
 
 /// A chart layer switch with no capability behind it.
@@ -767,7 +768,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         title: "Arm the fixed-range volume profile",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "fixed-range-profile")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.fixed_range_profile.create"),
     },
     UiBehaviour {
         id: "tool.horizontal-line",
@@ -876,9 +877,22 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         )],
         mapping: excluded!(
             PendingCapability,
-            "no capability copies an object; `annotate.*` places three shapes afresh, so an \
+            "no capability copies an object; `annotate.*` places four shapes afresh, so an \
              operator re-creates a copy rather than duplicating one. Tracked in issue 401"
         ),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_profile",
+        title: "Measure a range with a right-drag and turn it into a volume profile",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's action bar; a chart click or Escape dismisses the temporary range",
+        keys: &[(
+            Source::Authored,
+            "a secondary-button drag read per frame by `pane/quick_range.rs`, and the action \
+             bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an \
+             entry in a registry the drift guard walks",
+        )],
+        mapping: capability!("annotate.fixed_range_profile.create"),
     },
     UiBehaviour {
         id: "drawing.rename",

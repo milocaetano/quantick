@@ -57,11 +57,17 @@ pub(crate) mod context_bar;
 pub(crate) mod inline_editor;
 pub(crate) mod inspector;
 pub(crate) mod manager;
+mod quick_range;
+
+pub(crate) use quick_range::{
+    ACTION_CONTROL_ID as QUICK_RANGE_ACTION_CONTROL_ID, Control as QuickRangeControl,
+    Owner as QuickRangeOwner,
+};
 
 use eframe::egui;
 
 use crate::bands::BandLabel;
-use crate::drawings::{Drawing, DrawingStyle, PresetHost};
+use crate::drawings::{ChartPoint, Drawing, DrawingStyle, NewDrawing, PresetHost};
 use crate::pane::PaneSide;
 use crate::toolrail::ToolboxDock;
 
@@ -521,6 +527,11 @@ impl PresetHost for RecordingPresetHost<'_> {
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct DrawingChromeAsk {
+    /// Replace the temporary secondary-drag ruler with a durable fixed-range
+    /// volume profile through the registered annotation action.
+    pub place_quick_range_profile: Option<quick_range::PlaceRequest>,
+    /// The temporary range stood down because the trader clicked the chart.
+    pub dismiss_quick_range: bool,
     /// The inspector edited its copy of the selected drawing. Boxed: it is by
     /// far the largest thing a response can carry — a pencil stroke is 512
     /// anchors — and every other surface would pay for its size in a response
@@ -599,6 +610,10 @@ impl DrawingChromeAsk {
     /// pieces cannot both be right about one row, and dropping the later ask
     /// deterministically beats letting draw order decide in silence.
     pub(super) fn merge(&mut self, other: Self) {
+        self.place_quick_range_profile = self
+            .place_quick_range_profile
+            .or(other.place_quick_range_profile);
+        self.dismiss_quick_range |= other.dismiss_quick_range;
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
             .commit_edit_gesture
@@ -651,6 +666,7 @@ pub(crate) struct Shared {
 /// inline text editor, the inspector and the object manager.
 #[derive(Default)]
 pub(crate) struct DrawingChromeSurface {
+    quick_range: quick_range::QuickRange,
     shared: Shared,
     inspector: inspector::Inspector,
     bar: context_bar::ContextBarState,
@@ -676,6 +692,72 @@ pub(crate) struct DrawingChromeSurface {
 }
 
 impl DrawingChromeSurface {
+    // ---- Temporary secondary-drag range --------------------------------
+
+    pub fn quick_range_press(
+        &mut self,
+        owner: quick_range::Owner,
+        position: egui::Pos2,
+        anchor: ChartPoint,
+    ) {
+        self.quick_range.press(owner, position, anchor);
+    }
+
+    pub fn request_quick_range_demo(&mut self, ready: bool) {
+        self.quick_range.request_demo(ready);
+    }
+
+    pub fn stage_quick_range_demo(
+        &mut self,
+        owner: quick_range::Owner,
+        opening: impl FnOnce() -> Option<([ChartPoint; 2], NewDrawing)>,
+    ) {
+        self.quick_range.stage_demo(owner, opening);
+    }
+
+    pub fn quick_range_drag(
+        &mut self,
+        owner: quick_range::Owner,
+        position: egui::Pos2,
+        anchor: ChartPoint,
+        threshold_px: f32,
+        opening: impl FnOnce() -> NewDrawing,
+    ) {
+        self.quick_range
+            .drag(owner, position, anchor, threshold_px, opening);
+    }
+
+    pub fn quick_range_release(&mut self, owner: quick_range::Owner) {
+        self.quick_range.release(owner);
+    }
+
+    pub fn dismiss_quick_range(&mut self) {
+        self.quick_range.dismiss();
+    }
+
+    pub fn take_quick_range(&mut self) -> bool {
+        self.quick_range.dismiss_if_present()
+    }
+
+    pub fn quick_range_paint(&self, owner: quick_range::Owner) -> Option<quick_range::Paint<'_>> {
+        self.quick_range.paint(owner)
+    }
+
+    pub fn remember_quick_range_geometry(
+        &mut self,
+        owner: quick_range::Owner,
+        chart: egui::Rect,
+        bounds: egui::Rect,
+        right_limit: f32,
+    ) {
+        self.quick_range
+            .remember_geometry(owner, chart, bounds, right_limit);
+    }
+
+    pub fn quick_range_control(&self, active_tab: u64) -> Option<quick_range::Control> {
+        self.quick_range.control(active_tab)
+    }
+
     // ---- What the host reads --------------------------------------------
 
     /// Whether anything here is on screen or about to be, so the host knows
@@ -865,7 +947,19 @@ impl DrawingChromeSurface {
     /// created on the frame they open. Nothing here relies on being called
     /// last.
     pub fn draw_floating(&mut self, ctx: &egui::Context, env: &DrawingEnv<'_>) -> DrawingChromeAsk {
-        let mut ask = context_bar::draw(self, ctx, env);
+        let mut ask = match self.quick_range.reconcile_tab(env.tab) {
+            Some(true) => {
+                let mut quick = std::mem::take(&mut self.quick_range);
+                let ask = quick_range::draw(&mut quick, ctx, env);
+                self.quick_range = quick;
+                ask
+            }
+            // A temporary ruler is already the active chart selection. Its
+            // own action arrives on release; unrelated object chrome stands
+            // down for the held gesture.
+            Some(false) => DrawingChromeAsk::default(),
+            None => context_bar::draw(self, ctx, env),
+        };
         ask.merge(inline_editor::draw(self, ctx, env));
         ask.merge(inspector::draw_floating(self, ctx, env));
         ask.merge(manager::draw(self, ctx, env));
@@ -1075,6 +1169,13 @@ fn apply_actions(
 /// Here rather than in `app.rs` because the fields are here: a hook that
 /// stops matching its field stops compiling.
 pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
+    if let Ok(value) = std::env::var("QUANTICK_QUICK_RANGE_DEMO") {
+        match value.trim() {
+            "active" => chrome.request_quick_range_demo(false),
+            "1" | "ready" => chrome.request_quick_range_demo(true),
+            other => tracing::warn!(value = other, "unknown quick-range demo state"),
+        }
+    }
     // The object manager: where the "off series", "other market" and band
     // badges live, and the only place a mark clamped to an edge can be found
     // when it is nowhere near the visible window.
@@ -1164,6 +1265,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_DRAWING_INSPECTOR",
     "QUANTICK_DRAWING_INSPECTOR_POS",
     "QUANTICK_DRAWING_INSPECTOR_TAB",
+    "QUANTICK_QUICK_RANGE_DEMO",
     "QUANTICK_TEXT_NOTE"
 ];
 

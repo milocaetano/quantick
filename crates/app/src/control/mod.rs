@@ -38,10 +38,15 @@ mod types;
 mod workspace;
 
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
+pub(crate) use annotate::{
+    PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, fixed_range_profile_input,
+};
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
+#[cfg(test)]
+pub(crate) use scene::scene_snapshot;
 
 /// One journal entry a test can record, so a test about *how many* events a
 /// read returns does not have to reach into the journal's own vocabulary.

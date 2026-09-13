@@ -3207,6 +3207,31 @@ fn an_annotation_refuses_to_land_in_a_drawing_the_trader_is_still_making() {
     assert_eq!(pane.drawings.items().len(), 0, "and nothing was committed");
 }
 
+/// The quick-range button and a client share one registered placement path:
+/// invoking it without any UI gesture still produces the same durable tool
+/// and a structured result that names it.
+#[test]
+fn a_fixed_range_profile_is_reachable_as_an_annotation_capability() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    let anchor = newest_anchor(&app);
+    let earlier_anchor = anchor_at_slot(&app, 0);
+    let result = app
+        .control_action(
+            crate::control::PROFILE_CAPABILITY_ID,
+            crate::control::PROFILE_CAPABILITY_VERSION,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({ "anchors": [earlier_anchor, anchor] }),
+        )
+        .expect("the fixed-range profile action is registered");
+
+    assert_eq!(result["tool_id"], crate::frvp::TOOL_ID);
+    let drawings = app.active_tab().drawing_pane().drawings.items();
+    assert_eq!(drawings.len(), 1);
+    assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
+}
+
 /// Criterion 3: a script that does not compile comes back as spans and
 /// codes, never as a rendered paragraph an agent has to parse.
 #[test]
@@ -3419,6 +3444,10 @@ fn an_observer_reaches_no_action_of_the_annotate_tier() {
         ),
         (
             "annotate.zone.create",
+            serde_json::json!({ "anchors": [anchor.clone(), anchor.clone()] }),
+        ),
+        (
+            "annotate.fixed_range_profile.create",
             serde_json::json!({ "anchors": [anchor.clone(), anchor.clone()] }),
         ),
         (

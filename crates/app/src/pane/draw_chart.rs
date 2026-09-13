@@ -645,6 +645,7 @@ impl ChartPane {
         for (index, band) in carved.iter().enumerate() {
             self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
         }
+        self.draw_quick_range(painter, &carved, right, total, chrome);
         self.frame.bands = carved;
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top

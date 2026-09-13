@@ -1,4 +1,4 @@
-//! Answering on the chart: a label, an arrow or a zone placed against
+//! Answering on the chart: a label, an arrow, a zone or a range profile placed against
 //! resolved chart coordinates, attributed to whoever placed it, and removable
 //! in one action.
 //!
@@ -48,6 +48,8 @@ pub(crate) const ANNOTATE_CHART_PERMISSION_ID: &str = "annotate.chart";
 pub(crate) const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
 pub(crate) const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
 pub(crate) const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
+pub(crate) const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
+pub(crate) const PROFILE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub(crate) const REMOVE_CAPABILITY_ID: &str = "annotate.remove";
 
 pub(crate) const ANNOTATION_CREATED_EVENT_KIND: &str = "annotate.object.created";
@@ -57,7 +59,7 @@ const CAPABILITY_VERSION: u32 = 1;
 const NO_CONFIRMATION_ID: &str = "none";
 const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
-/// The registry ids of the three tools an annotation reaches for. They are
+/// The registry ids of the drawing tools an annotation reaches for. They are
 /// looked up by id in `DRAWING_TOOLS`, exactly as the rail does, so a rename
 /// in the tool registry is a compile-time-visible lookup failure here rather
 /// than a second list of tools.
@@ -105,9 +107,9 @@ pub(crate) struct AnnotationAnchor {
     pub price: CanonicalDecimal,
 }
 
-/// What a label, an arrow or a zone takes. The anchor count is the tool's
-/// (one for a label, two for an arrow and a zone) and is checked against the
-/// registry rather than restated here.
+/// What a chart annotation takes. The anchor count is the tool's (one for a
+/// label, two for the ranged tools) and is checked against the registry rather
+/// than restated here.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AnnotationInput {
@@ -200,6 +202,14 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
             "Draws a rectangular region between two chart coordinates, attributed to its author and removable in one action.",
         ),
         create_zone,
+    )?;
+    registry.register(
+        annotation_descriptor(
+            PROFILE_CAPABILITY_ID,
+            "Place a fixed-range volume profile",
+            "Folds traded volume over the market-time range between two chart coordinates and places the result as an attributed drawing.",
+        ),
+        create_profile,
     )?;
     registry.register(remove_descriptor(), remove_annotation)?;
     Ok(())
@@ -318,6 +328,48 @@ fn create_zone(
     input: &Value,
 ) -> Result<Value, ControlError> {
     place(app, access, actor, input, ZONE_TOOL_ID)
+}
+
+fn create_profile(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place(app, access, actor, input, crate::frvp::TOOL_ID)
+}
+
+/// Build the typed input the on-chart quick-range action sends through the
+/// same registered capability an operator without a mouse can invoke.
+pub(crate) fn fixed_range_profile_input(
+    tab_id: u64,
+    pane_side: crate::pane::PaneSide,
+    anchors: [ChartPoint; 2],
+) -> Option<Value> {
+    let pane_slot = match pane_side {
+        crate::pane::PaneSide::Flow => None,
+        crate::pane::PaneSide::Time(slot) => Some(WireU64::new(u64::try_from(slot).ok()?)),
+    };
+    let anchors = anchors
+        .into_iter()
+        .map(|anchor| {
+            Some(AnnotationAnchor {
+                time_unix_ms: anchor.time_ms?,
+                price: canonical_f64(anchor.price, ANNOTATION_PRICE_DECIMALS)?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    serde_json::to_value(AnnotationInput {
+        target: Some(AnnotationTarget {
+            tab_id: Some(WireU64::new(tab_id)),
+            pane_side: Some(pane_side.into()),
+            pane_slot,
+        }),
+        anchors,
+        text: None,
+        name: None,
+    })
+    .ok()
 }
 
 /// The one placement path: resolve the target pane, resolve every anchor

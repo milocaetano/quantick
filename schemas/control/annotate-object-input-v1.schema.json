@@ -77,7 +77,7 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "What a label, an arrow or a zone takes. The anchor count is the tool's\n(one for a label, two for an arrow and a zone) and is checked against the\nregistry rather than restated here.",
+  "description": "What a chart annotation takes. The anchor count is the tool's (one for a\nlabel, two for the ranged tools) and is checked against the registry rather\nthan restated here.",
   "properties": {
     "anchors": {
       "items": {

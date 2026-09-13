@@ -584,11 +584,13 @@ impl QuantickApp {
                         tz,
                         layer_actions,
                         footprint_config,
+                        surfaces,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
                         toolrail,
                         presets: drawing_presets,
+                        drawing_chrome: &mut surfaces.drawing_chrome,
                         begin_text_edit: &mut begin_text_edit,
                         style,
                         tz: *tz,
