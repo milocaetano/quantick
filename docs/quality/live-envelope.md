@@ -155,7 +155,12 @@ pane feeds them. Output: [burst-test.txt](live-envelope/burst-test.txt).
   measures how often a frame had to wait), the indicator has one row per closed bar, its last row equals the
   cumulative delta computed independently from the prints, the book retained
   one aggression per print and applied every depth update, and `deferred`,
-  `parked` and `coalesced_parked` stay 0 on both workers.
+  `parked` and `coalesced_parked` stay 0 on both workers. Those counts are
+  all it asserts. Whether the workers kept up with the frame cadence is a
+  statement about wall time on the machine that ran it, so it is the measured
+  claim under *Queue depth and keep-up* below; the test only prints its
+  `late_frames`. An asserted bound on them failed on a loaded machine with
+  nothing lost (#429).
 - **Above**: both workers are stalled through the production progress-clock
   port while 40 s of burst-rate frames arrive. Both channels fill to exactly
   their cap, commands park and fold (`deferred` > `parked` > 0,
