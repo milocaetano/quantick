@@ -28,7 +28,7 @@ one, the routed ones name a fixed set and let a property pick which, and
 | `quantick_read_events` | `events.read` | A page of the semantic event journal after a cursor or from `oldest`/`latest`, with `dropped_before` when retention passed the cursor. |
 | `quantick_wait_for_change` | `events.wait` | Parks (≤ 30 s) until the journal moves past the cursor, then the page that completes the call. |
 | `quantick_search_capabilities` | `control.describe`, filtered | Capabilities and scopes by substring or module, with availability and the reason when one is unavailable. |
-| `quantick_invoke` | any registered capability | The long tail, under the same authority checks as the named tools. |
+| `quantick_invoke` | any registered capability | The long tail, under the same authority checks as the named tools. Omit `capability_version` and it calls the newest version the instance registers for that ID, read from `control.describe`; the result's `capability_version` says which one answered. An explicit version is sent as given. |
 
 With the **annotator** profile the trader granted, the tool set also carries
 the half of the loop that answers on the chart:
