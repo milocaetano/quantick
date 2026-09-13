@@ -68,6 +68,17 @@ Campaign fix for the #449 architecture Blocker (AI-review thread
       (rare path: one describe per version-less invoke, unchanged); arch-review
       with every Blocker/Should-fix resolved or deferred. → PR body.
 
+<!-- required-ai-review-goal-gates:v1 -->
+- [ ] **G-AI1** — AI review is executed for the current PR review.
+- [ ] **G-AI2** — A durable AI-review report is published on the PR.
+- [ ] **G-AI3** — `ai_review_threads.sh list` returns zero unresolved threads.
+- [ ] **G-AI4** — `ai-review-complete` is valid for the current review key.
+<!-- end required-ai-review-goal-gates:v1 -->
+
+AI-review evidence lands on the PR: the durable report comment, the thread
+list, and the private `ai-review-complete` projection. G-AI1–4 are not
+claimed here.
+
 ## Evidence (local, head `a4d2cd33`)
 
 - A2 — `ff686057` (test only) failed: `a version-less call went ahead without
