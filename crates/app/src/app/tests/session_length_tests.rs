@@ -931,6 +931,65 @@ fn growth_table(long_session: usize, growth: [Growth; 2]) -> String {
     out
 }
 
+/// The largest single reallocation copy building a session's tape live may
+/// make: one chunk of the chunked tape. A contiguous tape copies itself whole
+/// each time it doubles — 7,340,032 bytes at print 131,072, inside the fast
+/// variant's long session — and fails it; the chunked tape never reallocates
+/// a print, so what is left is the chunk directory and the bar and ladder
+/// vectors, which a session of this length keeps far smaller than a chunk.
+const LARGEST_GROWTH_COPY: u64 =
+    (quantick_engine::trade_tape::CHUNK_TRADES * std::mem::size_of::<Trade>()) as u64;
+
+/// Every way building a tape of `session` prints broke the growth bound.
+fn growth_violations(session: usize, growth: Growth) -> Vec<String> {
+    if growth.largest_copy > LARGEST_GROWTH_COPY {
+        vec![format!(
+            "building a {session}-print tape live copied {} bytes in one reallocation; the bound is one chunk, {LARGEST_GROWTH_COPY} bytes",
+            growth.largest_copy
+        )]
+    } else {
+        Vec::new()
+    }
+}
+
+/// D3's stall as a count: no print's ingest may copy more than one chunk
+/// while the fast variant's long session is built live, print by print, with
+/// the lane command every frame — counted by the work meter, never timed.
+#[test]
+#[ignore = "red until the tape is chunked: the contiguous tape copies 7,340,032 bytes at print 131,072"]
+fn building_the_tape_live_never_copies_more_than_one_chunk() {
+    let rig = ChartRig::new(FAST_LONG_SESSION, Load::Live);
+    println!(
+        "{}",
+        growth_table(FAST_LONG_SESSION, [Growth::default(), rig.growth])
+    );
+    let found = growth_violations(FAST_LONG_SESSION, rig.growth);
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+/// The growth bound has teeth: a contiguous tape grown print by print to the
+/// same length — what the chart held before its tape was chunked — breaks it.
+#[test]
+fn the_growth_check_fails_a_contiguous_tape() {
+    work_meter::reset_largest();
+    let before = work_meter::tally();
+    let mut contiguous = Vec::new();
+    for index in 0..FAST_LONG_SESSION as u64 {
+        contiguous.push(print(index));
+    }
+    let built = work_meter::tally().since(before);
+    std::hint::black_box(&contiguous);
+    let growth = Growth {
+        copy_per_print: built.realloc_copy_bytes as f64 / FAST_LONG_SESSION as f64,
+        largest_copy: built.largest_realloc_copy,
+    };
+    let found = growth_violations(FAST_LONG_SESSION, growth);
+    assert!(
+        !found.is_empty(),
+        "a contiguous tape must break the one-chunk bound: {growth:?}"
+    );
+}
+
 /// The fast variant: 1 against 10 minutes of the sustained rate, counts only.
 #[test]
 fn hot_path_work_is_independent_of_session_length() {
@@ -1063,4 +1122,160 @@ fn the_check_fails_a_path_whose_work_grows_with_the_session() {
     };
     assert!(violations(&pair(flat)).is_empty());
     assert_eq!(violations(&pair(grown)).len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// The tape's growth stalls, one ingest at a time.
+// ---------------------------------------------------------------------------
+
+/// Prints the stall probe builds one pane's tape to: past the second former
+/// doubling point (2^22), by one chunk of the chunked tape, so a stall at
+/// either point — or at the first chunk after it — is inside the run.
+const STALL_PROBE_PRINTS: usize = (1 << 22) + (1 << 16);
+/// How far either side of a former doubling point the probe looks.
+const STALL_PROBE_REACH: usize = 1_024;
+/// The frame budget an ingest near a former doubling point is held to: a
+/// quarter of a 60 fps frame, so one slow print can never cost a frame.
+const STALL_BOUND: Duration = Duration::from_millis(4);
+
+/// The slowest ingest in one stretch of the probe, and the largest single
+/// reallocation any ingest in it made.
+#[derive(Clone, Copy, Debug, Default)]
+struct Stretch {
+    slowest: Duration,
+    slowest_at: usize,
+    largest_copy: u64,
+    largest_copy_at: usize,
+}
+
+impl Stretch {
+    fn see(&mut self, index: usize, took: Duration, copy: u64) {
+        if took > self.slowest {
+            self.slowest = took;
+            self.slowest_at = index;
+        }
+        if copy > self.largest_copy {
+            self.largest_copy = copy;
+            self.largest_copy_at = index;
+        }
+    }
+
+    fn line(&self, name: &str) -> String {
+        format!(
+            "| {name} | {:.3} | {} | {} | {} |",
+            self.slowest.as_secs_f64() * 1_000.0,
+            self.slowest_at,
+            self.largest_copy,
+            self.largest_copy_at
+        )
+    }
+}
+
+/// One pane's tape built live, print by print, to [`STALL_PROBE_PRINTS`]:
+/// every ingest timed and its largest reallocation counted, the stretches
+/// around the former doubling points 2^21 and 2^22 read on their own.
+/// Returns the two stretches and the whole run.
+fn stall_probe(footprint: bool) -> [Stretch; 3] {
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    state.set_footprint_enabled(footprint);
+    let points = [1_usize << 21, 1 << 22];
+    let mut near = [Stretch::default(); 2];
+    let mut all = Stretch::default();
+    let block = 100_000;
+    let mut blocks = Vec::new();
+    let mut block_started = Instant::now();
+    for index in 0..STALL_PROBE_PRINTS {
+        let trade = print(index as u64);
+        work_meter::reset_largest();
+        let started = Instant::now();
+        state.ingest_live(&trade);
+        let took = started.elapsed();
+        let copy = work_meter::tally().largest_realloc_copy;
+        all.see(index, took, copy);
+        for (stretch, point) in near.iter_mut().zip(points) {
+            if index.abs_diff(point) <= STALL_PROBE_REACH {
+                stretch.see(index, took, copy);
+            }
+        }
+        if (index + 1) % block == 0 {
+            blocks.push(block_started.elapsed().as_nanos() as f64 / block as f64);
+            block_started = Instant::now();
+        }
+    }
+    let mut sorted = blocks.clone();
+    sorted.sort_by(f64::total_cmp);
+    println!(
+        "footprint={footprint}: {} prints, {} bars (tick:50); ingest ns/print incl. the probe's \
+         own timer: first 100k {:.0}, last 100k {:.0}, median block {:.0}",
+        state.trades().len(),
+        state.bars().len(),
+        blocks.first().copied().unwrap_or(0.0),
+        blocks.last().copied().unwrap_or(0.0),
+        sorted[sorted.len() / 2],
+    );
+    [near[0], near[1], all]
+}
+
+/// The former doubling points of the tape, one ingest at a time: the
+/// slowest single ingest within [`STALL_PROBE_REACH`] prints of 2^21 and of
+/// 2^22 and over the whole run, beside the largest reallocation copy — the
+/// stall's size in bytes, which a stopwatch only estimates.
+///
+/// ```sh
+/// env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
+///     session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+/// ```
+#[test]
+#[ignore = "stall probe: builds a 4.26 M-print tape twice; run with --ignored, see the doc"]
+fn tape_growth_stalls() {
+    let sha = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        .unwrap_or_else(|_| "unknown".to_owned());
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_owned());
+    println!("# tape growth stall probe");
+    println!("sha: {sha}");
+    println!("host: {host}");
+    println!(
+        "command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
+         session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1"
+    );
+    println!(
+        "run: one tick:50 pane built live to {STALL_PROBE_PRINTS} prints; stretches are \
+         +/-{STALL_PROBE_REACH} prints around each former doubling point; bound {} ms",
+        STALL_BOUND.as_millis()
+    );
+    let mut over = Vec::new();
+    for footprint in [false, true] {
+        let [first, second, all] = stall_probe(footprint);
+        println!(
+            "| stretch (footprint={footprint}) | slowest ingest ms | at print | largest copy bytes | at print |\n\
+             | --- | ---: | ---: | ---: | ---: |"
+        );
+        println!("{}", first.line("2^21 +/- reach"));
+        println!("{}", second.line("2^22 +/- reach"));
+        println!("{}", all.line("whole run"));
+        println!();
+        for (name, stretch) in [("2^21", first), ("2^22", second)] {
+            if stretch.slowest > STALL_BOUND {
+                over.push(format!(
+                    "footprint={footprint}: {:.3} ms at print {} near {name}",
+                    stretch.slowest.as_secs_f64() * 1_000.0,
+                    stretch.slowest_at
+                ));
+            }
+        }
+    }
+    println!(
+        "verdict: {}",
+        if over.is_empty() {
+            "no ingest near a former doubling point above the bound".to_owned()
+        } else {
+            format!("OVER THE BOUND: {}", over.join("; "))
+        }
+    );
+    assert!(over.is_empty(), "{}", over.join("\n"));
 }
