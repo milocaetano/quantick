@@ -17,8 +17,9 @@ file). A new crate, a dependency-graph edge, a money path moved across a crate
 boundary, and two byte-pinned goldens that must not move: a full bug pass and
 a full delivery review are owed. Not `max`: no new behaviour, and no decision
 here is the trader's money or safety — the fill rules, the risk lock and the
-journal format are carried over byte for byte. (Two small trader-visible
-deltas were found and kept in review; S11 records them.)
+journal format are carried over byte for byte. (Review found two old
+oddities the move would have changed; S11 records why both stay as they
+were.)
 
 ## Request ledger
 
@@ -127,16 +128,19 @@ is an `S` line, and the ones step 3 would have asked are marked *wanted to ask*.
   `backtest` already links `sim` and is the headless consumer `CLAUDE.md`
   names, so it can take `paper` as a plain downward edge.
 
-- **S11** — *Recorded in review.* Two trader-visible deltas the move makes
-  on purpose, both found by the step-0 bug pass on `a61aa969`: the risk-lock
-  refusal sentence loses a run of 18 stray spaces a lost line continuation
-  had left inside it ("or                  turn the lock off" becomes "or
-  turn the lock off"), and a timeline reset's forced close now raises
-  `journal_changed`, so a report held open re-reads after a seek instead of
-  omitting that trade until the next close. No golden and no test asserted
-  the old text or the stale report; both are fixes of the same kind the
-  goldens exist to stop from happening *silently*, which is why they are
-  written down here and in the PR body.
+- **S11** — *Recorded in review.* The step-0 bug pass on `a61aa969` found
+  two places where the moved account behaved differently from the one it
+  replaced: the risk-lock refusal sentence had lost a run of 18 stray spaces
+  a lost line continuation had left in it at base ("or                  turn
+  the lock off"), and a timeline reset's forced close had started raising
+  `journal_changed`, so an open report would re-read after a seek. The first
+  delivery-review pass pointed out that either one makes the move touch
+  something the trader sees. Both were put back as they were at `317772a5`
+  by the commit "fix(paper): keep the two behaviours the move had changed":
+  the sentence is the base literal again, and a reset does not raise the flag,
+  which its doc comment and `a_timeline_reset_journals_the_forced_close_and_ends_the_file`
+  now state. Tidying the sentence and refreshing a report after a seek are
+  follow-ups for the PR body, not part of a move.
 
 S2 is the mission's headline scope decision; the PR body states it first
 for the reviewer to ratify, not only here.
@@ -203,8 +207,8 @@ decision; S9 fixes the load format so two readers agree on it.
       are line-local hunks.
       *Evidence:* `git diff --stat <base>... -- crates/app/src/control` empty,
       and the hunk list of the four shared files. → PR body, "A8". *(R11)*
-- [x] **A9** — Behaviour is unchanged apart from the two deltas S11 records:
-      every test that existed at base still passes, in `app` or in the crate
+- [x] **A9** — Behaviour is unchanged (S11 records the two places review
+      found and put back): every test that existed at base still passes, in `app` or in the crate
       it moved to, and no expected value was edited to make it pass.
       *Evidence:* test counts per crate at base and at head, and the full
       workspace test run. → PR body, "A9". *(R4, R5)*
@@ -231,8 +235,8 @@ decision; S9 fixes the load format so two readers agree on it.
       preserve today's behaviour, blast radius stated in the PR body.
 
 - [x] **G7** — The coordinator's "record them in the goal file and PR body":
-      every judgment call is an `S` line here and appears in the PR body's
-      "Other recorded choices" section. *Added after the first
+      every judgment call is an `S` line here, and the PR body lists all
+      eleven, S1 to S11, under "Recorded choices". *Added after the first
       delivery-review pass (traceability).* → PR body.
 
 <!-- required-ai-review-goal-gates:v1 -->
@@ -248,15 +252,10 @@ the `ai_review_threads.sh list` output quoted in the PR body, and the private
 
 ### Not applicable
 
-- **Touches anything user-visible** — no surface changes. Every string the
-  account raises is moved verbatim except the one S11 names: the risk-lock
-  refusal toast loses 18 stray spaces. The other S11 delta changes when an
-  open report re-reads (after a seek), not what it draws. Neither adds,
-  moves or restyles a surface, so `visual-qa` and `trader-ux-review` would
-  photograph the same chart; the refusal text is asserted in
-  `a_refusal_is_typed_for_a_caller_and_worded_for_the_trader`, and the
-  report re-read after a reset in
-  `a_timeline_reset_journals_the_forced_close_and_ends_the_file`.
+- **Touches anything user-visible** — no surface changes; every string the
+  account raises is moved verbatim (the one review found altered was put
+  back, S11), and the goldens pin the journal and the report. `visual-qa`
+  and `trader-ux-review` would photograph an unchanged chart.
 - **Adds something a trader does** — no new action; the control plane is
   untouched (R11).
 
