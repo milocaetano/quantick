@@ -2724,9 +2724,10 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
     // Free again. The gateway writes the wait's answer before it releases
     // the ID, so a client that reuses the ID the instant it reads that answer
     // can still meet the duplicate refusal: on a loaded machine the wait
-    // thread is preempted between the two (#411). The reuse is retried on
-    // exactly that refusal, inside the shared test budget, and must then
-    // succeed; an ID the gateway never released fails here.
+    // thread is preempted between the two (#411; the ordering itself is
+    // #425). The reuse is retried on exactly that refusal, inside the shared
+    // test budget, and must then succeed; an ID the gateway never released
+    // fails here.
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
     let reused = loop {
         client
@@ -2934,7 +2935,7 @@ fn an_operator_cannot_remove_an_object_the_trader_drew() {
 /// it, then run the frame that applies the result: the application loop's own
 /// order, with the worker's half made deterministic. A fixed count of frames
 /// is not a wait; on a loaded machine they all pass before the worker thread
-/// has run at all (#409, #415).
+/// has run at all (#409, #415, and the slot-number test below).
 fn flush_indicators_then_frame(app: &mut QuantickApp, ctx: &egui::Context) {
     for pane in app.active_tab_mut().panes_mut() {
         pane.indicator_worker.flush();
@@ -3014,24 +3015,14 @@ plot(close)
     // The trader's own, on the first tab.
     let (traders_tab, _, traders_slot) =
         app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if !indicator_kinds(&app).is_empty() {
-            break;
-        }
-    }
+    flush_indicators_then_frame(&mut app, &ctx);
 
     // The second chart, whose slot numbering starts over from zero.
     app.cycle_tab(1);
     run_frame(&mut app, &ctx);
     let (operators_tab, _, operators_slot) =
         app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if !indicator_kinds(&app).is_empty() {
-            break;
-        }
-    }
+    flush_indicators_then_frame(&mut app, &ctx);
     assert_ne!(traders_tab, operators_tab, "two charts, not one");
     assert_eq!(
         traders_slot.0, operators_slot.0,
