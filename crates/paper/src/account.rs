@@ -123,13 +123,18 @@ pub struct AccountResponse {
     /// this keeps exactly as it was. A queue here would change which message
     /// a trader sees.
     pub toast: Option<String>,
-    /// A close was journaled since the host last asked.
+    /// A close reported by the venue was journaled since the host last asked.
     ///
     /// The report reads the journal from disk, so a host holding one open
     /// has to re-read it after a close or it shows yesterday until a manual
     /// refresh. The account cannot re-read what it does not hold; it says
     /// so here, and the host takes the flag with
     /// [`PaperAccount::take_journal_changed`].
+    ///
+    /// Raised by [`PaperAccount::handle_events`] only. The forced close a
+    /// [`PaperAccount::reset_timeline`] journals does not raise it: the host
+    /// never re-read its report on a reset before the account left `app`,
+    /// and a move keeps that exactly as it was.
     pub journal_changed: bool,
 }
 
@@ -736,9 +741,6 @@ impl PaperAccount {
         for event in &events {
             if let VenueEvent::Closed(trade) = event {
                 all_saved &= self.journal(&trade.clone());
-                // The forced close is on disk like any other, so a report the
-                // host holds open is as stale after a seek as after a print.
-                self.outbox.journal_changed = true;
             }
         }
         // A reset ends the tape session, so it ends the file session too:

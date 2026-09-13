@@ -31,11 +31,15 @@ pub struct RiskRefusal {
 
 impl RiskRefusal {
     /// The refusal as the trader reads it.
+    ///
+    /// Byte for byte what the ticket's toast and the control plane's error
+    /// said before the account left `app`, including the run of spaces a lost
+    /// line continuation left before "turn" - a move is not the place to
+    /// change a sentence the trader reads. Tidying it is its own change.
     #[must_use]
     pub fn sentence(&self) -> String {
         format!(
-            "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or \
-             turn the lock off.",
+            "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
             self.risk.amount.normalize(),
             self.risk.currency.code(),
             self.budget.amount.normalize(),
