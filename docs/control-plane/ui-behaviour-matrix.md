@@ -107,7 +107,7 @@ The three exclusion classes are closed:
 | `trade.ticket.strategy.select` | Choose the ticket's exit ladder | the Trading panel's strategy selector | `trade.strategy.select` | — |
 | `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup | `feed.reconnect` | — |
 | `feed.reload` | Throw the timeline away and rebuild the chart | the feed notice popup | `feed.reload` | — |
-| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as                 trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals                 by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
+| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
 | `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | View menu, Drawing toolbar, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `tool.crosshair` | Arm the crosshair | tool rail, key 2 | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
@@ -198,7 +198,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.risk.set` | the Trading panel risk field |
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
-| `feed.deal_recording.set` | the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry                  in the menu registry; `record_by_default` is the same choice as a call |
+| `feed.deal_recording.set` | the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry in the menu registry; `record_by_default` is the same choice as a call |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
 | `drawing.rename` | the rename box inside the canvas right-click menu |

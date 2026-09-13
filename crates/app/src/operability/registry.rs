@@ -632,13 +632,16 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "feed.deal_recording.set",
-        title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as                 trades bars",
-        reach: "the REC control beside the symbol and its popover; the Tools menu's `Record deals                 by default` checkbox",
+        title: "Record the venue's deal counter, stop, load a recorded day, or show the pane as \
+                trades bars",
+        reach: "the REC control beside the symbol and its popover; the Tools menu's \
+                `Record deals by default` checkbox",
         keys: &[
             (Source::ToolbarAction, "DealRecording"),
             (
                 Source::Authored,
-                "the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry                  in the menu registry; `record_by_default` is the same choice as a call",
+                "the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry \
+                 in the menu registry; `record_by_default` is the same choice as a call",
             ),
         ],
         // `ShowAsTrades` is the popover's shortcut to the `trades` rule, the
