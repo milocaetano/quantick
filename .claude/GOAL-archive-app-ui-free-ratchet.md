@@ -62,12 +62,14 @@ Operational instructions (four checks run each on its own, draft PR against
   measurement, so the name the issue uses and the number the guard enforces
   are one definition. Earlier evidence files keep the old line-level values;
   the PR body states the break. Safe: `--report` enforces nothing.
-- **S3** — "Names the UI library" means production code (text before any
-  `//`) where `egui` or `eframe` starts a word (Q16/Q17 measure
-  "egui/eframe"). A comment does not make a file UI code, so a `// egui`
-  cannot launder one; and `timeframe` is not `eframe` — a bare substring
-  test charged every file naming a timeframe as UI code. Safe: both rules
-  err toward charging, never toward exempting.
+- **S3** — "Names the UI library" means what the headless guard forbids as
+  the UI toolkit (`egui`, `eframe`; Q16/Q17 measure "egui/eframe"), asked
+  through its own matcher: whole identifiers, comments stripped with quotes
+  respected. A comment does not make a file UI code, so a `// egui` cannot
+  launder one; and `timeframe` is not `eframe` — a bare substring test
+  charged every file naming a timeframe as UI code. Safe: one list and one
+  matcher for both guards (changed after the ai-review found the first
+  version kept a second one).
 - **S4** — Production is the size guard's definition (top-level
   `#[cfg(test)]` items stripped, `tests/` skipped): a test sidecar outside
   `tests/` counts, exactly as it counts toward size. Safe: one owner of
