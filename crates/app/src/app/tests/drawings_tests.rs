@@ -102,6 +102,85 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
     assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
 }
 
+/// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
+/// 160.5, above and below the chart's middle.
+fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane
+        .frame
+        .chart_area
+        .expect("the first frame laid out the chart");
+    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let x_at = |bar: f32| {
+        pane.viewport
+            .x_at_bar_position(bar, history_right, pane.slots())
+    };
+    (
+        chart,
+        egui::pos2(x_at(80.5), chart.center().y + 55.0),
+        egui::pos2(x_at(160.5), chart.center().y - 55.0),
+    )
+}
+
+/// The range is what the pointer crossed. A secondary drag used to pan the
+/// chart as well (`Response::dragged` counts every button), so the chart
+/// followed the pointer, the bar under it never changed, and the profile
+/// collapsed onto its first anchor.
+#[test]
+fn a_secondary_drag_measures_the_bars_it_crossed_without_panning() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, end) = quick_range_ends(&app);
+
+    drag_quick_range(&mut app, &ctx, start, end);
+    let (_, start_after, _) = quick_range_ends(&app);
+    assert!(
+        (start_after.x - start.x).abs() < 0.5,
+        "a secondary drag does not pan: bar 80.5 moved from {} to {}",
+        start.x,
+        start_after.x
+    );
+    let action = crate::app::control_quick_range(&app).expect("the drag raised its action");
+    // One idle frame first, as the dismissal click gives the flow test above:
+    // without it the press lands before the bar can take it.
+    run_frame(&mut app, &ctx);
+    click_chart(&mut app, &ctx, action.rect.center());
+
+    let drawings = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(drawings.len(), 1);
+    let bars: Vec<f32> = drawings[0].points.iter().map(|point| point.bar).collect();
+    let span = bars.iter().copied().fold(f32::MIN, f32::max)
+        - bars.iter().copied().fold(f32::MAX, f32::min);
+    assert!(
+        span >= 70.0,
+        "the profile spans the eighty bars the drag crossed, not one: {bars:?}"
+    );
+}
+
+/// A right-click whose hand slips a few pixels is still a click to egui,
+/// which opens the chart menu for it; the range must not start as well, or
+/// the trader gets a one-bar range, its action bar and the menu at once.
+#[test]
+fn a_right_click_that_slips_within_the_click_distance_raises_no_range() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, _) = quick_range_ends(&app);
+    let click_distance_px = ctx.options(|options| options.input_options.max_click_dist);
+
+    drag_quick_range(
+        &mut app,
+        &ctx,
+        start,
+        start + egui::vec2(click_distance_px - 1.0, 0.0),
+    );
+    assert!(
+        crate::app::control_quick_range(&app).is_none(),
+        "a slip inside egui's click distance is the context-menu gesture, not a range"
+    );
+}
+
 #[test]
 fn the_regular_ruler_remains_after_an_unrelated_chart_click() {
     let ctx = egui::Context::default();

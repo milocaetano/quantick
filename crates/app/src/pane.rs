@@ -1045,8 +1045,17 @@ impl ChartPane {
         // across the band is not one of them — the tape does not pan, it is
         // pinned to the live edge, so a drag there had no second meaning to
         // protect.
+        //
+        // Primary only: egui's `dragged()` counts every button, and the
+        // secondary drag is the quick range's (`pane/quick_range.rs`) — a pan
+        // under it keeps the same bar beneath the pointer and collapses the
+        // range onto its first anchor. The middle button pans below.
         let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
-        if total > 0 && chart.dragged() && !grabbing_divider && primary_free {
+        if total > 0
+            && chart.dragged_by(egui::PointerButton::Primary)
+            && !grabbing_divider
+            && primary_free
+        {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
             if let Some(auto) = auto

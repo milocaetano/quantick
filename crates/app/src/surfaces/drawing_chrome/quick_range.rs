@@ -131,7 +131,7 @@ impl QuickRange {
                 owner: pressed_owner,
                 position: pressed_at,
                 anchor: start,
-            } if *pressed_owner == owner && pressed_at.distance(position) >= threshold_px => {
+            } if *pressed_owner == owner && pressed_at.distance(position) > threshold_px => {
                 self.state = State::Selected(Selection {
                     owner,
                     anchors: [*start, anchor],
