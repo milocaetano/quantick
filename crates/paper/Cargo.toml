@@ -10,6 +10,7 @@ publish.workspace = true
 # the bot drive one account. It links the domain crates and nothing that
 # draws, runs a thread or reads a clock: the host tells it what time it is.
 [dependencies]
+quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }
 quantick-sim = { path = "../sim" }
 rust_decimal = { workspace = true }

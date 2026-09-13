@@ -26,10 +26,10 @@ use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
-// The civil-date law itself moved into `quantick_paper::civil`, where the
+// The civil-date law itself moved into `quantick-civil`, where the
 // report cuts on it and the journal names its files by it. Re-exported here so
 // the ledger, the report window and the harness hooks keep asking this module.
-pub(crate) use quantick_paper::civil::{
+pub(crate) use quantick_civil::{
     CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, parse_iso_date, weekday_abbr,
 };
 

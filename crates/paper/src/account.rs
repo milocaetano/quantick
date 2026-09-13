@@ -22,17 +22,17 @@ use quantick_sim::{
 };
 use rust_decimal::Decimal;
 
-use crate::civil::civil_utc;
 use crate::format::{PositionSummary, fmt_decimal, fmt_signed_points, position_word};
 use crate::order_strategies::OrderStrategy;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
+use quantick_civil::civil_utc;
 
 mod journal;
 mod orders;
 mod risk;
 
 pub use journal::{elide_path, export_csv};
-pub use risk::RiskEditor;
+pub use risk::{RiskEditor, RiskRefusal};
 
 /// What the account is handed that only the ticket can know.
 ///
@@ -359,8 +359,17 @@ impl PaperAccount {
     /// or a folder picker — and handed over; this crate reads none of them.
     #[must_use]
     pub fn with_trades_dir(dir: PathBuf) -> Self {
+        Self::with_venue(dir, Box::new(Simulator::new()))
+    }
+
+    /// An account journaling to `dir` and trading on `venue` — a simulator
+    /// the caller configured or seeded, a test double, or one day a broker
+    /// adapter. Everything else starts the way [`Self::with_trades_dir`]
+    /// starts it.
+    #[must_use]
+    pub fn with_venue(dir: PathBuf, venue: Box<dyn TradingVenue>) -> Self {
         Self {
-            venue: Box::new(Simulator::new()),
+            venue,
             symbol: String::new(),
             dir,
             journal_path: None,

@@ -2906,6 +2906,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.3.4",
  "png",
+ "quantick-civil",
  "quantick-control",
  "quantick-control-local",
  "quantick-engine",
@@ -2950,6 +2951,10 @@ dependencies = [
  "quantick-strategy",
  "rust_decimal",
 ]
+
+[[package]]
+name = "quantick-civil"
+version = "0.1.0"
 
 [[package]]
 name = "quantick-control"
@@ -3093,6 +3098,7 @@ dependencies = [
 name = "quantick-paper"
 version = "0.1.0"
 dependencies = [
+ "quantick-civil",
  "quantick-engine",
  "quantick-sim",
  "rust_decimal",

@@ -139,7 +139,7 @@ impl PaperTrading {
                             .clicked()
                         {
                             let fresh = new_strategy(self.account.order_strategies().len());
-                            self.account.order_strategies_mut().push(fresh);
+                            self.account.add_order_strategy(fresh);
                             self.strategy_editing = Some(self.account.order_strategies().len() - 1);
                             self.strategy_dirty = true;
                         }
@@ -149,24 +149,9 @@ impl PaperTrading {
                                 .on_hover_text("remove this strategy")
                                 .clicked()
                         {
-                            // Read the selection's *name* before the list
-                            // shifts: resolving the index afterwards answers
-                            // with whichever strategy slid into that slot, and
-                            // the ticket would silently arm the neighbour of
-                            // the one that was deleted.
-                            let selected = self
-                                .account()
-                                .selected_order_strategy()
-                                .map(|strategy| strategy.name.clone());
-                            let removed = self.account.order_strategies_mut().remove(index).name;
-                            let reselected =
-                                selected.filter(|name| *name != removed).and_then(|name| {
-                                    self.account
-                                        .order_strategies()
-                                        .iter()
-                                        .position(|strategy| strategy.name == name)
-                                });
-                            self.account.select_strategy(reselected);
+                            // The account keeps the selection on the strategy
+                            // it named, not on the slot that shifts under it.
+                            self.account.remove_order_strategy(index);
                             self.strategy_editing = if self.account.order_strategies().is_empty() {
                                 None
                             } else {
@@ -202,7 +187,7 @@ impl PaperTrading {
             );
             return false;
         };
-        let Some(strategy) = self.account.order_strategies_mut().get_mut(index) else {
+        let Some(strategy) = self.account.order_strategy_mut(index) else {
             return false;
         };
         let mut changed = false;

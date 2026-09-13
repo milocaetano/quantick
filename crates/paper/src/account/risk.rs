@@ -15,6 +15,35 @@ use super::{AccountEnv, PaperAccount};
 use crate::format::fmt_decimal;
 use crate::risk_sizing::{self, Capital, InstrumentBook, RiskSettings};
 
+/// The risk lock refused an order: what it would have risked, and the risk
+/// per trade it went over, both in the instrument's own currency.
+///
+/// Typed so a caller that is not a person - a bot, the backtest - can branch
+/// on a refusal without reading English; [`Self::sentence`] is the one
+/// wording the ticket's toast and the control plane's error both carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RiskRefusal {
+    /// What the order would lose at its stop.
+    pub risk: quantick_sim::Money,
+    /// The risk per trade it went over.
+    pub budget: quantick_sim::Money,
+}
+
+impl RiskRefusal {
+    /// The refusal as the trader reads it.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        format!(
+            "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or \
+             turn the lock off.",
+            self.risk.amount.normalize(),
+            self.risk.currency.code(),
+            self.budget.amount.normalize(),
+            self.budget.currency.code(),
+        )
+    }
+}
+
 /// The risk surface's three editable halves and the symbol they are read
 /// for, borrowed together.
 ///
@@ -159,7 +188,7 @@ impl PaperAccount {
     /// Reads the intent's *own* protection and quantity rather than the
     /// ticket's: a named call states what it wants, and the ceiling has to
     /// be measured against what was actually asked for.
-    pub fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
+    pub fn risk_refusal(&self, intent: &OrderIntent) -> Option<RiskRefusal> {
         if !self.risk.lock || self.risk.basis == risk_sizing::RiskBasis::Off {
             return None;
         }
@@ -181,15 +210,14 @@ impl PaperAccount {
             &self.instrument_money.get(&self.symbol)?.currency,
         )
         .ok()?;
-        (risk.amount > budget.amount).then(|| {
-            format!(
-                "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
-                risk.amount.normalize(),
-                risk.currency.code(),
-                budget.amount.normalize(),
-                budget.currency.code(),
-            )
-        })
+        (risk.amount > budget.amount).then_some(RiskRefusal { risk, budget })
+    }
+
+    /// The same refusal as the sentence the trader reads - what the control
+    /// plane answers a refused `place_order` with.
+    #[must_use]
+    pub fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
+        self.risk_refusal(intent).map(|refusal| refusal.sentence())
     }
 
     /// Whether a launch hook owns the risk per trade for this run, in which

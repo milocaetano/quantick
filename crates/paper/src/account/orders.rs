@@ -88,23 +88,40 @@ impl PaperAccount {
     /// infer from, and an action whose meaning depends on the market at the
     /// instant it lands is an action nobody can replay.
     pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        match self.try_place_intent(intent) {
+            Ok(events) => events,
+            Err(refusal) => {
+                // Nothing is fabricated onto the venue's own event stream:
+                // the lock is this application's policy, not a fact the
+                // venue reported, and a `RejectReason` variant for it would
+                // put that policy inside the domain crate. The trader gets
+                // the toast; a named caller gets the same sentence as an
+                // error, because `control::trade` asks `risk_refusal_for`
+                // first.
+                self.set_toast(format!("SIM: {}", refusal.sentence()));
+                Vec::new()
+            }
+        }
+    }
+
+    /// [`Self::place_intent`] for a caller that branches on a refusal rather
+    /// than reading it: the risk lock's answer as a typed [`RiskRefusal`],
+    /// and no acknowledgement posted. A refused order never reaches the
+    /// venue, so calling this again with the same intent is safe.
+    pub fn try_place_intent(
+        &mut self,
+        intent: OrderIntent,
+    ) -> Result<Vec<VenueEvent>, super::RiskRefusal> {
         // The risk per trade is a ceiling on the account, not on the mouse.
         // A named call is exactly the operator `CLAUDE.md` treats as
         // first-class, so a lock the ticket enforces and this path does not
         // would be a ceiling that holds only while a human is clicking.
-        if let Some(refusal) = self.risk_refusal_for(&intent) {
-            // Nothing is fabricated onto the venue's own event stream: the
-            // lock is this application's policy, not a fact the venue
-            // reported, and a `RejectReason` variant for it would put that
-            // policy inside the domain crate. The trader gets the toast; a
-            // named caller gets the same sentence as an error, because
-            // `control::trade` asks this same function first.
-            self.set_toast(format!("SIM: {refusal}"));
-            return Vec::new();
+        if let Some(refusal) = self.risk_refusal(&intent) {
+            return Err(refusal);
         }
         let events = self.venue.submit(intent);
         self.handle_events(events.clone());
-        events
+        Ok(events)
     }
 
     /// Replace a working order's protective prices — the chart's drag, said
@@ -268,11 +285,42 @@ impl PaperAccount {
         &self.strategies
     }
 
-    /// The kept strategies, for the editor that adds, renames and removes
-    /// them in place. The selection is an index into this list, so a caller
-    /// that removes one re-selects with [`Self::select_strategy`].
-    pub fn order_strategies_mut(&mut self) -> &mut Vec<OrderStrategy> {
-        &mut self.strategies
+    /// Keep one more strategy, after the others. Returns its index.
+    pub fn add_order_strategy(&mut self, strategy: OrderStrategy) -> usize {
+        self.strategies.push(strategy);
+        self.strategies.len() - 1
+    }
+
+    /// One kept strategy, for the editor that renames it and edits its rows
+    /// in place. The list's order and the selection stay the account's.
+    pub fn order_strategy_mut(&mut self, index: usize) -> Option<&mut OrderStrategy> {
+        self.strategies.get_mut(index)
+    }
+
+    /// Stop keeping one strategy, and keep the selection on the strategy it
+    /// named rather than on the slot it sat in.
+    ///
+    /// The selection is an index, and removing an earlier strategy shifts
+    /// every later one down a slot: re-resolving by the old index would
+    /// silently arm the neighbour of the one the trader chose. So the
+    /// selection is read by *name* before the list moves and found again
+    /// after; removing the selected strategy itself selects nothing.
+    pub fn remove_order_strategy(&mut self, index: usize) -> Option<OrderStrategy> {
+        if index >= self.strategies.len() {
+            return None;
+        }
+        let selected = self
+            .selected_order_strategy()
+            .map(|strategy| strategy.name.clone());
+        let removed = self.strategies.remove(index);
+        self.selected_strategy = selected
+            .filter(|name| *name != removed.name)
+            .and_then(|name| {
+                self.strategies
+                    .iter()
+                    .position(|strategy| strategy.name == name)
+            });
+        Some(removed)
     }
 
     /// Which kept strategy the ticket is set to, by index; `None` is the

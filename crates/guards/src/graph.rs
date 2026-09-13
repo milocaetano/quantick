@@ -87,7 +87,10 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
     // The paper account: policy, sizing and the journal over a `sim` venue.
-    ("paper", &["engine", "sim"]),
+    ("paper", &["civil", "engine", "sim"]),
+    // Civil dates and the display offset: pure arithmetic, reached by the
+    // paper account below `app` and by the chart above it.
+    ("civil", &[]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),

@@ -17,8 +17,8 @@ use quantick_sim::{ClosedTrade, PerformanceReport, history};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
-use crate::civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 use crate::format::sanitize_symbol;
+use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 
 /// One journal row loaded from disk: the trade, the symbol folder it came
 /// from, and the session source its file recorded.

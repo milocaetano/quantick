@@ -15,9 +15,9 @@ use quantick_sim::{ClosedTrade, history};
 use rust_decimal::Decimal;
 
 use super::{PaperAccount, utc_compact};
-use crate::civil::civil_utc;
 use crate::format::{fmt_decimal, sanitize_symbol};
 use crate::report::HistoryRow;
+use quantick_civil::civil_utc;
 
 impl PaperAccount {
     /// This session's closed round trips as history rows, each stamped with

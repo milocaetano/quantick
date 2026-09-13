@@ -1,7 +1,9 @@
-//! Civil time: the display offset and the date law every trade surface
+//! quantick-civil — the display offset and the date law every trade surface
 //! shares.
 //!
-//! Two halves that used to live in `app` beside the widgets that draw them.
+//! Two halves that used to live in `app` beside the widgets that draw them,
+//! and a crate of their own because more than one crate reads them: the
+//! paper account, and the chart and control plane above it.
 //! [`TzOffset`] is the display timezone — a fixed offset applied only when a
 //! UTC epoch-millisecond timestamp is shown. The rest is the civil-date law:
 //! which day a trade closed on, where that day starts and ends, and how a

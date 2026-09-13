@@ -119,6 +119,7 @@ graph TD
   app --> strategy
   app --> sim
   app --> paper
+  app --> civil
   app --> replay
   app --> orderbook
   app --> orderflow
@@ -144,6 +145,7 @@ graph TD
   replay["replay<br/>recorded sessions"] --> engine
   paper["paper<br/>paper account"] --> sim
   paper --> engine
+  paper --> civil
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
@@ -160,6 +162,7 @@ graph TD
     engine["engine<br/>trades → bars"]
     orderbook["orderbook<br/>L2 book core"]
     control["control<br/>control-plane contracts"]
+    civil["civil<br/>civil dates"]
   end
 ```
 
@@ -175,6 +178,7 @@ graph TD
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; chart, backtest and bot drive one account. |
+| `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |

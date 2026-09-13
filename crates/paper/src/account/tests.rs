@@ -452,3 +452,108 @@ fn a_timeline_reset_journals_the_forced_close_and_ends_the_file() {
         "the close was journaled"
     );
 }
+
+/// A bot or the backtest branches on a refusal without reading English:
+/// `try_place_intent` answers with the typed refusal and posts nothing,
+/// while `place_intent` posts the same sentence the refusal carries.
+#[test]
+fn a_refusal_is_typed_for_a_caller_and_worded_for_the_trader() {
+    let dir = ScratchDir::new("account-typed-refusal");
+    let mut account = account(&dir, "WIN$N");
+    account.seed(&print(0, 100));
+    let mut book = InstrumentBook::new();
+    book.insert(
+        "WIN$N".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    );
+    account.set_instrument_money(book);
+    let mut risk = account.risk_settings().clone();
+    risk.lock = true;
+    risk.basis = RiskBasis::Amount;
+    risk.amount = Decimal::from(1);
+    account.set_risk_settings(risk);
+    let intent = || {
+        OrderIntent::market(Side::Buy, Decimal::from(1000))
+            .with_bracket(Bracket::whole(Some(Decimal::from(1)), None))
+    };
+
+    let refusal = account
+        .try_place_intent(intent())
+        .expect_err("99 points x 0.20 x 1000 is past a 1 BRL budget");
+    assert_eq!(refusal.budget.amount, Decimal::from(1));
+    assert_eq!(refusal.risk.amount, Decimal::from(19_800));
+    assert_eq!(refusal.risk.currency.code(), "BRL");
+    assert!(
+        account.peek_toast().is_none(),
+        "a typed refusal posts nothing"
+    );
+    assert!(account.is_flat(), "and nothing reached the venue");
+    assert!(
+        account.try_place_intent(intent()).is_err(),
+        "asking twice is safe: still refused, still nothing placed"
+    );
+
+    assert!(account.place_intent(intent()).is_empty());
+    assert_eq!(
+        account.peek_toast().map(String::as_str),
+        Some(format!("SIM: {}", refusal.sentence()).as_str()),
+        "the toast is the refusal's own sentence"
+    );
+}
+
+/// Removing a kept strategy keeps the selection on the strategy it named,
+/// not on the slot that shifted under it - and removing the selected one
+/// selects nothing rather than its neighbour.
+#[test]
+fn removing_a_strategy_keeps_the_selection_on_its_name() {
+    let dir = ScratchDir::new("account-strategies");
+    let mut account = account(&dir, "LADDER");
+    let named = |name: &str| OrderStrategy {
+        name: name.to_owned(),
+        rows: Vec::new(),
+    };
+    for name in ["first", "second", "third"] {
+        account.add_order_strategy(named(name));
+    }
+    account.select_strategy(Some(2));
+
+    assert_eq!(
+        account.remove_order_strategy(0).map(|s| s.name),
+        Some("first".to_owned())
+    );
+    assert_eq!(
+        account.selected_order_strategy().map(|s| s.name.as_str()),
+        Some("third"),
+        "the selection followed its strategy down a slot"
+    );
+    assert_eq!(
+        account.remove_order_strategy(1).map(|s| s.name),
+        Some("third".to_owned())
+    );
+    assert_eq!(account.selected_strategy(), None, "no neighbour is armed");
+    assert!(
+        account.remove_order_strategy(5).is_none(),
+        "an index past the end is nothing"
+    );
+}
+
+/// The venue the host hands over is the one the account trades on.
+#[test]
+fn the_account_trades_on_the_venue_it_is_handed() {
+    let dir = ScratchDir::new("account-with-venue");
+    let mut seeded = Simulator::new();
+    seeded.seed(&print(0, 250));
+    let account = PaperAccount::with_venue(dir.path().to_path_buf(), Box::new(seeded));
+    assert_eq!(
+        account.mark_price(),
+        Some(Decimal::from(250)),
+        "the mark came from the handed simulator, not a fresh one"
+    );
+}

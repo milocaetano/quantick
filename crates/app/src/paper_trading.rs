@@ -32,7 +32,7 @@ use crate::paper_chrome::{PositionSummary, fmt_decimal};
 use crate::theme;
 // The report's anchor date is formatted only under test.
 #[cfg(test)]
-use quantick_paper::civil::civil_utc;
+use quantick_civil::civil_utc;
 
 // The report and the ledger moved to `paper_report`; these names did not.
 // The control plane, the dock and the harness hooks all reach them through
