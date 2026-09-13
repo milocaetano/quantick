@@ -736,6 +736,9 @@ impl PaperAccount {
         for event in &events {
             if let VenueEvent::Closed(trade) = event {
                 all_saved &= self.journal(&trade.clone());
+                // The forced close is on disk like any other, so a report the
+                // host holds open is as stale after a seek as after a print.
+                self.outbox.journal_changed = true;
             }
         }
         // A reset ends the tape session, so it ends the file session too:

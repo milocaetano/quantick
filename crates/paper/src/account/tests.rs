@@ -443,6 +443,10 @@ fn a_timeline_reset_journals_the_forced_close_and_ends_the_file() {
     assert!(account.is_flat(), "the position flattened");
     assert_eq!(account.session_trades().len(), 1, "at the last mark");
     assert!(
+        account.take_journal_changed(),
+        "the forced close reached the journal, so the host is told"
+    );
+    assert!(
         account.journal_path().is_none(),
         "the reset ended the session file, so the next close opens a new one"
     );
