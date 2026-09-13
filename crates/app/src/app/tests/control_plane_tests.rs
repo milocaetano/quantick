@@ -4777,11 +4777,15 @@ fn captures_parked_behind_the_first_ask_for_the_next_frame_when_the_budget_is_sp
         })
         .collect();
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    // Both must be parked at once. The helper returns on the first frame once
+    // one is, so this loop sleeps too, or its back-to-back frames would starve
+    // the reader thread the second request still has to cross.
     while run_frames_until_capture_parks(&mut app, &ctx) < 2 {
         assert!(
             std::time::Instant::now() < deadline,
             "both captures did not park within {GATEWAY_TEST_WAIT:?}"
         );
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 
     let mut access = app
