@@ -194,9 +194,17 @@ impl ControlAccess {
             // against a documented ceiling of four, and the drain would find
             // its budget already gone. A waiter this frame cannot serve stays
             // queued and is served by the next one.
-            if served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME
-                || elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US
-            {
+            //
+            // Except while this frame holds an image. `begin_frame` drops the
+            // image when the frame ends, so a waiter held back on *time* here
+            // would lose the picture it parked for, then wait out its deadline
+            // and report `frame_not_delivered` for a frame that was delivered.
+            // A loaded machine can spend the whole budget before this point on
+            // every frame, so that would repeat on every frame. The count
+            // ceiling still applies, and the first waiter is always under it.
+            let out_of_time =
+                elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US && self.screenshot.is_none();
+            if served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME || out_of_time {
                 self.awaiting_screenshot.push_back(request);
                 self.awaiting_screenshot.extend(waiting);
                 ctx.request_repaint();
