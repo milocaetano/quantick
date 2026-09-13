@@ -35,6 +35,12 @@
 //! The rule errs toward charging: a UI file that reaches the library only
 //! through a re-export (`use crate::prelude::Ui`) is counted as UI-free. That
 //! is the direction a ratchet may err in, and the fix is to name the import.
+//!
+//! The rule is lexical, so the other direction exists too: a name that is
+//! not a use — an unused `use eframe::egui as _;`, the name inside a block
+//! comment or a string — keeps a file off the books. No scan short of the
+//! compiler tells a use from a mention; the diff shows the line, and that is
+//! a reviewer's finding.
 
 use std::fs;
 use std::path::Path;
