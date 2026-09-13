@@ -158,6 +158,28 @@ fn a_secondary_drag_measures_the_bars_it_crossed_without_panning() {
     );
 }
 
+/// The action bar stands where the owning pane last painted the range. A
+/// layout that stops painting that pane must take the bar with it, or it
+/// floats over whatever took the space and places a profile on a chart the
+/// trader cannot see.
+#[test]
+fn hiding_the_pane_that_owns_a_range_takes_its_action_bar_away() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, end) = quick_range_ends(&app);
+    drag_quick_range(&mut app, &ctx, start, end);
+    assert!(crate::app::control_quick_range(&app).is_some());
+
+    app.active_tab_mut().set_layout(CanvasLayout::Time);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(
+        crate::app::control_quick_range(&app).is_none(),
+        "the flow pane no longer paints the range, so no bar speaks for it"
+    );
+}
+
 /// A right-click whose hand slips a few pixels is still a click to egui,
 /// which opens the chart menu for it; the range must not start as well, or
 /// the trader gets a one-bar range, its action bar and the menu at once.

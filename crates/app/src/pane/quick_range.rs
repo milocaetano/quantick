@@ -73,8 +73,11 @@ impl ChartPane {
             if (down || released)
                 && let Some(position) = pointer
             {
+                // The divider is last frame's and can sit left of the band
+                // after a layout change; `clamp` panics on an inverted range.
+                let right = history_right.max(price_band.rect.left());
                 let position = egui::pos2(
-                    position.x.clamp(price_band.rect.left(), history_right),
+                    position.x.clamp(price_band.rect.left(), right),
                     position
                         .y
                         .clamp(price_band.rect.top(), price_band.rect.bottom()),
