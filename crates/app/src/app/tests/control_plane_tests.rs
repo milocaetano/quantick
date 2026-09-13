@@ -2731,39 +2731,19 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
     let page = reply.expect("the parked wait was answered");
     assert_eq!(page.request_id, request_id);
     assert_eq!(success_result(&page)["timed_out"], true);
-    // Free again. The gateway writes the wait's answer before it releases
-    // the ID, so a client that reuses the ID the instant it reads that answer
-    // can still meet the duplicate refusal: on a loaded machine the wait
-    // thread is preempted between the two (#411; the ordering itself is
-    // #425). The reuse is retried on exactly that refusal, inside the shared
-    // test budget, and must then succeed; an ID the gateway never released
-    // fails here.
-    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
-    let reused = loop {
-        client
-            .send_with_request_id(
-                request_id.clone(),
-                crate::control::DESCRIBE_CAPABILITY_ID,
-                1,
-                serde_json::json!({}),
-            )
-            .unwrap();
-        let reply = client.read().unwrap();
-        assert_eq!(reply.request_id, request_id);
-        let still_held = matches!(
-            &reply.outcome,
-            quantick_control::wire::ResponseOutcome::Failure { error }
-                if error.code.as_str() == codes::INVALID_REQUEST
-        );
-        if !still_held {
-            break reply;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the answered wait's request ID was never released"
-        );
-        pause_one_request_interval();
-    };
+    // Free again, the moment the answer is read: the wait's answer released
+    // the ID before it was written (#425), so this reuse is sent once, with
+    // no wait, and an ID the gateway had not released fails here (#411).
+    client
+        .send_with_request_id(
+            request_id.clone(),
+            crate::control::DESCRIBE_CAPABILITY_ID,
+            1,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    let reused = client.read().unwrap();
+    assert_eq!(reused.request_id, request_id);
     assert!(
         matches!(
             reused.outcome,
@@ -2773,6 +2753,100 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
         reused.outcome
     );
 
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// #425: an answer releases its request ID before it is written, so a client
+/// that has read the answer may reuse the ID at once. The thread that wrote
+/// the answer is held right after the write, which is where a preempted
+/// thread used to sit with the ID still in flight, and the reuse sent the
+/// moment the answer is read must still be admitted.
+#[test]
+fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(2);
+    let directory = gateway_test_directory("reuse-at-once");
+    let request_id = quantick_control::id::RequestId::new("reused").unwrap();
+    let (written_tx, written) = crossbeam_channel::bounded(1);
+    let (release, released) = crossbeam_channel::bounded::<()>(1);
+    let held = Arc::new(AtomicBool::new(false));
+    let hold = {
+        let request_id = request_id.clone();
+        // Only the first answer under this ID is held; the reuse's own answer
+        // passes through.
+        move |answered: &quantick_control::id::RequestId| {
+            if *answered == request_id && !held.swap(true, Ordering::AcqRel) {
+                let _ = written_tx.send(());
+                let _ = released.recv_timeout(GATEWAY_TEST_WAIT);
+            }
+        }
+    };
+    app.control
+        .control_access
+        .as_mut()
+        .expect("control access is installed")
+        .enable_for_test_observing_answers(&ctx, directory.clone(), 4, Arc::new(hold));
+    wait_for_test_gateway_descriptor(&mut app, &ctx);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    // A read the application thread serves: its response worker writes the
+    // answer, then is held.
+    client
+        .send_with_request_id(
+            request_id.clone(),
+            crate::control::SNAPSHOT_CAPABILITY_ID,
+            1,
+            serde_json::json!({ "scopes": ["system.info"] }),
+        )
+        .unwrap();
+    wait_for_queued_gateway_requests(&app, 1);
+    drain_gateway_requests(&mut app, &ctx);
+    let answer = client.read().unwrap();
+    assert_eq!(answer.request_id, request_id);
+    assert!(
+        matches!(
+            answer.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the first request is answered: {:?}",
+        answer.outcome
+    );
+    written
+        .recv_timeout(GATEWAY_TEST_WAIT)
+        .expect("the thread that wrote the answer is held after its write");
+
+    // The reuse, sent the moment the answer is read, while that thread is
+    // still held.
+    client
+        .send_with_request_id(
+            request_id.clone(),
+            crate::control::DESCRIBE_CAPABILITY_ID,
+            1,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    let reused = client.read().unwrap();
+    assert_eq!(reused.request_id, request_id);
+    assert!(
+        matches!(
+            reused.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "a client that has read its answer may reuse the ID at once: {:?}",
+        reused.outcome
+    );
+
+    release.send(()).unwrap();
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }

@@ -67,6 +67,11 @@ use super::{
     WAITER_POLL_MS,
 };
 
+mod answer;
+#[cfg(test)]
+pub(super) use answer::AnswerWritten;
+use answer::{answer_and_release, send_response};
+
 /// Microseconds spent since `started`, saturating.
 ///
 /// One reading for everything that shares the frame budget, so the drain and
@@ -303,15 +308,19 @@ struct ConnectionSlots {
     in_flight_ids: Mutex<BTreeSet<quantick_control::id::RequestId>>,
     parked: AtomicUsize,
     closed: AtomicBool,
+    #[cfg(test)]
+    answer_written: Option<AnswerWritten>,
 }
 
 impl ConnectionSlots {
-    fn new() -> Arc<Self> {
+    fn new(#[cfg_attr(not(test), allow(unused_variables))] options: &GatewayOptions) -> Arc<Self> {
         Arc::new(Self {
             in_flight: AtomicUsize::new(0),
             in_flight_ids: Mutex::new(BTreeSet::new()),
             parked: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
+            #[cfg(test)]
+            answer_written: options.answer_written.clone(),
         })
     }
 
@@ -768,7 +777,7 @@ fn connection_session(
     // the application thread and parked waits are in flight from the
     // reader's point of view; a worker-side read is answered before the next
     // frame is read.
-    let slots = ConnectionSlots::new();
+    let slots = ConnectionSlots::new(&authority.options);
     (authority.wake)();
     tracing::info!(
         target: "quantick::control",
@@ -975,13 +984,14 @@ fn dispatch_prepared(
         );
         return;
     }
-    // Every terminal path below forgets the request ID: a wait that parked
-    // under this ID is in flight until its read is answered or refused.
+    // Every terminal path below answers through `answer_and_release`: a wait
+    // that parked under this ID is in flight until its read is answered or
+    // refused, and the answer releases it before it is written.
     if !try_reserve_in_flight(
         &authority.global_in_flight,
         CONTROL_MAX_BUFFERED_RESPONSE_SLOTS,
     ) {
-        send_response(
+        answer_and_release(
             writer,
             codec,
             failure_response(
@@ -992,8 +1002,8 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
+            slots,
         );
-        slots.forget(&prepared.envelope.request_id);
         return;
     }
     if let Some(result) = prepared.dispatch.execute_worker(
@@ -1009,9 +1019,8 @@ fn dispatch_prepared(
                 .idempotency
                 .record(ticket, &response, metrics::wall_clock_ms());
         }
-        send_response(writer, codec, response);
+        answer_and_release(writer, codec, response, slots);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        slots.forget(&prepared.envelope.request_id);
         return;
     }
     if !try_reserve_in_flight(
@@ -1019,7 +1028,7 @@ fn dispatch_prepared(
         authority.options.max_in_flight_per_connection,
     ) {
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        send_response(
+        answer_and_release(
             writer,
             codec,
             failure_response(
@@ -1030,8 +1039,8 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
+            slots,
         );
-        slots.forget(&prepared.envelope.request_id);
         return;
     }
 
@@ -1078,9 +1087,8 @@ fn dispatch_prepared(
             if let Some(ticket) = response_ticket.as_ref() {
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
-            send_response(&response_writer, &response_codec, response);
+            answer_and_release(&response_writer, &response_codec, response, &response_slots);
             // Answer out: shared slots back now, ours after the wait below.
-            response_slots.forget(&wait_envelope.request_id);
             response_global_in_flight.fetch_sub(1, Ordering::AcqRel);
             if timed_out && let Some(ticket) = response_ticket.as_ref() {
                 let settled = response_rx
@@ -1094,10 +1102,9 @@ fn dispatch_prepared(
             response_slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     if spawn.is_err() {
-        slots.forget(&envelope.request_id);
         slots.in_flight.fetch_sub(1, Ordering::AcqRel);
         authority.global_in_flight.fetch_sub(1, Ordering::AcqRel);
-        send_response(
+        answer_and_release(
             writer,
             codec,
             failure_response(
@@ -1108,6 +1115,7 @@ fn dispatch_prepared(
                     true,
                 ),
             ),
+            slots,
         );
         return;
     }
@@ -1285,21 +1293,19 @@ fn dispatch_parked_wait(
                 _ if thread_slots.closed.load(Ordering::Acquire) => {
                     thread_slots.forget(&thread_envelope.request_id);
                 }
-                WakeReason::Shutdown => {
-                    send_response(
-                        &thread_writer,
-                        &thread_codec,
-                        failure_response(
-                            &thread_envelope,
-                            known_error(
-                                codes::INSTANCE_GONE,
-                                "local access was disabled while the wait was parked",
-                                true,
-                            ),
+                WakeReason::Shutdown => answer_and_release(
+                    &thread_writer,
+                    &thread_codec,
+                    failure_response(
+                        &thread_envelope,
+                        known_error(
+                            codes::INSTANCE_GONE,
+                            "local access was disabled while the wait was parked",
+                            true,
                         ),
-                    );
-                    thread_slots.forget(&thread_envelope.request_id);
-                }
+                    ),
+                    &thread_slots,
+                ),
                 WakeReason::Woken | WakeReason::TimedOut => dispatch_prepared(
                     to_read(reason == WakeReason::TimedOut),
                     // Same read, same `Forbidden` declaration.
@@ -1321,13 +1327,12 @@ fn dispatch_parked_wait(
         // would write.
         authority.parked_waiters.fetch_sub(1, Ordering::AcqRel);
         slots.parked.fetch_sub(1, Ordering::AcqRel);
-        slots.forget(&envelope.request_id);
         tracing::warn!(
             target: "quantick::control",
             event_code = "CONTROL_WAIT_THREAD_FAILED",
             "could not create a parked-wait thread"
         );
-        send_response(
+        answer_and_release(
             writer,
             codec,
             failure_response(
@@ -1338,6 +1343,7 @@ fn dispatch_parked_wait(
                     true,
                 ),
             ),
+            slots,
         );
     }
 }
@@ -1433,37 +1439,6 @@ fn send_handshake_rejection(stream: &mut TcpStream, codec: &BoundedCodec, error:
         let _ = stream.write_all(&frame);
     }
     let _ = stream.shutdown(Shutdown::Both);
-}
-
-fn send_response(
-    writer: &Arc<Mutex<TcpStream>>,
-    codec: &BoundedCodec,
-    mut response: ResponseEnvelope,
-) {
-    let frame = match codec.encode(FrameRole::Response, &response) {
-        Ok(frame) => frame,
-        Err(error) => {
-            response.capture_revision = None;
-            response.module_revisions.clear();
-            response.outcome = ResponseOutcome::Failure {
-                error: super::encode_refusal::unencodable(&error),
-            };
-            match codec.encode(FrameRole::Response, &response) {
-                Ok(frame) => frame,
-                Err(_) => return,
-            }
-        }
-    };
-    let mut stream = writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // A write that fails part-way has already put a truncated frame on the
-    // wire: every byte after it would be read as that frame's payload. The
-    // connection cannot be recovered, so it is closed rather than left
-    // writing garbage the client will parse as answers.
-    if stream.write_all(&frame).is_err() {
-        let _ = stream.shutdown(Shutdown::Both);
-    }
 }
 
 pub(super) fn random_bytes<const N: usize>() -> Result<[u8; N], String> {
