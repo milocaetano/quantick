@@ -81,8 +81,9 @@ const CHANNEL_PROPERTY: &str = "channel";
 
 /// Every first-generation observer capability is registered at version 1.
 /// The named tools stay on it, since the schemas they embed are the v1
-/// documents; `quantick_invoke` falls back to it only for an ID the
-/// instance's registry does not list, so the instance refuses it as before.
+/// documents. `quantick_invoke` falls back to it only for an ID the
+/// instance's registry does not list, or when that registry cannot be read,
+/// so the call itself meets the instance's refusal exactly as before.
 const FIRST_CAPABILITY_VERSION: u32 = 1;
 
 const INSTANCE_ID_PROPERTY: &str = "instance_id";
@@ -513,13 +514,21 @@ pub fn call(
                 .and_then(Value::as_str)
                 .ok_or_else(|| RpcError::new(INVALID_PARAMS, "capability_id is required"))?
                 .to_owned();
+            let mut target = instance;
             let capability_version = match arguments.get("capability_version") {
                 // D20: an omitted version is the newest the instance
                 // registers, read from its own registry — never a table here.
-                None => match described(link, instance.as_ref()) {
-                    Ok((_, document)) => newest_registered_version(&document, &capability_id)
-                        .unwrap_or(FIRST_CAPABILITY_VERSION),
-                    Err(refused) => return Ok(refused),
+                // The call then goes to the instance that answered, so the
+                // version and the answer come from one registry. A describe
+                // that fails leaves the first version, and the call itself
+                // meets and reports whatever stopped it.
+                None => match described(link, target.as_ref()) {
+                    Ok((answered_by, document)) => {
+                        target = Some(answered_by);
+                        newest_registered_version(&document, &capability_id)
+                            .unwrap_or(FIRST_CAPABILITY_VERSION)
+                    }
+                    Err(_) => FIRST_CAPABILITY_VERSION,
                 },
                 Some(value) => value
                     .as_u64()
@@ -533,12 +542,7 @@ pub fn call(
                 .get("payload")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
-            match link.invoke(
-                instance.as_ref(),
-                &capability_id,
-                capability_version,
-                payload,
-            ) {
+            match link.invoke(target.as_ref(), &capability_id, capability_version, payload) {
                 Ok(response) => Ok(result_of(response, Some(capability_version))),
                 Err(error) => Ok(ToolResult::control_error(&error)),
             }
@@ -1006,7 +1010,7 @@ fn definitions_of(document: &Value) -> BTreeMap<String, Value> {
 
 #[cfg(test)]
 mod tests {
-    use quantick_control::schema::validate_schema;
+    use quantick_control::{error::ControlError, schema::validate_schema};
 
     use super::*;
 
@@ -1201,6 +1205,85 @@ mod tests {
             "an unlisted ID has no newest version; the instance refuses it"
         );
         assert_eq!(newest_registered_version(&json!({}), "snapshot.read"), None);
+    }
+
+    /// The version is read from one instance's registry, so the call goes to
+    /// that instance — never re-routed to whichever one is live a moment later.
+    #[test]
+    fn a_resolved_version_is_sent_to_the_instance_whose_registry_chose_it() {
+        let mut link = crate::fake::FakeLink::default();
+        let instance = InstanceId::from_bytes([4; 16]);
+        link.add_instance(instance.clone());
+        let result = call(
+            &mut link,
+            INVOKE,
+            json!({ "capability_id": CHART_WINDOW_CAPABILITY, "payload": {} }),
+        )
+        .expect("invoke forwards");
+        assert!(!result.is_error, "{:?}", result.structured_content);
+        assert_eq!(link.calls.len(), 2, "one describe, then the call");
+        assert_eq!(link.calls[0].capability_id, DESCRIBE_CAPABILITY);
+        assert_eq!(link.calls[0].instance, None, "the caller named none");
+        assert_eq!(link.calls[1].capability_id, CHART_WINDOW_CAPABILITY);
+        assert_eq!(link.calls[1].capability_version, 1);
+        assert_eq!(
+            link.calls[1].instance,
+            Some(instance),
+            "the call is pinned to the instance that answered the describe"
+        );
+    }
+
+    /// A link whose describe is refused while every other call answers, to
+    /// prove the default never swaps the caller's answer for describe's error.
+    struct DescribeRefused(Vec<u32>);
+
+    impl ControlLink for DescribeRefused {
+        fn instances(&mut self) -> Result<crate::link::Instances, ControlError> {
+            Ok(crate::link::Instances::default())
+        }
+
+        fn invoke(
+            &mut self,
+            _instance: Option<&InstanceId>,
+            capability_id: &str,
+            capability_version: u32,
+            _payload: Value,
+        ) -> Result<quantick_control::wire::ResponseEnvelope, ControlError> {
+            if capability_id == DESCRIBE_CAPABILITY {
+                return Err(ControlError::invalid_request("describe is refused"));
+            }
+            self.0.push(capability_version);
+            Ok(quantick_control::wire::ResponseEnvelope {
+                protocol_version: 1,
+                request_id: quantick_control::id::RequestId::new("test").expect("valid id"),
+                instance_id: InstanceId::from_bytes([5; 16]),
+                capture_revision: None,
+                module_revisions: Vec::new(),
+                outcome: quantick_control::wire::ResponseOutcome::Success { result: json!({}) },
+                warnings: Vec::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_refused_describe_leaves_the_first_version_rather_than_its_error() {
+        let mut link = DescribeRefused(Vec::new());
+        let result = call(
+            &mut link,
+            INVOKE,
+            json!({ "capability_id": SNAPSHOT_CAPABILITY, "payload": {} }),
+        )
+        .expect("invoke forwards");
+        assert!(
+            !result.is_error,
+            "the caller got describe's refusal for a call it never made: {:?}",
+            result.structured_content
+        );
+        assert_eq!(link.0, vec![FIRST_CAPABILITY_VERSION]);
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["capability_version"],
+            FIRST_CAPABILITY_VERSION
+        );
     }
 
     /// The default is part of the tool's published contract, so the tool
