@@ -246,8 +246,9 @@ pub fn snapshot_scope_catalogue<H: 'static>(
     Ok((scope_permissions, snapshot_scopes))
 }
 
-/// Every scope in `snapshot_scopes` this grant already reaches, in
-/// registration order and capped at what one capture may carry.
+/// Every scope in `snapshot_scopes` this grant already reaches, in the order
+/// given (the catalogue's, sorted by scope ID) and capped at what one capture
+/// may carry.
 pub fn readable_scopes(
     snapshot_scopes: &[SnapshotScopeDescriptor],
     grant: &BTreeSet<PermissionId>,

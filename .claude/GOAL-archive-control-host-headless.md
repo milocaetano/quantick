@@ -139,6 +139,12 @@ the full round would have asked is an assumption below marked *wanted to ask*.
   so the ceiling and the budget do not move. `CLAUDE.md` gains 34 bytes, within
   its ceiling. `deny.toml`'s count of `quantick-*` crates goes from eighteen to
   nineteen.
+- **S12** — **Admission is proved inside its own crate.** Found by the shape
+  pass: the moved checks were covered only by `app`'s tests, so a change to
+  them could not be tested without building `app` — against R11.
+  `crates/control-host/tests/admission_contract.rs` (9 tests over
+  `quantick_control::fake`'s reference registry) proves the order and every
+  refusal from outside the crate.
 - **S11** — **`contract.rs`'s own test module is untouched.** The tests reach
   `json!` through `use super::*`; production no longer uses it, so the
   import is kept under `#[cfg(test)]` rather than editing the tests.

@@ -1052,8 +1052,8 @@ impl ObserverContract {
             .collect()
     }
 
-    /// Every registered snapshot scope this grant already reaches, in
-    /// registration order and capped at what one capture may carry.
+    /// Every registered snapshot scope this grant already reaches, sorted by
+    /// scope ID and capped at what one capture may carry.
     ///
     /// Derived from the registry, never a hand-kept list: a module that
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
