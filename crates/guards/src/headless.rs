@@ -79,6 +79,7 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "trading",
     "control",
     "control-local",
+    "control-host",
     "indicators",
     "pine",
     "replay",

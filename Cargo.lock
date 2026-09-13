@@ -2908,6 +2908,7 @@ dependencies = [
  "png",
  "quantick-civil",
  "quantick-control",
+ "quantick-control-host",
  "quantick-control-local",
  "quantick-engine",
  "quantick-feed",
@@ -2968,6 +2969,17 @@ dependencies = [
  "sha2",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "quantick-control-host"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "quantick-control",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

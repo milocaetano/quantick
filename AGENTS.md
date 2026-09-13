@@ -31,18 +31,17 @@ cargo build --release -p quantick-mcp
 target/release/quantick-mcp setup --client claude   # or: --client codex
 ```
 
-`setup` only prints the registration command for your client, filled in with
-the binary's absolute path — it reads nothing but its own path, so it works
-before Quantick is running. It writes no configuration file and embeds no
-token. Register the command it prints, then, in the app, enable the connection
-under **Tools → Local agent access** and pick the scopes it gets.
+`setup` only prints your client's registration command with the binary's
+absolute path; it reads nothing else, writes no config and embeds no token, so
+it works before Quantick runs. Register what it prints, then enable the
+connection under **Tools → Local agent access** and pick its scopes.
 
 Then call `quantick_describe` first: with no argument it lists the reachable
 instances; with an `instance_id` it reports the protocol, the effective
 profile and scopes, the registered modules, every capability with its
-availability, the snapshot scopes and the limits. The rest of the tool set is
-discoverable from that one answer, which is the point — the adapter carries no
-hardcoded vocabulary the running instance might not implement.
+availability, the snapshot scopes and the limits. Everything else is
+discoverable from that answer: the adapter hardcodes no vocabulary the running
+instance might not implement.
 
 ### Profiles
 
@@ -126,6 +125,7 @@ graph TD
   app --> feed
   app --> control
   app --> controllocal
+  app --> controlhost
   app --> engine
   backtest --> strategy
   backtest --> pine
@@ -141,6 +141,7 @@ graph TD
   strategy["strategy<br/>armed regions, alarms"] --> sim
   strategy --> engine
   controllocal["control-local<br/>local transport"] --> control
+  controlhost["control-host<br/>host machinery"] --> control
   indicators["indicators<br/>bars → plot series"] --> engine
   replay["replay<br/>recorded sessions"] --> engine
   paper["paper<br/>paper account"] --> sim
@@ -182,6 +183,7 @@ graph TD
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
+| `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
@@ -203,11 +205,11 @@ and that file differ, that file wins.
    a cancellation, because the tape cannot tell which it was.
 4. **English is the repository's language.** `CLAUDE.md` is the rule's single
    owner — it defines the scope and the four exemptions where the foreign text
-   *is* the data. Read it there; this file deliberately does not restate it,
-   and `crates/guards/src/language.rs` enforces the mechanical half.
+   *is* the data. Read it there; `crates/guards/src/language.rs` enforces the
+   mechanical half.
 5. **Small and focused.** This is not a trading platform. Build bars, show
-   bars, expose bars to code. This is the rule that refuses scope creep, and
-   it applies to the control plane above as much as to the chart.
+   bars, expose bars to code. It refuses scope creep, in the control plane as
+   much as in the chart.
 6. **Operable without a hand.** A capability never ships reachable by mouse
    alone: it gets a named call, a readable result and a registry entry. This
    is why the control plane exists.

@@ -136,7 +136,7 @@ struct IdempotencyRecord {
 /// One request's place in the store, computed before dispatch and spent
 /// after it.
 #[derive(Clone, Debug)]
-pub(super) struct IdempotencyTicket {
+pub struct IdempotencyTicket {
     scope: IdempotencyScope,
     input_digest: Sha256Digest,
     /// Held from the moment [`IdempotencyStore::admit`] lets this call
@@ -185,7 +185,7 @@ struct Ledger {
 
 /// The records one enabling of the gateway retains.
 #[derive(Debug, Default)]
-pub(super) struct IdempotencyStore {
+pub struct IdempotencyStore {
     ledger: Mutex<Ledger>,
 }
 
@@ -205,13 +205,13 @@ impl IdempotencyStore {
 
     /// The ticket for `envelope`, or `None` when the request carries no key.
     ///
-    /// Called only after [`ObserverContract::prepare`] has accepted the
-    /// request, which is what makes a present key proof that the descriptor
-    /// allows one: `prepare` refuses a key on a `Forbidden` capability before
+    /// Called only after the host's contract has accepted the request through
+    /// [`admit_payload`], which is what makes a present key proof that the
+    /// descriptor allows one: it refuses a key on a `Forbidden` capability before
     /// this is ever reached.
     ///
-    /// [`ObserverContract::prepare`]: crate::control::contract::ObserverContract::prepare
-    pub(super) fn ticket(
+    /// [`admit_payload`]: crate::admission::admit_payload
+    pub fn ticket(
         instance_id: &InstanceId,
         principal_id: &PrincipalId,
         envelope: &RequestEnvelope,
@@ -264,7 +264,7 @@ impl IdempotencyStore {
     /// Expiry runs first, so a key that aged out re-executes instead of
     /// replaying a stale outcome: a retry that arrives a day late is not the
     /// retry the guarantee exists for.
-    pub(super) fn admit(
+    pub fn admit(
         store: &Arc<Self>,
         ticket: &mut IdempotencyTicket,
         envelope: &RequestEnvelope,
@@ -339,7 +339,7 @@ impl IdempotencyStore {
     /// that reconnects a few times would evict the records of the connections
     /// still running. Releasing them at the door keeps the cap meaning what
     /// it says.
-    pub(super) fn forget_principal(&self, principal_id: &PrincipalId) {
+    pub fn forget_principal(&self, principal_id: &PrincipalId) {
         let Some(mut ledger) = self.ledger() else {
             return;
         };
@@ -367,7 +367,7 @@ impl IdempotencyStore {
     /// execution. Absent while it cannot have acted is simply nothing
     /// happening: the key is released with the ticket and the retry is free to
     /// try again, which is what a caller whose call never ran is owed.
-    pub(super) fn settle(
+    pub fn settle(
         &self,
         ticket: &IdempotencyTicket,
         envelope: &RequestEnvelope,
@@ -413,7 +413,7 @@ impl IdempotencyStore {
     /// A retryable failure is deliberately dropped rather than stored; see
     /// the module documentation for why keeping it would be the opposite of
     /// the guarantee.
-    pub(super) fn record(
+    pub fn record(
         &self,
         ticket: &IdempotencyTicket,
         response: &ResponseEnvelope,
@@ -486,7 +486,7 @@ impl IdempotencyStore {
 /// ticket, and the common return is the ticket; the repository boxes the big
 /// side of a lopsided type elsewhere for the same reason
 /// (`ControlError::context`, `UiRequest::actor`).
-pub(super) fn admitted(
+pub fn admitted(
     store: &Arc<IdempotencyStore>,
     instance_id: &InstanceId,
     principal_id: &PrincipalId,

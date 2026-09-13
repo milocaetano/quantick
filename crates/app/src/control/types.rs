@@ -202,18 +202,9 @@ pub(crate) fn wire_usize(value: usize) -> WireU64 {
 
 /// One `control.*` failure, built from a code the crate declares. The whole
 /// control module answers with the same shape, so a client never has to guess
-/// which surface refused it.
-pub(crate) fn known_error(
-    code: &str,
-    message: impl AsRef<str>,
-    retryable: bool,
-) -> quantick_control::error::ControlError {
-    quantick_control::error::ControlError::new(
-        quantick_control::id::ErrorCode::new(code).expect("static error code is valid"),
-        message.as_ref(),
-        retryable,
-    )
-}
+/// which surface refused it — and the admission checks in
+/// `quantick-control-host` build theirs with this same function.
+pub(crate) use quantick_control_host::admission::known_error;
 
 /// The wire name of an actor kind — the same text `ActorKind` serializes to,
 /// for the places that carry it as plain text (a drawing's author).
