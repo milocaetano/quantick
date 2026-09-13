@@ -1046,14 +1046,16 @@ fn gateway_request_timeout_is_structured_and_late_ui_work_is_discarded() {
     assert_eq!(response_error(&response).code.as_str(), codes::TIMEOUT);
     assert!(response_error(&response).retryable);
 
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test(),
-        0
+    // Application frames take the late request off the queue. How many frames
+    // that takes is the frame budget's business, not this test's (#430, the
+    // #364 class): a loaded frame can spend `CONTROL_UI_BUDGET_US` before its
+    // drain starts, so one frame is not guaranteed to reach it.
+    drain_gateway_requests(&mut app, &ctx);
+    // And the late work is discarded: nothing answers the request a second
+    // time.
+    assert!(
+        !client.reply_pending(std::time::Duration::from_millis(100)),
+        "a request already answered with a timeout is not answered again"
     );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
@@ -2169,12 +2171,14 @@ fn is_retryable_backpressure(outcome: &quantick_control::wire::ResponseOutcome) 
 /// client is stalled". Asking again inside a bounded budget is therefore a
 /// wait, not a softened assertion — a gateway a stalled client really did stall
 /// never clears, and the caller still asserts a success.
+///
+/// The retries are paced by the connection's rate limit. On a loaded machine
+/// the slots can stay busy for longer than the limit's burst lasts at a faster
+/// pace, and the connection's next request, the caller's UI-side read, would
+/// then be refused by the limiter and never reach the queue (#427).
 fn worker_side_read_past_the_unread_replies(
     client: &mut quantick_control_local::client::LocalClient,
 ) -> quantick_control::wire::ResponseOutcome {
-    /// Long enough to outlast the write and the slot release that cost the
-    /// last attempt, short enough not to dominate the test's runtime.
-    const BACKOFF: std::time::Duration = std::time::Duration::from_millis(5);
     let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
     loop {
         let outcome = client
@@ -2192,7 +2196,7 @@ fn worker_side_read_past_the_unread_replies(
             "the buffered-response budget never freed a slot for a worker-side read within \
              {GATEWAY_TEST_WAIT:?}: {outcome:?}"
         );
-        std::thread::sleep(BACKOFF);
+        pause_one_request_interval();
     }
 }
 
@@ -2670,16 +2674,6 @@ fn gateway_wait_for_change_times_out_cleanly_and_parked_slots_are_bounded() {
     drop(late);
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
-}
-
-/// Wait one interval of the connection's request rate limit before a retry.
-/// A retry loop that runs faster than the limit is answered by the limiter's
-/// `control.backpressure` once its burst is spent, and the refusal a test was
-/// waiting out is then mistaken for another. Derived from the limit, so a
-/// lower limit slows the loops rather than breaking them.
-fn pause_one_request_interval() {
-    let per_second = quantick_control::limits::CONTROL_CLIENT_RATE_PER_SECOND;
-    std::thread::sleep(std::time::Duration::from_secs(1) / per_second);
 }
 
 #[test]
