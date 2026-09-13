@@ -221,7 +221,7 @@ fn readback(
 ) -> Vec<Value> {
     let row = retry_matrix::readback(capability).expect("the matrix has a row");
     if let Some(scope) = row.scope {
-        let response = remote_call(app, ctx, client, row.read, json!({ "scopes": [scope] }));
+        let response = read_call(app, ctx, client, row.read, json!({ "scopes": [scope] }));
         let result = success_result(&response);
         return values_at(&result["scopes"][scope]["value"], row.field);
     }
@@ -229,7 +229,7 @@ fn readback(
     let mut values = Vec::new();
     let mut page = json!({ "start": "oldest", "limit": CONTROL_DEFAULT_PAGE_ITEMS });
     loop {
-        let response = remote_call(app, ctx, client, row.read, page);
+        let response = read_call(app, ctx, client, row.read, page);
         let result = success_result(&response);
         for event in result["events"].as_array().expect("a page of events") {
             if event["kind"] == kind {
@@ -241,6 +241,27 @@ fn readback(
         }
         page = json!({ "cursor": result["next_cursor"], "limit": CONTROL_DEFAULT_PAGE_ITEMS });
     }
+}
+
+/// One read for a readback: a frame first, so whatever the last call set in
+/// motion has had one, as the frames `remote_call` ran gave it; then the read
+/// served through the seam the moment it is queued.
+///
+/// Not through the frames themselves: a frame's drain admits requests only
+/// inside `CONTROL_UI_BUDGET_US`, and on a loaded machine the frame can spend
+/// that before the drain starts (the #364 class). The read then waits frame
+/// after frame and expires unserved under this module's request windows, and
+/// `success_result` fails on a `control.timeout` the readback never asked
+/// about (#428, #432).
+fn read_call(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    client: &mut LocalClient,
+    capability: &str,
+    payload: Value,
+) -> ResponseEnvelope {
+    run_frame(app, ctx);
+    unkeyed_call(app, client, capability, payload).0
 }
 
 fn connection_ids(app: &QuantickApp) -> BTreeSet<ConnectionId> {
@@ -686,7 +707,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut after = readback(&mut app, &ctx, &mut client, capability);
         while expected == Readback::Moves && after == before && Instant::now() < deadline {
             run_frame(&mut app, &ctx);
-            std::thread::sleep(Duration::from_millis(20));
+            // Paced by the rate limit, so a slow rebuild cannot spend the
+            // connection's burst and turn the next readback into a refusal.
+            pause_one_request_interval();
             after = readback(&mut app, &ctx, &mut client, capability);
         }
         match expected {

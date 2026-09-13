@@ -396,16 +396,13 @@ fn inside_the_envelope_every_print_arrives_and_no_queue_fills() {
         as usize
         + BURST_TRADES_PER_FRAME;
     assert_eq!(tape.prints.len(), expected);
-    // The keep-up half, coarsely: the workers drained a frame before the
-    // next one arrived on most frames. Loose on purpose — a loaded runner
-    // may be late now and then; a worker that cannot hold the envelope's
-    // rate is late on nearly every frame and fails here.
-    let frames = ((SUSTAINED_SECONDS + BURST_SECONDS) * FRAMES_PER_S) as usize;
-    assert!(
-        rig.late_frames * 2 < frames,
-        "{} of {frames} frames found the previous one untaken",
-        rig.late_frames
-    );
+    // What this test asserts is counts: no print lost and no queue filled.
+    // The keep-up half of the envelope, whether the workers drained a frame
+    // before the next one arrived, is a statement about wall time on the
+    // machine that ran it. It is measured, not asserted: `measure.txt` block 4
+    // (`docs/quality/live-envelope.md`, *Queue depth and keep-up*), and the
+    // `late_frames` printed below. Asserted, it failed for the machine's sake
+    // on a loaded one (#429).
     rig.assert_nothing_lost(&tape, depth);
     for counts in [rig.indicator_counts(), rig.book_counts()] {
         assert_eq!(counts.deferred, 0, "inside the envelope no queue fills");

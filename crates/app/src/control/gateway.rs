@@ -190,6 +190,9 @@ struct GatewayOptions {
     request_timeout: Duration,
     #[cfg(test)]
     descriptor_directory: Option<PathBuf>,
+    /// Test build only: see [`server::AnswerWritten`].
+    #[cfg(test)]
+    answer_written: Option<server::AnswerWritten>,
 }
 
 impl Default for GatewayOptions {
@@ -202,6 +205,8 @@ impl Default for GatewayOptions {
             request_timeout: Duration::from_millis(CONTROL_REQUEST_TIMEOUT_MS),
             #[cfg(test)]
             descriptor_directory: None,
+            #[cfg(test)]
+            answer_written: None,
         }
     }
 }
@@ -1177,6 +1182,26 @@ impl ControlAccess {
             request_timeout,
             max_connections,
             descriptor_directory: Some(descriptor_directory),
+            ..GatewayOptions::default()
+        };
+        self.request_enable(ctx, options);
+    }
+
+    /// [`Self::enable_for_test`], with `written` called on the answering
+    /// thread each time an answer that released a request ID has been
+    /// written, before that thread moves on.
+    #[cfg(test)]
+    pub(crate) fn enable_for_test_observing_answers(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        descriptor_directory: PathBuf,
+        request_queue_capacity: usize,
+        written: server::AnswerWritten,
+    ) {
+        let options = GatewayOptions {
+            request_queue_capacity,
+            descriptor_directory: Some(descriptor_directory),
+            answer_written: Some(written),
             ..GatewayOptions::default()
         };
         self.request_enable(ctx, options);
