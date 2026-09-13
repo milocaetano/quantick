@@ -306,7 +306,9 @@ fn a_tree_without_app_source_has_no_measurement_and_tightens_nothing() {
     let root = tree(&[], 7 + SLACK + 1, "");
     fs::remove_dir_all(root.join("crates/app")).expect("app removable");
     assert!(measured(&root).is_err());
-    assert!(!check(&root).is_empty());
+    let findings = check(&root);
+    assert_eq!(findings.len(), 1, "{}", lines(&findings));
+    assert_eq!(findings[0].remedy, UNMEASURED_REMEDY);
     assert!(tighten(&root).is_err());
     let text = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline readable");
     assert!(

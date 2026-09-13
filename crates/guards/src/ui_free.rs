@@ -92,6 +92,13 @@ pub const BASELINE_REMEDY: &str = "crates/guards/ui-free-baseline.txt could not 
     so no ceiling was checked. Every line is blank, a `#` comment, the one `!budget <count>` \
     directive, or `crates/app <count>`. Fix the line the finding names.";
 
+/// What the guard asks for when the total could not be taken at all. Neither
+/// ceiling remedy applies: nothing grew and nothing shrank that anyone knows.
+pub const UNMEASURED_REMEDY: &str = "The UI-free total could not be taken, so no ceiling was \
+    checked: a path under crates/app/src could not be listed, read or decoded. Fix the path the \
+    finding names. Until then the guard is not reporting a clean tree; it is reporting that it \
+    could not look.";
+
 /// What the guard asks for when an exemption line is malformed or stale.
 pub const EXEMPTION_REMEDY: &str = "Every line in crates/guards/ui-free-exemptions.txt is blank, a \
     `#` comment, or `<path> <reason>`: a crates/app/src file that must be UI-free and must live \
@@ -282,7 +289,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let files = match files(root) {
         Ok(files) => files,
         Err(unmeasured) => {
-            findings.push(Finding::new(format!("  {unmeasured}"), REMEDY));
+            findings.push(Finding::new(format!("  {unmeasured}"), UNMEASURED_REMEDY));
             return findings;
         }
     };
