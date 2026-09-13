@@ -956,7 +956,6 @@ fn growth_violations(session: usize, growth: Growth) -> Vec<String> {
 /// while the fast variant's long session is built live, print by print, with
 /// the lane command every frame — counted by the work meter, never timed.
 #[test]
-#[ignore = "red until the tape is chunked: the contiguous tape copies 7,340,032 bytes at print 131,072"]
 fn building_the_tape_live_never_copies_more_than_one_chunk() {
     let rig = ChartRig::new(FAST_LONG_SESSION, Load::Live);
     println!(
@@ -1216,6 +1215,42 @@ fn stall_probe(footprint: bool) -> [Stretch; 3] {
     [near[0], near[1], all]
 }
 
+/// One pane's tape at the envelope's edge ([`RETAINED_TRADES_PER_PANE`]
+/// prints), built live and loaded at once: the prints held, the prints its
+/// chunks can hold, and the bytes both come to, directory included.
+fn tape_memory_at_the_edge() {
+    use quantick_engine::trade_tape::CHUNK_TRADES;
+    let trade = std::mem::size_of::<Trade>();
+    println!(
+        "| tape at {RETAINED_TRADES_PER_PANE} prints | prints held | capacity (prints) | chunks | \
+         bytes held | bytes reserved (capacity x {trade} B + directory) | unused |\n\
+         | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
+    );
+    let mut live = ChartState::new(BarSpec::Tick(50));
+    for index in 0..RETAINED_TRADES_PER_PANE as u64 {
+        live.ingest_live(&print(index));
+    }
+    let mut loaded = ChartState::new(BarSpec::Tick(50));
+    loaded.ingest_backfill(
+        &(0..RETAINED_TRADES_PER_PANE as u64)
+            .map(print)
+            .collect::<Vec<_>>(),
+    );
+    for (how, state) in [("built live", &live), ("loaded at once", &loaded)] {
+        let tape = state.trades();
+        let chunks = tape.capacity() / CHUNK_TRADES;
+        let reserved = tape.capacity() * trade + chunks * std::mem::size_of::<Vec<Trade>>();
+        println!(
+            "| {how} | {} | {} | {chunks} | {} | {reserved} | {} |",
+            tape.len(),
+            tape.capacity(),
+            tape.len() * trade,
+            reserved - tape.len() * trade
+        );
+    }
+    println!();
+}
+
 /// The former doubling points of the tape, one ingest at a time: the
 /// slowest single ingest within [`STALL_PROBE_REACH`] prints of 2^21 and of
 /// 2^22 and over the whole run, beside the largest reallocation copy — the
@@ -1248,6 +1283,7 @@ fn tape_growth_stalls() {
          +/-{STALL_PROBE_REACH} prints around each former doubling point; bound {} ms",
         STALL_BOUND.as_millis()
     );
+    tape_memory_at_the_edge();
     let mut over = Vec::new();
     for footprint in [false, true] {
         let [first, second, all] = stall_probe(footprint);

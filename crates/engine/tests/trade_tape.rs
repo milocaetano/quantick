@@ -3,8 +3,9 @@
 //! The oracle is the `Vec<Trade>` the chart held before the tape was chunked:
 //! after every one of a sequence of irregular appends and prepends, every read
 //! the tape offers must answer exactly as the same read over the vector
-//! does, across several chunk boundaries. Two tests pin what the chunks buy —
-//! no print moves when the tape grows, and at most one chunk is held unused.
+//! does, across several chunk boundaries. Three tests pin what the chunks buy
+//! — no print moves when the tape grows, at most one chunk is held unused,
+//! and a stretch comes back as one slice per chunk it touches.
 
 use quantick_engine::trade_tape::{CHUNK_TRADES, TradeSeq, TradeTape};
 use quantick_engine::{Side, Trade, fixture::parse_trades};
@@ -354,7 +355,6 @@ fn a_range_out_of_order_panics_like_a_vec() {
 /// The stall this type exists to remove: growing the tape must never move a
 /// print it already holds — a moved print is a copied tape.
 #[test]
-#[ignore = "red until the tape is chunked: a contiguous Vec moves every print when it grows"]
 fn appending_never_moves_a_trade_already_held() {
     let mut tape = TradeTape::new();
     let mut seen: Vec<(usize, *const Trade)> = Vec::new();
@@ -390,7 +390,6 @@ fn appending_never_moves_a_trade_already_held() {
 /// What the chunks cost in memory: at most one chunk held and unused, where
 /// a doubling vector holds up to the whole tape again.
 #[test]
-#[ignore = "red until the tape is chunked: a contiguous Vec reserves up to its length again"]
 fn the_tape_reserves_at_most_one_chunk_it_does_not_use() {
     for len in [
         1,
@@ -428,7 +427,6 @@ fn the_tape_reserves_at_most_one_chunk_it_does_not_use() {
 /// A bulk reader gets the stretch it asked for as one slice per chunk the
 /// stretch touches — contiguous memory, without the tape ever being one.
 #[test]
-#[ignore = "red until the tape is chunked: a contiguous Vec returns one slice of any length"]
 fn a_stretch_comes_back_as_one_slice_per_chunk() {
     let len = 3 * CHUNK_TRADES + 17;
     let tape: TradeTape = (0..len).map(trade).collect();

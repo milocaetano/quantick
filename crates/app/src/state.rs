@@ -1540,11 +1540,11 @@ mod tests {
 
     /// The first live print after a backfill must not copy the backfill.
     ///
-    /// `extend_from_slice` into an empty tape sizes it exactly, so the next
-    /// push reallocated the whole loaded session on the UI thread — about
-    /// 95 MB for a recovered 1.7 M-print day, one dropped frame the moment the
-    /// chart went live. The tape is sized at load to the capacity that push
-    /// would have grown it to, so nothing is copied and nothing more is held.
+    /// Filled exactly, a contiguous tape made the next push reallocate the
+    /// whole loaded session on the UI thread — about 95 MB for a recovered
+    /// 1.7 M-print day, one dropped frame the moment the chart went live. The
+    /// chunked tape never moves a print it holds, so that push copies
+    /// nothing, and it holds at most one chunk it does not use.
     #[test]
     fn the_first_live_print_after_a_backfill_copies_nothing() {
         let history: Vec<Trade> = (5_001..=15_000).map(trade).collect();
@@ -1560,13 +1560,13 @@ mod tests {
                 "the first live print copied {copied} bytes of a {tape_bytes}-byte tape"
             );
             assert!(
-                s.trades.capacity() <= 2 * s.trades.len(),
-                "no more is reserved than that push would have grown the tape to"
+                s.trades.capacity() - s.trades.len() < quantick_engine::trade_tape::CHUNK_TRADES,
+                "no more than one chunk is held unused"
             );
         };
         s.ingest_backfill(&history);
         first_live(&mut s, 15_001);
-        // Paging older history in joins a new tape: sized the same way.
+        // Paging older history in joins a new tape: chunked the same way.
         s.prepend_history(&older);
         first_live(&mut s, 15_002);
     }
