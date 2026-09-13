@@ -2752,7 +2752,9 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
             std::time::Instant::now() < deadline,
             "the answered wait's request ID was never released"
         );
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        // Slower than the connection's request rate limit, or the refusal
+        // that comes back is the limiter's rather than the duplicate check's.
+        std::thread::sleep(std::time::Duration::from_millis(50));
     };
     assert!(
         matches!(
@@ -2931,18 +2933,6 @@ fn an_operator_cannot_remove_an_object_the_trader_drew() {
     assert_eq!(result["removed"], true);
 }
 
-/// Let every pane's indicator worker finish what an attach or a detach sent
-/// it, then run the frame that applies the result: the application loop's own
-/// order, with the worker's half made deterministic. A fixed count of frames
-/// is not a wait; on a loaded machine they all pass before the worker thread
-/// has run at all (#409, #415, and the slot-number test below).
-fn flush_indicators_then_frame(app: &mut QuantickApp, ctx: &egui::Context) {
-    for pane in app.active_tab_mut().panes_mut() {
-        pane.indicator_worker.flush();
-    }
-    run_frame(app, ctx);
-}
-
 /// The tier's floor, again, on the surface the review found open: an
 /// operator detaches what an operator attached, and the trader's own
 /// indicator stays on the chart whatever slot id is named.
@@ -2963,7 +2953,8 @@ plot(close)
         .to_owned(),
         false,
     );
-    flush_indicators_then_frame(&mut app, &ctx);
+    // Settled, not waited out over a count of frames (#415).
+    settle_indicators(&mut app);
     assert_eq!(
         indicator_kinds(&app).len(),
         1,
@@ -3015,14 +3006,15 @@ plot(close)
     // The trader's own, on the first tab.
     let (traders_tab, _, traders_slot) =
         app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
-    flush_indicators_then_frame(&mut app, &ctx);
+    // Settled, not waited out over a count of frames, as in #415.
+    settle_indicators(&mut app);
 
     // The second chart, whose slot numbering starts over from zero.
     app.cycle_tab(1);
     run_frame(&mut app, &ctx);
     let (operators_tab, _, operators_slot) =
         app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
-    flush_indicators_then_frame(&mut app, &ctx);
+    settle_indicators(&mut app);
     assert_ne!(traders_tab, operators_tab, "two charts, not one");
     assert_eq!(
         traders_slot.0, operators_slot.0,
@@ -3185,9 +3177,10 @@ fn attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was() {
         )
         .expect("a script that compiles is attached");
     let slot_id = attached["slot_id"].as_str().unwrap().to_owned();
-    // The worker builds off the application thread; frames apply what it
-    // produced, exactly as the library's own click path is served.
-    flush_indicators_then_frame(&mut app, &ctx);
+    // The worker builds off the application thread. Settled rather than
+    // waited out over a count of frames: on a loaded machine 200 frames pass
+    // before the worker thread has run at all (#409).
+    settle_indicators(&mut app);
     assert_eq!(
         indicator_kinds(&app).len(),
         before.len() + 1,
@@ -3201,7 +3194,7 @@ fn attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was() {
         )
         .expect("what an operator attached, an operator detaches");
     assert_eq!(detached["detached"], true);
-    flush_indicators_then_frame(&mut app, &ctx);
+    settle_indicators(&mut app);
     assert_eq!(
         indicator_kinds(&app),
         before,
