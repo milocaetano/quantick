@@ -75,6 +75,17 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 - **S3** — The bridge Python checks are not run: #433 changes no file under
   `bridge/` or `tools/`. Safe: D5 makes them conditional on that.
 
+- **S4** — (Added after step 0, round one.) Two defects step 0 confirmed in
+  #433's own code — a right-drag also panned the chart, collapsing the range
+  onto one bar; a right-click slipping 4-6 px raised a range beside the menu —
+  are repaired in this branch rather than deferred, because arch-review
+  grades a confirmed correctness finding as a Blocker and R2 asks for #433's
+  behaviour, which the defects defeat. Safe: two small, tested edits in the
+  files that own the gestures (`pane.rs` body pan, `pane/quick_range.rs`
+  threshold, `surfaces/drawing_chrome/quick_range.rs` comparison); main still
+  carries the defects until the consolidated PR or a port, which the handoff
+  reports to the coordinator.
+
 ## Acceptance criteria
 
 - [ ] **A1** — The merge commit's first parent is `5222c911`, its second
@@ -117,6 +128,12 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
       rows in `docs/control-plane/{retry-matrix,ui-behaviour-matrix}.md`,
       `published_schema_compatibility` tests, the empty released diff.
       → PR body. *(R3)*
+- [ ] **A8** — #433's right-drag measures the bars it crossed without panning
+      the chart, and a right-click slipping within egui's click distance
+      raises no range. *Evidence:*
+      `a_secondary_drag_measures_the_bars_it_crossed_without_panning` and
+      `a_right_click_that_slips_within_the_click_distance_raises_no_range`
+      pass, both failing before the repair. → PR body. *(R2)*
 - [ ] **A7** — A draft PR with base `campaign/lean-a-plus` exists and is never
       merged by this mission. *Evidence:* `gh pr view` state. → handoff.
       *(R4)*
