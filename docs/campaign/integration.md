@@ -56,9 +56,12 @@ repository rules to obtain access.
    reset of the integration branch. Validate conflicts and integration risk,
    then apply the same authorized campaign merge gate. Dependent reviews stale
    when the campaign tip moves. Record the source main SHA and resulting tip.
+   `mission_ship_gate.sh` counts only archives absent from main: zero or one.
 7. At the campaign completion criteria, create the consolidated PR from the
    campaign branch to main. Its review base is main, with fresh full-diff
-   architecture, AI and delivery reviews and integration CI. Run the applicable
+   architecture, AI and delivery reviews and integration CI. Its body carries
+   `Campaign-parent: <parent issue URL>`; `mission_ship_gate.sh` requires that
+   charter to name the branch, not one goal archive. Run the applicable
    scorecard at the campaign SHA, label it as a campaign candidate and retain
    rubric limitations: a default-branch gate does not become a campaign gate
    by renaming it. Never present that candidate as main's score. Record the
@@ -74,9 +77,8 @@ coordinator implementation or its simulation.
 
 ## Branch-bound task context
 
-Resolve the actual worktree before running these examples. Shell variables do
-not persist across tool calls; set them again or substitute resolved values.
-After creating the child worktree, write one UTF-8/LF line to its private git
+Resolve the actual worktree first; shell variables do not persist across tool
+calls. After creating the child worktree, write one UTF-8/LF line to its private git
 directory's `mission-base` file (never the shared main git directory):
 
 ```text
@@ -143,17 +145,14 @@ cd /absolute/task/worktree && gh pr merge 42 --merge --match-head-commit FULL_HE
 ```
 
 No `--auto`, `--admin`, alternate repository or queue shortcut is accepted.
-Exactly one leading `cd <worktree> &&` may precede the statement, and nothing
-may follow it. An agent shell whose working directory resets between calls
-reaches the task worktree only that way; a second `cd`, a `;`, a `||` or any
-trailing statement is still rejected, so no second statement can share the
-first's authorization. Campaign readiness likewise uses a single
+Exactly one leading `cd <worktree> &&` may precede the statement and nothing
+may follow it: a second `cd`, a `;`, a `||` or any trailing statement is
+rejected. Campaign readiness likewise uses a single
 `gh pr ready NUMBER`, bare or behind that same one prefix, in the task
 worktree, with no repository override or other statement. A host tool outside
 the gate's matcher — Claude Code's PowerShell tool, for one — must never run
 these commands: a denial is reported to the coordinator, never routed around.
 The helper verifies the live base/head and clean, non-draft, same-repository PR
 with passing checks, and rejects a remote base that advanced since fetch.
-The existing hook's documented command-detection limits still apply: this is
-an operational guard, not a sandbox. GitHub main protections remain essential;
-do not claim the shell hook can secure arbitrary shell/API access.
+The hook's command-detection limits still apply: an operational guard, not a
+sandbox. GitHub main protections remain essential.
