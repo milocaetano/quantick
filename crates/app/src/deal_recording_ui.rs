@@ -172,8 +172,8 @@ fn draw_popover(
             row(
                 ui,
                 "this pane",
-                if pane_kind == BarKind::Trades {
-                    "trades".to_owned()
+                if pane_kind.needs_deal_counter() {
+                    pane_kind.label().to_owned()
                 } else {
                     format!("{} · switch to trades to cut by deals", pane_kind.label())
                 },
@@ -230,7 +230,7 @@ fn draw_popover(
                 .on_hover_text("a recorded day still opens from the list below");
             }
         }
-        if pane_kind != BarKind::Trades
+        if !pane_kind.needs_deal_counter()
             && view.deal_count_available()
             && ui.button("Show as trades").clicked()
         {
@@ -350,7 +350,7 @@ pub fn chip_for(
                 .to_owned(),
         ),
         RecState::Off | RecState::Unsupported => {
-            if pane_kind != BarKind::Trades {
+            if !pane_kind.needs_deal_counter() {
                 return None;
             }
             if view.state == RecState::Unsupported {
@@ -402,7 +402,7 @@ pub fn chip_for(
     };
     let mut text = text;
     let mut hover = hover;
-    if pane_kind == BarKind::Trades && uncounted_prints > 0 {
+    if pane_kind.needs_deal_counter() && uncounted_prints > 0 {
         text = format!(
             "{text} · {} prints have no count",
             fmt_count(uncounted_prints)
@@ -414,7 +414,7 @@ pub fn chip_for(
             quantick_engine::READING_MAX_AGE_MS / 60_000
         );
     }
-    if pane_kind == BarKind::Trades && !reading_in_pane && view.state == RecState::Recording {
+    if pane_kind.needs_deal_counter() && !reading_in_pane && view.state == RecState::Recording {
         hover = format!("{hover}. No reading has reached this pane yet");
     }
     Some(DealChip {

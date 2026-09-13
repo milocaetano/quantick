@@ -104,7 +104,7 @@ impl Tab {
             // mid-flick has moved the selector a frame ahead of the bars.
             let cutting_deals = self
                 .pane_at(index)
-                .is_some_and(|pane| pane.state.spec().kind() == BarKind::Trades);
+                .is_some_and(|pane| pane.state.spec().kind().needs_deal_counter());
             if cutting_deals {
                 // The series was rewritten under the bars, not the rule
                 // that cuts them: what a replay seek says when it disarms.
