@@ -28,9 +28,9 @@ use crate::chart::PriceScale;
 pub(crate) use crate::paper_account::{
     ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings, Leg, PaperControl, side_word,
 };
-// The report's anchor date is formatted only under test.
 use crate::paper_chrome::{PositionSummary, fmt_decimal};
 use crate::theme;
+// The report's anchor date is formatted only under test.
 #[cfg(test)]
 use quantick_paper::civil::civil_utc;
 
@@ -933,13 +933,11 @@ impl PaperTrading {
         self.account.armed = None;
         self.drag = PaperDrag::None;
         self.drag_price = None;
-        let (had_position, had_orders, all_saved) =
-            (reset.had_position, reset.had_orders, reset.all_saved);
-        if had_position && all_saved {
+        if reset.had_position && reset.all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
             );
-        } else if had_orders && all_saved {
+        } else if reset.had_orders && reset.all_saved {
             self.show_toast(
                 "SIM orders cancelled - the timeline was rebuilt under them.".to_owned(),
             );
