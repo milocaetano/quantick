@@ -33,6 +33,10 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 - **R4** — Deliver it as a draft PR against `campaign/lean-a-plus`, reviewed
   at tier high, with CI watched and readiness requested; never merge, never
   touch main.
+- **R5** — (Coordinator, mid-task) Merge the campaign's new tip (`8aa3dc03`,
+  #446) into this branch as a normal merge commit, rerun
+  `guardrails_test.sh`, and run `mission_ship_gate.sh ship <n>` as the last
+  step after CI and readiness, reporting its output.
 
 ## Decisions (from the coordinator's brief)
 
@@ -84,7 +88,10 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
   files that own the gestures (`pane.rs` body pan, `pane/quick_range.rs`
   threshold, `surfaces/drawing_chrome/quick_range.rs` comparison); main still
   carries the defects until the consolidated PR or a port, which the handoff
-  reports to the coordinator.
+  reports to the coordinator. Step 0 round two found two more in the same
+  code — the action bar kept the geometry of a pane a layout stopped
+  painting, and the right-drag's pointer clamp panicked on a stale lane
+  divider — repaired the same way, for the same reason.
 
 ## Acceptance criteria
 
@@ -130,10 +137,18 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
       → PR body. *(R3)*
 - [ ] **A8** — #433's right-drag measures the bars it crossed without panning
       the chart, and a right-click slipping within egui's click distance
-      raises no range. *Evidence:*
-      `a_secondary_drag_measures_the_bars_it_crossed_without_panning` and
-      `a_right_click_that_slips_within_the_click_distance_raises_no_range`
-      pass, both failing before the repair. → PR body. *(R2)*
+      raises no range; hiding the owning pane takes the action bar away; a
+      stale lane divider left of the band does not panic. *Evidence:*
+      `a_secondary_drag_measures_the_bars_it_crossed_without_panning`,
+      `a_right_click_that_slips_within_the_click_distance_raises_no_range`,
+      `hiding_the_pane_that_owns_a_range_takes_its_action_bar_away` and
+      `a_right_drag_survives_a_stale_divider_left_of_the_band` pass, each
+      failing before its repair. → PR body. *(R2)*
+- [ ] **A9** — The campaign tip `8aa3dc03` (#446) is merged into the branch
+      by a merge commit, the main merge `2b2f7e5c` is not rewritten, and
+      `guardrails_test.sh` passes after it. *Evidence:* the merge commit's
+      parents, `git merge-base --is-ancestor origin/campaign/lean-a-plus
+      HEAD`, the hook suite's count. → PR body. *(R5)*
 - [ ] **A7** — A draft PR with base `campaign/lean-a-plus` exists and is never
       merged by this mission. *Evidence:* `gh pr view` state. → handoff.
       *(R4)*
@@ -168,8 +183,10 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 - **C1** — `delivery-review` returns PASS.
 - **C2** — The PR is open against `campaign/lean-a-plus`.
 - **C3** — `gh pr ready` requested once, via Bash with the cd prefix, after
-  the reviews and final-head CI. (`mission_ship_gate.sh` does not govern
-  synchronization PRs, per D8.)
+  the reviews and final-head CI.
+- **C4** — `sh .claude/hooks/mission_ship_gate.sh ship <n>` from the worktree
+  after C3, its output reported to the coordinator (R5; #446 made it
+  campaign-aware, superseding D8's exemption).
 
 ## Not applicable
 
