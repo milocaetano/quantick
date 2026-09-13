@@ -231,3 +231,7 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 > - Use `python`, not `python3`. Scratch files under `-x3` paths. Commit trailers: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` and `Claude-Session: https://claude.ai/code/session_01VdP84bYEGeyCg7KwsNb1X2`. If writing review markers is denied, report the exact `printf` lines.
 >
 > Return a HANDOFF BLOCK like X2's: branch; PR URL; head; base tip; conflict table; invariants; guard output; regenerated artifacts and matrix rows added; review verdicts with URLs; markers; CI; ready accepted or denied; any human_decision; the coordinator's next action.
+
+> Attributed quotation: the coordinator's mid-task message, verbatim.
+
+> Coordinator FYI for X3: PR #446 (Q15, campaign-aware `mission_ship_gate.sh`; hooks, `docs/campaign/integration.md` and the ship skill only, no crate files) just merged into `campaign/lean-a-plus`. Before opening your PR (or now, if you are past the main merge), fetch and merge the new campaign tip into `sync/main-5c7b7d1a` as a normal merge commit, and rerun `sh .claude/hooks/guardrails_test.sh`. With it, your sync PR can also run `sh .claude/hooks/mission_ship_gate.sh ship <n>` from your worktree and should get `MISSION-COMPLETION:PASS` as a main sync (zero or one own archive); do that as the last step after CI and ready, and report the output. Everything else stands.
