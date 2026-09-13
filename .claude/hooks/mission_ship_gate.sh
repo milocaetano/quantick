@@ -121,8 +121,11 @@ if [ "$kind" = campaign ]; then
     # No single goal governs the consolidated PR: delivery-review grades the
     # parent charter's criteria, so the gate verifies that parent instead.
     parent=$(printf '%s\n' "$body" | sed -n 's/^Campaign-parent: *//p' | tr -d '\r')
-    [ "$(printf '%s\n' "$parent" | wc -l | tr -d ' ')" -eq 1 ] &&
-        printf '%s\n' "$parent" | grep -Eqx "${pr_url%/pull/*}/issues/[0-9]+" ||
+    # The repository prefix is compared literally: a regex built from the URL
+    # would let its dots match any character.
+    parent_number=${parent#"${pr_url%/pull/*}/issues/"}
+    [ "$(printf '%s\n' "$parent" | wc -l | tr -d ' ')" -eq 1 ] && [ "$parent_number" != "$parent" ] &&
+        case "$parent_number" in ''|*[!0-9]*) false ;; esac ||
         fail 'A consolidated campaign PR names its charter once in its body: Campaign-parent: <issue URL in this repository>.'
     charter=$(cd "$worktree" && gh issue view "$parent" --json body --jq .body) ||
         fail 'GitHub could not read the campaign parent charter.'

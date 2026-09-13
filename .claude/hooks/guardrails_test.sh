@@ -1374,6 +1374,15 @@ run_completion "a consolidated campaign PR without its parent fails" \
 printf 'Campaign-parent: https://github.com/other/repo/issues/7\n' > "$root/completion/pr-body"
 run_completion "a consolidated campaign PR naming another repository's parent fails" \
     ship fail 'Campaign-parent: <issue URL in this repository>'
+# A dot in the repository name is a literal dot, not a wildcard for a look-alike.
+sed -i 's|owner/repo/pull|owner/re.po/pull|' "$root/completion/pr-identity"
+printf 'Campaign-parent: https://github.com/owner/reXpo/issues/7\n' > "$root/completion/pr-body"
+run_completion "a consolidated campaign PR naming a look-alike repository's parent fails" \
+    ship fail 'Campaign-parent: <issue URL in this repository>'
+sed -i 's|owner/re.po/pull|owner/repo/pull|' "$root/completion/pr-identity"
+printf 'Campaign-parent: %s/7\n' "$parent" > "$root/completion/pr-body"
+run_completion "a consolidated campaign PR whose parent is not an issue number fails" \
+    ship fail 'Campaign-parent: <issue URL in this repository>'
 printf 'Campaign #7.\nCampaign-parent: %s\n' "$parent" > "$root/completion/pr-body"
 printf 'Exact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
 run_completion "a consolidated campaign PR whose parent is no charter fails" \

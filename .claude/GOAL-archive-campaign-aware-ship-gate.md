@@ -121,6 +121,10 @@ crate file, no hot path, no UI. Campaign child: base `origin/campaign/lean-a-plu
   `cargo build --workspace`, `cargo test --workspace` (with `QUANTICK_BUBBLES`
   unset): each exit 0, run separately.
 
+- arch-review repair (literal repository prefix for `Campaign-parent:`, two
+  more cases): `sh .claude/hooks/guardrails_test.sh` 275 passed, 0 failed; the
+  pre-repair regex accepted `owner/reXpo` for a PR in `owner/re.po`.
+
 ## Closing steps
 
 - **C1** — `delivery-review` completeness pass, inline (medium).
