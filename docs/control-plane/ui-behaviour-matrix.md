@@ -44,10 +44,10 @@ The three exclusion classes are closed:
 | Reachable by capability | 29 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 61 |
-| **Total** | **98** |
+| Excluded: `pending_capability` | 62 |
+| **Total** | **99** |
 
-80 of the 98 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 18 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+80 of the 99 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 19 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -136,6 +136,7 @@ The three exclusion classes are closed:
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow and rectangle tools have one. Tracked in issue 401 |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu, Delete | `annotate.remove` | — |
+| `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; Ctrl+C then Ctrl+V on the focused pane | — | `pending_capability` — no capability copies an object; `annotate.*` places three shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
@@ -173,7 +174,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 18 |
+| `authored` | 19 |
 
 ## Appendix: rows no registry stands behind
 
@@ -201,6 +202,7 @@ declares nothing here is a guard failure.
 | `feed.deal_recording.set` | the Tools menu checkbox is drawn by `app/deal_recording_wiring.rs`, not an entry in the menu registry; `record_by_default` is the same choice as a call |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
+| `drawing.duplicate` | the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 

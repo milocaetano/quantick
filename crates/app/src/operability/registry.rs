@@ -868,6 +868,22 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         mapping: capability!("annotate.remove"),
     },
     UiBehaviour {
+        id: "drawing.duplicate",
+        title: "Copy a drawing: duplicate it in place, or copy it and paste it on any chart",
+        reach: "the object context bar's Duplicate button, Ctrl+D; Ctrl+C then Ctrl+V on the \
+                focused pane",
+        keys: &[(
+            Source::Authored,
+            "the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by \
+             `app/drawing_input.rs` and the context bar, not entries in a hotkey registry",
+        )],
+        mapping: excluded!(
+            PendingCapability,
+            "no capability copies an object; `annotate.*` places three shapes afresh, so an \
+             operator re-creates a copy rather than duplicating one. Tracked in issue 401"
+        ),
+    },
+    UiBehaviour {
         id: "drawing.rename",
         title: "Rename a drawing",
         reach: "the canvas right-click menu, drawing section",
