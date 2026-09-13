@@ -68,10 +68,11 @@ Campaign child of #367 (Q10). Base: `campaign/lean-a-plus`. Issue: #418.
   `an_operator_detaching_its_own_slot_leaves_the_traders_slot_of_the_same_number`
   (same module, 200 back-to-back frames after an attach), failed this
   mission's own `cargo test --workspace` while contention runs shared the
-  host, and one local contention round. It gets the same flush helper: a
-  detour stated here and in the PR, because the verification loop cannot be
-  green without it and R7 needs the step to land. Other tests the local
-  harness found failing are filed, not fixed.
+  host, and one local contention round. It gets the same fix as #409 and
+  #415 (the suite's `settle_indicators`): a detour stated here and in the
+  PR, because the verification loop cannot be green without it and R7 needs
+  the step to land. Other tests the local harness found failing are filed,
+  not fixed: #427, #428, #429, #430; the #411 gateway ordering is #425.
 
 ## Acceptance criteria
 
