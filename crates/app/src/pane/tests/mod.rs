@@ -1149,6 +1149,7 @@ fn drive_navigation(
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = crate::chart_layers::LayerActions::default();
+    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),
@@ -1160,8 +1161,11 @@ fn drive_navigation(
     let _ = ctx.run(input, |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut chrome = PaneChrome {
+                tab: 1,
+                side: PaneSide::Flow,
                 toolrail: &mut toolrail,
                 presets: &presets,
+                drawing_chrome: &mut drawing_chrome,
                 begin_text_edit: &mut begin_text_edit,
                 style: &style,
                 tz: crate::timezone::TzOffset::default(),
@@ -1201,9 +1205,13 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
     let mut layers = crate::chart_layers::LayerActions::default();
+    let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     body(&mut PaneChrome {
+        tab: 1,
+        side: PaneSide::Flow,
         toolrail: &mut toolrail,
         presets: &presets,
+        drawing_chrome: &mut drawing_chrome,
         begin_text_edit: &mut begin_text_edit,
         style: &style,
         tz: crate::timezone::TzOffset::default(),

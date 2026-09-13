@@ -21,6 +21,7 @@ use crate::canvas_layout::PaneIdAllocator;
 mod chart_layers_wiring;
 mod chrome;
 mod control_host;
+pub(crate) use control_host::control_quick_range;
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 mod drawing_chrome_wiring;

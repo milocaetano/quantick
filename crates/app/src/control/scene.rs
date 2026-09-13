@@ -99,6 +99,8 @@ const FEED_CHIP_CONTROL_ID: &str = "feed_status.chip";
 /// The popup's two controls, named for the capability each one calls.
 const FEED_RECONNECT_CONTROL_ID: &str = "feed_status.reconnect";
 const FEED_RELOAD_CONTROL_ID: &str = "feed_status.reload";
+/// The compact action bar raised by a completed secondary-button range.
+const QUICK_RANGE_OWNER_ID: &str = "quick_range";
 
 /// What is on screen right now, as controls an operator can name.
 ///
@@ -350,6 +352,7 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
     let focused_pane_id = push_panes(&mut controls, active, focused_side);
+    push_quick_range(&mut controls, app);
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
     push_dock(&mut controls, app);
@@ -409,6 +412,41 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
     SceneOwnerKindDto::FeedStatus,
     SceneOwnerKindDto::TabStrip,
 ];
+
+/// The one contextual action visible after a temporary range settles.
+fn push_quick_range(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
+    let Some(control) = crate::app::control_quick_range(app) else {
+        return;
+    };
+    let bounds = rect_bounds(control.rect);
+    controls.push(SceneControlSnapshot {
+        control_id: crate::surfaces::drawing_chrome::QUICK_RANGE_ACTION_CONTROL_ID.to_owned(),
+        label: "Fixed-range volume profile".to_owned(),
+        role: SceneRoleDto::Action,
+        owner: SceneOwnerSnapshot {
+            // A contextual toolbar over the chart. Reusing the region kind is
+            // also schema-compatible for existing scene clients; the owner ID
+            // distinguishes it from the fixed toolbar above the canvas.
+            kind: SceneOwnerKindDto::Toolbar,
+            id: QUICK_RANGE_OWNER_ID.to_owned(),
+        },
+        selected: false,
+        availability: if control.enabled {
+            available()
+        } else {
+            unavailable("the_range_has_no_market_time")
+        },
+        bounds_availability: match &bounds {
+            Bounds::Rect(_) => available(),
+            Bounds::NotDrawn => unavailable("the_action_has_not_been_drawn_yet"),
+            Bounds::NotReportable => {
+                unavailable("the_actions_rectangle_is_not_a_reportable_number")
+            }
+        },
+        bounds: bounds.into_snapshot(),
+        capability_id: Some(super::annotate::PROFILE_CAPABILITY_ID.to_owned()),
+    });
+}
 
 /// The open charts, in strip order, up to the scene's ceiling.
 ///

@@ -450,12 +450,16 @@ fn with_flow_pane<R>(
         tz,
         layer_actions,
         footprint_config,
+        surfaces,
         ..
     } = app;
     let tab = &mut tabs[*active_tab];
     let mut chrome = pane::PaneChrome {
+        tab: tab.id,
+        side: pane::PaneSide::Flow,
         toolrail,
         presets: drawing_presets,
+        drawing_chrome: &mut surfaces.drawing_chrome,
         begin_text_edit: &mut begin_text_edit,
         style,
         tz: *tz,
@@ -1729,9 +1733,14 @@ fn grant_annotate_for_test(app: &mut QuantickApp, scopes: &str) {
 fn newest_anchor(app: &QuantickApp) -> serde_json::Value {
     let pane = app.active_tab().drawing_pane();
     let slot = pane.slots().saturating_sub(1);
+    anchor_at_slot(app, slot)
+}
+
+fn anchor_at_slot(app: &QuantickApp, slot: usize) -> serde_json::Value {
+    let pane = app.active_tab().drawing_pane();
     let time = pane
         .slot_open_time(slot)
-        .expect("the newest bar has a time");
+        .expect("the selected bar has a time");
     let price = pane
         .closed_bar(slot)
         .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
