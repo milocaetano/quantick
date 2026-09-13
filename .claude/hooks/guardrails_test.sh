@@ -75,7 +75,8 @@ git -C "$root/mainco" config user.name t
 # instead would hide every diagnostic guardrails.sh ever emits.
 git -C "$root/mainco" config core.autocrlf false
 git -C "$root/mainco" config core.safecrlf false
-mkdir -p "$root/mainco/src" "$root/mainco/.claude"
+mkdir -p "$root/mainco/src" "$root/mainco/.claude/skills/mission"
+cp "$script_dir/../skills/mission/SKILL.md" "$root/mainco/.claude/skills/mission/SKILL.md"
 echo one > "$root/mainco/src/a.txt"
 git -C "$root/mainco" add -A
 git -C "$root/mainco" commit -qm "first"
@@ -84,6 +85,10 @@ git -C "$root/mainco" update-ref refs/remotes/origin/main HEAD
 
 git -C "$root/mainco" worktree add -q -b feat/x "$root/wt" >/dev/null 2>&1
 echo two > "$root/wt/src/a.txt"
+mkdir -p "$root/wt/.claude"
+sed -n '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' \
+    "$root/wt/.claude/skills/mission/SKILL.md" | sed 's/^   //; s/^- \[ \]/- [x]/' \
+    > "$root/wt/.claude/GOAL-archive-fixture.md"
 git -C "$root/wt" add -A
 git -C "$root/wt" commit -qm "second"
 
@@ -508,9 +513,7 @@ cp "$GUARDRAILS" "$root/hooks/guardrails.sh"
 cat > "$root/hooks/ai_review_threads.sh" <<'STUB'
 #!/bin/sh
 # Fixture stub for the real ai_review_threads.sh. Honours only the one
-# subcommand the gate calls, and refuses the rest loudly rather than answering
-# a question it was never asked.
-[ "${1:-}" = count ] || exit 64
+# definition's two read operations and refuses everything else loudly.
 stub_answer=$(cat "$(dirname "$0")/threads" 2>/dev/null)
 case "$stub_answer" in
     unavailable)
@@ -518,8 +521,47 @@ case "$stub_answer" in
         exit 2
         ;;
 esac
-printf '%s\n' "$stub_answer"
+case "${1:-}" in
+    count)
+        [ "$stub_answer" = late5 ] && stub_answer=0
+        printf '%s\n' "$stub_answer"
+        ;;
+    list)
+        if [ "$stub_answer" = late5 ]; then
+            late_file=${QUANTICK_COMPLETION_FIXTURE:?}/listed-once
+            if [ -f "$late_file" ]; then stub_answer=5; else : > "$late_file"; stub_answer=0; fi
+        fi
+        stub_line=0
+        while [ "$stub_line" -lt "$stub_answer" ]; do
+            stub_line=$((stub_line + 1))
+            printf 'thread-%s\tsrc/a.txt:1\tfixture finding %s\n' "$stub_line" "$stub_line"
+        done
+        ;;
+    *) exit 64 ;;
+esac
 STUB
+
+cat > "$root/hooks/review_report.sh" <<'STUB'
+#!/bin/sh
+stub_dir=$(dirname "$0")
+operation=${1:-}
+kind=${2:-}
+report_state=$(cat "$stub_dir/reports" 2>/dev/null || printf 'current\n')
+case "$operation" in
+    verify)
+        [ "$report_state" != unavailable ] || exit 2
+        [ "$report_state" != "missing-$kind" ] || exit 1
+        printf 'https://example.test/%s-report\n' "$kind"
+        ;;
+    publish)
+        [ "$kind" = mission-completion ] || exit 64
+        grep -q '^MISSION-COMPLETION: PASS$' "$4" || exit 1
+        printf 'https://example.test/mission-completion-report\n'
+        ;;
+    *) exit 64 ;;
+esac
+STUB
+chmod +x "$root/hooks/review_report.sh"
 
 set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
 
@@ -673,6 +715,11 @@ done
 run "all required reviews and no open thread makes the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
 
+printf 'missing-arch-review\n' > "$root/hooks/reports"
+run "a hand-written architecture marker cannot replace its durable report" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "durable PR report"
+printf 'current\n' > "$root/hooks/reports"
+
 run "even reviewed main merges remain exclusively human" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "reserved exclusively"
 
@@ -720,6 +767,7 @@ run "two bare numbers are an ambiguous PR, not a guess" \
 # looking in the wrong place.
 mkdir -p "$root/lonely"
 cp "$GUARDRAILS" "$root/lonely/guardrails.sh"
+cp "$root/hooks/review_report.sh" "$root/lonely/review_report.sh"
 GUARDRAILS_UNDER_TEST="$root/lonely/guardrails.sh"
 run "a missing counting script is named as such, not blamed on gh" \
     pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" ask "is not beside the hook"
@@ -988,6 +1036,215 @@ else
     failed=$((failed + 1))
 fi
 
+# --- mission/ship final completion -----------------------------------------
+#
+# PR #306 did not cross `gh pr ready` during the faulty completion attempt: it
+# was already open and non-draft. These cases therefore drive the explicit
+# final verifier used by both workflow skills. GitHub's optimistic signals are
+# present on purpose; they cannot replace any review gate.
+MISSION_SHIP_GATE="$script_dir/mission_ship_gate.sh"
+cp "$MISSION_SHIP_GATE" "$root/hooks/mission_ship_gate.sh"
+cp "$script_dir/campaign_context.sh" "$root/hooks/campaign_context.sh"
+MISSION_SHIP_GATE="$root/hooks/mission_ship_gate.sh"
+mkdir -p "$root/bin"
+cat > "$root/bin/gh" <<'STUB'
+#!/bin/sh
+stub_root=${QUANTICK_COMPLETION_FIXTURE:?}
+if [ "${1:-} ${2:-}" = "pr view" ]; then
+    case " $* " in
+        *' --json body '*) cat "$stub_root/pr-body" ;;
+        *) cat "$stub_root/pr-identity" ;;
+    esac
+    exit 0
+fi
+if [ "${1:-} ${2:-}" = "pr checks" ]; then
+    cat "$stub_root/checks"
+    exit 0
+fi
+if [ "${1:-} ${2:-}" = "pr edit" ]; then
+    while [ $# -gt 0 ]; do
+        if [ "$1" = --body-file ]; then
+            cp "$2" "$stub_root/pr-body"
+            exit 0
+        fi
+        shift
+    done
+fi
+exit 64
+STUB
+chmod +x "$root/bin/gh"
+
+cat > "$root/hooks/review_report.sh" <<'STUB'
+#!/bin/sh
+stub_root=${QUANTICK_COMPLETION_FIXTURE:?}
+operation=${1:-}
+kind=${2:-}
+case "$operation" in
+    verify)
+        report_state=$(cat "$stub_root/reports")
+        [ "$report_state" != unavailable ] || exit 2
+        [ "$report_state" != "missing-$kind" ] || exit 1
+        printf 'https://example.test/%s-report\n' "$kind"
+        ;;
+    publish)
+        [ "$kind" = mission-completion ] || exit 64
+        grep -q '^MISSION-COMPLETION: PASS$' "$4" || exit 1
+        cp "$4" "$stub_root/published-report"
+        printf 'https://example.test/mission-completion-report\n'
+        ;;
+    *) exit 64 ;;
+esac
+STUB
+chmod +x "$root/hooks/review_report.sh"
+
+run_completion() {
+    completion_name=$1
+    completion_mode=$2
+    completion_expect=$3
+    completion_want=${4:-}
+    completion_out=$(QUANTICK_COMPLETION_FIXTURE="$root/completion" \
+        PATH="$root/bin:$PATH" \
+        sh "$MISSION_SHIP_GATE" "$completion_mode" 42 "$root/wt" 2>&1)
+    completion_status=$?
+
+    if [ "$completion_expect" = pass ] && [ "$completion_status" -eq 0 ]; then
+        case "$completion_out" in
+            *MISSION-COMPLETION:PASS*) passed=$((passed + 1)); return ;;
+        esac
+    elif [ "$completion_expect" = fail ] && [ "$completion_status" -ne 0 ]; then
+        case "$completion_out" in
+            *"$completion_want"*) passed=$((passed + 1)); return ;;
+        esac
+    fi
+
+    printf 'FAIL %s: expected %s containing "%s", status=%s\n  output: %s\n' \
+        "$completion_name" "$completion_expect" "$completion_want" \
+        "$completion_status" "$completion_out"
+    failed=$((failed + 1))
+}
+
+mkdir -p "$root/completion"
+: > "$root/completion/pr-body"
+printf 'pass\n' > "$root/completion/checks"
+printf 'current\n' > "$root/completion/reports"
+printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+
+GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
+set_tier "$root/wt" high
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_threads 0
+set_marker ai-review-complete ""
+for completion_mode in mission ship; do
+    run_completion "PR 306 $completion_mode refuses an already-ready green mergeable PR without AI completion" \
+        "$completion_mode" fail ai-review-complete
+done
+
+set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+set_threads 5
+for completion_mode in mission ship; do
+    run_completion "PR 306 $completion_mode refuses five open AI-review threads" \
+        "$completion_mode" fail '5 unresolved AI-review threads'
+done
+
+set_threads 0
+printf 'missing-ai-review\n' > "$root/completion/reports"
+for completion_mode in mission ship; do
+    run_completion "PR 306 $completion_mode refuses AI completion without its durable report" \
+        "$completion_mode" fail 'ai-review` marker has no matching durable PR report'
+done
+
+printf 'missing-arch-review\n' > "$root/completion/reports"
+run_completion "a hand-written architecture marker has no durable skill report" \
+    mission fail 'arch-review` marker has no matching durable PR report'
+
+printf 'missing-delivery-review\n' > "$root/completion/reports"
+run_completion "high cannot complete with a hand-written delivery marker" \
+    ship fail 'delivery-review` marker has no matching durable PR report'
+
+printf 'current\n' > "$root/completion/reports"
+for completion_mode in mission ship; do
+    run_completion "a fully evidenced already-ready PR completes through $completion_mode" \
+        "$completion_mode" pass
+done
+
+rm -f "$root/completion/listed-once" "$root/completion/published-report"
+set_threads late5
+run_completion "threads opened during reconciliation block durable completion publication" \
+    mission fail 'threads changed during final reconciliation'
+if [ ! -f "$root/completion/published-report" ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL late threads left a durable positive completion report\n'
+    failed=$((failed + 1))
+fi
+set_threads 0
+
+cp "$root/wt/.claude/GOAL-archive-fixture.md" "$root/completion/goal-archive"
+sed -i '/G-AI2/d' "$root/wt/.claude/GOAL-archive-fixture.md"
+git -C "$root/wt" add .claude/GOAL-archive-fixture.md
+git -C "$root/wt" commit -qm 'remove a required goal gate'
+head_sha=$(git -C "$root/wt" rev-parse HEAD)
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+run_completion "completion refuses an archived goal missing one canonical AI gate" \
+    mission fail 'does not literally contain the four canonical AI-review gates'
+cp "$root/completion/goal-archive" "$root/wt/.claude/GOAL-archive-fixture.md"
+git -C "$root/wt" add .claude/GOAL-archive-fixture.md
+git -C "$root/wt" commit -qm 'restore required goal gates'
+head_sha=$(git -C "$root/wt" rev-parse HEAD)
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+
+printf 'feat/x %s main %s OPEN true MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+run_completion "final completion refuses a PR that is still draft" \
+    ship fail 'still a draft'
+printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+
+set_tier "$root/wt" small
+set_marker delivery-review-ok ""
+printf 'missing-delivery-review\n' > "$root/completion/reports"
+run_completion "small keeps only its bounded delivery-review exemption" \
+    mission pass
+
+printf 'current\n' > "$root/completion/reports"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+for tier in medium high max; do
+    set_tier "$root/wt" "$tier"
+    run_completion "$tier completes through the same final gate" mission pass
+done
+
+cp "$root/wt/.claude/skills/mission/SKILL.md" "$root/completion/mission-skill"
+sed -i '/<!-- end what-done-means:v1 -->/i\- **D9** -- An unmapped completion clause.' \
+    "$root/wt/.claude/skills/mission/SKILL.md"
+git -C "$root/wt" add .claude/skills/mission/SKILL.md
+git -C "$root/wt" commit -qm 'mutate completion contract'
+head_sha=$(git -C "$root/wt" rev-parse HEAD)
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
+printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
+    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+run_completion "an unknown What done means clause blocks completion" \
+    mission fail 'Unknown What done means clause'
+cp "$root/completion/mission-skill" "$root/wt/.claude/skills/mission/SKILL.md"
+git -C "$root/wt" add .claude/skills/mission/SKILL.md
+git -C "$root/wt" commit -qm 'restore completion contract'
+head_sha=$(git -C "$root/wt" rev-parse HEAD)
+
+set_tier "$root/wt" ""
+set_marker delivery-review-ok "$(marker_key "$root/wt")"
+printf 'current\n' > "$root/completion/reports"
+
 # --- commit-reminder --------------------------------------------------------
 
 # At the `small` tier the reminder has to name the gate that branch actually
@@ -996,6 +1253,8 @@ fi
 set_tier "$root/wt" small
 run "the reminder at the small tier names the exemption it runs under" \
     commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "exemption"
+run "the reminder at the small tier still requires AI evidence" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "ai-review-complete"
 
 # The other direction. Only `small` changes what the reminder says, and without
 # this a widened condition (`small*`, or a prefix match) would start telling
@@ -1005,8 +1264,8 @@ run "the reminder at the small tier names the exemption it runs under" \
 for tier in $tiers; do
     [ "$tier" != "small" ] || continue
     set_tier "$root/wt" "$tier"
-    run "the reminder at the $tier tier still names both markers" \
-        commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "delivery-review-ok"
+    run "the reminder at the $tier tier still names all reviews" \
+        commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "architecture, delivery and AI"
 done
 
 # Cleared before anything else runs: every case from here on predates tiers and
@@ -1014,8 +1273,8 @@ done
 # test rather than fail them.
 set_tier "$root/wt" ""
 
-run "the untiered reminder still names both markers" \
-    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "delivery-review-ok"
+run "the untiered reminder still names all reviews" \
+    commit-reminder "$(json_bash "$root/wt" "git commit -m x")" context "architecture, delivery and AI"
 
 run "a bash command that is not git commit is ignored" \
     commit-reminder "$(json_bash "$root/wt" "git status")" silent
@@ -1298,9 +1557,9 @@ fi
 # loudly; a self-selecting one failed silently.
 flow_docs=".claude/hooks/README.md .claude/skills/mission/SKILL.md .claude/skills/ship/SKILL.md"
 
-# Each review skill must carry its own recording command. Which marker belongs
-# to which is derived from the skill's directory rather than listed, so this is
-# not a third copy of the names.
+# Each review skill must call the shared producer under its own kind. The
+# producer owns marker writes and durable receipts; a direct redirect in a
+# skill would reopen the manual-marker path this suite guards.
 review_skills=".claude/skills/arch-review/SKILL.md .claude/skills/delivery-review/SKILL.md .claude/skills/ai-review/SKILL.md"
 
 # Per file, not "somewhere among them": checking the set would stay green while
@@ -1321,29 +1580,18 @@ done
 
 for doc in $review_skills; do
     skill=$(basename "$(dirname "$doc")")
-    # The tier file is *read* by a review skill and never recorded by one, so
-    # it is dropped from the set here rather than excused inside the loop.
-    # Excusing it there left `written` non-empty on a skill that had lost its
-    # own recording snippet, so the emptiness check below stopped firing and
-    # the drift this block exists to catch went green.
-    written=$(grep -o -- 'absolute-git-dir)/[A-Za-z0-9._-]*' "$repo_root/$doc" |
-        sed 's|.*/||' |
-        grep -vxF -- "$tier_file_name" |
-        sort -u)
-    if [ -z "$written" ]; then
-        printf 'FAIL %s carries no marker-recording command of its own\n' "$doc"
+    if grep -qF -- "review_report.sh publish $skill" "$repo_root/$doc"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s does not publish through the shared %s producer\n' "$doc" "$skill"
         failed=$((failed + 1))
-        continue
     fi
-    for name in $written; do
-        case "$name" in
-            "$skill"-*) passed=$((passed + 1)) ;;
-            *)
-                printf 'FAIL %s records %s, which is not a marker named for %s\n' "$doc" "$name" "$skill"
-                failed=$((failed + 1))
-                ;;
-        esac
-    done
+    if grep -q -- 'absolute-git-dir).*review-ok\|absolute-git-dir)/ai-review-complete' "$repo_root/$doc"; then
+        printf 'FAIL %s still teaches a direct private marker write\n' "$doc"
+        failed=$((failed + 1))
+    else
+        passed=$((passed + 1))
+    fi
 done
 
 # Every file name the prose tells an agent to *write* into a git dir is one the
@@ -1436,24 +1684,25 @@ done
 # commit sha, with the whole suite green, because the checks above assert only
 # that a doc *names* a marker file and never what it writes into it.
 
-for doc in .claude/hooks/README.md .claude/skills/arch-review/SKILL.md \
-    .claude/skills/delivery-review/SKILL.md; do
-    if [ ! -f "$repo_root/$doc" ]; then
-        printf 'FAIL %s is checked for its recording command but does not exist\n' "$doc"
-        failed=$((failed + 1))
-    elif grep -qF -- 'hash-object --stdin' "$repo_root/$doc"; then
+for marker in $markers; do
+    if grep -qF -- "$marker" "$repo_root/.claude/hooks/review_report.sh"; then
         passed=$((passed + 1))
     else
-        printf 'FAIL %s records a marker without hashing the diff, so the gate would reject it\n' "$doc"
+        printf 'FAIL the shared report producer never owns %s\n' "$marker"
         failed=$((failed + 1))
     fi
 done
+if grep -qF -- 'campaign_context.sh" key' "$repo_root/.claude/hooks/review_report.sh"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the shared report producer does not use the canonical review key\n'
+    failed=$((failed + 1))
+fi
 
 # AI completion uses the shared key producer and an explicit branch prefix.
 # These fixed producer obligations must not vanish with a renamed marker.
-for required in 'campaign_context.sh key' 'symbolic-ref --quiet --short HEAD' \
-    'gh pr comment' 'REVIEWED_BASE_TIP' 'REVIEWED_HEAD' 'REVIEWED_KEY' \
-    'status --porcelain=v1 --untracked-files=all'; do
+for required in 'review_report.sh publish ai-review' 'AI-REVIEW: COMPLETE' \
+    'ai_review_threads.sh list'; do
     if grep -qF -- "$required" "$repo_root/.claude/skills/ai-review/SKILL.md"; then
         passed=$((passed + 1))
     else
@@ -1461,6 +1710,41 @@ for required in 'campaign_context.sh key' 'symbolic-ref --quiet --short HEAD' \
         failed=$((failed + 1))
     fi
 done
+
+for required in 'At every tier copy the four reserved `G-AI` lines' \
+    '**G-AI1**' '**G-AI2**' '**G-AI3**' '**G-AI4**'; do
+    if grep -qF -- "$required" "$repo_root/.claude/skills/mission/SKILL.md"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL every mission tier no longer declares: %s\n' "$required"
+        failed=$((failed + 1))
+    fi
+done
+
+if grep -qF -- 'goal_ai_gates" = "$canonical_ai_gates' \
+    "$repo_root/.claude/hooks/mission_ship_gate.sh"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL final completion no longer compares the archived AI gates literally\n'
+    failed=$((failed + 1))
+fi
+
+for caller in mission ship; do
+    if grep -qF -- "mission_ship_gate.sh $caller" "$repo_root/.claude/skills/$caller/SKILL.md"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s does not invoke the shared final completion gate\n' "$caller"
+        failed=$((failed + 1))
+    fi
+done
+
+if [ "$(grep -cF -- 'require_green_checks' "$repo_root/.claude/hooks/mission_ship_gate.sh")" -ge 3 ] &&
+    [ "$(grep -cF -- 'list_threads' "$repo_root/.claude/hooks/mission_ship_gate.sh")" -ge 3 ]; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL final completion no longer rechecks CI and AI threads after reconciliation\n'
+    failed=$((failed + 1))
+fi
 
 # And no document that describes the gate may still say a marker holds a
 # commit sha. Command drift and prose drift are different failures: the first
@@ -1494,6 +1778,12 @@ done
 # --- report -----------------------------------------------------------------
 
 if sh "$script_dir/campaign_context_test.sh"; then
+    passed=$((passed + 1))
+else
+    failed=$((failed + 1))
+fi
+
+if sh "$script_dir/review_report_test.sh"; then
     passed=$((passed + 1))
 else
     failed=$((failed + 1))

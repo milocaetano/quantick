@@ -2,7 +2,19 @@
 
 use rust_decimal::Decimal;
 
-use crate::{Bar, Trade};
+use crate::{Bar, DealSample, Trade};
+
+/// Optional venue input kept separate from the universal print-driven bar
+/// contract. A builder that needs the deal counter exposes this port; other
+/// builders implement no pretend no-op operation.
+pub trait DealCounterInput {
+    fn observe(&mut self, sample: DealSample);
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BarBuilderDiagnostics {
+    pub uncounted_trades: u64,
+}
 
 /// How far the in-progress bar is from closing.
 ///
@@ -59,5 +71,21 @@ pub trait BarBuilder {
     /// tell the reader the bar closes at a moment it will not.
     fn progress(&self) -> Option<BarProgress> {
         None
+    }
+
+    /// The optional deal-counter input port. `None` means this rule is driven
+    /// entirely by prints.
+    fn deal_counter_input(&mut self) -> Option<&mut dyn DealCounterInput> {
+        None
+    }
+
+    /// Prints this builder could not place in any bar because the rule had
+    /// nothing to count them against — a deal bar before the first counter
+    /// reading. Zero for every rule fed by prints alone.
+    ///
+    /// Reported rather than hidden: a chart owes the trader the number of
+    /// prints it is showing no bar for.
+    fn diagnostics(&self) -> BarBuilderDiagnostics {
+        BarBuilderDiagnostics::default()
     }
 }

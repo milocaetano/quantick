@@ -825,6 +825,12 @@ impl ChartPane {
         }
     }
 
+    /// Re-cut every retained print from the retained deal-counter readings.
+    pub fn rebuild_bars(&mut self) {
+        self.state.rebuild_bars();
+        self.bump_pagination_revision();
+    }
+
     /// Revision protecting the closed-bar prefix exposed through paginated
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]

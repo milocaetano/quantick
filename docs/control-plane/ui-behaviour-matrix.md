@@ -41,13 +41,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 28 |
+| Reachable by capability | 29 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 61 |
-| **Total** | **97** |
+| Excluded: `pending_capability` | 62 |
+| **Total** | **99** |
 
-80 of the 97 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 17 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 99 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 18 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -65,7 +65,7 @@ The three exclusion classes are closed:
 | `layout.tab.rename` | Rename a layout tab | layout strip double-click, View → Layouts | `layout.tab.rename` | — |
 | `layout.tab.rename.cancel` | Abandon a rename in progress | Escape, or clicking away from the strip's rename box | — | `ui_only_by_decision` — `layout.tab.rename` is atomic: a caller sends the new name or sends nothing, so there is no half-finished rename for it to abandon. The begin/cancel pair is the in-place editor's own state and has no remote counterpart by construction |
 | `layout.tab.switch` | Show another layout on the focused chart | layout strip, View → Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
-| `chart.bars.set_spec` | Change what one bar is — kind and size | toolbar bar controls | `layout.pane.set_interval` | — |
+| `chart.bars.set_spec` | Change what one bar is — kind and size | toolbar bar controls | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
 | `chart.pan` | Drag the chart back through the tape | primary drag on the canvas; the price and time axes | — | `pending_capability` — `chart.window.read` reports the visible window; nothing sets it, so an operator reads where the trader is looking and cannot look elsewhere. Tracked in issue 401 |
 | `chart.zoom` | Zoom the chart in or out | wheel on the canvas; drag on either axis | — | `pending_capability` — the read half exists as `chart.window.read` and the write half does not. Tracked in issue 401 |
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
@@ -107,6 +107,7 @@ The three exclusion classes are closed:
 | `trade.ticket.strategy.select` | Choose the ticket's exit ladder | the Trading panel's strategy selector | `trade.strategy.select` | — |
 | `feed.reconnect` | Respawn the transport and keep the timeline | the feed notice popup | `feed.reconnect` | — |
 | `feed.reload` | Throw the timeline away and rebuild the chart | the feed notice popup | `feed.reload` | — |
+| `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
 | `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | View menu, Drawing toolbar, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `tool.crosshair` | Arm the crosshair | tool rail, key 2 | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
@@ -135,6 +136,7 @@ The three exclusion classes are closed:
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow and rectangle tools have one. Tracked in issue 401 |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu, Delete | `annotate.remove` | — |
+| `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; Ctrl+C then Ctrl+V on the focused pane | — | `pending_capability` — no capability copies an object; `annotate.*` places three shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
@@ -159,7 +161,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 19 |
+| `toolbar_action` | 20 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |
@@ -172,7 +174,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 17 |
+| `authored` | 18 |
 
 ## Appendix: rows no registry stands behind
 
@@ -199,6 +201,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
+| `drawing.duplicate` | the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 

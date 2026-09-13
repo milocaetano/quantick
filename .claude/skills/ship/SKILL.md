@@ -64,7 +64,10 @@ for the base, review key and authorized merge command; normal tasks use main.
    the shared git dir's file. The `small` exemption is subject to the hook
    ceiling. Independent
    delta follow-ups may carry forward unaffected evidence under the delivery
-   contract; they still issue a verdict for the current review key.
+   contract; they still issue a verdict for the current review key. Each
+   review publishes through `.claude/hooks/review_report.sh`; only that
+   producer records its private projection after the matching current-review
+   PR report is readable. Never write or refresh a review marker directly.
 
 5. **Finish checks and repairs.** Observe required CI at the actual PR head.
    Use `gh pr checks <n>` or run/job metadata when checks are not registered;
@@ -74,8 +77,16 @@ for the base, review key and authorized merge command; normal tasks use main.
    No pending, missing or red CI counts as success.
 
 6. **Mark ready and deliver.** Once current reviews, required checks and finding
-   resolution are proven, run `gh pr ready <n>` from the reviewed worktree.
-   Report the PR URL and exact-head CI. The user alone merges to main: no
+   resolution are proven, inspect the PR state. If it is a draft, run
+   `gh pr ready <n>` from the reviewed worktree. If it is already non-draft,
+   do not treat the missing transition as evidence and do not run it again.
+   In both cases finish with
+   `sh .claude/hooks/mission_ship_gate.sh ship <n>` from that worktree. This
+   shared gate revalidates the current PR/head, every applicable review and
+   durable report, exact-head CI, and the literal mission `What done means`
+   clauses; it publishes and verifies the final reconciliation. Refuse
+   delivery unless it prints `MISSION-COMPLETION:PASS`. Then report the PR URL and exact-head
+   CI. The user alone merges to main: no
    auto-merge, queue, direct push or protection override. An authorized campaign
    child instead returns to its coordinator for the serialized, head-pinned
    merge in the integration contract. Keep its worktree through merge so the

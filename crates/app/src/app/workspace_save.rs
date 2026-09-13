@@ -97,6 +97,7 @@ impl QuantickApp {
         self.toolrail.set_dock(chrome.rail_dock.into());
         self.toolrail.set_visible(chrome.rail_visible);
         self.health.show_perf = chrome.perf_readings;
+        self.chrome.record_deals = chrome.record_deals;
         self.history.progressive_history = chrome.progressive_history;
         // A token this release does not know keeps the reach it had — the
         // default on startup, whatever the trader picked when a bookmark is
@@ -173,6 +174,7 @@ impl QuantickApp {
             // at the top of the file. An arrangement that carried a copy would
             // be an arrangement that could overwrite them on open.
             legacy_favorite_tools: Vec::new(),
+            record_deals: self.chrome.record_deals,
             progressive_history: self.history.progressive_history,
             // The default writes no key: a workspace that says nothing about
             // the reach restores the press the button has always had, which is

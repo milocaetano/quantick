@@ -275,6 +275,7 @@ pub(super) async fn serve_connection(
             book_levels: hello.book_levels,
             rates: hello.rates.unwrap_or(false),
             history_paging: can_page,
+            deal_counter: hello.deal_counter.unwrap_or(false),
         }))
         .await
         .is_err()
@@ -309,6 +310,7 @@ pub(super) async fn serve_connection(
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
     let mut latency = LatencyTracker::new();
+    let mut deals = crate::deals::DealSampler::new(hello.server_utc_offset_s);
     // Whether the tape has already been reported late. Edge-triggered, so a
     // session that stays behind logs the diagnosis once instead of once per
     // sample, and its recovery is logged too — a report with no matching
@@ -485,6 +487,12 @@ pub(super) async fn serve_connection(
             }
             Ok(BridgeMsg::Tick(tick)) => {
                 let _ = tracker.observe(tick.seq);
+                // Ahead of the print it stamps; quote-only ticks carry it too.
+                if let Some(sample) = deals.observe(&tick)
+                    && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
                 if let MapOutcome::Trade { trade, .. } = mapper.map(&tick) {
                     // A tick belongs to whichever block is open around it. The
                     // paged block is checked first because it is the one that
@@ -545,9 +553,18 @@ pub(super) async fn serve_connection(
                 }
             }
             Ok(BridgeMsg::Heartbeat(hb)) => {
+                // A second without a tick ends the round a reading waits on
+                // — before the clock moves, so the reading is dated with the
+                // ticks it covered.
+                if let Some(sample) = deals.finish()
+                    && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
                 if let Some(offset) = hb.server_utc_offset_s {
                     mapper.set_server_utc_offset_s(offset);
                     depth.set_server_utc_offset_s(offset);
+                    deals.set_server_utc_offset_s(offset);
                 }
                 // The beat a thin tape is measured on: a symbol printing once
                 // a minute never reaches the per-print sampling bound, and
@@ -896,6 +913,12 @@ pub(super) async fn serve_connection(
         );
     }
     mapper.stats.log_summary(&config.symbol);
+    // The reading a round was still waiting on, dated at the last tick it
+    // covered. Dropped, the next session would re-emit its value at its own
+    // first round, and the recording would carry the wrong time.
+    if let Some(sample) = deals.finish() {
+        let _ = tx.send(Mt5Event::DealCounter(sample)).await;
+    }
     // A consumer that was capturing depth must hear that this generation ended,
     // so it renders the discontinuity instead of connecting liquidity across it.
     depth.close(tx).await;

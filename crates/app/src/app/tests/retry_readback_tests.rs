@@ -576,6 +576,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "layout.pane.set_bar_spec",
+            LAYOUT_V2,
+            json!({ "pane": "0", "spec": "tick:77" }),
+            Readback::Moves,
+        ),
+        (
             "layout.pane.move",
             LAYOUT_V2,
             json!({ "from": "1", "to": "2" }),
@@ -615,6 +621,15 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         // `respawned: false`, and the generation says so by not moving.
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
+        // A tab whose feed declares no deal counter and has no recorded day:
+        // stopping a recorder that is not running acts on nothing, and the
+        // scope lists no recorder either side of the call.
+        (
+            "feed.deal_recording.set",
+            1,
+            json!({ "enabled": false }),
+            Readback::Stays,
+        ),
     ]
 }
 

@@ -20,6 +20,8 @@ use crate::window_scale;
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    /// Saved override for recording deal counters; `None` follows feed config.
+    pub(super) record_deals: Option<bool>,
     /// Where the offline chip was drawn, or `None` when it was not.
     ///
     /// Written as part of drawing it, exactly as a pane records its own chart

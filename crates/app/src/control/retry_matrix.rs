@@ -179,6 +179,9 @@ const LAYOUT_COLLAPSE_PROOF: &[&str] =
     &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
 /// The layout-tab calls have one version and are not called by the v2 test.
 const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+/// `layout.pane.set_bar_spec` has a v2, which the every-optional-row test
+/// drives; the v2 test predates it and does not call it.
+const BAR_SPEC_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
 
 /// Every mutable capability's readback. Order is irrelevant: the document is
@@ -239,6 +242,14 @@ pub(crate) const READBACKS: &[Readback] = &[
         "tabs[].feed_generation",
         "the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation)",
         &[FEED_TEST, EVERY_OPTIONAL_TEST, FEED_GENERATION_TEST],
+    ),
+    snapshot(
+        "feed.deal_recording.set",
+        Optional,
+        feed::SCOPE_ID,
+        "tabs[].deal_recording.state",
+        "the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there",
+        &[EVERY_OPTIONAL_TEST],
     ),
     // The journal rather than `analysis.indicators`: that scope carries the
     // trader's input values and needs `observe.user_text`, which a caller
@@ -308,6 +319,14 @@ pub(crate) const READBACKS: &[Readback] = &[
         "panes[].bar_spec",
         "the pane's bar spec is the interval asked for; it is the spec the bars were built with, which follows a new interval within two frames on the active tab and when a background tab is next shown, so read until it settles",
         LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.set_bar_spec",
+        Optional,
+        chart::SCOPE_ID,
+        "panes[].bar_spec",
+        "the pane's bar spec is the rule asked for; it is the spec the bars were built with, which follows the call once the pane is re-cut, so read until it settles",
+        BAR_SPEC_PROOF,
     ),
     snapshot(
         "layout.preset.apply",

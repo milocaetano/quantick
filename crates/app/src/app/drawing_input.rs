@@ -12,30 +12,30 @@ use std::time::Instant;
 use eframe::egui;
 
 use crate::drawings::DeleteOutcome;
+use crate::surfaces::DrawingChromeSurface;
+use crate::tab::Tab;
 use crate::toolrail::Tool;
 
-use super::QuantickApp;
+use super::{QuantickApp, replay_and_history::DUPLICATE_OFFSET_BARS};
 
-impl QuantickApp {
-    /// Keyboard grammar for drawings. Any focused widget wins: while an input
-    /// owns the keyboard, chart shortcuts stay suspended.
-    pub(super) fn handle_drawing_keys(&mut self, ctx: &egui::Context, now: Instant) {
-        if ctx.memory(|memory| memory.focused().is_some()) {
-            return;
-        }
-        struct DrawingKeys {
-            escape: bool,
-            delete: bool,
-            backspace: bool,
-            undo: bool,
-            redo: bool,
-            lock: bool,
-            hide: bool,
-            duplicate: bool,
-            nudge_bars: f32,
-            nudge_px: f32,
-        }
-        let keys = ctx.input(|input| {
+struct DrawingKeys {
+    escape: bool,
+    delete: bool,
+    backspace: bool,
+    undo: bool,
+    redo: bool,
+    lock: bool,
+    hide: bool,
+    duplicate: bool,
+    copy: bool,
+    paste: bool,
+    nudge_bars: f32,
+    nudge_px: f32,
+}
+
+impl DrawingKeys {
+    fn read(ctx: &egui::Context) -> Self {
+        ctx.input(|input| {
             let command = input.modifiers.command;
             let shift = input.modifiers.shift;
             let alt = input.modifiers.alt;
@@ -45,7 +45,7 @@ impl QuantickApp {
                 - f32::from(input.key_pressed(egui::Key::ArrowLeft));
             let vertical = f32::from(input.key_pressed(egui::Key::ArrowUp))
                 - f32::from(input.key_pressed(egui::Key::ArrowDown));
-            DrawingKeys {
+            Self {
                 escape: input.key_pressed(egui::Key::Escape),
                 delete: input.key_pressed(egui::Key::Delete),
                 backspace: input.key_pressed(egui::Key::Backspace),
@@ -55,10 +55,57 @@ impl QuantickApp {
                 lock: alt && input.key_pressed(egui::Key::L),
                 hide: alt && input.key_pressed(egui::Key::H),
                 duplicate: command && input.key_pressed(egui::Key::D),
+                copy: command && input.key_pressed(egui::Key::C),
+                paste: command && input.key_pressed(egui::Key::V),
                 nudge_bars: horizontal * step,
                 nudge_px: vertical * step,
             }
-        });
+        })
+    }
+}
+
+/// Capture the selected drawing without changing the chart.
+///
+/// Rate: rare — one trader keystroke; the per-frame path only reads key state.
+fn copy_selected_drawing(tab: &Tab, clipboard: &mut DrawingChromeSurface) -> bool {
+    let copied = tab
+        .drawing_pane()
+        .drawings
+        .selected()
+        .and_then(|index| tab.drawing_pane().drawings.items().get(index).cloned());
+    if let Some(drawing) = copied {
+        clipboard.copy_drawing(&drawing);
+        true
+    } else {
+        false
+    }
+}
+
+/// Paste the clipboard into the pane the drawing keyboard currently owns.
+///
+/// The clipboard holds a snapshot, not a source index, so changing or
+/// deleting the original cannot redirect the operation to another drawing.
+/// Rate: rare — one trader keystroke and one drawing clone.
+fn paste_copied_drawing(tab: &mut Tab, clipboard: &mut DrawingChromeSurface) {
+    let Some((drawing, paste_count)) = clipboard.next_drawing_paste() else {
+        return;
+    };
+    let offset_bars = DUPLICATE_OFFSET_BARS * paste_count as f32;
+    let focused = tab.focused_side();
+    for pane in tab.panes_mut() {
+        pane.drawings.select(None);
+    }
+    let _ = tab.pane_mut(focused).drawings.paste(&drawing, offset_bars);
+}
+
+impl QuantickApp {
+    /// Keyboard grammar for drawings. Any focused widget wins: while an input
+    /// owns the keyboard, chart shortcuts stay suspended.
+    pub(super) fn handle_drawing_keys(&mut self, ctx: &egui::Context, now: Instant) {
+        if ctx.memory(|memory| memory.focused().is_some()) {
+            return;
+        }
+        let keys = DrawingKeys::read(ctx);
         // The escape stack: rail drag → paper interaction → pending
         // confirmation → draft → selection → Pointer, one layer per press.
         // Paper trading's armed placement / grabbed line reads Escape here,
@@ -143,6 +190,20 @@ impl QuantickApp {
         }
         if keys.duplicate {
             self.duplicate_selected_drawing();
+        }
+        if keys.copy
+            && copy_selected_drawing(
+                &self.tabs[self.active_tab],
+                &mut self.surfaces.drawing_chrome,
+            )
+        {
+            self.note_workspace("Drawing copied. Press Ctrl+V to paste.".to_owned());
+        }
+        if keys.paste {
+            paste_copied_drawing(
+                &mut self.tabs[self.active_tab],
+                &mut self.surfaces.drawing_chrome,
+            );
         }
         if (keys.nudge_bars != 0.0 || keys.nudge_px != 0.0)
             && self.drawing_pane().drawings.selected().is_some()

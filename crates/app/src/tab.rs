@@ -26,6 +26,7 @@ use quantick_feed_binance::depth::DepthEvent;
 use crate::canvas_layout::PaneIdAllocator;
 use crate::canvas_layout::{self, LayoutPreset, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::{AppConfig, FeedCapabilities};
+use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
@@ -298,6 +299,8 @@ pub struct Tab {
     /// What the running feed can really do, read fresh every frame. The feed
     /// narrows it once a session tells it what the symbol actually offers.
     pub feed_capabilities: watch::Receiver<FeedCapabilities>,
+    /// The venue's deal counter and its optional durable recording.
+    pub deal_recorder: DealRecorder,
     /// Where this feed's delay is being spent, read fresh every frame.
     ///
     /// A reading rather than an event, so a frame that skipped three samples
@@ -600,6 +603,7 @@ impl Tab {
             feed_gaps: Vec::new(),
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
+            deal_recorder: DealRecorder::placeholder(symbol.clone()),
             feed_latency: feed.latency,
             forced_latency: quantick_feed::forced_latency_split(),
             commands: feed.commands,

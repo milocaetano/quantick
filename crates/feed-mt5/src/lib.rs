@@ -94,6 +94,7 @@
 //! 1080`). Re-verify any broker with `tools/mt5/record_ticks.py`.
 
 pub mod bridge_log;
+pub mod deals;
 pub mod depth;
 pub mod latency;
 pub mod map;
@@ -103,6 +104,7 @@ pub mod session;
 pub mod stream;
 
 pub use bridge_log::{BridgeReport, BridgeSeverity, report_for_line};
+pub use deals::{DealSampleStats, DealSampler};
 pub use depth::{BookMapper, BookStats};
 pub use latency::{LatencyHop, LatencySample, LatencyTracker};
 pub use map::{DropReason, MapOutcome, MapStats, PriceContext, SideMode, SideSource, TickMapper};

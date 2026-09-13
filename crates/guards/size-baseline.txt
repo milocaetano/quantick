@@ -88,4 +88,9 @@
 # - #377: `app.rs` itself, whose 769 had been under the threshold since the
 #   field regroup and was kept only as history. Its entry was retired with the
 #   rest and the budget set to 0.
+# - Synchronization X2 (main d8de9a1b into the campaign): main's #306 signed
+#   raises for `pane.rs`, `tab.rs` and `stream.rs` were not taken. Each change
+#   they paid for was re-homed in the sibling that owns that code since the
+#   splits above (`pane/series.rs`, `tab/layout.rs`, `stream/connection.rs`
+#   and `stream/events.rs`), every one under the threshold.
 !budget 0

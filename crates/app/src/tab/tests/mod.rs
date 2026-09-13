@@ -536,6 +536,7 @@ mod collapse_path_tests {
             feeds: vec![],
             metatrader: Default::default(),
             paper: Default::default(),
+            deals: Default::default(),
             history: Default::default(),
         };
         let style = crate::style::ChartStyle::default();

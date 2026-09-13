@@ -1,5 +1,11 @@
 # Origin 0bd50f9b815a05e2ba8d0c9804324dbb415f6658: QuantickApp 10243; ChartState 429.
 # Separate source union caps; native ownership extraction lowers only QuantickApp.
-!budget 10665
-ChartState 426
-QuantickApp 10239
+# Pull request #306 adds retained deal readings to ChartState and 23 lines of
+# window docking. The recording policy and window wiring remain in dedicated
+# owners; this amendment records the reviewed integration surface explicitly.
+# Synchronized into campaign #367 from main d8de9a1b (X2): measured over the
+# campaign's split and written by `--tighten`, ChartState 426 + 159 and
+# QuantickApp 10239 + 2 -- the same growth #306 recorded on main, and no more.
+!budget 10826
+ChartState 585
+QuantickApp 10241

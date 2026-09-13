@@ -205,3 +205,172 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
         }
     }
 }
+
+/// A synthetic tape past three chunk boundaries, one print every 10 ms, with
+/// a deal-counter reading ahead of every 50th print — the venue's counter
+/// moving about three deals a print — as a MetaTrader B3 feed sends them.
+fn deal_tape() -> (Vec<Trade>, Vec<DealSample>) {
+    let count = 3 * CHUNK_TRADES + 1_234;
+    let tape: Vec<Trade> = (0..count)
+        .map(|index| {
+            let index = index as u64;
+            Trade {
+                agg_id: index + 1,
+                timestamp_ms: 1_000 + index as i64 * 10,
+                price: Decimal::from(100 + (index * 7) % 13),
+                quantity: Decimal::from(1 + index % 3),
+                side: if index.is_multiple_of(2) {
+                    quantick_engine::Side::Buy
+                } else {
+                    quantick_engine::Side::Sell
+                },
+            }
+        })
+        .collect();
+    let readings = tape
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % 50 == 0)
+        .map(|(index, trade)| DealSample {
+            time_ms: trade.timestamp_ms - 1,
+            session_deals: 5 + 3 * index as u64 + (index as u64 % 7),
+        })
+        .collect();
+    (tape, readings)
+}
+
+/// What a contiguous tape showed under a deal rule: every reading handed to
+/// a fresh builder — interleaved ahead of the prints it precedes when
+/// `interleaved`, all first otherwise, as a rebuild does — then the prints
+/// folded in order, the first `backfilled` of them as history.
+fn deal_oracle(
+    spec: &BarSpec,
+    tape: &[Trade],
+    readings: &[DealSample],
+    interleaved: bool,
+    backfilled: usize,
+    footprint: bool,
+) -> Shown {
+    let mut builder = spec.build();
+    let mut footprints = FootprintSeries::new(footprint_series::default_group());
+    if !interleaved {
+        seed_deal_counter(&mut *builder, readings);
+    }
+    let mut pending = readings.iter().peekable();
+    let mut bars = Vec::new();
+    let mut boundary = None;
+    for (index, trade) in tape.iter().enumerate() {
+        if index == backfilled {
+            boundary = Some(bars.len());
+        }
+        while interleaved
+            && pending
+                .peek()
+                .is_some_and(|r| r.time_ms < trade.timestamp_ms)
+        {
+            let reading = *pending.next().expect("peeked");
+            seed_deal_counter(&mut *builder, &[reading]);
+        }
+        bars.extend(fold_print(&mut *builder, &mut footprints, footprint, trade));
+    }
+    Shown {
+        bars: format!("{bars:?}"),
+        partial: format!("{:?}", builder.partial()),
+        boundary: boundary.or(Some(bars.len())),
+        footprints: format!("{:?}", footprints.closed()),
+        partial_footprint: format!("{:?}", footprints.partial()),
+        trades: format!("{:?}", tape.iter().collect::<Vec<_>>()),
+    }
+}
+
+/// #306's deal bars over #431's chunked tape (synchronization X2): the
+/// retained readings and every path that replays them — a backfill, live
+/// readings interleaved with live prints, a page of older history, a second
+/// view seeded from the first's tape and readings, a switch into the deal
+/// rule, a footprint refold, and a series reset that keeps the readings —
+/// cut the same bars a contiguous tape cut, across three chunk boundaries.
+#[test]
+fn deal_bars_on_a_chunked_tape_show_what_a_contiguous_tape_showed() {
+    let (tape, readings) = deal_tape();
+    let spec = BarSpec::Trades(500);
+    for footprint in [false, true] {
+        let what = format!("footprint {footprint}, {} prints", tape.len());
+        let rebuilt = deal_oracle(&spec, &tape, &readings, false, tape.len(), footprint);
+        assert!(
+            rebuilt.bars.matches("Bar {").count() > 2,
+            "the rule cuts bars: {what}"
+        );
+
+        let mut backfilled = chart(&spec, footprint);
+        backfilled.observe_deals_batch(&readings);
+        backfilled.ingest_backfill(&tape);
+        // A batch of readings reaches the bars through the rebuild its caller
+        // runs straight after (`Tab::retain_deal_samples`).
+        backfilled.rebuild_bars();
+        assert_eq!(Shown::of(&backfilled), rebuilt, "backfill: {what}");
+
+        let mut live = chart(&spec, footprint);
+        let mut pending = readings.iter().peekable();
+        for trade in &tape {
+            while let Some(reading) = pending.next_if(|r| r.time_ms < trade.timestamp_ms) {
+                live.observe_deals(*reading);
+            }
+            live.ingest_live(trade);
+        }
+        let mut shown = deal_oracle(&spec, &tape, &readings, true, 0, footprint);
+        shown.boundary = None;
+        assert_eq!(
+            Shown::of(&live),
+            shown,
+            "live, readings interleaved: {what}"
+        );
+
+        let (older, rest) = tape.split_at(tape.len() * 2 / 5);
+        let mut paged = chart(&spec, footprint);
+        paged.observe_deals_batch(&readings);
+        paged.ingest_backfill(rest);
+        paged.prepend_history(older);
+        assert_eq!(
+            Shown::of(&paged),
+            rebuilt,
+            "older history prepended: {what}"
+        );
+
+        let mut seeded = chart(&spec, footprint);
+        seeded.observe_deals_batch(backfilled.deal_samples());
+        seeded.rebuild_bars();
+        let split = backfilled.backfill_trade_count();
+        seeded.ingest_backfill(backfilled.trades().range(..split));
+        for trade in backfilled.trades().since(split) {
+            seeded.ingest_live(trade);
+        }
+        assert_eq!(
+            Shown::of(&seeded),
+            Shown::of(&backfilled),
+            "seeded from another chart's tape and readings: {what}"
+        );
+
+        let mut switched = chart(&BarSpec::Tick(7), false);
+        switched.observe_deals_batch(&readings);
+        switched.ingest_backfill(&tape);
+        switched.set_spec(spec.clone());
+        switched.set_footprint_enabled(footprint);
+        assert_eq!(
+            Shown::of(&switched),
+            rebuilt,
+            "switched into the deal rule: {what}"
+        );
+
+        backfilled.reset_series(spec.clone());
+        assert_eq!(backfilled.deal_samples(), readings.as_slice());
+        // A reset is a fresh chart, the footprint off, as `ChartState::new`
+        // is; the pane turns it back on as it does after any reset.
+        backfilled.set_footprint_enabled(footprint);
+        backfilled.ingest_backfill(&tape);
+        assert_eq!(
+            Shown::of(&backfilled),
+            rebuilt,
+            "reset, readings kept: {what}"
+        );
+    }
+}

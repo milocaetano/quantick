@@ -25,7 +25,7 @@ class TicksMixin:
     """The live half of a session: ticks, the book, and the heartbeat.
 
     Mixed into `Session`, which owns everything read here. State:
-    `args`, `symbol`, `tape`, `seq`, `cursor_msc`, `sent_at_cursor`,
+    `args`, `symbol`, `tape`, `deal_counter`, `seq`, `cursor_msc`, `sent_at_cursor`,
     `ticks_sent`, `offset_s`, `last_heartbeat`, `pump_round_limits`,
     `book_subscribed`, `book_sent`, `book_seq`, `book_skipped`,
     `last_book_body`, `last_book_ms`. Behaviour from siblings: `send`,
@@ -66,8 +66,26 @@ class TicksMixin:
 
     # -- session ----------------------------------------------------------
 
-    def send_tick(self, tick, sent_ms: int) -> None:
+    def session_deals(self) -> int | None:
+        """The venue's session deal counter, as the terminal has it now.
+
+        `SYMBOL_SESSION_DEALS` is the one deal count MetaTrader keeps: the
+        ticks it stores are already folded several deals to one, and nothing
+        in them says how many. Read once per pump round, *after* the round's
+        ticks were fetched, so the reading is never behind the prints it
+        stamps. `None` when the terminal cannot answer.
+        """
+        info = mt5.symbol_info(self.symbol)
+        deals = None if info is None else getattr(info, "session_deals", None)
+        return None if deals is None else int(deals)
+
+    def send_tick(self, tick, sent_ms: int, deals: int | None = None) -> None:
         """Queue one tick, stamped with when this bridge handed it over.
+
+        `deals` is the session deal counter read for this pump round, stamped
+        on live ticks only: a history tick has no reading of its own, and
+        stamping today's total on yesterday's print would be a lie the chart
+        cannot detect. Absent means "no reading", never zero.
 
         `sent_ms` is on the same server clock as `time_ms`, so the reader can
         split one end-to-end delay into the part spent inside the terminal
@@ -90,6 +108,7 @@ class TicksMixin:
                 "last": self.price(float(tick["last"])),
                 "volume": int(tick["volume"]),
                 "flags": int(tick["flags"]),
+                **({} if deals is None else {"deals": deals}),
             }
         )
         self.ticks_sent += 1
@@ -150,6 +169,9 @@ class TicksMixin:
             )
             if ticks is None or not len(ticks):
                 return
+            # One reading per round, taken after the ticks it will stamp were
+            # fetched: the counter is then at or past every print in hand.
+            deals = self.session_deals() if self.deal_counter else None
             at_cursor_seen = 0
             forwarded = 0
             for tick in ticks:
@@ -160,11 +182,11 @@ class TicksMixin:
                     at_cursor_seen += 1
                     if at_cursor_seen <= self.sent_at_cursor:
                         continue
-                    self.send_tick(tick, sent_ms)
+                    self.send_tick(tick, sent_ms, deals)
                     self.sent_at_cursor += 1
                     forwarded += 1
                 else:
-                    self.send_tick(tick, sent_ms)
+                    self.send_tick(tick, sent_ms, deals)
                     self.cursor_msc = msc
                     self.sent_at_cursor = 1
                     at_cursor_seen = 0

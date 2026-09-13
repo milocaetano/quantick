@@ -132,6 +132,8 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // Only one client ever dials this listener.
             Mt5Event::SessionBusy { peer, .. } => panic!("unexpected second client: {peer}"),
             Mt5Event::HistoryPage { .. } => panic!("nothing asked this fixture for older ticks"),
+            // A recorded session predates the deal stamp, so no reading can arrive.
+            Mt5Event::DealCounter(sample) => panic!("unexpected deal reading: {sample:?}"),
             // The fixture's opening block is one `backfill_start`/`backfill_end`
             // pair; it is small enough that the bridge never slices it.
             Mt5Event::OpeningPage { .. } => panic!("this fixture sends no opening slices"),

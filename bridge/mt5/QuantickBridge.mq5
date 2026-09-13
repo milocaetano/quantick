@@ -340,21 +340,22 @@ void Disconnect(const string why)
 //| blocks in SocketSend then shows its cost as wire delay, which is  |
 //| where it belongs.                                                 |
 //+------------------------------------------------------------------+
-bool SendTick(const MqlTick &tick, const long sent_ms)
+//| `deals` is the session deal counter read for this pump round, or  |
+//| -1 for none: stamped on live ticks only, never on history, whose  |
+//| prints have no reading of their own (PROTOCOL.md, `deals`).       |
+bool SendTick(const MqlTick &tick, const long sent_ms, const long deals = -1)
   {
    g_seq++;
+   string stamp = deals < 0 ? "" : StringFormat(",\"deals\":%I64d", deals);
    string line = StringFormat(
       "{\"type\":\"tick\",\"seq\":%I64u,\"time_ms\":%I64d,\"sent_ms\":%I64d,"
       "\"bid\":\"%s\",\"ask\":\"%s\","
-      "\"last\":\"%s\",\"volume\":%I64u,\"flags\":%u}",
-      g_seq,
-      tick.time_msc,
-      sent_ms,
+      "\"last\":\"%s\",\"volume\":%I64u,\"flags\":%u%s}",
+      g_seq, tick.time_msc, sent_ms,
       DoubleToString(tick.bid, _Digits),
       DoubleToString(tick.ask, _Digits),
       DoubleToString(tick.last, _Digits),
-      tick.volume,
-      tick.flags);
+      tick.volume, tick.flags, stamp);
    if(!SendLine(line))
       return(false);
    g_ticks_sent++;
@@ -462,6 +463,29 @@ bool SendBook()
 //| and nothing would look broken, and a month of lookback costs the  |
 //| same single tick request as a day.                                |
 //+------------------------------------------------------------------+
+//| Whether the terminal reports the session deal counter for a trades  |
+//| tape. The three-argument form says whether the property exists;    |
+//| the plain one answers 0 for "unsupported" and 0 for "no deals yet",|
+//| and a stamp of 0 where none was read is exactly what PROTOCOL.md   |
+//| forbids.                                                           |
+bool HasDealCounter()
+  {
+   if(!g_tape_trades)
+      return(false);
+   long probe = 0;
+   return(SymbolInfoInteger(_Symbol, SYMBOL_SESSION_DEALS, probe));
+  }
+
+//| The session deal counter for this round, or -1 when the terminal   |
+//| does not report one.                                               |
+long SessionDeals()
+  {
+   long value = 0;
+   if(!g_tape_trades || !SymbolInfoInteger(_Symbol, SYMBOL_SESSION_DEALS, value))
+      return(-1);
+   return(value);
+  }
+
 string DetectTape()
   {
    MqlTick probe[];
@@ -541,12 +565,18 @@ bool StartSession()
                                        DoubleToString(tick_size, _Digits)));
      }
 
+   // In this order, as statements: the counter check reads the tape flag
+   // the probe sets, and MQL5 does not promise which argument of a call is
+   // evaluated first.
+   string tape             = DetectTape();
+   bool   has_deal_counter = HasDealCounter();
    string hello = StringFormat(
       "{\"type\":\"hello\",\"schema\":%d,\"bridge\":\"%s\",\"bridge_version\":\"%s\","
       "\"symbol\":\"%s\",\"broker_symbol\":\"%s\",\"digits\":%d,\"server_utc_offset_s\":%I64d,"
-      "\"tape\":\"%s\"%s}",
+      "\"tape\":\"%s\",\"deal_counter\":%s%s}",
       SCHEMA_VERSION, BRIDGE_NAME, BRIDGE_VERSION,
-      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), DetectTape(), depth);
+      _Symbol, basis, _Digits, ServerUtcOffsetSeconds(), tape,
+      (has_deal_counter ? "true" : "false"), depth);
    // Written, not merely queued: the feed's contract is that a bridge says
    // hello *the moment it connects* (crates/feed-mt5/src/stream.rs), and it
    // gives the greeting ten seconds before dropping the connection. The next
@@ -745,6 +775,10 @@ void Pump()
          drained = true;
          break;
         }
+      // One reading per round, after the ticks it stamps were fetched, so
+      // the counter is at or past every print in hand. A quoted instrument
+      // has no deals to count.
+      long deals = SessionDeals();
       int at_cursor_seen = 0;
       int forwarded      = 0;
       for(int i = 0; i < n; i++)
@@ -756,7 +790,7 @@ void Pump()
             at_cursor_seen++;
             if(at_cursor_seen <= g_sent_at_last_msc)
                continue; // already sent this one
-            if(!SendTick(ticks[i], sent_ms))
+            if(!SendTick(ticks[i], sent_ms, deals))
               {
                Disconnect("send failed");
                return;
@@ -766,7 +800,7 @@ void Pump()
            }
          else
            {
-            if(!SendTick(ticks[i], sent_ms))
+            if(!SendTick(ticks[i], sent_ms, deals))
               {
                Disconnect("send failed");
                return;

@@ -34,6 +34,16 @@ default_symbol = "BTCUSDT"
 #                   spec; with a time-showing default_layout and a time spec,
 #                   the timeframe pane opens on that interval too. A spec that
 #                   does not parse is refused at load, like any config error.
+#                   `trades:2000` — a bar every N exchange deals, ProfitChart's
+#                   Trades periodicity — is accepted on MetaTrader feeds only:
+#                   it needs the venue's deal counter, which only a MetaTrader
+#                   bridge session declares.
+#   record_deals  — optional, MetaTrader feeds only: `true` starts writing the
+#                   venue's session deal counter to disk the moment a symbol on
+#                   this feed connects, so `trades` bars cover the whole day and
+#                   a recorded day reopens as the same chart. The REC control
+#                   beside the symbol starts and stops it by hand either way,
+#                   and the trader's choice under Tools overrides this default.
 [[feeds]]
 id = "binance"
 name = "Binance"
@@ -110,6 +120,12 @@ bubble_preset = "live lane pie"
 # sized by the zone's summed volume. Per symbol because WDO$N on this same
 # feed keeps the feed-wide look above.
 symbol_bubble_presets = { "WIN$N" = "mini index regions" }
+# MetaTrader folds several B3 deals into one tick and keeps no count per
+# tick, so a chart cut by deals — the Trades chart the trader reads on
+# ProfitChart — exists only for days somebody recorded the counter. Record
+# by default here (user decision 2026-09-03): opening quantick before the
+# session covers the whole day without a click.
+record_deals = true
 
 # MetaTrader bridge settings (defaults shown; the section is optional).
 #   listen_addr — where quantick listens for any symbol `ports` does not name;

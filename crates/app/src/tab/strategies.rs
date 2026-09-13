@@ -219,9 +219,9 @@ impl Tab {
     /// Sent by a source that rewound — seeking a replay, for instance. The
     /// chart is rebuilt from the history that follows rather than patched,
     /// because bars that already closed cannot be reopened.
-    pub fn reset_market_state(&mut self) {
+    pub fn reset_market_state(&mut self, keep_readings: bool) {
         for pane in self.panes_mut() {
-            pane.reset_series();
+            pane.reset_series_with(keep_readings);
             // Indicators follow the chart into the empty state; the refill's
             // Backfilled event replays them (replay seek funnels through here,
             // so seeking inherits correct indicator behavior for free).

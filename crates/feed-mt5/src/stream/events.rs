@@ -47,6 +47,8 @@ pub enum Mt5Status {
         /// rest — the same quantick build talks to a bridge that pages and to
         /// one that does not, and the provider's name cannot tell them apart.
         history_paging: bool,
+        /// Whether live ticks carry the venue's deal counter (`Tick::deals`).
+        deal_counter: bool,
     },
     /// The bridge went away; the server is looping back to waiting.
     Lost {
@@ -65,6 +67,10 @@ pub enum Mt5Event {
     Backfilled(Vec<Trade>),
     /// One live trade.
     Live(Trade),
+    /// A new deal-counter reading, ahead of the print that carried it — see
+    /// [`crate::DealSampler`] for the reduction and the engine's deal builder
+    /// for the join.
+    DealCounter(quantick_engine::DealSample),
     /// Where the tape's delay is being spent, measured at the socket.
     ///
     /// Sent at a bounded rate — at most once every
