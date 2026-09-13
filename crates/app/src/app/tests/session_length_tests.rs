@@ -1183,12 +1183,14 @@ fn stall_probe(footprint: bool) -> [Stretch; 3] {
     let block = 100_000;
     let mut blocks = Vec::new();
     let mut block_started = Instant::now();
+    let mut ingesting = Duration::ZERO;
     for index in 0..STALL_PROBE_PRINTS {
         let trade = print(index as u64);
         work_meter::reset_largest();
         let started = Instant::now();
         state.ingest_live(&trade);
         let took = started.elapsed();
+        ingesting += took;
         let copy = work_meter::tally().largest_realloc_copy;
         all.see(index, took, copy);
         for (stretch, point) in near.iter_mut().zip(points) {
@@ -1205,12 +1207,14 @@ fn stall_probe(footprint: bool) -> [Stretch; 3] {
     sorted.sort_by(f64::total_cmp);
     println!(
         "footprint={footprint}: {} prints, {} bars (tick:50); ingest ns/print incl. the probe's \
-         own timer: first 100k {:.0}, last 100k {:.0}, median block {:.0}",
+         own timer: first 100k {:.0}, last 100k {:.0}, median block {:.0}; ingest alone, \
+         mean over the whole run, doublings included: {:.1}",
         state.trades().len(),
         state.bars().len(),
         blocks.first().copied().unwrap_or(0.0),
         blocks.last().copied().unwrap_or(0.0),
         sorted[sorted.len() / 2],
+        ingesting.as_nanos() as f64 / STALL_PROBE_PRINTS as f64,
     );
     [near[0], near[1], all]
 }

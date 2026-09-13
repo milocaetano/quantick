@@ -68,12 +68,14 @@ impl TradeTape {
 
     /// Prints held.
     #[must_use]
+    #[inline]
     pub const fn len(&self) -> usize {
         self.len
     }
 
     /// Whether the tape holds no print.
     #[must_use]
+    #[inline]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -87,6 +89,7 @@ impl TradeTape {
 
     /// Print `index`, oldest first, or `None` past the end.
     #[must_use]
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&Trade> {
         if index < self.len {
             Some(&self.chunks[index >> CHUNK_SHIFT][index & OFFSET_MASK])
@@ -97,20 +100,30 @@ impl TradeTape {
 
     /// The oldest print held.
     #[must_use]
+    #[inline]
     pub fn first(&self) -> Option<&Trade> {
         self.chunks.first().and_then(|chunk| chunk.first())
     }
 
     /// The newest print held.
     #[must_use]
+    #[inline]
     pub fn last(&self) -> Option<&Trade> {
         self.chunks.last().and_then(|chunk| chunk.last())
     }
 
     /// Append one print. Writes it into the last chunk, or allocates one new
     /// chunk when that is full; never moves a print already held.
+    #[inline]
     pub fn push(&mut self, trade: Trade) {
-        self.open_chunk_if_full().push(trade);
+        // Every chunk before the last is full, so the last is full (or there
+        // is none) exactly when the length is a whole number of chunks.
+        if self.len & OFFSET_MASK == 0 {
+            self.chunks.push(Vec::with_capacity(CHUNK_TRADES));
+        }
+        if let Some(chunk) = self.chunks.last_mut() {
+            chunk.push(trade);
+        }
         self.len += 1;
     }
 
@@ -265,6 +278,7 @@ impl TradeTape {
 impl Index<usize> for TradeTape {
     type Output = Trade;
 
+    #[inline]
     fn index(&self, index: usize) -> &Trade {
         self.get(index).unwrap_or_else(|| {
             panic!(
@@ -325,6 +339,7 @@ impl Slices<'_> {
 impl<'a> Iterator for Slices<'a> {
     type Item = &'a [Trade];
 
+    #[inline]
     fn next(&mut self) -> Option<&'a [Trade]> {
         if !self.head.is_empty() {
             return Some(std::mem::take(&mut self.head));
@@ -335,6 +350,7 @@ impl<'a> Iterator for Slices<'a> {
         (!self.tail.is_empty()).then(|| std::mem::take(&mut self.tail))
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = usize::from(!self.head.is_empty())
             + self.middle.len()
@@ -344,6 +360,7 @@ impl<'a> Iterator for Slices<'a> {
 }
 
 impl<'a> DoubleEndedIterator for Slices<'a> {
+    #[inline]
     fn next_back(&mut self) -> Option<&'a [Trade]> {
         if !self.tail.is_empty() {
             return Some(std::mem::take(&mut self.tail));
@@ -370,6 +387,7 @@ pub struct Iter<'a> {
 impl<'a> Iterator for Iter<'a> {
     type Item = &'a Trade;
 
+    #[inline]
     fn next(&mut self) -> Option<&'a Trade> {
         loop {
             if let Some(trade) = self.front.next() {
@@ -387,12 +405,14 @@ impl<'a> Iterator for Iter<'a> {
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.len, Some(self.len))
     }
 }
 
 impl DoubleEndedIterator for Iter<'_> {
+    #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(trade) = self.back.next_back() {
