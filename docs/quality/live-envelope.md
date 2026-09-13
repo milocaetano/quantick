@@ -116,15 +116,17 @@ Reading the table:
   per print when the footprint is on (its ladders). At the envelope's edge
   that is 221 MiB per pane, or 570 MiB with the footprint — and every pane of a
   tab keeps its own copy of the tape.
-- **The tape's growth has one stall per doubling.** `Vec<Trade>` reallocates
-  when it doubles; the copy runs on the UI thread. The largest inside the
-  envelope is about 20 ms at print 2,097,152 (a 112 MiB copy) — one dropped frame,
-  once, about 10.6 hours into two sessions of the mean rate. The next (a
-  224 MiB copy, about twice as long) would come at 4,194,304 prints, just
-  outside the envelope. Within a single
-  session the largest stall is at 1,048,576 prints (a 56 MiB copy). This is
-  accepted inside the envelope and named as a follow-up, not a product call:
-  chunked tape storage would remove it without evicting anything.
+- **The tape's growth had one stall per doubling; chunked storage removed
+  it.** `Vec<Trade>` reallocated when it doubled, the copy on the UI thread:
+  about 20 ms at print 2,097,152 (a 112 MiB copy) in the table above, and a
+  224 MiB copy at 4,194,304. Q12 (#423) stores the tape in fixed chunks of
+  65,536 prints, so an append never copies it: at the head of that change the
+  slowest ingest near either point is under 0.12 ms and the slowest anywhere
+  is the bar vector's own doubling at 65,536 bars (7.5 MiB, about 2 ms), and
+  the tape reserves at most one chunk it does not use (223.9 MB at the
+  envelope's edge, where the `Vec` reserved 234.9 MB built live and 443.5 MB
+  loaded at once). Re-run of this harness and the rest:
+  [the chunked trade tape](chunked-tape.md).
 
 ### The product decision this leaves open
 

@@ -1,0 +1,49 @@
+# The stall probe, three builds interleaved: base-1 tail-1 dir-1 dir-2 tail-2 base-2 base-3 dir-3 tail-3 tail-4 base-4 dir-4 dir-5 tail-5 base-5
+# base: release test binary of eef07e5f (the base's Vec tape) with the probe's whole-run mean added; dir: 13b3f51b (every chunk in the directory); tail: the tree committed as d2030cc0 (the newest chunk kept beside the directory) — the final storage
+# command, per run: env -u QUANTICK_BUBBLES <binary> app::tests::session_length_tests::tape_growth_stalls --ignored --nocapture --test-threads=1; only the per-print lines are kept
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro)
+## base-1
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 121, last 100k 509, median block 106; ingest alone, mean over the whole run, doublings included: 92.9
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 199, last 100k 608, median block 190; ingest alone, mean over the whole run, doublings included: 179.7
+## tail-1
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 113, last 100k 101, median block 106; ingest alone, mean over the whole run, doublings included: 74.4
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 186, last 100k 183, median block 188; ingest alone, mean over the whole run, doublings included: 166.7
+## dir-1
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 126, last 100k 110, median block 106; ingest alone, mean over the whole run, doublings included: 75.0
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 192, last 100k 191, median block 191; ingest alone, mean over the whole run, doublings included: 161.2
+## dir-2
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 123, last 100k 121, median block 107; ingest alone, mean over the whole run, doublings included: 76.6
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 211, last 100k 183, median block 197; ingest alone, mean over the whole run, doublings included: 169.1
+## tail-2
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 127, last 100k 104, median block 104; ingest alone, mean over the whole run, doublings included: 74.2
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 186, last 100k 187, median block 187; ingest alone, mean over the whole run, doublings included: 160.3
+## base-2
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 148, last 100k 523, median block 108; ingest alone, mean over the whole run, doublings included: 97.8
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 206, last 100k 611, median block 189; ingest alone, mean over the whole run, doublings included: 177.1
+## base-3
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 121, last 100k 521, median block 107; ingest alone, mean over the whole run, doublings included: 94.0
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 268, last 100k 619, median block 193; ingest alone, mean over the whole run, doublings included: 182.4
+## dir-3
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 120, last 100k 106, median block 108; ingest alone, mean over the whole run, doublings included: 76.0
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 186, last 100k 196, median block 191; ingest alone, mean over the whole run, doublings included: 160.8
+## tail-3
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 131, last 100k 104, median block 104; ingest alone, mean over the whole run, doublings included: 73.9
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 195, last 100k 192, median block 189; ingest alone, mean over the whole run, doublings included: 162.0
+## tail-4
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 124, last 100k 105, median block 111; ingest alone, mean over the whole run, doublings included: 81.9
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 184, last 100k 245, median block 192; ingest alone, mean over the whole run, doublings included: 162.6
+## base-4
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 132, last 100k 538, median block 104; ingest alone, mean over the whole run, doublings included: 92.9
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 223, last 100k 708, median block 192; ingest alone, mean over the whole run, doublings included: 183.0
+## dir-4
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 112, last 100k 111, median block 108; ingest alone, mean over the whole run, doublings included: 75.9
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 199, last 100k 186, median block 197; ingest alone, mean over the whole run, doublings included: 167.9
+## dir-5
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 126, last 100k 124, median block 110; ingest alone, mean over the whole run, doublings included: 80.1
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 211, last 100k 196, median block 211; ingest alone, mean over the whole run, doublings included: 175.7
+## tail-5
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 105, last 100k 108, median block 108; ingest alone, mean over the whole run, doublings included: 76.6
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 189, last 100k 190, median block 203; ingest alone, mean over the whole run, doublings included: 170.6
+## base-5
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 125, last 100k 558, median block 113; ingest alone, mean over the whole run, doublings included: 99.6
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 224, last 100k 675, median block 220; ingest alone, mean over the whole run, doublings included: 202.2

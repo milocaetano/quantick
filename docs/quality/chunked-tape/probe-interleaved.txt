@@ -1,0 +1,144 @@
+# The stall probe, base and head interleaved: base-1 head-1 base-2 head-2 head-3 base-3 head-4 base-4 head-5 base-5 base-6 head-6 base-7 head-7
+# base: the release test binary of eef07e5f (ChartState still on its Vec, the base's code) with the probe's whole-run mean added; head: the release test binary of 13b3f51b's tree; see probe-interleaved-final.txt for the same comparison with the final storage (d2030cc0)
+# command, per run: env -u QUANTICK_BUBBLES <binary> app::tests::session_length_tests::tape_growth_stalls --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); sibling agents' builds shared the host; the verdict lines are omitted (the base fails the bound by design)
+## base-1 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 153, last 100k 732, median block 144; ingest alone, mean over the whole run, doublings included: 129.2
+| 2^21 +/- reach | 26.894 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 58.312 | 4194304 | 234881024 | 4194304 |
+| whole run | 58.312 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 307, last 100k 757, median block 280; ingest alone, mean over the whole run, doublings included: 263.1
+| 2^21 +/- reach | 29.446 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 51.878 | 4194304 | 234881024 | 4194304 |
+| whole run | 51.878 | 4194304 | 234881024 | 4194304 |
+## head-1 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 150, last 100k 150, median block 150; ingest alone, mean over the whole run, doublings included: 109.1
+| 2^21 +/- reach | 0.017 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.017 | 4194304 | 1536 | 4194304 |
+| whole run | 1.959 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 296, last 100k 276, median block 282; ingest alone, mean over the whole run, doublings included: 238.5
+| 2^21 +/- reach | 0.014 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.056 | 4193872 | 1536 | 4194304 |
+| whole run | 3.749 | 3344292 | 7864320 | 3276849 |
+## base-2 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 160, last 100k 607, median block 138; ingest alone, mean over the whole run, doublings included: 116.7
+| 2^21 +/- reach | 24.552 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 49.521 | 4194304 | 234881024 | 4194304 |
+| whole run | 49.521 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 233, last 100k 709, median block 232; ingest alone, mean over the whole run, doublings included: 215.5
+| 2^21 +/- reach | 25.484 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 47.440 | 4194304 | 234881024 | 4194304 |
+| whole run | 47.440 | 4194304 | 234881024 | 4194304 |
+## head-2 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 120, last 100k 124, median block 131; ingest alone, mean over the whole run, doublings included: 94.7
+| 2^21 +/- reach | 0.016 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.025 | 4194304 | 1536 | 4194304 |
+| whole run | 4.205 | 428908 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 267, last 100k 217, median block 212; ingest alone, mean over the whole run, doublings included: 181.3
+| 2^21 +/- reach | 0.022 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.054 | 4193829 | 1536 | 4194304 |
+| whole run | 2.894 | 3276849 | 7864320 | 3276849 |
+## head-3 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 122, last 100k 145, median block 135; ingest alone, mean over the whole run, doublings included: 95.6
+| 2^21 +/- reach | 0.020 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.022 | 4194304 | 1536 | 4194304 |
+| whole run | 1.947 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 225, last 100k 249, median block 217; ingest alone, mean over the whole run, doublings included: 187.7
+| 2^21 +/- reach | 0.015 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.107 | 4193911 | 1536 | 4194304 |
+| whole run | 2.779 | 3276849 | 7864320 | 3276849 |
+## base-3 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 136, last 100k 583, median block 109; ingest alone, mean over the whole run, doublings included: 98.2
+| 2^21 +/- reach | 22.604 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 47.692 | 4194304 | 234881024 | 4194304 |
+| whole run | 47.692 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 223, last 100k 660, median block 231; ingest alone, mean over the whole run, doublings included: 216.7
+| 2^21 +/- reach | 22.580 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 43.881 | 4194304 | 234881024 | 4194304 |
+| whole run | 43.881 | 4194304 | 234881024 | 4194304 |
+## head-4 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 113, last 100k 120, median block 113; ingest alone, mean over the whole run, doublings included: 80.3
+| 2^21 +/- reach | 0.013 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.018 | 4194741 | 1536 | 4194304 |
+| whole run | 1.569 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 190, last 100k 194, median block 210; ingest alone, mean over the whole run, doublings included: 176.0
+| 2^21 +/- reach | 0.015 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.119 | 4193926 | 1536 | 4194304 |
+| whole run | 2.064 | 3276849 | 7864320 | 3276849 |
+## base-4 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 131, last 100k 546, median block 110; ingest alone, mean over the whole run, doublings included: 96.6
+| 2^21 +/- reach | 23.780 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 42.591 | 4194304 | 234881024 | 4194304 |
+| whole run | 42.591 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 209, last 100k 639, median block 196; ingest alone, mean over the whole run, doublings included: 185.6
+| 2^21 +/- reach | 21.511 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 44.943 | 4194304 | 234881024 | 4194304 |
+| whole run | 44.943 | 4194304 | 234881024 | 4194304 |
+## head-5 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 121, last 100k 126, median block 114; ingest alone, mean over the whole run, doublings included: 81.2
+| 2^21 +/- reach | 0.010 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.017 | 4194304 | 1536 | 4194304 |
+| whole run | 1.467 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 231, last 100k 230, median block 205; ingest alone, mean over the whole run, doublings included: 175.7
+| 2^21 +/- reach | 0.013 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.061 | 4193926 | 1536 | 4194304 |
+| whole run | 2.013 | 3276849 | 7864320 | 3276849 |
+## base-5 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 142, last 100k 526, median block 105; ingest alone, mean over the whole run, doublings included: 93.0
+| 2^21 +/- reach | 21.451 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 42.265 | 4194304 | 234881024 | 4194304 |
+| whole run | 42.265 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 216, last 100k 654, median block 227; ingest alone, mean over the whole run, doublings included: 203.8
+| 2^21 +/- reach | 24.583 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 44.851 | 4194304 | 234881024 | 4194304 |
+| whole run | 44.851 | 4194304 | 234881024 | 4194304 |
+## base-6 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 129, last 100k 527, median block 110; ingest alone, mean over the whole run, doublings included: 95.9
+| 2^21 +/- reach | 21.412 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 42.088 | 4194304 | 234881024 | 4194304 |
+| whole run | 42.088 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 212, last 100k 621, median block 197; ingest alone, mean over the whole run, doublings included: 184.7
+| 2^21 +/- reach | 23.111 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 42.712 | 4194304 | 234881024 | 4194304 |
+| whole run | 42.712 | 4194304 | 234881024 | 4194304 |
+## head-6 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 110, last 100k 110, median block 111; ingest alone, mean over the whole run, doublings included: 80.1
+| 2^21 +/- reach | 0.010 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.013 | 4194304 | 1536 | 4194304 |
+| whole run | 1.412 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 207, last 100k 202, median block 202; ingest alone, mean over the whole run, doublings included: 168.7
+| 2^21 +/- reach | 0.011 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.051 | 4193926 | 1536 | 4194304 |
+| whole run | 2.326 | 3276849 | 7864320 | 3276849 |
+## base-7 (probe-base-eef07e5f-mean.exe)
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 129, last 100k 530, median block 113; ingest alone, mean over the whole run, doublings included: 97.1
+| 2^21 +/- reach | 20.459 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 41.839 | 4194304 | 234881024 | 4194304 |
+| whole run | 41.839 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 207, last 100k 621, median block 198; ingest alone, mean over the whole run, doublings included: 185.2
+| 2^21 +/- reach | 22.153 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 42.470 | 4194304 | 234881024 | 4194304 |
+| whole run | 42.470 | 4194304 | 234881024 | 4194304 |
+## head-7 (probe-head-mean.exe)
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 112, last 100k 125, median block 121; ingest alone, mean over the whole run, doublings included: 88.4
+| 2^21 +/- reach | 0.013 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.017 | 4194304 | 1536 | 4194304 |
+| whole run | 1.415 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 214, last 100k 197, median block 208; ingest alone, mean over the whole run, doublings included: 176.2
+| 2^21 +/- reach | 0.011 | 2097152 | 768 | 2097152 |
+| 2^22 +/- reach | 0.058 | 4193926 | 1536 | 4194304 |
+| whole run | 2.010 | 3276849 | 7864320 | 3276849 |

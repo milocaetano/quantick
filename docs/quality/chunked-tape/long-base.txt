@@ -1,0 +1,35 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base eb60ed41 with only the stall probe added to the test module (hence 'tracked files modified' below)
+running 1 test
+test app::tests::session_length_tests::long ... # session-length long variant
+sha: eb60ed41b2e7b8b6312e5931c68d8497469f07e6 (tracked files modified)
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+sessions: 18000 and 3960000 prints at 300/s; window 1800 frames x 5 prints, 30000 depth updates; tolerance counts +10%, time +50%
+| path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 240 |
+| trade.chart.backfilled | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 240 |
+| trade.chart.live | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 140 |
+| trade.chart.live | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 140 |
+| trade.book | 18000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 300 |
+| trade.book | 3960000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 300 |
+| depth.book | 18000 | 30000 | 19.110 | 6720.6 | 332.0 | 9437184 | 0.00 | 0.00 | 6500 |
+| depth.book | 3960000 | 30000 | 19.110 | 6720.6 | 17.5 | 262144 | 0.00 | 0.00 | 6500 |
+| frame.book | 18000 | 1800 | 2128.415 | 4761780.0 | 2887094.2 | 2621440 | 0.00 | 0.00 | 187400 |
+| frame.book | 3960000 | 1800 | 2128.410 | 4761753.6 | 2887094.2 | 2621440 | 0.00 | 0.00 | 187300 |
+| frame.app.tick50 | 18000 | 1800 | 2896.380 | 854827.1 | 1276335.5 | 381696 | 0.00 | 4.50 | 1567200 |
+| frame.app.tick50 | 3960000 | 1800 | 2896.699 | 855462.3 | 1277300.2 | 382080 | 0.00 | 4.50 | 1601100 |
+| frame.worker.tick50 | 18000 | 1800 | 55.501 | 4918.1 | 461.0 | 36864 | 26.10 | 0.00 | 0 |
+| frame.worker.tick50 | 3960000 | 1800 | 55.502 | 4918.2 | 435.9 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 1800 | 1456.669 | 297620.6 | 810675.1 | 187872 | 0.00 | 5.00 | 684600 |
+| frame.app.time1d | 3960000 | 1800 | 1423.047 | 289873.7 | 805031.3 | 187872 | 0.00 | 5.00 | 705900 |
+| frame.worker.time1d | 18000 | 1800 | 139.002 | 11913.3 | 0.0 | 0 | 1923.17 | 0.00 | 0 |
+| frame.worker.time1d | 3960000 | 1800 | 139.001 | 11913.2 | 0.1 | 160 | 1916.47 | 0.00 | 0 |
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 106.7 | 917504 |
+| 3960000 | 64.9 | 117440512 |
+verdict: within budget (154 s)
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2067 filtered out; finished in 154.51s

@@ -1,0 +1,37 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); the contiguous stage b9cbff74 (ChartState on a TradeTape that still keeps one Vec, with the base's push doubling and load-time 2x reservation) with the probe as committed in fca1e190 — the memory table of the Vec form, measured. In this stage 'chunks' is capacity / 65,536 and the directory term is not real: bytes reserved are capacity x 56 B (234,881,024 built live, 443,520,000 loaded at once)
+running 1 test
+test app::tests::session_length_tests::tape_growth_stalls ... # tape growth stall probe
+sha: b9cbff7475aff32475a71b7a3c2ea1437d099b8b
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+run: one tick:50 pane built live to 4259840 prints; stretches are +/-1024 prints around each former doubling point; bound 4 ms
+| tape at 3960000 prints | prints held | capacity (prints) | chunks | bytes held | bytes reserved (capacity x 56 B + directory) | unused |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| built live | 3960000 | 4194304 | 64 | 221760000 | 234882560 | 13122560 |
+| loaded at once | 3960000 | 7920000 | 120 | 221760000 | 443522880 | 221762880 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 134, last 100k 596, median block 124
+| stretch (footprint=false) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 29.183 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 49.159 | 4194304 | 234881024 | 4194304 |
+| whole run | 49.159 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 242, last 100k 725, median block 250
+| stretch (footprint=true) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 27.534 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 51.848 | 4194304 | 234881024 | 4194304 |
+| whole run | 51.848 | 4194304 | 234881024 | 4194304 |
+verdict: OVER THE BOUND: footprint=false: 29.183 ms at print 2097152 near 2^21; footprint=false: 49.159 ms at print 4194304 near 2^22; footprint=true: 27.534 ms at print 2097152 near 2^21; footprint=true: 51.848 ms at print 4194304 near 2^22
+thread 'app::tests::session_length_tests::tape_growth_stalls' (12032) panicked at crates\app\src\app\tests\session_length_tests.rs:1316:5:
+footprint=false: 29.183 ms at print 2097152 near 2^21
+footprint=false: 49.159 ms at print 4194304 near 2^22
+footprint=true: 27.534 ms at print 2097152 near 2^21
+footprint=true: 51.848 ms at print 4194304 near 2^22
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+failures:
+failures:
+    app::tests::session_length_tests::tape_growth_stalls
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2071 filtered out; finished in 2.44s
+error: test failed, to rerun pass `-p quantick-app --bin quantick-app`

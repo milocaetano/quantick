@@ -1,0 +1,43 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); head d2030cc0; the FIRST run at this commit, kept because it failed: depth.book CPU time 7,800 -> 12,200 ns against an allowed 11,700, on the book worker's depth path, which this change does not touch; every count equals the passing run's (long-head.txt). Sibling agents' builds shared the host
+running 1 test
+test app::tests::session_length_tests::long ... # session-length long variant
+sha: d2030cc0c4a055089001dfbb345c277a72cb4562
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+sessions: 18000 and 3960000 prints at 300/s; window 1800 frames x 5 prints, 30000 depth updates; tolerance counts +10%, time +50%
+| path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 140 |
+| trade.chart.backfilled | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 140 |
+| trade.chart.live | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 140 |
+| trade.chart.live | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 140 |
+| trade.book | 18000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| trade.book | 3960000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| depth.book | 18000 | 30000 | 19.110 | 6720.6 | 332.0 | 9437184 | 0.00 | 0.00 | 7800 |
+| depth.book | 3960000 | 30000 | 19.110 | 6720.6 | 17.5 | 262144 | 0.00 | 0.00 | 12200 |
+| frame.book | 18000 | 1800 | 2128.415 | 4761780.0 | 2887094.2 | 2621440 | 0.00 | 0.00 | 251700 |
+| frame.book | 3960000 | 1800 | 2128.410 | 4761753.6 | 2887094.2 | 2621440 | 0.00 | 0.00 | 255000 |
+| frame.app.tick50 | 18000 | 1800 | 2890.173 | 853392.6 | 1272480.5 | 381696 | 0.00 | 4.50 | 2358300 |
+| frame.app.tick50 | 3960000 | 1800 | 2894.738 | 855139.4 | 1275986.0 | 381888 | 0.00 | 4.50 | 2402000 |
+| frame.worker.tick50 | 18000 | 1800 | 55.501 | 4918.1 | 461.0 | 36864 | 26.10 | 0.00 | 0 |
+| frame.worker.tick50 | 3960000 | 1800 | 55.502 | 4918.3 | 435.8 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 1800 | 1456.101 | 297560.7 | 809915.9 | 187872 | 0.00 | 5.00 | 980600 |
+| frame.app.time1d | 3960000 | 1800 | 1430.939 | 291456.9 | 810958.0 | 187872 | 0.00 | 5.00 | 1039600 |
+| frame.worker.time1d | 18000 | 1800 | 138.988 | 11912.2 | 1.1 | 160 | 1923.17 | 0.00 | 0 |
+| frame.worker.time1d | 3960000 | 1800 | 138.996 | 11912.9 | 0.4 | 160 | 1916.47 | 0.00 | 0 |
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 4.7 | 30720 |
+| 3960000 | 5.6 | 7864320 |
+verdict: OVER BUDGET
+depth.book: CPU time grew with the session: 7800 ns/unit at 18000 prints, 12200 at 3960000 (allowed 11700) (167 s)
+thread 'app::tests::session_length_tests::long' (11892) panicked at crates\app\src\app\tests\session_length_tests.rs:1068:5:
+depth.book: CPU time grew with the session: 7800 ns/unit at 18000 prints, 12200 at 3960000 (allowed 11700)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+failures:
+failures:
+    app::tests::session_length_tests::long
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2071 filtered out; finished in 167.15s
+error: test failed, to rerun pass `-p quantick-app --bin quantick-app`
