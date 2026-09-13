@@ -55,6 +55,13 @@ pub(crate) struct ChartPaneSnapshot {
     pub timeline_revision: WireU64,
     pub pagination_revision: WireU64,
     pub closed_bar_count: WireU64,
+    /// Prints the pane's rule could place in no bar — a deal bar's prints
+    /// before its first counter reading. Zero for every other rule. The
+    /// number the chart-corner chip shows, as data.
+    /// Optional on the wire so v1 readers remain compatible with snapshots
+    /// produced before deal bars existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uncounted_prints: Option<WireU64>,
     pub venue_history_bar_count: WireU64,
     pub backfill_boundary_slot: Option<WireU64>,
     pub has_in_progress_bar: bool,
@@ -280,6 +287,7 @@ fn pane_snapshot(
         timeline_revision: WireU64::new(pane.state.timeline_revision()),
         pagination_revision: WireU64::new(pane.pagination_revision()),
         closed_bar_count: wire_usize(pane.closed_slots()),
+        uncounted_prints: Some(WireU64::new(pane.state.uncounted_trades())),
         venue_history_bar_count: wire_usize(seam),
         backfill_boundary_slot: pane
             .state

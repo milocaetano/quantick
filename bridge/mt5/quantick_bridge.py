@@ -191,6 +191,22 @@ def _cache_write(symbol: str, offset_s: int) -> None:
     except OSError:
         pass  # a read-only checkout is not worth failing the feed over
 
+
+def declares_deal_counter(tape: str, session_deals) -> bool:
+    """Whether a session stamps its live ticks with the deal counter.
+
+    Only a trades tape: a quoted CFD prints no deals, and a counter there
+    would count something other than what the chart calls a deal. And only
+    when the terminal reports the field at all — an older terminal build
+    answers `None` and gets no stamp. A field that reads 0 is declared and
+    stamped: before the open the counter *is* 0, and a broker that never
+    counts leaves it there all day, which the chart shows as a counter that
+    never moves rather than as a session with no deals — the honest shape
+    for a fact this bridge cannot tell apart from the terminal's answer.
+    """
+    return tape == "trades" and session_deals is not None
+
+
 class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
     """One connection to quantick: framing, cursors and message building."""
 
@@ -216,6 +232,10 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         # What this venue prints, decided once at hello and reused by the
         # candle block to choose an honest volume source.
         self.tape = "trades"
+        # Whether live ticks are stamped with the venue's session deal
+        # counter. Decided at hello: a trades tape whose terminal reports
+        # `session_deals`. See `declares_deal_counter` and PROTOCOL.md `deals`.
+        self.deal_counter = False
         # Cursor: MT5 ticks share milliseconds, so it takes both the newest
         # millisecond sent and how many ticks at that millisecond already went.
         self.cursor_msc = 0
@@ -242,6 +262,9 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         self.offset_s = offset_s
         self.digits = int(info.digits)
         self.tape = self.detect_tape()
+        self.deal_counter = declares_deal_counter(
+            self.tape, getattr(info, "session_deals", None)
+        )
 
         hello = {
             "type": "hello",
@@ -253,6 +276,9 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
             "digits": self.digits,
             "server_utc_offset_s": offset_s,
             "tape": self.tape,
+            # Whether live ticks carry the session deal counter. Absent means
+            # no, so a feed reading an older bridge expects no stamp.
+            "deal_counter": self.deal_counter,
         }
         # Candle history is announced only when this session will really send
         # it, so a feed knows immediately whether a time pane has anything

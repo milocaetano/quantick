@@ -88,7 +88,9 @@ CLAUDE.md 9551
 # count. None of them decided an outcome, which is the test `CLAUDE.md` sets
 # for a line in a `SKILL.md`. The trade is even; the tracked total moves by the
 # 90 bytes the new prose costs.
-.claude/skills/ui-harness/references/hook-registry.md 70817
+# Raised by 305 bytes for the three hooks that make deal recording and the
+# unavailable trades-bar state reachable without a hand.
+.claude/skills/ui-harness/references/hook-registry.md 71122
 .claude/skills/ui-harness/SKILL.md 12727
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse

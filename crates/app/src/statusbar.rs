@@ -30,6 +30,7 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use crate::deal_recording::RecState;
 use crate::feed_notice;
 use crate::metrics;
 use crate::theme;
@@ -139,6 +140,9 @@ pub struct StatusModel {
     /// chart never says whether the next print completes the bar or the
     /// fiftieth does.
     pub bar_progress: Option<String>,
+    /// The deal recorder's cell — `REC 2 301 455 · 09:00:00 · file`, `REC
+    /// off`, `RECORDED · day` — or none where the feed has no counter.
+    pub deal_recording: Option<DealCell>,
     /// Bars that came from the venue's own candle history, in front of
     /// everything this app built from prints. Zero on any pane without a
     /// venue prefix, which is every flow pane.
@@ -176,6 +180,14 @@ pub struct StatusModel {
     /// Whether the perf readings (fps, frame time, trades) are shown
     /// (View → perf readings).
     pub show_perf: bool,
+}
+
+/// The recording cell, with the state that colours it — red while the
+/// counter is being written, amber while it is stale, quiet otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DealCell {
+    pub text: String,
+    pub tone: RecState,
 }
 
 /// The delay the tape cell reports, and the sample the hop beside it came from.
@@ -466,6 +478,15 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
                 .color(theme::AMBER),
         )
         .on_hover_text("how far the forming bar is from closing");
+    }
+    if let Some(cell) = &model.deal_recording {
+        let color = match cell.tone {
+            RecState::Recording => theme::REC,
+            RecState::Stale => theme::AMBER,
+            RecState::Off | RecState::Recorded | RecState::Unsupported => theme::TEXT_MUTED,
+        };
+        ui.label(egui::RichText::new(&cell.text).monospace().color(color))
+            .on_hover_text("the venue's deal counter: counted live and written to disk");
     }
     ui.label(
         egui::RichText::new(bars_text(
@@ -823,6 +844,7 @@ mod tests {
                 tape_age_ms: (!replaying).then_some(200),
                 spec_summary: "tick(50)".to_owned(),
                 bar_progress: Some("37/50 ticks".to_owned()),
+                deal_recording: None,
                 venue_bars: 0,
                 backfilled_bars: 240,
                 live_bars: 61,
@@ -872,6 +894,7 @@ mod tests {
             tape_age_ms: Some(150),
             spec_summary: "tick(50)".to_owned(),
             bar_progress: Some("37/50 ticks".to_owned()),
+            deal_recording: None,
             venue_bars: 0,
             backfilled_bars: 3_999,
             live_bars: 17,

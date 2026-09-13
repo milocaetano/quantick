@@ -87,30 +87,24 @@ A branch still needs the `arch-review-ok` marker for PR readiness, so on a
 docs/skills change — where the shape pass is waived — run this skill anyway
 and report step 0's findings through it. The bug pass is not the waived part.
 
-## Record the marker when the review closes
+## Publish and record when the review closes
 
-A branch cannot mark its PR ready until this review is recorded against the exact
-change being shipped — a hash of the branch's diff, so a rebase does not
-invalidate it but an edit to a tracked file does. Once every Blocker and
-Should-fix is resolved or deferred in the PR body, and no further commits are
-coming:
+Write the complete verdict to a scratch report whose final line is exactly
+`ARCH-REVIEW: PASS`. Only after every Blocker and Should-fix is resolved or
+validly deferred and no repository edit is pending, publish it from the clean
+reviewed worktree:
 
 ```sh
-WT=/path/to/worktree
 cd "$WT" &&
-  git diff origin/main...HEAD |
-    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/arch-review-ok"
+  sh .claude/hooks/review_report.sh publish arch-review "$PR" "$REPORT_PATH"
 ```
 
-The `cd` matters: both `git` calls resolve against the shell's cwd, which for
-an agent session is the main checkout. Without it the marker lands in the
-wrong git dir holding the wrong sha, and the next `gh pr ready` denies with
-no clue why.
-
-A branch that gains another commit after this has a stale marker by design:
-the review runs again over the new head before it is re-recorded. Re-stamping
-a marker whose review did not run again is the one dishonest move the gate
-cannot detect.
+The producer verifies the worktree, branch, HEAD, base ref/tip, review key and
+PR identity before and after publication; reads the durable report back; then
+records `arch-review-ok`. A manually written marker has no matching receipt
+and readiness rejects it. Without a PR, print the report and record nothing.
+Any later tracked edit changes the review key and requires a current follow-up,
+not a marker refresh.
 
 ## What this skill does not review
 

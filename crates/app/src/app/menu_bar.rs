@@ -725,6 +725,7 @@ impl QuantickApp {
                             self.surfaces.style_panel.open();
                             ui.close_menu();
                         }
+                        super::deal_recording_wiring::draw_toggle(self, ui);
                         let access_label = self.control
                             .control_access
                             .as_ref()

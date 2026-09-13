@@ -185,12 +185,11 @@ the overrides and why they fail open — and is not repeated here. What is
 worth pulling out for an outside reader is the one
 design decision that makes the gate honest rather than decorative:
 
-> Each marker `pr-gate` reads holds **a hash of the change the review
-> covered** — `git diff origin/main...HEAD` — not a timestamp, not a boolean,
-> and not the sha of whichever commit happened to carry it. Edit a tracked file
-> after reviewing and the hash no longer matches, so the gate denies and names
-> both values. There are two markers, one per review, because a branch that
-> passed one has not passed the other.
+> Each private projection holds **a hash of the change the review covered**,
+> not a timestamp or boolean. Its skill's shared producer first publishes a
+> durable PR report bound to branch, head, base tip and that key. Readiness
+> requires both; a hand-written marker alone is detectable. Architecture,
+> delivery and AI remain three independent reviews.
 
 Keying on the change rather than the commit is the second version of that
 decision, and it was bought with real pain: the branch that introduced tiers
@@ -200,11 +199,12 @@ about. It is also *stricter* in the case the sha form missed — a rebase that
 lands a branch on top of upstream edits to the very files it changes now stales
 the marker, which is exactly when a second look is worth most.
 
-A marker that only recorded "a review happened" would pass while the newest
-three commits went unreviewed — which is the failure this repository
-actually hit. It still only proves a review was *recorded*, not that it was
-*good*; nothing outside the review can prove the latter, and the hooks README
-says so rather than implying otherwise.
+A marker that only recorded "a review happened" once passed while new commits
+went unreviewed. A durable receipt closes the observed manual-marker gap; it
+still cannot prove the review judgment was *good*. The final mission/ship
+verifier closes the other boundary: an already-ready PR that never crosses a
+gated command still has to prove reports, threads, CI and the literal mission
+completion clauses before an agent may call it done.
 
 ## The mission archive
 
@@ -320,8 +320,8 @@ finding costs most to act on.
 **The review budget covers the chain, not each skill.** The old arrangement had
 no total at all: `arch-review`'s step 0 was bounded at two, `delivery-review`
 carried a separate three, the nine-dimension shape pass had none, and since
-answering any of them is a commit — which stales both markers by design and
-re-runs both reviews — nothing summed them. Measured before it was written:
+answering any of them is a commit — which stales review evidence and reruns
+affected reviews — nothing summed them. Measured before it was written:
 ordinary code branches spend about one round, meta-work on the workflow itself
 averages three, and the worst branch in the last twenty spent eight.
 

@@ -112,6 +112,17 @@
         "timeline_revision": {
           "$ref": "#/$defs/WireU64"
         },
+        "uncounted_prints": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prints the pane's rule could place in no bar — a deal bar's prints\nbefore its first counter reading. Zero for every other rule. The\nnumber the chart-corner chip shows, as data.\nOptional on the wire so v1 readers remain compatible with snapshots\nproduced before deal bars existed."
+        },
         "venue_history_bar_count": {
           "$ref": "#/$defs/WireU64"
         },

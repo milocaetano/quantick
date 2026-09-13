@@ -13,6 +13,7 @@ pub mod presets;
 
 // Geometry shared by a family of tools. Not tools themselves, so they are not
 // in the registry — a family core exists so its members stay declarations.
+mod clipboard;
 mod line_core;
 mod mark_core;
 mod measure_core;

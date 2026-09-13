@@ -33,6 +33,11 @@ cat > "$fixture/hooks/ai_review_threads.sh" <<'STUB'
 #!/bin/sh
 cat "$(dirname "$0")/threads"
 STUB
+cat > "$fixture/hooks/review_report.sh" <<'STUB'
+#!/bin/sh
+[ "${1:-}" = verify ] || exit 64
+printf 'https://example.test/%s-report\n' "$2"
+STUB
 printf '0\n' > "$fixture/hooks/threads"
 cat > "$fixture/bin/gh" <<'STUB'
 #!/bin/sh

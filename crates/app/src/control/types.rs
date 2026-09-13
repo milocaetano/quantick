@@ -96,6 +96,15 @@ impl From<&BarSpec> for BarSpecDto {
                 parameter_unit: "target_trades".to_owned(),
                 imbalance_unit: Some(unit.as_str().to_owned()),
             },
+            // "deals", not "trades": the tick kind's unit already says
+            // `trades` for prints, and a client reading both must not be
+            // told the two rules count the same thing.
+            BarSpec::Trades(count) => Self {
+                kind: "trades".to_owned(),
+                parameter: canonical_u64(*count),
+                parameter_unit: "deals".to_owned(),
+                imbalance_unit: None,
+            },
         }
     }
 }

@@ -45,7 +45,9 @@ The **cockpit** profile is a superset of the annotator's: the same tools, plus
 two modules reached through `quantick_invoke`. `cockpit.layout` unlocks the
 `layout.*` capabilities — panes, layout tabs, presets and focus — and the
 `cockpit` permission on its own unlocks `feed.reconnect`, which respawns the
-live market transport. Neither is destructive.
+live market transport, and `feed.deal_recording.set`, which starts or stops a
+MetaTrader B3 tab's deal recording (the REC control, as a call). None of them
+is destructive.
 
 `feed.reload` is, and it sits outside what this adapter can reach: it also
 requires the separately sensitive `cockpit.recover`, declares

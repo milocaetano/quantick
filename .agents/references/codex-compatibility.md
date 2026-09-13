@@ -13,3 +13,7 @@ done. Translate only these host mechanics:
   the default coding model, `fable` the strongest.
 - Translate POSIX examples without changing order, worktree, markers or failure.
 - `.codex/hooks.json` runs shared guardrails without adding permissions.
+- Durable review publication and final mission/ship verification are repository
+  commands, so Codex runs the canonical scripts through `exec_command` exactly
+  as written. Host goal status and local marker writes never substitute for
+  their successful current-PR receipts.

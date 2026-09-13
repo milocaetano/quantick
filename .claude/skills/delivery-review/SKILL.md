@@ -313,21 +313,22 @@ review, not the traceability-only follow-up path.
 subtitle correcting the heading is not enough, because the heading is what gets
 skimmed. Without a user grant or its explicit delegation, no deferral exists.
 
-## Step 6 — Record the marker
+## Step 6 — Publish PASS and record its projection
 
-On **PASS** only:
+Write the complete verdict to a scratch report whose final line is exactly
+`DELIVERY-REVIEW: PASS`. On **PASS** only, from the clean reviewed worktree:
 
 ```sh
-WT=/path/to/worktree
 cd "$WT" &&
-  git diff origin/main...HEAD |
-    git hash-object --stdin > "$(git rev-parse --absolute-git-dir)/delivery-review-ok"
+  sh .claude/hooks/review_report.sh publish delivery-review "$PR" "$REPORT_PATH"
 ```
 
-`pr-gate` denies `gh pr ready` until this file holds the hash of the exact
-change being shipped, alongside `arch-review-ok`. Recording it on a FAIL, or
-before the last edit, is lying to the gate — the second is caught
-automatically, the first is caught by nothing but you.
+The producer verifies the branch, HEAD, base ref/tip, review key and PR
+identity before and after publication; reads the durable report back; then
+records `delivery-review-ok`. A manually written marker has no matching
+current receipt and readiness rejects it. Without a PR, print the verdict and
+record nothing. A later tracked edit requires a current follow-up review, not
+a marker refresh.
 
 Run this skill **after** `arch-review`, never before: it grades the branch as
 shipped, including whatever the shape review made you change.

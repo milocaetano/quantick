@@ -341,6 +341,11 @@ pub struct SavedChrome {
     /// bars they never chose to see.
     #[serde(default)]
     pub venue_lead_in: bool,
+    /// Whether a MetaTrader tab records the venue's deal counter on its own.
+    /// Absent follows the feed config's `record_deals`; a file written before
+    /// the recorder existed therefore changes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_deals: Option<bool>,
     /// Where the trader parked the drawing-properties popup, in screen points,
     /// or absent while it still places itself beside the object it configures.
     ///
@@ -1094,6 +1099,7 @@ mod tests {
                 history_reach: None,
                 history_reach_span_minutes: None,
                 venue_lead_in: false,
+                record_deals: None,
                 inspector_position: Some([412.5, 640.0]),
             }),
             saved: Vec::new(),
@@ -1490,9 +1496,11 @@ mod tests {
                 symbol_bubble_presets: Default::default(),
                 default_layout: None,
                 default_bars: None,
+                record_deals: false,
             }],
             metatrader: crate::config::MetaTraderSettings::default(),
             paper: crate::config::PaperSettings::default(),
+            deals: crate::config::DealsSettings::default(),
             history: crate::config::HistorySettings::default(),
         }
     }

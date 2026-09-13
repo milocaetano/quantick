@@ -147,7 +147,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** — `CLAUDE.md` owns the rule, its scope and its exemptions; do not restate them here. Graded by `arch-review` dimension 8, enforced by `crates/guards/src/language.rs` |
+   | Any mission at all | **every artifact in English** under `CLAUDE.md`, graded by `arch-review` dimension 8 and the language guard. At every tier copy the four reserved `G-AI` lines below verbatim into the goal. Declare their PR evidence destinations before archival; do not claim they already ran. |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
    | Touches a hot path | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook, added in the same change; `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
@@ -160,8 +160,8 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
 
    ### Closing steps are not criteria
 
-   Two things finish every mission and **neither is an `A` or a `G`**:
-   `delivery-review` returns PASS, and the PR is open. List them as `C1`…`Cn`
+   List delivery-review PASS, the open PR and final-verifier PASS as `C1`…`Cn`,
+   not `A`/`G`,
    under **Closing steps**. **At `small` the first is not listed at all** — a
    closing step the mission is exempt from is not one it owes, and writing it
    down leaves the archive recording an obligation nothing will discharge.
@@ -176,16 +176,11 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    not on the branch, and `delivery-review` — which looks for the checklist
    *on the branch* — returns NOT GRADEABLE.
 
-   `GOAL.md` carries, in this order: the objective and why it matters; **the
-   tier, as a `**Tier:**` line naming it and why the work earns it**; the
-   request ledger; the decisions `D1`…`Dn`; the assumptions `S1`…`Sn`; the
-   acceptance criteria; what is not applicable and why; and last, **the request
-   as received, quoted in full and verbatim**.
-
-   At `small`, the tier line says why the exemption was earned; empty decisions
-   and not-applicable sections may be omitted. `delivery-review` refuses a file
-   without the verbatim request. Mark it as an attributed quotation under
-   `CLAUDE.md`'s language exemption; keep every other line English.
+   In order, record: objective and why; a `**Tier:**` line and justification;
+   request ledger; decisions `D1`…; assumptions `S1`…; acceptance criteria;
+   N/A with reasons; then **the full verbatim request** as an attributed
+   quotation. At `small`, justify the exemption. Empty decisions/N/A may go.
+   Missing verbatim request is NOT GRADEABLE; every other line is English.
 
    ### The checklist format
 
@@ -197,13 +192,22 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
          → <path where that evidence will be written>. *(R3, R4)*
    ```
 
-   Each item has a stable ID (`A` mission-specific, `G` injected), one
-   observable outcome, an evidence kind and destination path, and an `(R…)`
-   tail on `A` lines only. Never renumber. Transcript-only claims are UNPROVEN.
+   Each item has a stable ID (`A` mission-specific, `G` injected), one outcome,
+   evidence and destination, plus an `(R…)` tail on `A` only. Never renumber;
+   transcript-only claims are UNPROVEN.
 
-   Assumptions get their own list, `S1`…`Sn`, each with the reason it was safe
-   to assume rather than ask. `delivery-review` audits that list: an assumption
-   that turned out to drive the design is a question step 3 should have asked.
+   Every tier includes this exact block under its acceptance criteria. The
+   final verifier compares it literally with the archived goal.
+
+   <!-- required-ai-review-goal-gates:v1 -->
+   - [ ] **G-AI1** — AI review is executed for the current PR review.
+   - [ ] **G-AI2** — A durable AI-review report is published on the PR.
+   - [ ] **G-AI3** — `ai_review_threads.sh list` returns zero unresolved threads.
+   - [ ] **G-AI4** — `ai-review-complete` is valid for the current review key.
+   <!-- end required-ai-review-goal-gates:v1 -->
+
+   Each `S` states why assuming was safe. Delivery review rejects a design-driving
+   assumption that step 3 should have asked.
 
 6. **Set up the ground — before step 5 writes anything.** Fresh worktree from
    updated `main` under `../quantick-worktrees/` per `CLAUDE.md`; never the
@@ -223,8 +227,8 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
 
    Both commands run **before the first edit**.
 
-   **Record the tier here**, before the first line of work, beside the two
-   review markers in that worktree's own git dir — per-branch, never committed:
+   **Record the tier here**, before the first line of work, beside the review
+   projections in that worktree's own git dir — per-branch, never committed:
 
    ```sh
    WT=/path/to/worktree
@@ -264,17 +268,18 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
         git commit -m "docs: archive the $SLUG mission"
       ```
 
-   2. **`Skill(arch-review)`** — shape and bugs, over the final branch, at the
-      effort and breadth this tier sets. It records `arch-review-ok` itself.
-      Every tier runs it.
-   3. **`Skill(delivery-review)`** — conformance, over the same final branch.
-      It records `delivery-review-ok` itself, on PASS only. **Skipped at
-      `small`**, and only there.
-   4. **PR readiness** — `ship` may publish the draft before reviews; `ai-review`
-      needs its resolvable threads. Ready waits for current reviews and CI.
-      The PR body names the tier and labels local/reused/CI verification.
-      `ai-review` owns the durable PR report and `ai-review-complete` projection;
-      completion and zero unresolved threads are required at every tier.
+   2. **Publish the draft PR** if `ship` has not; reports and threads need it.
+   3. **`Skill(arch-review)`** — every tier; its producer publishes PASS and
+      records `arch-review-ok`. Never write the marker directly.
+   4. **`Skill(ai-review)`** — every tier, same PR/key; its producer publishes
+      and records `ai-review-complete`. Close every thread returned by `list`.
+   5. **`Skill(delivery-review)`** — last; its producer publishes PASS and
+      records `delivery-review-ok`. **Skipped only at `small`.**
+   6. **Final completion** — after exact-head CI and any needed ready transition:
+      `sh .claude/hooks/mission_ship_gate.sh mission <pr>` from the task
+      worktree. Run it for already-ready PRs too. It reuses `pr-gate`, lists AI
+      threads, checks reports/PR/head/CI and publishes the literal reconciliation.
+      No mission is complete without PASS.
 
    A `small` mission still archives `GOAL.md` as its durable objective record.
 
@@ -291,22 +296,26 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    /goal <the criteria from step 4, as one measurable end state, plus "or stop after N turns">
    ```
 
-   - **4,000 characters maximum.** Compress rather than drop: state each
-     criterion as a terse observable outcome ("clippy/fmt/build/test exit 0",
-     "delivery-review returned PASS", "PR URL printed", "GOAL.md archived"),
-     strip rationale and repo context, collapse per-surface detail into one
-     line. Count the characters before printing.
-   - The evaluator **does not run commands or read files** — every criterion
-     must be something this session's own output demonstrates.
-   - Include a bound (`or stop after 20 turns`) so a stuck mission ends.
-   - It does not change permissions. Pair with auto mode for unattended runs.
-   - Write the line in English, like the criteria it restates.
+   Keep it English and under 4,000 characters. Compress outcomes criteria to
+   observable outcomes without dropping any. The evaluator reads session
+   output, not files or commands, and changes no permission; include a finite
+   `or stop after N turns` bound.
 
 ## What done means
 
-Done = the PR is ready, CI is green, `delivery-review` returned PASS, and the
-evidence is in the PR body. At `small`, where that review does not run, done is
-the same line without it — the PR ready, CI green, `arch-review` closed, the
-evidence in the body. Main merging is exclusively the user's action;
-intermediate campaign merges follow their explicit grant and integration contract. Do not
-ask routine permission to push, publish the draft or complete readiness.
+The final verifier reads these stable clauses literally and refuses ID drift.
+
+<!-- what-done-means:v1 -->
+- **D1** — The open PR is non-draft and matches branch, head and base.
+- **D2** — Every registered CI check is green at that head.
+- **D3** — Architecture has a current projection and durable PASS report.
+- **D4** — Delivery has both when applicable; only bounded `small` is exempt.
+- **D5** — AI has current completion, a durable report and zero listed threads.
+- **D6** — The PR body carries current-head evidence and report URLs.
+- **D7** — The final verifier publishes and verifies this literal reconciliation.
+- **D8** — Only the user merges to `main`.
+<!-- end what-done-means:v1 -->
+
+Intermediate campaign merges still require their explicit grant and integration
+contract. Do not ask routine permission to push, publish the draft, run reviews,
+complete readiness or run the final verifier.

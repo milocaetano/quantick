@@ -1,4 +1,4 @@
-//! Version 2 of the seven layout calls that answer with the arrangement: the
+//! Version 2 of the eight layout calls that answer with the arrangement: the
 //! same acts, with the context column's share carried as an exact decimal.
 //!
 //! Version 1 declares `fraction` as a JSON number, and the control wire
@@ -6,8 +6,8 @@
 //! So a v1 `layout.pane.resize` can only be sent the integers 0 and 1, and
 //! every v1 call that answers a `LayoutResult` — `layout.focus.set`,
 //! `layout.pane.collapse`, `layout.pane.expand`, `layout.pane.move`,
-//! `layout.preset.apply`, `layout.pane.set_interval` and a successful
-//! `layout.pane.resize` — acts, and then the gateway cannot encode the answer
+//! `layout.preset.apply`, `layout.pane.set_interval`,
+//! `layout.pane.set_bar_spec` and a successful `layout.pane.resize` — acts, and then the gateway cannot encode the answer
 //! and tells the client `control.capability_unavailable`. The retry matrix's
 //! transport tests found it: the call applied, and the client was told it
 //! had not.
@@ -50,8 +50,9 @@ use super::super::{actions::ActionRegistry, gateway::ControlAccess, types::canon
 // own, so the answer and the readback are one number written one way.
 use super::super::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
 use super::{
-    APPLY_PRESET_CAPABILITY_ID, COLLAPSE_CAPABILITY_ID, EXPAND_CAPABILITY_ID, FOCUS_CAPABILITY_ID,
-    INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID, RESIZE_CAPABILITY_ID, TabTarget,
+    APPLY_PRESET_CAPABILITY_ID, BAR_SPEC_CAPABILITY_ID, COLLAPSE_CAPABILITY_ID,
+    EXPAND_CAPABILITY_ID, FOCUS_CAPABILITY_ID, INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID,
+    RESIZE_CAPABILITY_ID, TabTarget,
 };
 
 /// The version this module registers.
@@ -89,8 +90,8 @@ pub(crate) struct ResizeInputV2 {
     pub fraction: CanonicalDecimal,
 }
 
-/// The seven calls, each with the v2 handler that answers for it.
-const CALLS: [(&str, super::super::actions::ActionHandler); 7] = [
+/// The eight calls, each with the v2 handler that answers for it.
+const CALLS: [(&str, super::super::actions::ActionHandler); 8] = [
     (APPLY_PRESET_CAPABILITY_ID, apply_preset),
     (MOVE_PANE_CAPABILITY_ID, move_pane),
     (RESIZE_CAPABILITY_ID, resize),
@@ -98,6 +99,7 @@ const CALLS: [(&str, super::super::actions::ActionHandler); 7] = [
     (EXPAND_CAPABILITY_ID, expand),
     (FOCUS_CAPABILITY_ID, focus),
     (INTERVAL_CAPABILITY_ID, set_interval),
+    (BAR_SPEC_CAPABILITY_ID, set_bar_spec),
 ];
 
 /// Dock v2 of every call in [`CALLS`]. Runs after v1 is registered: each v2
@@ -201,6 +203,15 @@ fn set_interval(
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::set_interval(app, access, actor, input)?)
+}
+
+fn set_bar_spec(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    exact(super::set_bar_spec(app, access, actor, input)?)
 }
 
 /// Resize, with the share read as an exact decimal and handed to the v1 body
