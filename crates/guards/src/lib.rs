@@ -60,6 +60,7 @@ pub mod scratch;
 #[cfg(test)]
 pub mod scratch_dir;
 pub mod size;
+pub mod ui_free;
 
 use std::path::{Path, PathBuf};
 

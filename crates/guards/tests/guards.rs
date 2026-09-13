@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 11] = [
+const TESTED: [&str; 12] = [
     "size",
     "language",
     "encoding",
@@ -29,6 +29,7 @@ const TESTED: [&str; 11] = [
     "headless",
     "extension-boundary",
     "instruction_links",
+    "app-ui-free",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -113,6 +114,14 @@ fn the_generated_indexes_match_the_code_they_describe() {
 #[test]
 fn no_test_mints_a_temporary_path_outside_its_scratch_module() {
     assert_clean(TESTED[6]);
+}
+
+/// UI-free code keeps out of the UI crate: the production lines in
+/// `crates/app` files that never name the UI library may not grow past the
+/// recorded ceiling, and a ceiling left far above them asks for `--tighten`.
+#[test]
+fn app_ui_free_code_stays_within_its_ceiling() {
+    assert_clean(TESTED[11]);
 }
 
 // --- `--report`, the mode that measures rather than judges -------------------
@@ -280,6 +289,25 @@ fn the_report_is_byte_identical_across_runs() {
     assert!(
         first.lines().any(|line| line == "scan.failed\t0"),
         "every measurement of this repository was taken"
+    );
+}
+
+/// `app.lines.without_egui` is the number the `app-ui-free` ratchet rations,
+/// not a second count of the same idea: two definitions of "UI-free" would
+/// let the report and the guard disagree with nothing to fail.
+#[test]
+fn the_report_row_is_the_number_the_ui_free_ratchet_rations() {
+    let report = run_report();
+    let value = |label: &str| {
+        report
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{label}\t")))
+            .unwrap_or_else(|| panic!("no `{label}` row in:\n{report}"))
+            .to_owned()
+    };
+    assert_eq!(
+        value("app.lines.without_egui"),
+        value("ratchet.app-ui-free.measured")
     );
 }
 
