@@ -57,19 +57,49 @@ status=$(git -C "$worktree" status --porcelain=v1 --untracked-files=all) || fail
 [ -z "$status" ] || fail 'The task worktree is not clean.'
 
 skill="$worktree/.claude/skills/mission/SKILL.md"
+# Three PR kinds, told apart only by facts verified against the PR below (the
+# branch is its head, the base its base), never by a flag the caller sets: a
+# consolidated campaign PR (campaign/* into main), a main synchronization (into
+# a campaign base, named sync/* or carrying main commits that base lacks), and
+# every other PR, a mission.
+kind=mission
+case "$base:$branch" in
+    origin/main:campaign/?*) kind=campaign ;;
+    origin/campaign/?*:*)
+        case "$branch" in sync/?*) kind=sync ;; esac
+        main_fork=$(git -C "$worktree" merge-base origin/main HEAD 2>/dev/null) &&
+            ! git -C "$worktree" merge-base --is-ancestor "$main_fork" "$base" && kind=sync
+        ;;
+esac
 goal_paths=$(git -C "$worktree" diff --name-only "$base...HEAD" -- '.claude/GOAL-archive-*.md') ||
     fail 'The archived mission goal could not be located.'
+if [ "$kind" = sync ]; then
+    # A sync carries every archive main merged since the last one; only an
+    # archive new against both its base and main is the sync's own goal.
+    main_paths=$(git -C "$worktree" diff --name-only "origin/main...HEAD" -- '.claude/GOAL-archive-*.md') ||
+        fail 'The synchronization archives could not be compared with origin/main.'
+    goal_paths=$(printf '%s\n%s\n' "$goal_paths" "$main_paths" | sed -n '/./p' | sort | uniq -d)
+fi
 goal_count=$(printf '%s\n' "$goal_paths" | sed -n '/./p' | wc -l | tr -d ' ')
-[ "$goal_count" -eq 1 ] || fail 'Exactly one archived mission goal must exist in the reviewed diff.'
-goal_path=$worktree/$goal_paths
-canonical_ai_gates=$(sed -n \
-    '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$skill" |
-    sed 's/^   //; s/^- \[[ xX]\]/- [ ]/')
-goal_ai_gates=$(sed -n \
-    '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$goal_path" |
-    sed 's/^- \[[ xX]\]/- [ ]/')
-[ -n "$canonical_ai_gates" ] && [ "$goal_ai_gates" = "$canonical_ai_gates" ] ||
-    fail 'The archived goal does not literally contain the four canonical AI-review gates.'
+case "$kind:$goal_count" in
+    mission:1|sync:1|campaign:*) ;;
+    sync:0) goal_note='Main synchronization: no archived goal of its own; archives main holds are not counted.' ;;
+    sync:*) fail 'A main synchronization may add at most one archived goal of its own.' ;;
+    *) fail 'Exactly one archived mission goal must exist in the reviewed diff.' ;;
+esac
+if [ "$kind" != campaign ] && [ "$goal_count" -eq 1 ]; then
+    goal_path=$worktree/$goal_paths
+    canonical_ai_gates=$(sed -n \
+        '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$skill" |
+        sed 's/^   //; s/^- \[[ xX]\]/- [ ]/')
+    goal_ai_gates=$(sed -n \
+        '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$goal_path" |
+        sed 's/^- \[[ xX]\]/- [ ]/')
+    [ -n "$canonical_ai_gates" ] && [ "$goal_ai_gates" = "$canonical_ai_gates" ] ||
+        fail 'The archived goal does not literally contain the four canonical AI-review gates.'
+    goal_note="Archived goal: $goal_paths (four canonical AI-review gates matched literally)"
+    [ "$kind" = mission ] || goal_note="Main synchronization. $goal_note"
+fi
 
 remote=$(cd "$worktree" && gh pr view "$pr" \
     --json headRefName,headRefOid,baseRefName,baseRefOid,state,isDraft,mergeable,mergeStateStatus,url,isCrossRepository \
@@ -84,6 +114,22 @@ set -- $remote
 [ "$7" = MERGEABLE ] ||
     fail 'GitHub has not confirmed a mergeable PR; that signal is required but never sufficient.'
 pr_url=$9
+
+body=$(cd "$worktree" && gh pr view "$pr" --json body --jq .body) ||
+    fail 'GitHub could not read the PR body evidence.'
+if [ "$kind" = campaign ]; then
+    # No single goal governs the consolidated PR: delivery-review grades the
+    # parent charter's criteria, so the gate verifies that parent instead.
+    parent=$(printf '%s\n' "$body" | sed -n 's/^Campaign-parent: *//p' | tr -d '\r')
+    [ "$(printf '%s\n' "$parent" | wc -l | tr -d ' ')" -eq 1 ] &&
+        printf '%s\n' "$parent" | grep -Eqx "${pr_url%/pull/*}/issues/[0-9]+" ||
+        fail 'A consolidated campaign PR names its charter once in its body: Campaign-parent: <issue URL in this repository>.'
+    charter=$(cd "$worktree" && gh issue view "$parent" --json body --jq .body) ||
+        fail 'GitHub could not read the campaign parent charter.'
+    case "$charter" in *'<!-- quantick-campaign:v1 -->'*) ;; *) fail 'Campaign-parent is not a campaign charter.' ;; esac
+    case "$charter" in *"\`$branch\`"*) ;; *) fail "The campaign charter does not name \`$branch\`." ;; esac
+    goal_note="Consolidated campaign: charter $parent names \`$branch\`; delivery-review grades its criteria."
+fi
 
 require_green_checks
 
@@ -101,8 +147,6 @@ fi
 ai_url=$(sh "$script_dir/review_report.sh" verify ai-review "$pr" "$worktree") ||
     fail 'The current AI completion marker has no matching durable COMPLETE report.'
 
-body=$(cd "$worktree" && gh pr view "$pr" --json body --jq .body) ||
-    fail 'GitHub could not read the PR body evidence.'
 body_tmp=$(mktemp) || fail 'Cannot create the PR body evidence file.'
 report_tmp=$(mktemp) || fail 'Cannot create the completion report file.'
 trap 'rm -f "$body_tmp" "$report_tmp"' EXIT HUP INT TERM
@@ -128,8 +172,7 @@ clauses=$(sed -n '/<!-- what-done-means:v1 -->/,/<!-- end what-done-means:v1 -->
 printf '## Mission completion - PR #%s @ %s\n\n' "$pr" "$head" > "$report_tmp"
 printf 'Caller: %s\nPR: %s\nBranch: %s\nBase: %s\nBase tip: %s\nReview key: %s\n\n' \
     "$mode" "$pr_url" "$branch" "$base" "$base_tip" "$key" >> "$report_tmp"
-printf 'Archived goal: %s (four canonical AI-review gates matched literally)\n\n' \
-    "$goal_paths" >> "$report_tmp"
+printf '%s\n\n' "$goal_note" >> "$report_tmp"
 seen=
 while IFS= read -r clause; do
     case "$clause" in
