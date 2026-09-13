@@ -2,6 +2,6 @@
 # Pull request #306 adds retained deal readings to ChartState and 23 lines of
 # window docking. The recording policy and window wiring remain in dedicated
 # owners; this amendment records the reviewed integration surface explicitly.
-!budget 10851
+!budget 10830
 ChartState 588
-QuantickApp 10263
+QuantickApp 10242

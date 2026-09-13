@@ -668,6 +668,11 @@ pub(crate) struct DrawingChromeSurface {
     /// *after* the new-selection reset, because the placement that made the
     /// request also made the selection change that clears it.
     pending_open_settings: bool,
+    /// One window-level snapshot, kept here so copy/paste crosses panes and
+    /// tabs without adding feature state to `QuantickApp`.
+    clipboard: Option<Drawing>,
+    /// Number of copies already pasted from the current snapshot.
+    paste_count: u32,
 }
 
 impl DrawingChromeSurface {
@@ -708,6 +713,22 @@ impl DrawingChromeSurface {
     }
 
     // ---- What the host commands -----------------------------------------
+
+    /// Replace the internal clipboard with this drawing snapshot.
+    pub fn copy_drawing(&mut self, drawing: &Drawing) {
+        self.clipboard = Some(drawing.clone());
+        self.paste_count = 0;
+    }
+
+    /// Return the copied snapshot and its next one-based paste count.
+    ///
+    /// The count makes repeated pastes advance instead of stacking at the
+    /// same offset. Cloning is paid only for the explicit paste gesture.
+    pub fn next_drawing_paste(&mut self) -> Option<(Drawing, u32)> {
+        let drawing = self.clipboard.as_ref()?.clone();
+        self.paste_count = self.paste_count.saturating_add(1);
+        Some((drawing, self.paste_count))
+    }
 
     /// Open the object manager, or shut it.
     pub fn set_manager_open(&mut self, open: bool) {

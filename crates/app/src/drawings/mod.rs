@@ -13,6 +13,7 @@ pub mod presets;
 
 // Geometry shared by a family of tools. Not tools themselves, so they are not
 // in the registry — a family core exists so its members stay declarations.
+mod clipboard;
 mod line_core;
 mod mark_core;
 mod measure_core;
@@ -1848,37 +1849,10 @@ impl Drawings {
     #[must_use]
     pub fn duplicate_selected(&mut self, offset_bars: f32) -> Option<Duplicated> {
         let index = self.selected.filter(|&index| index < self.items.len())?;
-        let before = self.snapshot();
-        let mut copy = self.items[index].clone();
-        // A copy is a new object: its own identity, and never the
-        // original's name — two drawings answering to "congestão 108k"
-        // would make every reference ambiguous.
-        copy.id = self.alloc_id();
-        copy.name = None;
-        for point in &mut copy.points {
-            point.bar += offset_bars;
-            // The offset moves the copy in *bar* space, and the instant an
-            // anchor remembers is what survives a re-cut: `reanchor` puts
-            // every timestamped anchor back where its own market moment
-            // landed. Carrying the source's instants would therefore snap
-            // the copy onto the original at the next bar-spec change,
-            // replay seek, reconnect or symbol switch — two rectangles at
-            // one place, and since this branch hangs a bot on the copy, two
-            // bots there too. The copy is a mark the trader placed just
-            // now, at no market moment of its own; that is what an anchor
-            // dropped past the newest bar already carries, and it is the
-            // honest reading here.
-            point.time_ms = None;
-        }
-        copy.locked = false;
-        let duplicated = Duplicated {
-            source: self.items[index].id,
-            copy: copy.id,
-        };
-        self.items.push(copy);
-        self.selected = Some(self.items.len() - 1);
-        self.record(before);
-        Some(duplicated)
+        let source = self.items[index].id;
+        let drawing = self.items[index].clone();
+        let copy = self.paste(&drawing, offset_bars);
+        Some(Duplicated { source, copy })
     }
 
     /// Re-express every anchor against a series that was cut again — a

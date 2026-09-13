@@ -33,6 +33,7 @@ use crate::widgets::{IconButton, TOOLRAIL_ICON};
 pub const BAR_HEIGHT_PX: f32 = 2.0 * BAR_PAD_Y_PX + TOOLRAIL_ICON.hit;
 const BAR_PAD_X_PX: f32 = 6.0;
 const BAR_PAD_Y_PX: f32 = 4.0;
+const DUPLICATE_HOVER_TEXT: &str = "Duplicate (Ctrl+D) · Copy and paste (Ctrl+C, Ctrl+V)";
 /// Gap between two neighbouring slots.
 const ITEM_GAP_PX: f32 = 4.0;
 /// Width of the hairline that isolates a group.
@@ -637,7 +638,7 @@ fn draw_slot(
         Slot::GlyphSize => draw_glyph_size_slot(ui, bar),
         Slot::Duplicate => {
             if IconButton::new(icons::COPY_SIMPLE, TOOLRAIL_ICON)
-                .hover_text("Duplicate (Ctrl+D)")
+                .hover_text(DUPLICATE_HOVER_TEXT)
                 .show(ui)
                 .clicked()
             {
@@ -1210,6 +1211,11 @@ mod tests {
             functional <= 8,
             "the bar holds at most 8 functional slots; found {functional}"
         );
+    }
+
+    #[test]
+    fn duplicate_names_the_two_key_copy_paste_workflow() {
+        assert!(DUPLICATE_HOVER_TEXT.contains("Ctrl+C, Ctrl+V"));
     }
 
     #[test]
