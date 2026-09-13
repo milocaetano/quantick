@@ -46,6 +46,13 @@ impl ControlAccess {
         self.awaiting_screenshot.len()
     }
 
+    /// Whether the window has been asked for a rasterised frame it has not
+    /// delivered yet.
+    #[cfg(test)]
+    pub(crate) fn screenshot_armed_for_test(&self) -> bool {
+        self.screenshot_armed
+    }
+
     /// How many bundles this instance is holding.
     #[cfg(test)]
     pub(crate) fn retained_evidence_for_test(&self) -> usize {
@@ -197,17 +204,23 @@ impl ControlAccess {
             //
             // Except while this frame holds an image. `begin_frame` drops the
             // image when the frame ends, so a waiter held back on *time* here
-            // would lose the picture it parked for, then wait out its deadline
-            // and report `frame_not_delivered` for a frame that was delivered.
-            // A loaded machine can spend the whole budget before this point on
-            // every frame, so that would repeat on every frame. The count
-            // ceiling still applies, and the first waiter is always under it.
+            // would lose the picture it parked for. A loaded machine can spend
+            // the whole budget before this point on every frame, and then no
+            // capture would ever get its picture: each would be answered by
+            // its deadline with a bare `control.timeout`. The count ceiling
+            // still applies, and the first waiter is always under it.
+            //
+            // A waiter that is held back still wants a picture, and the one
+            // this frame holds (if any) is gone by the next frame, so the
+            // window is asked for another. Asking only for a repaint would
+            // leave the captures parked behind the first one waiting on an
+            // image nothing requested.
             let out_of_time =
                 elapsed_us_since(frame_started) > CONTROL_UI_BUDGET_US && self.screenshot.is_none();
             if served >= CONTROL_UI_MAX_REQUESTS_PER_FRAME || out_of_time {
                 self.awaiting_screenshot.push_back(request);
                 self.awaiting_screenshot.extend(waiting);
-                ctx.request_repaint();
+                self.arm_screenshot(ctx);
                 return served;
             }
             // Given up on *before* the deadline, not at it. `execute_on_ui`

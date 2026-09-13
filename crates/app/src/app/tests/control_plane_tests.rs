@@ -2672,6 +2672,16 @@ fn gateway_wait_for_change_times_out_cleanly_and_parked_slots_are_bounded() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Wait one interval of the connection's request rate limit before a retry.
+/// A retry loop that runs faster than the limit is answered by the limiter's
+/// `control.backpressure` once its burst is spent, and the refusal a test was
+/// waiting out is then mistaken for another. Derived from the limit, so a
+/// lower limit slows the loops rather than breaking them.
+fn pause_one_request_interval() {
+    let per_second = quantick_control::limits::CONTROL_CLIENT_RATE_PER_SECOND;
+    std::thread::sleep(std::time::Duration::from_secs(1) / per_second);
+}
+
 #[test]
 fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
     use quantick_control::error::codes;
@@ -2752,9 +2762,7 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
             std::time::Instant::now() < deadline,
             "the answered wait's request ID was never released"
         );
-        // Slower than the connection's request rate limit, or the refusal
-        // that comes back is the limiter's rather than the duplicate check's.
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        pause_one_request_interval();
     };
     assert!(
         matches!(
@@ -4738,6 +4746,91 @@ fn a_parked_capture_claims_its_image_in_a_frame_whose_budget_is_already_spent() 
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// The captures parked behind the first one on a frame whose budget is spent.
+/// The first claims the image; the image is then gone, and the rest are held
+/// back on time. Held back without asking the window for another frame, they
+/// waited on an image nothing had requested until their deadline answered
+/// them with a bare timeout. A held-back capture now asks for the next frame,
+/// and claims it when it comes, however loaded that frame is too.
+#[test]
+fn captures_parked_behind_the_first_ask_for_the_next_frame_when_the_budget_is_spent() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(6);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("evidence-second-image-over-budget");
+    grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    let sent: Vec<_> = (0..2)
+        .map(|_| {
+            client
+                .send(
+                    "evidence.capture",
+                    serde_json::json!({ "scopes": ["scene.controls"], "screenshot": true }),
+                )
+                .expect("the request is sent")
+        })
+        .collect();
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    while run_frames_until_capture_parks(&mut app, &ctx) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both captures did not park within {GATEWAY_TEST_WAIT:?}"
+        );
+    }
+
+    let mut access = app
+        .control
+        .control_access
+        .take()
+        .expect("control access is installed");
+    access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+    access.begin_frame_over_budget_for_test(&mut app, &ctx);
+    let (parked, armed) = (
+        access.awaiting_screenshot_for_test(),
+        access.screenshot_armed_for_test(),
+    );
+    assert_eq!(parked, 1, "the first capture claimed the frame's image");
+    assert!(
+        armed,
+        "the capture still parked asks the window for the next frame"
+    );
+    access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+    access.begin_frame_over_budget_for_test(&mut app, &ctx);
+    let parked = access.awaiting_screenshot_for_test();
+    app.control.control_access = Some(access);
+    assert_eq!(parked, 0, "and claims that frame when it arrives");
+
+    // Two response workers encode the two bundles, so the answers can arrive
+    // in either order; each is matched to its own request.
+    let mut answered = Vec::new();
+    for _ in 0..sent.len() {
+        let response = client.read().expect("the gateway answered");
+        assert!(
+            sent.contains(&response.request_id),
+            "an answer to a request this test sent"
+        );
+        assert!(
+            !answered.contains(&response.request_id),
+            "each request is answered once"
+        );
+        answered.push(response.request_id.clone());
+        let manifest = success_result(&response);
+        assert_eq!(
+            manifest["screenshot"]["capture_revision"], manifest["capture_revision"],
+            "each capture carries its own image, stamped with its own revision"
+        );
+    }
+
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 /// A bundle always carries a page of the journal and the effective
 /// configuration, so it always requires the scopes those belong to —
 /// whatever scopes were named.
@@ -5559,9 +5652,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
             std::time::Instant::now() < deadline,
             "the settle window closes and the key comes back"
         );
-        // Slower than the connection's request rate limit, or the refusal
-        // that comes back is the limiter's rather than the store's.
-        std::thread::sleep(Duration::from_millis(50));
+        pause_one_request_interval();
     };
 
     assert!(
