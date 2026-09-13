@@ -37,6 +37,10 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
   #446) into this branch as a normal merge commit, rerun
   `guardrails_test.sh`, and run `mission_ship_gate.sh ship <n>` as the last
   step after CI and readiness, reporting its output.
+- **R6** — (Coordinator, mid-task, D28) Keep the four repairs of #433's code
+  with their failing-first tests, name them and D28 in the PR body under
+  their own heading, and file one follow-up issue for the four deferred
+  round-three findings.
 
 ## Decisions (from the coordinator's brief)
 
@@ -60,6 +64,16 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
   once, via Bash with the cd prefix.
 - **D8** — (Coordinator decision D26 on #367) `mission_ship_gate.sh` does not
   govern synchronization PRs; the hooks are not touched here.
+- **D28** — (Coordinator decision D28, mid-task; source: the coordinator's
+  second message, quoted below) Keep the four repairs of #433's code
+  (`6b181df5`: the right-drag no longer pans, a slipped right-click raises no
+  range; `ba900a24`: a hidden pane's action bar goes away, the stale-divider
+  clamp no longer panics), each with its failing-first test: confirmed
+  correctness defects, carried to main by the consolidated campaign PR, so no
+  separate main port. Name the four fixes and D28 in the PR body under their
+  own heading, and file one follow-up issue for the four deferred round-three
+  findings (labels `area:app` `type:fix`, milestone "v0.1 - Engine core",
+  each with its evidence, "Found by campaign #367 sync X3 (PR #445)").
 
 ## Assumptions
 
@@ -91,7 +105,10 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
   reports to the coordinator. Step 0 round two found two more in the same
   code — the action bar kept the geometry of a pane a layout stopped
   painting, and the right-drag's pointer clamp panicked on a stale lane
-  divider — repaired the same way, for the same reason.
+  divider — repaired the same way, for the same reason. *Wanted to ask* the
+  coordinator before the first repair (delivery-review: this assumption
+  drove the design); asked after that review, and answered by **D28**, which
+  replaces this assumption as the authority for the repairs.
 
 ## Acceptance criteria
 
@@ -135,6 +152,11 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
       rows in `docs/control-plane/{retry-matrix,ui-behaviour-matrix}.md`,
       `published_schema_compatibility` tests, the empty released diff.
       → PR body. *(R3)*
+- [ ] **A10** — One follow-up issue lists the four deferred round-three
+      findings with their evidence, labelled `area:app` `type:fix`, milestone
+      "v0.1 - Engine core", saying "Found by campaign #367 sync X3 (PR #445)".
+      *Evidence:* `gh issue view 447` (https://github.com/milocaetano/quantick/issues/447), linked from the PR body. → PR body.
+      *(R6)*
 - [ ] **A8** — #433's right-drag measures the bars it crossed without panning
       the chart, and a right-click slipping within egui's click distance
       raises no range; hiding the owning pane takes the action bar away; a
@@ -143,7 +165,12 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
       `a_right_click_that_slips_within_the_click_distance_raises_no_range`,
       `hiding_the_pane_that_owns_a_range_takes_its_action_bar_away` and
       `a_right_drag_survives_a_stale_divider_left_of_the_band` pass, each
-      failing before its repair. → PR body. *(R2)*
+      failing before its repair; and the pan repair's side effect — a middle
+      drag, which the body pan also answered, now follows the pointer 1:1
+      instead of twice as far — is pinned by
+      `a_middle_drag_pans_with_the_pointer_not_twice_as_far` (-200 px for a
+      100 px drag before the repair); the PR body names the four fixes and D28
+      under their own heading. → PR body. *(R2, R6)*
 - [ ] **A9** — The campaign tip `8aa3dc03` (#446) is merged into the branch
       by a merge commit, the main merge `2b2f7e5c` is not rewritten, and
       `guardrails_test.sh` passes after it. *Evidence:* the merge commit's
@@ -170,6 +197,23 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 - [ ] **G6** — The brief's extra validation (D5): `cargo test -p
       quantick-guards`, `sh .claude/hooks/guardrails_test.sh`. *Evidence:*
       logs and the PR body's verification section. → PR body.
+- [ ] **G7** — The brief's constraint that another child owns
+      `.claude/hooks/*`, `docs/campaign/integration.md` and the ship skill:
+      this branch's diff against its base edits none of them. *Evidence:*
+      `git diff --stat origin/campaign/lean-a-plus...HEAD -- .claude/hooks
+      docs/campaign/integration.md .claude/skills/ship` is empty. → PR body.
+- [ ] **G8** — Touches something user-visible (S4's repairs change how the
+      right-drag behaves: it no longer pans, a slipped right-click raises no
+      range, a hidden pane's action bar goes away; and a middle drag pans 1:1
+      instead of twice as far): `trader-ux-review` of the
+      right-drag flow with no unresolved Blocker; every state the repairs
+      touch is reachable without a hand — the range states by #433's
+      `QUANTICK_QUICK_RANGE_DEMO` hook and by the gateway's
+      `annotate.fixed_range_profile.create`, the hidden pane by
+      `layout.preset.apply`; no repair changes how any state is drawn, so
+      #433's `visual-qa` captures stand and are not re-taken. *Evidence:* the
+      trader-UX report on the PR, and the four A8 tests driving the states
+      through the app frame. → PR comment and PR body.
 
 <!-- required-ai-review-goal-gates:v1 -->
 - [ ] **G-AI1** — AI review is executed for the current PR review.
@@ -185,22 +229,32 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 - **C3** — `gh pr ready` requested once, via Bash with the cd prefix, after
   the reviews and final-head CI.
 - **C4** — `sh .claude/hooks/mission_ship_gate.sh ship <n>` from the worktree
-  after C3, its output reported to the coordinator (R5; #446 made it
-  campaign-aware, superseding D8's exemption).
+  after C3 returns `MISSION-COMPLETION: PASS` as a main sync (zero or one own
+  archive); its output, or any refusal and its reason, reported to the
+  coordinator (R5; #446 made it campaign-aware, superseding D8's exemption).
+- **C5** — The handoff block the brief lists (branch; PR URL; head; base tip;
+  conflict table; invariants; guard output; regenerated artifacts and matrix
+  rows added; review verdicts with URLs; markers, or the exact `printf` lines
+  if writing them is denied; CI; ready accepted or denied; any
+  human_decision; the coordinator's next action) returned to the
+  coordinator.
 
 ## Not applicable
 
 - *Touches a hot path*: #433's per-frame paths (the quick-range input and
   paint) were measured on main in #433 (59-60 fps, flat against main); this
-  merge re-homes one paint call and adds no per-print or per-frame work of its
-  own, and the chunked tape's counts tests (A5) are the campaign's hot-path
-  proof.
-- *Touches anything user-visible*: the surface is #433's, visual-QA'd and
-  trader-UX-reviewed on main; this merge re-homes its code and changes no
-  surface.
+  merge re-homes one paint call and adds no per-print work. S4's repairs
+  edit per-frame paths at constant cost — one more button test in the pan
+  condition, one `options` read per pane frame, three `Option` moves in the
+  surface, one `max` before the clamp — with no loop or allocation, so a
+  measurement would compare noise; the chunked tape's counts tests (A5) are
+  the campaign's hot-path proof.
+- *Touches anything user-visible*: no longer claimed not applicable — S4's
+  repairs change the right-drag's behaviour; graded under G8.
 - *Adds a capability* / *Engine determinism*: the capability arrives already
   reviewed from main; no engine code changes. This mission's own new code is
-  matrix rows and two transport-test entries.
+  matrix rows, two transport-test entries, and S4's four repairs with their
+  tests in `pane.rs`, `pane/quick_range.rs` and `surfaces/drawing_chrome/`.
 - *Bridge Python checks*: no bridge or tools file changes (S3).
 
 ## The request as received
@@ -235,3 +289,7 @@ Campaign synchronization X3 of #367. Base: `campaign/lean-a-plus` at
 > Attributed quotation: the coordinator's mid-task message, verbatim.
 
 > Coordinator FYI for X3: PR #446 (Q15, campaign-aware `mission_ship_gate.sh`; hooks, `docs/campaign/integration.md` and the ship skill only, no crate files) just merged into `campaign/lean-a-plus`. Before opening your PR (or now, if you are past the main merge), fetch and merge the new campaign tip into `sync/main-5c7b7d1a` as a normal merge commit, and rerun `sh .claude/hooks/guardrails_test.sh`. With it, your sync PR can also run `sh .claude/hooks/mission_ship_gate.sh ship <n>` from your worktree and should get `MISSION-COMPLETION:PASS` as a main sync (zero or one own archive); do that as the last step after CI and ready, and report the output. Everything else stands.
+
+> Attributed quotation: the coordinator's second mid-task message (decision D28), verbatim.
+
+> Coordinator decision D28 for X3: KEEP the four repairs of #433's code (6b181df5, ba900a24), each with its failing-first test. Reasons: they are confirmed correctness defects (one is a panic), the consolidated campaign PR carries them to main anyway, so no separate main port is needed and the divergence lasts only until that PR merges; reverting them would ship known defects through a reviewed sync. Record D28 in your goal archive with this message as its source (replacing assumption S4 as the authority), name the four fixes and D28 in the PR body under their own heading, and file ONE follow-up issue for the four deferred round-three findings (labels area:app type:fix, milestone "v0.1 - Engine core", body lists each with its evidence, "Found by campaign #367 sync X3 (PR #445)"). Delivery-review's completeness line for S4 is then satisfied by D28. Also merge the new campaign tip (#446, hooks only) into your branch as I wrote earlier. Proceed.
