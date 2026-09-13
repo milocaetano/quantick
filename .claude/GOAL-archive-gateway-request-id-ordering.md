@@ -93,6 +93,18 @@ Issue: #434.
   pass, which asked whether this should be a decision: kept as an assumption
   for that reason, and named in the PR.
 
+- **S5** — A sixth test with #430's exact mechanism,
+  `gateway_rejects_a_duplicate_request_id_while_the_first_is_in_flight`
+  (same module, one `run_frame` then a blocking read), failed once in a
+  local contention round of this branch's binary. It gets #430's fix
+  (`drain_gateway_requests`), assertions unchanged: a stated detour, since
+  R10 needs the step to land and the test guards the very duplicate rule R1
+  must keep. Recorded after review round 2, when it was found.
+- **S6** — Review repairs (rounds 1 and 2 on #436) added an `InFlightId`
+  token in `gateway/server/answer.rs` (a tracked ID is released by the answer
+  that consumes it, or on drop) and moved the test probe between the release
+  and the write. Both serve R1 and R2 as asked; no wire change.
+
 ## Acceptance criteria
 
 - [ ] **A1** — Every terminal path in `gateway/server.rs` that answers a tracked
