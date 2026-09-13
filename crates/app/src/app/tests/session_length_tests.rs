@@ -1074,7 +1074,7 @@ fn long() {
 #[test]
 fn the_check_fails_a_path_whose_work_grows_with_the_session() {
     let clone_the_tape = |state: &ChartState| {
-        std::hint::black_box(state.trades().to_vec());
+        std::hint::black_box(state.trades().iter().cloned().collect::<Vec<Trade>>());
     };
     let ([short, long], _) = trade_chart(
         [SHORT_SESSION, FAST_LONG_SESSION],

@@ -109,6 +109,12 @@ impl TradeTape {
     /// Append `trades`, in order: chunk by chunk, allocating each new chunk
     /// once and never moving a print already held.
     pub fn extend_from_slice(&mut self, trades: &[Trade]) {
+        // The contiguous stage keeps the chart's own sizing (reserve twice
+        // what is then held, so the next push copies nothing), so moving the
+        // chart onto this type changes no count its tests measure.
+        let held = self.trades.len() + trades.len();
+        self.trades
+            .reserve((2 * held).saturating_sub(self.trades.len()));
         self.trades.extend_from_slice(trades);
     }
 
@@ -123,7 +129,7 @@ impl TradeTape {
         if older.is_empty() {
             return;
         }
-        let mut joined = Vec::with_capacity(older.len() + self.trades.len());
+        let mut joined = Vec::with_capacity(2 * (older.len() + self.trades.len()));
         joined.extend_from_slice(older);
         joined.append(&mut self.trades);
         self.trades = joined;
@@ -233,6 +239,17 @@ impl<'a> IntoIterator for &'a TradeTape {
 
     fn into_iter(self) -> Iter<'a> {
         self.iter()
+    }
+}
+
+impl<'a> Extend<&'a Trade> for TradeTape {
+    fn extend<I: IntoIterator<Item = &'a Trade>>(&mut self, trades: I) {
+        // The chart's own sizing, as in `extend_from_slice`.
+        let trades = trades.into_iter();
+        let held = self.trades.len() + trades.size_hint().0;
+        self.trades
+            .reserve((2 * held).saturating_sub(self.trades.len()));
+        self.trades.extend(trades.cloned());
     }
 }
 

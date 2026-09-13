@@ -129,7 +129,7 @@ fn retained(footprint: bool) {
     let after = working_set();
     let trades = state.trades().len();
     let bars = state.bars().len();
-    let trade_bytes = std::mem::size_of_val(state.trades()) as u64;
+    let trade_bytes = (state.trades().len() * std::mem::size_of::<Trade>()) as u64;
     let bar_bytes = std::mem::size_of_val(state.bars()) as u64;
     println!(
         "footprint={footprint}: {trades} prints, {bars} bars (tick:50) in {:.2} s; \
