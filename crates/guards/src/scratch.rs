@@ -39,6 +39,9 @@ use crate::Finding;
 /// `guards` crate depends on nothing at all) cannot share one.
 const SCRATCH_MODULES: &[&str] = &[
     "crates/app/src/scratch.rs",
+    // The paper account journals every close, so the harness test that
+    // drives one needs a folder of its own.
+    "crates/backtest/tests/common/mod.rs",
     "crates/control-local/src/scratch.rs",
     "crates/feed/src/scratch.rs",
     "crates/guards/src/scratch_dir.rs",
@@ -47,6 +50,7 @@ const SCRATCH_MODULES: &[&str] = &[
     // tests under `tests/` cannot share one module.
     "crates/mcp/src/scratch.rs",
     "crates/mcp/tests/common/mod.rs",
+    "crates/paper/src/scratch.rs",
     "crates/replay/src/scratch.rs",
 ];
 

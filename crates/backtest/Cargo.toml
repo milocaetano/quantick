@@ -19,6 +19,11 @@ quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }
 
+# The paper account's second consumer is proved by a test here
+# (`tests/paper_account.rs`); the harness itself does not trade through it yet.
+[dev-dependencies]
+quantick-paper = { path = "../paper" }
+
 [[bin]]
 name = "quantick-backtest"
 path = "src/main.rs"

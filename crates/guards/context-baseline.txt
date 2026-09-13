@@ -121,7 +121,14 @@ CLAUDE.md 9551
 # than behind a cargo feature, and the map is where `control::fake` is named
 # for the same reason. A published module the map does not mention is one a
 # reader has no way to tell from a leak.
-AGENTS.md 13179
+#
+# +252 for `quantick-paper` (#441). The same cost `quantick-feed` paid: one
+# node with the two edges that place it (`paper --> sim`, `engine`), the two
+# consumers that reach it (`app`, `backtest`), and one row saying what it owns
+# and the property that is its reason to exist - one account, three drivers.
+# A raise, not a trade, for the reason given above; the total budget below
+# absorbs it unchanged.
+AGENTS.md 13431
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
