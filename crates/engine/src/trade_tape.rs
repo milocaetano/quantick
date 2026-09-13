@@ -21,8 +21,9 @@
 //!
 //! **Memory.** Every chunk but the last is full, so the tape reserves at most
 //! one chunk it does not use, where a doubling vector reserves up to the
-//! whole tape again. The chunk directory is one pointer triple per chunk: 61
-//! of them at the live envelope's 3,960,000 prints.
+//! whole tape again. The newest chunk, the one appends write to, sits in the
+//! tape itself; the others are listed in a directory of one pointer triple
+//! each — 60 of them at the live envelope's 3,960,000 prints.
 
 use std::iter::FusedIterator;
 use std::ops::{Bound, Index, RangeBounds};
@@ -49,11 +50,13 @@ const OFFSET_MASK: usize = CHUNK_TRADES - 1;
 /// See the [module docs](self) for why chunks, and what an append costs.
 #[derive(Debug, Default)]
 pub struct TradeTape {
-    /// Every chunk holds exactly [`CHUNK_TRADES`] prints except the last,
-    /// which holds at least one; each was allocated at [`CHUNK_TRADES`]
-    /// capacity and is never grown. An empty tape has no chunks.
-    chunks: Vec<Vec<Trade>>,
-    len: usize,
+    /// The full chunks, oldest first: [`CHUNK_TRADES`] prints each.
+    full: Vec<Vec<Trade>>,
+    /// The newest chunk, the one an append writes to: allocated at
+    /// [`CHUNK_TRADES`] capacity with its first print and never grown, and
+    /// empty only while the whole tape is. Kept beside the directory rather
+    /// than in it, so a print's append reads nothing but this.
+    tail: Vec<Trade>,
 }
 
 impl TradeTape {
@@ -61,8 +64,8 @@ impl TradeTape {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            chunks: Vec::new(),
-            len: 0,
+            full: Vec::new(),
+            tail: Vec::new(),
         }
     }
 
@@ -70,71 +73,65 @@ impl TradeTape {
     #[must_use]
     #[inline]
     pub const fn len(&self) -> usize {
-        self.len
+        self.full.len() * CHUNK_TRADES + self.tail.len()
     }
 
     /// Whether the tape holds no print.
     #[must_use]
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.tail.is_empty()
     }
 
     /// Prints the tape can hold before it allocates again: whole chunks, so
     /// never more than [`CHUNK_TRADES`] − 1 beyond [`len`](Self::len).
     #[must_use]
     pub fn capacity(&self) -> usize {
-        self.chunks.len() * CHUNK_TRADES
+        self.full.len() * CHUNK_TRADES + self.tail.capacity()
     }
 
     /// Print `index`, oldest first, or `None` past the end.
     #[must_use]
     #[inline]
     pub fn get(&self, index: usize) -> Option<&Trade> {
-        if index < self.len {
-            Some(&self.chunks[index >> CHUNK_SHIFT][index & OFFSET_MASK])
-        } else {
-            None
-        }
+        self.chunk(index >> CHUNK_SHIFT)?.get(index & OFFSET_MASK)
     }
 
     /// The oldest print held.
     #[must_use]
     #[inline]
     pub fn first(&self) -> Option<&Trade> {
-        self.chunks.first().and_then(|chunk| chunk.first())
+        self.full.first().unwrap_or(&self.tail).first()
     }
 
     /// The newest print held.
     #[must_use]
     #[inline]
     pub fn last(&self) -> Option<&Trade> {
-        self.chunks.last().and_then(|chunk| chunk.last())
+        self.tail.last()
     }
 
     /// Append one print. Writes it into the last chunk, or allocates one new
     /// chunk when that is full; never moves a print already held.
     #[inline]
     pub fn push(&mut self, trade: Trade) {
-        // Every chunk before the last is full, so the last is full (or there
-        // is none) exactly when the length is a whole number of chunks.
-        if self.len & OFFSET_MASK == 0 {
-            self.chunks.push(Vec::with_capacity(CHUNK_TRADES));
+        // The tail is empty only on a new tape and full at a whole chunk:
+        // either way its length is a multiple of one.
+        if self.tail.len() & OFFSET_MASK == 0 {
+            self.open_tail();
         }
-        if let Some(chunk) = self.chunks.last_mut() {
-            chunk.push(trade);
-        }
-        self.len += 1;
+        self.tail.push(trade);
     }
 
     /// Append `trades`, in order: chunk by chunk, allocating each new chunk
     /// once and never moving a print already held.
     pub fn extend_from_slice(&mut self, mut trades: &[Trade]) {
         while !trades.is_empty() {
-            let chunk = self.open_chunk_if_full();
-            let take = (CHUNK_TRADES - chunk.len()).min(trades.len());
-            chunk.extend_from_slice(&trades[..take]);
-            self.len += take;
+            if self.tail.len() & OFFSET_MASK == 0 {
+                self.open_tail();
+            }
+            let take = (CHUNK_TRADES - self.tail.len()).min(trades.len());
+            self.tail.extend_from_slice(&trades[..take]);
             trades = &trades[take..];
         }
     }
@@ -152,7 +149,7 @@ impl TradeTape {
         }
         let held = std::mem::take(self);
         self.extend_from_slice(older);
-        for chunk in held.chunks {
+        for chunk in held.full.into_iter().chain([held.tail]) {
             self.extend_from_slice(&chunk);
         }
     }
@@ -187,7 +184,7 @@ impl TradeTape {
     /// holds fewer.
     #[must_use]
     pub fn last_n(&self, n: usize) -> Iter<'_> {
-        self.range(self.len.saturating_sub(n)..)
+        self.range(self.len().saturating_sub(n)..)
     }
 
     /// The prints at positions `range` as contiguous slices, at most one per
@@ -205,12 +202,10 @@ impl TradeTape {
     /// for the chunk, then one inside it.
     pub fn partition_point(&self, mut pred: impl FnMut(&Trade) -> bool) -> usize {
         let whole = self
-            .chunks
+            .full
             .partition_point(|chunk| chunk.last().is_some_and(&mut pred));
-        match self.chunks.get(whole) {
-            Some(chunk) => (whole << CHUNK_SHIFT) + chunk.partition_point(pred),
-            None => self.len,
-        }
+        let chunk = self.full.get(whole).unwrap_or(&self.tail);
+        (whole << CHUNK_SHIFT) + chunk.partition_point(pred)
     }
 
     /// `range` as a start and an end position, checked as slicing a `Vec`
@@ -224,16 +219,16 @@ impl TradeTape {
         let end = match range.end_bound() {
             Bound::Included(&end) => end + 1,
             Bound::Excluded(&end) => end,
-            Bound::Unbounded => self.len,
+            Bound::Unbounded => self.len(),
         };
         assert!(
             start <= end,
             "tape range starts at {start} but ends at {end}"
         );
         assert!(
-            end <= self.len,
+            end <= self.len(),
             "tape range end {end} is out of range for a tape of {} prints",
-            self.len
+            self.len()
         );
         (start, end)
     }
@@ -246,32 +241,42 @@ impl TradeTape {
         let last = end - 1;
         let (first_chunk, last_chunk) = (start >> CHUNK_SHIFT, last >> CHUNK_SHIFT);
         let (from, to) = (start & OFFSET_MASK, (last & OFFSET_MASK) + 1);
+        let chunk = |index| self.chunk(index).unwrap_or_default();
         if first_chunk == last_chunk {
             return Slices {
-                head: &self.chunks[first_chunk][from..to],
+                head: &chunk(first_chunk)[from..to],
                 middle: [].iter(),
                 tail: &[],
             };
         }
+        // Only the last chunk of a range can be the tail, so every chunk
+        // strictly between its ends is a full one.
         Slices {
-            head: &self.chunks[first_chunk][from..],
-            middle: self.chunks[first_chunk + 1..last_chunk].iter(),
-            tail: &self.chunks[last_chunk][..to],
+            head: &chunk(first_chunk)[from..],
+            middle: self.full[first_chunk + 1..last_chunk].iter(),
+            tail: &chunk(last_chunk)[..to],
         }
     }
 
-    /// The last chunk, after opening a new one if it is full (or if there is
-    /// none): the only allocation an append ever makes.
-    fn open_chunk_if_full(&mut self) -> &mut Vec<Trade> {
-        if self
-            .chunks
-            .last()
-            .is_none_or(|chunk| chunk.len() == CHUNK_TRADES)
-        {
-            self.chunks.push(Vec::with_capacity(CHUNK_TRADES));
+    /// Chunk `index`: a full one, the tail, or `None` past it.
+    #[inline]
+    fn chunk(&self, index: usize) -> Option<&[Trade]> {
+        match self.full.get(index) {
+            Some(chunk) => Some(chunk),
+            None if index == self.full.len() => Some(&self.tail),
+            None => None,
         }
-        let last = self.chunks.len() - 1;
-        &mut self.chunks[last]
+    }
+
+    /// Retire a full tail into the directory (an empty one, on a new tape,
+    /// is simply replaced) and allocate the next: the only allocation an
+    /// append ever makes, once per [`CHUNK_TRADES`] prints.
+    #[cold]
+    fn open_tail(&mut self) {
+        let filled = std::mem::replace(&mut self.tail, Vec::with_capacity(CHUNK_TRADES));
+        if !filled.is_empty() {
+            self.full.push(filled);
+        }
     }
 }
 
@@ -283,7 +288,7 @@ impl Index<usize> for TradeTape {
         self.get(index).unwrap_or_else(|| {
             panic!(
                 "tape index {index} is out of range for a tape of {} prints",
-                self.len
+                self.len()
             )
         })
     }
