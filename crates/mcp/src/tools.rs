@@ -82,8 +82,8 @@ const CHANNEL_PROPERTY: &str = "channel";
 /// Every first-generation observer capability is registered at version 1.
 /// The named tools stay on it, since the schemas they embed are the v1
 /// documents. `quantick_invoke` falls back to it only for an ID the
-/// instance's registry does not list, or when that registry cannot be read,
-/// so the call itself meets the instance's refusal exactly as before.
+/// instance's registry does not list, so the call itself meets the
+/// instance's `control.capability_unknown`.
 const FIRST_CAPABILITY_VERSION: u32 = 1;
 
 const INSTANCE_ID_PROPERTY: &str = "instance_id";
@@ -519,16 +519,17 @@ pub fn call(
                 // D20: an omitted version is the newest the instance
                 // registers, read from its own registry — never a table here.
                 // The call then goes to the instance that answered, so the
-                // version and the answer come from one registry. A describe
-                // that fails leaves the first version, and the call itself
-                // meets and reports whatever stopped it.
+                // version and the answer come from one registry. A refused
+                // describe is the caller's answer, code and `retryable` as
+                // given: guessing version 1 instead would, for `layout.*`,
+                // apply the change and then report it unavailable.
                 None => match described(link, target.as_ref()) {
                     Ok((answered_by, document)) => {
                         target = Some(answered_by);
                         newest_registered_version(&document, &capability_id)
                             .unwrap_or(FIRST_CAPABILITY_VERSION)
                     }
-                    Err(_) => FIRST_CAPABILITY_VERSION,
+                    Err(refused) => return Ok(refused),
                 },
                 Some(value) => value
                     .as_u64()
@@ -1276,9 +1277,13 @@ mod tests {
         );
     }
 
-    /// A link whose describe is refused while every other call answers, to
-    /// prove the default never swaps the caller's answer for describe's error.
-    struct DescribeRefused(Vec<u32>);
+    /// A link whose describe is refused — by the gateway under load, in the
+    /// response it answers, or by the transport itself — while it records
+    /// every other call it is asked to make.
+    struct DescribeRefused {
+        by_transport: bool,
+        invoked: Vec<(String, u32)>,
+    }
 
     impl ControlLink for DescribeRefused {
         fn instances(&mut self) -> Result<crate::link::Instances, ControlError> {
@@ -1292,41 +1297,65 @@ mod tests {
             capability_version: u32,
             _payload: Value,
         ) -> Result<quantick_control::wire::ResponseEnvelope, ControlError> {
-            if capability_id == DESCRIBE_CAPABILITY {
-                return Err(ControlError::invalid_request("describe is refused"));
-            }
-            self.0.push(capability_version);
+            let outcome = if capability_id == DESCRIBE_CAPABILITY {
+                let busy = ControlError::new(
+                    quantick_control::id::ErrorCode::new(
+                        quantick_control::error::codes::BACKPRESSURE,
+                    )
+                    .expect("valid code"),
+                    "the gateway is at capacity",
+                    true,
+                );
+                if self.by_transport {
+                    return Err(busy);
+                }
+                quantick_control::wire::ResponseOutcome::Failure { error: busy }
+            } else {
+                self.invoked
+                    .push((capability_id.to_owned(), capability_version));
+                quantick_control::wire::ResponseOutcome::Success { result: json!({}) }
+            };
             Ok(quantick_control::wire::ResponseEnvelope {
                 protocol_version: 1,
                 request_id: quantick_control::id::RequestId::new("test").expect("valid id"),
                 instance_id: InstanceId::from_bytes([5; 16]),
                 capture_revision: None,
                 module_revisions: Vec::new(),
-                outcome: quantick_control::wire::ResponseOutcome::Success { result: json!({}) },
+                outcome,
                 warnings: Vec::new(),
             })
         }
     }
 
+    /// Version 1 of a `layout.*` call applies the change and then answers
+    /// `control.capability_unavailable`, so a describe refused under load and
+    /// papered over with version 1 would move a pane, report that it did not,
+    /// and move it again on the agent's retry. The caller gets describe's own
+    /// refusal, retryable as the gateway said, and nothing is invoked.
     #[test]
     fn a_refused_describe_leaves_the_first_version_rather_than_its_error() {
-        let mut link = DescribeRefused(Vec::new());
-        let result = call(
-            &mut link,
-            INVOKE,
-            json!({ "capability_id": SNAPSHOT_CAPABILITY, "payload": {} }),
-        )
-        .expect("invoke forwards");
-        assert!(
-            !result.is_error,
-            "the caller got describe's refusal for a call it never made: {:?}",
-            result.structured_content
-        );
-        assert_eq!(link.0, vec![FIRST_CAPABILITY_VERSION]);
-        assert_eq!(
-            result.structured_content.as_ref().unwrap()["capability_version"],
-            FIRST_CAPABILITY_VERSION
-        );
+        for by_transport in [false, true] {
+            let mut link = DescribeRefused {
+                by_transport,
+                invoked: Vec::new(),
+            };
+            let result = call(
+                &mut link,
+                INVOKE,
+                json!({ "capability_id": "layout.pane.move", "payload": {} }),
+            )
+            .expect("a refusal is a tool result, not a protocol error");
+            assert!(
+                link.invoked.is_empty(),
+                "a version-less call went ahead without describe (by_transport \
+                 {by_transport}): {:?}",
+                link.invoked
+            );
+            assert!(result.is_error, "describe's refusal was swallowed");
+            let error = &result.structured_content.as_ref().expect("structured")["error"];
+            assert_eq!(error["code"], quantick_control::error::codes::BACKPRESSURE);
+            assert_eq!(error["retryable"], true);
+        }
     }
 
     /// The default is part of the tool's published contract, so the tool
