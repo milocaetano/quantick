@@ -169,6 +169,12 @@ the full round would have asked is an assumption below marked *wanted to ask*.
   that declares neither is still refused. The broken rustdoc link the bug pass
   found now points at `CapabilityAdmitted::admit_payload`, and
   `cargo doc -p quantick-control-host` runs with `-D warnings`.
+- **S15** — **The bug pass's last finding, fixed.** Step 0 at `0e5696a1` found
+  that a tier accepting revisions would not hold a `RevisionPolicy::Required`
+  capability to sending one, where the reference host refuses it. Such a tier
+  now refuses a `Required` capability with no expected revision; `STRICT`
+  checks none and still does not ask, so today's behaviour holds. The
+  admission contract test covers both halves.
 - **S11** — **`contract.rs`'s own test module is untouched.** The tests reach
   `json!` through `use super::*`; production no longer uses it, so the
   import is kept under `#[cfg(test)]` rather than editing the tests.

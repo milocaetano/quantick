@@ -1,4 +1,4 @@
-# A4 / A9: tests travelled with the moved files (round-two repair tree, base ed14b7c5)
+# A4 / A9: tests travelled with the moved files (final repair tree, base ed14b7c5)
 #[test] in the moved files at 317772a5: journal.rs 4, gateway/idempotency.rs 22, registry.rs 0 = 26
 #[test] in crates/control-host at HEAD: journal.rs 4, idempotency.rs 22 (moved); projection.rs 4, catalogue.rs 3, tests/admission_contract.rs 12 (new)
 quantick-app tests listed before: 2143; after: 2117

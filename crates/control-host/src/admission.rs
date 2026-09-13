@@ -95,7 +95,8 @@ pub fn register_capability<P>(
 /// admission order. It only ever narrows what a capability declares: a dry
 /// run is admitted when the tier accepts one *and* the descriptor supports
 /// one, and expected revisions when the tier accepts them *and* the
-/// descriptor's revision policy is not `Forbidden`. Every tier the
+/// descriptor's revision policy is not `Forbidden` — and a tier that accepts
+/// them also holds a `Required` capability to sending one. Every tier the
 /// application hosts today is [`TierPolicy::STRICT`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TierPolicy {
@@ -204,6 +205,17 @@ impl<'a> CapabilityAdmitted<'a> {
         if refused_dry_run || refused_revisions {
             return Err(ControlError::invalid_request(
                 "this tier's capabilities forbid dry runs and expected revisions",
+            ));
+        }
+        // A tier that checks revisions holds a capability that requires one
+        // to it, as the reference host does. A tier that checks none —
+        // `STRICT`, every tier today — cannot, so it does not ask.
+        let missing_revision = policy.accepts_expected_revisions
+            && descriptor.revision_policy == RevisionPolicy::Required
+            && envelope.expected_revisions.is_empty();
+        if missing_revision {
+            return Err(ControlError::invalid_request(
+                "capability requires at least one expected revision",
             ));
         }
         Ok(PayloadAdmitted { descriptor, own })

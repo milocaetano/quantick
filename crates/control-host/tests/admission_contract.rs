@@ -296,6 +296,30 @@ fn an_expected_revision_needs_both_a_tier_that_accepts_one_and_a_capability_that
         admit(&host(), &peek, &observe(), checks_revisions),
         Err(codes::INVALID_REQUEST.to_owned())
     );
+
+    // The write requires one: a tier that checks revisions refuses it
+    // without, as the reference host does. The strict tier checks none, so it
+    // does not ask — today's behaviour.
+    let mut unrevised_put = put_with_revision();
+    unrevised_put.expected_revisions.clear();
+    assert_eq!(
+        admit(
+            &host(),
+            &unrevised_put,
+            &observe_and_write(),
+            checks_revisions
+        ),
+        Err(codes::INVALID_REQUEST.to_owned())
+    );
+    assert_eq!(
+        admit(
+            &host(),
+            &unrevised_put,
+            &observe_and_write(),
+            TierPolicy::STRICT
+        ),
+        Ok(PUT_HANDLER)
+    );
 }
 
 #[test]
