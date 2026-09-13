@@ -732,16 +732,29 @@ fn described(
     }
 }
 
+/// The describe document's keys the version resolution reads. Named once so
+/// a test can hold them to the committed describe contract: a renamed key
+/// would otherwise leave every version-less call quietly on version 1.
+const DESCRIBED_CAPABILITIES_KEY: &str = "capabilities";
+const CAPABILITY_ID_KEY: &str = "id";
+const CAPABILITY_VERSION_KEY: &str = "version";
+
 /// The highest version a describe document registers for `capability_id`.
 /// The registry lists one row per version, so a capability that kept v1 when
 /// v2 arrived appears twice. `None` when the ID is not listed at all.
 fn newest_registered_version(described: &Value, capability_id: &str) -> Option<u32> {
     described
-        .get("capabilities")
+        .get(DESCRIBED_CAPABILITIES_KEY)
         .and_then(Value::as_array)?
         .iter()
-        .filter(|capability| capability.get("id").and_then(Value::as_str) == Some(capability_id))
-        .filter_map(|capability| capability.get("version").and_then(Value::as_u64))
+        .filter(|capability| {
+            capability.get(CAPABILITY_ID_KEY).and_then(Value::as_str) == Some(capability_id)
+        })
+        .filter_map(|capability| {
+            capability
+                .get(CAPABILITY_VERSION_KEY)
+                .and_then(Value::as_u64)
+        })
         .filter_map(|version| u32::try_from(version).ok())
         .max()
 }
@@ -1178,6 +1191,36 @@ mod tests {
         assert_eq!(take_instance_id(&mut arguments).unwrap(), Some(id));
         assert!(!arguments.contains_key("instance_id"));
         assert!(arguments.contains_key("scopes"));
+    }
+
+    /// The resolver's fixtures are hand-written, so this is what ties its keys
+    /// to the contract the application publishes: every capability row of the
+    /// committed describe document requires a string-typed ID and an integer
+    /// version under exactly the keys the resolver reads.
+    #[test]
+    fn the_version_resolution_reads_the_keys_the_describe_contract_requires() {
+        let describe = parse_schema(DESCRIBE_RESULT_SCHEMA);
+        let rows = &describe["properties"][DESCRIBED_CAPABILITIES_KEY];
+        assert_eq!(rows["type"], "array", "capabilities is a list of rows");
+        let reference = rows["items"]["$ref"]
+            .as_str()
+            .expect("capability rows are a named definition");
+        let name = reference
+            .strip_prefix("#/$defs/")
+            .expect("a local definition");
+        let row = &describe["$defs"][name];
+        let required = row["required"].as_array().expect("required keys");
+        for key in [CAPABILITY_ID_KEY, CAPABILITY_VERSION_KEY] {
+            assert!(
+                required.iter().any(|entry| entry == key),
+                "the describe contract no longer requires `{key}` on a capability row"
+            );
+        }
+        assert_eq!(row["properties"][CAPABILITY_VERSION_KEY]["type"], "integer");
+        assert!(
+            row["properties"][CAPABILITY_ID_KEY].is_object(),
+            "the ID is a declared property"
+        );
     }
 
     /// D20: the default is read from the instance's registry, one row per
