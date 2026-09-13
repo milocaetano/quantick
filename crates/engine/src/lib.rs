@@ -20,6 +20,7 @@
 //! replay to guard determinism.
 
 pub mod fixture;
+pub mod forming_run;
 pub mod golden;
 
 mod bar;

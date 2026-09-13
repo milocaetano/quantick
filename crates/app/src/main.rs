@@ -99,6 +99,14 @@ mod worker_progress;
 mod workspace_bundle;
 mod workspace_store;
 
+// The test binary counts heap work per thread (`work_meter`); production
+// builds keep the system allocator.
+#[cfg(test)]
+mod work_meter;
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
+
 /// The bar type the chart opens on. The type and its parameter are tunable live
 /// from the controls bar; the feed and symbol come from the configuration.
 const INITIAL_TICK_SIZE: u64 = 50;
