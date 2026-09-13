@@ -73,6 +73,12 @@ is an `S` line, and the ones step 3 would have asked are marked *wanted to ask*.
   `engine` is documented as never seeing a timezone. If a later crate below
   `app` needs the same offset, lifting `civil` into its own crate is a
   follow-up, not this mission's.
+  *Amended in review (AI-review thread PRRT_kwDOTfuoRs6h7rs7, commit
+  `a61aa969`):* the follow-up was taken now. Q17's headless control host
+  uses `TzOffset` too, so leaving it in `paper` would have handed that crate
+  an edge into the paper account for a timezone. `civil` became
+  `quantick-civil`, a dependency-free crate below `paper` and `app`, listed in
+  `HEADLESS_CRATES` and `CLAUDE.md`'s sentence beside `paper`.
 - **S4** — **`app` keeps a host wrapper at `crates/app/src/paper_account.rs`**
   that owns the headless account plus the UI-side state the old struct
   carried: the report window state, the cmd-trading gesture settings and the
@@ -115,6 +121,17 @@ is an `S` line, and the ones step 3 would have asked are marked *wanted to ask*.
   test driving the account would be the reverse edge `sim → paper`.
   `backtest` already links `sim` and is the headless consumer `CLAUDE.md`
   names, so it can take `paper` as a plain downward edge.
+
+- **S11** — *Recorded in review.* Two trader-visible deltas the move makes
+  on purpose, both found by the step-0 bug pass on `a61aa969`: the risk-lock
+  refusal sentence loses a run of 18 stray spaces a lost line continuation
+  had left inside it ("or                  turn the lock off" becomes "or
+  turn the lock off"), and a timeline reset's forced close now raises
+  `journal_changed`, so a report held open re-reads after a seek instead of
+  omitting that trade until the next close. No golden and no test asserted
+  the old text or the stale report; both are fixes of the same kind the
+  goldens exist to stop from happening *silently*, which is why they are
+  written down here and in the PR body.
 
 S2 is the mission's headline scope decision; the PR body states it first
 for the reviewer to ratify, not only here.
@@ -160,7 +177,8 @@ decision; S9 fixes the load format so two readers agree on it.
       ready for the coordinator's merge.
       *Evidence:* `gh pr view --json baseRefName`. → PR body. *(R9)*
 - [x] **A6** — The graph is one-way: `ALLOWED` gives `paper` exactly
-      `engine` and `sim`, `backtest` gains `paper`, nothing gains `app`, and
+      `engine` and `sim` (amended by S3's review note: and `civil`, whose own
+      row is empty), `backtest` gains `paper`, nothing gains `app`, and
       the graph guard passes.
       *Evidence:* the `graph.rs` hunk and the guards run. → PR body, "A6".
       *(R2)*
