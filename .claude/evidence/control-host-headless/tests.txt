@@ -1,4 +1,4 @@
-# A4 / A9: tests travelled with the moved files (review-repair tree, base c29ce130)
+# A4 / A9: tests travelled with the moved files (round-two repair tree, base ed14b7c5)
 #[test] in the moved files at 317772a5: journal.rs 4, gateway/idempotency.rs 22, registry.rs 0 = 26
 #[test] in crates/control-host at HEAD: journal.rs 4, idempotency.rs 22 (moved); projection.rs 4, catalogue.rs 3, tests/admission_contract.rs 12 (new)
 quantick-app tests listed before: 2143; after: 2117
@@ -8,8 +8,8 @@ git diff --stat origin/campaign/lean-a-plus -- crates/app/src/app/tests (empty =
 <end>
 
 # cargo test -p quantick-control-host (after touching a crate source so it recompiles)
-   Compiling quantick-control-host v0.1.0 (C:\src\quantick-worktrees\refactor-control-host-headless\crates\control-host)
 test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Compiling quantick-control-host v0.1.0 (C:\src\quantick-worktrees\refactor-control-host-headless\crates\control-host)
 quantick-app in the dependency tree of quantick-control-host (all edge kinds): 0

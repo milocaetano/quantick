@@ -157,6 +157,18 @@ the full round would have asked is an assumption below marked *wanted to ask*.
   to its own `catalogue.rs`. The caller still owns the registry and the three
   tables: moving them into one struct would force edits to `contract.rs`'s own
   unit tests, which reach those fields, and R4 keeps those tests unchanged.
+- **S14** — **Second (last) AI-review repair round, behaviour unchanged.**
+  `CapabilityAdmitted` no longer exposes the handler key: `admit_payload`
+  takes the host's own lookup as a closure and hands the found value back on
+  `PayloadAdmitted::own`, so the descriptor to dispatch on exists only after
+  the payload checks. `TierPolicy` now only narrows what a capability
+  declares — a dry run needs the tier *and* `dry_run_supported`, expected
+  revisions need the tier *and* a non-`Forbidden` revision policy; with
+  `STRICT` that refuses exactly what was refused before. The permissive tests
+  use the reference counter *set*, which declares both, and prove the read
+  that declares neither is still refused. The broken rustdoc link the bug pass
+  found now points at `CapabilityAdmitted::admit_payload`, and
+  `cargo doc -p quantick-control-host` runs with `-D warnings`.
 - **S11** — **`contract.rs`'s own test module is untouched.** The tests reach
   `json!` through `use super::*`; production no longer uses it, so the
   import is kept under `#[cfg(test)]` rather than editing the tests.

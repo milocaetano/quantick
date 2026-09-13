@@ -1108,20 +1108,18 @@ impl ObserverContract {
         envelope: RequestEnvelope,
         effective_scopes: &BTreeSet<PermissionId>,
     ) -> Result<PreparedRequest, ControlError> {
-        let admitted = admit_capability(&self.registry, &envelope, effective_scopes)?;
-        let action = self
-            .actions
-            .lookup(admitted.id().as_str(), admitted.version());
         // An action validates against its own compiled schema — the same
         // one the hotkey's call passes — so the two paths cannot drift.
-        let admitted = admitted.admit_payload(
-            &envelope,
-            action.as_ref().map(|action| &action.input),
-            &self.input_validators,
-            TierPolicy::STRICT,
-        )?;
+        let admitted = admit_capability(&self.registry, &envelope, effective_scopes)?
+            .admit_payload(
+                &envelope,
+                |id, version| self.actions.lookup(id.as_str(), version),
+                |action| &action.input,
+                &self.input_validators,
+                TierPolicy::STRICT,
+            )?;
         let descriptor = admitted.descriptor();
-        if action.is_some() {
+        if admitted.own().is_some() {
             let dispatch = PreparedDispatch::Action(PreparedAction {
                 capability_id: descriptor.id.clone(),
                 capability_version: descriptor.version,

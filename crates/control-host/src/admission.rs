@@ -9,7 +9,10 @@
 //! revision ([`CapabilityAdmitted::admit_payload`]); and, once a handler has
 //! named the snapshot scopes the request reaches, are those granted too
 //! ([`PayloadAdmitted::admit_scopes`]). Each step returns the only value the
-//! next one accepts, so a host cannot skip one or run them out of order.
+//! next one accepts, and the admitted descriptor — the handler key — is only
+//! reachable once the payload checks passed, so a host cannot dispatch past a
+//! skipped or reordered check. The scope check is the one the host calls after
+//! its handler runs, because only the handler knows which scopes it reaches.
 //!
 //! What is *not* here is the authority table itself — which profiles,
 //! permissions, effects and capabilities exist — and the handlers. Those are
@@ -22,7 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use quantick_control::{
     error::{ControlError, codes},
     id::{CapabilityId, ErrorCode, PermissionId},
-    registry::{CapabilityDescriptor, ControlRegistry, RegistryError, check_idempotency_key},
+    registry::{
+        CapabilityDescriptor, ControlRegistry, RegistryError, RevisionPolicy, check_idempotency_key,
+    },
     schema::CompiledSchema,
     wire::RequestEnvelope,
 };
@@ -87,8 +92,11 @@ pub fn register_capability<P>(
 ///
 /// A policy rather than a hard-coded refusal, so a later tier that can
 /// preview an action or check a revision says so here instead of forking the
-/// admission order. Every tier the application hosts today is
-/// [`TierPolicy::STRICT`].
+/// admission order. It only ever narrows what a capability declares: a dry
+/// run is admitted when the tier accepts one *and* the descriptor supports
+/// one, and expected revisions when the tier accepts them *and* the
+/// descriptor's revision policy is not `Forbidden`. Every tier the
+/// application hosts today is [`TierPolicy::STRICT`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TierPolicy {
     pub accepts_dry_runs: bool,
@@ -105,18 +113,20 @@ impl TierPolicy {
 
 /// A request that passed the first three checks — the envelope, the
 /// registration, the permissions the descriptor requires — and may now have
-/// its payload checked. The only way to [`PayloadAdmitted`], so the order
-/// cannot be skipped.
+/// its payload checked. It exposes nothing a host could dispatch on; the only
+/// way forward is [`Self::admit_payload`].
 #[must_use = "a capability admission is only half of the checks"]
 pub struct CapabilityAdmitted<'a> {
     descriptor: &'a CapabilityDescriptor,
 }
 
 /// A request that passed every check that does not depend on its handler.
-/// The host dispatches on [`Self::descriptor`]; a handler that names snapshot
-/// scopes then passes them through [`Self::admit_scopes`].
-pub struct PayloadAdmitted<'a> {
+/// The host dispatches on [`Self::descriptor`] — or on [`Self::own`], what it
+/// holds for the capability outside the compiled table — and a handler that
+/// names snapshot scopes then passes them through [`Self::admit_scopes`].
+pub struct PayloadAdmitted<'a, A> {
     descriptor: &'a CapabilityDescriptor,
+    own: Option<A>,
 }
 
 /// The first three checks: the envelope, the registration, the permissions
@@ -147,34 +157,29 @@ pub fn admit_capability<'a>(
 }
 
 impl<'a> CapabilityAdmitted<'a> {
-    /// The admitted capability's ID, for the host to find what it holds for it.
-    pub fn id(&self) -> &'a CapabilityId {
-        &self.descriptor.id
-    }
-
-    /// The admitted capability's version.
-    pub fn version(&self) -> u32 {
-        self.descriptor.version
-    }
-
     /// The next three checks: the payload against its schema, the
-    /// idempotency key against the descriptor's policy, and the tier's
-    /// refusal of what `policy` does not accept.
+    /// idempotency key against the descriptor's policy, and what the tier's
+    /// `policy` and the descriptor together accept of a dry run or an
+    /// expected revision.
     ///
-    /// `own_validator` is a schema the host holds for this capability outside
-    /// the compiled table — an action validates against the very schema its
-    /// hotkey passes, so the two paths cannot drift. Without one, the
-    /// capability must have been registered through [`register_capability`].
-    pub fn admit_payload(
+    /// `own` looks up what the host holds for this capability outside the
+    /// compiled table, and `own_schema` names the input schema inside it — an
+    /// action validates against the very schema its hotkey passes, so the two
+    /// paths cannot drift. Without one, the capability must have been
+    /// registered through [`register_capability`]. The looked-up value comes
+    /// back on the [`PayloadAdmitted`].
+    pub fn admit_payload<A>(
         self,
         envelope: &RequestEnvelope,
-        own_validator: Option<&CompiledSchema>,
+        own: impl FnOnce(&CapabilityId, u32) -> Option<A>,
+        own_schema: impl Fn(&A) -> &CompiledSchema,
         input_validators: &CompiledCapabilitySchemas,
         policy: TierPolicy,
-    ) -> Result<PayloadAdmitted<'a>, ControlError> {
+    ) -> Result<PayloadAdmitted<'a, A>, ControlError> {
         let descriptor = self.descriptor;
-        let validator = match own_validator {
-            Some(validator) => validator,
+        let own = own(&descriptor.id, descriptor.version);
+        let validator = match &own {
+            Some(own) => own_schema(own),
             None => input_validators
                 .get(&descriptor.id)
                 .and_then(|versions| versions.get(&descriptor.version))
@@ -191,22 +196,29 @@ impl<'a> CapabilityAdmitted<'a> {
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
         let carries_key = envelope.idempotency_key.is_some();
         check_idempotency_key(descriptor.idempotency, carries_key, envelope.dry_run)?;
-        let refused_dry_run = envelope.dry_run && !policy.accepts_dry_runs;
-        let refused_revisions =
-            !envelope.expected_revisions.is_empty() && !policy.accepts_expected_revisions;
+        let accepts_dry_run = policy.accepts_dry_runs && descriptor.dry_run_supported;
+        let accepts_revisions = policy.accepts_expected_revisions
+            && descriptor.revision_policy != RevisionPolicy::Forbidden;
+        let refused_dry_run = envelope.dry_run && !accepts_dry_run;
+        let refused_revisions = !envelope.expected_revisions.is_empty() && !accepts_revisions;
         if refused_dry_run || refused_revisions {
             return Err(ControlError::invalid_request(
                 "this tier's capabilities forbid dry runs and expected revisions",
             ));
         }
-        Ok(PayloadAdmitted { descriptor })
+        Ok(PayloadAdmitted { descriptor, own })
     }
 }
 
-impl<'a> PayloadAdmitted<'a> {
+impl<'a, A> PayloadAdmitted<'a, A> {
     /// The capability the request may now be dispatched to.
     pub fn descriptor(&self) -> &'a CapabilityDescriptor {
         self.descriptor
+    }
+
+    /// What the host's `own` lookup found for this capability, if anything.
+    pub fn own(&self) -> Option<&A> {
+        self.own.as_ref()
     }
 
     /// The last check, after a handler has named the snapshot scopes the

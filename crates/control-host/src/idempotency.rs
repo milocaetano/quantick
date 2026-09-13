@@ -210,7 +210,7 @@ impl IdempotencyStore {
     /// descriptor allows one: it refuses a key on a `Forbidden` capability before
     /// this is ever reached.
     ///
-    /// [`admit_payload`]: crate::admission::admit_payload
+    /// [`admit_payload`]: crate::admission::CapabilityAdmitted::admit_payload
     pub fn ticket(
         instance_id: &InstanceId,
         principal_id: &PrincipalId,
