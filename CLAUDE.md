@@ -15,9 +15,9 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-Run `cargo test -p quantick-guards` after edit batches. `PostToolUse` is advisory and silent until guards are built in that worktree; silence is not a pass.
+`PostToolUse` is advisory and silent until guards are built in that worktree; silence is not a pass.
 
-`cargo run -p quantick-guards -- --report` gives deterministic size/struct/ratchet metrics for comparison.
+`cargo run -p quantick-guards -- --report` prints deterministic metrics to compare.
 
 CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
 
@@ -25,9 +25,9 @@ CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_t
 
 Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the graph. The invariants:
 
-- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`. Inside a crate too: cargo cannot see a module cycle, so `guards/src/cycle.rs` fails the build on a new one.
+- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`. Inside a crate too: `guards/src/cycle.rs` fails a new module cycle.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
-- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `indicators`, `pine`, `replay`, `sim`, `paper`, `civil` and `strategy`, and it binds third-party crates too; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is the stopwatch in its `main.rs`, whose numbers reach stderr and never a report.
+- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `indicators`, `pine`, `replay`, `sim`, `paper`, `civil` and `strategy`, and it binds third-party crates too; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` are *told* how much time passed rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is its `main.rs` stopwatch, which reaches stderr, never a report.
 - **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
@@ -50,13 +50,14 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 - **The size ratchet enforces this** — `crates/guards/src/size.rs`, production lines only, `tests/` untracked. `crates/guards/size-baseline.txt` is empty: no production file exceeds 1,500 lines.
 - **Teeth both ways** — no growth past a ceiling, nor more than 200 lines below one. `cargo run -p quantick-guards -- --tighten` writes the new number when a file shrinks.
 - **Growth is pay-as-you-go** — an exception is a signed, reasoned entry, and a budget caps the sum of all ceilings, so raising one means lowering another in the same change.
+- **UI-free code in `app` is ratcheted too** — `guards/src/ui_free.rs` caps the lines of `crates/app` files that never name `egui`/`eframe`; such code belongs in a headless crate.
 
 ## Keeping the instructions small
 
 The context ratchet covers this file, `AGENTS.md`, and Markdown under `.claude/skills/`, `.agents/`, `docs/campaign/` and `docs/workflow/`; goal files and workflow evidence are excluded. Ceilings live in `context-baseline.txt`; `ratchet.rs` owns the mechanism.
 
 - **A `SKILL.md` states every rule that decides an outcome, once, operatively.** Reasoning, histories and per-dimension detail go to `references/` beside it, read on demand — a waived dimension then costs nothing. A working rule's reasoning goes to `docs/agentic-development.md`.
-- **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts. So splitting prose into sub-threshold files buys nothing — only deleting it does.
+- **The budget is the whole tracked weight**, not just the ceilings: files over 10,000 bytes carry a signed entry, and every smaller one still counts, so only deleting prose buys room.
 
 ## Workflow
 

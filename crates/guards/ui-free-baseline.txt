@@ -1,0 +1,20 @@
+# The app-ui-free ratchet's ceiling (`crates/guards/src/ui_free.rs`): the
+# production lines of every crates/app/src file that never names `egui` or
+# `eframe` in code, summed, less the files `ui-free-exemptions.txt` signs for.
+# One `crates/app <ceiling>` entry and the `!budget` capping it; `#` starts a
+# comment.
+#
+# `app` is the one crate the headless guard does not scan, so code that never
+# touches the UI and lives there anyway has no wall-clock rule, no second
+# consumer, and rebuilds the largest crate on every change. This number may
+# only fall. Moving such code into a headless crate lowers it, and
+# `cargo run -p quantick-guards -- --tighten` writes the lower number once it
+# sits more than 200 below. A raise is this entry and the budget, both raised
+# in the same change with a comment saying why.
+#
+# Recorded at campaign tip 317772a5 (#443, Q18): 50,795 lines in 130 files,
+# measured by the guard and by an independent script. Q16 (#441, the paper
+# account) and Q17 (#442, the control-plane host) move code out of `app` and
+# will lower it.
+!budget 50795
+crates/app 50795

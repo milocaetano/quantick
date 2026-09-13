@@ -57,6 +57,17 @@ fn code_naming_either_ui_identifier_makes_a_file_ui_code() {
     assert!(!names_ui(&["fn ship() {}", "struct Plain;"]));
 }
 
+/// A name that merely contains one of the identifiers is not a reference:
+/// `timeframe` ends in `eframe`, and a substring test charged every file
+/// that names a timeframe as UI code.
+#[test]
+fn an_identifier_inside_a_longer_word_is_not_the_ui_library() {
+    assert!(!names_ui(&["let timeframe = Timeframe::M1;"]));
+    assert!(!names_ui(&["fn set_regui() {}"]));
+    assert!(names_ui(&["use egui_extras::TableBuilder;"]));
+    assert!(names_ui(&["let x = (egui::Pos2::ZERO, 1);"]));
+}
+
 /// A comment is not a reference to the library. Were it one, `// egui` at
 /// the top of a file would take every line in it off the books.
 #[test]
@@ -67,6 +78,7 @@ fn a_comment_naming_the_ui_library_does_not_make_a_file_ui_code() {
     ]));
     assert!(!names_ui(&["    // egui would draw this", "fn ship() {}"]));
     assert!(!names_ui(&["/// See eframe.", "fn ship() {}"]));
+    assert!(!names_ui(&["fn ship() {} // egui", "struct Plain;"]));
 }
 
 #[test]
@@ -117,7 +129,7 @@ fn a_file_that_drops_its_last_ui_line_is_charged_whole() {
 #[test]
 fn test_items_are_not_production_lines() {
     let source = format!(
-        "{}\n#[cfg(test)]\nmod tests {{\n    fn a() {{}}\n    fn b() {{}}\n}}\n",
+        "{}#[cfg(test)]\nmod tests {{\n    fn a() {{}}\n    fn b() {{}}\n}}\n",
         ui_free(3)
     );
     let root = tree(&[("free.rs", source)], 3, "");
@@ -170,7 +182,9 @@ fn an_exemption_without_a_reason_is_a_finding() {
     let found = lines(&findings);
     assert!(found.contains("ui-free-exemptions.txt:1"), "{found}");
     assert!(found.contains("no reason"), "{found}");
-    assert!(findings.iter().all(|f| f.remedy == EXEMPTION_REMEDY));
+    assert_eq!(findings[0].remedy, EXEMPTION_REMEDY);
+    // A malformed line exempts nothing, so a typo cannot widen the list.
+    assert!(found.contains("crates/app: 3"), "{found}");
 }
 
 #[test]
@@ -248,6 +262,26 @@ fn a_total_far_below_its_ceiling_asks_for_tighten_and_tighten_lowers_both() {
     assert!(text.contains("!budget 10"), "{text}");
     assert!(text.contains("# fixture"), "comments survive: {text}");
     assert_eq!(check(&root), Vec::new());
+}
+
+/// An entry lowered by hand leaves the budget behind; the finding sends the
+/// author to `--tighten`, not to the over-ceiling remedy.
+#[test]
+fn a_budget_left_far_above_the_entry_asks_to_follow_it_down() {
+    let root = tree(&[("free.rs", ui_free(10))], 10, "");
+    write_baseline(&root, 10, 10 + SLACK + 1);
+    let findings = check(&root);
+    assert_eq!(findings.len(), 1, "{}", lines(&findings));
+    assert_eq!(findings[0].remedy, BUDGET_SLACK_REMEDY);
+}
+
+#[test]
+fn a_baseline_that_does_not_parse_says_so_rather_than_passing() {
+    let root = tree(&[("free.rs", ui_free(10))], 10, "");
+    fs::write(root.join(BASELINE_FILE), "!budget 10\ncrates/app lots\n").expect("writable");
+    let findings = check(&root);
+    assert_eq!(findings.len(), 1, "{}", lines(&findings));
+    assert_eq!(findings[0].remedy, BASELINE_REMEDY);
 }
 
 #[test]

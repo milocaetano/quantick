@@ -1,7 +1,8 @@
 //! Repository guards for the things the compiler cannot see.
 //!
 //! [`GUARDS`] is the list, and deliberately the only one: a file may not
-//! silently absorb a crate ([`size`]), the instructions a session loads may
+//! silently absorb a crate ([`size`]), code that never names the UI library
+//! may not pile up in the UI crate ([`ui_free`]), the instructions a session loads may
 //! not either ([`context`]), a crate's modules may not weld themselves into a
 //! cycle ([`cycle`]), everything written into a tracked file is English
 //! ([`language`]), sources are UTF-8 without a BOM and without welded doc
@@ -202,6 +203,16 @@ pub const GUARDS: &[Guard] = &[
             tighten: size::tighten,
             policy: &size::POLICY,
             measured: size::measured,
+        }),
+    },
+    Guard {
+        name: "app-ui-free",
+        check: ui_free::check,
+        check_file: ui_free::check_file,
+        ratchet: Some(Ratchet {
+            tighten: ui_free::tighten,
+            policy: &ui_free::POLICY,
+            measured: ui_free::measured,
         }),
     },
     Guard {

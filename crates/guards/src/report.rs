@@ -27,16 +27,17 @@
 //!
 //! # Why this measures and enforces nothing
 //!
-//! Not one of these numbers is ratcheted. The mode exists to make "did it
+//! The report itself enforces none of these numbers; the ratchet rows only
+//! repeat what the guards enforce elsewhere. The mode exists to make "did it
 //! improve?" answerable, and a number that fails a build is a number people
-//! negotiate with rather than read. Deciding which of them earns a ceiling is
-//! a later decision, taken with a few weeks of reports to look at.
+//! negotiate with rather than read. A number that earns a ceiling earns it in
+//! a guard, never here — as `app.lines.without_egui` did in #443.
 
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use crate::{GUARDS, graph, headless, size};
+use crate::{GUARDS, graph, headless, size, ui_free};
 
 /// How many of the largest production files the report names.
 ///
@@ -107,14 +108,6 @@ pub fn site_counts(production: &[&str]) -> Vec<usize> {
 /// Spelled in halves for the reason [`SITES`] gives.
 const TEST_MODULE_SITE: &str = concat!("#[cfg(te", "st)]");
 
-/// The identifier whose absence marks a line as portable out of `app`.
-///
-/// `app` is the only crate allowed to know about the UI toolkit, so a
-/// production line in it that never names `egui` is a line some other crate
-/// could hold. The count is headroom, not a defect list: plenty of those
-/// lines are genuinely app glue.
-const UI_IDENTIFIER: &str = "egui";
-
 /// The crate whose share of the workspace the sprint is trying to shrink.
 const TRUNK_CRATE: &str = "app";
 
@@ -135,10 +128,16 @@ pub fn render(root: &Path) -> Rendered {
     wide_structs_section(&mut out, &scanned);
     let failures = ratchets_section(&mut out, root);
     sites_section(&mut out, &scanned);
+    // The number the `app-ui-free` ratchet rations, under the label it had
+    // before it was rationed. It used to count *lines* not spelling the
+    // library, which scored 97% of `app` as portable; the guard's file-level
+    // measurement is the one definition now. A failure prints `failed` and
+    // is counted once, by the ratchet's own row above.
+    let portable = ui_free::measured(root).map_or_else(|_| "failed".to_owned(), |n| n.to_string());
     row(
         &mut out,
-        format!("{TRUNK_CRATE}.lines.without_{UI_IDENTIFIER}"),
-        scanned.portable_trunk_lines,
+        format!("{TRUNK_CRATE}.lines.without_egui"),
+        portable,
     );
     // The two architecture invariants, as numbers a merge can be diffed on:
     // how wide the graph is, and whether the headless rule still holds. Both
@@ -301,7 +300,7 @@ fn sites_section(out: &mut String, scanned: &Scan) {
 ///
 /// The paths come from [`size::measure`], so this never decides for itself
 /// which files are in scope; it only re-reads what that walk already found
-/// and asks four more questions of each one.
+/// and asks three more questions of each one.
 struct Scan {
     /// Wide structs by crate-qualified name, sorted.
     wide_structs: Vec<(String, usize)>,
@@ -309,8 +308,6 @@ struct Scan {
     sites: Vec<usize>,
     /// `#[cfg(test)]` occurrences in files that are not themselves test files.
     test_modules: usize,
-    /// Production lines in the trunk crate that never name the UI toolkit.
-    portable_trunk_lines: usize,
 }
 
 impl Scan {
@@ -319,9 +316,7 @@ impl Scan {
             wide_structs: Vec::new(),
             sites: vec![0; SITES.len()],
             test_modules: 0,
-            portable_trunk_lines: 0,
         };
-        let trunk = format!("crates/{TRUNK_CRATE}/src/");
         for (path, _) in counts {
             // A file the walk measured and this pass cannot read is left out
             // rather than guessed at; `size::measure` is the surface that
@@ -335,12 +330,6 @@ impl Scan {
             let production = size::production_source(&source);
             for (total, found) in scan.sites.iter_mut().zip(site_counts(&production)) {
                 *total += found;
-            }
-            if path.starts_with(&trunk) {
-                scan.portable_trunk_lines += production
-                    .iter()
-                    .filter(|line| !line.contains(UI_IDENTIFIER))
-                    .count();
             }
             if let Some(name) = crate_of(path) {
                 scan.wide_structs.extend(
