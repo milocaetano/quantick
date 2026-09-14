@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::shape_core::SHAPES_FAMILY;
 use super::{
-    DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, PresetHost, ToolFamily,
-    ToolShortcut, drawing_fill, drawing_stroke,
+    Constrain, DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles,
+    PresetHost, ToolFamily, ToolShortcut, drawing_fill, drawing_stroke,
 };
 
 /// Registry id, named like `frvp::TOOL_ID` for the callers that gate on
@@ -88,6 +88,44 @@ fn payload_of<'a>(ctxt: &'a DrawContext<'_>) -> &'a RectanglePayload {
         .as_any()
         .downcast_ref::<RectanglePayload>()
         .expect("a rectangle always carries a rectangle payload")
+}
+
+/// Four stable grab points built from the two diagonal anchors.
+///
+/// Handle identity follows anchor components instead of sorted screen sides.
+/// That distinction matters while a drag crosses the opposite corner: the
+/// active handle must keep following the pointer after left becomes right or
+/// top becomes bottom on the next frame.
+fn rectangle_handles(points: &[egui::Pos2]) -> Option<Handles> {
+    let [first, second] = points else {
+        return None;
+    };
+    Some(Handles::from_slice(&[
+        *first,
+        egui::pos2(second.x, first.y),
+        *second,
+        egui::pos2(first.x, second.y),
+    ]))
+}
+
+/// Move the two anchor components owned by one corner while the diagonally
+/// opposite corner stays fixed.
+fn resize_from_corner(
+    points: &[egui::Pos2],
+    handle: usize,
+    to: egui::Pos2,
+) -> Option<Handles> {
+    let [first, second] = points else {
+        return None;
+    };
+    let (first, second) = match handle {
+        0 => (to, *second),
+        1 => (egui::pos2(first.x, to.y), egui::pos2(to.x, second.y)),
+        2 => (*first, to),
+        3 => (egui::pos2(to.x, first.y), egui::pos2(second.x, to.y)),
+        _ => return None,
+    };
+    Some(Handles::from_slice(&[first, second]))
 }
 
 pub(super) static TOOL: Rectangle = Rectangle;
@@ -187,6 +225,27 @@ impl DrawingToolImpl for Rectangle {
         // and clicks through its middle keep belonging to the chart.
         ctxt.style.fill_alpha > 0 || !rect.shrink(radius_px).contains(position)
     }
+    fn handles(
+        &self,
+        _chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<Handles> {
+        rectangle_handles(points)
+    }
+    fn drag_handle(
+        &self,
+        _chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        handle: usize,
+        to: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+        // A rectangle corner changes two independent edges; it has no line
+        // angle for the level constraint to preserve.
+        _constrain: Constrain,
+    ) -> Option<Handles> {
+        resize_from_corner(points, handle, to)
+    }
 
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
@@ -194,5 +253,120 @@ impl DrawingToolImpl for Rectangle {
             vec![egui::pos2(100.0, 100.0), egui::pos2(200.0, 200.0)],
             egui::pos2(150.0, 150.0),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drawings::{ChartPoint, Constrain, PriceScale, ValueUnit};
+
+    fn context<'a>(
+        payload: &'a RectanglePayload,
+        anchors: &'a [ChartPoint],
+        scale: &'a PriceScale,
+    ) -> DrawContext<'a> {
+        DrawContext {
+            payload,
+            anchors,
+            scale,
+            px_per_bar: 20.0,
+            unit: ValueUnit::Price,
+            primary_band: true,
+            style: DrawingStyle::default(),
+            selected: true,
+            halo: false,
+            content_editing: false,
+        }
+    }
+
+    #[test]
+    fn a_rectangle_exposes_all_four_corners_as_handles() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let points = [egui::pos2(300.0, 220.0), egui::pos2(100.0, 80.0)];
+        let anchors = [ChartPoint::at(30.0, 90.0), ChartPoint::at(10.0, 110.0)];
+        let scale = PriceScale::from_range(80.0, 120.0, 0.0, 300.0);
+        let payload = RectanglePayload::default();
+        let ctxt = context(&payload, &anchors, &scale);
+
+        assert_eq!(
+            TOOL.handles(chart, &points, &ctxt)
+                .expect("the rectangle owns its four handles")
+                .as_slice(),
+            &[
+                egui::pos2(300.0, 220.0),
+                egui::pos2(100.0, 220.0),
+                egui::pos2(100.0, 80.0),
+                egui::pos2(300.0, 80.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_corner_expands_and_contracts_around_its_opposite_corner() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let points = [egui::pos2(100.0, 80.0), egui::pos2(300.0, 220.0)];
+        let anchors = [ChartPoint::at(10.0, 110.0), ChartPoint::at(30.0, 90.0)];
+        let scale = PriceScale::from_range(80.0, 120.0, 0.0, 300.0);
+        let payload = RectanglePayload::default();
+        let ctxt = context(&payload, &anchors, &scale);
+        let opposite = [
+            egui::pos2(300.0, 220.0),
+            egui::pos2(100.0, 220.0),
+            egui::pos2(100.0, 80.0),
+            egui::pos2(300.0, 80.0),
+        ];
+        let outward = [
+            egui::pos2(60.0, 40.0),
+            egui::pos2(340.0, 40.0),
+            egui::pos2(340.0, 260.0),
+            egui::pos2(60.0, 260.0),
+        ];
+        let inward = [
+            egui::pos2(140.0, 120.0),
+            egui::pos2(260.0, 120.0),
+            egui::pos2(260.0, 180.0),
+            egui::pos2(140.0, 180.0),
+        ];
+
+        for handle in 0..4 {
+            for target in [outward[handle], inward[handle]] {
+                let moved = TOOL
+                    .drag_handle(
+                        chart,
+                        &points,
+                        handle,
+                        target,
+                        &ctxt,
+                        Constrain::Free,
+                    )
+                    .expect("the rectangle owns every corner drag");
+                let resized = egui::Rect::from_two_pos(moved[0], moved[1]);
+                assert!(resized.contains(target), "handle {handle} follows the pointer");
+                assert!(
+                    resized.contains(opposite[handle]),
+                    "handle {handle} preserves its opposite corner"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_corner_may_cross_its_opposite_without_losing_resize_control() {
+        let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
+        let points = [egui::pos2(100.0, 80.0), egui::pos2(300.0, 220.0)];
+        let anchors = [ChartPoint::at(10.0, 110.0), ChartPoint::at(30.0, 90.0)];
+        let scale = PriceScale::from_range(80.0, 120.0, 0.0, 300.0);
+        let payload = RectanglePayload::default();
+        let ctxt = context(&payload, &anchors, &scale);
+        let target = egui::pos2(340.0, 250.0);
+
+        let moved = TOOL
+            .drag_handle(chart, &points, 0, target, &ctxt, Constrain::Free)
+            .expect("crossing remains a rectangle resize");
+        assert_eq!(
+            egui::Rect::from_two_pos(moved[0], moved[1]),
+            egui::Rect::from_two_pos(target, egui::pos2(300.0, 220.0))
+        );
     }
 }
