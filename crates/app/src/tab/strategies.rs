@@ -242,6 +242,7 @@ impl Tab {
         // re-anchors itself by market time, so one left behind would paint
         // itself onto the refilled series as though a reconnect had happened.
         self.feed_gaps.clear();
+        self.feed_integrity = quantick_feed::FeedIntegrity::default();
         self.resume_floor_ms = None;
         self.history_trades = 0;
         // A run anchored to a tape that no longer exists cannot continue, and

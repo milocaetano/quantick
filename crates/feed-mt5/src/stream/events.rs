@@ -67,6 +67,16 @@ pub enum Mt5Event {
     Backfilled(Vec<Trade>),
     /// One live trade.
     Live(Trade),
+    /// Source sequence evidence, before the tick's mapped data. Timestamps are
+    /// UTC tick stamps; missing ticks may be quotes rather than trades.
+    SequenceAnomaly {
+        /// Exact sequence classification, without inferring missing trades.
+        anomaly: crate::session::SeqAnomaly,
+        /// UTC stamp attached to the previous highest sequence ID.
+        from_ms: i64,
+        /// Current tick's UTC stamp (possibly earlier during history paging).
+        to_ms: i64,
+    },
     /// A new deal-counter reading, ahead of the print that carried it — see
     /// [`crate::DealSampler`] for the reduction and the engine's deal builder
     /// for the join.

@@ -11099,7 +11099,7 @@
                 "x-unit": "milliseconds"
               },
               "tape_gaps": {
-                "description": "Stretches of market time this tab's tape does not cover, left by a\nreconnect that kept the timeline. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
+                "description": "Market-time bounds of source loss or a reconnect interruption.\nEqual bounds can bracket known missing messages. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
                 "items": {
                   "$ref": "#/$defs/FeedGapSnapshot"
                 },
@@ -11220,6 +11220,30 @@
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
+          },
+          "FeedIntegritySnapshot": {
+            "description": "Counts source messages, never estimates how many executed trades were lost.",
+            "properties": {
+              "anomalies": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "missing_messages": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "non_monotonic": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "unknown_loss": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "anomalies",
+              "missing_messages",
+              "unknown_loss",
+              "non_monotonic"
+            ],
+            "type": "object"
           },
           "FrameHealthSnapshot": {
             "properties": {
@@ -11565,6 +11589,17 @@
                   "$ref": "#/$defs/LoadingTaskSnapshot"
                 },
                 "type": "array"
+              },
+              "feed_integrity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FeedIntegritySnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Cumulative source diagnostics, independent of latency and gap eviction."
               },
               "panes": {
                 "items": {

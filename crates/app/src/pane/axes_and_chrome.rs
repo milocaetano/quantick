@@ -32,6 +32,10 @@ use super::{
     draw_dashed_vertical, grid_color,
 };
 
+/// Logical pixels reserved above the chart bottom: three caption text rows
+/// keep gap labels clear of the footer and backfill captions below them.
+const GAP_CAPTION_BOTTOM_CLEARANCE_PX: f32 = 3.0 * SEAM_LABEL_PT;
+
 impl ChartPane {
     /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
     /// visible bars. Draggable left/right to zoom the candle spacing.
@@ -682,13 +686,16 @@ impl ChartPane {
                 continue; // off-screen
             }
             draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::GAP_LINE);
-            // On the right of its line, where the venue seam's caption is on
-            // the left: the two can land on the same bar, and a trader has to
-            // be able to tell which line each word belongs to.
+            // Above the bottom footer/backfill labels, away from the top
+            // foreground loading overlay and flow legend. Keep the caption
+            // to the right of its line, opposite the venue seam's caption.
             painter.text(
-                egui::pos2(x + SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
-                egui::Align2::LEFT_TOP,
-                format!("{} gap", quantick_feed::stall::spoken_ms(gap.duration_ms())),
+                egui::pos2(
+                    x + SEAM_LABEL_INSET_PX,
+                    pane.bottom() - GAP_CAPTION_BOTTOM_CLEARANCE_PX.min(pane.height() / 2.0),
+                ),
+                egui::Align2::LEFT_BOTTOM,
+                format!("{} gap", gap.duration_label()),
                 egui::FontId::proportional(SEAM_LABEL_PT),
                 theme::GAP_LABEL,
             );

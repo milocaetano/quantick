@@ -467,6 +467,12 @@ impl Tab {
                         live = true;
                     }
                 }
+                Ok(FeedEvent::Continuity(event)) => {
+                    self.feed_integrity.observe(event);
+                    if let Some(gap) = event.gap {
+                        self.retain_gap(gap);
+                    }
+                }
                 Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
                 Ok(FeedEvent::Reset) => self.reset_market_state(true),
                 Ok(FeedEvent::OhlcvHistory {
@@ -991,6 +997,12 @@ impl Tab {
         if gap.duration_ms() < MIN_MARKED_GAP_MS {
             return;
         }
+        self.retain_gap(gap);
+    }
+
+    /// Confirmed source loss bypasses the duration threshold used for manual
+    /// reconnect silence: even equal timestamps can bracket missing messages.
+    fn retain_gap(&mut self, gap: FeedGap) {
         // Bounded: the newest gaps are the ones on screen, so the oldest is
         // what falls off.
         if self.feed_gaps.len() >= MAX_REMEMBERED_GAPS {

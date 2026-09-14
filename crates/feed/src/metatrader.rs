@@ -381,6 +381,7 @@ async fn feed_task(
     // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
     // what was already streamed live; only strictly-newer trades pass.
     let mut last_forwarded_ms = i64::MIN;
+    let mut pending_gap = None;
     // Oldest trade timestamp forwarded to the UI: the floor a page's overlap is
     // trimmed against.
     //
@@ -473,6 +474,9 @@ async fn feed_task(
                             // without this, "reconnecting" is a promise
                             // nobody keeps.
                             Mt5Status::Lost { .. } => {
+                                if forwarded_any {
+                                    pending_gap = Some(last_forwarded_ms);
+                                }
                                 bridge_connected.store(false, Ordering::Relaxed);
                                 // A click can land in the gap between a session
                                 // clearing its pager and this status arriving:
@@ -539,6 +543,11 @@ async fn feed_task(
                                 oldest_forwarded_ms =
                                     earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
                                 paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
+                                if let Some(event) = crate::continuity::mt5_reconnect_gap(&trade, &mut pending_gap)
+                                    && tx.send(FeedEvent::Continuity(event)).await.is_err()
+                                {
+                                    break;
+                                }
                                 if tx.send(FeedEvent::Live(trade)).await.is_err() {
                                     break;
                                 }
@@ -813,6 +822,12 @@ async fn feed_task(
                         // gone away does not stop the feed.
                         latency_tx.send_replace(Some(neutral_latency(&sample)));
                     }
+                    Some(Mt5Event::SequenceAnomaly { anomaly, from_ms, to_ms }) => {
+                        let event = crate::FeedContinuity::mt5(anomaly, from_ms, to_ms);
+                        if tx.send(FeedEvent::Continuity(event)).await.is_err() {
+                            break;
+                        }
+                    }
                     Some(Mt5Event::DealCounter(sample)) => {
                         // Ahead of the prints it stamps, in the same channel,
                         // so the consumer holds the reading before the print.
@@ -829,6 +844,11 @@ async fn feed_task(
                         oldest_forwarded_ms =
                             earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
                         paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
+                        if let Some(event) = crate::continuity::mt5_reconnect_gap(&trade, &mut pending_gap)
+                            && tx.send(FeedEvent::Continuity(event)).await.is_err()
+                        {
+                            break;
+                        }
                         if tx.send(FeedEvent::Live(trade)).await.is_err() {
                             break; // UI gone
                         }
@@ -1473,6 +1493,25 @@ mod tests {
         };
         assert_eq!(trade.agg_id, 3);
         assert_eq!(trade.side, quantick_engine::Side::Sell);
+        sock.write_all(b"{\"type\":\"tick\",\"seq\":6,\"time_ms\":1003,\"bid\":\"0\",\"ask\":\"0\",\"last\":\"101\",\"volume\":1,\"flags\":1080}\n").await.unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            .await
+            .unwrap();
+        assert!(matches!(
+            event,
+            Some(FeedEvent::Continuity(crate::FeedContinuity {
+                gap: Some(crate::FeedGap {
+                    from_ms: 10_801_002,
+                    to_ms: 10_801_003
+                }),
+                missing_messages: Some(2),
+                non_monotonic: false,
+            }))
+        ));
+        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            .await
+            .unwrap();
+        assert!(matches!(event, Some(FeedEvent::Live(trade)) if trade.agg_id == 6));
     }
 
     #[tokio::test]
@@ -2451,6 +2490,22 @@ mod tests {
         sock.write_all(script.as_bytes()).await.unwrap();
         sock.flush().await.unwrap();
 
+        // Session IDs reset, so missing messages cannot be counted even when
+        // the new history overlaps. Admit unknown continuity before the tail.
+        let event = tokio::time::timeout(Duration::from_secs(5), feed.events.recv())
+            .await
+            .unwrap();
+        assert!(matches!(
+            event,
+            Some(FeedEvent::Continuity(crate::FeedContinuity {
+                gap: Some(crate::FeedGap {
+                    from_ms: 10_801_002,
+                    to_ms: 10_801_003
+                }),
+                missing_messages: None,
+                non_monotonic: false,
+            }))
+        ));
         // Only the unseen tail arrives; the overlap is dropped, not replayed.
         let Some(FeedEvent::Live(fresh)) =
             tokio::time::timeout(Duration::from_secs(5), feed.events.recv())

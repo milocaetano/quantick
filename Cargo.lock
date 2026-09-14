@@ -3006,6 +3006,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "dirs",
+ "futures-util",
  "quantick-engine",
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
@@ -3016,6 +3017,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 

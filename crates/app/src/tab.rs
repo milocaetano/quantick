@@ -290,9 +290,11 @@ pub struct Tab {
     /// Silences in this tab's tape that no print covers, in market time,
     /// oldest first and bounded by [`MAX_REMEMBERED_GAPS`].
     ///
-    /// Written only by a reconnect that kept the timeline. A reload has no
-    /// gaps to record: it throws the timeline away, so there is no seam.
+    /// Written by reconnects that keep the timeline and source-sequence gaps.
+    /// A reload clears the timeline and its diagnostics together.
     pub feed_gaps: Vec<FeedGap>,
+    /// Cumulative source-message integrity; gaps alone are a bounded view.
+    pub feed_integrity: quantick_feed::FeedIntegrity,
     /// State reported by the live trade transport, independent from how often
     /// that market prints and from the last observed arrival latency.
     pub feed_connection: FeedConnectionState,
@@ -601,6 +603,7 @@ impl Tab {
             forced_stall: stall::ForcedStall::from_env(),
             pending_demo_gap_ms: quantick_feed::demo_gap_ms(),
             feed_gaps: Vec::new(),
+            feed_integrity: quantick_feed::FeedIntegrity::default(),
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
@@ -705,6 +708,7 @@ impl Tab {
             // clock and writes a fabricated gap on a chart that never
             // reconnected.
             self.feed_gaps.clear();
+            self.feed_integrity = quantick_feed::FeedIntegrity::default();
             self.resume_floor_ms = None;
         } else {
             // A kept timeline needs no refill, so nothing restarts the history

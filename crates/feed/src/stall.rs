@@ -76,6 +76,15 @@ pub enum Recovery {
 }
 
 impl Recovery {
+    /// Stable machine-readable name, shared by observers and recovery controls.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Reconnect => "reconnect",
+            Self::Reload => "reload",
+        }
+    }
+
     /// The word on the button.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -301,10 +310,9 @@ const HOURS_ABOVE_MIN: i64 = 90;
 /// A duration in the words a status line uses: seconds while seconds still
 /// mean something, then minutes, then hours.
 ///
-/// Shared with the gap mark the chart draws and with the status line's own
-/// staleness cell, so a four-minute silence is called the same thing by the
-/// popup that offers to fix it, the seam that records it and the line that
-/// measures it.
+/// Shared by the recovery hints and the status line's staleness cell.
+/// Confirmed gap captions use [`crate::FeedGap::duration_label`] instead,
+/// preserving exact millisecond bounds rather than a coarse staleness tier.
 ///
 /// See [`MINUTES_ABOVE_S`] and [`HOURS_ABOVE_MIN`] for where the readings meet.
 #[must_use]
@@ -622,6 +630,8 @@ mod tests {
     fn recovery_names_itself_and_its_opposite() {
         assert_eq!(Recovery::Reconnect.label(), "Reconnect");
         assert_eq!(Recovery::Reload.label(), "Reload");
+        assert_eq!(Recovery::Reconnect.wire_name(), "reconnect");
+        assert_eq!(Recovery::Reload.wire_name(), "reload");
         assert_eq!(Recovery::Reconnect.other(), Recovery::Reload);
         assert_eq!(Recovery::Reload.other(), Recovery::Reconnect);
     }

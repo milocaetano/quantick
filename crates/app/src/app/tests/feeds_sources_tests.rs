@@ -2,6 +2,75 @@ use super::*;
 use quantick_feed::history_reach;
 
 #[test]
+fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades() {
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [
+        observer_scope("health.summary"),
+        observer_scope("feed.status"),
+    ];
+    let before = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let gap = quantick_feed::FeedGap {
+        from_ms: 100,
+        to_ms: 100,
+    };
+    let count = quantick_feed::MAX_REMEMBERED_GAPS + 1;
+    for _ in 0..count {
+        events
+            .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+                gap: Some(gap),
+                missing_messages: Some(3),
+                non_monotonic: false,
+            }))
+            .unwrap();
+    }
+    events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
+    app.active_tab_mut().drain_feed();
+    assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
+    assert_eq!(
+        app.active_tab().feed_gaps.len(),
+        quantick_feed::MAX_REMEMBERED_GAPS
+    );
+    assert!(
+        app.active_tab()
+            .feed_gaps
+            .iter()
+            .all(|observed| *observed == gap)
+    );
+    assert_eq!(
+        app.active_tab().feed_integrity.missing_messages,
+        count as u64 * 3
+    );
+    let after = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let health = &after.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
+    assert_eq!(health["missing_messages"], (count * 3).to_string());
+    assert_eq!(health["unknown_loss"], "0");
+    assert_ne!(
+        before.scopes[&scopes[0]].value,
+        after.scopes[&scopes[0]].value
+    );
+    let gaps = &after.scopes[&scopes[1]].value["tabs"][0]["tape_gaps"];
+    assert_eq!(
+        gaps.as_array().unwrap().len(),
+        quantick_feed::MAX_REMEMBERED_GAPS
+    );
+    assert_eq!(gaps[0]["duration_ms"], 0);
+    app.active_tab_mut().reset_market_state(true);
+    assert_eq!(
+        app.active_tab().feed_integrity,
+        quantick_feed::FeedIntegrity::default()
+    );
+}
+
+#[test]
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
     assert_eq!(

@@ -402,6 +402,58 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     );
 }
 
+#[test]
+fn short_gap_captions_stay_exact_and_clear_of_loading_and_footer_chrome() {
+    for size in [TEST_WINDOW, MIN_WINDOW] {
+        for (duration_ms, label) in [(0, "0 ms gap"), (100, "100 ms gap")] {
+            let (mut app, _commands) = app_with_history(200);
+            let ctx = egui::Context::default();
+            app.active_tab_mut().tape_mut().set_enabled(true, 10);
+            app.active_tab_mut().tape_mut().flush_for_test();
+            let to_ms = trade(180).timestamp_ms;
+            app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
+                from_ms: to_ms - duration_ms,
+                to_ms,
+            });
+            run_frame_at(&mut app, &ctx, size);
+            let output = run_frame_sized(&mut app, &ctx, size, Vec::new(), egui::Modifiers::NONE);
+            let rect_for = |label: &str| {
+                output
+                    .shapes
+                    .iter()
+                    .find_map(|clipped| match &clipped.shape {
+                        egui::Shape::Text(text) if text.galley.text() == label => {
+                            Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("missing {label:?}; painted {:?}", painted_text(&output))
+                    })
+            };
+            let caption = rect_for(label);
+            let loading = rect_for("syncing order book…");
+            let chart = app.active_tab().flow_pane.frame.chart_area.unwrap();
+            assert!(
+                chart.contains_rect(caption),
+                "caption must remain on its chart"
+            );
+            assert!(
+                caption.top() > chart.center().y,
+                "keep clear of top overlays"
+            );
+            assert!(
+                caption.bottom() < chart.bottom() - 20.0,
+                "leave the footer and time axis clear"
+            );
+            assert!(
+                !caption.intersects(loading),
+                "loading must not obscure confirmed loss"
+            );
+        }
+    }
+}
+
 /// A right-click that lands on a drawing owns a section of the menu:
 /// the object by name, rename, lock, hide, delete — and the lock keeps
 /// guarding the delete there like everywhere else.
