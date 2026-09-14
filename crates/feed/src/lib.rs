@@ -396,6 +396,24 @@ impl FeedGap {
     pub fn duration_ms(self) -> i64 {
         self.to_ms.saturating_sub(self.from_ms).max(0)
     }
+
+    /// Exact market-time span for a gap caption, including subsecond loss.
+    /// Unlike a staleness hint, confirmed bounds must not round down to zero.
+    #[must_use]
+    pub fn duration_label(self) -> String {
+        let ms = self.duration_ms();
+        if ms < 1_000 {
+            format!("{ms} ms")
+        } else if ms % 3_600_000 == 0 {
+            format!("{} h", ms / 3_600_000)
+        } else if ms % 60_000 == 0 {
+            format!("{} min", ms / 60_000)
+        } else if ms % 1_000 == 0 {
+            format!("{} s", ms / 1_000)
+        } else {
+            format!("{}.{:03} s", ms / 1_000, ms % 1_000)
+        }
+    }
 }
 
 /// A gap asked for by `QUANTICK_FEED_GAP`, in milliseconds of silence.
@@ -865,5 +883,29 @@ mod tests {
             0,
             "a venue clock that stepped back is not a negative silence"
         );
+    }
+
+    #[test]
+    fn gap_captions_preserve_exact_millisecond_bounds() {
+        for (ms, expected) in [
+            (0, "0 ms"),
+            (100, "100 ms"),
+            (999, "999 ms"),
+            (1_000, "1 s"),
+            (1_001, "1.001 s"),
+            (1_100, "1.100 s"),
+            (60_000, "1 min"),
+            (60_123, "60.123 s"),
+            (3_600_000, "1 h"),
+        ] {
+            assert_eq!(
+                FeedGap {
+                    from_ms: 0,
+                    to_ms: ms
+                }
+                .duration_label(),
+                expected
+            );
+        }
     }
 }

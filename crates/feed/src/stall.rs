@@ -310,10 +310,9 @@ const HOURS_ABOVE_MIN: i64 = 90;
 /// A duration in the words a status line uses: seconds while seconds still
 /// mean something, then minutes, then hours.
 ///
-/// Shared with the gap mark the chart draws and with the status line's own
-/// staleness cell, so a four-minute silence is called the same thing by the
-/// popup that offers to fix it, the seam that records it and the line that
-/// measures it.
+/// Shared by the recovery hints and the status line's staleness cell.
+/// Confirmed gap captions use [`crate::FeedGap::duration_label`] instead,
+/// preserving exact millisecond bounds rather than a coarse staleness tier.
 ///
 /// See [`MINUTES_ABOVE_S`] and [`HOURS_ABOVE_MIN`] for where the readings meet.
 #[must_use]

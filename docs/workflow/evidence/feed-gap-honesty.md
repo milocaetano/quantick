@@ -127,3 +127,37 @@ the coordinator's isolated visual review.
 Independent visual observation, final reviews and exact-head CI remain pending
 at draft publication. This record makes no score claim, and a headless snapshot
 test is not a pixel-level visual verdict.
+
+## Prepublication visual repair
+
+After the initial local archive commit, but before push or PR publication, the
+coordinator's independent capture found a 100 ms gap captioned as `0 s gap` and
+partly hidden by the top-center book-sync overlay. Structured evidence in the
+same captured state confirmed a 100 ms interval and three missing messages.
+The initial successful loop above remains historical proof, not validation of
+the subsequent repair.
+
+The repair gives `FeedGap` an exact duration label, including `0 ms` and `100 ms`,
+without changing coarse stall/status formatting. Captions move into the lower
+chart band above the footer/backfill labels, away from the top loading overlay.
+The original dashed seam and its market-time position are unchanged.
+
+Targeted checks passed: `gap_captions_preserve_exact_millisecond_bounds`, and
+`short_gap_captions_stay_exact_and_clear_of_loading_and_footer_chrome` (0.22s).
+The latter inspects actual app paint shapes at 1400x900 and 900x560 with the
+production book-sync overlay: equal-time and 100 ms captions must remain in
+their chart, above the footer/time axis, and disjoint from the loading label.
+It does not replace the coordinator's repeat pixel observations.
+
+The caption repair's full ordered loop passed at tree
+`73f4e4f6e58b9e41dfab8093a7c909ad32597c48`, 16:59:09 to 17:02:13 on
+2026-09-14 (America/Sao_Paulo): fmt, clippy, build and workspace tests all exited
+zero. App: 2069 passed, zero failed, 11 ignored. Fresh production executable
+SHA256: `8CD1D369A9A855B24AF5E7335505D916F4AE80766BB64E92364502C6B7560EBC`.
+
+The coordinator then integrated sibling R1 at campaign tip
+`05bc95ecfa36339be75411b251edf67cffa79992` and requested a clean rebase before
+publication. That changed-base loop remains due; prior outputs are retained as
+historical evidence, not reused as validation of the combined tree. Repeat
+independent visual observations and final reviews remain pending. No score,
+final visual PASS or mission completion is asserted here.
