@@ -1,0 +1,29 @@
+# method: tools/live_envelope/run_replay.ps1 (WINV26 2026-08-25, 1,700,085 prints, speed 60, day-before join off, book + bubbles + footprint + live strip, window 1500x900, __COMPAT_LAYER=DPIUNAWARE, 45 s, killed not closed), five runs head-1..head-5 in sequence; one side only, no base comparison
+# build: cargo build --release -p quantick-app at ebe462f60fae65c0811a303ae7cf4dda729680d1, clean tree
+# stores: every QUANTICK_* cleared, then every store pointed at a fresh per-run scratch directory. The script was run from a scratch copy with two additions,
+#   QUANTICK_FOOTPRINT_SETTINGS and QUANTICK_DEALS_DIR (both store variables the committed script does not redirect), and its bubbles.toml copy source
+#   spelled as the worktree's absolute config/bubbles.toml; nothing else differs (diff --strip-trailing-cr against the committed script)
+# summary: python tools/live_envelope/frame_timing.py, unchanged, imported by a scratch wrapper that sets its run order to the five head labels; the script's
+#   per-side summary assumes a base side too, so the head line below is re-derived by the wrapper with the script's formula, plus worker_deferred's maximum
+# worker_deferred and worker_parked: 0 in all 110 APP_HEALTH_SUMMARY lines of the five runs, load frames included
+# host: DESKTOP-BTVJFFR (12th Gen Intel Core i5-12400F, 31.8 GB, Windows 11 Pro 10.0.26200); idle: no cargo or rustc process in any 10 s sample over the
+#   five runs (01:16:58-01:20:55); two other sessions' debug quantick-app.exe windows were open throughout (not ours, left running)
+# sha: ebe462f60fae65c0811a303ae7cf4dda729680d1 (campaign/lean-a-plus tip), clean tree (git status --porcelain --untracked-files=no empty), release profile, run 2026-09-14
+# this is the fourth set of five at this SHA and the only one on an idle host; the three earlier sets are listed at the end, unused as evidence
+| Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| head-1 | 21 | 59 / 59.19 | 16.667 | 2.421 | 2.429 | 33.23 | 4,680 | 0 | 256 | 0 |
+| head-2 | 21 | 59 / 59.24 | 16.661 | 2.433 | 2.420 | 33.21 | 4,692 | 0 | 499 | 0 |
+| head-3 | 21 | 59 / 59.19 | 16.674 | 2.298 | 2.324 | 39.31 | 4,679 | 0 | 187 | 0 |
+| head-4 | 21 | 59 / 59.33 | 16.680 | 2.470 | 2.483 | 40.15 | 4,684 | 0 | 77 | 0 |
+| head-5 | 21 | 59 / 59.24 | 16.674 | 2.418 | 2.443 | 33.63 | 4,676 | 0 | 239 | 0 |
+- **head**: 5 runs; fps min 59; frame_avg 16.671 ms; frame_cpu mean 2.408 ms (per run 2.42, 2.43, 2.30, 2.47, 2.42; stdev 0.065); worst steady frame 40.15 ms; APP_SLOW_FRAMES lines 0; worker_deferred max 0
+
+# working set at the kill (bytes), from run_replay.ps1:
+# head-1 262057984; head-2 262615040; head-3 260952064; head-4 262918144; head-5 258805760
+
+# the three earlier sets of five, each started on an idle host and joined by other sessions' cargo builds (1 to 6 rustc.exe per 10 s sample) during the runs;
+# host not idle, so inconclusive and not graded (same method, same build):
+# 00:40-00:44: fps min 49; frame_avg 16.782 ms; frame_cpu mean 2.727 ms; worst steady frame 448.31 ms; APP_SLOW_FRAMES lines 2; worker_deferred max 0
+# 00:49-00:53: fps min 26; frame_avg 17.367 ms; frame_cpu mean 3.327 ms; worst steady frame 1373.04 ms; APP_SLOW_FRAMES lines 8; worker_deferred max 335
+# 01:00-01:04: fps min 16; frame_avg 18.133 ms; frame_cpu mean 4.292 ms; worst steady frame 5099.91 ms; APP_SLOW_FRAMES lines 5; worker_deferred max 2385
