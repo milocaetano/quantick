@@ -511,12 +511,7 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     );
 
     // The BARS group borrows the focused pane's selector fields.
-    let top_spec = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .state
-        .spec()
-        .clone();
+    let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
     let pane = app.active_tab_mut().focused_pane_mut();
     pane.spec.kind = crate::state::BarKind::Time;
     pane.spec.retain(crate::state::BarSpec::Time(900_000));

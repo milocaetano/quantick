@@ -147,8 +147,9 @@ impl BarKind {
     }
 }
 
-/// A bar rule together with its threshold parameter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A bar rule together with its threshold parameter. A small value — a count,
+/// a `Decimal` or an interval — so it is `Copy` and passes by value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarSpec {
     /// N trades per bar.
     Tick(u64),

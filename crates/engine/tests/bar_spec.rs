@@ -103,7 +103,11 @@ fn barkind_all_lists_every_variant() {
             BarKind::ALL.contains(&kind),
             "{kind:?} is a bar kind BarKind::ALL does not list, so no per-kind table has a slot for it"
         );
-        assert_eq!(kind.default_spec().kind(), kind, "{kind:?}'s default is another kind");
+        assert_eq!(
+            kind.default_spec().kind(),
+            kind,
+            "{kind:?}'s default is another kind"
+        );
     }
     assert_eq!(
         BarKind::ALL.len(),
@@ -184,7 +188,7 @@ fn every_bar_spec_survives_the_config_round_trip() {
         let text = spec.to_config_string();
         assert_eq!(
             BarSpec::parse(&text),
-            Ok(spec.clone()),
+            Ok(spec),
             "'{text}' did not come back as the spec that wrote it"
         );
     }
@@ -322,7 +326,11 @@ fn time_summaries_speak_the_chips_language() {
     assert_eq!(fmt_time_interval(300_000), "5m");
     assert_eq!(fmt_time_interval(900_000), "15m");
     assert_eq!(fmt_time_interval(3_600_000), "1h");
-    assert_eq!(fmt_time_interval(90_000), "90s", "90s is not a round minute");
+    assert_eq!(
+        fmt_time_interval(90_000),
+        "90s",
+        "90s is not a round minute"
+    );
     assert_eq!(fmt_time_interval(1_000), "1s");
     assert_eq!(fmt_time_interval(1_500), "1500ms");
     assert_eq!(BarSpec::Time(60_000).summary(), "time(1m)");

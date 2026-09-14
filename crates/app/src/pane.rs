@@ -718,7 +718,7 @@ impl ChartPane {
     /// among the panes on screen.
     fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
-        let selector = SpecSelector::new(spec.clone());
+        let selector = SpecSelector::new(spec);
 
         Self {
             id,
@@ -800,7 +800,7 @@ impl ChartPane {
     /// snap the chart back to a rule they never chose.
     pub fn set_spec(&mut self, spec: BarSpec) {
         let changed = self.state.spec() != &spec;
-        self.spec.set(spec.clone());
+        self.spec.set(spec);
         self.state.set_spec(spec);
         if changed {
             self.bump_pagination_revision();

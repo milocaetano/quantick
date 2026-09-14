@@ -1298,7 +1298,7 @@ fn a_pane_opened_late_keeps_the_backfill_boundary_honest() {
 fn a_timeframe_chip_moves_only_the_time_panes_spec() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let flow_spec = app.active_tab().flow_pane.state.spec().clone();
+    let flow_spec = *app.active_tab().flow_pane.state.spec();
     assert_eq!(
         app.active_tab().pane(PaneSide::Time(0)).state.spec(),
         &BarSpec::Time(time_header::DEFAULT_INTERVAL_MS),
@@ -1520,7 +1520,7 @@ fn the_bars_selectors_govern_the_focused_pane() {
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let flow_spec = app.active_tab().flow_pane.state.spec().clone();
+    let flow_spec = *app.active_tab().flow_pane.state.spec();
 
     // The exact selector fields the toolbar's BARS group borrows for the
     // focused pane, written through the same deferred-spec path.
