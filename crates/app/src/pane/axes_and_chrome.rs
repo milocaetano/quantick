@@ -32,6 +32,10 @@ use super::{
     draw_dashed_vertical, grid_color,
 };
 
+/// Logical pixels reserved above the chart bottom: three caption text rows
+/// keep gap labels clear of the footer and backfill captions below them.
+const GAP_CAPTION_BOTTOM_CLEARANCE_PX: f32 = 3.0 * SEAM_LABEL_PT;
+
 impl ChartPane {
     /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
     /// visible bars. Draggable left/right to zoom the candle spacing.
@@ -688,7 +692,7 @@ impl ChartPane {
             painter.text(
                 egui::pos2(
                     x + SEAM_LABEL_INSET_PX,
-                    pane.bottom() - (3.0 * SEAM_LABEL_PT).min(pane.height() / 2.0),
+                    pane.bottom() - GAP_CAPTION_BOTTOM_CLEARANCE_PX.min(pane.height() / 2.0),
                 ),
                 egui::Align2::LEFT_BOTTOM,
                 format!("{} gap", gap.duration_label()),

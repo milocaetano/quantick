@@ -1,6 +1,7 @@
 # Feed continuity evidence (F1, campaign #472)
 
-Base: `eb7bb039`, `origin/campaign/outside-eight`. Child issue: #474.
+Initial base: `eb7bb039`, `origin/campaign/outside-eight`. Child issue: #474.
+Current publication base: `05bc95ecfa36339be75411b251edf67cffa79992`.
 
 The Binance transport already retained its continuity tracker across automatic
 reconnects. Its returned anomalies were discarded, leaving only tracing. The
@@ -112,7 +113,7 @@ ordered loop: 16:31:56 to 16:32:53 America/Sao_Paulo
 ```
 
 Toolchain: rustc 1.98.0 (`88d9e12ae`, x86_64-pc-windows-msvc), LLVM 22.1.8.
-Base remains `eb7bb039434667bb150be9cdf5237e172c4198fe`. Final evidence and
+At that initial run, base was `eb7bb039434667bb150be9cdf5237e172c4198fe`. Final evidence and
 mission archive edits reuse this runtime proof: their entire delta is prose,
 not runtime, schema, fixture, dependency or build input. Guards and diff hygiene
 are checked again for that delta. Original failed logs and successful raw
@@ -157,7 +158,36 @@ SHA256: `8CD1D369A9A855B24AF5E7335505D916F4AE80766BB64E92364502C6B7560EBC`.
 
 The coordinator then integrated sibling R1 at campaign tip
 `05bc95ecfa36339be75411b251edf67cffa79992` and requested a clean rebase before
-publication. That changed-base loop remains due; prior outputs are retained as
-historical evidence, not reused as validation of the combined tree. Repeat
-independent visual observations and final reviews remain pending. No score,
-final visual PASS or mission completion is asserted here.
+publication. The clean rebase produced head
+`4c394f63dc8fba5e68e221f3d680feb2e20bb8b3`, tree
+`a8cebfcffb26dc8a384bcc840895c8b2854c17e2`. Its full ordered loop passed
+17:04:09 to 17:08:48: all four commands exited zero, 3910 tests passed,
+zero failed, 21 ignored (including two new manual benchmarks). App: 2071
+passed, zero failed, 11 ignored. The production executable SHA256 was
+`8D9A1A30299B269CBCD4E9E7A7EF24A5D92AD6518A94A77E2A536C70DAEEC3FC`.
+
+An independent source review of that full declared-base diff found one
+Should-fix, F1-AR1: the caption/footer clearance needed a documented module-top
+tuning constant under the architecture hardcoded-values rule. The bounded
+repair names `GAP_CAPTION_BOTTOM_CLEARANCE_PX`, preserving the identical three
+text rows and midpoint clamp. Attempt 1 is one compatible source-review repair
+batch; no other runtime change was requested. The successful pre-repair output
+remains retained, not relabelled as the next tree's validation.
+
+The constant-repair ordered loop passed at tree
+`5dd1f20b76e3d5076375b49ab98776b4496994ac`, 17:27:16 to 17:29:30 on
+2026-09-14 (America/Sao_Paulo). All four commands exited zero: 3910 passed,
+zero failed, 21 ignored; app 2071 passed, zero failed, 11 ignored. The fresh
+production executable SHA256 is
+`ED0D9E3B08FDD4C7871F8F7E5738E7481AB76D5D256F7685DFC3408498772F63`.
+
+The final publication record reuses that runtime proof. The full delta from
+the verified tree modifies only this evidence file and the archived mission;
+both are prose records, with no tested input change. Base, toolchain, lock hash
+and tracked bubbles fixture remain the identities recorded above. No relevant
+untracked/generated input changed. Guards, diff hygiene and the entire record
+delta are checked again. Raw command logs, status timestamps and the exact
+current-tree reuse receipt remain in the worktree's private evidence directory.
+
+The independent delta verdict and repeat pixel observations remain pending.
+No score, final visual PASS or mission completion is asserted here.
