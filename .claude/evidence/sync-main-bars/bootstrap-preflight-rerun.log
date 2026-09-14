@@ -1,0 +1,20 @@
+TRANSCRIPT_KIND=bootstrap-preflight-rerun
+START_UTC=2026-09-14T22:04:54.2349144Z
+WORKTREE=C:/src/quantick-worktrees/feat-sync-main-bars
+HEAD=432632239f924883c07e76904551be0faf0f37eb
+TREE=fdb46a97219a096e8686c17f4628c15c374b61f3
+CARGO_LOCK_SHA256=8826f73f0589b91f318c40316c18c1925b926bd7a03c0ddb393ca0a84ec795fa
+CARGO_VERSION=cargo 1.98.0 (797e8a9bc 2026-08-05)
+RUSTC_VERSION=rustc 1.98.0 (88d9e12ae 2026-08-18)
+GUARD_COMMAND=cargo build -p quantick-guards
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.11s
+GUARD_EXIT_CODE=0
+GUARD_FINISH_UTC=2026-09-14T22:04:54.6928221Z
+CHECK_COMMAND=cargo check -j 1 -p quantick-app -p quantick-engine -p quantick-backtest --all-targets
+CARGO_TARGET_DIR=C:/src/quantick-worktrees/fix-mutation-retry-truth/target
+QUANTICK_BUBBLES=C:/src/quantick-worktrees/feat-sync-main-bars/crates/app/config/bubbles.toml
+QUANTICK_BUBBLES_SHA256=5db6b44a4564f7e0cd26482a3f1badd17eb41788e6959453330f2738bb37cd4d
+FREE_GIB_AT_CHECK_START=9.71
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.40s
+CHECK_EXIT_CODE=0
+FINISH_UTC=2026-09-14T22:04:55.3180858Z

@@ -1,0 +1,8 @@
+GUARD_START_UTC=2026-09-14T22:56:53.0692311Z
+HEAD=b558b0c2e32da7a0dd298f81bdef79ee2e292412
+INDEX_TREE=74d4cd4eb3736af2e77466176da3801adb726f4c
+GUARD_BINARY=C:/src/quantick-worktrees/feat-sync-main-bars/target/debug/quantick-guards.exe
+GUARD_BINARY_SHA256=3c2f60ddbe19d5c1d0284a0cce7f2e33399f5d1d5dc2d9fab176f74d987e967a
+COMMAND=target/debug/quantick-guards.exe
+GUARD_EXIT_CODE=0
+GUARD_FINISH_UTC=2026-09-14T22:56:54.2540327Z
