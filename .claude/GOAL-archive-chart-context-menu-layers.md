@@ -73,6 +73,9 @@ The mission began at small with no interrogation. No design-driving ambiguity em
   market orders, and A1's regression test compares anchored VWAP against both
   `chart layers` and `trade`. The focused test and repository guards pass at
   the repair head.
+- The architecture pass named the capture geometry fractions in `harness.rs`;
+  the hook's narrow-window placement is now one documented module policy
+  rather than two inline values. Its focused geometry test and guards pass.
 
 ## Not applicable
 
