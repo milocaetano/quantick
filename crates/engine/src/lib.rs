@@ -15,6 +15,9 @@
 //! - [`Bar`] — the OHLCV + order-flow summary of the trades in one sampling
 //!   bucket. The bucketing rule (tick / volume / dollar / time) lives in a bar
 //!   *builder*; the summary shape is shared.
+//! - [`BarSpec`] — which builder, and its parameter, as the `kind:parameter`
+//!   vocabulary every consumer reads. The chart, the backtest and the bot all
+//!   build through [`BarSpec::build`].
 //!
 //! The [`fixture`] module defines the plain-text trade format that golden tests
 //! replay to guard determinism.
@@ -33,6 +36,7 @@ mod imbalance;
 mod price_grid;
 mod profile;
 mod profile_fold;
+mod spec;
 pub mod threshold;
 mod tick;
 mod time;
@@ -51,6 +55,10 @@ pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};
 pub use price_grid::PriceGrid;
 pub use profile::{ValueArea, VolumeProfile};
 pub use profile_fold::ProfileFold;
+pub use spec::{
+    BarKind, BarSpec, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS, MAX_TIME_INTERVAL_MS,
+    MIN_TIME_INTERVAL_MS, fmt_time_interval,
+};
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};
 pub use time::TimeBarBuilder;
