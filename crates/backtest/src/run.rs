@@ -196,7 +196,8 @@ pub struct SessionRun {
 pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy) -> SessionRun {
     assert!(
         !spec.kind().needs_deal_counter(),
-        "{} needs the venue's deal counter, which a recorded session does not carry;          bars::parse_runnable refuses it before a run",
+        "{} needs the venue's deal counter, which a recorded session does not carry; \
+         bars::parse_runnable refuses it before a run",
         spec.to_config_string()
     );
     let mut builder = spec.build();

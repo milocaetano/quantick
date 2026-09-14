@@ -809,3 +809,16 @@ fn the_backtest_cuts_every_golden_the_chart_cuts() {
         );
     }
 }
+
+/// The parser refuses a deal-count spec by name; a caller that builds one in
+/// code and runs it anyway hits the same refusal rather than a run that cuts
+/// no bar and reports an empty session as if it had traded nothing.
+#[test]
+#[should_panic(
+    expected = "trades:10 needs the venue's deal counter, which a recorded session does not carry; bars::parse_runnable refuses it before a run"
+)]
+fn a_deal_count_spec_is_refused_by_the_run_itself() {
+    let session = synthetic(&tape_of(&["100", "101", "102"]));
+    let mut strategy = EmaCross::new(3, 9, Decimal::ONE, Protection::default(), false);
+    let _ = run_session(&session, BarSpec::Trades(10), &mut strategy);
+}
