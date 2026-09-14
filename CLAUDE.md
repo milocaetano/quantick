@@ -19,7 +19,7 @@ Run `cargo test -p quantick-guards` after edit batches. `PostToolUse` is advisor
 
 `cargo run -p quantick-guards -- --report` gives deterministic size/struct/ratchet metrics for comparison.
 
-CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
+CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 tools/outside_score/test_measure.py`, `python3 bridge/mt5/tests/test_*.py`. Run the ones your change touches, watch with `gh pr checks <n> --watch`; red CI never merges.
 
 ## Architecture
 
