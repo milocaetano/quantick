@@ -24,7 +24,8 @@ VERSION = 1
 UI_TOOLKIT = re.compile(r"\b(?:egui|eframe)\b")
 FN_ITEM = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 IMPL = re.compile(r"\bimpl\b")
-TEST_ATTR = re.compile(r"#\[cfg\((?:all\()?\s*test\b")
+TEST_ATTR = re.compile(r"#\[cfg\((?:all\(|any\()?\s*test\b")
+INNER_TEST_ATTR = re.compile(r"#!\[cfg\((?:all\(|any\()?\s*test\b")
 CRATE_VIS = re.compile(r"\bpub\s*\(\s*(?:crate|super)\s*\)")
 UNWRAP = re.compile(r"\.unwrap\(\s*\)")
 PANIC = re.compile(r"\b(?:panic|unreachable|todo|unimplemented)!")
@@ -161,7 +162,11 @@ def item_end(code, start):
 
 
 def test_spans(code):
-    """Offset ranges of every `#[cfg(test)]` item, attribute included."""
+    """Offset ranges of every `#[cfg(test)]` item, attribute included. An
+    inner `#![cfg(test)]` makes the whole file test code. `any(test, ...)`
+    counts as test: it is test support that some feature also publishes."""
+    if INNER_TEST_ATTR.search(code):
+        return [(0, len(code))]
     spans = []
     for m in TEST_ATTR.finditer(code):
         close = code.find("]", m.end())
@@ -237,7 +242,7 @@ def inherent_impls(prod):
         header = re.split(r"\bwhere\b", header)[0]
         if re.search(r"\bfor\b", header):
             continue
-        head = header.strip().lstrip("&").replace("mut ", "").split("<")[0]
+        head = re.sub(r"\b(?:mut|dyn)\s+", "", header.strip().lstrip("&")).split("<")[0]
         segments = [s.strip() for s in head.split("::") if s.strip()]
         name = IDENT.match(segments[-1]) if segments else None
         if name:
@@ -251,7 +256,8 @@ def measure(tree, ui_crate):
     fns = []  # (lines, rel, name)
     impls = defaultdict(lambda: defaultdict(set))
     ui_free_lines = 0
-    hooks = set()
+    hooks = set()  # names the UI crate reads
+    all_hooks = set()  # names any crate reads
     crates_dir = os.path.join(tree, "crates")
     crate_of = {}  # directory -> crate: the nearest Cargo.toml, else crates/<x>
     for dirpath, dirnames, filenames in os.walk(crates_dir):
@@ -286,15 +292,17 @@ def measure(tree, ui_crate):
             fns.extend((n, rel, name) for name, n in functions(prod))
             for name in inherent_impls(prod):
                 impls[crate][name].add(rel)
+            read = {
+                text
+                for offset, text in literals
+                if HOOK.fullmatch(text) and not in_spans(offset, spans)
+            }
+            all_hooks |= read
             if crate == ui_crate:
+                hooks |= read
                 if not UI_TOOLKIT.search(prod):
                     ui_free_lines += lines
-                hooks.update(
-                    text
-                    for offset, text in literals
-                    if HOOK.fullmatch(text) and not in_spans(offset, spans)
-                )
-    return crates, files, fns, impls, ui_free_lines, hooks
+    return crates, files, fns, impls, ui_free_lines, hooks, all_hooks
 
 
 def ratio(num, den, scale=1.0, places=2):
@@ -302,7 +310,7 @@ def ratio(num, den, scale=1.0, places=2):
 
 
 def render(tree, ui_crate="app", top=10):
-    crates, files, fns, impls, ui_free, hooks = measure(tree, ui_crate)
+    crates, files, fns, impls, ui_free, hooks, all_hooks = measure(tree, ui_crate)
     prod = sum(s["prod"] for s in crates.values())
     test = sum(s["test"] for s in crates.values())
     panic = sum(s["panic"] for s in crates.values())
@@ -319,6 +327,7 @@ def render(tree, ui_crate="app", top=10):
         ("ui_crate.ui_free_lines", ui_free),
         ("ui_crate.ui_free_share_percent", ratio(ui_free, ui, 100, 1)),
         ("ui_crate.harness_hooks", len(hooks)),
+        ("harness_hooks", len(all_hooks)),
         ("files.production", len(files)),
         ("files.over_1000", sum(1 for n, _ in files if n > 1000)),
         ("files.over_1500", sum(1 for n, _ in files if n > 1500)),
@@ -347,17 +356,25 @@ def render(tree, ui_crate="app", top=10):
     return "".join(f"{k}\t{v}\n" for k, v in rows)
 
 
+def usage():
+    sys.stderr.write(__doc__)
+    return 2
+
+
 def main(argv):
     args = list(argv[1:])
     options = {"--ui-crate": "app", "--top": "10"}
     for flag in options:
         if flag in args:
             k = args.index(flag)
+            if k + 1 >= len(args):
+                return usage()
             options[flag] = args[k + 1]
             del args[k:k + 2]
+    if not options["--top"].isdigit():
+        return usage()
     if len(args) != 1 or not os.path.isdir(os.path.join(args[0], "crates")):
-        sys.stderr.write(__doc__)
-        return 2
+        return usage()
     sys.stdout.write(render(args[0], options["--ui-crate"], int(options["--top"])))
     return 0
 

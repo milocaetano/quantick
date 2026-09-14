@@ -6,7 +6,9 @@ fixture text, never read back from the measurement.
 """
 
 import importlib.util
+import io
 import os
+import sys
 import tempfile
 import unittest
 
@@ -172,6 +174,48 @@ class MeasureTest(unittest.TestCase):
         out = rows(measure.render(root, "app", top=20))
         self.assertEqual(out["crate.re_view.lines.production"], "3")
         self.assertNotIn("crate.viewer.lines.production", out)
+
+    def test_inner_and_any_cfg_test_are_test_code(self):
+        root = self.tmp.name
+        # A test-only file declared by an inner attribute: 4 lines, all test.
+        write(root, "crates/app/src/support.rs", "#![cfg(test)]\npub fn helper() {\n    let _ = 1;\n}\n")
+        # Test support also published by a feature: 4 lines, all test.
+        write(
+            root,
+            "crates/app/src/fake.rs",
+            '#[cfg(any(test, feature = "fake"))]\npub fn fake() -> u8 {\n    Some(1).unwrap()\n}\n',
+        )
+        out = rows(measure.render(root, "app", top=20))
+        self.assertEqual(out["lines.test"], str(16 + 4 + 4))
+        self.assertEqual(out["panic_sites"], "1")  # still only `short`'s unwrap
+        self.assertFalse(any(k.endswith("::helper") or k.endswith("::fake") for k in out))
+
+    def test_an_impl_on_a_trait_object_is_named_by_the_trait(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "crates/core/src/a.rs", "impl dyn Shape {\n    fn a(&self) {}\n}\n")
+            write(root, "crates/core/src/b.rs", "impl dyn Shape {\n    fn b(&self) {}\n}\n")
+            out = rows(measure.render(root, "app", top=20))
+        self.assertEqual(out["crate.core.impl_spread.Shape"], "2")
+
+    def test_harness_hooks_count_every_crate_and_the_ui_crate_apart(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "crates/app/src/lib.rs", 'pub fn a() { let _ = "QUANTICK_A"; }\n')
+            write(root, "crates/feed/src/lib.rs", 'pub fn b() { let _ = ("QUANTICK_A", "QUANTICK_B"); }\n')
+            out = rows(measure.render(root, "app", top=20))
+        self.assertEqual(out["ui_crate.harness_hooks"], "1")
+        self.assertEqual(out["harness_hooks"], "2")
+
+    def test_a_flag_without_its_value_prints_usage(self):
+        for argv in (["m", self.tmp.name, "--top"], ["m", self.tmp.name, "--top", "x"], ["m", "--ui-crate"]):
+            stderr = sys.stderr
+            sys.stderr = io.StringIO()
+            try:
+                code = measure.main(argv)
+                text = sys.stderr.getvalue()
+            finally:
+                sys.stderr = stderr
+            self.assertEqual(code, 2, argv)
+            self.assertIn("Usage:", text)
 
     def test_output_is_deterministic(self):
         self.assertEqual(self.out, measure.render(self.tmp.name, "app", top=20))
