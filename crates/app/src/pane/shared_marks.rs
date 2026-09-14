@@ -17,7 +17,8 @@ use crate::bands;
 use crate::drawings::{self, ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle};
 
 use super::{
-    ChartPane, DRAWING_DRAG_THRESHOLD_PX, DRAWING_SELECT_RADIUS_PX, PaneChrome, anchor_hit,
+    ChartPane, DRAWING_ANCHOR_RADIUS_PX, DRAWING_DRAG_THRESHOLD_PX, DRAWING_SELECT_RADIUS_PX,
+    PaneChrome,
 };
 
 /// What a pane resolved on *another* pane's shared marks this frame.
@@ -345,9 +346,13 @@ impl ChartPane {
             // there; reshaping it happens on the chart it was drawn on. An
             // invisible grab point on the mirror would be worse than an
             // absent one: the ring the trader sees is the ring they get.
-            if drawing.tool.handles_are_anchors(band.rect, &points, &ctxt)
-                && let Some(anchor) = anchor_hit(&points, pos)
-            {
+            if let Some(anchor) = drawing.tool.hit_shared_handle(
+                band.rect,
+                &points,
+                pos,
+                DRAWING_ANCHOR_RADIUS_PX,
+                &ctxt,
+            ) {
                 return Some((index, Some(anchor)));
             }
             if body.is_none()

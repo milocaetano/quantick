@@ -48,6 +48,21 @@ body still shows NotAllowed and blocks the gesture. The repair uses the same
 ordered validation with `repair1-*.log` records and a separate input identity.
 The PR's append-only progress records preserve one batch and one attempt.
 
+The full AI review found a separate next-variant gap, `VP-HIT-MIRROR-POLICY-01`
+([thread](https://github.com/milocaetano/quantick/pull/461#discussion_r4002066444)):
+an anchor-based tool could opt out of handles locally while the mirror still
+used a generic anchor picker. Repair batch 2 routes mirrored anchors through
+`DrawingTool::hit_shared_handle`, which preserves the raw-anchor restriction
+and delegates to the same tool policy as the owner. The obsolete pane picker
+is removed. Raw anchors are borrowed instead of copied into a handle buffer.
+`precise_handle_policy_agrees_between_owner_and_mirror` supplies a second,
+anchor-based implementation with selected-only handles, checks both paths before
+and after selection, checks ordinary tools retain their defaults, and verifies
+derived profile handles still cannot enter the mirror's raw-anchor resize port.
+The final ordered logs and input identity are `repair2-*.log` and
+`repair2-validation-identity.json`. Cumulative history preserves two batches,
+one attempt per finding, and the earlier independent closure of the lock case.
+
 ## Validation identity
 
 Windows, Rust 1.98.0 (`88d9e12ae`, 2026-08-18), Cargo 1.98.0, workspace test
@@ -75,6 +90,9 @@ ladder supplies the rows. Screen-to-price bounds select a BTreeMap range before
 projection, including overlapping one-pixel rows. Silhouette traversal uses the
 same clipped paint geometry; hit traversal allocates no segment buffer.
 The cached POC supplies the maximum row volume for both paint passes.
+The second repair shares the existing nearest-handle traversal across hosts;
+it adds no traversal or persistent state and removes the raw-anchor copy from
+that path. Profile painting and the measured geometry fixture are unchanged.
 
 `precise_profile_frame_benchmark` runs 2,048 deterministic rows, 200 egui frames
 per batch, six batches, both paint passes and one pointer test per frame. The

@@ -636,13 +636,32 @@ impl DrawingTool {
         ctxt: &DrawContext<'_>,
     ) -> Option<usize> {
         let radius = self.0.handle_hit_radius(radius_px, ctxt)?;
-        self.handles(chart_rect, points, ctxt)
+        let handles = self.0.handles(chart_rect, points, ctxt);
+        handles
+            .as_deref()
+            .unwrap_or(points)
             .iter()
             .enumerate()
             .map(|(index, point)| (index, point.distance_sq(position)))
             .filter(|(_, distance)| *distance <= radius * radius)
             .min_by(|left, right| left.1.total_cmp(&right.1))
             .map(|(index, _)| index)
+    }
+
+    /// A mirror can resize only raw anchors, using the same policy as its owner.
+    #[must_use]
+    pub fn hit_shared_handle(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        position: egui::Pos2,
+        radius_px: f32,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<usize> {
+        if !self.handles_are_anchors(chart_rect, points, ctxt) {
+            return None;
+        }
+        self.hit_handle(chart_rect, points, position, radius_px, ctxt)
     }
 
     /// Whether this tool's handles *are* its anchors — true for almost every

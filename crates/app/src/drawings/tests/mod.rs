@@ -9,6 +9,8 @@
 
 use super::*;
 
+mod handle_policy;
+
 fn tool(id: &str) -> DrawingTool {
     DRAWING_TOOLS
         .into_iter()
