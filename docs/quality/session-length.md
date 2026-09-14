@@ -268,19 +268,19 @@ run. Three earlier sets agreed on no regression — `dcea6d77`, 1.669 against
 
 ## Gate 6 at one SHA
 
-> **Re-measured at the campaign tip `ebe462f6`.** At the phase-2 tip — the
-> paper account in `crates/paper` and `crates/civil` (#453), the control host
-> in `crates/control-host` (#452), the UI-free ratchet (#450) and the cheap
-> fast variant (#458) — all four gate-6 measurements — this page's long
+> **Re-measured at the campaign tip `1baef443`.** At the synced tip — the
+> phase-2 tip `ebe462f6` plus sync X4 (#466), which brought main's #461 and
+> #462 into the frame path — all four gate-6 measurements — this page's long
 > variant, the tape-growth stall probe, Q3's envelope harness and the
-> dense-replay frame timing — were re-run on release builds of `ebe462f6` on
+> dense-replay frame timing — were re-run on release builds of `1baef443` on
 > a clean tree, and each passed its condition on an idle host.
-> [gate6-ebe462f6/](gate6-ebe462f6/README.md) has the table, the host and the
+> [gate6-1baef443/](gate6-1baef443/README.md) has the table, the host and the
 > raw outputs; it supersedes the `3013f342` files cited below as the evidence
-> at the assessed revision. Absolute frame times rose against `950a6440`
-> (no condition compares them across revisions, and the host differed); the
-> README states both. The earlier runs stay as history:
-> [gate6-950a6440/](gate6-950a6440/README.md) (after #445) and
+> at the assessed revision. The absolute frame times that rose at `ebe462f6`
+> came back inside the same-host A/B's noise band on an idle host (no
+> condition compares them across revisions); the README states both. The
+> earlier runs stay as history: [gate6-ebe462f6/](gate6-ebe462f6/README.md)
+> (phase-2 tip), [gate6-950a6440/](gate6-950a6440/README.md) (after #445) and
 > [gate6-124cdf0d/](gate6-124cdf0d/README.md) (after #437). The table below is
 > the record of what answered the interim assessment's findings.
 

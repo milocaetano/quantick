@@ -1,0 +1,23 @@
+# method: tools/live_envelope/run_replay.ps1 (WINV26 2026-08-25, 1,700,085 prints, speed 60, day-before join off, book + bubbles + footprint + live strip, window 1500x900, __COMPAT_LAYER=DPIUNAWARE, 45 s, killed not closed), five runs head-1..head-5 in sequence; one side only, no base comparison
+# build: cargo build --release -p quantick-app at 1baef4439a68175d65f8a4fecc1bb1e2d06b403f, clean tree
+# stores: every QUANTICK_* cleared, then every store pointed at a fresh per-run scratch directory. The script was run from a scratch copy with two additions,
+#   QUANTICK_FOOTPRINT_SETTINGS and QUANTICK_DEALS_DIR (both store variables the committed script does not redirect), and its bubbles.toml copy source
+#   spelled as the worktree's absolute config/bubbles.toml; nothing else differs (diff --strip-trailing-cr against the committed script)
+# summary: python tools/live_envelope/frame_timing.py, unchanged, imported by a scratch wrapper that sets its run order to the five head labels; the script's
+#   per-side summary assumes a base side too, so the head line below is re-derived by the wrapper with the script's formula, plus worker_deferred's maximum
+# worker_deferred and worker_parked: 0 in all 110 APP_HEALTH_SUMMARY lines of the five runs, load frames included
+# host: DESKTOP-BTVJFFR (12th Gen Intel Core i5-12400F, 31.8 GB, Windows 11 Pro 10.0.26200); idle: no cargo or rustc process in any of the 23 samples, 10 s apart, over the
+#   five runs (03:29:47-03:33:44); the only quantick-app.exe processes in the samples were the five runs' own (no other session's window was open)
+# sha: 1baef4439a68175d65f8a4fecc1bb1e2d06b403f (campaign/lean-a-plus tip), clean tree (git status --porcelain --untracked-files=no empty), release profile, run 2026-09-14
+# the first set of five at this SHA; no repeat was needed
+| Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| head-1 | 21 | 59 / 59.24 | 16.668 | 1.600 | 1.584 | 33.37 | 4,694 | 0 | 78 | 0 |
+| head-2 | 21 | 59 / 59.24 | 16.667 | 1.676 | 1.673 | 33.54 | 4,676 | 0 | 0 | 0 |
+| head-3 | 21 | 59 / 59.10 | 16.667 | 1.687 | 1.690 | 32.79 | 4,671 | 0 | 255 | 0 |
+| head-4 | 21 | 59 / 59.29 | 16.667 | 1.727 | 1.716 | 33.53 | 4,674 | 0 | 30 | 0 |
+| head-5 | 21 | 59 / 59.24 | 16.667 | 1.712 | 1.681 | 33.21 | 4,671 | 0 | 59 | 0 |
+- **head**: 5 runs; fps min 59; frame_avg 16.667 ms; frame_cpu mean 1.680 ms (per run 1.60, 1.68, 1.69, 1.73, 1.71; stdev 0.049); worst steady frame 33.54 ms; APP_SLOW_FRAMES lines 0; worker_deferred max 0
+
+# working set at the kill (bytes), from run_replay.ps1:
+# head-1 260358144; head-2 260583424; head-3 260825088; head-4 261820416; head-5 260608000
