@@ -40,6 +40,11 @@ jobs:
         # Drives export_session.py end to end against a fake terminal: no
         # MetaTrader, no network, no credentials, nothing to install.
         run: python3 tools/mt5/test_export_session.py
+      - name: Outside-score measurement tests
+        # Every measured row the outside-score rubric grades comes from this
+        # lexer. A regression in it moves scores without any code changing, so
+        # its fixtures run here, beside the other offline tool suites.
+        run: python3 tools/outside_score/test_measure.py
       - name: Bridge tests
         # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
         # It covers which ticks the live pump asks for, how "load older" walks

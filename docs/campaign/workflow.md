@@ -39,11 +39,11 @@ require recovery or migration, never an invented default state.
 3. Find prior campaign identifiers and work with the same outcome. Reuse a
    matching issue/PR or explicitly record why it does not discharge this ask.
    An unrelated Project, including an empty one, is not available for takeover.
-4. If the objective names `quantick-score`, read that skill and use its
-   read-only assessment. Reuse a report only at the assessed SHA and rubric
-   version, otherwise reassess. Persist the full report, baseline, target,
-   dimension gaps and A+ gate evidence; never infer A+ from a rounded score.
-   Other campaigns name their own measurable baseline or explain why none is
+4. If the objective names `quantick-score` or `outside-score`, use that
+   skill's read-only assessment. Reuse a report only at the assessed SHA and
+   rubric version, else reassess. Persist the full report, baseline, target,
+   dimension gaps and gate or cap evidence; never infer a grade from a rounded
+   score. Other campaigns name a measurable baseline or say why none is
    meaningful. Missing evidence is unknown, not zero or a pass.
 5. Record granted actions and their source. Permission to create a campaign
    does not automatically authorize implementation. Use the session's existing
