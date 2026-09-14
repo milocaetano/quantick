@@ -81,7 +81,7 @@ The source-first completeness pass reviewed this map after the clarification. It
 
 - Engine/determinism gates do not apply: the change is confined to application chrome and does not alter bars, market data, replay, or deterministic domain output.
 - `new-extension` does not apply: no feed, bar type, indicator, layer, panel, crate, port, or registration point is added.
-- The new-action capability gate does not apply: switch/create/rename/delete already have keyboard, menu, and control-plane reach; this mission only relocates their existing mouse surface while preserving that contract.
+- The new-action capability gate does not apply: this mission adds no action and only relocates existing mouse surfaces. Switch/create/rename retain their existing keyboard, menu, and control-plane reach. Delete retains its existing confirmed keyboard/menu surface and remains deliberately absent from the control plane because the current effect policy forbids destructive capabilities.
 - Docs/skills-only waivers do not apply because Rust runtime UI code changes.
 
 ## Verification evidence before review

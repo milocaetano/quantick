@@ -336,25 +336,6 @@ impl QuantickApp {
         self.create_layout_at(tab, side, name)
     }
 
-    /// Add a layout and put it on the pane whose footer asked for it.
-    pub(crate) fn create_layout_at(
-        &mut self,
-        tab: u64,
-        side: PaneSide,
-        name: Option<&str>,
-    ) -> Result<LayoutId, LayoutError> {
-        if !self.pane_is_real(tab, side) {
-            return Err(LayoutError::Unknown);
-        }
-        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
-            return Err(refusal);
-        }
-        let id = self.workspace.layouts_mut().book_mut().create(name)?;
-        self.mark_layouts_dirty();
-        self.switch_pane_layout(tab, side, id)?;
-        Ok(id)
-    }
-
     pub(crate) fn rename_layout(&mut self, id: LayoutId, name: &str) -> Result<bool, LayoutError> {
         let changed = self.workspace.layouts_mut().book_mut().rename(id, name)?;
         if changed {
