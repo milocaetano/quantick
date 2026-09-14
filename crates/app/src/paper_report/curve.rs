@@ -7,54 +7,14 @@
 
 use eframe::egui;
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 
 use super::{
     CURVE_FILL_ALPHA, CURVE_GRID_LINE_ALPHA, CURVE_GRID_RESERVE_PX, CURVE_GUTTER_PX,
-    CURVE_MAX_H_PX, CURVE_MAX_POINTS, HistoryRow, ReportView,
+    CURVE_MAX_H_PX, CURVE_MAX_POINTS, ReportView,
 };
 use crate::paper_calendar::fmt_offset_minute;
 use crate::paper_chrome::{caption, fmt_decimal, fmt_points, fmt_signed_points, position_word};
 use crate::theme;
-
-/// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
-/// in the two shapes its two readers need: exact points for the trade
-/// list's running total, and plot-ready `f32` with its bounds for the
-/// curve. Computed once when the view is cut — a window holding a year of
-/// trades must not walk them again sixty times a second.
-pub(super) struct EquityWalk {
-    /// `n + 1` exact running totals in points.
-    pub(super) points: Vec<Decimal>,
-    /// The same walk as the curve plots it.
-    pub(super) plot: Vec<f32>,
-    pub(super) low: f32,
-    pub(super) high: f32,
-}
-
-impl EquityWalk {
-    pub(super) fn of(rows: &[HistoryRow]) -> Self {
-        let mut points = Vec::with_capacity(rows.len() + 1);
-        let mut plot = Vec::with_capacity(rows.len() + 1);
-        points.push(Decimal::ZERO);
-        plot.push(0.0_f32);
-        let (mut low, mut high) = (0.0_f32, 0.0_f32);
-        let mut sum = Decimal::ZERO;
-        for row in rows {
-            sum = sum.saturating_add(row.trade.pnl_points);
-            points.push(sum);
-            let value = sum.to_f64().unwrap_or_default() as f32;
-            low = low.min(value);
-            high = high.max(value);
-            plot.push(value);
-        }
-        Self {
-            points,
-            plot,
-            low,
-            high,
-        }
-    }
-}
 
 /// The realized equity curve, `E_k` by trade index — the closing order
 /// that defines the drawdown, so calling the axis "time" would misstate

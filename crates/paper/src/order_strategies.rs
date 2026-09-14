@@ -27,11 +27,11 @@ use serde::{Deserialize, Serialize};
 /// The most rows one strategy may carry — the simulator's own ladder bound,
 /// restated here so the editor can refuse a sixth row while it is being
 /// typed rather than at placement time.
-pub(crate) const MAX_ROWS: usize = MAX_EXIT_PARTS;
+pub const MAX_ROWS: usize = MAX_EXIT_PARTS;
 
 /// One rung of a named strategy, in the units its editor shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct StrategyRow {
+pub struct StrategyRow {
     /// Share of the entry's quantity this rung closes, in percent.
     pub share_percent: Decimal,
     /// Distance to the target, in ticks; `None` leaves the rung with no
@@ -52,7 +52,7 @@ impl StrategyRow {
 
 /// A named exit ladder the trader keeps between sessions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct OrderStrategy {
+pub struct OrderStrategy {
     pub name: String,
     pub rows: Vec<StrategyRow>,
 }
@@ -63,7 +63,7 @@ pub(crate) struct OrderStrategy {
 /// the trader fixes it there rather than discovering it when an order is
 /// refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StrategyError {
+pub enum StrategyError {
     /// No rows at all.
     Empty,
     /// More rows than [`MAX_ROWS`].
@@ -80,7 +80,7 @@ pub(crate) enum StrategyError {
 
 impl StrategyError {
     /// A sentence for the trader, saying what to do instead.
-    pub(crate) fn advice(self) -> &'static str {
+    pub fn advice(self) -> &'static str {
         match self {
             Self::Empty => "a strategy needs at least one row",
             Self::TooManyRows => "a strategy takes at most four rows - merge two of them",
@@ -98,7 +98,7 @@ impl OrderStrategy {
     /// # Errors
     ///
     /// The first [`StrategyError`] the rows commit, in reading order.
-    pub(crate) fn validate(&self) -> Result<(), StrategyError> {
+    pub fn validate(&self) -> Result<(), StrategyError> {
         if self.rows.is_empty() {
             return Err(StrategyError::Empty);
         }
@@ -132,7 +132,7 @@ impl OrderStrategy {
     ///
     /// [`StrategyError`] when the strategy is invalid, or when the ladder it
     /// resolves to is one the simulator refuses.
-    pub(crate) fn resolve(
+    pub fn resolve(
         &self,
         side: Side,
         entry: Decimal,

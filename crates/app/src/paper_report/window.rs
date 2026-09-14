@@ -7,23 +7,20 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_sim::{ClosedTrade, PerformanceReport};
+pub(crate) use quantick_paper::report::{ReportPeriod, load_history, parse_period};
 
-use super::curve::{EquityWalk, draw_equity_curve};
-use super::ledger::{LedgerScope, SourceFilter, load_history};
+use super::curve::draw_equity_curve;
+use super::ledger::LedgerScope;
 use super::tables::{
     draw_exit_reason_grid, draw_report_grid, draw_report_tiles, draw_side_grid, draw_trade_list,
 };
 use super::{
     CALENDAR_CELL_H_PX, CALENDAR_CELL_W_PX, CURVE_MIN_H_CALENDAR_PX, CURVE_MIN_H_PX,
-    CUSTOM_PERIOD_FIELD_PX, HistoryRow, REPORT_DEFAULT_H_PX, REPORT_DEFAULT_W_PX,
-    REPORT_FOOTER_RESERVE_PX, REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX,
-    REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX, ReportEnv, ReportResponse, ReportSnapshot,
-    ReportState, ReportView,
+    CUSTOM_PERIOD_FIELD_PX, REPORT_DEFAULT_H_PX, REPORT_DEFAULT_W_PX, REPORT_FOOTER_RESERVE_PX,
+    REPORT_GRID_MIN_H_PX, REPORT_MIN_HEIGHT_CALENDAR_PX, REPORT_MIN_HEIGHT_PX, REPORT_MIN_WIDTH_PX,
+    ReportEnv, ReportResponse, ReportSnapshot, ReportState, ReportView, SourceFilter,
 };
-use crate::paper_calendar::{
-    CalendarAction, CivilDate, DAY_MS, DateRange, DayIndex, DaySelection, today,
-};
+use crate::paper_calendar::{CalendarAction, CivilDate, DateRange, DayIndex, DaySelection, today};
 use crate::paper_chrome::{list_symbol_folders, pill_toggle};
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -160,13 +157,6 @@ impl ReportState {
             self.report_days_key = None;
             return;
         };
-        let in_scope: Vec<&HistoryRow> = history
-            .rows
-            .iter()
-            .filter(|row| self.report_source.admits(row.source))
-            .collect();
-        let hidden_by_source = history.rows.len().saturating_sub(in_scope.len());
-        let anchor_ms = in_scope.last().map(|row| row.trade.closed_ms);
 
         // Which days hold trades depends on the loaded history, the Source
         // filter and the timezone — not on the picked range. Rebuilding it
@@ -174,7 +164,15 @@ impl ReportState {
         // that did not change.
         let days_key = (self.report_generation, self.report_source, tz);
         if self.report_days_key != Some(days_key) {
-            self.report_days = DayIndex::build(in_scope.iter().map(|row| &row.trade), tz);
+            let source = self.report_source;
+            self.report_days = DayIndex::build(
+                history
+                    .rows
+                    .iter()
+                    .filter(|row| source.admits(row.source))
+                    .map(|row| &row.trade),
+                tz,
+            );
             self.report_days_key = Some(days_key);
             // The days under the grid just changed — a new symbol, a new
             // Source, another timezone. Follow them: leaving the grid
@@ -183,38 +181,15 @@ impl ReportState {
             self.calendar.month = self.report_days.last().map(CivilDate::month_start);
         }
 
-        // A picked range is an explicit answer to "which days"; it takes
-        // over from the pills rather than intersecting with them, so a
-        // chosen date can never come back empty because a pill the user
-        // had forgotten about was cutting too.
-        let cutoff = match range {
-            Some(_) => None,
-            None => anchor_ms.and_then(|anchor| self.report_period.cutoff_ms(anchor, tz)),
-        };
-        let rows: Vec<HistoryRow> = in_scope
-            .iter()
-            .filter(|row| {
-                range.is_none_or(|range| range.contains_ms(row.trade.closed_ms, tz))
-                    && cutoff.is_none_or(|cutoff| row.trade.closed_ms >= cutoff)
-            })
-            .map(|row| (*row).clone())
-            .collect();
-        let hidden_outside = in_scope.len().saturating_sub(rows.len());
-        let trades: Vec<ClosedTrade> = rows.iter().map(|row| row.trade.clone()).collect();
-        let report = PerformanceReport::from_trades(&trades);
-        let equity = EquityWalk::of(&rows);
-        self.report_view = Some(ReportView {
-            period: self.report_period,
-            source: self.report_source,
+        // The numbers are the paper account's crate's: the same cut a
+        // backtest or an operator with no window gets for the same history.
+        self.report_view = Some(ReportView::cut(
+            history,
+            self.report_period,
+            self.report_source,
             range,
             tz,
-            anchor_ms,
-            hidden_outside,
-            hidden_by_source,
-            rows,
-            equity,
-            report,
-        });
+        ));
         // The cut states itself as data. A trader reads the window; an
         // operator that cannot see it reads this line — and it is the same
         // snapshot either of them would be handed.
@@ -693,117 +668,6 @@ impl ReportState {
             self.pick_report_dates(calendar.selection);
         }
     }
-}
-
-/// The report's period filter, measured back from the newest saved trade
-/// in scope — never from a wall clock. The engine has no clock, and a
-/// replayed session's trades may be years old; a wall-clock "7 days" would
-/// report a perfectly good replay as empty.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReportPeriod {
-    Today,
-    Week,
-    Month,
-    Quarter,
-    All,
-    /// A typed span (`2d`, `12h`…) in milliseconds back from the anchor —
-    /// the text box beside the pills.
-    Custom(i64),
-}
-
-impl ReportPeriod {
-    /// Every fixed period, in pill order; `Custom` rides the text box.
-    const PILLS: [Self; 5] = [
-        Self::Today,
-        Self::Week,
-        Self::Month,
-        Self::Quarter,
-        Self::All,
-    ];
-
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Today => "Today",
-            Self::Week => "7d",
-            Self::Month => "30d",
-            Self::Quarter => "90d",
-            Self::All => "All",
-            Self::Custom(_) => "custom",
-        }
-    }
-
-    /// The anchor-relative phrase the support line reads.
-    fn phrase(self) -> String {
-        match self {
-            Self::Today => "the newest trade's day".to_owned(),
-            Self::Week => "the last 7 days".to_owned(),
-            Self::Month => "the last 30 days".to_owned(),
-            Self::Quarter => "the last 90 days".to_owned(),
-            Self::All => "everything saved".to_owned(),
-            Self::Custom(period_ms) => format!("the last {}", fmt_period_ms(period_ms)),
-        }
-    }
-
-    /// Oldest closing time still inside the period, measured back from
-    /// `anchor_ms`; `None` keeps everything. "Today" is the anchor's civil
-    /// day in the chart's display timezone — the ledger renders local
-    /// times, so the day must break where the user sees midnight, not
-    /// where UTC does.
-    pub(super) fn cutoff_ms(self, anchor_ms: i64, tz: TzOffset) -> Option<i64> {
-        match self {
-            // The same civil day the calendar highlights and the ledger
-            // stamps: one date law, so a pill and a picked cell can never
-            // disagree about where midnight is.
-            Self::Today => Some(CivilDate::from_ms(anchor_ms, tz).start_ms(tz)),
-            Self::Week => Some(anchor_ms.saturating_sub(7 * DAY_MS)),
-            Self::Month => Some(anchor_ms.saturating_sub(30 * DAY_MS)),
-            Self::Quarter => Some(anchor_ms.saturating_sub(90 * DAY_MS)),
-            Self::All => None,
-            Self::Custom(period_ms) => Some(anchor_ms.saturating_sub(period_ms)),
-        }
-    }
-}
-
-/// Parse a typed period: a positive whole number and a unit — `m`
-/// (minutes), `h`, `d`, `w` — any case, blanks tolerated. `None` is a
-/// refusal the caller must say out loud: a silently-empty report is
-/// exactly the confusion the typed field exists to end.
-pub(super) fn parse_period(text: &str) -> Option<i64> {
-    let text = text.trim();
-    let unit = text.chars().last()?;
-    let count = text.get(..text.len() - unit.len_utf8())?.trim_end();
-    let count: i64 = count.parse().ok()?;
-    if count <= 0 {
-        return None;
-    }
-    let unit_ms: i64 = match unit.to_ascii_lowercase() {
-        'm' => 60_000,
-        'h' => 3_600_000,
-        'd' => 86_400_000,
-        'w' => 7 * 86_400_000,
-        _ => return None,
-    };
-    count.checked_mul(unit_ms)
-}
-
-/// `45m`, `36h`, `2d`, `1w` — the canonical spelling of a custom period,
-/// largest whole unit first.
-pub(super) fn fmt_period_ms(period_ms: i64) -> String {
-    const MINUTE_MS: i64 = 60_000;
-    const HOUR_MS: i64 = 3_600_000;
-    // `DAY_MS` is the calendar's, not a local copy: the pills and the
-    // month grid measure a day the same way or they are two features.
-    const WEEK_MS: i64 = 7 * DAY_MS;
-    let (value, unit) = if period_ms % WEEK_MS == 0 {
-        (period_ms / WEEK_MS, 'w')
-    } else if period_ms % DAY_MS == 0 {
-        (period_ms / DAY_MS, 'd')
-    } else if period_ms % HOUR_MS == 0 {
-        (period_ms / HOUR_MS, 'h')
-    } else {
-        (period_ms / MINUTE_MS, 'm')
-    };
-    format!("{value}{unit}")
 }
 
 /// Which filter is cutting the report. Exclusive by construction: a

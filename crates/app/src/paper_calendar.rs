@@ -26,194 +26,17 @@ use crate::paper_chrome::{fmt_signed_points, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
-/// Milliseconds in a civil day. Civil days here are exactly 24 h: the
-/// display timezone is a fixed offset (the workspace has no DST table),
-/// so there is no shorter or longer day to model — and inventing one
-/// would be a guess, not a fact.
-pub(crate) const DAY_MS: i64 = 86_400_000;
-
-/// Days in one calendar week.
-const WEEK_DAYS: i64 = 7;
+// The civil-date law itself moved into `quantick-civil`, where the
+// report cuts on it and the journal names its files by it. Re-exported here so
+// the ledger, the report window and the harness hooks keep asking this module.
+pub(crate) use quantick_civil::{
+    CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, parse_iso_date, weekday_abbr,
+};
 
 /// Rows a month grid always paints. Six is the worst case (a 31-day month
 /// starting on a Sunday), and painting a fixed six keeps the calendar from
 /// resizing the report window as the user pages through months.
 const MONTH_GRID_ROWS: usize = 6;
-
-// ----------------------------------------------------------------------
-// Civil dates
-// ----------------------------------------------------------------------
-
-/// Civil UTC date-time from epoch milliseconds: `(year, month, day, hour,
-/// minute, second)`. Civil-from-days per Howard Hinnant's algorithm; no
-/// clock, no chrono.
-pub(crate) fn civil_utc(timestamp_ms: i64) -> (i64, i64, i64, i64, i64, i64) {
-    let seconds = timestamp_ms.div_euclid(1000);
-    let days = seconds.div_euclid(86_400);
-    let time_of_day = seconds.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    (
-        year,
-        month,
-        day,
-        time_of_day / 3600,
-        (time_of_day % 3600) / 60,
-        time_of_day % 60,
-    )
-}
-
-/// `(year, month, day)` from a day number counted from 1970-01-01 —
-/// Hinnant's `civil_from_days`.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let mp = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
-/// The exact inverse of [`civil_from_days`] — Hinnant's `days_from_civil`.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let month_offset = if month > 2 { month - 3 } else { month + 9 };
-    let day_of_year = (153 * month_offset + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-/// One civil date in the display timezone: the unit the ledger stamps, the
-/// calendar paints and the range filter cuts on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct CivilDate {
-    /// Day number counted from 1970-01-01. Kept as the single field so
-    /// ordering, differences and range tests are plain integer work, and
-    /// an impossible date (month 13, day 32) cannot be constructed.
-    day_number: i64,
-}
-
-impl CivilDate {
-    /// The civil date a venue timestamp falls on, in the display timezone.
-    pub(crate) fn from_ms(timestamp_ms: i64, tz: TzOffset) -> Self {
-        let local = timestamp_ms.saturating_add(tz.offset_ms());
-        Self {
-            day_number: local.div_euclid(DAY_MS),
-        }
-    }
-
-    /// The date `year-month-day`, normalising out-of-range months and days
-    /// the way the civil algorithm does (month 13 is January of the next
-    /// year) — the calendar's month paging relies on it.
-    pub(crate) fn from_ymd(year: i64, month: i64, day: i64) -> Self {
-        Self {
-            day_number: days_from_civil(year, month, day),
-        }
-    }
-
-    /// `(year, month, day)`.
-    pub(crate) fn ymd(self) -> (i64, i64, i64) {
-        civil_from_days(self.day_number)
-    }
-
-    /// Day number from 1970-01-01 — the sort key and the day index's key.
-    pub(crate) fn day_number(self) -> i64 {
-        self.day_number
-    }
-
-    /// This date `count` days later (negative walks back).
-    pub(crate) fn offset_days(self, count: i64) -> Self {
-        Self {
-            day_number: self.day_number.saturating_add(count),
-        }
-    }
-
-    /// First venue timestamp that belongs to this civil date, inclusive.
-    pub(crate) fn start_ms(self, tz: TzOffset) -> i64 {
-        self.day_number
-            .saturating_mul(DAY_MS)
-            .saturating_sub(tz.offset_ms())
-    }
-
-    /// First venue timestamp *after* this civil date — the exclusive end,
-    /// so a trade printed at 23:59:59.999 local is inside and the next
-    /// day's 00:00:00.000 is not.
-    pub(crate) fn end_ms(self, tz: TzOffset) -> i64 {
-        self.offset_days(1).start_ms(tz)
-    }
-
-    /// `2026-08-17` — the unambiguous stamp every surface prints.
-    pub(crate) fn iso(self) -> String {
-        let (year, month, day) = self.ymd();
-        format!("{year:04}-{month:02}-{day:02}")
-    }
-
-    /// `17 Aug` — the compact stamp for a row that already sits under a
-    /// year-qualified day header. Short on purpose: the characters it does
-    /// not spend are characters the exit reason beside it gets to keep.
-    pub(crate) fn short(self) -> String {
-        let (_, month, day) = self.ymd();
-        format!("{day:02} {}", month_abbr(month))
-    }
-
-    /// `Mon 17 Aug 2026` — the ledger's day header.
-    pub(crate) fn long(self) -> String {
-        let (year, month, day) = self.ymd();
-        format!(
-            "{} {day:02} {} {year:04}",
-            weekday_abbr(self.weekday()),
-            month_abbr(month)
-        )
-    }
-
-    /// Weekday, 0 = Monday … 6 = Sunday. 1970-01-01 was a Thursday, which
-    /// is why the epoch day number is shifted by three before the modulo.
-    pub(crate) fn weekday(self) -> i64 {
-        (self.day_number + 3).rem_euclid(WEEK_DAYS)
-    }
-
-    /// The first day of this date's month — where a month grid starts.
-    pub(crate) fn month_start(self) -> Self {
-        let (year, month, _) = self.ymd();
-        Self::from_ymd(year, month, 1)
-    }
-
-    /// The month `count` months later (negative walks back), clamped to
-    /// the first of the month: paging never lands on the 31st of a month
-    /// that has 30 days.
-    pub(crate) fn offset_months(self, count: i64) -> Self {
-        let (year, month, _) = self.ymd();
-        let zero_based = (year * 12 + month - 1).saturating_add(count);
-        Self::from_ymd(zero_based.div_euclid(12), zero_based.rem_euclid(12) + 1, 1)
-    }
-
-    /// Whether this date shares a month with `other`.
-    pub(crate) fn same_month(self, other: Self) -> bool {
-        let (year, month, _) = self.ymd();
-        let (other_year, other_month, _) = other.ymd();
-        (year, month) == (other_year, other_month)
-    }
-}
-
-/// `YYYY-MM-DD HH:MM` in the display timezone — the equity curve's hover
-/// stamp, on the same clock as every trade row beneath it.
-///
-/// Here rather than beside the report's other formatters because it is
-/// civil-date arithmetic, and this module is where that law lives; a copy
-/// in `paper_chrome` would have had to import `civil_utc` from here while
-/// this module imports colours from there, which is the cycle the split
-/// exists to prevent.
-pub(crate) fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
-    let (year, month, day, hour, minute, _) =
-        civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
-}
 
 /// Today's civil date on the display clock. The app layer may read a wall
 /// clock — the engine and the pure modules may not — and this is the one
@@ -225,19 +48,6 @@ pub(crate) fn today(tz: TzOffset) -> CivilDate {
         .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(0))
         .unwrap_or(0);
     CivilDate::from_ms(now_ms, tz)
-}
-
-/// `Jan`…`Dec`; anything outside 1..=12 is a bug upstream, and `???` says
-/// so rather than panicking inside a paint.
-fn month_abbr(month: i64) -> &'static str {
-    const NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    usize::try_from(month - 1)
-        .ok()
-        .and_then(|index| NAMES.get(index))
-        .copied()
-        .unwrap_or("???")
 }
 
 /// `January`…`December`, for the calendar's own header.
@@ -257,16 +67,6 @@ fn month_name(month: i64) -> &'static str {
         "December",
     ];
     usize::try_from(month - 1)
-        .ok()
-        .and_then(|index| NAMES.get(index))
-        .copied()
-        .unwrap_or("???")
-}
-
-/// `Mon`…`Sun` from [`CivilDate::weekday`].
-fn weekday_abbr(weekday: i64) -> &'static str {
-    const NAMES: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    usize::try_from(weekday)
         .ok()
         .and_then(|index| NAMES.get(index))
         .copied()
@@ -325,7 +125,7 @@ impl DayIndex {
         self.days
             .keys()
             .next()
-            .map(|day| CivilDate { day_number: *day })
+            .map(|day| CivilDate::from_day_number(*day))
     }
 
     /// Newest day holding a trade — where the calendar opens.
@@ -333,7 +133,7 @@ impl DayIndex {
         self.days
             .keys()
             .next_back()
-            .map(|day| CivilDate { day_number: *day })
+            .map(|day| CivilDate::from_day_number(*day))
     }
 
     /// How many days hold at least one trade.
@@ -349,51 +149,6 @@ impl DayIndex {
 // ----------------------------------------------------------------------
 // The selection
 // ----------------------------------------------------------------------
-
-/// An inclusive span of civil days.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DateRange {
-    pub(crate) start: CivilDate,
-    pub(crate) end: CivilDate,
-}
-
-impl DateRange {
-    /// The span between two days, in either click order.
-    pub(crate) fn new(a: CivilDate, b: CivilDate) -> Self {
-        if a <= b {
-            Self { start: a, end: b }
-        } else {
-            Self { start: b, end: a }
-        }
-    }
-
-    /// Whether a venue timestamp falls inside — start inclusive, end
-    /// inclusive to the last millisecond of its civil day.
-    pub(crate) fn contains_ms(self, timestamp_ms: i64, tz: TzOffset) -> bool {
-        timestamp_ms >= self.start.start_ms(tz) && timestamp_ms < self.end.end_ms(tz)
-    }
-
-    /// How many civil days the span covers, both ends counted.
-    pub(crate) fn days(self) -> i64 {
-        self.end.day_number() - self.start.day_number() + 1
-    }
-
-    /// `2026-08-17` for a single day, `2026-08-12 to 2026-08-17` for a
-    /// span — what the report's support line reads out loud.
-    ///
-    /// Spelled with a word, not an arrow: this string is rendered in the
-    /// proportional UI font, whose fallback has no `→` and draws a tofu
-    /// box instead. The arrow survives where the text is monospace (the
-    /// trade list's `ENTRY → EXIT`, a ledger row's round trip); here it
-    /// would be a missing glyph in the one label naming the filter.
-    pub(crate) fn label(self) -> String {
-        if self.start == self.end {
-            self.start.iso()
-        } else {
-            format!("{} to {}", self.start.iso(), self.end.iso())
-        }
-    }
-}
 
 /// The calendar's click state machine. A first click picks a day and
 /// filters to it immediately — a trader asking "what happened on the 12th"
@@ -456,22 +211,6 @@ pub(crate) struct CalendarState {
     /// the newest day that holds a trade.
     pub(crate) month: Option<CivilDate>,
     pub(crate) selection: DaySelection,
-}
-
-/// Read a `YYYY-MM-DD` date, refusing anything that is not one. The
-/// parse must round-trip: `2026-02-30` normalises to March 2nd inside the
-/// civil algorithm, and silently answering a question nobody asked is
-/// exactly the guess this refuses to make.
-pub(crate) fn parse_iso_date(text: &str) -> Option<CivilDate> {
-    let mut parts = text.trim().split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    let date = CivilDate::from_ymd(year, month, day);
-    (date.ymd() == (year, month, day)).then_some(date)
 }
 
 /// Read a harness hook's calendar spec: `1` opens the grid with nothing
@@ -708,22 +447,6 @@ mod tests {
         TzOffset::new(-180)
     }
 
-    /// Travelled here with `fmt_offset_minute`: the curve's hover stamp
-    /// and the ledger's rows must read on one clock, and that clock is
-    /// this module's.
-    #[test]
-    fn display_stamps_read_on_the_display_clock() {
-        assert_eq!(
-            fmt_offset_minute(1_773_666_068_000, utc()),
-            "2026-03-16 13:01"
-        );
-        assert_eq!(
-            fmt_offset_minute(1_773_666_068_000, sao_paulo()),
-            "2026-03-16 10:01",
-            "the curve's stamp reads on the display clock"
-        );
-    }
-
     fn trade(closed_ms: i64, pnl: i64) -> ClosedTrade {
         ClosedTrade {
             side: quantick_engine::Side::Buy,
@@ -739,64 +462,6 @@ mod tests {
             mae_points: None,
             mfe_points: None,
         }
-    }
-
-    #[test]
-    fn civil_days_round_trip_through_the_epoch_and_back() {
-        for day in [-100_000_i64, -1, 0, 1, 19_952, 100_000] {
-            let (year, month, date) = civil_from_days(day);
-            assert_eq!(
-                days_from_civil(year, month, date),
-                day,
-                "{year:04}-{month:02}-{date:02} must come back to day {day}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_date_knows_its_own_midnight_bounds() {
-        let date = CivilDate::from_ymd(2026, 8, 17);
-        assert_eq!(date.iso(), "2026-08-17");
-        assert_eq!(date.end_ms(utc()) - date.start_ms(utc()), DAY_MS);
-        // The last millisecond of the day is inside; the next is not.
-        let range = DateRange {
-            start: date,
-            end: date,
-        };
-        assert!(range.contains_ms(date.end_ms(utc()) - 1, utc()));
-        assert!(!range.contains_ms(date.end_ms(utc()), utc()));
-        assert!(range.contains_ms(date.start_ms(utc()), utc()));
-        assert!(!range.contains_ms(date.start_ms(utc()) - 1, utc()));
-    }
-
-    #[test]
-    fn a_late_utc_print_belongs_to_the_previous_day_in_sao_paulo() {
-        // 2026-08-18T01:30:00Z is 2026-08-17T22:30 local at UTC-03:00.
-        let timestamp = CivilDate::from_ymd(2026, 8, 18).start_ms(utc()) + 90 * 60_000;
-        assert_eq!(CivilDate::from_ms(timestamp, utc()).iso(), "2026-08-18");
-        assert_eq!(
-            CivilDate::from_ms(timestamp, sao_paulo()).iso(),
-            "2026-08-17",
-            "the calendar must highlight the day the trader saw on the clock"
-        );
-    }
-
-    #[test]
-    fn month_paging_never_lands_on_a_day_the_month_does_not_have() {
-        let january_31 = CivilDate::from_ymd(2026, 1, 31);
-        assert_eq!(january_31.offset_months(1).iso(), "2026-02-01");
-        assert_eq!(january_31.offset_months(-1).iso(), "2025-12-01");
-        assert_eq!(january_31.offset_months(12).iso(), "2027-01-01");
-        assert_eq!(january_31.offset_months(-13).iso(), "2024-12-01");
-    }
-
-    #[test]
-    fn weekdays_start_on_monday() {
-        // 2026-08-17 is a Monday.
-        assert_eq!(CivilDate::from_ymd(2026, 8, 17).weekday(), 0);
-        assert_eq!(CivilDate::from_ymd(2026, 8, 23).weekday(), 6);
-        assert_eq!(CivilDate::from_ymd(1970, 1, 1).weekday(), 3, "a Thursday");
-        assert_eq!(CivilDate::from_ymd(1969, 12, 28).weekday(), 6, "a Sunday");
     }
 
     #[test]
@@ -881,18 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn a_range_contains_every_millisecond_of_both_end_days() {
-        let range = DateRange::new(
-            CivilDate::from_ymd(2026, 8, 12),
-            CivilDate::from_ymd(2026, 8, 17),
-        );
-        assert!(range.contains_ms(range.start.start_ms(sao_paulo()), sao_paulo()));
-        assert!(range.contains_ms(range.end.end_ms(sao_paulo()) - 1, sao_paulo()));
-        assert!(!range.contains_ms(range.start.start_ms(sao_paulo()) - 1, sao_paulo()));
-        assert!(!range.contains_ms(range.end.end_ms(sao_paulo()), sao_paulo()));
-    }
-
-    #[test]
     fn selection_membership_matches_the_range_it_reports() {
         let selection = DaySelection::None
             .click(CivilDate::from_ymd(2026, 8, 12))
@@ -941,13 +594,5 @@ mod tests {
                 "{refused:?} must be refused"
             );
         }
-    }
-
-    #[test]
-    fn dates_print_the_way_every_surface_reads_them() {
-        let date = CivilDate::from_ymd(2026, 8, 17);
-        assert_eq!(date.iso(), "2026-08-17");
-        assert_eq!(date.short(), "17 Aug");
-        assert_eq!(date.long(), "Mon 17 Aug 2026");
     }
 }

@@ -31,18 +31,17 @@ cargo build --release -p quantick-mcp
 target/release/quantick-mcp setup --client claude   # or: --client codex
 ```
 
-`setup` only prints the registration command for your client, filled in with
-the binary's absolute path — it reads nothing but its own path, so it works
-before Quantick is running. It writes no configuration file and embeds no
-token. Register the command it prints, then, in the app, enable the connection
-under **Tools → Local agent access** and pick the scopes it gets.
+`setup` only prints your client's registration command with the binary's
+absolute path; it reads nothing else, writes no config and embeds no token, so
+it works before Quantick runs. Register what it prints, then enable the
+connection under **Tools → Local agent access** and pick its scopes.
 
 Then call `quantick_describe` first: with no argument it lists the reachable
 instances; with an `instance_id` it reports the protocol, the effective
 profile and scopes, the registered modules, every capability with its
-availability, the snapshot scopes and the limits. The rest of the tool set is
-discoverable from that one answer, which is the point — the adapter carries no
-hardcoded vocabulary the running instance might not implement.
+availability, the snapshot scopes and the limits. Everything else is
+discoverable from that answer: the adapter hardcodes no vocabulary the running
+instance might not implement.
 
 ### Profiles
 
@@ -118,18 +117,22 @@ graph TD
   app --> indicators
   app --> strategy
   app --> sim
+  app --> paper
+  app --> civil
   app --> replay
   app --> orderbook
   app --> orderflow
   app --> feed
   app --> control
   app --> controllocal
+  app --> controlhost
   app --> engine
   backtest --> strategy
   backtest --> pine
   backtest --> indicators
   backtest --> replay
   backtest --> sim
+  backtest -.-> paper
   backtest --> engine
   mcp --> controllocal
   mcp --> control
@@ -138,8 +141,12 @@ graph TD
   strategy["strategy<br/>armed regions, alarms"] --> sim
   strategy --> engine
   controllocal["control-local<br/>local transport"] --> control
+  controlhost["control-host<br/>host machinery"] --> control
   indicators["indicators<br/>bars → plot series"] --> engine
   replay["replay<br/>recorded sessions"] --> engine
+  paper["paper<br/>paper account"] --> sim
+  paper --> engine
+  paper --> civil
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
@@ -156,6 +163,7 @@ graph TD
     engine["engine<br/>trades → bars"]
     orderbook["orderbook<br/>L2 book core"]
     control["control<br/>control-plane contracts"]
+    civil["civil<br/>civil dates"]
   end
 ```
 
@@ -170,13 +178,16 @@ graph TD
 | `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
+| `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; the chart drives it; the backtest proves it in a test. |
+| `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
+| `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
-| `guards` | The guards the compiler cannot see: the size, context and cycle ratchets, the English scan, the encoding check. No dependencies, so asking them costs a second. |
+| `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies, so asking them costs a second. |
 | `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
 
 ## The non-negotiable design rules
@@ -189,16 +200,16 @@ and that file differ, that file wins.
    no wall clock, no randomness, no iteration-order-dependent output.
 2. **One engine, three consumers.** Chart, backtest and bot share the
    aggregator. Never fork bar-building logic per consumer.
-3. **Data honesty.** Inferred or incomplete data is labelled as such, never
-   silently patched. A depth reduction is an "unattributed L2 reduction", not
-   a cancellation, because the tape cannot tell which it was.
+3. **Data honesty.** Inferred or incomplete data is labelled, never silently
+   patched. A depth reduction is an "unattributed L2 reduction", not a
+   cancellation: the tape cannot tell which it was.
 4. **English is the repository's language.** `CLAUDE.md` is the rule's single
    owner — it defines the scope and the four exemptions where the foreign text
-   *is* the data. Read it there; this file deliberately does not restate it,
-   and `crates/guards/src/language.rs` enforces the mechanical half.
+   *is* the data. Read it there; `crates/guards/src/language.rs` enforces the
+   mechanical half.
 5. **Small and focused.** This is not a trading platform. Build bars, show
-   bars, expose bars to code. This is the rule that refuses scope creep, and
-   it applies to the control plane above as much as to the chart.
+   bars, expose bars to code. It refuses scope creep, in the control plane as
+   much as in the chart.
 6. **Operable without a hand.** A capability never ships reachable by mouse
    alone: it gets a named call, a readable result and a registry entry. This
    is why the control plane exists.

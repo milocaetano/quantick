@@ -20,14 +20,22 @@ use quantick_control::{
     registry::{
         CapabilityDescriptor, ControlRegistry, DefaultGrant, EffectConstraints, EffectPolicy,
         McpHintFloor, ModuleDescriptor, PermissionDescriptor, ProfileDescriptor, RegistryError,
-        check_idempotency_key,
     },
-    schema::CompiledSchema,
     wire::{ModuleRevision, RequestEnvelope, WireU64},
+};
+use quantick_control_host::{
+    admission::{
+        self, CompiledCapabilitySchemas, TierPolicy, admit_capability, register_capability,
+    },
+    catalogue,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+// The scope-denied error that used it moved to `admission`; the tests below
+// still build their payloads with it through `use super::*`.
+#[cfg(test)]
+use serde_json::json;
 
 use crate::app::QuantickApp;
 
@@ -65,7 +73,7 @@ pub(crate) use reads::EventsReadInvocation;
 use reads::{
     prepare_chart_window, prepare_describe, prepare_diagnostics, prepare_events_read,
     prepare_events_wait, prepare_evidence_capture, prepare_evidence_read, prepare_scene,
-    prepare_snapshot, read_capability, register_capability,
+    prepare_snapshot, read_capability,
 };
 
 pub(crate) const OBSERVER_PROFILE_ID: &str = "observer";
@@ -232,16 +240,7 @@ pub(crate) struct DescribeResult {
     pub snapshot_scopes: Vec<SnapshotScopeDescriptor>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct SnapshotScopeDescriptor {
-    pub id: SnapshotScopeId,
-    pub module_id: ModuleId,
-    pub schema_version: u32,
-    pub title: String,
-    pub description: String,
-    pub required_permissions: BTreeSet<PermissionId>,
-    pub schema: Value,
-}
+pub(crate) use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),
@@ -419,7 +418,6 @@ struct PreparedCapability {
 }
 
 type PrepareHandler = fn(&ObserverContract, &Value) -> Result<PreparedCapability, ControlError>;
-type CompiledCapabilitySchemas = BTreeMap<CapabilityId, BTreeMap<u32, CompiledSchema>>;
 
 pub(crate) struct ObserverContract {
     registry: ControlRegistry,
@@ -838,32 +836,10 @@ impl ObserverContract {
             },
         })?;
 
-        let mut scope_permissions = BTreeMap::new();
-        let mut snapshot_scopes = Vec::new();
-        for descriptor in projections.descriptors() {
-            let required_permissions = descriptor.required_permissions.clone();
-            for permission in &required_permissions {
-                if !permissions.iter().any(|known| known.id == *permission) {
-                    return Err(RegistryError::Unknown {
-                        kind: "permission",
-                        id: permission.to_string(),
-                    });
-                }
-            }
-            scope_permissions.insert(descriptor.scope_id.clone(), required_permissions.clone());
-            snapshot_scopes.push(SnapshotScopeDescriptor {
-                id: descriptor.scope_id.clone(),
-                module_id: descriptor.module_id.clone(),
-                schema_version: descriptor.schema_version,
-                title: descriptor.title.clone(),
-                description: descriptor.description.clone(),
-                required_permissions,
-                schema: descriptor.schema.clone(),
-            });
-        }
-        snapshot_scopes.sort_by(|left, right| left.id.cmp(&right.id));
+        let (scope_permissions, snapshot_scopes) =
+            catalogue::snapshot_scope_catalogue(projections.inner(), &permissions)?;
 
-        let mut handlers = BTreeMap::new();
+        let mut handlers: BTreeMap<(CapabilityId, u32), PrepareHandler> = BTreeMap::new();
         let mut input_validators = CompiledCapabilitySchemas::new();
         let mut output_validators = CompiledCapabilitySchemas::new();
         register_capability(
@@ -1064,10 +1040,12 @@ impl ObserverContract {
         {
             return action.output.validate(result).is_ok();
         }
-        self.output_validators
-            .get(capability_id)
-            .and_then(|versions| versions.get(&capability_version))
-            .is_some_and(|validator| validator.validate(result).is_ok())
+        admission::output_is_valid(
+            &self.output_validators,
+            capability_id,
+            capability_version,
+            result,
+        )
     }
 
     pub fn default_grant(&self) -> BTreeSet<PermissionId> {
@@ -1076,19 +1054,14 @@ impl ObserverContract {
             .collect()
     }
 
-    /// Every registered snapshot scope this grant already reaches, in
-    /// registration order and capped at what one capture may carry.
+    /// Every registered snapshot scope this grant already reaches, sorted by
+    /// scope ID and capped at what one capture may carry.
     ///
     /// Derived from the registry, never a hand-kept list: a module that
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
     /// here or in whatever asked.
     pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
-        self.snapshot_scopes
-            .iter()
-            .filter(|descriptor| descriptor.required_permissions.is_subset(grant))
-            .map(|descriptor| descriptor.id.clone())
-            .take(CONTROL_MAX_SNAPSHOT_SCOPES)
-            .collect()
+        catalogue::readable_scopes(&self.snapshot_scopes, grant)
     }
 
     /// One registered snapshot scope, by id — what the retry matrix checks a
@@ -1135,55 +1108,18 @@ impl ObserverContract {
         envelope: RequestEnvelope,
         effective_scopes: &BTreeSet<PermissionId>,
     ) -> Result<PreparedRequest, ControlError> {
-        envelope.validate()?;
-        let descriptor = self
-            .registry
-            .capability(&envelope.capability_id, envelope.capability_version)
-            .ok_or_else(|| {
-                ControlError::new(
-                    quantick_control::id::ErrorCode::new(codes::CAPABILITY_UNKNOWN)
-                        .expect("static error code is valid"),
-                    "capability ID or version is not registered",
-                    false,
-                )
-            })?;
-        if !descriptor.required_permissions.is_subset(effective_scopes) {
-            return Err(known_error(
-                codes::PERMISSION_DENIED,
-                "connection lacks a required capability permission",
-                false,
-            ));
-        }
-        let action = self
-            .actions
-            .lookup(descriptor.id.as_str(), descriptor.version);
-        let validator = match &action {
-            // An action validates against its own compiled schema — the same
-            // one the hotkey's call passes — so the two paths cannot drift.
-            Some(action) => &action.input,
-            None => self
-                .input_validators
-                .get(&descriptor.id)
-                .and_then(|versions| versions.get(&descriptor.version))
-                .ok_or_else(|| {
-                    known_error(
-                        codes::CAPABILITY_UNAVAILABLE,
-                        "registered observer capability has no input validator",
-                        false,
-                    )
-                })?,
-        };
-        validator
-            .validate(&envelope.payload)
-            .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-        let carries_key = envelope.idempotency_key.is_some();
-        check_idempotency_key(descriptor.idempotency, carries_key, envelope.dry_run)?;
-        if envelope.dry_run || !envelope.expected_revisions.is_empty() {
-            return Err(ControlError::invalid_request(
-                "this tier's capabilities forbid dry runs and expected revisions",
-            ));
-        }
-        if action.is_some() {
+        // An action validates against its own compiled schema — the same
+        // one the hotkey's call passes — so the two paths cannot drift.
+        let admitted = admit_capability(&self.registry, &envelope, effective_scopes)?
+            .admit_payload(
+                &envelope,
+                |id, version| self.actions.lookup(id.as_str(), version),
+                |action| &action.input,
+                &self.input_validators,
+                TierPolicy::STRICT,
+            )?;
+        let descriptor = admitted.descriptor();
+        if admitted.own().is_some() {
             let dispatch = PreparedDispatch::Action(PreparedAction {
                 capability_id: descriptor.id.clone(),
                 capability_version: descriptor.version,
@@ -1211,21 +1147,7 @@ impl ObserverContract {
             dynamic_permissions,
         } = handler(self, &envelope.payload)?;
 
-        if !dynamic_permissions.is_subset(effective_scopes) {
-            let missing = dynamic_permissions
-                .difference(effective_scopes)
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            let mut error = known_error(
-                codes::SCOPE_DENIED,
-                "one or more requested snapshot scopes are outside the connection grant",
-                false,
-            );
-            error.context.details = Some(json!({ "missing_permissions": missing }));
-            error.context.next_steps =
-                vec!["Enable the required read scopes in Quantick, then reconnect.".to_owned()];
-            return Err(error);
-        }
+        admitted.admit_scopes(&dynamic_permissions, effective_scopes)?;
 
         let mut required_permissions = descriptor.required_permissions.clone();
         required_permissions.extend(dynamic_permissions);

@@ -1,0 +1,11 @@
+# Signed exceptions to the app-ui-free ratchet (`crates/guards/src/ui_free.rs`).
+#
+#   <workspace-relative path> <reason>
+#
+# A crates/app/src file listed here is left out of the rationed total. It must
+# be UI-free by nature *and* unable to live anywhere but `app`; code that is
+# merely UI-free belongs in a headless crate, not on this list. Lines
+# beginning with `#` are comments. An entry whose file is gone, or now names
+# the UI library, is itself a finding: delete the line.
+
+crates/app/src/scratch.rs test scratch directories; the scratch guard requires each crate's tests to mint them through that crate's own scratch module, so `app`'s must live in `app`, and it never touches the UI.

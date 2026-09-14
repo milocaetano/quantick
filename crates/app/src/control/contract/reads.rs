@@ -11,7 +11,7 @@
 //! effect policies stay in the parent's constructor. What this file may decide
 //! is what one read needs, never whether the caller may have it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use quantick_control::{
     cursor::EventCursor,
@@ -19,10 +19,10 @@ use quantick_control::{
     handshake::ProtocolLimits,
     id::{CapabilityId, CostClassId, InstanceId, PermissionId, ProfileId, SnapshotScopeId},
     registry::{
-        Availability, CapabilityDescriptor, ControlRegistry, EffectPersistence, ExpectedCost,
-        IdempotencyPolicy, RegistryError, RevisionPolicy,
+        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
+        RevisionPolicy,
     },
-    schema::{CompiledSchema, generated_schema},
+    schema::generated_schema,
     wire::ModuleRevision,
 };
 use schemars::JsonSchema;
@@ -42,10 +42,10 @@ use super::super::{
     types::known_error,
 };
 use super::{
-    ChartWindowInput, CompiledCapabilitySchemas, DeferredUiRead, EmptyInput, NO_CONFIRMATION_ID,
-    OBSERVE_EFFECT_ID, ObserverContract, ParkedWait, PrepareHandler, PreparedCapability,
-    PreparedDispatch, PreparedUiRead, PreparedWorkerRead, SerializedUiRead, SnapshotReadInput,
-    UiReadContext, UiReadExecution, confirmation, effect, module, permission,
+    ChartWindowInput, DeferredUiRead, EmptyInput, NO_CONFIRMATION_ID, OBSERVE_EFFECT_ID,
+    ObserverContract, ParkedWait, PreparedCapability, PreparedDispatch, PreparedUiRead,
+    PreparedWorkerRead, SerializedUiRead, SnapshotReadInput, UiReadContext, UiReadExecution,
+    confirmation, effect, module, permission,
 };
 
 const UI_BOUNDED_COST_ID: &str = "ui_bounded";
@@ -251,44 +251,6 @@ impl PreparedWorkerRead for EvidenceReadInvocation {
         )?;
         serde_json::to_value(page).map_err(|_| serialization_failed("an evidence page"))
     }
-}
-
-pub(super) fn register_capability(
-    registry: &mut ControlRegistry,
-    handlers: &mut BTreeMap<(CapabilityId, u32), PrepareHandler>,
-    input_validators: &mut CompiledCapabilitySchemas,
-    output_validators: &mut CompiledCapabilitySchemas,
-    descriptor: CapabilityDescriptor,
-    handler: PrepareHandler,
-) -> Result<(), RegistryError> {
-    let key = (descriptor.id.clone(), descriptor.version);
-    let input_validator = CompiledSchema::new(&descriptor.input_schema).map_err(|error| {
-        RegistryError::InvalidDescriptor(format!(
-            "capability `{}` input schema is invalid: {error}",
-            descriptor.id
-        ))
-    })?;
-    let output_validator = CompiledSchema::new(&descriptor.output_schema).map_err(|error| {
-        RegistryError::InvalidDescriptor(format!(
-            "capability `{}` output schema is invalid: {error}",
-            descriptor.id
-        ))
-    })?;
-    registry.register_capability(descriptor)?;
-    let previous = handlers.insert(key.clone(), handler);
-    debug_assert!(
-        previous.is_none(),
-        "registry rejected duplicate capability IDs"
-    );
-    input_validators
-        .entry(key.0.clone())
-        .or_default()
-        .insert(key.1, input_validator);
-    output_validators
-        .entry(key.0)
-        .or_default()
-        .insert(key.1, output_validator);
-    Ok(())
 }
 
 pub(super) fn prepare_describe(

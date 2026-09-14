@@ -43,7 +43,8 @@ use super::{
 };
 
 mod encode_refusal;
-mod idempotency;
+// Moved to `quantick-control-host`; named here so `super::idempotency` resolves.
+use quantick_control_host::idempotency;
 mod local_action;
 mod panel;
 mod screenshot;

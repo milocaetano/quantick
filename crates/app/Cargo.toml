@@ -7,10 +7,13 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+quantick-civil = { path = "../civil" }
 quantick-control = { path = "../control" }
 # Private descriptor publication for the local gateway (ADR 0001). The
 # discovery and client halves of the same crate are what the MCP adapter uses.
 quantick-control-local = { path = "../control-local" }
+# The headless host machinery: projection registry, admission, idempotency, journal.
+quantick-control-host = { path = "../control-host" }
 quantick-engine = { path = "../engine" }
 # The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
 # it, and the feed-shaped config types this crate re-exports.
@@ -22,6 +25,9 @@ quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-orderflow = { path = "../orderflow" }
+# The paper account: orders, sizing, the journal and the report numbers. This
+# crate keeps the ticket that draws it and the host wiring around it.
+quantick-paper = { path = "../paper" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 quantick-strategy = { path = "../strategy" }

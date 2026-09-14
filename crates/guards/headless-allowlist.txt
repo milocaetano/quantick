@@ -17,4 +17,5 @@
 
 crates/replay/src/scratch.rs SystemTime::now test-only helper; the nanoseconds seed a unique scratch directory name and never reach a result. The module ships in `src/` rather than under `tests/` only because a crate's own tests cannot see an integration test's items.
 crates/control-local/src/scratch.rs SystemTime::now test-only helper; identical to `replay`'s, and separate because a crate that may not depend on another cannot share one.
+crates/paper/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the paper account's journal tests.
 crates/orderflow/src/engine.rs Instant::now a stopwatch around the projection build and the live pass, feeding `last_projection_ms` and `last_live_ms`. Both are diagnostic counters the health panel reads; neither reaches anything the projection returns, and `project_at` is told `now` by its caller, so the cache cadence stays deterministic.

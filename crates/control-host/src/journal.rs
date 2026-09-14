@@ -42,14 +42,14 @@ const OVERSIZED_PAYLOAD_MARKER: &str = "payload_exceeds_event_limit";
 /// Who caused an event, as the journal retains it: the kind and a display
 /// name, never a principal that could be mistaken for an identity.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct EventActor {
+pub struct EventActor {
     pub kind: ActorKind,
     pub client_name: String,
 }
 
 /// One semantic event as a client reads it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct SemanticEvent {
+pub struct SemanticEvent {
     /// Monotonic, instance-scoped; the cursor token.
     pub sequence: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
@@ -64,7 +64,7 @@ pub(crate) struct SemanticEvent {
 }
 
 /// What a new event carries before the journal stamps it.
-pub(crate) struct NewEvent {
+pub struct NewEvent {
     pub module_id: ModuleId,
     pub kind: EventKind,
     pub actor: Option<EventActor>,
@@ -74,7 +74,7 @@ pub(crate) struct NewEvent {
 /// The journal's position as gateway workers may read it without a lock.
 /// `next_sequence` advances on every record; parked waiters compare their
 /// target against it, and the tick channel wakes the waiter manager.
-pub(crate) struct JournalSignal {
+pub struct JournalSignal {
     next_sequence: AtomicU64,
     oldest_sequence: AtomicU64,
     ticks: Sender<()>,
@@ -104,7 +104,7 @@ impl JournalSignal {
 
 /// A page of events as the UI-thread read returns it, before the envelope.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct EventPage {
+pub struct EventPage {
     pub instance_id: InstanceId,
     pub events: Vec<SemanticEvent>,
     /// One past the last returned event, or the resolved start when empty.
@@ -120,7 +120,7 @@ pub(crate) struct EventPage {
     pub timed_out: bool,
 }
 
-pub(crate) struct EventJournal {
+pub struct EventJournal {
     events: VecDeque<(SemanticEvent, usize)>,
     next_sequence: u64,
     total_bytes: usize,
@@ -251,13 +251,13 @@ impl EventJournal {
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.events.len()
     }
 }
 
 /// What one read returns before the envelope fields are added.
-pub(crate) struct ReadSlice {
+pub struct ReadSlice {
     pub events: Vec<SemanticEvent>,
     pub next_sequence: u64,
     pub has_more: bool,

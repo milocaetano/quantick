@@ -12,7 +12,58 @@ use quantick_sim::{Bracket, OcoId, OrderIntent, OrderRole, Position};
 use rust_decimal::Decimal;
 
 use super::{AccountEnv, PaperAccount};
-use crate::paper_chrome::fmt_decimal;
+use crate::format::fmt_decimal;
+use crate::risk_sizing::{self, Capital, InstrumentBook, RiskSettings};
+
+/// The risk lock refused an order: what it would have risked, and the risk
+/// per trade it went over, both in the instrument's own currency.
+///
+/// Typed so a caller that is not a person - a bot, the backtest - can branch
+/// on a refusal without reading English; [`Self::sentence`] is the one
+/// wording the ticket's toast and the control plane's error both carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RiskRefusal {
+    /// What the order would lose at its stop.
+    pub risk: quantick_sim::Money,
+    /// The risk per trade it went over.
+    pub budget: quantick_sim::Money,
+}
+
+impl RiskRefusal {
+    /// The refusal as the trader reads it.
+    ///
+    /// Byte for byte what the ticket's toast and the control plane's error
+    /// said before the account left `app`, including the run of spaces a lost
+    /// line continuation left before "turn" - a move is not the place to
+    /// change a sentence the trader reads. Tidying it is its own change.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        format!(
+            "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
+            self.risk.amount.normalize(),
+            self.risk.currency.code(),
+            self.budget.amount.normalize(),
+            self.budget.currency.code(),
+        )
+    }
+}
+
+/// The risk surface's three editable halves and the symbol they are read
+/// for, borrowed together.
+///
+/// One borrow and not three calls: an editor that writes the risk, the
+/// capital and the instrument money in one pass needs all three at once,
+/// and three `&mut self` accessors could never be held together.
+pub struct RiskEditor<'a> {
+    /// The instrument the book entry being edited belongs to.
+    pub symbol: &'a str,
+    /// What one trade may lose, and whether the lock stands.
+    pub settings: &'a mut RiskSettings,
+    /// The declared practice capital, one amount per currency.
+    pub capital: &'a mut Capital,
+    /// What one point of each instrument is worth, by bare symbol.
+    pub book: &'a mut InstrumentBook,
+}
 
 impl PaperAccount {
     // ------------------------------------------------------------------
@@ -29,7 +80,7 @@ impl PaperAccount {
     /// The ruler leads because rolling it is the most recent thing the trader
     /// did and it is the answer they are looking at. Rolling back to zero puts
     /// the armed ladder in front again, so neither gesture costs the other.
-    pub(crate) fn aim_bracket(
+    pub fn aim_bracket(
         &self,
         side: Side,
         price: Decimal,
@@ -53,15 +104,15 @@ impl PaperAccount {
 
     /// What the risk per trade makes of an entry, and the bracket it would
     /// rest with.
-    pub(crate) fn risk_sized(
+    pub fn risk_sized(
         &self,
         side: Side,
         reference: Decimal,
         ticket: Bracket,
         env: &AccountEnv,
-    ) -> (crate::risk_sizing::RiskState, Bracket) {
-        crate::risk_sizing::sized_for_aim(
-            &crate::risk_sizing::RiskContext {
+    ) -> (risk_sizing::RiskState, Bracket) {
+        risk_sizing::sized_for_aim(
+            &risk_sizing::RiskContext {
                 settings: &self.risk,
                 capital: &self.capital,
                 book: &self.instrument_money,
@@ -74,18 +125,18 @@ impl PaperAccount {
     }
 
     /// What the risk per trade says about the entry the aim is holding.
-    pub(crate) fn risk_state(
+    pub fn risk_state(
         &self,
         side: Side,
         reference: Decimal,
         env: &AccountEnv,
-    ) -> crate::risk_sizing::RiskState {
+    ) -> risk_sizing::RiskState {
         let ticket = env.form.bracket(side, reference);
         self.risk_sized(side, reference, ticket, env).0
     }
 
     /// The risk read, and whether it blocks an entry.
-    pub(crate) fn risk_report(&self, env: &AccountEnv) -> (crate::risk_sizing::RiskState, bool) {
+    pub fn risk_report(&self, env: &AccountEnv) -> (risk_sizing::RiskState, bool) {
         let reference = self.mark_price().unwrap_or_default();
         let state = self.risk_state(Side::Buy, reference, env);
         let blocks = state.blocks_entry(self.risk.lock);
@@ -93,7 +144,7 @@ impl PaperAccount {
     }
 
     /// The bracket an armed entry would carry, at this size.
-    pub(crate) fn armed_bracket(
+    pub fn armed_bracket(
         &self,
         side: Side,
         reference: Decimal,
@@ -106,7 +157,7 @@ impl PaperAccount {
 
     /// The size and bracket an entry takes, or nothing with the reason
     /// posted to the outbox.
-    pub(crate) fn entry_size(
+    pub fn entry_size(
         &mut self,
         side: Side,
         reference: Decimal,
@@ -141,15 +192,15 @@ impl PaperAccount {
     /// Reads the intent's *own* protection and quantity rather than the
     /// ticket's: a named call states what it wants, and the ceiling has to
     /// be measured against what was actually asked for.
-    pub(crate) fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
-        if !self.risk.lock || self.risk.basis == crate::risk_sizing::RiskBasis::Off {
+    pub fn risk_refusal(&self, intent: &OrderIntent) -> Option<RiskRefusal> {
+        if !self.risk.lock || self.risk.basis == risk_sizing::RiskBasis::Off {
             return None;
         }
         let reference = intent
             .price
             .or_else(|| self.venue.mark_price())
             .unwrap_or_default();
-        let risk = crate::risk_sizing::risk_of(
+        let risk = risk_sizing::risk_of(
             &self.instrument_money,
             &self.symbol,
             intent.side,
@@ -157,59 +208,69 @@ impl PaperAccount {
             &intent.bracket,
             intent.quantity,
         )?;
-        let budget = crate::risk_sizing::budget_for(
+        let budget = risk_sizing::budget_for(
             &self.risk,
             &self.capital,
             &self.instrument_money.get(&self.symbol)?.currency,
         )
         .ok()?;
-        (risk.amount > budget.amount).then(|| {
-            format!(
-                "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or                  turn the lock off.",
-                risk.amount.normalize(),
-                risk.currency.code(),
-                budget.amount.normalize(),
-                budget.currency.code(),
-            )
-        })
+        (risk.amount > budget.amount).then_some(RiskRefusal { risk, budget })
+    }
+
+    /// The same refusal as the sentence the trader reads - what the control
+    /// plane answers a refused `place_order` with.
+    #[must_use]
+    pub fn risk_refusal_for(&self, intent: &OrderIntent) -> Option<String> {
+        self.risk_refusal(intent).map(|refusal| refusal.sentence())
     }
 
     /// Whether a launch hook owns the risk per trade for this run, in which
     /// case the stored settings must not be fanned back over it.
     #[must_use]
-    pub(crate) fn risk_from_hook(&self) -> bool {
+    pub fn risk_from_hook(&self) -> bool {
         self.risk_from_hook
     }
 
     /// What one trade may lose, and whether the lock stands.
-    pub(crate) fn risk_settings(&self) -> &crate::risk_sizing::RiskSettings {
+    pub fn risk_settings(&self) -> &RiskSettings {
         &self.risk
     }
 
     /// Replace the risk per trade. App-wide, like the ticket's other
     /// settings: a ceiling a trader sets in one tab is one they mean in all.
-    pub(crate) fn set_risk_settings(&mut self, risk: crate::risk_sizing::RiskSettings) {
+    pub fn set_risk_settings(&mut self, risk: RiskSettings) {
         self.risk = risk;
     }
 
     /// The declared practice capital, one amount per currency.
-    pub(crate) fn capital(&self) -> &crate::risk_sizing::Capital {
+    pub fn capital(&self) -> &Capital {
         &self.capital
     }
 
     /// Replace the declared capital.
-    pub(crate) fn set_capital(&mut self, capital: crate::risk_sizing::Capital) {
+    pub fn set_capital(&mut self, capital: Capital) {
         self.capital = capital;
     }
 
     /// What one point of each instrument is worth, by bare symbol.
-    pub(crate) fn instrument_money(&self) -> &crate::risk_sizing::InstrumentBook {
+    pub fn instrument_money(&self) -> &InstrumentBook {
         &self.instrument_money
     }
 
     /// Replace the declared instrument money.
-    pub(crate) fn set_instrument_money(&mut self, book: crate::risk_sizing::InstrumentBook) {
+    pub fn set_instrument_money(&mut self, book: InstrumentBook) {
         self.instrument_money = book;
+    }
+
+    /// The risk settings, the capital and the instrument book, borrowed
+    /// together for an editor that writes all three; see [`RiskEditor`].
+    pub fn risk_editor(&mut self) -> RiskEditor<'_> {
+        RiskEditor {
+            symbol: &self.symbol,
+            settings: &mut self.risk,
+            capital: &mut self.capital,
+            book: &mut self.instrument_money,
+        }
     }
 
     /// What actually guards the open position, whatever shape it is in.
@@ -225,7 +286,7 @@ impl PaperAccount {
     ///
     /// Grouped by OCO id, which is what a rung *is*, and walked in placement
     /// order so the rungs read in the order the trader wrote them.
-    pub(crate) fn position_bracket(&self, position: &Position) -> Bracket {
+    pub fn position_bracket(&self, position: &Position) -> Bracket {
         let mut parts: Vec<(OcoId, quantick_sim::ExitPart)> = Vec::new();
         for leg in self
             .venue
@@ -271,7 +332,7 @@ impl PaperAccount {
     /// price, so the same fraction gives a wheel that feels the same on an
     /// instrument quoted at 78,000 and one quoted at 5.
     #[must_use]
-    pub(crate) fn derived_ruler_step(&self) -> Decimal {
+    pub fn derived_ruler_step(&self) -> Decimal {
         let tick = self.tick();
         let Some(mark) = self.venue.mark_price() else {
             return tick;
@@ -300,7 +361,7 @@ impl PaperAccount {
     /// Round a pointer price to the precision the tape itself uses (the
     /// mark's decimal places), so a dragged line lands on a price the
     /// instrument can actually print.
-    pub(crate) fn snap(&self, price: f64) -> Decimal {
+    pub fn snap(&self, price: f64) -> Decimal {
         // The instrument's own precision, learned from the tape - not the
         // raw scale of the last print. A venue that quotes
         // `79172.37000000` has a raw scale of eight, and snapping to it put
@@ -336,11 +397,11 @@ impl PaperAccount {
     /// can express. Read from the mark the same way [`Self::snap`] reads it,
     /// so the ruler steps in exactly the units a drag would land on.
     #[must_use]
-    pub(crate) fn tick_size(&self) -> Decimal {
+    pub fn tick_size(&self) -> Decimal {
         self.tick()
     }
 
-    pub(crate) fn tick(&self) -> Decimal {
+    pub fn tick(&self) -> Decimal {
         let places = if self.venue.mark_price().is_some() {
             self.tick_scale
         } else {
@@ -350,7 +411,7 @@ impl PaperAccount {
     }
 
     /// The size one stepper press moves, for the hover that promises it.
-    pub(crate) fn quantity_step_hint(&self, notches: Decimal) -> String {
+    pub fn quantity_step_hint(&self, notches: Decimal) -> String {
         let unit = self
             .instrument_money
             .get(&self.symbol)

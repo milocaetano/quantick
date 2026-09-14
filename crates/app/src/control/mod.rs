@@ -18,7 +18,8 @@ mod gateway;
 mod health;
 mod interaction;
 pub(crate) mod inventory;
-mod journal;
+// Moved to `quantick-control-host`; named here so `super::journal` resolves.
+use quantick_control_host::journal;
 mod layout;
 mod notify;
 mod orderflow;
@@ -91,7 +92,7 @@ pub(crate) fn registered_action_count() -> usize {
 /// Build the initial owner-module registry. Adding a later snapshot module is
 /// one registration call here; scope IDs remain open strings in the contract.
 pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegistryError> {
-    let mut registry = ProjectionRegistry::new();
+    let mut registry = ProjectionRegistry::new(std::sync::Arc::new(registry::SystemClock));
     system::register(&mut registry)?;
     workspace::register(&mut registry)?;
     feed::register(&mut registry)?;

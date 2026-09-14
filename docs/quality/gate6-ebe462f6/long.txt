@@ -1,0 +1,46 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (12th Gen Intel Core i5-12400F, 31.8 GB, Windows 11 Pro 10.0.26200); idle: no other cargo build and no rustc in any of the 10 s process samples over the run (01:13-01:17);
+#   two other sessions' debug quantick-app.exe windows were open throughout (not ours, left running)
+# sha: ebe462f60fae65c0811a303ae7cf4dda729680d1 (campaign/lean-a-plus tip), clean tree (git status --porcelain --untracked-files=no empty), release profile, run 2026-09-14
+# this is the third run of the variant at this SHA and the only one on an idle host; the two earlier runs (23:55 and 00:31) had other
+#   sessions' builds start about 30 s in, also verdict "within budget" (largest time rise +2.08% and +11.25%), not used as the evidence
+    Finished `release` profile [optimized] target(s) in 1.40s
+     Running unittests src\main.rs (target\release\deps\quantick_app-e0700df2eae13183.exe)
+
+running 1 test
+test app::tests::session_length_tests::long ... # session-length long variant
+sha: ebe462f60fae65c0811a303ae7cf4dda729680d1
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::long -- --ignored --nocapture --test-threads=1
+sessions: 18000 and 3960000 prints at 300/s; window 1800 frames x 5 prints, 30000 depth updates; tolerance counts +10%, time +50%
+
+| path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | median ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 220 |
+| trade.chart.backfilled | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 220 |
+| trade.chart.live | 18000 | 9000 | 0.287 | 110.7 | 13.2 | 61440 | 0.00 | 0.90 | 140 |
+| trade.chart.live | 3960000 | 9000 | 0.287 | 110.7 | 3.6 | 16384 | 0.00 | 0.90 | 140 |
+| trade.book | 18000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| trade.book | 3960000 | 9000 | 0.010 | 3.2 | 29.1 | 131072 | 0.00 | 0.00 | 400 |
+| depth.book | 18000 | 30000 | 19.110 | 6720.6 | 332.0 | 9437184 | 0.00 | 0.00 | 7500 |
+| depth.book | 3960000 | 30000 | 19.110 | 6720.6 | 17.5 | 262144 | 0.00 | 0.00 | 7400 |
+| frame.book | 18000 | 1800 | 2128.415 | 4761780.0 | 2887094.2 | 2621440 | 0.00 | 0.00 | 211400 |
+| frame.book | 3960000 | 1800 | 2128.410 | 4761753.6 | 2887094.2 | 2621440 | 0.00 | 0.00 | 213900 |
+| frame.app.tick50 | 18000 | 1800 | 2909.131 | 856606.4 | 1276087.1 | 381696 | 0.00 | 4.50 | 1944600 |
+| frame.app.tick50 | 3960000 | 1800 | 2908.550 | 856940.4 | 1276540.3 | 382080 | 0.00 | 4.50 | 1965000 |
+| frame.worker.tick50 | 18000 | 1800 | 55.502 | 4918.2 | 460.9 | 36864 | 26.10 | 0.00 | 0 |
+| frame.worker.tick50 | 3960000 | 1800 | 55.500 | 4918.0 | 436.1 | 2240 | 26.10 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 1800 | 1479.753 | 300219.4 | 804791.3 | 187872 | 0.00 | 5.00 | 965700 |
+| frame.app.time1d | 3960000 | 1800 | 1452.571 | 293580.0 | 804049.1 | 187872 | 0.00 | 5.00 | 933400 |
+| frame.worker.time1d | 18000 | 1800 | 138.998 | 11913.1 | 0.3 | 160 | 1923.17 | 0.00 | 0 |
+| frame.worker.time1d | 3960000 | 1800 | 139.001 | 11913.2 | 0.1 | 160 | 1916.47 | 0.00 | 0 |
+
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 4.7 | 30720 |
+| 3960000 | 5.6 | 7864320 |
+
+verdict: within budget (188 s)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2059 filtered out; finished in 187.68s

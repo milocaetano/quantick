@@ -1,0 +1,36 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (12th Gen Intel Core i5-12400F, 31.8 GB, Windows 11 Pro 10.0.26200); idle: no other cargo build and no rustc before or during the 3 s run (00:02:46);
+#   other sessions' debug quantick-app.exe windows were open (not ours, left running)
+# sha: ebe462f60fae65c0811a303ae7cf4dda729680d1 (campaign/lean-a-plus tip), clean tree (git status --porcelain --untracked-files=no empty), release profile, run 2026-09-14
+    Finished `release` profile [optimized] target(s) in 0.53s
+     Running unittests src\main.rs (target\release\deps\quantick_app-e0700df2eae13183.exe)
+
+running 1 test
+test app::tests::session_length_tests::tape_growth_stalls ... # tape growth stall probe
+sha: ebe462f60fae65c0811a303ae7cf4dda729680d1
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+run: one tick:50 pane built live to 4259840 prints; stretches are +/-1024 prints around each former doubling point; bound 4 ms
+| tape at 3960000 prints | prints held | capacity (prints) | chunks | bytes held | bytes reserved (capacity x 56 B + directory) | unused |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 138, last 100k 119, median block 121; ingest alone, mean over the whole run, doublings included: 87.9
+| stretch (footprint=false) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 0.010 | 2097152 | 0 | 0 |
+| 2^22 +/- reach | 0.013 | 4194304 | 0 | 0 |
+| whole run | 1.477 | 3276849 | 7864320 | 3276849 |
+
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 205, last 100k 223, median block 233; ingest alone, mean over the whole run, doublings included: 201.5
+| stretch (footprint=true) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 0.530 | 2097774 | 0 | 0 |
+| 2^22 +/- reach | 0.057 | 4193874 | 0 | 0 |
+| whole run | 2.444 | 3276849 | 7864320 | 3276849 |
+
+verdict: no ingest near a former doubling point above the bound
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2059 filtered out; finished in 2.18s

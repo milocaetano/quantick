@@ -27,10 +27,12 @@
 //! variant's time ratio is what catches it.
 //!
 //! **Two variants.** [`hot_path_work_is_independent_of_session_length`] runs
-//! in the ordinary `cargo test` at 1 and 10 minutes of the sustained rate,
-//! counts only. The long variant, `#[ignore]`d, holds 1 minute against the
-//! envelope's edge (`RETAINED_TRADES_PER_PANE` prints) and also bounds the
-//! time ratio:
+//! in the ordinary `cargo test` at 20 and 200 seconds of the sustained rate
+//! over a one-second window, counts only, in about 5 s — the same tenfold
+//! contrast at a size every copy of the test binary can afford. The long
+//! variant, `#[ignore]`d, holds 1 minute against the envelope's edge
+//! (`RETAINED_TRADES_PER_PANE` prints) over a thirty-second window and also
+//! bounds the time ratio:
 //!
 //! ```sh
 //! env -u QUANTICK_BUBBLES cargo test --release -p quantick-app \
@@ -54,14 +56,32 @@ use std::time::{Duration, Instant};
 // Budgets. Declared before the measurement code, and never read back from it.
 // ---------------------------------------------------------------------------
 
-/// Prints of history in the short session: one minute at the envelope's
-/// sustained rate.
+/// Prints of history in the long variant's short session: one minute at the
+/// envelope's sustained rate.
 const SHORT_SESSION: usize = 60 * SUSTAINED_TRADES_PER_S as usize;
-/// The fast variant's long session: ten minutes, 10x the short one — the
-/// smallest ratio the rubric's "two lengths" reading accepts.
-const FAST_LONG_SESSION: usize = 10 * SHORT_SESSION;
 /// The long variant's long session: the envelope's edge, 220x the short one.
 const LONG_SESSION: usize = RETAINED_TRADES_PER_PANE;
+/// The fast variant's short session: twenty seconds at the sustained rate,
+/// 120 tick:50 bars — the projection's whole window, so neither session
+/// projects fewer bars than the other.
+///
+/// Sized by cost: the book's history costs about 11 µs per depth update to
+/// build, 3.3 updates per print, so the 1-and-10-minute pair this variant
+/// first ran took 15 s of every `cargo test` and timed out every copy of the
+/// contention harness (#435). Counts per unit do not depend on the absolute
+/// size, only on the contrast: an O(history) cost still grows tenfold.
+const FAST_SHORT_SESSION: usize = 20 * SUSTAINED_TRADES_PER_S as usize;
+/// The fast variant's long session: 200 seconds, 10x the short one — the
+/// smallest ratio the rubric's "two lengths" reading accepts.
+const FAST_LONG_SESSION: usize = 10 * FAST_SHORT_SESSION;
+/// The fast variant's two sessions.
+const FAST_SESSIONS: [usize; 2] = [FAST_SHORT_SESSION, FAST_LONG_SESSION];
+/// The long variant's two sessions.
+const LONG_SESSIONS: [usize; 2] = [SHORT_SESSION, LONG_SESSION];
+/// The tape the growth checks build live: ten minutes at the sustained rate,
+/// past print 131,072, where a contiguous tape's doubling first copies more
+/// than one chunk. Only the chart's ingest runs, so it stays cheap.
+const GROWTH_SESSION: usize = 600 * SUSTAINED_TRADES_PER_S as usize;
 
 /// How much more work per unit the long session may cost than the short one:
 /// a tenth, plus the path's absolute slack. Work that grows with history
@@ -91,8 +111,10 @@ impl Window {
     }
 }
 
-/// The fast variant's window: five seconds.
-const FAST_WINDOW: Window = Window { frames: 300 };
+/// The fast variant's window: one second. A frame of the book's projection
+/// alone costs about 10 ms in the test profile, so the window, not the
+/// counts, sets this variant's run time.
+const FAST_WINDOW: Window = Window { frames: 60 };
 /// The long variant's window: thirty seconds, so its stopwatch reads more
 /// than noise.
 const LONG_WINDOW: Window = Window { frames: 1_800 };
@@ -801,7 +823,7 @@ impl AppRig {
         };
         for _ in 0..WARMUP_FRAMES {
             rig.frame();
-            rig.app.active_tab_mut().flow_pane.indicator_worker.flush();
+            rig.settle();
         }
         assert!(
             rig.app
@@ -818,9 +840,9 @@ impl AppRig {
         rig
     }
 
-    /// One frame of five prints. Each frame's batch is taken by the worker
-    /// before the next frame runs, so every frame drains exactly the previous
-    /// one's deltas whatever the host's load.
+    /// One frame of five prints. The rig [settles](Self::settle) after each,
+    /// so every frame drains exactly the previous one's deltas and reads the
+    /// book the previous one published, whatever the host's load.
     fn frame(&mut self) {
         self.events
             .try_send(FeedEvent::LiveBatch(
@@ -833,14 +855,25 @@ impl AppRig {
         run_frame(&mut self.app, &self.ctx);
     }
 
+    /// Let both workers finish what the frame sent them: the indicator
+    /// worker its batch, the book worker its prints and the publish the next
+    /// frame reads. Without the book's flush a loaded host decides whether a
+    /// frame sees a new publish, which moves the frame's counts and, before
+    /// the first one, whether the lane is on screen at all.
+    fn settle(&mut self) {
+        let tab = self.app.active_tab_mut();
+        tab.flow_pane.indicator_worker.flush();
+        tab.tape_mut().flush_for_test();
+    }
+
     /// `frames` measured frames: the application's frame is the lap; the
-    /// worker's settle is not.
+    /// workers' settle is not.
     fn frames(&mut self, frames: usize) {
         for _ in 0..frames {
             let mut acc = std::mem::take(&mut self.acc);
             acc.lap(|| self.frame());
             self.acc = acc;
-            self.app.active_tab_mut().flow_pane.indicator_worker.flush();
+            self.settle();
         }
     }
 
@@ -875,16 +908,15 @@ fn app_frames(spec: &BarSpec, sessions: [usize; 2], window: Window) -> [[PerUnit
 // The variants.
 // ---------------------------------------------------------------------------
 
-/// Every path at the short session and at `long_session`, plus the tape's
+/// Every path at the short and the long of `sessions`, plus the tape's
 /// growth while each live session was built.
-fn measure(long_session: usize, window: Window) -> (Vec<Pair>, [Growth; 2]) {
-    let sessions = [SHORT_SESSION, long_session];
+fn measure(sessions: [usize; 2], window: Window) -> (Vec<Pair>, [Growth; 2]) {
     let pair = |budget: Budget, [short, long]: [PerUnit; 2]| Pair {
         budget,
         short,
         long,
-        short_session: SHORT_SESSION,
-        long_session,
+        short_session: sessions[0],
+        long_session: sessions[1],
     };
     let named = |budget: Budget, path: &'static str| Budget { path, ..budget };
     let none = |_: &ChartState| {};
@@ -917,12 +949,12 @@ fn measure(long_session: usize, window: Window) -> (Vec<Pair>, [Growth; 2]) {
     (pairs, growth)
 }
 
-fn growth_table(long_session: usize, growth: [Growth; 2]) -> String {
+fn growth_table(sessions: [usize; 2], growth: [Growth; 2]) -> String {
     let mut out = String::from(
         "| tape built live to | copy bytes/print over the session | largest single copy |\n\
          | ---: | ---: | ---: |\n",
     );
-    for (session, g) in [(SHORT_SESSION, growth[0]), (long_session, growth[1])] {
+    for (session, g) in sessions.into_iter().zip(growth) {
         out.push_str(&format!(
             "| {session} | {:.1} | {} |\n",
             g.copy_per_print, g.largest_copy
@@ -933,8 +965,8 @@ fn growth_table(long_session: usize, growth: [Growth; 2]) -> String {
 
 /// The largest single reallocation copy building a session's tape live may
 /// make: one chunk of the chunked tape. A contiguous tape copies itself whole
-/// each time it doubles — 7,340,032 bytes at print 131,072, inside the fast
-/// variant's long session — and fails it; the chunked tape never reallocates
+/// each time it doubles — 7,340,032 bytes at print 131,072, inside
+/// [`GROWTH_SESSION`] — and fails it; the chunked tape never reallocates
 /// a print, so what is left is the chunk directory and the bar and ladder
 /// vectors, which a session of this length keeps far smaller than a chunk.
 const LARGEST_GROWTH_COPY: u64 =
@@ -953,17 +985,17 @@ fn growth_violations(session: usize, growth: Growth) -> Vec<String> {
 }
 
 /// D3's stall as a count: no print's ingest may copy more than one chunk
-/// while the fast variant's long session is built live, print by print, with
+/// while [`GROWTH_SESSION`] is built live, print by print, with
 /// the lane command every frame — counted by the work meter, never timed.
 #[test]
 fn building_the_tape_live_never_copies_more_than_one_chunk() {
-    let rig = ChartRig::new(FAST_LONG_SESSION, Load::Live);
+    let rig = ChartRig::new(GROWTH_SESSION, Load::Live);
     println!(
-        "tape built live to {FAST_LONG_SESSION} prints: {:.1} copy bytes/print, largest single \
+        "tape built live to {GROWTH_SESSION} prints: {:.1} copy bytes/print, largest single \
          copy {} bytes (bound: one chunk, {LARGEST_GROWTH_COPY} bytes)",
         rig.growth.copy_per_print, rig.growth.largest_copy
     );
-    let found = growth_violations(FAST_LONG_SESSION, rig.growth);
+    let found = growth_violations(GROWTH_SESSION, rig.growth);
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
 
@@ -974,28 +1006,29 @@ fn the_growth_check_fails_a_contiguous_tape() {
     work_meter::reset_largest();
     let before = work_meter::tally();
     let mut contiguous = Vec::new();
-    for index in 0..FAST_LONG_SESSION as u64 {
+    for index in 0..GROWTH_SESSION as u64 {
         contiguous.push(print(index));
     }
     let built = work_meter::tally().since(before);
     std::hint::black_box(&contiguous);
     let growth = Growth {
-        copy_per_print: built.realloc_copy_bytes as f64 / FAST_LONG_SESSION as f64,
+        copy_per_print: built.realloc_copy_bytes as f64 / GROWTH_SESSION as f64,
         largest_copy: built.largest_realloc_copy,
     };
-    let found = growth_violations(FAST_LONG_SESSION, growth);
+    let found = growth_violations(GROWTH_SESSION, growth);
     assert!(
         !found.is_empty(),
         "a contiguous tape must break the one-chunk bound: {growth:?}"
     );
 }
 
-/// The fast variant: 1 against 10 minutes of the sustained rate, counts only.
+/// The fast variant: 20 against 200 seconds of the sustained rate, counts
+/// only.
 #[test]
 fn hot_path_work_is_independent_of_session_length() {
-    let (pairs, growth) = measure(FAST_LONG_SESSION, FAST_WINDOW);
+    let (pairs, growth) = measure(FAST_SESSIONS, FAST_WINDOW);
     println!("{}", table(&pairs));
-    println!("{}", growth_table(FAST_LONG_SESSION, growth));
+    println!("{}", growth_table(FAST_SESSIONS, growth));
     let broken: Vec<String> = pairs.iter().flat_map(violations).collect();
     assert!(broken.is_empty(), "{}", broken.join("\n"));
 }
@@ -1041,10 +1074,10 @@ fn long() {
         TIME_GROWTH_TOLERANCE * 100.0
     );
     let started = Instant::now();
-    let (pairs, growth) = measure(LONG_SESSION, LONG_WINDOW);
+    let (pairs, growth) = measure(LONG_SESSIONS, LONG_WINDOW);
     println!();
     println!("{}", table(&pairs));
-    println!("{}", growth_table(LONG_SESSION, growth));
+    println!("{}", growth_table(LONG_SESSIONS, growth));
     let broken: Vec<String> = pairs
         .iter()
         .flat_map(|pair| {
@@ -1076,17 +1109,13 @@ fn the_check_fails_a_path_whose_work_grows_with_the_session() {
     let clone_the_tape = |state: &ChartState| {
         std::hint::black_box(state.trades().iter().cloned().collect::<Vec<Trade>>());
     };
-    let ([short, long], _) = trade_chart(
-        [SHORT_SESSION, FAST_LONG_SESSION],
-        Load::Backfill,
-        FAST_WINDOW,
-        &clone_the_tape,
-    );
+    let ([short, long], _) =
+        trade_chart(FAST_SESSIONS, Load::Backfill, FAST_WINDOW, &clone_the_tape);
     let planted = Pair {
         budget: TRADE_CHART,
         short,
         long,
-        short_session: SHORT_SESSION,
+        short_session: FAST_SHORT_SESSION,
         long_session: FAST_LONG_SESSION,
     };
     let found = violations(&planted);
@@ -1117,7 +1146,7 @@ fn the_check_fails_a_path_whose_work_grows_with_the_session() {
         },
         short: flat,
         long,
-        short_session: SHORT_SESSION,
+        short_session: FAST_SHORT_SESSION,
         long_session: FAST_LONG_SESSION,
     };
     assert!(violations(&pair(flat)).is_empty());

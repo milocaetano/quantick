@@ -1,0 +1,10 @@
+# A5: generated artifacts, dumped from the branch binary built after the rebase onto 2f5f597b (code head 3ffba599) and compared byte for byte (cmp) with the committed files
+quantick-app --dump-capability-inventory vs docs/control-plane/capability-inventory.md: identical (sha256 ddf436e1112d2bbe)
+quantick-app --dump-retry-matrix vs docs/control-plane/retry-matrix.md: identical (sha256 dc4c2435ea3990b6)
+quantick-app --dump-ui-behaviour-matrix vs docs/control-plane/ui-behaviour-matrix.md: identical (sha256 ebbed6e4019f9d26)
+quantick-app --dump-hook-registry vs .claude/skills/ui-harness/references/hook-registry.md: identical (sha256 3562ed969de319d6)
+
+# QUANTICK_UPDATE_CONTROL_SCHEMAS=1 cargo test -p quantick-app control (regenerates every published observer schema and the catalog in place)
+test result: ok. 171 passed; 0 failed; 5 ignored; 0 measured; 1884 filtered out; finished in 3.04s
+git status --short -- schemas docs .claude/skills (empty means byte-identical):
+<end of status>

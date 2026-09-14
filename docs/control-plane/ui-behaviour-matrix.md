@@ -136,7 +136,7 @@ The three exclusion classes are closed:
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu, Delete | `annotate.remove` | — |
-| `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; Ctrl+C then Ctrl+V on the focused pane | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
+| `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.quick_range_profile` | Measure a range with a right-drag and turn it into a volume profile | a secondary-button drag on the price band with the Pointer tool, then the range's action bar; a chart click or Escape dismisses the temporary range | `annotate.fixed_range_profile.create` | — |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
@@ -202,7 +202,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
-| `drawing.duplicate` | the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
+| `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |

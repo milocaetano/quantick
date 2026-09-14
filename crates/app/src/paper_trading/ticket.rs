@@ -52,7 +52,7 @@ impl PaperTrading {
             return word.to_owned();
         };
         let qty_text = fmt_decimal(qty);
-        let Some(position) = self.account.venue.position() else {
+        let Some(position) = self.account.venue().position() else {
             return format!("{word} {qty_text}");
         };
         if position.side == side {
@@ -129,7 +129,7 @@ impl PaperTrading {
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
-        let Some(mark) = self.account.venue.mark_price() else {
+        let Some(mark) = self.account.venue().mark_price() else {
             ui.label(
                 egui::RichText::new("no print yet - there is no market to trade against")
                     .color(theme::TEXT_MUTED)
@@ -242,7 +242,7 @@ impl PaperTrading {
     /// session's realized points), the full card while a position is open —
     /// identity, brackets with their P&L, the R:R read, and the actions.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
-        let Some(position) = self.account.venue.position().cloned() else {
+        let Some(position) = self.account.venue().position().cloned() else {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("FLAT")
@@ -250,7 +250,7 @@ impl PaperTrading {
                         .color(theme::TEXT_MUTED),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let realized = self.account.venue.realized_points();
+                    let realized = self.account.venue().realized_points();
                     ui.label(
                         egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                             .monospace()
@@ -260,7 +260,7 @@ impl PaperTrading {
                     .on_hover_text("this session's realized points");
                 });
             });
-            if !self.account.venue.working_orders().is_empty()
+            if !self.account.venue().working_orders().is_empty()
                 && ui
                     .button("Cancel all orders")
                     .on_hover_text("remove every working order without trading (Shift+X)")
@@ -273,7 +273,7 @@ impl PaperTrading {
         let color = theme::side_color(position.side);
         let open = self
             .account
-            .venue
+            .venue()
             .mark_price()
             .map(|mark| position.open_points(mark));
 
@@ -510,10 +510,10 @@ impl PaperTrading {
         // distance - the ruler walks both legs the same number of points,
         // and a typed offset is a distance rather than a price - so the risk
         // is the side-independent half of the answer.
-        let risk_reference = self.account.venue.mark_price().unwrap_or_default();
+        let risk_reference = self.account.venue().mark_price().unwrap_or_default();
         let risk_state = self.risk_state(Side::Buy, risk_reference);
         let derived_quantity = risk_state.derived_quantity();
-        let risk_blocks = risk_state.blocks_entry(self.account.risk.lock);
+        let risk_blocks = risk_state.blocks_entry(self.account.risk_settings().lock);
         if let Some(quantity) = derived_quantity {
             // The mode writes into the field the whole form already reads,
             // rather than adding a second number beside it: one quantity on
@@ -606,13 +606,14 @@ impl PaperTrading {
         // The whole risk surface, in its own module: this file already
         // carries the order form, and a second feature inside it is how the
         // trunk grew the first time.
+        let editor = self.account.risk_editor();
         let risk_changed = crate::risk_sizing::draw_risk_block(
             ui,
             crate::risk_sizing::RiskBlock {
-                symbol: &self.account.symbol,
-                settings: &mut self.account.risk,
-                capital: &mut self.account.capital,
-                book: &mut self.account.instrument_money,
+                symbol: editor.symbol,
+                settings: editor.settings,
+                capital: editor.capital,
+                book: editor.book,
                 amount_text: &mut self.risk_amount_text,
                 percent_text: &mut self.risk_percent_text,
                 capital_text: &mut self.capital_text,
@@ -720,8 +721,8 @@ impl PaperTrading {
     pub(super) fn step_quantity(&mut self, notches: Decimal) {
         let (unit, floor) = self
             .account
-            .instrument_money
-            .get(&self.account.symbol)
+            .instrument_money()
+            .get(self.account.symbol())
             .map_or((Decimal::ONE, Decimal::ONE), |money| {
                 (money.size_step, money.min_size)
             });
@@ -740,14 +741,14 @@ impl PaperTrading {
 
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
         let mut in_flight = Vec::new();
-        self.account.venue.in_flight_entries(&mut in_flight);
+        self.account.venue().in_flight_entries(&mut in_flight);
         let queued_entries = in_flight.len();
         // Saturating, because the two reads cross a trait boundary and are
         // documented independently: a venue whose `in_flight_entries` says
         // more than its `in_flight` counts must not panic the render loop.
         let queued_closes = self
             .account
-            .venue
+            .venue()
             .in_flight()
             .saturating_sub(queued_entries);
         let orders: Vec<_> = self.account.working_orders().to_vec();
@@ -836,7 +837,7 @@ impl PaperTrading {
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let mut action = None;
         ui.horizontal(|ui| {
-            let realized = self.account.venue.realized_points();
+            let realized = self.account.venue().realized_points();
             ui.label(
                 egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
                     .monospace()
@@ -846,7 +847,7 @@ impl PaperTrading {
             ui.label(
                 egui::RichText::new(format!(
                     "realized · {} trades",
-                    self.account.venue.closed_trades().len()
+                    self.account.venue().closed_trades().len()
                 ))
                 .color(theme::TEXT_MUTED)
                 .small(),
@@ -857,8 +858,8 @@ impl PaperTrading {
                     .on_hover_text("performance metrics computed from the saved history")
                     .clicked()
                 {
-                    let env = crate::paper_account::account_env!(self.account);
-                    self.account.report.open(&env);
+                    let (report, env) = self.account.report_parts();
+                    report.open(&env);
                 }
             });
         });
@@ -878,7 +879,7 @@ impl PaperTrading {
                     egui::Button::new(
                         egui::RichText::new(format!(
                             "trades saved to: {}",
-                            self.account.dir.display()
+                            self.account.trades_dir().display()
                         ))
                         .color(theme::TEXT_MUTED)
                         .small(),
@@ -894,13 +895,13 @@ impl PaperTrading {
                      QUANTICK_TRADES_DIR overrides it for one run. Anything writing the \
                      quantick-trades format here (a future bot included) shows up in the \
                      ledger, the report and the export.",
-                    std::path::absolute(&self.account.dir)
-                        .unwrap_or_else(|_| self.account.dir.clone())
+                    std::path::absolute(self.account.trades_dir())
+                        .unwrap_or_else(|_| self.account.trades_dir().to_path_buf())
                         .display()
                 ))
                 .clicked()
             {
-                reveal_folder(&self.account.dir);
+                reveal_folder(self.account.trades_dir());
             }
         });
         action
@@ -933,14 +934,14 @@ impl PaperTrading {
 
     /// The trades ledger tab. Returns what the ledger asked of the host.
     pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
-        let env = crate::paper_account::account_env!(self.account);
-        self.account.report.draw_trades_tab(ui, tz, &env)
+        let (report, env) = self.account.report_parts();
+        report.draw_trades_tab(ui, tz, &env)
     }
 
     /// The performance report window, computed from what is on disk.
     pub fn draw_report_window(&mut self, ctx: &egui::Context, tz: TzOffset) {
-        let env = crate::paper_account::account_env!(self.account);
-        let asked = self.account.report.draw_window(ctx, tz, &env);
+        let (report, env) = self.account.report_parts();
+        let asked = report.draw_window(ctx, tz, &env);
         // The report can decide a folder picker should open; opening one is
         // this host's job, because the import copies into *its* journal.
         if asked.start_import {
@@ -959,15 +960,16 @@ impl PaperTrading {
     // End of frame
     // ------------------------------------------------------------------
 
-    /// Settle this panel's per-frame handshakes. Runs last in the frame, and
-    /// for **every** tab rather than only the one on screen.
+    /// Settle this panel's per-frame handshakes. Runs once a frame, before
+    /// the report window paints, for **every** tab, not only the one shown.
     ///
-    /// Three things happen here: the dock-hover link is cleared (the chart
-    /// has already read it), and the export and import pickers are polled for
-    /// a background job that finished. Both of those jobs belong to the tab
-    /// that started them, and a trader who starts an export and then looks at
-    /// another chart must not have to come back for it to land — which is
-    /// what running this only for the active tab used to mean.
+    /// Here the dock-hover link is cleared (the chart has already read it),
+    /// an open report re-reads a close the journal took since, and the export
+    /// and import pickers are polled for a background job that finished. Both
+    /// jobs belong to the tab that started them, and a trader who starts an
+    /// export and then looks at another chart must not have to come back for
+    /// it to land — which is what running this only for the active tab used
+    /// to mean.
     ///
     /// It no longer draws anything. The message it produces goes to the
     /// window's one toast, through [`Self::take_toast`].

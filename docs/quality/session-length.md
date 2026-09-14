@@ -56,8 +56,22 @@ the doc comments say so. The growth tolerance was never changed.
 
 | Variant | Sessions (prints) | Window | Runs | Asserts |
 | --- | --- | --- | --- | --- |
-| fast, `hot_path_work_is_independent_of_session_length` | 18,000 (1 min) and 180,000 (10 min), 10x | 300 frames, 5,000 depth updates | every `cargo test --workspace`, about 13 s | counts |
+| fast, `hot_path_work_is_independent_of_session_length` | 6,000 (20 s) and 60,000 (200 s), 10x | 60 frames, 1,000 depth updates | every `cargo test --workspace`, about 5 s | counts |
 | long, `long` (`#[ignore]`) | 18,000 and 3,960,000 (`RETAINED_TRADES_PER_PANE`, the envelope's edge), 220x | 1,800 frames, 30,000 depth updates | on demand, about 2.5 min in release | counts and CPU time |
+
+The fast variant first ran at 18,000 and 180,000 prints over 300 frames. That
+took 15 s of every `cargo test`, the `quantick-app` binary's longest test, and
+timed out every copy of the contention harness (#435). The book's history
+costs about 11 µs per depth update to build and a frame of its projection about
+10 ms, so both sizes came down, keeping the tenfold contrast that the growth check
+reads. The short session stays at 120 tick:50 bars, the projection's whole
+window. The one-chunk growth bound keeps its own ten-minute tape
+(`GROWTH_SESSION`, 180,000 prints), which only the cheap chart ingest builds.
+The application rig now also flushes the book worker after every frame, as it
+already flushed the indicator worker. Before that, a loaded host decided whether
+a frame saw the book's newest publish. That moved the `frame.app` counts and,
+in 7 of 36 copies run at once on 12 cores, left the lane off screen after the
+warm-up, which failed the rig's "the fixture draws a lane" assertion.
 
 `the_check_fails_a_path_whose_work_grows_with_the_session` plants a per-frame
 clone of the tape in the ingest path and requires the growth check to fail;
@@ -188,10 +202,11 @@ Folds per frame, from the harness:
 > **Since removed.** Q12 (#423) stores the tape in fixed-size chunks, so an
 > append never copies it: the slowest ingest within 1,024 prints of 2^21 and
 > of 2^22 is now under 0.12 ms, every consumer's output byte-identical, and
-> the fast variant asserts that building its session live never copies more
-> than one chunk. [The chunked trade tape](chunked-tape.md) has the design,
-> the identity proof and the measurements. The section below is the record
-> of what Q4 found.
+> `building_the_tape_live_never_copies_more_than_one_chunk` asserts that
+> building a ten-minute session live never copies more than one chunk.
+> [The chunked trade tape](chunked-tape.md) has the design, the identity
+> proof and the measurements. The section below is the record of what Q4
+> found.
 
 Q3 measured a ~21 ms UI stall when the tape's `Vec<Trade>` doubles at
 2,097,152 prints. At `3013f342`, Q3's harness re-run
@@ -253,16 +268,22 @@ run. Three earlier sets agreed on no regression — `dcea6d77`, 1.669 against
 
 ## Gate 6 at one SHA
 
-> **Re-measured at the campaign tip `950a6440`.** After main was synchronized
-> into the campaign again (#433, PR #445, which touched the per-frame path),
-> all four gate-6 measurements — this page's long variant, the tape-growth
-> stall probe, Q3's envelope harness and the dense-replay frame timing — were
-> re-run on release builds of `950a6440` on a clean tree, and each passed its
-> condition. [gate6-950a6440/](gate6-950a6440/README.md) has the table, the
-> host and the raw outputs; it supersedes the `3013f342` files cited below as
-> the evidence at the assessed revision. The earlier run at `124cdf0d` (after
-> #437) stays in [gate6-124cdf0d/](gate6-124cdf0d/README.md) as history. The table below is the record of what answered the
-> interim assessment's findings.
+> **Re-measured at the campaign tip `0c0860db`.** At the final phase-2 tip —
+> the synced tip `1baef443` plus #469, which settles the paper panels before
+> the report window paints in the frame path — all four gate-6 measurements —
+> this page's long variant, the tape-growth stall probe, Q3's envelope
+> harness and the dense-replay frame timing — were re-run on release builds
+> of `0c0860db` on a clean tree, and each passed its condition on an idle
+> host. [gate6-0c0860db/](gate6-0c0860db/README.md) has the table, the host
+> and the raw outputs; it supersedes the `3013f342` files cited below as the
+> evidence at the assessed revision. Absolute frame times stay inside the
+> same-host A/B's noise band (no condition compares them across revisions);
+> the README states both. The earlier runs stay as history:
+> [gate6-1baef443/](gate6-1baef443/README.md) (synced tip),
+> [gate6-ebe462f6/](gate6-ebe462f6/README.md) (phase-2 tip),
+> [gate6-950a6440/](gate6-950a6440/README.md) (after #445) and
+> [gate6-124cdf0d/](gate6-124cdf0d/README.md) (after #437). The table below is
+> the record of what answered the interim assessment's findings.
 
 Gate 6: *scalability claims for supported live workloads have current
 measurements, stated rates and bounded-state evidence at the assessed

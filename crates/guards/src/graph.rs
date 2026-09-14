@@ -58,6 +58,7 @@ use crate::Finding;
 pub const ALLOWED: &[(&str, &[&str])] = &[
     ("control", &[]),
     ("control-local", &["control"]),
+    ("control-host", &["control"]),
     ("mcp", &["control", "control-local"]),
     ("engine", &[]),
     ("orderbook", &[]),
@@ -86,12 +87,25 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // it: it is what `sim` and any future broker adapter both speak.
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
+    // The paper account: policy, sizing and the journal over a `sim` venue.
+    ("paper", &["civil", "engine", "sim"]),
+    // Civil dates and the display offset: pure arithmetic, reached by the
+    // paper account below `app` and by the chart above it.
+    ("civil", &[]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),
     (
         "backtest",
-        &["engine", "indicators", "pine", "replay", "sim", "strategy"],
+        &[
+            "engine",
+            "indicators",
+            "paper",
+            "pine",
+            "replay",
+            "sim",
+            "strategy",
+        ],
     ),
     // The repository guards. Empty for the same reason `control` is, but
     // load-bearing in a way the others are not: these read files and count

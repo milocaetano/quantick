@@ -5,13 +5,10 @@
 //! "which trades, in what order, from which file?", so the two read the same
 //! journal for different questions and keep their state apart.
 
-use std::path::{Path, PathBuf};
-
 use eframe::egui;
 use egui_phosphor::regular as icons;
-#[cfg(test)]
-use quantick_sim::PerformanceReport;
-use quantick_sim::{ClosedTrade, history};
+use quantick_paper::report::load_history;
+use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::rows::{
@@ -23,9 +20,7 @@ use super::{
     TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{
-    caption, fmt_signed_points, list_symbol_folders, points_color, sanitize_symbol,
-};
+use crate::paper_chrome::{caption, fmt_signed_points, list_symbol_folders, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -511,164 +506,4 @@ impl LedgerPage {
             remaining: total.saturating_sub(shown),
         }
     }
-}
-
-/// One journal row loaded from disk: the trade, the symbol folder it came
-/// from, and the session source its file recorded.
-#[derive(Clone)]
-pub(crate) struct HistoryRow {
-    pub(crate) symbol: String,
-    /// `None` — a file from before the source was recorded. The report's
-    /// Real view includes it: that era *was* live trading, and hiding it
-    /// would "lose" the user's history all over again.
-    pub(crate) source: Option<history::SessionSource>,
-    pub(crate) trade: ClosedTrade,
-}
-
-/// Journal rows loaded from disk, each remembering the symbol folder it
-/// came from, merged into one closing-order timeline.
-pub(crate) struct LoadedHistory {
-    /// Rows in closing order across every file read.
-    pub(crate) rows: Vec<HistoryRow>,
-    pub(crate) files: usize,
-    /// Files that were not readable quantick-trades files.
-    pub(crate) unreadable_files: usize,
-    /// Rows the parser had to report as unreadable (torn tails and such).
-    pub(crate) problem_rows: usize,
-}
-
-/// The report's session-source filter. Default `Real`: practice runs must
-/// never inflate the real track record unasked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SourceFilter {
-    /// Live sessions, plus files from before the source was recorded.
-    Real,
-    /// Replay-driven practice sessions only.
-    Replay,
-    /// Everything, mixed.
-    All,
-}
-
-impl SourceFilter {
-    /// Every filter, in pill order.
-    pub(super) const PILLS: [Self; 3] = [Self::Real, Self::Replay, Self::All];
-
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Real => "Real",
-            Self::Replay => "Replay",
-            // Not "All": the period pills own that word on the same row,
-            // and two identical pills a hand-width apart invite the wrong
-            // click.
-            Self::All => "Both",
-        }
-    }
-
-    pub(super) fn hover(self) -> &'static str {
-        match self {
-            Self::Real => {
-                "live sessions - files saved before quantick recorded a source count as real"
-            }
-            Self::Replay => "practice sessions driven by a market-replay recording",
-            Self::All => "live and replay together - mixed on purpose",
-        }
-    }
-
-    /// Whether a row with this recorded source belongs to the filter.
-    pub(super) fn admits(self, source: Option<history::SessionSource>) -> bool {
-        match self {
-            // Exhaustive on purpose: a future source variant must not fall
-            // into the real track record by default — adding one forces
-            // this match to say where it belongs.
-            Self::Real => match source {
-                None | Some(history::SessionSource::Live) => true,
-                Some(history::SessionSource::Replay) => false,
-            },
-            Self::Replay => source == Some(history::SessionSource::Replay),
-            Self::All => true,
-        }
-    }
-}
-
-/// Read every history file under `dir` (one symbol's folder, or all of
-/// them), remembering each row's symbol and skipping every path in
-/// `exclude` (the live session's own files — their trades are already in
-/// the simulator). Missing folders are simply empty, not an error.
-pub(crate) fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> LoadedHistory {
-    let mut folders = Vec::new();
-    match symbol {
-        Some(symbol) => folders.push(dir.join(sanitize_symbol(symbol))),
-        None => {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        folders.push(path);
-                    }
-                }
-                folders.sort();
-            }
-        }
-    }
-    let mut rows = Vec::new();
-    let mut files = 0usize;
-    let mut unreadable_files = 0usize;
-    let mut problem_rows = 0usize;
-    for folder in folders {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        let folder_symbol = folder
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mut paths: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.extension()
-                    .is_some_and(|extension| extension == history::FILE_EXTENSION)
-            })
-            .collect();
-        paths.sort();
-        for path in paths {
-            if exclude.contains(&path) {
-                continue;
-            }
-            files += 1;
-            match std::fs::read_to_string(&path).map_err(|error| error.to_string()) {
-                Ok(text) => match history::parse(&text) {
-                    Ok(parsed) => {
-                        problem_rows += parsed.problems.len();
-                        let symbol = parsed.symbol.unwrap_or_else(|| folder_symbol.clone());
-                        let source = parsed.source;
-                        rows.extend(parsed.trades.into_iter().map(|trade| HistoryRow {
-                            symbol: symbol.clone(),
-                            source,
-                            trade,
-                        }));
-                    }
-                    Err(_) => unreadable_files += 1,
-                },
-                Err(_) => unreadable_files += 1,
-            }
-        }
-    }
-    // Files are per-session; merge into one closing-order timeline so the
-    // drawdown walk is honest across sessions.
-    rows.sort_by_key(|row| (row.trade.closed_ms, row.trade.opened_ms));
-    LoadedHistory {
-        rows,
-        files,
-        unreadable_files,
-        problem_rows,
-    }
-}
-
-/// Aggregate loaded history rows — the tests' shortcut from a journal on
-/// disk to a report.
-#[cfg(test)]
-pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
-    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
-    PerformanceReport::from_trades(&trades)
 }

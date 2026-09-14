@@ -1,0 +1,15 @@
+[package]
+name = "quantick-civil"
+description = "Civil time: the display offset and the civil-date law every trade surface shares"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Pure integer arithmetic over epoch milliseconds, with no workspace or
+# third-party dependency: the paper account names its journal files by it,
+# the report cuts on it, and the chart axis labels with its offset.
+[dependencies]
+
+[lints]
+workspace = true
