@@ -13,3 +13,9 @@ test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
    Compiling quantick-control-host v0.1.0 (C:\src\quantick-worktrees\refactor-control-host-headless\crates\control-host)
 quantick-app in the dependency tree of quantick-control-host (all edge kinds): 0
+
+# After the rebase onto campaign tip 2f5f597b (#453 moved paper-account tests out of app)
+# quantick-app lists 2060 tests (2050 passed + 10 ignored in the workspace run), none under
+# control::journal or control::gateway::idempotency; `git diff --stat 2f5f597b...HEAD -- crates/app`
+# touches only the nine control files this PR moves or rewires, and crates/app/src/app/tests is
+# unchanged. cargo test -p quantick-control-host: 33 unit + 12 integration, all green.
