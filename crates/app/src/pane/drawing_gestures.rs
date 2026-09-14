@@ -603,7 +603,8 @@ impl ChartPane {
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
-                    selected: self.drawings.selected() == Some(index),
+                    // Locked selections paint no editable affordances.
+                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
                     halo: false,
                     content_editing: false,
                 };
@@ -640,7 +641,7 @@ impl ChartPane {
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
-                    selected: self.drawings.selected() == Some(index),
+                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
                     halo: false,
                     content_editing: false,
                 };
@@ -689,7 +690,7 @@ impl ChartPane {
             unit: band.unit(),
             primary_band: true,
             style: drawing.style,
-            selected: self.drawings.selected() == Some(drawing_index),
+            selected: self.drawings.selected() == Some(drawing_index) && !drawing.locked,
             halo: false,
             content_editing: false,
         };

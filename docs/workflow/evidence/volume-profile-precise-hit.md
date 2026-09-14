@@ -15,8 +15,10 @@ pointer tolerance. Labels remain informational.
 
 The generic handle shortcut also needed a tool policy: otherwise an invisible
 profile handle could still intercept a pointer that missed the precise body.
-The profile exposes handle targets only while selected, bounded by the painted
-circle/ring plus the same tolerance. Other tools retain their existing default.
+The profile exposes handle targets only while selected and unlocked, bounded by
+the painted circle/ring plus the same tolerance. The local and mirrored hit
+contexts suppress selection-only affordances on locked drawings, matching paint.
+Other tools retain their existing default.
 This necessary adjustment implements R1/R2 without changing their gestures.
 
 The tests in `drawings/fixed_range_profile/tests/precise_hit.rs` cover row width,
@@ -34,6 +36,17 @@ chart, preserves both profile anchors and leaves it unselected; a subsequent
 empty click clears selection. A painted-row drag moves both anchors and shows
 the move cursor; a visible-handle drag changes only the endpoint and shows the
 resize cursor. Price round trips use a 0.00001 tolerance for screen precision.
+
+The independent initial architecture review found the selected-and-locked case
+still captured invisible handle space (`VP-HIT-LOCKED-01`, [report](https://github.com/milocaetano/quantick/pull/461#issuecomment-5658593798)).
+Repair batch 1 updates the three local hit contexts and the mirrored hit context;
+paint selection and locked-body blocking are unchanged. The additional
+`precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart` test
+hovers and drags six pixels beside the hidden handle through an empty row,
+checks chart pan and unchanged anchors, then verifies that the painted locked
+body still shows NotAllowed and blocks the gesture. The repair uses the same
+ordered validation with `repair1-*.log` records and a separate input identity.
+The PR's append-only progress records preserve one batch and one attempt.
 
 ## Validation identity
 

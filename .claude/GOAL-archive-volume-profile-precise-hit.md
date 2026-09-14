@@ -52,6 +52,7 @@ AI gate evidence destinations: current PR AI review report, thread listing and f
 - Geometry projection, painting and pointer hit testing: per frame; share rendered geometry, bound row lookup to the pointer neighborhood, avoid additional session scans.
 - Pointer selection/move/resize: user gesture, evaluated per frame while active.
 - Necessary detour for R1/R2: the generic invisible-handle shortcut bypassed body precision, so a tool-owned target-radius policy is used by both picking and handle gestures. The profile requires selection; other tools preserve their defaults.
+- Independent architecture finding VP-HIT-LOCKED-01 also identified hidden targets on a selected, locked profile. Repair batch 1 aligns local and mirrored hit contexts with locked handle visibility and adds an application pointer regression; actual locked-body blocking stays intact. Evidence and cumulative attempt history are on PR #461 and in the evidence document.
 - Regression tests and evidence: validation only.
 - Use QUANTICK_FRVP_DEMO and QUANTICK_POINTER with isolated stores; extend an existing hook only if a changed state cannot already be reached.
 

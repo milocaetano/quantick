@@ -333,7 +333,8 @@ impl ChartPane {
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
-                selected: source.drawings.selected() == Some(index),
+                // The mirror also hides locked selection handles.
+                selected: source.drawings.selected() == Some(index) && !drawing.locked,
                 halo: false,
                 content_editing: false,
             };

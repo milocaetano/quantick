@@ -61,6 +61,33 @@ fn target(app: &QuantickApp, bar: f32, price: f64) -> egui::Pos2 {
     )
 }
 
+fn profile_handle(app: &QuantickApp, index: usize) -> egui::Pos2 {
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.unwrap();
+    let scale = pane
+        .price_view
+        .scale(pane.frame.auto_range.unwrap(), chart.top(), chart.bottom());
+    let drawing = &pane.drawings.items()[0];
+    let points: Vec<_> = drawing
+        .points
+        .iter()
+        .map(|point| target(app, point.bar, point.price))
+        .collect();
+    let drawing_context = crate::drawings::DrawContext {
+        payload: drawing.payload.as_ref(),
+        anchors: &drawing.points,
+        scale: &scale,
+        px_per_bar: pane.viewport.px_per_bar(),
+        unit: crate::drawings::ValueUnit::Price,
+        primary_band: true,
+        style: drawing.style,
+        selected: true,
+        halo: false,
+        content_editing: false,
+    };
+    drawing.tool.handles(chart, &points, &drawing_context)[index]
+}
+
 #[test]
 fn precise_profile_empty_space_pans_and_deselects_without_moving_the_drawing() {
     let (mut app, _commands, ctx) = profile_app();
@@ -133,30 +160,7 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
     assert_ne!(moved[0].bar, before[0].bar);
     assert!(((moved[1].bar - moved[0].bar) - (before[1].bar - before[0].bar)).abs() < 0.1);
     // Drive the visible affordance after the move has refreshed its range.
-    let pane = &app.active_tab().flow_pane;
-    let chart = pane.frame.chart_area.unwrap();
-    let scale = pane
-        .price_view
-        .scale(pane.frame.auto_range.unwrap(), chart.top(), chart.bottom());
-    let drawing = &pane.drawings.items()[0];
-    let points: Vec<_> = drawing
-        .points
-        .iter()
-        .map(|point| target(&app, point.bar, point.price))
-        .collect();
-    let drawing_context = crate::drawings::DrawContext {
-        payload: drawing.payload.as_ref(),
-        anchors: &drawing.points,
-        scale: &scale,
-        px_per_bar: pane.viewport.px_per_bar(),
-        unit: crate::drawings::ValueUnit::Price,
-        primary_band: true,
-        style: drawing.style,
-        selected: true,
-        halo: false,
-        content_editing: false,
-    };
-    let handle = drawing.tool.handles(chart, &points, &drawing_context)[1];
+    let handle = profile_handle(&app, 1);
     let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(handle)]);
     assert_eq!(
         hover.platform_output.cursor_icon,
@@ -175,4 +179,59 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
     assert!((resized[0].price - moved[0].price).abs() < 1e-5);
     assert_ne!(resized[1].bar, moved[1].bar);
     assert!((resized[1].price - moved[1].price).abs() < 1e-5);
+}
+
+#[test]
+fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
+    let (mut app, _commands, ctx) = profile_app();
+    app.active_tab_mut().flow_pane.drawings.select(Some(0));
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_locked_at(0, true);
+    run_frame(&mut app, &ctx);
+    // Six pixels misses the border but used to hit its hidden 7.125 px handle.
+    let start = profile_handle(&app, 0) + egui::vec2(6.0, 0.0);
+    let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(start)]);
+    assert_ne!(
+        hover.platform_output.cursor_icon,
+        egui::CursorIcon::NotAllowed
+    );
+    assert_ne!(hover.platform_output.cursor_icon, egui::CursorIcon::Move);
+    let before = app.active_tab().flow_pane.drawings.items()[0]
+        .points
+        .clone();
+    let reference = target(&app, 120.0, 106.0);
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        start,
+        start - egui::vec2(60.0, 0.0),
+    );
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].points,
+        before
+    );
+    assert!(target(&app, 120.0, 106.0).x < reference.x - 20.0);
+    // The actual painted body still owns the blocked gesture on a locked object.
+    let body = target(&app, 100.0, 100.5);
+    let reference = target(&app, 120.0, 106.0);
+    let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(body)]);
+    assert_eq!(
+        hover.platform_output.cursor_icon,
+        egui::CursorIcon::NotAllowed
+    );
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        body,
+        body - egui::vec2(40.0, 0.0),
+    );
+    assert_eq!(target(&app, 120.0, 106.0), reference);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].points,
+        before
+    );
 }
