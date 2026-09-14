@@ -634,7 +634,7 @@ fn candle_appearance_change_is_render_only() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     take_capture_start(&mut cmd_rx);
     let capture_epoch = app.active_tab().book_capture_epoch;
-    let bar_spec = app.active_tab().flow_pane.state.spec().clone();
+    let bar_spec = *app.active_tab().flow_pane.state.spec();
 
     app.style.candles = CandlePreset::OutlineOnly.style();
     app.style_revision = app.style_revision.saturating_add(1);

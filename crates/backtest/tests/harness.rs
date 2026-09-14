@@ -741,3 +741,84 @@ fn a_strategy_that_declares_no_indicator_reads_na_instead_of_panicking() {
         strategy.readings
     );
 }
+
+/// The backtest's half of the one-vocabulary proof: given the spec string a
+/// trader would type and the engine's hand-computed golden tape, the bars a
+/// strategy is shown are exactly the engine's committed bars. The chart asserts
+/// its half against the same files (`crates/app/src/state/bar_spec_parity_tests.rs`),
+/// and the engine pins `BarSpec::build` to them (`crates/engine/tests/bar_spec.rs`).
+#[test]
+fn the_backtest_cuts_every_golden_the_chart_cuts() {
+    use quantick_engine::{Bar, fixture, golden};
+
+    /// Shows nothing, orders nothing: only keeps every bar it is shown.
+    struct Recorder(Vec<Bar>);
+    impl Strategy for Recorder {
+        fn name(&self) -> &str {
+            "recorder"
+        }
+        fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+            self.0.push(view.bar.clone());
+            Vec::new()
+        }
+    }
+
+    for (text, trades_csv, expected_csv) in [
+        (
+            "tick:3",
+            include_str!("../../engine/tests/fixtures/tick_trades.csv"),
+            include_str!("../../engine/tests/fixtures/tick_n3_expected.csv"),
+        ),
+        (
+            "volume:5.0",
+            include_str!("../../engine/tests/fixtures/volume_trades.csv"),
+            include_str!("../../engine/tests/fixtures/volume_t5_expected.csv"),
+        ),
+        (
+            "dollar:500",
+            include_str!("../../engine/tests/fixtures/dollar_trades.csv"),
+            include_str!("../../engine/tests/fixtures/dollar_t500_expected.csv"),
+        ),
+        (
+            "time:1s",
+            include_str!("../../engine/tests/fixtures/time_trades.csv"),
+            include_str!("../../engine/tests/fixtures/time_i1000_expected.csv"),
+        ),
+        (
+            "imbalance:8",
+            include_str!("../../engine/tests/fixtures/imbalance_trades.csv"),
+            include_str!("../../engine/tests/fixtures/imbalance_t8_expected.csv"),
+        ),
+    ] {
+        let spec =
+            quantick_backtest::bars::parse_runnable(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let expected = fixture::parse_bars(expected_csv).expect("expected fixture parses");
+        let mut session = synthetic(&tape_of(&["100"]));
+        session.trades = fixture::parse_trades(trades_csv).expect("trade fixture parses");
+
+        let mut recorder = Recorder(Vec::new());
+        let run = run_session(&session, spec, &mut recorder);
+
+        if let Some(report) = golden::diff_bars(&expected, &recorder.0) {
+            panic!("{text}: {report}");
+        }
+        assert_eq!(
+            run.bars,
+            expected.len(),
+            "{text}: the run counts what it showed"
+        );
+    }
+}
+
+/// The parser refuses a deal-count spec by name; a caller that builds one in
+/// code and runs it anyway hits the same refusal rather than a run that cuts
+/// no bar and reports an empty session as if it had traded nothing.
+#[test]
+#[should_panic(
+    expected = "trades:10 needs the venue's deal counter, which a recorded session does not carry; bars::parse_runnable refuses it before a run"
+)]
+fn a_deal_count_spec_is_refused_by_the_run_itself() {
+    let session = synthetic(&tape_of(&["100", "101", "102"]));
+    let mut strategy = EmaCross::new(3, 9, Decimal::ONE, Protection::default(), false);
+    let _ = run_session(&session, BarSpec::Trades(10), &mut strategy);
+}
