@@ -235,3 +235,52 @@ fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
         before
     );
 }
+
+/// Campaign sync X4: the right-drag repairs (D28) meet #461's precise picking.
+/// Space a precise profile does not paint belongs to the chart, so a secondary
+/// drag started there measures a quick range: the chart does not pan and the
+/// profile neither moves nor becomes selected.
+#[test]
+fn a_secondary_drag_through_a_profile_gap_measures_without_panning_or_moving_it() {
+    let (mut app, _commands, ctx) = profile_app();
+    let before = app.active_tab().flow_pane.drawings.items()[0]
+        .points
+        .clone();
+    let start = target(&app, 100.0, 106.0);
+    let end = target(&app, 140.0, 104.0);
+    let reference = target(&app, 120.0, 106.0);
+    let secondary = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(start), secondary(start, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(end), secondary(end, false)],
+    );
+
+    assert!(
+        crate::app::control_quick_range(&app).is_some(),
+        "the drag through the profile's gap raised a quick range"
+    );
+    let after = target(&app, 120.0, 106.0);
+    assert!(
+        (after.x - reference.x).abs() < 0.5,
+        "a secondary drag does not pan: bar 120 moved from {} to {}",
+        reference.x,
+        after.x
+    );
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), None);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].points,
+        before
+    );
+}
