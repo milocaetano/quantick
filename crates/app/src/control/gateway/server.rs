@@ -39,6 +39,7 @@ use quantick_control::limits::{
 use quantick_control::wire::{
     ModuleRevision, RequestEnvelope, ResponseEnvelope, ResponseOutcome, WireU64,
 };
+use quantick_control_host::dispatch::{failure_response, try_reserve_in_flight};
 use quantick_control_local::discovery::publish_descriptor;
 #[cfg(test)]
 use quantick_control_local::discovery::publish_descriptor_in;
@@ -1062,9 +1063,13 @@ fn dispatch_prepared(
     let response_ticket = ticket.clone();
     let response_idempotency = Arc::clone(&authority.idempotency);
     let settle_window = authority.options.request_timeout;
-    let started = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(super::DispatchState::default());
     let request_started = Arc::clone(&started);
     let wait_envelope = envelope.clone();
+    let read_only = contract
+        .registry()
+        .capability(&envelope.capability_id, envelope.capability_version)
+        .is_some_and(|descriptor| descriptor.read_only);
     let spawn = thread::Builder::new()
         .name(format!("quantick-control-response-{}", envelope.request_id))
         .spawn(move || {
@@ -1075,22 +1080,14 @@ fn dispatch_prepared(
                 Ok(result) => serialize_ui_result(&contract, &wait_envelope, result),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => failure_response(
                     &wait_envelope,
-                    known_error(
-                        codes::TIMEOUT,
-                        "request did not complete before its deadline",
-                        true,
-                    ),
+                    started.interrupted(codes::TIMEOUT, read_only),
                 ),
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => failure_response(
                     &wait_envelope,
-                    known_error(
-                        codes::INSTANCE_GONE,
-                        "application request dispatcher is unavailable",
-                        true,
-                    ),
+                    started.interrupted(codes::INSTANCE_GONE, read_only),
                 ),
             };
-            if let Some(ticket) = response_ticket.as_ref() {
+            if !timed_out && let Some(ticket) = response_ticket.as_ref() {
                 response_idempotency.record(ticket, &response, metrics::wall_clock_ms());
             }
             let in_flight = InFlightId::take(&worker_in_flight);
@@ -1102,7 +1099,7 @@ fn dispatch_prepared(
                     .recv_timeout(settle_window)
                     .ok()
                     .map(|result| serialize_ui_result(&contract, &wait_envelope, result));
-                let acted = started.load(Ordering::Acquire);
+                let acted = started.has_started();
                 let at = metrics::wall_clock_ms();
                 response_idempotency.settle(ticket, &wait_envelope, settled.as_ref(), acted, at);
             }
@@ -1354,14 +1351,6 @@ fn dispatch_parked_wait(
     }
 }
 
-pub(super) fn try_reserve_in_flight(counter: &AtomicUsize, limit: usize) -> bool {
-    counter
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            (current < limit).then_some(current + 1)
-        })
-        .is_ok()
-}
-
 fn serialize_worker_result(
     contract: &ObserverContract,
     request: &RequestEnvelope,
@@ -1424,18 +1413,6 @@ fn validated_success(
         capture_revision,
         module_revisions,
         outcome: ResponseOutcome::Success { result },
-        warnings: Vec::new(),
-    }
-}
-
-fn failure_response(request: &RequestEnvelope, error: ControlError) -> ResponseEnvelope {
-    ResponseEnvelope {
-        protocol_version: request.protocol_version,
-        request_id: request.request_id.clone(),
-        instance_id: request.instance_id.clone(),
-        capture_revision: None,
-        module_revisions: Vec::new(),
-        outcome: ResponseOutcome::Failure { error },
         warnings: Vec::new(),
     }
 }

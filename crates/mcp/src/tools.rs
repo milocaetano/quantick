@@ -13,7 +13,8 @@
 
 use std::collections::BTreeMap;
 
-use quantick_control::id::InstanceId;
+use quantick_control::id::{IdempotencyKey, InstanceId};
+use quantick_control::limits::CONTROL_IDEMPOTENCY_KEY_MAX_BYTES;
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -509,6 +510,7 @@ pub fn call(
         ),
         SEARCH_CAPABILITIES => search(link, instance.as_ref(), &arguments),
         INVOKE => {
+            let idempotency_key = take_idempotency_key(&mut arguments)?;
             let capability_id = arguments
                 .get("capability_id")
                 .and_then(Value::as_str)
@@ -543,7 +545,13 @@ pub fn call(
                 .get("payload")
                 .cloned()
                 .unwrap_or_else(|| Value::Object(Map::new()));
-            match link.invoke(target.as_ref(), &capability_id, capability_version, payload) {
+            match link.invoke_with_idempotency_key(
+                target.as_ref(),
+                &capability_id,
+                capability_version,
+                payload,
+                idempotency_key,
+            ) {
                 Ok(response) => Ok(result_of(response, Some(capability_version))),
                 Err(error) => Ok(ToolResult::control_error(&error)),
             }
@@ -568,6 +576,21 @@ fn take_instance_id(arguments: &mut Map<String, Value>) -> Result<Option<Instanc
             )
         }),
         Some(_) => Err(RpcError::new(INVALID_PARAMS, "instance_id is a string")),
+    }
+}
+
+fn take_idempotency_key(
+    arguments: &mut Map<String, Value>,
+) -> Result<Option<IdempotencyKey>, RpcError> {
+    match arguments.remove("idempotency_key") {
+        None => Ok(None),
+        Some(Value::String(key)) => IdempotencyKey::new(key).map(Some).map_err(|_| {
+            RpcError::new(
+                INVALID_PARAMS,
+                "idempotency_key must be 1 to 128 printable ASCII bytes",
+            )
+        }),
+        Some(_) => Err(RpcError::new(INVALID_PARAMS, "idempotency_key is a string")),
     }
 }
 
@@ -866,6 +889,11 @@ fn invoke_schema() -> Value {
                 "type": "integer",
                 "minimum": 1,
                 "description": "Which registered version to call. Omitted: the newest version the instance registers for capability_id, as quantick_describe lists them. An ID the instance does not register is refused as unknown either way."
+            },
+            "idempotency_key": {
+                "type": "string", "minLength": 1, "maxLength": CONTROL_IDEMPOTENCY_KEY_MAX_BYTES,
+                "pattern": "^[ -~]+$",
+                "description": "Optional key passed unchanged to the instance when the capability permits it. Identical input deduplicates on the same connection while retained; bounded records can expire or be evicted. A missing mutation result requires readback even with a key, never a retry on a new connection."
             },
             "payload": {
                 "type": "object",
@@ -1249,6 +1277,30 @@ mod tests {
             "an unlisted ID has no newest version; the instance refuses it"
         );
         assert_eq!(newest_registered_version(&json!({}), "snapshot.read"), None);
+    }
+
+    #[test]
+    fn invoke_rejects_invalid_keys_before_discovery_or_dispatch() {
+        for key in [
+            json!(""),
+            json!("\n"),
+            json!("x".repeat(129)),
+            json!("é"),
+            json!(null),
+            json!(1),
+        ] {
+            let mut link = crate::fake::FakeLink::default();
+            let error = call(
+                &mut link,
+                INVOKE,
+                json!({ "capability_id": "layout.tab.create", "idempotency_key": key }),
+            )
+            .unwrap_err();
+            assert_eq!(error.code, INVALID_PARAMS);
+            assert!(link.calls.is_empty());
+        }
+        let schema = invoke_schema();
+        assert_eq!(schema["properties"]["idempotency_key"]["maxLength"], 128);
     }
 
     /// The version is read from one instance's registry, so the call goes to

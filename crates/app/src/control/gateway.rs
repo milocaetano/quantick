@@ -44,6 +44,7 @@ use super::{
 
 mod encode_refusal;
 // Moved to `quantick-control-host`; named here so `super::idempotency` resolves.
+use quantick_control_host::dispatch::DispatchState;
 use quantick_control_host::idempotency;
 mod local_action;
 mod panel;
@@ -446,7 +447,7 @@ struct UiRequest {
     /// Set once this request is past every pre-dispatch refusal, so the
     /// response worker can tell "never ran" from "may have run" when it stops
     /// hearing back. `gateway/idempotency.rs` is what needs the difference.
-    started: Arc<AtomicBool>,
+    started: Arc<DispatchState>,
     response: Sender<Result<UiReadExecution, ControlError>>,
 }
 
@@ -615,11 +616,7 @@ impl ControlAccess {
         request: &UiRequest,
     ) -> Result<UiReadExecution, ControlError> {
         if request.deadline <= Instant::now() {
-            return Err(known_error(
-                codes::TIMEOUT,
-                "request expired before application-thread dispatch",
-                true,
-            ));
+            return Err(request.started.interrupted(codes::TIMEOUT, false));
         }
         if request.grant_generation != current_generation
             || self.revoked_connections.contains(&request.connection_id)
@@ -640,9 +637,6 @@ impl ControlAccess {
                 ));
             }
         };
-        // Past every refusal that can happen without touching the
-        // application: from here the request may really act.
-        request.started.store(true, Ordering::Release);
         if request.prepared.envelope.instance_id != instance_id {
             return Err(known_error(
                 codes::INSTANCE_GONE,
@@ -662,6 +656,11 @@ impl ControlAccess {
             ));
         }
 
+        // The response worker can cancel queued work even after our deadline
+        // check. Both sides arbitrate the same transition before any action.
+        if !request.started.try_start() {
+            return Err(request.started.interrupted(codes::TIMEOUT, false));
+        }
         if let PreparedDispatch::Action(action) = &request.prepared.dispatch {
             let Some(actor) = request.actor.clone() else {
                 return Err(known_error(

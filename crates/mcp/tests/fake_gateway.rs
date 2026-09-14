@@ -8,13 +8,13 @@
 mod common;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     io::Write as _,
     net::{Ipv4Addr, TcpListener, TcpStream},
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -49,6 +49,7 @@ struct FakeGateway {
     stop: Arc<AtomicBool>,
     _published: PublishedDescriptor,
     port: u16,
+    actions: Arc<AtomicUsize>,
 }
 
 impl FakeGateway {
@@ -82,6 +83,8 @@ impl FakeGateway {
         let stop = Arc::new(AtomicBool::new(false));
         let serving_stop = Arc::clone(&stop);
         let serving_id = instance_id.clone();
+        let actions = Arc::new(AtomicUsize::new(0));
+        let serving_actions = Arc::clone(&actions);
         thread::spawn(move || {
             while !serving_stop.load(Ordering::Acquire) {
                 match listener.accept() {
@@ -89,7 +92,8 @@ impl FakeGateway {
                         let id = serving_id.clone();
                         let nonce = process_nonce.clone();
                         let token = token.clone();
-                        thread::spawn(move || serve_connection(stream, id, nonce, token));
+                        let actions = Arc::clone(&serving_actions);
+                        thread::spawn(move || serve_connection(stream, id, nonce, token, actions));
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -103,6 +107,7 @@ impl FakeGateway {
             stop,
             _published: published,
             port,
+            actions,
         }
     }
 }
@@ -120,6 +125,7 @@ fn serve_connection(
     instance_id: InstanceId,
     process_nonce: ProcessNonce,
     token: BearerToken,
+    actions: Arc<AtomicUsize>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let handshake_codec = BoundedCodec::handshake();
@@ -154,13 +160,18 @@ fn serve_connection(
         return;
     }
     let codec = BoundedCodec::default();
+    let mut keyed = BTreeMap::new();
     loop {
         let request = match codec.read_request(&mut stream) {
             Ok(request) => request,
             Err(CodecError::IdleTimeout) => continue,
             Err(_) => return,
         };
-        let outcome = answer(&instance_id, &request);
+        let outcome = keyed_answer(&instance_id, &request, &actions, &mut keyed);
+        // Close the actual socket after executing but before encoding a reply.
+        if request.payload.get("drop_reply").and_then(Value::as_bool) == Some(true) {
+            return;
+        }
         let response = ResponseEnvelope {
             protocol_version: request.protocol_version,
             request_id: request.request_id.clone(),
@@ -180,6 +191,51 @@ fn serve_connection(
 /// A capability the fake registers twice, the way `layout.pane.resize` kept
 /// version 1 when version 2 arrived: one registry row per version.
 const VERSIONED_CAPABILITY: &str = "layout.pane.resize";
+
+fn keyed_answer(
+    instance_id: &InstanceId,
+    request: &RequestEnvelope,
+    actions: &AtomicUsize,
+    keyed: &mut BTreeMap<String, (u32, Value, ResponseOutcome)>,
+) -> ResponseOutcome {
+    if let Some(key) = &request.idempotency_key {
+        if request.capability_id.as_str() != VERSIONED_CAPABILITY {
+            return ResponseOutcome::Failure {
+                error: ControlError::invalid_request("this capability forbids a key"),
+            };
+        }
+        if let Some((version, payload, outcome)) = keyed.get(key.as_str()) {
+            return if *version == request.capability_version && *payload == request.payload {
+                outcome.clone()
+            } else {
+                ResponseOutcome::Failure {
+                    error: ControlError::idempotency_conflict(),
+                }
+            };
+        }
+    }
+    let mut outcome = answer(instance_id, request);
+    if request.capability_id.as_str() == VERSIONED_CAPABILITY
+        && matches!(outcome, ResponseOutcome::Success { .. })
+    {
+        actions.fetch_add(1, Ordering::AcqRel);
+    }
+    if let ResponseOutcome::Success { result } = &mut outcome {
+        result["actions"] = json!(actions.load(Ordering::Acquire));
+        result["idempotency_key"] = json!(request.idempotency_key);
+    }
+    if let Some(key) = &request.idempotency_key {
+        keyed.insert(
+            key.as_str().to_owned(),
+            (
+                request.capability_version,
+                request.payload.clone(),
+                outcome.clone(),
+            ),
+        );
+    }
+    outcome
+}
 
 fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcome {
     // Keyed on the version as well as the ID, as the real registry is: a
@@ -226,6 +282,87 @@ fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcom
 
 fn scratch_directory(name: &str) -> common::ScratchDir {
     common::ScratchDir::new(name)
+}
+
+#[test]
+fn generic_invoke_carries_keys_and_the_wire_host_deduplicates_and_refuses_conflicts() {
+    let directory = scratch_directory("keys");
+    let gateway = FakeGateway::start(&directory, 0x72, 1_700_000_000_000);
+    let mut server = server_over(&directory);
+    let args = json!({ "capability_id": VERSIONED_CAPABILITY, "idempotency_key": "key with spaces", "payload": { "fraction": "0.4" } });
+    let first = call(&mut server, 2, tools::INVOKE, args.clone());
+    assert_eq!(first["isError"], false);
+    assert_eq!(
+        first["structuredContent"]["result"]["idempotency_key"],
+        "key with spaces"
+    );
+    let second = call(&mut server, 3, tools::INVOKE, args.clone());
+    assert_eq!(
+        first["structuredContent"]["result"],
+        second["structuredContent"]["result"]
+    );
+    assert_eq!(gateway.actions.load(Ordering::Acquire), 1);
+    let mut changed = args;
+    changed["payload"]["fraction"] = json!("0.5");
+    let conflict = call(&mut server, 4, tools::INVOKE, changed);
+    assert_eq!(
+        conflict["structuredContent"]["error"]["code"],
+        codes::IDEMPOTENCY_CONFLICT
+    );
+    let forbidden = call(
+        &mut server,
+        5,
+        tools::INVOKE,
+        json!({ "capability_id": tools::SNAPSHOT_CAPABILITY, "idempotency_key": "forbidden" }),
+    );
+    assert_eq!(
+        forbidden["structuredContent"]["error"]["code"],
+        codes::INVALID_REQUEST
+    );
+    assert_eq!(gateway.actions.load(Ordering::Acquire), 1);
+}
+
+#[test]
+fn a_real_lost_reply_after_execution_never_invites_a_mutating_retry_even_with_a_key() {
+    for keyed in [false, true] {
+        let directory = scratch_directory(if keyed { "lost-key" } else { "lost-unkeyed" });
+        let gateway = FakeGateway::start(&directory, 0x73, 1_700_000_000_000);
+        let mut server = server_over(&directory);
+        let mut args =
+            json!({ "capability_id": VERSIONED_CAPABILITY, "payload": { "drop_reply": true } });
+        if keyed {
+            args["idempotency_key"] = json!("lost-key");
+        }
+        let lost = call(&mut server, 2, tools::INVOKE, args);
+        assert_eq!(gateway.actions.load(Ordering::Acquire), 1);
+        let error = &lost["structuredContent"]["error"];
+        assert_eq!(error["code"], codes::INSTANCE_GONE);
+        assert_eq!(error["retryable"], false);
+        assert_eq!(error["details"]["outcome"], "unknown");
+        assert!(!error["next_steps"].as_array().unwrap().is_empty());
+        let readback = call(
+            &mut server,
+            3,
+            tools::GET_SNAPSHOT,
+            json!({ "scopes": ["system.info"] }),
+        );
+        assert_eq!(readback["structuredContent"]["result"]["actions"], 1);
+        assert_eq!(gateway.actions.load(Ordering::Acquire), 1);
+    }
+}
+
+#[test]
+fn a_lost_read_reply_uses_the_runtime_read_only_descriptor_to_allow_retry() {
+    let directory = scratch_directory("lost-read");
+    let _gateway = FakeGateway::start(&directory, 0x74, 1_700_000_000_000);
+    let mut server = server_over(&directory);
+    let lost = call(
+        &mut server,
+        2,
+        tools::INVOKE,
+        json!({ "capability_id": tools::SNAPSHOT_CAPABILITY, "payload": { "drop_reply": true } }),
+    );
+    assert_eq!(lost["structuredContent"]["error"]["retryable"], true);
 }
 
 fn server_over(directory: &Path) -> McpServer {

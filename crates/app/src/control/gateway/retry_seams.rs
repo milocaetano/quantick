@@ -34,7 +34,7 @@
 //! `#[cfg(test)]`, and the one production change it leans on is
 //! `request_enable` naming its ceiling through `request_enable_under`.
 
-use std::{path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use crossbeam_channel::Sender;
 use quantick_control::{error::ControlError, id::ProfileId};
@@ -59,7 +59,7 @@ impl ServedRequest {
         Self {
             capability_id: request.prepared.envelope.capability_id.as_str().to_owned(),
             request_id: request.prepared.envelope.request_id.as_str().to_owned(),
-            began: request.started.load(Ordering::Acquire),
+            began: request.started.has_started(),
         }
     }
 }

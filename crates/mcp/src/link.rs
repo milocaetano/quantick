@@ -15,7 +15,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use quantick_control::{
     error::{ControlError, codes},
-    id::{ErrorCode, InstanceId},
+    id::{ErrorCode, IdempotencyKey, InstanceId},
     wire::ResponseEnvelope,
 };
 use quantick_control_local::{
@@ -60,6 +60,24 @@ pub trait ControlLink {
         capability_version: u32,
         payload: Value,
     ) -> Result<ResponseEnvelope, ControlError>;
+
+    /// Invoke with a key when supported. Implementations must refuse keys they
+    /// cannot carry; silently dropping one could execute a mutation twice.
+    fn invoke_with_idempotency_key(
+        &mut self,
+        instance: Option<&InstanceId>,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<ResponseEnvelope, ControlError> {
+        if idempotency_key.is_some() {
+            return Err(ControlError::invalid_request(
+                "this link cannot carry an idempotency key",
+            ));
+        }
+        self.invoke(instance, capability_id, capability_version, payload)
+    }
 }
 
 /// The real link: discovery plus one cached authenticated connection per
@@ -197,6 +215,17 @@ impl ControlLink for LocalLink {
         capability_version: u32,
         payload: Value,
     ) -> Result<ResponseEnvelope, ControlError> {
+        self.invoke_with_idempotency_key(instance, capability_id, capability_version, payload, None)
+    }
+
+    fn invoke_with_idempotency_key(
+        &mut self,
+        instance: Option<&InstanceId>,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<ResponseEnvelope, ControlError> {
         let id = self.connection(instance)?;
         let client = self
             .clients
@@ -210,7 +239,18 @@ impl ControlLink for LocalLink {
             .then(|| payload.get("timeout_ms").and_then(Value::as_u64))
             .flatten();
         let outcome: Result<ResponseEnvelope, ControlError> = (|| {
-            let request_id = client.send_versioned(capability_id, capability_version, payload)?;
+            // Named tools and explicit-version calls also learn whether the
+            // runtime calls them read-only. A refused describe leaves the
+            // request conservative; it never manufactures a read-only claim.
+            if !client.knows_retry_policy(capability_id, capability_version) {
+                let _ = client.invoke(crate::tools::DESCRIBE_CAPABILITY, serde_json::json!({}))?;
+            }
+            let request_id = client.send_versioned_with_key(
+                capability_id,
+                capability_version,
+                payload,
+                idempotency_key,
+            )?;
             loop {
                 let response = match patience {
                     Some(timeout_ms) => client.read_with_extra_patience(timeout_ms)?,

@@ -17,11 +17,10 @@
 //!   outcome under a key would pin the client to that failure for the whole
 //!   retention window, which inverts the guarantee the key exists for. Only a
 //!   success or a non-retryable failure is terminal enough to replay.
-//! - **An oversized result is not retained, and the call still answers.** The
-//!   reference host rolls its effect back and refuses; a gateway cannot
-//!   un-move a pane. The response goes out as it is and nothing is stored, so
-//!   a retry re-executes — exactly what a call with no key does today, which
-//!   is why this costs the client nothing it had.
+//! - **An oversized result retains a bounded uncertainty refusal.** The
+//!   reference host can roll its effect back; a gateway cannot un-move a pane.
+//!   The original response still goes out, but a keyed retry gets a
+//!   non-retryable readback instruction instead of executing again.
 //!
 //! Three limits are worth stating plainly rather than leaving to be
 //! discovered.
@@ -43,11 +42,11 @@
 //! [`CONTROL_IDEMPOTENCY_RETENTION_MS`].
 //!
 //! The wait is the subtler half. A `control.timeout` says the response thread
-//! stopped waiting, not that the action did not happen: `execute_on_ui`
-//! refuses only a request whose deadline had already passed when it was
-//! dequeued, so one dequeued just before it runs in full. A timeout is
-//! retryable and therefore never recorded, which would leave a keyed retry
-//! free to act a second time. So the thread keeps the reservation and follows
+//! stopped waiting, not that the action did not happen. Cancellation and
+//! application dispatch arbitrate one atomic transition. If dispatch won,
+//! the timeout is non-retryable even with a key: a bounded record can expire
+//! or be evicted before a future retry. The initial timeout is not the final
+//! outcome, so the thread keeps the reservation and follows
 //! the call for one more request window, records what actually happened
 //! without sending it, and the retry replays that.
 //!
@@ -303,13 +302,9 @@ impl IdempotencyStore {
         }
         if let Some(running) = ledger.in_flight.get(&ticket.scope) {
             let error = if running == &ticket.input_digest {
-                // Retryable on purpose: the caller is told to ask again, and
-                // the answer waiting for it then is the first call's own.
-                ControlError::new(
-                    ErrorCode::new(codes::REQUEST_IN_PROGRESS).expect("static error code is valid"),
-                    "a call under this idempotency key is still in flight",
-                    true,
-                )
+                // A reservation protects this call now, but capacity eviction
+                // can remove its terminal result before a later retry arrives.
+                ControlError::outcome_unknown(codes::REQUEST_IN_PROGRESS)
             } else {
                 ControlError::idempotency_conflict()
             };
@@ -426,9 +421,9 @@ impl IdempotencyStore {
         let retained_bytes = serde_json::to_vec(&retained)
             .map(|bytes| bytes.len())
             .unwrap_or(usize::MAX);
-        if retained_bytes > CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES {
-            return;
-        }
+        // A large terminal answer still consumed the key. Losing the result
+        // must not turn the next attempt into a second execution.
+        let oversized = retained_bytes > CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES;
         let Some(mut ledger) = self.ledger() else {
             return;
         };
@@ -447,8 +442,18 @@ impl IdempotencyStore {
             ticket.scope.clone(),
             IdempotencyRecord {
                 input_digest: ticket.input_digest.clone(),
-                outcome: response.outcome.clone(),
-                module_revisions: response.module_revisions.clone(),
+                outcome: if oversized {
+                    ResponseOutcome::Failure {
+                        error: ControlError::outcome_unknown(codes::PAYLOAD_TOO_LARGE),
+                    }
+                } else {
+                    response.outcome.clone()
+                },
+                module_revisions: if oversized {
+                    Vec::new()
+                } else {
+                    response.module_revisions.clone()
+                },
                 stored_at_unix_ms: now_unix_ms,
             },
         );
@@ -562,7 +567,8 @@ fn expire(records: &mut BTreeMap<IdempotencyScope, IdempotencyRecord>, now_unix_
 /// chatty connection spend the cap and silently withdraw the guarantee every
 /// other connection was published. Taking from the largest holder — the
 /// incoming principal itself when it is the largest, which is the common case
-/// — keeps one client's traffic from costing another its retries. Ties go to
+/// — limits that interference but does not eliminate it. A new principal can
+/// still evict a larger holder's record before its TTL. Ties go to
 /// the oldest record of that principal, so a holder still loses its stalest
 /// key rather than an arbitrary one.
 fn make_room(records: &mut BTreeMap<IdempotencyScope, IdempotencyRecord>, incoming: &PrincipalId) {
@@ -771,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_call_under_a_key_still_in_flight_is_told_to_try_again() {
+    fn a_second_call_under_a_key_still_in_flight_is_told_to_reconcile() {
         let store = store();
         let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
         let mut in_flight = ticket_for(&request, 1);
@@ -790,9 +796,35 @@ mod tests {
         };
         assert_eq!(error.code.as_str(), codes::REQUEST_IN_PROGRESS);
         assert!(
-            error.retryable,
-            "the caller is told to ask again, and the first answer will be waiting"
+            !error.retryable,
+            "the caller cannot know whether a later retry will still find the record"
         );
+    }
+
+    #[test]
+    fn another_principal_can_evict_a_terminal_record_so_in_flight_advice_is_not_retryable() {
+        let store = store();
+        let first = envelope("first", Some("oldest"), json!({}));
+        let mut held = ticket_for(&first, 1);
+        assert!(IdempotencyStore::admit(&store, &mut held, &first, NOW).is_none());
+        let mut retry_ticket = ticket_for(&first, 1);
+        let refused = IdempotencyStore::admit(&store, &mut retry_ticket, &first, NOW).unwrap();
+        let ResponseOutcome::Failure { error } = refused.outcome else {
+            panic!("still in flight")
+        };
+        assert!(!error.retryable);
+        store.record(&held, &success(&first, json!({ "acted": true })), NOW);
+        drop(held);
+        for index in 1..CONTROL_IDEMPOTENCY_MAX_ENTRIES {
+            let fill = envelope("fill", Some(&format!("fill-{index}")), json!({}));
+            assert!(serve(&store, &fill, 1, &success(&fill, json!({})), NOW + 1).is_none());
+        }
+        let other = envelope("other", Some("other-key"), json!({}));
+        assert!(serve(&store, &other, 2, &success(&other, json!({})), NOW + 2).is_none());
+        // The original TTL has not elapsed, but another principal's record
+        // displaced this principal's oldest result. The earlier refusal must
+        // not have invited this now-unsafe retry.
+        assert!(IdempotencyStore::admit(&store, &mut retry_ticket, &first, NOW + 3).is_none());
     }
 
     #[test]
@@ -1175,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn a_result_too_large_to_retain_is_answered_and_not_stored() {
+    fn a_result_too_large_to_retain_keeps_a_non_retryable_tombstone() {
         let store = store();
         let request = envelope("first", Some("key-1"), json!({ "tab": 1 }));
         let oversized = success(
@@ -1183,12 +1215,17 @@ mod tests {
             json!({ "blob": "x".repeat(CONTROL_IDEMPOTENCY_RECORD_MAX_BYTES + 1) }),
         );
         assert!(serve(&store, &request, 1, &oversized, NOW).is_none());
-        assert_eq!(store.len(), 0);
+        assert_eq!(store.len(), 1);
 
         let retry = envelope("second", Some("key-1"), json!({ "tab": 1 }));
-        assert!(
-            serve(&store, &retry, 1, &success(&retry, json!({})), NOW).is_none(),
-            "a retry re-executes, exactly as it does with no key at all"
-        );
+        let replay = serve(&store, &retry, 1, &success(&retry, json!({})), NOW)
+            .expect("a retry cannot re-execute a mutation whose large result was lost");
+        let ResponseOutcome::Failure { error } = replay.outcome else {
+            panic!("the result is unknown")
+        };
+        assert_eq!(error.code.as_str(), codes::PAYLOAD_TOO_LARGE);
+        assert!(!error.retryable);
+        assert_eq!(error.context.details.unwrap()["outcome"], "unknown");
+        assert!(!error.context.next_steps.is_empty());
     }
 }

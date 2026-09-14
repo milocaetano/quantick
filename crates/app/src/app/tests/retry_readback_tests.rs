@@ -51,6 +51,9 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "mutation_uncertainty_tests.rs"]
+mod uncertainty;
+
 /// Scopes a client asks for: the safe reads plus `extra`.
 fn options(profile: &str, extra: &[&str]) -> ConnectOptions {
     let mut scopes = gateway_test_scopes();
@@ -1110,13 +1113,13 @@ fn a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by
     let first = client.read().expect("the deadline answers");
     assert_eq!(error_code(&first), Some(codes::TIMEOUT));
     assert!(
-        response_error(&first).retryable,
-        "a timeout invites a retry"
+        !response_error(&first).retryable,
+        "even a keyed timeout cannot promise retention before a future retry"
     );
 
-    // The invited retry. While the worker is still waiting out the settle
-    // window the key is in flight, and the contract's answer to that is "ask
-    // again" — so this asks again, slower than the connection's rate limit.
+    // Deliberately probe despite the refusal to prove the reservation keeps
+    // deduplicating and settles into readback advice. A compliant caller
+    // reconciles without these probes; they never execute a second action.
     let mut attempts = 0;
     let (refused, served) = loop {
         attempts += 1;
