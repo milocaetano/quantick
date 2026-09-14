@@ -102,6 +102,21 @@ impl ControlError {
         Self::known(codes::INVALID_REQUEST, message, false)
     }
 
+    /// A call may have executed, but no trustworthy result was received.
+    /// Keep the transport/deadline code while refusing an unsafe replay.
+    pub fn outcome_unknown(code: &'static str) -> Self {
+        let mut error = Self::known(
+            code,
+            "the call may have executed; its outcome is unknown",
+            false,
+        );
+        error.context.details = Some(serde_json::json!({ "outcome": "unknown" }));
+        error.context.next_steps = vec![
+            "Do not repeat the mutation. Read the state back with snapshot.read or events.read using the capability's readback in docs/control-plane/retry-matrix.md. A new connection does not retain this connection's idempotency keys.".to_owned(),
+        ];
+        error
+    }
+
     pub fn revision_conflict(current_revisions: Vec<ModuleRevision>) -> Self {
         let mut error = Self::known(
             codes::REVISION_CONFLICT,

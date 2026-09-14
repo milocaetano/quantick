@@ -5730,7 +5730,7 @@ fn the_same_layout_key_with_different_input_is_refused_as_a_conflict() {
 /// The record for an action is written on the response worker, after the
 /// connection loop has gone back to reading. Without a key held for the
 /// duration of the dispatch both calls would find no record and both would
-/// act. Here the second is refused while the first is still queued, retryably,
+/// act. Here the second is refused while the first is still queued,
 /// and the first goes on to create exactly one layout.
 #[test]
 fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
@@ -5778,8 +5778,8 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
         codes::REQUEST_IN_PROGRESS
     );
     assert!(
-        response_error(&refused).retryable,
-        "the caller is told to ask again once the first has answered"
+        !response_error(&refused).retryable,
+        "an in-flight refusal cannot promise that a future retry will find a retained result"
     );
 
     // The refusal above was answered before any frame ran, which is the race
@@ -5875,9 +5875,9 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
         "a call refused on its deadline created nothing"
     );
 
-    // The invited retry. `control.request_in_progress` while the settle window
-    // is still open is the contract's own instruction to ask again, so this
-    // asks again rather than treating it as the answer. Each retry is served
+    // The first response proved no dispatch, so these probes can verify that
+    // the settle window eventually releases its key. The generic in-flight
+    // refusal itself does not invite another mutation. Each retry is served
     // the moment it is queued, through the same `execute_on_ui` a frame's
     // drain calls, so its own deadline is never spent waiting for a frame
     // whose budget the frame's other work used up.
