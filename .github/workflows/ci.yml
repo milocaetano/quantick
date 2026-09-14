@@ -9,6 +9,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  read-cost:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The calculator reads both immutable PR objects. A shallow checkout
+          # can contain only GitHub's synthetic merge commit and would make a
+          # missing base look like a zero-cost change.
+          fetch-depth: 0
+          # Execute the calculator and frozen production lexer from the exact
+          # head named in the artifact, not from a synthetic merge worktree.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Measure direct source read cost
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mkdir -p artifacts
+          python3 tools/read_cost/measure.py \
+            --repo . --base "$BASE_SHA" --head "$HEAD_SHA" \
+            > artifacts/read-cost.json
+          cat artifacts/read-cost.json
+      - name: Upload SHA-bound read cost
+        uses: actions/upload-artifact@v4
+        with:
+          name: read-cost-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: artifacts/read-cost.json
+          if-no-files-found: error
+
   ci:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +75,10 @@ jobs:
         # lexer. A regression in it moves scores without any code changing, so
         # its fixtures run here, beside the other offline tool suites.
         run: python3 tools/outside_score/test_measure.py
+      - name: Read-cost measurement tests
+        # Exercises explicit Git revisions, Rust module layouts, direct-only
+        # reference scope, deduplication, and delete/rename pre-images.
+        run: python3 tools/read_cost/test_measure.py
       - name: Bridge tests
         # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
         # It covers which ticks the live pump asks for, how "load older" walks
