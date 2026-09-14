@@ -280,30 +280,37 @@ impl BarSpec {
     ///
     /// # Errors
     ///
-    /// Returns a human-readable message naming what is wrong and the accepted
-    /// forms, for the caller to surface verbatim.
-    pub fn parse(text: &str) -> Result<Self, String> {
+    /// A [`BarSpecError`] naming the reason as a variant; its `Display` is the
+    /// human-readable sentence, with the accepted forms, for the caller to
+    /// surface verbatim.
+    pub fn parse(text: &str) -> Result<Self, BarSpecError> {
         let (kind, param) = text
             .split_once(':')
-            .ok_or_else(|| format!("'{text}' is not a kind:parameter bar spec, like 'time:1m'"))?;
+            .ok_or_else(|| BarSpecError::NotKindParameter {
+                text: text.to_owned(),
+            })?;
         let (kind, param) = (kind.trim(), param.trim());
-        let positive_count = |what: &str| -> Result<u64, String> {
+        let positive_count = |kind: BarKind| -> Result<u64, BarSpecError> {
             match param.parse::<u64>() {
                 Ok(n) if n > 0 => Ok(n),
-                _ => Err(format!(
-                    "{what} bars need a positive whole number, got '{param}'"
-                )),
+                _ => Err(BarSpecError::NotPositiveCount {
+                    kind,
+                    param: param.to_owned(),
+                }),
             }
         };
-        let positive_decimal = |what: &str| -> Result<Decimal, String> {
+        let positive_decimal = |kind: BarKind| -> Result<Decimal, BarSpecError> {
             match param.parse::<Decimal>() {
                 Ok(d) if d > Decimal::ZERO => Ok(d),
-                _ => Err(format!("{what} bars need a positive number, got '{param}'")),
+                _ => Err(BarSpecError::NotPositiveNumber {
+                    kind,
+                    param: param.to_owned(),
+                }),
             }
         };
         match kind {
-            "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
-            "trades" => Ok(BarSpec::Trades(positive_count("trades")?)),
+            "tick" => Ok(BarSpec::Tick(positive_count(BarKind::Tick)?)),
+            "trades" => Ok(BarSpec::Trades(positive_count(BarKind::Trades)?)),
             "imbalance" => {
                 // The parameter is `target` or `unit:target`. The unit picks
                 // what θ accumulates; the target counts trades in every unit.
@@ -312,53 +319,158 @@ impl BarSpec {
                     Some((token, target)) => {
                         let token = token.trim();
                         let unit = ImbalanceUnit::parse_token(token).ok_or_else(|| {
-                            format!(
-                                "unknown imbalance unit '{token}'; one of trades, \
-                                 volume, dollar"
-                            )
+                            BarSpecError::UnknownImbalanceUnit {
+                                unit: token.to_owned(),
+                            }
                         })?;
                         (unit, target.trim())
                     }
                 };
                 match target.parse::<u64>() {
                     Ok(n) if n > 0 => Ok(BarSpec::Imbalance(unit, n)),
-                    _ => Err(format!(
-                        "imbalance bars need a positive whole trade target, got '{target}'"
-                    )),
+                    _ => Err(BarSpecError::NotPositiveTarget {
+                        target: target.to_owned(),
+                    }),
                 }
             }
-            "volume" => Ok(BarSpec::Volume(positive_decimal("volume")?)),
-            "dollar" => Ok(BarSpec::Dollar(positive_decimal("dollar")?)),
+            "volume" => Ok(BarSpec::Volume(positive_decimal(BarKind::Volume)?)),
+            "dollar" => Ok(BarSpec::Dollar(positive_decimal(BarKind::Dollar)?)),
             "time" => {
                 let ms = parse_time_interval(param)?;
                 if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
-                    return Err(format!(
-                        "time interval '{param}' is outside {}..={} — the domain both \
-                         time-bar controls accept",
-                        fmt_time_interval(MIN_TIME_INTERVAL_MS),
-                        fmt_time_interval(MAX_TIME_INTERVAL_MS),
-                    ));
+                    return Err(BarSpecError::IntervalOutOfRange {
+                        ms,
+                        param: param.to_owned(),
+                    });
                 }
                 Ok(BarSpec::Time(ms))
             }
-            _ => Err(format!(
-                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
-            )),
+            _ => Err(BarSpecError::UnknownKind {
+                kind: kind.to_owned(),
+            }),
         }
     }
 }
 
+/// Why a `kind:parameter` string is not a [`BarSpec`].
+///
+/// The variant is the reason, for a caller that repairs its own request — a
+/// control call, a script — without reading prose. `Display` is the sentence a
+/// person reads, the same one the config loader and the backtest have always
+/// printed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BarSpecError {
+    /// No `kind:parameter` shape at all.
+    NotKindParameter {
+        /// The whole text, as given.
+        text: String,
+    },
+    /// A kind this vocabulary does not have.
+    UnknownKind {
+        /// The kind as given, trimmed.
+        kind: String,
+    },
+    /// A counted kind (tick, trades) whose parameter is not a positive whole
+    /// number.
+    NotPositiveCount {
+        /// Which kind was asked for.
+        kind: BarKind,
+        /// The parameter as given, trimmed.
+        param: String,
+    },
+    /// A measured kind (volume, dollar) whose parameter is not a positive
+    /// number.
+    NotPositiveNumber {
+        /// Which kind was asked for.
+        kind: BarKind,
+        /// The parameter as given, trimmed.
+        param: String,
+    },
+    /// An imbalance unit other than trades, volume or dollar.
+    UnknownImbalanceUnit {
+        /// The unit as given, trimmed.
+        unit: String,
+    },
+    /// An imbalance target that is not a positive whole number of trades.
+    NotPositiveTarget {
+        /// The target as given, trimmed.
+        target: String,
+    },
+    /// A time parameter that is not a positive duration in the vocabulary
+    /// [`fmt_time_interval`] speaks.
+    NotAnInterval {
+        /// The parameter as given, trimmed.
+        text: String,
+    },
+    /// A duration outside [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`].
+    IntervalOutOfRange {
+        /// The duration it parsed to.
+        ms: i64,
+        /// The parameter as given, trimmed.
+        param: String,
+    },
+}
+
+impl std::fmt::Display for BarSpecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotKindParameter { text } => {
+                write!(
+                    f,
+                    "'{text}' is not a kind:parameter bar spec, like 'time:1m'"
+                )
+            }
+            Self::UnknownKind { kind } => write!(
+                f,
+                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
+            ),
+            Self::NotPositiveCount { kind, param } => write!(
+                f,
+                "{} bars need a positive whole number, got '{param}'",
+                kind.label()
+            ),
+            Self::NotPositiveNumber { kind, param } => write!(
+                f,
+                "{} bars need a positive number, got '{param}'",
+                kind.label()
+            ),
+            Self::UnknownImbalanceUnit { unit } => write!(
+                f,
+                "unknown imbalance unit '{unit}'; one of trades, volume, dollar"
+            ),
+            Self::NotPositiveTarget { target } => write!(
+                f,
+                "imbalance bars need a positive whole trade target, got '{target}'"
+            ),
+            Self::NotAnInterval { text } => {
+                write!(f, "'{text}' is not a time interval, like '1m' or '30s'")
+            }
+            Self::IntervalOutOfRange { param, .. } => write!(
+                f,
+                "time interval '{param}' is outside {}..={} — the domain both time-bar \
+                 controls accept",
+                fmt_time_interval(MIN_TIME_INTERVAL_MS),
+                fmt_time_interval(MAX_TIME_INTERVAL_MS),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BarSpecError {}
+
 /// Parse a time interval in the same vocabulary [`fmt_time_interval`] emits:
 /// `1h`, `5m`, `90s`, `1500ms`, or a bare millisecond count. The round trip is
 /// deliberate — whatever the status bar can say, a config can ask for.
-fn parse_time_interval(text: &str) -> Result<i64, String> {
-    let parse_scaled = |digits: &str, scale: i64| -> Result<i64, String> {
+fn parse_time_interval(text: &str) -> Result<i64, BarSpecError> {
+    let parse_scaled = |digits: &str, scale: i64| -> Result<i64, BarSpecError> {
         digits
             .parse::<i64>()
             .ok()
             .and_then(|n| n.checked_mul(scale))
             .filter(|ms| *ms > 0)
-            .ok_or_else(|| format!("'{text}' is not a time interval, like '1m' or '30s'"))
+            .ok_or_else(|| BarSpecError::NotAnInterval {
+                text: text.to_owned(),
+            })
     };
     // `ms` before `m` and `s`: the longest suffix owns the string.
     if let Some(digits) = text.strip_suffix("ms") {

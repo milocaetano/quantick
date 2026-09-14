@@ -56,8 +56,8 @@ pub use price_grid::PriceGrid;
 pub use profile::{ValueArea, VolumeProfile};
 pub use profile_fold::ProfileFold;
 pub use spec::{
-    BarKind, BarSpec, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS, MAX_TIME_INTERVAL_MS,
-    MIN_TIME_INTERVAL_MS, fmt_time_interval,
+    BarKind, BarSpec, BarSpecError, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS,
+    MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,
 };
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};

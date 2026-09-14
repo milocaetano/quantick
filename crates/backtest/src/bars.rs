@@ -8,13 +8,14 @@
 
 use std::fmt;
 
-pub use quantick_engine::BarSpec;
+pub use quantick_engine::{BarSpec, BarSpecError};
 
 /// Why a spec the vocabulary accepts cannot be run here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecError {
-    /// Not a spec at all; the message names what was expected.
-    Unparsable(String),
+    /// Not a spec at all; the vocabulary's own reason, whose `Display` names
+    /// what was expected.
+    Unparsable(BarSpecError),
     /// A deal-count (`trades:N`) spec. It cuts on the venue's deal counter,
     /// which no exported session or replay tape carries yet, so there is
     /// nothing to cut it on — refused for that reason, never approximated by a
@@ -25,7 +26,7 @@ pub enum SpecError {
 impl fmt::Display for SpecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unparsable(message) => f.write_str(message),
+            Self::Unparsable(reason) => reason.fmt(f),
             Self::NeedsDealCounter(spec) => write!(
                 f,
                 "{} counts the venue's deal counter, which no exported session carries \
@@ -36,15 +37,22 @@ impl fmt::Display for SpecError {
     }
 }
 
-impl std::error::Error for SpecError {}
+impl std::error::Error for SpecError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unparsable(reason) => Some(reason),
+            Self::NeedsDealCounter(_) => None,
+        }
+    }
+}
 
 /// Parse a `kind:parameter` spec this harness can run.
 ///
 /// # Errors
 ///
-/// [`SpecError::Unparsable`] for text the vocabulary rejects, with the
-/// vocabulary's own message; [`SpecError::NeedsDealCounter`] for a spec that
-/// counts deals.
+/// [`SpecError::Unparsable`] for text the vocabulary rejects, carrying the
+/// vocabulary's own [`BarSpecError`]; [`SpecError::NeedsDealCounter`] for a
+/// spec that counts deals.
 pub fn parse_runnable(text: &str) -> Result<BarSpec, SpecError> {
     let spec = BarSpec::parse(text).map_err(SpecError::Unparsable)?;
     if spec.kind().needs_deal_counter() {
@@ -88,7 +96,12 @@ mod tests {
     #[test]
     fn a_nonsense_spec_carries_the_vocabulary_message() {
         let refusal = parse_runnable("candles:5").unwrap_err();
-        assert!(matches!(refusal, SpecError::Unparsable(_)), "{refusal:?}");
+        assert_eq!(
+            refusal,
+            SpecError::Unparsable(BarSpecError::UnknownKind {
+                kind: "candles".to_owned()
+            })
+        );
         assert!(refusal.to_string().contains("tick"), "{refusal}");
     }
 }

@@ -357,7 +357,7 @@ fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
                 ms: 50,
                 param: "50ms".to_owned(),
             },
-            "time interval '50ms' is outside 100ms..=1d — the domain both time-bar controls accept",
+            "time interval '50ms' is outside 100ms..=24h — the domain both time-bar controls accept",
         ),
     ];
     for (text, variant, sentence) in cases {
