@@ -187,7 +187,7 @@ graph TD
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
-| `guards` | The guards the compiler cannot see: the size, context and cycle ratchets, the English scan, the encoding check. No dependencies, so asking them costs a second. |
+| `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies, so asking them costs a second. |
 | `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
 
 ## The non-negotiable design rules

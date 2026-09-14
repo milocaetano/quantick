@@ -6,7 +6,7 @@ mod scratch_dir;
 use std::fs;
 use std::process::Command;
 
-use quantick_guards::{GUARDS, extension_boundary as boundary};
+use quantick_guards::{GUARDS, extension_boundary as boundary, ui_free};
 use scratch_dir::ScratchDir;
 
 const SOURCE: &str = "\
@@ -59,6 +59,16 @@ fn fixture() -> ScratchDir {
     }
     fs::write(root.join("crates/guards/size-baseline.txt"), "!budget 0\n").unwrap();
     fs::write(root.join("crates/guards/cycle-baseline.txt"), "!budget 0\n").unwrap();
+    // The UI-free ratchet runs beside this one in the CLI. A ceiling equal to
+    // its own slack admits any fixture total from zero to that many lines, so
+    // no specimen below has to be counted twice.
+    let ceiling = ui_free::SLACK;
+    fs::write(
+        root.join(ui_free::BASELINE_FILE),
+        format!("!budget {ceiling}\ncrates/app {ceiling}\n"),
+    )
+    .unwrap();
+    fs::write(root.join(ui_free::EXEMPTIONS_FILE), "").unwrap();
     fs::write(root.join("crates/app/src/app.rs"), SOURCE).unwrap();
     // Lexical tokens deliberately keep & and the lifetime separate.
     fs::write(

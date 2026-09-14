@@ -107,6 +107,14 @@ pub struct Forbidden {
     pub because: &'static str,
 }
 
+/// The `because` every [`FORBIDDEN`] entry naming the UI toolkit carries.
+///
+/// Public so [`crate::ui_free`] asks this list which identifiers are the UI
+/// library instead of keeping a second one: a UI crate added here is then UI
+/// code to both guards, and the ratchet can never tell an author to move a
+/// file into a headless crate that this guard would reject.
+pub const UI_TOOLKIT: &str = "the UI toolkit";
+
 /// Everything the scan looks for.
 ///
 /// The four clauses of one sentence — no UI, no network, no async, no wall
@@ -143,12 +151,12 @@ pub const FORBIDDEN: &[Forbidden] = &[
     Forbidden {
         name: "egui",
         identifiers: &["egui"],
-        because: "the UI toolkit",
+        because: UI_TOOLKIT,
     },
     Forbidden {
         name: "eframe",
         identifiers: &["eframe"],
-        because: "the UI toolkit",
+        because: UI_TOOLKIT,
     },
     Forbidden {
         name: "HashMap",
@@ -381,18 +389,28 @@ fn hits(source: &str, path: &str) -> Vec<Hit> {
     for line in size::production_source(source) {
         let offset = line.as_ptr() as usize - base;
         let number = starts.partition_point(|start| *start <= offset);
-        let tokens = identifiers(without_comments(line));
-        for forbidden in FORBIDDEN {
-            if contains_sequence(&tokens, forbidden.identifiers) {
-                found.push(Hit {
-                    path: path.to_owned(),
-                    line: number,
-                    forbidden,
-                });
-            }
+        for forbidden in forbidden_on(line) {
+            found.push(Hit {
+                path: path.to_owned(),
+                line: number,
+                forbidden,
+            });
         }
     }
     found
+}
+
+/// Every [`FORBIDDEN`] entry one line of code reaches, in list order: its
+/// comment stripped with quotes respected, then matched as whole identifiers.
+///
+/// The one matcher. [`crate::ui_free`] asks it whether a line names the UI
+/// toolkit, so the two guards cannot disagree about what a reference is.
+pub fn forbidden_on(line: &str) -> Vec<&'static Forbidden> {
+    let tokens = identifiers(without_comments(line));
+    FORBIDDEN
+        .iter()
+        .filter(|forbidden| contains_sequence(&tokens, forbidden.identifiers))
+        .collect()
 }
 
 /// A line with its comment removed, quotes respected.
