@@ -56,8 +56,22 @@ the doc comments say so. The growth tolerance was never changed.
 
 | Variant | Sessions (prints) | Window | Runs | Asserts |
 | --- | --- | --- | --- | --- |
-| fast, `hot_path_work_is_independent_of_session_length` | 18,000 (1 min) and 180,000 (10 min), 10x | 300 frames, 5,000 depth updates | every `cargo test --workspace`, about 13 s | counts |
+| fast, `hot_path_work_is_independent_of_session_length` | 6,000 (20 s) and 60,000 (200 s), 10x | 60 frames, 1,000 depth updates | every `cargo test --workspace`, about 5 s | counts |
 | long, `long` (`#[ignore]`) | 18,000 and 3,960,000 (`RETAINED_TRADES_PER_PANE`, the envelope's edge), 220x | 1,800 frames, 30,000 depth updates | on demand, about 2.5 min in release | counts and CPU time |
+
+The fast variant first ran at 18,000 and 180,000 prints over 300 frames. That
+took 15 s of every `cargo test`, the `quantick-app` binary's longest test, and
+timed out every copy of the contention harness (#435). The book's history
+costs about 11 µs per depth update to build and a frame of its projection about
+10 ms, so both sizes came down, keeping the tenfold contrast that the growth check
+reads. The short session stays at 120 tick:50 bars, the projection's whole
+window. The one-chunk growth bound keeps its own ten-minute tape
+(`GROWTH_SESSION`, 180,000 prints), which only the cheap chart ingest builds.
+The application rig now also flushes the book worker after every frame, as it
+already flushed the indicator worker. Before that, a loaded host decided whether
+a frame saw the book's newest publish. That moved the `frame.app` counts and,
+in 7 of 36 copies run at once on 12 cores, left the lane off screen after the
+warm-up, which failed the rig's "the fixture draws a lane" assertion.
 
 `the_check_fails_a_path_whose_work_grows_with_the_session` plants a per-frame
 clone of the tape in the ingest path and requires the growth check to fail;
@@ -188,10 +202,11 @@ Folds per frame, from the harness:
 > **Since removed.** Q12 (#423) stores the tape in fixed-size chunks, so an
 > append never copies it: the slowest ingest within 1,024 prints of 2^21 and
 > of 2^22 is now under 0.12 ms, every consumer's output byte-identical, and
-> the fast variant asserts that building its session live never copies more
-> than one chunk. [The chunked trade tape](chunked-tape.md) has the design,
-> the identity proof and the measurements. The section below is the record
-> of what Q4 found.
+> `building_the_tape_live_never_copies_more_than_one_chunk` asserts that
+> building a ten-minute session live never copies more than one chunk.
+> [The chunked trade tape](chunked-tape.md) has the design, the identity
+> proof and the measurements. The section below is the record of what Q4
+> found.
 
 Q3 measured a ~21 ms UI stall when the tape's `Vec<Trade>` doubles at
 2,097,152 prints. At `3013f342`, Q3's harness re-run
