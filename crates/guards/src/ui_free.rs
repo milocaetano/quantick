@@ -198,13 +198,16 @@ fn files(root: &Path) -> Result<Vec<(String, bool, usize)>, Unmeasured> {
     }
     let walk = size::measure(root);
     // A file or directory under the source tree, as the walk reported it.
+    // `size::measure` writes an unlistable directory to `unreadable` as well
+    // as to `blind`, so one inside the tree is caught here, not below.
     let mut missed: Vec<String> = walk
         .unreadable
         .iter()
         .filter(|line| line.trim_start().starts_with(SOURCE))
         .cloned()
         .collect();
-    // An ancestor the walk could not list hides the whole tree.
+    // An ancestor the walk could not list hides the whole tree; its line in
+    // `unreadable` names the ancestor, which the filter above cannot match.
     missed.extend(
         walk.blind
             .iter()
