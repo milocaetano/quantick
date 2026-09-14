@@ -457,10 +457,12 @@ fn the_chart_menu_leads_with_anchored_vwap_and_nests_display_controls() {
 
     let anchor =
         painted_text_center(&open, "Anchor VWAP here").expect("the placing action is offered");
+    let layers =
+        painted_text_center(&open, "chart layers").expect("the submenu has a visible label");
     let trade = painted_text_center(&open, "trade").expect("the resting-order section is offered");
     assert!(
-        anchor.y < trade.y,
-        "anchored VWAP is the first general chart action: {anchor:?} vs {trade:?}"
+        anchor.y < layers.y && anchor.y < trade.y,
+        "anchored VWAP leads both general sections: {anchor:?}, {layers:?}, {trade:?}"
     );
     assert!(
         !top_level.iter().any(|text| text.ends_with(" market")),
@@ -480,8 +482,6 @@ fn the_chart_menu_leads_with_anchored_vwap_and_nests_display_controls() {
         "layer toggles stay out of the primary menu: {top_level:?}"
     );
 
-    let layers =
-        painted_text_center(&open, "chart layers").expect("the submenu has a visible label");
     run_frame_with_events(
         &mut app,
         &ctx,
