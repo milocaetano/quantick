@@ -55,8 +55,16 @@ impl DrawingKeys {
                 lock: alt && input.key_pressed(egui::Key::L),
                 hide: alt && input.key_pressed(egui::Key::H),
                 duplicate: command && input.key_pressed(egui::Key::D),
-                copy: command && input.key_pressed(egui::Key::C),
-                paste: command && input.key_pressed(egui::Key::V),
+                copy: input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Copy))
+                    || (command && input.key_pressed(egui::Key::C)),
+                paste: input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Paste(_)))
+                    || (command && input.key_pressed(egui::Key::V)),
                 nudge_bars: horizontal * step,
                 nudge_px: vertical * step,
             }

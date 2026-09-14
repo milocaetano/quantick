@@ -554,7 +554,7 @@ fn ctrl_d_duplicates_the_selection_offset_and_selected() {
 }
 
 #[test]
-fn ctrl_c_then_ctrl_v_pastes_the_copied_drawing_not_the_current_selection() {
+fn native_clipboard_events_paste_the_copied_drawing_not_the_current_selection() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
@@ -564,12 +564,7 @@ fn ctrl_c_then_ctrl_v_pastes_the_copied_drawing_not_the_current_selection() {
     let original = app.active_tab().flow_pane.drawings.items()[0].clone();
     let undo_before_copy = app.active_tab().flow_pane.drawings.undo_depth();
 
-    run_frame_with_modifiers(
-        &mut app,
-        &ctx,
-        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
-        egui::Modifiers::COMMAND,
-    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::Copy]);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items(),
         std::slice::from_ref(&original)
@@ -588,12 +583,7 @@ fn ctrl_c_then_ctrl_v_pastes_the_copied_drawing_not_the_current_selection() {
     assert_ne!(other.tool, original.tool, "the current selection differs");
     let undo_before_paste = app.active_tab().flow_pane.drawings.undo_depth();
 
-    run_frame_with_modifiers(
-        &mut app,
-        &ctx,
-        vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
-        egui::Modifiers::COMMAND,
-    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::Paste(String::new())]);
     let drawings = &app.active_tab().flow_pane.drawings;
     assert_eq!(drawings.items().len(), 3);
     assert_eq!(drawings.selected(), Some(2), "the pasted copy is selected");
@@ -628,22 +618,12 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
     app.active_tab_mut().focus = PaneSide::Time(0);
     let source = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
 
-    run_frame_with_modifiers(
-        &mut app,
-        &ctx,
-        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
-        egui::Modifiers::COMMAND,
-    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::Copy]);
     let flow = pane_point(&app, PaneSide::Flow);
     click_chart(&mut app, &ctx, flow);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
     for _ in 0..2 {
-        run_frame_with_modifiers(
-            &mut app,
-            &ctx,
-            vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
-            egui::Modifiers::COMMAND,
-        );
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::Paste(String::new())]);
     }
 
     assert_eq!(
@@ -664,6 +644,25 @@ fn drawing_clipboard_targets_the_focused_pane_and_repeated_pastes_do_not_overlap
         source.points[0].bar + DUPLICATE_OFFSET_BARS * 2.0,
         "each paste advances from the clipboard source"
     );
+    assert_eq!(
+        app.active_tab().pane(PaneSide::Flow).drawings.selected(),
+        Some(1),
+        "each paste selects the new drawing"
+    );
+
+    for expected_len in [1, 0] {
+        run_frame_with_modifiers(
+            &mut app,
+            &ctx,
+            vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)],
+            egui::Modifiers::COMMAND,
+        );
+        assert_eq!(
+            app.active_tab().pane(PaneSide::Flow).drawings.items().len(),
+            expected_len,
+            "each undo removes exactly one pasted drawing"
+        );
+    }
 }
 
 #[test]
@@ -672,15 +671,75 @@ fn ctrl_v_before_copy_is_a_no_op() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
 
-    run_frame_with_modifiers(
-        &mut app,
-        &ctx,
-        vec![key_press_with(egui::Key::V, egui::Modifiers::COMMAND)],
-        egui::Modifiers::COMMAND,
-    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::Paste(String::new())]);
 
     assert!(app.active_tab().flow_pane.drawings.items().is_empty());
     assert_eq!(app.active_tab().flow_pane.drawings.undo_depth(), 0);
+}
+
+#[test]
+fn native_clipboard_events_remain_available_to_a_focused_text_field() {
+    let (mut app, _commands) = app_with_history(200);
+    let drawing_ctx = egui::Context::default();
+    run_frame(&mut app, &drawing_ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &drawing_ctx, egui::pos2(700.0, 300.0));
+    let text_ctx = egui::Context::default();
+    let text_id = egui::Id::new("native-clipboard-text-field");
+    let mut text = "chart title".to_owned();
+
+    let _ = text_ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add(egui::TextEdit::singleline(&mut text).id(text_id))
+                .request_focus();
+        });
+    });
+    let _ = text_ctx.run(
+        egui::RawInput {
+            events: vec![key_press_with(egui::Key::A, egui::Modifiers::COMMAND)],
+            modifiers: egui::Modifiers::COMMAND,
+            ..Default::default()
+        },
+        |ctx| {
+            app.handle_drawing_keys(ctx, Instant::now());
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
+            });
+        },
+    );
+    let copied = text_ctx.run(
+        egui::RawInput {
+            events: vec![egui::Event::Copy],
+            ..Default::default()
+        },
+        |ctx| {
+            app.handle_drawing_keys(ctx, Instant::now());
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
+            });
+        },
+    );
+    assert_eq!(copied.platform_output.copied_text, "chart title");
+
+    let _ = text_ctx.run(
+        egui::RawInput {
+            events: vec![egui::Event::Paste("replacement".to_owned())],
+            ..Default::default()
+        },
+        |ctx| {
+            app.handle_drawing_keys(ctx, Instant::now());
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
+            });
+        },
+    );
+    assert_eq!(text, "replacement");
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        1,
+        "text clipboard events must not paste or replace a drawing"
+    );
 }
 
 #[test]
