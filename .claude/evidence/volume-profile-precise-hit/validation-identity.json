@@ -1,0 +1,50 @@
+{
+  "recorded_at": "2026-09-14T03:22:45.772437+00:00",
+  "branch": "fix/volume-profile-precise-hit",
+  "base_ref": "origin/main",
+  "base_tip": "d3d4b23d3741ec82204b2c0f2c77b23a98908ac4",
+  "verified_source_tree": "e19278be36637fc79841bd6d78691e236cbeff19",
+  "source_tree_scope": "Base tree plus the seven changed Rust files; subsequent evidence and mission archival contain no runtime inputs.",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "environment": {
+    "RUST_TEST_THREADS": "2",
+    "QUANTICK_BUBBLES": "C:\\src\\quantick-worktrees\\fix-volume-profile-precise-hit\\config\\bubbles.toml",
+    "platform": "Windows x86_64 MSVC"
+  },
+  "input_sha256": {
+    "crates/app/src/app/tests/mod.rs": "d7299c097f0f7f85c6500d5dd7df9e8117d9b95aa905cda52abea1678fe32f90",
+    "crates/app/src/app/tests/profile_pointer_tests.rs": "bc7a339807d45404b79d989174be37ecf9fffb26c9c9b0ef8c543392346bb95c",
+    "crates/app/src/drawings/fixed_range_profile.rs": "8a391b84c1228a53f6e472c122cd6674cc8e20d93e3aeb2fabe77f53e6890276",
+    "crates/app/src/drawings/fixed_range_profile/geometry.rs": "8c5e7d9cff937a400a613743123ff4437c26a640c8df37d5bc7ba294970d512c",
+    "crates/app/src/drawings/fixed_range_profile/tests/precise_hit.rs": "b22584507dc6a12dbd4d3a7f9a863f7eb2fc1fbcf68c7f2430db466ef18be94c",
+    "crates/app/src/drawings/tool.rs": "1942295d7637963bb2e99a8ce64c9b1697ad990d47db9cf729d2ba8f774f0066",
+    "crates/app/src/pane/drawing_gestures.rs": "042564221bc818b7c8c78ad0cf430143b5cf18d78a25b59e11f77505518ee3a8",
+    "Cargo.toml": "1396a98e0f8f25877f855ee115eb61e661374f7c1c76be6610e69c24b0249878",
+    "Cargo.lock": "02d505e112dcce244b11627708da2815c6068402997a5c0d805b0e483d1c6721",
+    "config/bubbles.toml": "5db6b44a4564f7e0cd26482a3f1badd17eb41788e6959453330f2738bb37cd4d",
+    "crates/app/Cargo.toml": "74760128a4cf47abb14b85c1825404cbfb2f1fe182367a7c9cbe58ffb8cba1e6"
+  },
+  "ordered_validation": [
+    {
+      "log": "fmt.log",
+      "exit": 0,
+      "sha256": "e8a3153e6f5259175cd4f0f7aaa5d0585e887ee11e7f8ae78e8fcc912f3c09ad"
+    },
+    {
+      "log": "clippy.log",
+      "exit": 0,
+      "sha256": "b4abb80094907384c4cc23416793b5afc77d91dc646af1637561c568bfc18441"
+    },
+    {
+      "log": "build.log",
+      "exit": 0,
+      "sha256": "cced76d6c1ed04a5cb288266a56aab5629a44a8834daa090e417bc9ce5d472b3"
+    },
+    {
+      "log": "workspace-tests.log",
+      "exit": 0,
+      "sha256": "11fe47a0ba81d49a60fd43515dd8409019d20cb04c80ff7dc90b4ef23ec6541a"
+    }
+  ]
+}

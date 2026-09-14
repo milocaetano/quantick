@@ -329,6 +329,11 @@ pub(super) trait DrawingToolImpl: Sync {
     ) -> Option<Handles> {
         None
     }
+    /// Handle target radius, or no target when the affordance is unavailable.
+    /// Defaults preserve existing tools; precise tools may require selection.
+    fn handle_hit_radius(&self, radius_px: f32, _ctxt: &DrawContext<'_>) -> Option<f32> {
+        Some(radius_px)
+    }
     /// Apply a drag of handle `handle` to screen position `to`, answering the
     /// object's new screen anchors — the tool decides which anchors a handle
     /// moves, and a handle may well move more than one.
@@ -620,6 +625,26 @@ impl DrawingTool {
             .unwrap_or_else(|| points.iter().copied().collect())
     }
 
+    /// Resolve the nearest eligible handle using the tool's target policy.
+    #[must_use]
+    pub fn hit_handle(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        position: egui::Pos2,
+        radius_px: f32,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<usize> {
+        let radius = self.0.handle_hit_radius(radius_px, ctxt)?;
+        self.handles(chart_rect, points, ctxt)
+            .iter()
+            .enumerate()
+            .map(|(index, point)| (index, point.distance_sq(position)))
+            .filter(|(_, distance)| *distance <= radius * radius)
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(index, _)| index)
+    }
+
     /// Whether this tool's handles *are* its anchors — true for almost every
     /// tool. A host that can only express "move anchor N" (the cross-pane
     /// shared edit) asks this before offering a handle at all, rather than
@@ -660,9 +685,8 @@ impl DrawingTool {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
-        self.handles(chart_rect, points, ctxt)
-            .iter()
-            .any(|point| point.distance_sq(position) <= radius_px * radius_px)
+        self.hit_handle(chart_rect, points, position, radius_px, ctxt)
+            .is_some()
             || self
                 .0
                 .hit_test(chart_rect, points, position, radius_px, ctxt)
