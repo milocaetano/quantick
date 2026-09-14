@@ -333,6 +333,16 @@ impl QuantickApp {
     /// the strip as it was rather than with a tab nobody asked to keep.
     pub(crate) fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
         let (tab, side) = self.focused_target();
+        self.create_layout_at(tab, side, name)
+    }
+
+    /// Add a layout and put it on the pane whose footer asked for it.
+    pub(crate) fn create_layout_at(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+        name: Option<&str>,
+    ) -> Result<LayoutId, LayoutError> {
         if !self.pane_is_real(tab, side) {
             return Err(LayoutError::Unknown);
         }
