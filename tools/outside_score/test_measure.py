@@ -219,6 +219,10 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(out["ui_crate.harness_hooks"], "1")
         self.assertEqual(out["harness_hooks"], "2")
 
+    def test_an_empty_toolkit_list_is_refused_by_the_library_too(self):
+        with self.assertRaises(ValueError):
+            measure.render(self.tmp.name, "app", top=20, toolkit=",")
+
     def test_a_ui_crate_that_never_names_the_toolkit_is_not_applicable(self):
         with tempfile.TemporaryDirectory() as root:
             write(root, "crates/gui/src/lib.rs", "use iced::Element;\npub fn view() {}\n")
@@ -230,7 +234,16 @@ class MeasureTest(unittest.TestCase):
 
     def test_a_flag_without_its_value_or_an_unknown_crate_prints_usage(self):
         missing = ["m", self.tmp.name, "--ui-crate", "quantick-app"]
-        for argv in (["m", self.tmp.name, "--top"], ["m", self.tmp.name, "--top", "x"], ["m", "--ui-crate"], missing):
+        no_toolkit = ["m", self.tmp.name, "--ui-toolkit", ""]
+        only_commas = ["m", self.tmp.name, "--ui-toolkit", " , "]
+        for argv in (
+            ["m", self.tmp.name, "--top"],
+            ["m", self.tmp.name, "--top", "x"],
+            ["m", "--ui-crate"],
+            missing,
+            no_toolkit,
+            only_commas,
+        ):
             stderr = sys.stderr
             sys.stderr = io.StringIO()
             try:

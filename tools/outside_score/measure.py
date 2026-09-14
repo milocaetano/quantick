@@ -256,10 +256,18 @@ def inherent_impls(prod):
     return names
 
 
+def toolkit_names(names):
+    """The non-empty names in a comma-separated toolkit list."""
+    return [n.strip() for n in names.split(",") if n.strip()]
+
+
 def toolkit_pattern(names):
-    """Whole-identifier matcher for the UI toolkit's crate names."""
-    alternatives = "|".join(re.escape(n.strip()) for n in names.split(",") if n.strip())
-    return re.compile(r"\b(?:" + alternatives + r")\b")
+    """Whole-identifier matcher for the UI toolkit's crate names. An empty
+    list would match every file and score the tree as all UI, so it raises."""
+    listed = toolkit_names(names)
+    if not listed:
+        raise ValueError("the UI toolkit list names no crate")
+    return re.compile(r"\b(?:" + "|".join(re.escape(n) for n in listed) + r")\b")
 
 
 class UnknownCrate(ValueError):
@@ -398,7 +406,7 @@ def main(argv):
                 return usage()
             options[flag] = args[k + 1]
             del args[k:k + 2]
-    if not options["--top"].isdigit():
+    if not options["--top"].isdigit() or not toolkit_names(options["--ui-toolkit"]):
         return usage()
     if len(args) != 1 or not os.path.isdir(os.path.join(args[0], "crates")):
         return usage()
