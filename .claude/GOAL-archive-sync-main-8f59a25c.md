@@ -90,7 +90,10 @@ Campaign synchronization X4 of #367. Base: `campaign/lean-a-plus` at
       *Evidence:* `quantick-guards --report` on the campaign tip and the
       merged head, `cargo test -p quantick-guards`. → PR body. *(R2)*
 - [ ] **A4** — #461 and #462 tests pass by name on the merged head, and so do
-      the D28/D29 right-drag tests and #433's quick-range tests.
+      the D28/D29 right-drag tests and #433's quick-range tests; one new test
+      composes them: a secondary drag through space a precise profile does not
+      paint raises a quick range without panning or moving the profile
+      (`a_secondary_drag_through_a_profile_gap_measures_without_panning_or_moving_it`).
       *Evidence:* named test runs. → PR body. *(R3)*
 - [ ] **A5** — Phase-2 composition: the diff this sync brings touches no file
       in `crates/paper` or `crates/control-host`, and their tests pass.
@@ -117,8 +120,9 @@ Campaign synchronization X4 of #367. Base: `campaign/lean-a-plus` at
 - [ ] **G4** — `arch-review` run, every Blocker/Should-fix resolved or
       deferred in the PR body. *Evidence:* its report URL. → PR body.
 - [ ] **G5** — Any fix this branch makes to main's own code is also filed as
-      a follow-up issue. *Evidence:* the issue URL, or "no fix to main's code"
-      in the PR body. → PR body. *(R5)*
+      a follow-up issue: the `drawing.duplicate` row edit (S1) corrects prose
+      main carries in `crates/app/src/operability/registry.rs`, so it gets
+      one: #465. *Evidence:* https://github.com/milocaetano/quantick/issues/465, linked from the PR body. → PR body. *(R5)*
 
 <!-- required-ai-review-goal-gates:v1 -->
 - [ ] **G-AI1** — AI review is executed for the current PR review.
