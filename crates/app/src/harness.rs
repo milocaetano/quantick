@@ -74,6 +74,11 @@ use eframe::egui;
 use crate::indicator_panel::SettingsTab;
 use quantick_feed::history_reach::CampaignEnd;
 
+/// Horizontal point inside the candle canvas that leaves room for a submenu.
+const CONTEXT_MENU_CHART_X_FRACTION: f32 = 1.0 / 6.0;
+/// Vertical point that leaves room below for the complete layer inventory.
+const CONTEXT_MENU_CHART_Y_FRACTION: f32 = 1.0 / 5.0;
+
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -996,11 +1001,11 @@ pub(crate) fn context_menu_canvas_position(
     let x = match (pane, divider) {
         (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
         (ContextMenuPane::Tape, None) => return None,
-        (_, Some(divider)) => rect.left() + (divider - rect.left()) / 6.0,
-        (_, None) => rect.left() + rect.width() / 6.0,
+        (_, Some(divider)) => rect.left() + (divider - rect.left()) * CONTEXT_MENU_CHART_X_FRACTION,
+        (_, None) => rect.left() + rect.width() * CONTEXT_MENU_CHART_X_FRACTION,
     };
     let y = if pane == ContextMenuPane::Chart {
-        rect.top() + rect.height() / 5.0
+        rect.top() + rect.height() * CONTEXT_MENU_CHART_Y_FRACTION
     } else {
         rect.center().y
     };
