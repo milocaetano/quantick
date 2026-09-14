@@ -49,6 +49,7 @@ mod layers_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
+mod profile_pointer_tests;
 mod published_schema_compatibility_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
