@@ -226,7 +226,14 @@ open non-draft PR matching the clean worktree's branch/head/base, a mergeable
 GitHub state, at least one registered CI check and every bucket
 passing, current durable reports, and an empty literal thread list. It first
 compares the sole archived goal in the reviewed diff with mission's canonical
-four-line `G-AI` block. It then writes report URLs and the review key into the
+four-line `G-AI` block. The PR kind comes from facts the PR identity then
+verifies, never a caller flag. A main synchronization (base `campaign/*`,
+head `sync/*` or carrying main commits the base lacks) counts only archives
+absent from `origin/main`, zero or one, since it carries every archive main
+merged. A consolidated `campaign/*` PR into main has no single goal: its body
+names `Campaign-parent: <issue URL>` in the same repository, whose charter
+must carry `<!-- quantick-campaign:v1 -->` and the branch as a whole ref name. Every
+other check applies to all three. It then writes report URLs and the review key into the
 PR body, reads the canonical `What done means` block, publishes each clause with its
 evidence, reads that report back, and only then prints
 `MISSION-COMPLETION:PASS`. Green CI or `MERGEABLE` alone cannot reach it.

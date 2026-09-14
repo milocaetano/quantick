@@ -42,7 +42,7 @@ fn pending_sample_does_not_lock_unsampled_sends_or_lose_the_next_sample() {
     let producer = WorkerProgress::with_clock(clock.clone());
     let observer = producer.observer().clone();
     let shared = producer.consumer();
-    let (tx, rx) = channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let tx = producer.bind(tx);
     clock.at(10);
     tx.send(1).unwrap();
@@ -98,7 +98,7 @@ fn contended_admission_finishes_before_sample_unlock_and_recovers_known_residenc
     let observer = producer.observer().clone();
     let shared = producer.consumer();
     let instance = observer.snapshot().instance;
-    let (tx, rx) = channel::<(u64, Sender<()>)>();
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(u64, Sender<()>)>(TEST_QUEUE);
     let tx = producer.bind(tx);
     let (admit, permission) = channel();
     let (ack1, done1) = channel();

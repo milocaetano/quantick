@@ -1,8 +1,12 @@
 //! Background thread that owns the [`IndicatorHost`].
 //!
 //! Modelled on [`crate::orderflow_worker`]: the UI thread never touches host
-//! state. Commands go down an unbounded channel; **delta events** come back —
-//! the UI owns its own copy of the plot columns and applies deltas, so a full
+//! state. Commands go down a channel bounded by
+//! [`INDICATOR_COMMAND_QUEUE`] — a full one parks and folds them on the UI
+//! side ([`fold_parked`]), never blocking and never dropping one; **delta
+//! events** come back on a channel bounded by [`INDICATOR_EVENT_QUEUE`],
+//! where a UI behind on its reads pauses the worker (counted as
+//! `output_blocked`) instead of growing a queue — the UI owns its own copy of the plot columns and applies deltas, so a full
 //! column set crosses the channel only on a rebuild, and appending a live bar
 //! costs O(plots) per indicator, not a clone of history.
 //!
@@ -13,13 +17,18 @@
 //! which is always correct: a preview only ever describes the newest forming
 //! bar.
 
+use crate::live_envelope::{INDICATOR_COMMAND_QUEUE, INDICATOR_EVENT_QUEUE};
 use crate::worker_progress::{
     Coalescing, ObservedOutput, ObservedSender, ProgressSnapshot, SharedProgress, WorkerProgress,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+#[cfg(test)]
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 
+use quantick_engine::forming_run::FormingRun;
+use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, Trade};
 use quantick_indicators::{
     EvalError, Indicator, IndicatorDescriptor, IndicatorHost, InputValue, InstanceId,
@@ -47,33 +56,6 @@ pub(crate) struct LaneSample {
     /// One value per declared plot, in descriptor order; NaN = nothing to
     /// draw, exactly as in a committed row.
     pub values: Vec<f64>,
-}
-
-/// Fold `run` into forming-bar prefixes, at most `rungs` of them.
-///
-/// The trades are the forming bar's own, in occurrence order, so folding all
-/// of them reproduces the bar the chart is drawing — which is why the last
-/// print always gets a rung: the lane's right edge is the live edge, and
-/// stopping a sample short of it would draw the tape as if the newest prints
-/// had not happened.
-fn lane_prefixes(run: &[Trade], rungs: usize) -> Vec<Bar> {
-    if run.is_empty() || rungs == 0 {
-        return Vec::new();
-    }
-    let step = run.len().div_ceil(rungs.min(run.len())).max(1);
-    let mut prefixes = Vec::with_capacity(run.len().div_ceil(step) + 1);
-    let mut forming: Option<Bar> = None;
-    for (index, trade) in run.iter().enumerate() {
-        match &mut forming {
-            None => forming = Some(Bar::opened_by(trade)),
-            Some(bar) => bar.extend(trade),
-        }
-        let last = index + 1 == run.len();
-        if last || (index + 1) % step == 0 {
-            prefixes.push(forming.clone().expect("a trade opened the bar"));
-        }
-    }
-    prefixes
 }
 
 /// UI-side handle for one indicator slot. The UI allocates these (so it can
@@ -266,7 +248,13 @@ impl LaneTransport {
         changed
     }
 
-    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &[Trade]) -> IndicatorCommand {
+    /// The forming-bar update for this frame: the partial, and the forming
+    /// run's prints not yet sent.
+    ///
+    /// Rate: **per frame**. The copy is the unsent suffix of the tape only —
+    /// the prints since the previous command, or the forming bar's whole run
+    /// after a reset — taken chunk slice by chunk slice, never the tape.
+    pub(crate) fn command(&mut self, partial: Option<Bar>, trades: &TradeTape) -> IndicatorCommand {
         let count = partial
             .as_ref()
             .filter(|_| self.rungs > 0)
@@ -276,7 +264,10 @@ impl LaneTransport {
                     .min(trades.len())
             });
         let start = trades.len() - count + self.sent.min(count);
-        let run = trades[start..].to_vec();
+        let mut run = Vec::with_capacity(trades.len() - start);
+        for slice in trades.slices(start..) {
+            run.extend_from_slice(slice);
+        }
         self.sent = count;
         IndicatorCommand::PartialUpdated {
             partial,
@@ -330,7 +321,22 @@ pub(crate) enum IndicatorCommand {
     #[allow(dead_code)]
     Flush(Sender<()>),
     #[cfg(test)]
-    InspectLane(Sender<(usize, usize)>),
+    InspectLane(Sender<LaneProbe>),
+}
+
+/// What the worker thread reports about its forming run and its own work.
+#[cfg(test)]
+pub(crate) struct LaneProbe {
+    /// Prints the forming run holds.
+    pub len: usize,
+    /// Prints its storage can hold without growing.
+    pub capacity: usize,
+    /// Prints the worker thread has folded into bars, appends and walks,
+    /// over every run it has held.
+    pub folds: u64,
+    /// The worker thread's heap work since it started; its largest copy is
+    /// the largest since the previous probe.
+    pub heap: crate::work_meter::Tally,
 }
 
 /// Delta events back to the UI. Bounded cost per event: only [`Rebuilt`]
@@ -475,15 +481,21 @@ impl IndicatorWorker {
     }
 
     pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
-        let (cmd_tx, cmd_rx) = channel::<IndicatorCommand>();
-        let (evt_tx, evt_rx) = channel::<IndicatorEvent>();
+        Self::spawn_bounded(progress, INDICATOR_EVENT_QUEUE)
+    }
+
+    /// Spawn with an event channel of `event_capacity`: production uses
+    /// [`INDICATOR_EVENT_QUEUE`]; a test shrinks it to reach the full path.
+    pub(crate) fn spawn_bounded(progress: WorkerProgress, event_capacity: usize) -> Self {
+        let (cmd_tx, cmd_rx) = sync_channel::<IndicatorCommand>(INDICATOR_COMMAND_QUEUE);
+        let (evt_tx, evt_rx) = sync_channel::<IndicatorEvent>(event_capacity);
         let observed = progress.consumer();
         std::thread::Builder::new()
             .name("quantick-indicators".to_owned())
             .spawn(move || run_observed(&cmd_rx, &evt_tx, observed))
             .expect("spawn indicator worker thread");
         Self {
-            commands: progress.bind(cmd_tx),
+            commands: progress.bind_merging(cmd_tx, fold_parked),
             events: evt_rx,
             #[cfg(test)]
             partial_updates: std::cell::Cell::new(0),
@@ -492,9 +504,9 @@ impl IndicatorWorker {
         }
     }
 
-    /// Queue one command. A send failure means the worker died — worth a log
-    /// line, never a full queue (the channel is unbounded and command volume
-    /// is bounded by feed cadence).
+    /// Queue one command, or park it when the bounded queue is full; either
+    /// way it reaches the worker and the caller never waits. A send failure
+    /// means the worker died — worth a log line.
     pub(crate) fn send(&self, command: IndicatorCommand) {
         #[cfg(test)]
         if let IndicatorCommand::PartialUpdated { run, .. } = &command {
@@ -517,7 +529,11 @@ impl IndicatorWorker {
     }
 
     /// Every event the worker published since the last drain.
+    ///
+    /// Also the per-frame retry point for commands parked behind a full
+    /// queue: one length read when nothing is parked.
     pub(crate) fn drain_events(&self) -> Vec<IndicatorEvent> {
+        self.commands.pump();
         let mut events = Vec::new();
         while let Ok(event) = self.events.try_recv() {
             events.push(event);
@@ -541,10 +557,32 @@ impl IndicatorWorker {
 
     #[cfg(test)]
     pub(crate) fn retained_lane_for_test(&self) -> (usize, usize) {
+        let probe = self.lane_probe_for_test();
+        (probe.len, probe.capacity)
+    }
+
+    /// The worker thread's own report on its forming run and heap work.
+    #[cfg(test)]
+    pub(crate) fn lane_probe_for_test(&self) -> LaneProbe {
         let (tx, rx) = channel();
         self.send(IndicatorCommand::InspectLane(tx));
-        rx.recv_timeout(std::time::Duration::from_secs(10))
+        self.await_reply(&rx)
             .expect("the worker reports retained lane storage")
+    }
+
+    /// Wait up to ten seconds for a reply to a command just sent, pumping any
+    /// parked commands meanwhile — a test is its own UI frame loop, and a
+    /// parked barrier would otherwise wait on a queue nobody refills.
+    #[cfg(test)]
+    pub(crate) fn await_reply<T>(&self, rx: &Receiver<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            self.commands.pump();
+            if let Ok(reply) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
+                return Some(reply);
+            }
+        }
+        None
     }
 
     /// Block until every command sent before this call has been applied and
@@ -554,7 +592,80 @@ impl IndicatorWorker {
     pub(crate) fn flush(&self) {
         let (ack_tx, ack_rx) = channel();
         self.send(IndicatorCommand::Flush(ack_tx));
-        let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(10));
+        let _ = self.await_reply(&ack_rx);
+    }
+}
+
+/// The superseding rule for commands parked behind a full queue: `newer`
+/// folds into `older`, the last parked command, only where the worker would
+/// have produced the same result from the pair. Anything else keeps its
+/// place (`Some(newer)`).
+///
+/// - Forming-bar updates carry the unsent prints of the forming run. When the
+///   older one extends the run (a partial and a lane), the newer's prints are
+///   appended to it and its partial and budget win — the batch loop's own
+///   rule. When the newer one clears the run, it replaces the older outright.
+///   An older one that clears followed by a newer one that extends cannot be
+///   expressed as one command, so both stay.
+/// - Input sets for the same slot: the newer replaces the older, which the
+///   batch loop would have skipped ([`drop_superseded_inputs`]).
+/// - A replay from scratch (`Backfilled`, `Rebuild`) followed by another: the
+///   newer replays everything the older would have.
+pub(crate) fn fold_parked(
+    older: &mut IndicatorCommand,
+    newer: IndicatorCommand,
+) -> Option<IndicatorCommand> {
+    match (&mut *older, newer) {
+        (
+            IndicatorCommand::PartialUpdated {
+                partial,
+                run,
+                rungs,
+            },
+            IndicatorCommand::PartialUpdated {
+                partial: next_partial,
+                run: next_run,
+                rungs: next_rungs,
+            },
+        ) => {
+            let newer_clears = next_partial.is_none() || next_rungs == 0;
+            let older_extends = partial.is_some() && *rungs > 0;
+            if newer_clears {
+                *partial = next_partial;
+                *run = next_run;
+                *rungs = next_rungs;
+                None
+            } else if older_extends {
+                run.extend(next_run);
+                *partial = next_partial;
+                *rungs = next_rungs;
+                None
+            } else {
+                Some(IndicatorCommand::PartialUpdated {
+                    partial: next_partial,
+                    run: next_run,
+                    rungs: next_rungs,
+                })
+            }
+        }
+        (
+            IndicatorCommand::SetInputs { slot, values },
+            IndicatorCommand::SetInputs {
+                slot: next_slot,
+                values: next_values,
+            },
+        ) if *slot == next_slot => {
+            *values = next_values;
+            None
+        }
+        (
+            IndicatorCommand::Backfilled(_) | IndicatorCommand::Rebuild(..),
+            replay @ (IndicatorCommand::Backfilled(_) | IndicatorCommand::Rebuild(..)),
+        ) => {
+            *older = replay;
+            None
+        }
+        (_, newer) => Some(newer),
     }
 }
 
@@ -613,7 +724,7 @@ fn drop_superseded_inputs(batch: &mut Vec<IndicatorCommand>) {
 
 fn run_observed(
     rx: &Receiver<IndicatorCommand>,
-    sender: &Sender<IndicatorEvent>,
+    sender: &SyncSender<IndicatorEvent>,
     progress: Arc<SharedProgress>,
 ) {
     let _lifecycle = progress.lifecycle();
@@ -622,7 +733,7 @@ fn run_observed(
         progress: &progress,
     };
     let mut host = IndicatorHost::new();
-    let mut lane_run: Vec<Trade> = Vec::new();
+    let mut lane_run = FormingRun::default();
     // BTreeMap: deterministic iteration order for event emission.
     let mut slots: BTreeMap<SlotId, SlotMirror> = BTreeMap::new();
 
@@ -656,13 +767,13 @@ fn run_observed(
                     host.rebuild(&bars, None);
                     rebuilt = true;
                     // The retired epoch must not retain its peak allocation.
-                    lane_run = Vec::new();
+                    cut(&mut lane_run);
                     partial_update = None;
                     lane_request = None;
                 }
                 IndicatorCommand::BarClosed(bar) => {
                     host.push_closed_bar(&bar);
-                    lane_run = Vec::new();
+                    cut(&mut lane_run);
                     partial_update = None;
                     lane_request = None;
                 }
@@ -672,7 +783,7 @@ fn run_observed(
                     rungs,
                 } => {
                     if partial.is_none() || rungs == 0 {
-                        lane_run = Vec::new();
+                        cut(&mut lane_run);
                     } else {
                         lane_run.extend(run);
                     }
@@ -690,7 +801,7 @@ fn run_observed(
                     // series.
                     partial_update = None;
                     lane_request = None;
-                    lane_run = Vec::new();
+                    cut(&mut lane_run);
                 }
                 IndicatorCommand::Add { slot, source } => match source.build() {
                     Ok(indicator) => {
@@ -853,7 +964,14 @@ fn run_observed(
                 IndicatorCommand::Flush(ack) => flushes.push(ack),
                 #[cfg(test)]
                 IndicatorCommand::InspectLane(ack) => {
-                    let _ = ack.send((lane_run.len(), lane_run.capacity()));
+                    let _ = ack.send(LaneProbe {
+                        len: lane_run.len(),
+                        capacity: lane_run.capacity(),
+                        folds: RETIRED_FOLDS.with(std::cell::Cell::get) + lane_run.folds(),
+                        heap: crate::work_meter::tally(),
+                    });
+                    // The next probe reports the largest copy since this one.
+                    crate::work_meter::reset_largest();
                 }
             }
         }
@@ -864,7 +982,9 @@ fn run_observed(
 
         // The ladder is walked here, on the worker's own cadence, for the same
         // reason previews are: the cost is per drained batch, never per print
-        // and never on the render thread. The fold still costs O(forming trades).
+        // and never on the render thread. The run carries its own fold, so a
+        // walk folds at most `rungs × (CHECKPOINT_SPACING - 1)` prints however
+        // long the bar has been forming (see `quantick_engine::forming_run`).
         let mut lane = lane_request
             .map(|rungs| walk_lane(&mut host, &slots, &lane_run, rungs))
             .unwrap_or_default();
@@ -878,6 +998,22 @@ fn run_observed(
     }
 }
 
+/// Cut the forming run: the bar closed, the series was rebuilt, or the lane
+/// went away. The run's storage goes with it.
+fn cut(run: &mut FormingRun) {
+    #[cfg(test)]
+    RETIRED_FOLDS.with(|folds| folds.set(folds.get() + run.folds()));
+    *run = FormingRun::default();
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Prints folded by runs this thread has already cut, so the worker's
+    /// probe reports its work across the runs a tick chart cuts at every
+    /// close.
+    static RETIRED_FOLDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Sample every slot's plots across the forming bar's run, oldest rung first.
 ///
 /// Returns an empty map when there is no lane, no run, or nothing forming —
@@ -886,11 +1022,11 @@ fn run_observed(
 fn walk_lane(
     host: &mut IndicatorHost,
     slots: &BTreeMap<SlotId, SlotMirror>,
-    run: &[Trade],
+    run: &FormingRun,
     rungs: usize,
 ) -> BTreeMap<SlotId, Vec<LaneSample>> {
     let mut lane: BTreeMap<SlotId, Vec<LaneSample>> = BTreeMap::new();
-    let prefixes = lane_prefixes(run, rungs.min(MAX_LANE_RUNGS));
+    let prefixes = run.prefixes(rungs.min(MAX_LANE_RUNGS));
     if prefixes.is_empty() {
         return lane;
     }
@@ -1028,6 +1164,13 @@ mod tests {
     use super::*;
     use crate::indicators::IndicatorViews;
     use quantick_engine::{BarBuilder as _, Side, TickBarBuilder, Trade, golden as engine_golden};
+
+    /// The ladder of `run` as the worker samples it.
+    fn lane_prefixes(run: &[Trade], rungs: usize) -> Vec<Bar> {
+        let mut forming = FormingRun::default();
+        forming.extend(run.to_vec());
+        forming.prefixes(rungs)
+    }
     use quantick_indicators::{PlotId, SourceId, native::Ema};
     use rust_decimal::Decimal;
 
@@ -2235,11 +2378,11 @@ mod incremental_lane_tests {
 
     /// Queue everything before running: this exercises one actual worker batch.
     fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
-        let (tx, rx) = channel();
-        let (events, output) = channel();
+        let (tx, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
+        let (events, output) = sync_channel(INDICATOR_EVENT_QUEUE);
         let progress = WorkerProgress::new();
         let observed = progress.consumer();
-        let tx = progress.bind(tx);
+        let tx = progress.bind_merging(tx, fold_parked);
         for command in commands {
             tx.send(command).unwrap();
         }
@@ -2533,6 +2676,12 @@ mod incremental_lane_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod event_backpressure_tests;
+
+#[cfg(test)]
+mod fold_tests;
 
 #[cfg(test)]
 mod progress_tests;

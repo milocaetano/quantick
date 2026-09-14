@@ -20,15 +20,7 @@ fn capture_fixture(
             serde_json::json!({ "scopes": EVIDENCE_TEST_SCOPES, "screenshot": true }),
         )
         .unwrap();
-    assert!((0..PARK_WAIT_FRAMES).any(|_| {
-        run_frame(app, ctx);
-        app.control
-            .control_access
-            .as_ref()
-            .unwrap()
-            .awaiting_screenshot_for_test()
-            > 0
-    }));
+    run_frames_until_capture_parks(app, ctx);
     let tab = app.active_tab_mut();
     assert_eq!(tab.time_panes.len(), 2);
     tab.time_panes[0].frame.chart_area = rectangles[0];

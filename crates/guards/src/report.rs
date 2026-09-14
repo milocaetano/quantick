@@ -123,9 +123,9 @@ const TRUNK_CRATE: &str = "app";
 /// Deterministic by construction: every section sorts before it prints, the
 /// only paths are workspace-relative with forward slashes, and nothing here
 /// reads a clock, an environment variable or a random number. Two calls
-/// against the same tree return equal strings, which is the property
+/// against the same tree return equal tables, which is the property
 /// `report_is_byte_identical_across_runs` pins.
-pub fn render(root: &Path) -> String {
+pub fn render(root: &Path) -> Rendered {
     let sizes = size::measure(root);
     let scanned = Scan::of(root, &sizes.counts);
 
@@ -133,7 +133,7 @@ pub fn render(root: &Path) -> String {
     crates_section(&mut out, &sizes.counts);
     largest_files_section(&mut out, &sizes.counts);
     wide_structs_section(&mut out, &scanned);
-    ratchets_section(&mut out, root);
+    let failures = ratchets_section(&mut out, root);
     sites_section(&mut out, &scanned);
     row(
         &mut out,
@@ -149,7 +149,23 @@ pub fn render(root: &Path) -> String {
     row(&mut out, "scan.unreadable", sizes.unreadable.len());
     row(&mut out, "scan.undecodable", sizes.undecodable.len());
     row(&mut out, "scan.blind", sizes.blind.len());
-    out
+    row(&mut out, "scan.failed", failures.len());
+    Rendered {
+        table: out,
+        failures,
+    }
+}
+
+/// The report, and every ratchet measurement it could not take.
+pub struct Rendered {
+    /// The `label<TAB>value` table.
+    pub table: String,
+    /// One reason per ratchet whose walk failed, in registry order, each
+    /// opening with the ratchet's name. Kept out of the table because a
+    /// reason carries operating-system text and absolute paths, which would
+    /// break the byte-identical property; the table carries the count, as
+    /// `scan.failed`, and `failed` in place of each missing number.
+    pub failures: Vec<String>,
 }
 
 /// One `label<TAB>value` line. The single owner of the report's shape, so a
@@ -230,7 +246,12 @@ fn wide_structs_section(out: &mut String, scanned: &Scan) {
 /// The registry is the only list. A ratchet added to [`GUARDS`] appears here
 /// without an edit, which is the property that stopped the cycle ratchet from
 /// being invisible to `--tighten` when it was added.
-fn ratchets_section(out: &mut String, root: &Path) {
+///
+/// Returns the reason for every measurement that failed. Such a row reads
+/// `failed`, never a number: the first version printed `0` for a failed
+/// extension-boundary scan, the one value that looks best (#365).
+fn ratchets_section(out: &mut String, root: &Path) -> Vec<String> {
+    let mut failures = Vec::new();
     for guard in GUARDS {
         let Some(ratchet) = &guard.ratchet else {
             continue;
@@ -256,12 +277,16 @@ fn ratchets_section(out: &mut String, root: &Path) {
                 row(out, format!("ratchet.{name}.recorded"), "unparsed");
             }
         }
-        row(
-            out,
-            format!("ratchet.{name}.measured"),
-            (ratchet.measured)(root),
-        );
+        let label = format!("ratchet.{name}.measured");
+        match (ratchet.measured)(root) {
+            Ok(total) => row(out, label, total),
+            Err(reason) => {
+                row(out, label, "failed");
+                failures.push(format!("{name}: {reason}"));
+            }
+        }
     }
+    failures
 }
 
 /// The counted sites, in the fixed order [`SITES`] lists them.

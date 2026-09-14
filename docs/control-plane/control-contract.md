@@ -257,7 +257,9 @@ A keyed call whose outcome cannot be determined — the application had still no
 answered a full request window after the caller's own deadline expired —
 records a non-retryable refusal naming the uncertainty rather than releasing
 its key. The retry receives that refusal instead of either a second execution
-or an indefinite hold, and reconciles by reading state back.
+or an indefinite hold, and reconciles by reading state back. Which read
+reconciles each mutable capability is listed, generated from the registry, in
+the [retry matrix](retry-matrix.md).
 
 ### 5.3 Pagination cursors
 
@@ -456,6 +458,14 @@ quantick_invoke
 not bypass availability, permission, confirmation, revision, idempotency, or
 audit checks. A capability unavailable to the current profile remains
 unavailable through `invoke`.
+
+An omitted version resolves to the newest version the instance registers for
+that ID, read from its `control.describe` registry at call time; the result
+names the `capability_version` that answered. A refused `control.describe`
+is itself the answer, with its code and `retryable` flag unchanged; no
+version is guessed and nothing is invoked. An explicit version is sent
+unchanged, and an ID the instance does not register is refused as unknown
+either way. Clients that depend on one version's shape pass it explicitly.
 
 High-frequency workflows may earn a named tool after usage evidence. The first
 planned write tools are `quantick_annotate`, `quantick_notify`, and

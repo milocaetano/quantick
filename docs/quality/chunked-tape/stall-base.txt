@@ -1,0 +1,33 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base: eb60ed41 (campaign/lean-a-plus) with only the probe added to the test module (the probe as committed in eef07e5f, before its memory table and whole-run mean); the test fails by design: every stall is over the bound
+running 1 test
+test app::tests::session_length_tests::tape_growth_stalls ... # tape growth stall probe
+sha: eb60ed41b2e7b8b6312e5931c68d8497469f07e6
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+run: one tick:50 pane built live to 4259840 prints; stretches are +/-1024 prints around each former doubling point; bound 4 ms
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 122, last 100k 645, median block 126
+| stretch (footprint=false) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 25.444 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 52.461 | 4194304 | 234881024 | 4194304 |
+| whole run | 52.461 | 4194304 | 234881024 | 4194304 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 257, last 100k 716, median block 218
+| stretch (footprint=true) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 21.952 | 2097152 | 117440512 | 2097152 |
+| 2^22 +/- reach | 53.217 | 4194304 | 234881024 | 4194304 |
+| whole run | 53.217 | 4194304 | 234881024 | 4194304 |
+verdict: OVER THE BOUND: footprint=false: 25.444 ms at print 2097152 near 2^21; footprint=false: 52.461 ms at print 4194304 near 2^22; footprint=true: 21.952 ms at print 2097152 near 2^21; footprint=true: 53.217 ms at print 4194304 near 2^22
+thread 'app::tests::session_length_tests::tape_growth_stalls' (11680) panicked at crates\app\src\app\tests\session_length_tests.rs:1221:5:
+footprint=false: 25.444 ms at print 2097152 near 2^21
+footprint=false: 52.461 ms at print 4194304 near 2^22
+footprint=true: 21.952 ms at print 2097152 near 2^21
+footprint=true: 53.217 ms at print 4194304 near 2^22
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+failures:
+failures:
+    app::tests::session_length_tests::tape_growth_stalls
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2067 filtered out; finished in 1.73s
+error: test failed, to rerun pass `-p quantick-app --bin quantick-app`

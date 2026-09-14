@@ -9,6 +9,14 @@ sequence; the files here fix the details that outcome has to honour.
 - [Capability inventory](capability-inventory.md) lists every capability the
   application registers — identifier, version, module and required
   permissions. **Generated**; see [Precedence](#precedence) before editing it.
+- [UI behaviour matrix](ui-behaviour-matrix.md) runs that inventory the other
+  way: every behaviour a trader can reach from the interface, and either the
+  capability that performs it or the classified reason none does.
+  **Generated**; see [Precedence](#precedence) before editing it.
+- [Retry matrix](retry-matrix.md) runs the inventory's mutable capabilities
+  through retry: the idempotency policy each publishes, what the gateway does
+  with a key, and the read that reconciles a call that did not answer.
+  **Generated**; see [Precedence](#precedence) before editing it.
 - [Control contract](control-contract.md) fixes identifier, schema, revision,
   authority, limit, tool-surface, determinism, and trade-annotation rules.
 - [ADR 0001](adr-0001-local-transport-and-instance-discovery.md) selects the
@@ -43,6 +51,20 @@ committed copy and the registry diverge. Do not hand-edit either file; change
 the code and regenerate. `crates/control/examples/export_schemas.rs` and
 `crates/control/tests/schema_snapshots.rs` are the pattern both follow, and the
 reason the read contracts have never drifted.
+
+The [UI behaviour matrix](ui-behaviour-matrix.md) is generated the same way and
+guarded by `cargo test -p quantick-app operability` rather than by the guards
+crate, because its check needs the interface's own registries — the toolbar
+actions, the drawing tools, the menu labels — which live behind this crate. It
+fails when a behaviour is registered with no row, when a row claims something
+the interface no longer has, and when a row names a capability the inventory
+does not carry.
+
+The [retry matrix](retry-matrix.md) is generated from the same registry by
+`quantick-app --dump-retry-matrix`. `cargo test -p quantick-app retry_matrix`
+refuses a row whose policy, read, scope or field disagrees with the registry,
+and `cargo test -p quantick-guards` fails in a second when the inventory lists
+a mutable capability the matrix has no row for.
 
 **Wire rules — the contract is authoritative.** Identifier grammar, schema
 shape, revision and cursor semantics, the authority boundary, limits,

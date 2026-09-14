@@ -63,11 +63,21 @@ impl ChartPane {
                     .drawing_chrome
                     .quick_range_press(owner, position, anchor);
             }
+            // Past egui's own click distance, not only the drawing drag's:
+            // a right-press that slips less than that is still a click, which
+            // opens the chart menu, and must not raise a range beside it.
+            let range_threshold_px = ui
+                .ctx()
+                .options(|options| options.input_options.max_click_dist)
+                .max(DRAWING_DRAG_THRESHOLD_PX);
             if (down || released)
                 && let Some(position) = pointer
             {
+                // The divider is last frame's and can sit left of the band
+                // after a layout change; `clamp` panics on an inverted range.
+                let right = history_right.max(price_band.rect.left());
                 let position = egui::pos2(
-                    position.x.clamp(price_band.rect.left(), history_right),
+                    position.x.clamp(price_band.rect.left(), right),
                     position
                         .y
                         .clamp(price_band.rect.top(), price_band.rect.bottom()),
@@ -84,7 +94,7 @@ impl ChartPane {
                         owner,
                         position,
                         anchor,
-                        DRAWING_DRAG_THRESHOLD_PX,
+                        range_threshold_px,
                         || drawings::new_drawing_from_defaults(chrome.presets, measure),
                     );
                 }

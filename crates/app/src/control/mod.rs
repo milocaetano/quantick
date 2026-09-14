@@ -25,6 +25,7 @@ mod orderflow;
 mod recovery;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
+pub(crate) mod retry_matrix;
 mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
@@ -41,7 +42,7 @@ pub(crate) use annotate::{
     PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, fixed_range_profile_input,
 };
 #[cfg(test)]
-pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID};
+pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
 #[cfg(test)]
@@ -61,6 +62,8 @@ pub(crate) fn journal_test_event(index: usize) -> journal::NewEvent {
 }
 #[cfg(test)]
 pub(crate) use gateway::RecordedActor;
+#[cfg(test)]
+pub(crate) use gateway::ServedRequest;
 pub(crate) use gateway::{ActionOrigin, ControlAccess, MARK_SHORTCUT};
 pub(crate) use notify::AgentPopup;
 pub(crate) use types::PaneSideDto;

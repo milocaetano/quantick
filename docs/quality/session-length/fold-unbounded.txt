@@ -1,0 +1,35 @@
+# command: the fast variant with FormingRun::prefixes temporarily replaced by the unbounded fold of 2452e577 (the oracle), then restored; not a commit
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); measured on 991d2336's harness with the fold reverted, before 10b87d90
+test app::tests::session_length_tests::hot_path_work_is_independent_of_session_length ... | path | session prints | units | allocs/unit | bytes/unit | copy bytes/unit | largest copy | folds/unit | lane entries/unit | ns/unit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trade.chart.backfilled | 18000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 191 |
+| trade.chart.backfilled | 180000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 186 |
+| trade.chart.live | 18000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 357 |
+| trade.chart.live | 180000 | 1500 | 0.287 | 110.7 | 0.0 | 0 | 0.00 | 0.90 | 160 |
+| trade.book | 18000 | 1500 | 0.011 | 3.5 | 0.0 | 0 | 0.00 | 0.00 | 613 |
+| trade.book | 180000 | 1500 | 0.011 | 3.5 | 0.0 | 0 | 0.00 | 0.00 | 461 |
+| depth.book | 18000 | 5000 | 19.110 | 6720.6 | 0.0 | 0 | 0.00 | 0.00 | 9612 |
+| depth.book | 180000 | 5000 | 19.110 | 6720.6 | 0.0 | 0 | 0.00 | 0.00 | 9564 |
+| frame.book | 18000 | 300 | 2236.157 | 5156391.5 | 2553042.5 | 9437184 | 0.00 | 0.00 | 8799374 |
+| frame.book | 180000 | 300 | 2236.133 | 5156227.3 | 2552898.8 | 1310720 | 0.00 | 0.00 | 8460311 |
+| frame.app.tick50 | 18000 | 300 | 2539.177 | 753186.0 | 1039130.0 | 322272 | 0.00 | 4.50 | 1760741 |
+| frame.app.tick50 | 180000 | 300 | 2535.180 | 752731.2 | 1036239.7 | 320640 | 0.00 | 4.50 | 1888231 |
+| frame.worker.tick50 | 18000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 27.00 | 0.00 | 0 |
+| frame.worker.tick50 | 180000 | 300 | 55.507 | 4924.8 | 436.0 | 2240 | 27.00 | 0.00 | 0 |
+| frame.app.time1d | 18000 | 300 | 1473.537 | 295009.4 | 765444.5 | 202848 | 0.00 | 5.00 | 901157 |
+| frame.app.time1d | 180000 | 300 | 1347.847 | 274620.8 | 737194.8 | 187872 | 0.00 | 5.00 | 1054165 |
+| frame.worker.time1d | 18000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 18907.50 | 0.00 | 0 |
+| frame.worker.time1d | 180000 | 300 | 139.010 | 11920.0 | 0.0 | 0 | 180907.50 | 0.00 | 0 |
+| tape built live to | copy bytes/print over the session | largest single copy |
+| ---: | ---: | ---: |
+| 18000 | 106.7 | 917504 |
+| 180000 | 85.4 | 7340032 |
+thread 'app::tests::session_length_tests::hot_path_work_is_independent_of_session_length' (7536) panicked at crates\app\src\app\tests\session_length_tests.rs:806:5:
+frame.worker.time1d: folds 18907.500/unit at 18000 prints exceeds the ceiling 4037
+frame.worker.time1d: folds 180907.500/unit at 180000 prints exceeds the ceiling 4037
+frame.worker.time1d: folds grew with the session: 18907.500/unit at 18000 prints, 180907.500 at 180000 (allowed 20798.250)
+FAILED
+failures:
+failures:
+    app::tests::session_length_tests::hot_path_work_is_independent_of_session_length
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2040 filtered out; finished in 15.16s

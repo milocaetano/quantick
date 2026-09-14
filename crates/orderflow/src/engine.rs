@@ -286,6 +286,11 @@ pub struct OrderflowHealth {
     pub depth_updates_since_summary: u64,
     pub snapshots: u64,
     pub gaps: u64,
+    /// Aggressions the retention window or a capacity cap removed from the
+    /// history, cumulative: the bubbles that left the canvas by design.
+    pub aggressions_evicted: u64,
+    /// Finalized liquidity runs removed the same way, cumulative.
+    pub runs_evicted: u64,
 }
 
 impl OrderflowHealth {
@@ -323,6 +328,8 @@ impl OrderflowHealth {
             depth_updates_since_summary: 0,
             snapshots: 0,
             gaps: 0,
+            aggressions_evicted: 0,
+            runs_evicted: 0,
         }
     }
 }
@@ -1278,7 +1285,7 @@ impl BookEngine {
             ask_levels: self.history.book().ask_count(),
             active_levels: self.history.active_level_count(),
             archived_runs: self.history.archived_run_count(),
-            aggression_count: self.history.aggressions().count(),
+            aggression_count: self.history.aggression_count(),
             history_bytes: self.history.approximate_history_bytes(),
             projection_cells: self.last_projection_cells,
             projection_aggressions: self.last_projection_aggressions,
@@ -1299,6 +1306,8 @@ impl BookEngine {
             depth_updates_since_summary: self.depth_updates_since_summary,
             snapshots: counters.snapshots,
             gaps: counters.gaps,
+            aggressions_evicted: counters.aggressions_evicted,
+            runs_evicted: counters.runs_evicted,
         }
     }
 

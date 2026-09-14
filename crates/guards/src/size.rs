@@ -55,6 +55,11 @@
 //! to be bigger now" and can argue with it, which is precisely what a silent
 //! +400 lines inside a 36,000-line file never let anyone do.
 //!
+//! Campaign #367 left the baseline with no entry and a budget of 0, so every
+//! production file is at or under [`THRESHOLD`] and an exception is now two
+//! edits in one change: the signed entry, and the budget raise that pays for
+//! it. The mechanism below is unchanged; only its data went to zero.
+//!
 //! # And the total is capped, because signed raises still lose ground
 //!
 //! A signed raise is arguable, and it was still not enough. One branch raised
@@ -112,8 +117,10 @@ pub const BASELINE_FILE: &str = "crates/guards/size-baseline.txt";
 /// is not. [`Baseline::recorded`] sums *ceilings*, not measured counts, so
 /// every tracked file may also sit up to [`SLACK`] under its own entry without
 /// moving the total at all. The real hidden headroom is therefore
-/// `BUDGET_SLACK + entries × SLACK` — with the eighteen entries recorded
-/// today, about 4,100 production lines rather than 500.
+/// `BUDGET_SLACK + entries × SLACK` — eighteen entries once made that about
+/// 4,100 production lines rather than 500. With the baseline empty and the
+/// budget at 0 it is nothing, and each exception signed in later adds back
+/// its own [`SLACK`].
 ///
 /// That is stated rather than fixed, because the alternative is worse. Summing
 /// measured counts would move the budget on every ordinary edit, so a branch
@@ -145,9 +152,11 @@ pub const REMEDY: &str = "A file over its ceiling means a capability docked by e
                           instead of by adding a module. The fix asked for is the one in the \
                           new-extension skill: give the capability its own file and a port to \
                           dock into, so the edit here is a registration line rather than a body. \
-                          Raising a ceiling on purpose is still allowed — change the number in \
-                          crates/guards/size-baseline.txt and say why in a comment, so a reviewer \
-                          argues with a visible decision instead of missing an invisible one. A \
+                          An exception on purpose is still allowed — record the file and its \
+                          ceiling in crates/guards/size-baseline.txt with a comment saying why, \
+                          and raise its !budget line by as much in the same change, so a \
+                          reviewer argues with a visible decision instead of missing an \
+                          invisible one. A \
                           file that shrank needs no argument at all: `cargo run -p \
                           quantick-guards -- --tighten` writes the new number.";
 
@@ -399,8 +408,20 @@ fn scan(dir: &Path, root: &Path, found: &mut Measured) {
 /// What every tracked path measures today, summed, for
 /// [`crate::report`]. The *how* is [`ratchet::total`]; this only names the
 /// walk it sums, which is the one thing that differs per guard.
-pub fn measured(root: &Path) -> usize {
-    ratchet::total(&measure(root).counts)
+///
+/// An error rather than a smaller total when the walk missed anything: an
+/// unlistable directory (a missing `crates/` included), an unreadable file,
+/// or one that does not decode and so carries no count.
+pub fn measured(root: &Path) -> Result<usize, ratchet::Unmeasured> {
+    let found = measure(root);
+    let mut missed = found.unreadable;
+    missed.extend(
+        found
+            .undecodable
+            .iter()
+            .map(|path| format!("  {path}: does not decode as UTF-8")),
+    );
+    ratchet::complete_total(&found.counts, &missed)
 }
 
 /// Production-line counts for every scanned file, sorted by path.
@@ -612,19 +633,39 @@ mod tests {
 
     /// The parse the data file bought, and the two ways it could go wrong: a
     /// comment read as an entry, or a trailing comment read into the count.
+    /// Over a fixture, because the real baseline no longer holds an entry to
+    /// read a comment beside.
     #[test]
     fn baseline_parsing_ignores_comments() {
-        let entries = baseline(&workspace_root())
-            .expect("the baseline file parses")
-            .entries;
-        assert!(
-            entries.iter().any(|e| e.path == "crates/app/src/app.rs"),
-            "app.rs is the entry the guard was written for"
+        let root = scratch("parse-comments", 1_600, 1_600);
+        let parsed = baseline(&root).expect("the scratch baseline parses");
+        let entries: Vec<(&str, usize)> = parsed
+            .entries
+            .iter()
+            .map(|e| (e.path.as_str(), e.ceiling))
+            .collect();
+        assert_eq!(
+            entries,
+            vec![("crates/probe/src/big.rs", 1_600)],
+            "a comment was read as an entry or into a count"
         );
+        assert_eq!(parsed.budget.map(|b| b.allowed), Some(1_600));
+    }
+
+    /// The rule this file now states: no production file over the threshold,
+    /// so no exception recorded and nothing for a budget to cap. A signed
+    /// entry is still possible, but it arrives with a budget raise, and this
+    /// test is where a reviewer sees the two land together.
+    #[test]
+    fn the_baseline_holds_no_exception_and_a_zero_budget() {
+        let parsed = baseline(&workspace_root()).expect("the baseline file parses");
+        let entries: Vec<&str> = parsed.entries.iter().map(|e| e.path.as_str()).collect();
         assert!(
-            entries.iter().all(|e| !e.path.starts_with('#')),
-            "a comment line was read as an entry"
+            entries.is_empty(),
+            "every production file is at or under {THRESHOLD} lines; these carry an exception: \
+             {entries:?}"
         );
+        assert_eq!(parsed.budget.map(|b| b.allowed), Some(0));
     }
 
     #[test]
@@ -1159,5 +1200,116 @@ mod tests {
             "a mixed run must explain both, file first: {findings:?}"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A throwaway workspace with the given baseline text and one probe file
+    /// of `lines` production lines, followed by a test module that must not
+    /// count — so the fixture is measured the way a real source file is.
+    fn scratch_with(test: &str, baseline: &str, lines: usize) -> crate::scratch_dir::ScratchDir {
+        let root = crate::scratch_dir::ScratchDir::new(test);
+        fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join("crates/probe/src")).expect("scratch dirs are creatable");
+        fs::write(root.join(BASELINE_FILE), baseline).expect("scratch baseline is writable");
+        let source = format!(
+            "{}\n#[cfg(test)]\nmod tests {{\n    fn t() {{}}\n}}\n",
+            "x\n".repeat(lines).trim_end()
+        );
+        assert_eq!(
+            production_lines(&source),
+            lines,
+            "the fixture counts as meant"
+        );
+        fs::write(root.join("crates/probe/src/big.rs"), source)
+            .expect("scratch source is writable");
+        root
+    }
+
+    /// The rule with no exception left to hide behind: one line over the
+    /// threshold fails an empty baseline, in both surfaces, and is sent to
+    /// carve a module rather than to raise a number.
+    #[test]
+    fn a_file_one_line_over_the_threshold_fails_an_empty_baseline() {
+        let root = scratch_with("threshold-over", "!budget 0\n", THRESHOLD + 1);
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "expected one finding: {findings:?}");
+        assert!(
+            findings[0]
+                .line
+                .starts_with("  crates/probe/src/big.rs: 1501 production lines, over the 1500"),
+            "the finding names the file, its size and the threshold: {findings:?}"
+        );
+        assert_eq!(findings[0].remedy, REMEDY);
+        assert_eq!(check_file(&root, "crates/probe/src/big.rs"), findings);
+    }
+
+    /// The boundary is inclusive: a file of exactly the threshold is inside
+    /// the rule, and an empty baseline with a zero budget is a clean tree.
+    #[test]
+    fn a_file_at_the_threshold_passes_an_empty_baseline() {
+        let root = scratch_with("threshold-at", "!budget 0\n", THRESHOLD);
+        assert_eq!(check(&root), Vec::new());
+        assert_eq!(check_file(&root, "crates/probe/src/big.rs"), Vec::new());
+        assert_eq!(check_file(&root, BASELINE_FILE), Vec::new());
+    }
+
+    /// The one way past the threshold that stays, and why it is two edits: a
+    /// signed entry alone is a raise nobody paid for, because an empty
+    /// baseline's budget is 0. The older `a_raise_that_pays_for_nothing_is_
+    /// over_budget` proves the same rule between two existing entries; this
+    /// is the case the zero budget makes the only one.
+    #[test]
+    fn a_signed_exception_without_a_budget_raise_fails() {
+        let root = scratch_with(
+            "exception-unpaid",
+            "!budget 0\ncrates/probe/src/big.rs 1501  # signed, and unpaid\n",
+            THRESHOLD + 1,
+        );
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "expected only the budget: {findings:?}");
+        assert!(
+            findings[0].line.contains("+1501"),
+            "the finding names the whole unpaid raise: {findings:?}"
+        );
+        assert_eq!(findings[0].remedy, BUDGET_REMEDY);
+        assert_eq!(check_file(&root, BASELINE_FILE), findings);
+    }
+
+    /// The same exception with the budget raised by as much in the same
+    /// change: allowed, because both numbers are now in front of a reviewer.
+    #[test]
+    fn a_signed_exception_with_its_budget_raise_passes() {
+        let root = scratch_with(
+            "exception-paid",
+            "!budget 1501\ncrates/probe/src/big.rs 1501  # signed, budget raised with it\n",
+            THRESHOLD + 1,
+        );
+        assert_eq!(check(&root), Vec::new());
+    }
+
+    /// A walk that could not see a file has no total to report, and the
+    /// undecodable file is the quiet case: present, seen, and carrying no
+    /// count, so summing the rest would print a smaller tree than there is.
+    #[test]
+    fn measured_is_a_failure_when_the_walk_missed_a_file() {
+        let root = scratch_with("measured-undecodable", "!budget 0\n", 10);
+        assert_eq!(measured(&root), Ok(10));
+        fs::write(root.join("crates/probe/src/latin.rs"), b"// caf\xe9\n")
+            .expect("scratch source is writable");
+        let failure = measured(&root).expect_err("an undecodable file is a missed one");
+        assert_eq!(
+            failure.missed,
+            vec!["  crates/probe/src/latin.rs: does not decode as UTF-8".to_owned()],
+            "the failure names the file"
+        );
+
+        let missing = crate::scratch_dir::ScratchDir::new("measured-missing-sources");
+        let failure = measured(&missing).expect_err("a missing crates/ is not zero lines");
+        assert!(
+            failure
+                .missed
+                .iter()
+                .all(|line| line.starts_with("  crates/: ")),
+            "{failure}"
+        );
     }
 }

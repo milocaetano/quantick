@@ -51,19 +51,27 @@ pub(crate) const GENERATED_MARKER: &str =
 /// is what lets the committed copy be compared byte for byte instead of
 /// parsed.
 pub(crate) fn capability_inventory_markdown() -> Result<String, String> {
+    let contract = standard_contract()?;
+    let capabilities: Vec<&CapabilityDescriptor> = contract.registry().capabilities().collect();
+    Ok(render(&capabilities))
+}
+
+/// The contract the gateway serves, built offline for a generator.
+///
+/// Shared with [`super::retry_matrix`], which renders the same registry from a
+/// different angle; two generators each assembling their own contract would be
+/// two answers to "which registry is this document about?".
+pub(crate) fn standard_contract() -> Result<ObserverContract, String> {
     let projections =
         super::standard_registry().map_err(|error| format!("projection registry: {error}"))?;
     let actions =
         super::actions::standard_actions().map_err(|error| format!("action registry: {error}"))?;
-    let contract = ObserverContract::new(
+    ObserverContract::new(
         &projections,
         std::sync::Arc::new(actions),
         super::evidence::EvidenceStore::new(),
     )
-    .map_err(|error| format!("observer contract: {error}"))?;
-
-    let capabilities: Vec<&CapabilityDescriptor> = contract.registry().capabilities().collect();
-    Ok(render(&capabilities))
+    .map_err(|error| format!("observer contract: {error}"))
 }
 
 fn render(capabilities: &[&CapabilityDescriptor]) -> String {

@@ -277,6 +277,10 @@ fn the_report_is_byte_identical_across_runs() {
         first.lines().all(|line| line.matches('\t').count() == 1),
         "every row is one label, one tab, one value"
     );
+    assert!(
+        first.lines().any(|line| line == "scan.failed\t0"),
+        "every measurement of this repository was taken"
+    );
 }
 
 /// The modes are alternatives. `--report` with anything beside it is refused
@@ -302,6 +306,75 @@ fn the_report_mode_refuses_extra_arguments() {
         complaint.contains("--report"),
         "the usage string offers the mode that was asked for: {complaint}"
     );
+}
+
+#[path = "../src/scratch_dir.rs"]
+mod scratch_dir;
+
+/// Every registered ratchet measures this repository, and refuses to measure
+/// a tree it cannot scan instead of reporting the zero it found there. Walked
+/// through the registry, so a ratchet added later is held to it without an
+/// edit here: the extension boundary printed 0 for a failed scan (#365)
+/// because nothing asked this of it.
+#[test]
+fn every_ratchet_fails_to_measure_a_tree_it_cannot_scan() {
+    let missing = scratch_dir::ScratchDir::new("report-missing-root");
+    for guard in GUARDS {
+        let Some(ratchet) = &guard.ratchet else {
+            continue;
+        };
+        let name = guard.name;
+        let real = (ratchet.measured)(&workspace_root());
+        assert!(
+            real.is_ok(),
+            "{name} could not measure this repository: {real:?}"
+        );
+        let failed = (ratchet.measured)(missing.path());
+        assert!(
+            failed.is_err(),
+            "{name} measured {failed:?} over an empty tree instead of failing"
+        );
+    }
+}
+
+/// The same property through the command, which is where a reader meets it:
+/// `failed` where the number would be, a `scan.failed` count beside the
+/// other scan rows, the reasons on stderr, and a non-zero exit, so neither a
+/// reader nor a script can take the table for a clean measurement.
+#[test]
+fn the_report_says_failed_rather_than_zero_when_a_scan_fails() {
+    let missing = scratch_dir::ScratchDir::new("report-failed-scan");
+    let output = Command::new(env!("CARGO_BIN_EXE_quantick-guards"))
+        .env("QUANTICK_GUARDS_ROOT", missing.path())
+        .arg("--report")
+        .output()
+        .expect("the guards binary runs");
+    let table = String::from_utf8_lossy(&output.stdout);
+    let reasons = String::from_utf8_lossy(&output.stderr);
+    let ratchets: Vec<&str> = GUARDS
+        .iter()
+        .filter(|guard| guard.ratchet.is_some())
+        .map(|guard| guard.name)
+        .collect();
+    for name in &ratchets {
+        let row = format!("ratchet.{name}.measured\tfailed");
+        assert!(
+            table.lines().any(|line| line == row),
+            "no `{row}` in:\n{table}"
+        );
+        assert!(
+            reasons
+                .lines()
+                .any(|line| line.starts_with(&format!("{name}: "))),
+            "stderr gives no reason for {name}:\n{reasons}"
+        );
+    }
+    let count = format!("scan.failed\t{}", ratchets.len());
+    assert!(
+        table.lines().any(|line| line == count),
+        "no `{count}` in:\n{table}"
+    );
+    assert!(!output.status.success(), "a failed scan must not exit 0");
 }
 
 /// `--blast-radius` measures; it never judges, so it exits 0 whatever it is

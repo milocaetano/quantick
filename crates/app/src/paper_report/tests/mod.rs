@@ -7,10 +7,19 @@
 // widens no visibility in production code, and the `use super::*` below is
 // the line the module already had inline.
 
-use quantick_sim::ExitReason;
+use eframe::egui;
+use quantick_engine::Side;
+use quantick_sim::{ExitReason, history};
 use rust_decimal::Decimal;
 
+// The items the split gave owners; `super::*` still carries the state
+// itself, the environment types and the module's constants.
+use super::curve::EquityWalk;
+use super::ledger::{LedgerPage, LedgerTotals};
+use super::rows::{LedgerRow, elide_tail, ledger_detail, push_by_day};
+use super::window::{ReportPeriod, fmt_period_ms, parse_period};
 use super::*;
+use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
 
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.

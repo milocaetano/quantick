@@ -1,0 +1,29 @@
+# command: powershell tools/live_envelope/run_replay.ps1 -Exe <build> -Label <run> -Root <scratch>, ten runs interleaved in the order below, then
+#          python tools/live_envelope/frame_timing.py <scratch>
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); base = release build of c1b4002e (campaign base), head = release build of commit 5311d6f7 of feat/live-workload-envelope
+# replay: WINV26 2026-08-25 (1.70 M prints) at speed 60, book + bubbles + footprint + live strip on, 1500x900, 45 s per run
+
+| Run | lines | fps min / mean | frame_avg ms | frame_cpu ms mean | frame_cpu median | worst ms | trades/s mean | worker_deferred max | worker_backlog max | slow-frame lines |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base-1 | 21 | 59 / 59.29 | 16.665 | 1.692 | 1.608 | 32.05 | 4,686 | n/a | n/a | 0 |
+| head-1 | 21 | 59 / 59.24 | 16.660 | 2.103 | 2.127 | 18.72 | 4,678 | 0 | 232 | 0 |
+| base-2 | 21 | 59 / 59.38 | 16.667 | 2.296 | 2.288 | 32.95 | 4,682 | n/a | n/a | 0 |
+| head-2 | 21 | 59 / 59.29 | 16.667 | 2.055 | 2.053 | 33.36 | 4,692 | 0 | 169 | 0 |
+| head-3 | 20 | 59 / 59.20 | 16.667 | 2.082 | 2.083 | 33.23 | 4,770 | 406 | 420 | 1 |
+| base-3 | 20 | 59 / 59.45 | 16.664 | 1.921 | 1.899 | 33.26 | 4,803 | n/a | n/a | 1 |
+| head-4 | 20 | 59 / 59.40 | 16.667 | 2.211 | 2.181 | 33.26 | 4,799 | 566 | 279 | 1 |
+| base-4 | 21 | 59 / 59.33 | 16.667 | 1.809 | 1.785 | 33.30 | 4,674 | n/a | n/a | 0 |
+| head-5 | 21 | 59 / 59.19 | 16.667 | 1.779 | 1.748 | 33.28 | 4,683 | 0 | 148 | 0 |
+| base-5 | 21 | 59 / 59.33 | 16.667 | 1.784 | 1.774 | 33.29 | 4,681 | n/a | n/a | 0 |
+- **base**: 5 runs; fps min 59; frame_avg 16.666 ms; frame_cpu mean 1.900 ms (per run 1.69, 2.30, 1.92, 1.81, 1.78; stdev 0.236); worst steady frame 33.30 ms; APP_SLOW_FRAMES lines 1
+- **head**: 5 runs; fps min 59; frame_avg 16.666 ms; frame_cpu mean 2.046 ms (per run 2.10, 2.06, 2.08, 2.21, 1.78; stdev 0.161); worst steady frame 33.36 ms; APP_SLOW_FRAMES lines 2
+
+## the two head runs whose load overflowed a queue (first three APP_HEALTH_SUMMARY lines and the warnings between them)
+head-3 summary 1 17:37:22 fps=48 worst_ms=235.0 trades_per_s=18670 live_rate=above worker_backlog=193 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+  LIVE_QUEUE_DEFERRED deferred_since_summary=406 output_blocked_since_summary=0 worker_parked=0
+head-3 summary 2 17:37:24 fps=59 worst_ms=17.0 trades_per_s=9527 live_rate=above worker_backlog=420 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+head-3 summary 3 17:37:26 fps=60 worst_ms=20.3 trades_per_s=8201 live_rate=above worker_backlog=0 worker_parked=0 worker_deferred=406 worker_output_blocked=0
+head-4 summary 1 17:39:13 fps=44 worst_ms=403.4 trades_per_s=17590 live_rate=above worker_backlog=99 worker_parked=0 worker_deferred=566 worker_output_blocked=0
+  LIVE_QUEUE_DEFERRED deferred_since_summary=566 output_blocked_since_summary=0 worker_parked=0
+head-4 summary 2 17:39:15 fps=59 worst_ms=17.3 trades_per_s=9316 live_rate=above worker_backlog=131 worker_parked=0 worker_deferred=566 worker_output_blocked=0
+head-4 summary 3 17:39:17 fps=60 worst_ms=17.2 trades_per_s=8988 live_rate=above worker_backlog=110 worker_parked=0 worker_deferred=566 worker_output_blocked=0

@@ -47,9 +47,9 @@ Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the grap
 
 - **A capability docks as a new file plus one registration line** — not a field, an init, a draw call and a hotkey in `QuantickApp`. No port to dock against? Build one: `.claude/skills/new-extension/SKILL.md`.
 - **A surface that moves out takes its tests with it.**
-- **The size ratchet enforces this** — `crates/guards/src/size.rs`, ceilings in `crates/guards/size-baseline.txt`. Production lines only, threshold 1,500; `tests/` untracked.
-- **Teeth both ways** — no growth past a ceiling, and no sitting more than 200 lines below one. `cargo run -p quantick-guards -- --tighten` writes the new number when a file shrinks.
-- **Growth is pay-as-you-go** — a raise must be signed in the baseline with a reason, and a budget caps the sum of all ceilings, so raising one means lowering another in the same change.
+- **The size ratchet enforces this** — `crates/guards/src/size.rs`, production lines only, `tests/` untracked. `crates/guards/size-baseline.txt` is empty: no production file exceeds 1,500 lines.
+- **Teeth both ways** — no growth past a ceiling, nor more than 200 lines below one. `cargo run -p quantick-guards -- --tighten` writes the new number when a file shrinks.
+- **Growth is pay-as-you-go** — an exception is a signed, reasoned entry, and a budget caps the sum of all ceilings, so raising one means lowering another in the same change.
 
 ## Keeping the instructions small
 

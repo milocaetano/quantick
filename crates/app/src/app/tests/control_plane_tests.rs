@@ -784,6 +784,66 @@ fn a_new_generation_replaces_a_block_already_held() {
     );
 }
 
+/// Connect with a descriptor the gateway must refuse, and report the refusal
+/// code it answered with. A handshake that misses its deadline on a loaded
+/// machine fails at the transport level with `control.instance_gone`, which
+/// says nothing about the credential that was offered. That outcome is retried
+/// a bounded number of times and, if it never clears, reported as the transport
+/// failure it is — never as the wrong refusal code.
+fn refused_handshake_code(
+    credential: &str,
+    descriptor: &quantick_control::descriptor::InstanceDescriptor,
+    options: &quantick_control_local::client::ConnectOptions,
+) -> String {
+    use quantick_control::error::codes;
+    /// Enough attempts that a machine busy for a moment still gets its answer,
+    /// few enough that a gateway which never answers stays loud.
+    const ATTEMPTS: usize = 4;
+    /// Long enough to outlast the scheduling hiccup that cost the last attempt,
+    /// short enough that four of them do not dominate the test's runtime.
+    const BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
+    for attempt in 1..=ATTEMPTS {
+        match quantick_control_local::client::LocalClient::connect(descriptor.clone(), options) {
+            Ok(_) => panic!("the gateway accepted {credential}, which it must refuse"),
+            Err(error) if error.code.as_str() == codes::INSTANCE_GONE => {
+                if attempt < ATTEMPTS {
+                    std::thread::sleep(BACKOFF);
+                }
+            }
+            Err(error) => return error.code.as_str().to_owned(),
+        }
+    }
+    panic!(
+        "the handshake offering {credential} never completed: all {ATTEMPTS} attempts failed at \
+         the transport level with {}, so the gateway never stated a refusal reason",
+        codes::INSTANCE_GONE
+    );
+}
+
+/// Let the flow pane's order-flow worker publish everything it was sent, and
+/// run the frame that adopts it, until one such round changes nothing the
+/// chart projection reads from the pane. The frame can hand the worker new
+/// input (a price grid, a projection request), so one round is not always
+/// enough; a bounded number is.
+fn settle_flow_pane(app: &mut QuantickApp, ctx: &egui::Context) {
+    let observed = |app: &QuantickApp| {
+        let pane = &app.active_tab().flow_pane;
+        (
+            pane.state.timeline_revision(),
+            crate::control::chart::viewport_snapshot(pane),
+        )
+    };
+    for _ in 0..8 {
+        let before = observed(app);
+        app.active_tab_mut().tape_mut().flush_for_test();
+        run_frame(app, ctx);
+        if observed(app) == before {
+            return;
+        }
+    }
+    panic!("the flow pane kept changing after eight worker flushes and frames");
+}
+
 #[test]
 fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     use quantick_control::{
@@ -796,6 +856,12 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     let (mut app, _commands) = app_with_history(12);
     let directory = gateway_test_directory("read");
     let _descriptor_path = enable_test_gateway(&mut app, &ctx, &directory, 8);
+    // The observer-read claim below compares two reads, so nothing but those
+    // reads may move the chart between them. The order-flow worker is still
+    // publishing what the backfill sent it, and the frame that adopts its
+    // capture bucket refolds the footprints, which moves the chart's timeline
+    // revision (#408).
+    settle_flow_pane(&mut app, &ctx);
     let discovery =
         quantick_control_local::client::discover_in(&directory, &gateway_test_options()).unwrap();
     assert!(discovery.issues.is_empty());
@@ -809,37 +875,49 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
     let descriptor = client.descriptor().clone();
     let mut wrong_token = descriptor.clone();
     wrong_token.bearer_token = BearerToken::from_bytes([0xEE; 32]);
-    let error =
-        quantick_control_local::client::LocalClient::connect(wrong_token, &gateway_test_options())
-            .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong bearer token",
+            &wrong_token,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut wrong_instance = descriptor.clone();
     wrong_instance.instance_id = InstanceId::from_bytes([0xDD; 16]);
-    let error = quantick_control_local::client::LocalClient::connect(
-        wrong_instance,
-        &gateway_test_options(),
-    )
-    .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong instance id",
+            &wrong_instance,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut wrong_nonce = descriptor.clone();
     wrong_nonce.process_nonce = ProcessNonce::from_bytes([0xCC; 16]);
-    let error =
-        quantick_control_local::client::LocalClient::connect(wrong_nonce, &gateway_test_options())
-            .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::AUTH_FAILED);
+    assert_eq!(
+        refused_handshake_code(
+            "a wrong process nonce",
+            &wrong_nonce,
+            &gateway_test_options()
+        ),
+        codes::AUTH_FAILED
+    );
 
     let mut non_overlapping_version = descriptor;
     non_overlapping_version.protocol_versions =
         ProtocolVersionRange::new(CURRENT_PROTOCOL_VERSION + 1, CURRENT_PROTOCOL_VERSION + 1)
             .unwrap();
-    let error = quantick_control_local::client::LocalClient::connect(
-        non_overlapping_version,
-        &gateway_test_options(),
-    )
-    .unwrap_err();
-    assert_eq!(error.code.as_str(), codes::VERSION_UNSUPPORTED);
+    assert_eq!(
+        refused_handshake_code(
+            "a protocol range this build does not speak",
+            &non_overlapping_version,
+            &gateway_test_options()
+        ),
+        codes::VERSION_UNSUPPORTED
+    );
 
     let request_id = client
         .send(
@@ -850,16 +928,10 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
         )
         .unwrap();
     wait_for_queued_gateway_requests(&app, 1);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test(),
-        0,
-        "the application frame must drain the queued gateway request"
-    );
+    // Application frames drain the queue; the socket thread never does. Under
+    // a 250-microsecond per-frame budget a loaded machine can need more than
+    // one frame, which is the budget working, not the drain failing.
+    drain_gateway_requests(&mut app, &ctx);
     let response = client.read().unwrap();
     assert_eq!(response.request_id, request_id);
     let first_revisions = response.module_revisions.clone();
@@ -889,7 +961,7 @@ fn gateway_client_reads_the_running_application_and_wrong_tokens_fail_closed() {
         )
         .unwrap();
     wait_for_queued_gateway_requests(&app, 1);
-    run_frame(&mut app, &ctx);
+    drain_gateway_requests(&mut app, &ctx);
     let repeated = client.read().unwrap();
     assert_eq!(repeated.request_id, again);
     assert_eq!(
@@ -976,14 +1048,16 @@ fn gateway_request_timeout_is_structured_and_late_ui_work_is_discarded() {
     assert_eq!(response_error(&response).code.as_str(), codes::TIMEOUT);
     assert!(response_error(&response).retryable);
 
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test(),
-        0
+    // Application frames take the late request off the queue. How many frames
+    // that takes is the frame budget's business, not this test's (#430, the
+    // #364 class): a loaded frame can spend `CONTROL_UI_BUDGET_US` before its
+    // drain starts, so one frame is not guaranteed to reach it.
+    drain_gateway_requests(&mut app, &ctx);
+    // And the late work is discarded: nothing answers the request a second
+    // time.
+    assert!(
+        !client.reply_pending(std::time::Duration::from_millis(100)),
+        "a request already answered with a timeout is not answered again"
     );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
@@ -2076,6 +2150,58 @@ fn gateway_revoking_one_client_closes_it_and_keeps_serving_others() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Whether the gateway answered "the buffered-response budget is busy". That
+/// refusal is about a budget every connection shares, and production marks it
+/// retryable: it never means the client that asked was stalled.
+fn is_retryable_backpressure(outcome: &quantick_control::wire::ResponseOutcome) -> bool {
+    match outcome {
+        quantick_control::wire::ResponseOutcome::Failure { error } => {
+            error.code.as_str() == quantick_control::error::codes::BACKPRESSURE && error.retryable
+        }
+        quantick_control::wire::ResponseOutcome::Success { .. } => false,
+    }
+}
+
+/// Ask the gateway for a worker-side read and return the outcome it answered
+/// with, once the buffered-response slots the previous requests held have been
+/// released.
+///
+/// A response thread releases its global slot after it has written its reply,
+/// which is a moment later than the application frame that answered it. A read
+/// that lands inside that moment is refused with `control.backpressure`, which
+/// production itself marks retryable: it says "the budget is busy", never "this
+/// client is stalled". Asking again inside a bounded budget is therefore a
+/// wait, not a softened assertion — a gateway a stalled client really did stall
+/// never clears, and the caller still asserts a success.
+///
+/// The retries are paced by the connection's rate limit. On a loaded machine
+/// the slots can stay busy for longer than the limit's burst lasts at a faster
+/// pace, and the connection's next request, the caller's UI-side read, would
+/// then be refused by the limiter and never reach the queue (#427).
+fn worker_side_read_past_the_unread_replies(
+    client: &mut quantick_control_local::client::LocalClient,
+) -> quantick_control::wire::ResponseOutcome {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
+        let outcome = client
+            .invoke(
+                crate::control::DESCRIBE_CAPABILITY_ID,
+                serde_json::json!({}),
+            )
+            .unwrap()
+            .outcome;
+        if !is_retryable_backpressure(&outcome) {
+            return outcome;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the buffered-response budget never freed a slot for a worker-side read within \
+             {GATEWAY_TEST_WAIT:?}: {outcome:?}"
+        );
+        pause_one_request_interval();
+    }
+}
+
 #[test]
 fn gateway_a_client_that_never_reads_does_not_stall_another() {
     use quantick_control::limits::CONTROL_MAX_IN_FLIGHT_PER_CONNECTION;
@@ -2101,15 +2227,39 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
             )
             .unwrap();
     }
-    // A worker-side read is answered without the frame loop and without
-    // the stalled client's replies ever being read.
-    let outcome = live
+    // Wait for the whole backlog to be queued before asking anything else of
+    // the gateway, so the interleaving below is established rather than raced:
+    // asking first could take the buffered-response slot one of these requests
+    // needs, and then the backlog never reaches its own depth.
+    wait_for_at_least_queued_gateway_requests(&app, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION);
+    // With that backlog queued and unanswered, the other client is answered
+    // either way: served if the shared buffered-response budget still has a
+    // slot, refused retryably if the backlog took them all. A connection may
+    // hold as many in-flight requests as that budget has slots, so which of the
+    // two happens is not the test's to pin — being left to wait on a client
+    // that never reads is, and it is not among the outcomes.
+    let under_backlog = live
         .invoke(
             crate::control::DESCRIBE_CAPABILITY_ID,
             serde_json::json!({}),
         )
         .unwrap()
         .outcome;
+    assert!(
+        matches!(
+            under_backlog,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ) || is_retryable_backpressure(&under_backlog),
+        "a queued backlog answers the live client, with a read or with a retryable refusal: \
+         {under_backlog:?}"
+    );
+    // Answer the backlog, so that what stalls the gateway from here on is the
+    // thing this test is named after: replies sitting unread in a client's
+    // socket, rather than requests still waiting to be served.
+    drain_gateway_requests(&mut app, &ctx);
+    // A worker-side read is answered without the frame loop and without
+    // the stalled client's replies ever being read.
+    let outcome = worker_side_read_past_the_unread_replies(&mut live);
     assert!(
         matches!(
             outcome,
@@ -2125,19 +2275,10 @@ fn gateway_a_client_that_never_reads_does_not_stall_another() {
             serde_json::json!({ "scopes": ["system.info"] }),
         )
         .unwrap();
-    for iteration in 0..400 {
-        run_frame(&mut app, &ctx);
-        let queued = app
-            .control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .queued_requests_for_test();
-        if iteration >= 10 && queued == 0 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    // Wait for the request to reach the queue before asking the frames to
+    // empty it: an empty queue means nothing until the request is in it.
+    wait_for_queued_gateway_requests(&app, 1);
+    drain_gateway_requests(&mut app, &ctx);
     let response = live.read().unwrap();
     assert_eq!(response.request_id, request_id);
     assert!(matches!(
@@ -2266,7 +2407,9 @@ fn gateway_rejects_a_duplicate_request_id_while_the_first_is_in_flight() {
         response_error(&rejected).code.as_str(),
         codes::INVALID_REQUEST
     );
-    run_frame(&mut app, &ctx);
+    // Frames serve the first; how many that takes is the frame budget's
+    // business (the #364 class, as in #430).
+    drain_gateway_requests(&mut app, &ctx);
     let served = client.read().unwrap();
     assert_eq!(served.request_id, first);
     assert!(matches!(
@@ -2586,6 +2729,9 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
     let page = reply.expect("the parked wait was answered");
     assert_eq!(page.request_id, request_id);
     assert_eq!(success_result(&page)["timed_out"], true);
+    // Free again, the moment the answer is read: the wait's answer released
+    // the ID before it was written (#425), so this reuse is sent once, with
+    // no wait, and an ID the gateway had not released fails here (#411).
     client
         .send_with_request_id(
             request_id.clone(),
@@ -2594,11 +2740,116 @@ fn gateway_rejects_a_duplicate_request_id_while_a_wait_is_parked() {
             serde_json::json!({}),
         )
         .unwrap();
-    assert!(matches!(
-        client.read().unwrap().outcome,
-        quantick_control::wire::ResponseOutcome::Success { .. }
-    ));
+    let reused = client.read().unwrap();
+    assert_eq!(reused.request_id, request_id);
+    assert!(
+        matches!(
+            reused.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the ID is free once the wait is answered: {:?}",
+        reused.outcome
+    );
 
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// #425: an answer releases its request ID before it is written, so a client
+/// that has read the answer may reuse the ID at once. The gateway reports
+/// whether the ID was still in flight just before the answer's frame was
+/// written, and the thread that wrote it is held right after the write,
+/// which is where a preempted thread used to sit with the ID still in
+/// flight: the reuse sent the moment the answer is read must be admitted.
+#[test]
+fn a_client_that_reads_its_answer_can_reuse_the_request_id_at_once() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(2);
+    let directory = gateway_test_directory("reuse-at-once");
+    let request_id = quantick_control::id::RequestId::new("reused").unwrap();
+    let (written_tx, written) = crossbeam_channel::bounded(1);
+    let (release, released) = crossbeam_channel::bounded::<()>(1);
+    let held = Arc::new(AtomicBool::new(false));
+    let hold = {
+        let request_id = request_id.clone();
+        // Only the first answer under this ID is held; the reuse's own answer
+        // passes through.
+        move |answered: &quantick_control::id::RequestId, in_flight_when_written: bool| {
+            if *answered == request_id && !held.swap(true, Ordering::AcqRel) {
+                let _ = written_tx.send(in_flight_when_written);
+                let _ = released.recv_timeout(GATEWAY_TEST_WAIT);
+            }
+        }
+    };
+    app.control
+        .control_access
+        .as_mut()
+        .expect("control access is installed")
+        .enable_for_test_observing_answers(&ctx, directory.clone(), 4, Arc::new(hold));
+    wait_for_test_gateway_descriptor(&mut app, &ctx);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &gateway_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    // A read the application thread serves: its response worker writes the
+    // answer, then is held.
+    client
+        .send_with_request_id(
+            request_id.clone(),
+            crate::control::SNAPSHOT_CAPABILITY_ID,
+            1,
+            serde_json::json!({ "scopes": ["system.info"] }),
+        )
+        .unwrap();
+    wait_for_queued_gateway_requests(&app, 1);
+    drain_gateway_requests(&mut app, &ctx);
+    let answer = client.read().unwrap();
+    assert_eq!(answer.request_id, request_id);
+    assert!(
+        matches!(
+            answer.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "the first request is answered: {:?}",
+        answer.outcome
+    );
+    let in_flight_when_written = written
+        .recv_timeout(GATEWAY_TEST_WAIT)
+        .expect("the thread that wrote the answer is held after its write");
+    assert!(
+        !in_flight_when_written,
+        "the ID was released before its answer's frame was written"
+    );
+
+    // The reuse, sent the moment the answer is read, while that thread is
+    // still held.
+    client
+        .send_with_request_id(
+            request_id.clone(),
+            crate::control::DESCRIBE_CAPABILITY_ID,
+            1,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    let reused = client.read().unwrap();
+    assert_eq!(reused.request_id, request_id);
+    assert!(
+        matches!(
+            reused.outcome,
+            quantick_control::wire::ResponseOutcome::Success { .. }
+        ),
+        "a client that has read its answer may reuse the ID at once: {:?}",
+        reused.outcome
+    );
+
+    release.send(()).unwrap();
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -2787,12 +3038,13 @@ plot(close)
         .to_owned(),
         false,
     );
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if !indicator_kinds(&app).is_empty() {
-            break;
-        }
-    }
+    // Settled, not waited out over a count of frames (#415).
+    settle_indicators(&mut app);
+    assert_eq!(
+        indicator_kinds(&app).len(),
+        1,
+        "the trader's indicator is on the pane"
+    );
     let refused = app
         .control_action(
             "indicator.script.detach",
@@ -2839,24 +3091,15 @@ plot(close)
     // The trader's own, on the first tab.
     let (traders_tab, _, traders_slot) =
         app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if !indicator_kinds(&app).is_empty() {
-            break;
-        }
-    }
+    // Settled, not waited out over a count of frames, as in #415.
+    settle_indicators(&mut app);
 
     // The second chart, whose slot numbering starts over from zero.
     app.cycle_tab(1);
     run_frame(&mut app, &ctx);
     let (operators_tab, _, operators_slot) =
         app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if !indicator_kinds(&app).is_empty() {
-            break;
-        }
-    }
+    settle_indicators(&mut app);
     assert_ne!(traders_tab, operators_tab, "two charts, not one");
     assert_eq!(
         traders_slot.0, operators_slot.0,
@@ -3044,14 +3287,10 @@ fn attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was() {
         )
         .expect("a script that compiles is attached");
     let slot_id = attached["slot_id"].as_str().unwrap().to_owned();
-    // The worker builds off the application thread; frames apply what it
-    // produced, exactly as the library's own click path is served.
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if indicator_kinds(&app).len() > before.len() {
-            break;
-        }
-    }
+    // The worker builds off the application thread. Settled rather than
+    // waited out over a count of frames: on a loaded machine 200 frames pass
+    // before the worker thread has run at all (#409).
+    settle_indicators(&mut app);
     assert_eq!(
         indicator_kinds(&app).len(),
         before.len() + 1,
@@ -3065,12 +3304,7 @@ fn attaching_a_script_and_detaching_it_leaves_the_pane_as_it_was() {
         )
         .expect("what an operator attached, an operator detaches");
     assert_eq!(detached["detached"], true);
-    for _ in 0..200 {
-        run_frame(&mut app, &ctx);
-        if indicator_kinds(&app).len() == before.len() {
-            break;
-        }
-    }
+    settle_indicators(&mut app);
     assert_eq!(
         indicator_kinds(&app),
         before,
@@ -4518,19 +4752,7 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
         .expect("the request is sent");
     // Frames pass and the capture does not answer: it is waiting for the
     // window, which a headless context never rasterises on its own.
-    let mut waited = 0;
-    for _ in 0..PARK_WAIT_FRAMES {
-        run_frame(&mut app, &ctx);
-        waited = app
-            .control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .awaiting_screenshot_for_test();
-        if waited > 0 {
-            break;
-        }
-    }
+    let waited = run_frames_until_capture_parks(&mut app, &ctx);
     assert_eq!(waited, 1, "the capture parked instead of answering blind");
 
     let mut access = app
@@ -4561,6 +4783,159 @@ fn a_capture_that_wants_an_image_waits_for_the_frame_instead_of_answering_blind(
             .awaiting_screenshot_for_test(),
         0
     );
+
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// An image can be claimed only in the frame that holds it: `begin_frame`
+/// drops an unclaimed one when the frame ends. A loaded machine can spend the
+/// frame's whole request budget before the parked captures are served, and a
+/// capture held back on that budget lost the picture it parked for, waited
+/// out its deadline, and reported `frame_not_delivered` for a frame that was
+/// delivered (#413, #416, #417). This spends the budget on purpose.
+#[test]
+fn a_parked_capture_claims_its_image_in_a_frame_whose_budget_is_already_spent() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(6);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("evidence-image-over-budget");
+    grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    let request_id = client
+        .send(
+            "evidence.capture",
+            serde_json::json!({ "scopes": ["scene.controls"], "screenshot": true }),
+        )
+        .expect("the request is sent");
+    assert_eq!(run_frames_until_capture_parks(&mut app, &ctx), 1);
+
+    let mut access = app
+        .control
+        .control_access
+        .take()
+        .expect("control access is installed");
+    access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+    access.begin_frame_over_budget_for_test(&mut app, &ctx);
+    let still_parked = access.awaiting_screenshot_for_test();
+    app.control.control_access = Some(access);
+    assert_eq!(
+        still_parked, 0,
+        "the capture is served in the frame that holds its image, whatever that frame has spent"
+    );
+
+    let response = client.read().expect("the gateway answered");
+    assert_eq!(response.request_id, request_id);
+    let manifest = success_result(&response);
+    assert_eq!(
+        manifest["screenshot"]["capture_revision"], manifest["capture_revision"],
+        "the image is stamped with the capture that parked for it"
+    );
+    assert!(
+        !manifest["coverage"]["not_captured"]
+            .as_array()
+            .expect("the coverage lists what is missing")
+            .contains(&serde_json::json!({
+                "subject": "screenshot",
+                "reason": "frame_not_delivered"
+            })),
+        "a delivered frame is never reported as undelivered"
+    );
+
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// The captures parked behind the first one on a frame whose budget is spent.
+/// The first claims the image; the image is then gone, and the rest are held
+/// back on time. Held back without asking the window for another frame, they
+/// waited on an image nothing had requested until their deadline answered
+/// them with a bare timeout. A held-back capture now asks for the next frame,
+/// and claims it when it comes, however loaded that frame is too.
+#[test]
+fn captures_parked_behind_the_first_ask_for_the_next_frame_when_the_budget_is_spent() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(6);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("evidence-second-image-over-budget");
+    grant_annotate_for_test(&mut app, "all-reads,observe.evidence,observe.screenshot");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &evidence_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+
+    let sent: Vec<_> = (0..2)
+        .map(|_| {
+            client
+                .send(
+                    "evidence.capture",
+                    serde_json::json!({ "scopes": ["scene.controls"], "screenshot": true }),
+                )
+                .expect("the request is sent")
+        })
+        .collect();
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    // Both must be parked at once. The helper returns on the first frame once
+    // one is, so this loop sleeps too, or its back-to-back frames would starve
+    // the reader thread the second request still has to cross.
+    while run_frames_until_capture_parks(&mut app, &ctx) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "both captures did not park within {GATEWAY_TEST_WAIT:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    let mut access = app
+        .control
+        .control_access
+        .take()
+        .expect("control access is installed");
+    access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+    access.begin_frame_over_budget_for_test(&mut app, &ctx);
+    let (parked, armed) = (
+        access.awaiting_screenshot_for_test(),
+        access.screenshot_armed_for_test(),
+    );
+    assert_eq!(parked, 1, "the first capture claimed the frame's image");
+    assert!(
+        armed,
+        "the capture still parked asks the window for the next frame"
+    );
+    access.publish_screenshot_for_test(&mut app, test_screenshot(320, 200));
+    access.begin_frame_over_budget_for_test(&mut app, &ctx);
+    let parked = access.awaiting_screenshot_for_test();
+    app.control.control_access = Some(access);
+    assert_eq!(parked, 0, "and claims that frame when it arrives");
+
+    // Two response workers encode the two bundles, so the answers can arrive
+    // in either order; each is matched to its own request.
+    let mut answered = Vec::new();
+    for _ in 0..sent.len() {
+        let response = client.read().expect("the gateway answered");
+        assert!(
+            sent.contains(&response.request_id),
+            "an answer to a request this test sent"
+        );
+        assert!(
+            !answered.contains(&response.request_id),
+            "each request is answered once"
+        );
+        answered.push(response.request_id.clone());
+        let manifest = success_result(&response);
+        assert_eq!(
+            manifest["screenshot"]["capture_revision"], manifest["capture_revision"],
+            "each capture carries its own image, stamped with its own revision"
+        );
+    }
 
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
@@ -4746,7 +5121,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 46);
+    assert_eq!(documents.len(), 48);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");
@@ -5407,7 +5782,12 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
         "the caller is told to ask again once the first has answered"
     );
 
-    run_frame(&mut app, &ctx);
+    // The refusal above was answered before any frame ran, which is the race
+    // this test is about. Serving the first call is not: a frame admits the
+    // queue only inside `CONTROL_UI_BUDGET_US`, and on a loaded machine the
+    // frame's other work can spend that budget before the drain starts, so the
+    // first call is served over as many frames as the budget needs.
+    drain_gateway_requests(&mut app, &ctx);
     let served = client.read().unwrap();
     assert_eq!(served.request_id, first);
     assert!(matches!(
@@ -5434,10 +5814,10 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
 /// It does **not** exercise `UiRequest::started`. The application answers
 /// here, refusing the request on its deadline, so `settle` gets a real
 /// outcome and never consults the flag. The flag decides only the case where
-/// the application began an action and had still not answered a window later,
-/// and forcing that needs an action a test can hold open past the deadline,
-/// which the gateway has no hook for. That branch is covered by the unit
-/// tests over `settle` and by reading, not by this.
+/// the application began an action and had still not answered a window later;
+/// that branch is proven end to end by
+/// `retry_readback_tests::a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by_readback`,
+/// which holds the action's answer through a `#[cfg(test)]` seam.
 #[test]
 fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free() {
     use quantick_control::{error::codes, id::IdempotencyKey, id::RequestId};
@@ -5448,7 +5828,12 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     run_frame(&mut app, &ctx);
     let directory = gateway_test_directory("idempotency-settle");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway_with_limits(&mut app, &ctx, &directory, 4, Duration::from_millis(50), 4);
+    // One window serves both calls: the first must outlive it, the retry must
+    // not. 50 ms was short enough that a loaded machine let the retry expire
+    // too (#410). The first call expires however long the window is, because
+    // nothing serves it until its refusal has been read.
+    let window = Duration::from_millis(750);
+    enable_test_gateway_with_limits(&mut app, &ctx, &directory, 4, window, 4);
     let mut client =
         quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
             .unwrap()
@@ -5468,7 +5853,12 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
             key(),
         )
         .unwrap();
-    let expired = client.read().unwrap();
+    // The refusal is written when the response worker's own timer fires, and a
+    // loaded machine can wake that thread after the client's ordinary read
+    // timeout: waited for as long as the shared test budget allows.
+    let expired = client
+        .read_with_extra_patience(GATEWAY_TEST_WAIT.as_millis() as u64)
+        .unwrap();
     assert_eq!(expired.request_id, first);
     assert_eq!(response_error(&expired).code.as_str(), codes::TIMEOUT);
     assert!(
@@ -5487,30 +5877,54 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
 
     // The invited retry. `control.request_in_progress` while the settle window
     // is still open is the contract's own instruction to ask again, so this
-    // asks again rather than treating it as the answer.
-    let mut answered = None;
-    for attempt in 0..40 {
-        let response = remote_call_with_key(
-            &mut app,
-            &ctx,
-            &mut client,
-            &format!("retry-{attempt}"),
-            "layout.tab.create",
-            serde_json::json!({}),
-            "layout-key-1",
-        );
+    // asks again rather than treating it as the answer. Each retry is served
+    // the moment it is queued, through the same `execute_on_ui` a frame's
+    // drain calls, so its own deadline is never spent waiting for a frame
+    // whose budget the frame's other work used up.
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    let mut attempt = 0;
+    let answered = loop {
+        attempt += 1;
+        let sent = client
+            .send_with_idempotency_key(
+                RequestId::new(format!("retry-{attempt}")).unwrap(),
+                "layout.tab.create",
+                1,
+                serde_json::json!({}),
+                key(),
+            )
+            .unwrap();
+        let response = loop {
+            let mut access = app
+                .control
+                .control_access
+                .take()
+                .expect("control access is installed");
+            access.serve_queued_for_test(&mut app);
+            app.control.control_access = Some(access);
+            if client.reply_pending(Duration::from_millis(5)) {
+                break client.read().unwrap();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no answer to retry-{attempt}"
+            );
+        };
+        assert_eq!(response.request_id, sent);
         let still_running = matches!(
             &response.outcome,
             quantick_control::wire::ResponseOutcome::Failure { error }
                 if error.code.as_str() == codes::REQUEST_IN_PROGRESS
         );
         if !still_running {
-            answered = Some(response);
-            break;
+            break response;
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    let answered = answered.expect("the settle window closes and the key comes back");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the settle window closes and the key comes back"
+        );
+        pause_one_request_interval();
+    };
 
     assert!(
         matches!(

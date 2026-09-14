@@ -1,0 +1,27 @@
+# command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+# host: DESKTOP-BTVJFFR (i5-12400F, 31.8 GB, Windows 11 Pro); head d2030cc0
+running 1 test
+test app::tests::session_length_tests::tape_growth_stalls ... # tape growth stall probe
+sha: d2030cc0c4a055089001dfbb345c277a72cb4562
+host: DESKTOP-BTVJFFR
+command: env -u QUANTICK_BUBBLES cargo test --release -p quantick-app session_length_tests::tape_growth_stalls -- --ignored --nocapture --test-threads=1
+run: one tick:50 pane built live to 4259840 prints; stretches are +/-1024 prints around each former doubling point; bound 4 ms
+| tape at 3960000 prints | prints held | capacity (prints) | chunks | bytes held | bytes reserved (capacity x 56 B + directory) | unused |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| built live | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+| loaded at once | 3960000 | 3997696 | 61 | 221760000 | 223872440 | 2112440 |
+footprint=false: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 103, last 100k 108, median block 105; ingest alone, mean over the whole run, doublings included: 72.8
+| stretch (footprint=false) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 0.007 | 2097152 | 0 | 0 |
+| 2^22 +/- reach | 0.012 | 4194304 | 0 | 0 |
+| whole run | 1.427 | 3276849 | 7864320 | 3276849 |
+footprint=true: 4259840 prints, 85196 bars (tick:50); ingest ns/print incl. the probe's own timer: first 100k 193, last 100k 199, median block 193; ingest alone, mean over the whole run, doublings included: 165.3
+| stretch (footprint=true) | slowest ingest ms | at print | largest copy bytes | at print |
+| --- | ---: | ---: | ---: | ---: |
+| 2^21 +/- reach | 0.011 | 2097152 | 0 | 0 |
+| 2^22 +/- reach | 0.064 | 4193874 | 0 | 0 |
+| whole run | 2.321 | 3276849 | 7864320 | 3276849 |
+verdict: no ingest near a former doubling point above the bound
+ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2071 filtered out; finished in 1.92s

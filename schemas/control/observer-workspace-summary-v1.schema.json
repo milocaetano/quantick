@@ -87,6 +87,11 @@
         "active": {
           "type": "boolean"
         },
+        "context_collapsed": {
+          "default": false,
+          "description": "Whether the context column is collapsed to its rail. A collapsed chart\nis still counted `visible` in `panes`, because it comes back with its\nbars and drawings; this is the one field that says it is put away.\nThe readback for `layout.pane.collapse` and `layout.pane.expand`, and\n`#[serde(default)]` so it is an optional, additive field of the v1\npayload.",
+          "type": "boolean"
+        },
         "feed_id": {
           "type": "string"
         },

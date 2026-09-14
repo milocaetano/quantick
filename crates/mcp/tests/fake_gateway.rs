@@ -177,26 +177,42 @@ fn serve_connection(
     }
 }
 
+/// A capability the fake registers twice, the way `layout.pane.resize` kept
+/// version 1 when version 2 arrived: one registry row per version.
+const VERSIONED_CAPABILITY: &str = "layout.pane.resize";
+
 fn answer(instance_id: &InstanceId, request: &RequestEnvelope) -> ResponseOutcome {
-    match request.capability_id.as_str() {
-        tools::DESCRIBE_CAPABILITY => ResponseOutcome::Success {
+    // Keyed on the version as well as the ID, as the real registry is: a
+    // version it does not register is refused, never answered by another.
+    match (request.capability_id.as_str(), request.capability_version) {
+        (tools::DESCRIBE_CAPABILITY, 1) => ResponseOutcome::Success {
             result: json!({
                 "instance_id": instance_id,
                 "application_version": "0.1.0-fake",
                 "capabilities": [
                     { "id": tools::DESCRIBE_CAPABILITY, "version": 1, "title": "Describe", "description": "Report the instance", "module": "control", "read_only": true, "availability": {"status": "available"} },
-                    { "id": tools::SNAPSHOT_CAPABILITY, "version": 1, "title": "Snapshot", "description": "Coherent capture", "module": "snapshot", "read_only": true, "availability": {"status": "available"} }
+                    { "id": tools::SNAPSHOT_CAPABILITY, "version": 1, "title": "Snapshot", "description": "Coherent capture", "module": "snapshot", "read_only": true, "availability": {"status": "available"} },
+                    { "id": VERSIONED_CAPABILITY, "version": 2, "title": "Resize a pane", "description": "Answers an exact decimal share", "module": "layout", "read_only": false, "availability": {"status": "available"} },
+                    { "id": VERSIONED_CAPABILITY, "version": 1, "title": "Resize a pane", "description": "The first contract", "module": "layout", "read_only": false, "availability": {"status": "available"} }
                 ],
                 "snapshot_scopes": [
                     { "id": "system.info", "module_id": "system", "title": "System", "description": "Build identity", "schema_version": 1, "required_permissions": ["observe"], "schema": { "type": "object" } }
                 ]
             }),
         },
-        tools::SNAPSHOT_CAPABILITY
-        | tools::DIAGNOSTICS_CAPABILITY
-        | tools::CHART_WINDOW_CAPABILITY
-        | tools::SCENE_CAPABILITY => ResponseOutcome::Success {
-            result: json!({ "echo": request.payload, "capability": request.capability_id }),
+        (
+            tools::SNAPSHOT_CAPABILITY
+            | tools::DIAGNOSTICS_CAPABILITY
+            | tools::CHART_WINDOW_CAPABILITY
+            | tools::SCENE_CAPABILITY,
+            1,
+        )
+        | (VERSIONED_CAPABILITY, 1 | 2) => ResponseOutcome::Success {
+            result: json!({
+                "echo": request.payload,
+                "capability": request.capability_id,
+                "version": request.capability_version,
+            }),
         },
         _ => ResponseOutcome::Failure {
             error: ControlError::new(
@@ -323,6 +339,76 @@ fn the_adapter_discovers_authenticates_and_reads_through_the_real_transport() {
 
     drop(gateway);
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// D20 through the real transport: an omitted version is the newest the
+/// instance registers for that ID, an explicit one is honoured, and a
+/// capability that only ever had version 1 still answers without one.
+#[test]
+fn an_omitted_version_reaches_the_newest_registered_one_and_an_explicit_one_is_kept() {
+    let directory = scratch_directory("versions");
+    let gateway = FakeGateway::start(&directory, 0x77, 1_700_000_000_000);
+    let mut server = server_over(&directory);
+
+    let newest = call(
+        &mut server,
+        2,
+        tools::INVOKE,
+        json!({ "capability_id": VERSIONED_CAPABILITY, "payload": { "fraction": "0.4" } }),
+    );
+    assert_eq!(newest["isError"], false, "{newest}");
+    assert_eq!(
+        newest["structuredContent"]["result"]["version"], 2,
+        "the gateway was asked for version 2, the newest it registers"
+    );
+    assert_eq!(
+        newest["structuredContent"]["capability_version"], 2,
+        "and the result says which version answered"
+    );
+    assert_eq!(
+        newest["structuredContent"]["result"]["echo"],
+        json!({ "fraction": "0.4" }),
+        "the payload reaches the resolved version untouched"
+    );
+
+    let first = call(
+        &mut server,
+        3,
+        tools::INVOKE,
+        json!({ "capability_id": VERSIONED_CAPABILITY, "capability_version": 1, "payload": {} }),
+    );
+    assert_eq!(first["isError"], false, "{first}");
+    assert_eq!(
+        first["structuredContent"]["result"]["version"], 1,
+        "an explicit version passes through unchanged"
+    );
+    assert_eq!(first["structuredContent"]["capability_version"], 1);
+
+    let only = call(
+        &mut server,
+        4,
+        tools::INVOKE,
+        json!({ "capability_id": tools::SNAPSHOT_CAPABILITY, "payload": { "scopes": ["system.info"] } }),
+    );
+    assert_eq!(only["isError"], false, "{only}");
+    assert_eq!(
+        only["structuredContent"]["result"]["version"], 1,
+        "a capability registered only at version 1 still answers without one"
+    );
+
+    let unregistered = call(
+        &mut server,
+        5,
+        tools::INVOKE,
+        json!({ "capability_id": VERSIONED_CAPABILITY, "capability_version": 3, "payload": {} }),
+    );
+    assert_eq!(unregistered["isError"], true);
+    assert_eq!(
+        unregistered["structuredContent"]["error"]["code"], "control.capability_unknown",
+        "an explicit version the instance lacks is refused, not rounded down"
+    );
+
+    drop(gateway);
 }
 
 #[test]

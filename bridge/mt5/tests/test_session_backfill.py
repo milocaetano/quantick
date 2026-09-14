@@ -31,6 +31,7 @@ from harness import (  # noqa: E402  (deliberately after the path insert)
     block_ticks,
     check,
     load_bridge,
+    patch_bridge,
     run_tests,
     session_at,
     tick_at,
@@ -308,7 +309,7 @@ def test_a_session_beyond_the_cap_keeps_the_newest_and_says_so():
     bridge = load_bridge(term)
     session = session_at(bridge, term, now_s, backfill_minutes=720, backfill_max_ticks=100)
     logged: list[tuple[str, dict]] = []
-    bridge.log = lambda code, **fields: logged.append((code, fields))
+    patch_bridge("log", lambda code, **fields: logged.append((code, fields)))
     session.backfill()
 
     check(
@@ -537,7 +538,7 @@ def test_an_empty_block_still_parks_the_live_cursor():
     session = session_at(bridge, term, now_s, backfill_minutes=720)
     session.cursor_msc = 0
     logged: list[str] = []
-    bridge.log = lambda code, **fields: logged.append(code)
+    patch_bridge("log", lambda code, **fields: logged.append(code))
     # Settle the floor and the search first, then fail the walk's own next
     # window: the point is the path where a print *was* found and the block is
     # still empty, not the no-history path, which parks the cursor already.

@@ -248,7 +248,7 @@ pub(crate) enum ScriptedMenu {
 
 impl ScriptedMenu {
     /// Every menu this hook can open, by the token that names it.
-    const ALL: [(&'static str, Self); 2] =
+    pub(crate) const ALL: [(&'static str, Self); 2] =
         [("workspace", Self::Workspace), ("history", Self::History)];
 
     fn from_token(token: &str) -> Option<Self> {

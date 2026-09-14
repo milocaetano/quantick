@@ -50,7 +50,9 @@ mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
 mod published_schema_compatibility_tests;
+mod retry_readback_tests;
 mod screenshot_evidence_tests;
+mod session_length_tests;
 mod toolrail_tests;
 mod workspaces_tests;
 
@@ -1903,11 +1905,28 @@ fn enable_test_gateway_with_limits(
     wait_for_test_gateway_descriptor(app, ctx)
 }
 
+/// How long a test waits for another thread to reach a state. A fixed number
+/// of short sleeps is not a clock: on a loaded machine the iterations run out
+/// long before the work they are waiting for had its chance, and the wait then
+/// reports a defect where there is only contention.
+const GATEWAY_TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Wait one interval of the connection's request rate limit before a retry.
+/// A retry loop that runs faster than the limit is answered by the limiter's
+/// `control.backpressure` once its burst is spent, and the refusal a test was
+/// waiting out is then mistaken for another. Derived from the limit, so a
+/// lower limit slows the loops rather than breaking them.
+fn pause_one_request_interval() {
+    let per_second = quantick_control::limits::CONTROL_CLIENT_RATE_PER_SECOND;
+    std::thread::sleep(std::time::Duration::from_secs(1) / per_second);
+}
+
 fn wait_for_test_gateway_descriptor(
     app: &mut QuantickApp,
     ctx: &egui::Context,
 ) -> std::path::PathBuf {
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
         run_frame(app, ctx);
         if let Some(path) = app
             .control
@@ -1917,26 +1936,86 @@ fn wait_for_test_gateway_descriptor(
         {
             return path;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "test gateway did not publish discovery within {GATEWAY_TEST_WAIT:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("test gateway did not publish discovery");
 }
 
 fn wait_for_queued_gateway_requests(app: &QuantickApp, expected: usize) {
-    for _ in 0..400 {
+    wait_for_queue_depth(app, &format!("reach {expected}"), |queued| {
+        queued == expected
+    });
+}
+
+/// [`wait_for_queued_gateway_requests`] for a caller that only needs the
+/// requests to have arrived, not to be the only ones there. Exact equality is
+/// a trap once anything else can be in flight: one extra request from another
+/// connection, or one left over from an earlier step, and a wait that insists
+/// on its own number never sees it.
+///
+/// What it does not buy: tolerance of the queue shrinking under the caller.
+/// The response worker answers a request that missed its deadline without any
+/// frame running, and a set that loses one of its own members never reaches
+/// its depth under either comparison. A caller that waits for a whole backlog
+/// is relying on that deadline being far away, not on this spelling.
+fn wait_for_at_least_queued_gateway_requests(app: &QuantickApp, expected: usize) {
+    wait_for_queue_depth(app, &format!("reach {expected} or more"), |queued| {
+        queued >= expected
+    });
+}
+
+fn wait_for_queue_depth(app: &QuantickApp, wanted: &str, reached: impl Fn(usize) -> bool) {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
+        let queued = app
+            .control
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .queued_requests_for_test();
+        if reached(queued) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "gateway request queue did not {wanted} within {GATEWAY_TEST_WAIT:?} (queued {queued})"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Run application frames until the gateway request queue is empty. A frame
+/// admits up to `CONTROL_UI_MAX_REQUESTS_PER_FRAME` requests, but only inside
+/// `CONTROL_UI_BUDGET_US`; on a loaded machine the frame's other work can spend
+/// that budget before the drain even starts, and the queue then empties over
+/// several frames. What a caller asserts by calling this is that application
+/// frames drain the queue — the socket thread never does — so how many frames
+/// the budget needed is reported only when the wait gives up.
+fn drain_gateway_requests(app: &mut QuantickApp, ctx: &egui::Context) {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    let mut frames = 0;
+    loop {
+        run_frame(app, ctx);
+        frames += 1;
         if app
             .control
             .control_access
             .as_ref()
             .expect("control access is installed")
             .queued_requests_for_test()
-            == expected
+            == 0
         {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(
+            std::time::Instant::now() < deadline,
+            "application frames did not drain the queued gateway requests within \
+             {GATEWAY_TEST_WAIT:?} ({frames} frames)"
+        );
     }
-    panic!("gateway request queue did not reach {expected}");
 }
 
 fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
@@ -1945,7 +2024,8 @@ fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
         .as_mut()
         .expect("control access is installed")
         .disable_for_test();
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
         run_frame(app, ctx);
         if app
             .control
@@ -1956,9 +2036,12 @@ fn disable_test_gateway(app: &mut QuantickApp, ctx: &egui::Context) {
         {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "test gateway did not stop cleanly within {GATEWAY_TEST_WAIT:?}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("test gateway did not stop cleanly");
 }
 
 fn response_error(
@@ -2374,19 +2457,7 @@ fn capture_with_screenshot(
     // wait for one that never comes. Asserted rather than assumed, so a
     // machine slow enough to break the precondition says so here instead
     // of failing later on a confusing assertion about the manifest.
-    let parked = (0..PARK_WAIT_FRAMES).any(|_| {
-        run_frame(app, ctx);
-        app.control
-            .control_access
-            .as_ref()
-            .expect("control access is installed")
-            .awaiting_screenshot_for_test()
-            > 0
-    });
-    assert!(
-        parked,
-        "the capture did not park for an image within {PARK_WAIT_FRAMES} frames"
-    );
+    run_frames_until_capture_parks(app, ctx);
     let mut access = app
         .control
         .control_access
@@ -2405,12 +2476,34 @@ fn capture_with_screenshot(
     response
 }
 
-/// Frames a test spends waiting for a capture to park on an image.
+/// Run application frames until a capture has parked on an image, and return
+/// how many are parked.
 ///
-/// Generous: the request crosses a socket and two threads, and these tests
-/// run alongside every other crate's test binary. The gateways they use
-/// have their request timeout raised for the same reason.
-const PARK_WAIT_FRAMES: usize = 600;
+/// Bounded by time, not by frames. The request crosses a socket and the
+/// gateway's reader thread before any frame can park it, and on a loaded
+/// machine a fixed count of back-to-back frames runs out before that thread
+/// has run at all (#416). The sleep between frames hands it the core.
+fn run_frames_until_capture_parks(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+    let deadline = std::time::Instant::now() + GATEWAY_TEST_WAIT;
+    loop {
+        run_frame(app, ctx);
+        let parked = app
+            .control
+            .control_access
+            .as_ref()
+            .expect("control access is installed")
+            .awaiting_screenshot_for_test();
+        if parked > 0 {
+            return parked;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the capture did not park for an image within {GATEWAY_TEST_WAIT:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+}
+
 /// Frames a test spends waiting for the gateway's reply.
 const REPLY_WAIT_FRAMES: usize = 600;
 

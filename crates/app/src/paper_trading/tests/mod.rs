@@ -14,9 +14,14 @@
 
 mod risk_tests;
 
+// The items the split gave owners; `super::*` still carries the ticket
+// itself, the module's constants and the account's vocabulary.
+use super::cmd::{cmd_preview_layout, resolve_cmd_kind};
+use super::paint_ctx::{PaintCtx, bracket_handle_rect, dodged_chip_y, handles_visible};
 use super::*;
 use crate::paper_account::{elide_path, export_csv, utc_compact};
 use crate::paper_report::HistoryRow;
+use crate::timezone::TzOffset;
 // Journalling tests read back the folders the writer created; the
 // helper that lists them lives with the rest of the shared chrome.
 use crate::paper_chrome::list_symbol_folders;

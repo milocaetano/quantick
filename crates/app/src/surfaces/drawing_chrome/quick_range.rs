@@ -131,7 +131,7 @@ impl QuickRange {
                 owner: pressed_owner,
                 position: pressed_at,
                 anchor: start,
-            } if *pressed_owner == owner && pressed_at.distance(position) >= threshold_px => {
+            } if *pressed_owner == owner && pressed_at.distance(position) > threshold_px => {
                 self.state = State::Selected(Selection {
                     owner,
                     anchors: [*start, anchor],
@@ -259,12 +259,18 @@ pub(super) fn draw(
         quick.dismiss();
         return DrawingChromeAsk::default();
     }
-    let State::Selected(selection) = &quick.state else {
+    let State::Selected(selection) = &mut quick.state else {
         return DrawingChromeAsk::default();
     };
-    let (Some(chart), Some(bounds), Some(right_limit)) =
-        (selection.chart, selection.bounds, selection.right_limit)
-    else {
+    // Consumed once per frame: the owning pane measures the range again each
+    // time it paints it, so a pane a layout stopped painting (a collapsed
+    // column, a hidden flow pane) leaves no bar over whatever took its place.
+    let (Some(chart), Some(bounds), Some(right_limit)) = (
+        selection.chart.take(),
+        selection.bounds.take(),
+        selection.right_limit.take(),
+    ) else {
+        quick.action_rect = None;
         return DrawingChromeAsk::default();
     };
     let Some(tool) = drawings::DrawingTool::by_id(crate::frvp::TOOL_ID) else {

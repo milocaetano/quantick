@@ -1,7 +1,11 @@
 use super::*;
-use crate::worker_progress::{Age, Phase, tests::Gate};
+use crate::worker_progress::{
+    Age, Phase,
+    tests::{Gate, TEST_QUEUE},
+};
 use quantick_engine::{Bar, Side};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
 impl BookWorker {
@@ -11,13 +15,13 @@ impl BookWorker {
         symbol: &str,
         progress: WorkerProgress,
     ) -> (Self, impl FnOnce() + Send) {
-        let (commands, rx) = channel();
+        let (commands, rx) = sync_channel(BOOK_COMMAND_QUEUE);
         let published = Arc::new(Mutex::new(BookPublished::initial()));
         let shared = Arc::clone(&published);
         let symbol = symbol.to_owned();
         let observed = progress.consumer();
         let worker = Self {
-            commands: progress.bind(commands),
+            commands: progress.bind_merging(commands, fold_parked),
             published,
         };
         (worker, move || {
@@ -33,7 +37,7 @@ fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
     let clock = Gate::new();
     let progress = WorkerProgress::with_clock(clock.clone());
     let observer = progress.observer().clone();
-    let (tx, rx) = channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
     let shared = Arc::new(Mutex::new(BookPublished::initial()));
     let observed = progress.consumer();
     let tx = progress.bind(tx);

@@ -48,9 +48,13 @@ mod indicators;
 mod layout_picker;
 mod layout_strip;
 mod layouts;
+mod live_envelope;
+#[cfg(test)]
+mod live_envelope_tests;
 mod live_strip;
 mod loading;
 mod metrics;
+mod operability;
 mod order_strategies;
 mod orderflow_render;
 mod orderflow_view;
@@ -94,9 +98,18 @@ mod ui_state;
 mod viewport;
 mod widgets;
 mod window_scale;
+mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
 mod workspace_store;
+
+// The test binary counts heap work per thread (`work_meter`); production
+// builds keep the system allocator.
+#[cfg(test)]
+mod work_meter;
+#[cfg(test)]
+#[global_allocator]
+static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
 
 /// The bar type the chart opens on. The type and its parameter are tunable live
 /// from the controls bar; the feed and symbol come from the configuration.
@@ -181,8 +194,16 @@ fn run_dump_subcommand(argument: &str) -> bool {
             emit(control::inventory::capability_inventory_markdown());
             true
         }
+        "--dump-retry-matrix" => {
+            emit(control::retry_matrix::retry_matrix_markdown());
+            true
+        }
         "--dump-hook-registry" => {
             emit(hooks::hook_registry_markdown());
+            true
+        }
+        "--dump-ui-behaviour-matrix" => {
+            emit(Ok(operability::matrix::ui_behaviour_matrix_markdown()));
             true
         }
         _ => false,

@@ -355,6 +355,67 @@ mod cockpit_tier_tests {
         );
     }
 
+    /// The retry matrix says which capabilities no grant reaches by asking
+    /// which ceilings a grant can hand out, and that list is only true while
+    /// `configured_profile` never returns anything else. So every grant the
+    /// panel can make — none, each tier, and every selectable scope at once,
+    /// `trade` included — is asked for its ceiling here.
+    #[test]
+    fn no_grant_hands_out_a_ceiling_outside_the_grantable_list() {
+        let everything = ControlAccess::new()
+            .contract
+            .selectable_permissions()
+            .map(|descriptor| descriptor.id.as_str().to_owned())
+            .collect::<Vec<_>>()
+            .join(",");
+        for scopes in [
+            "",
+            "all-reads",
+            "annotate-tier",
+            "cockpit,cockpit.layout",
+            "trade",
+            everything.as_str(),
+        ] {
+            let mut access = ControlAccess::new();
+            access
+                .configure_scopes(scopes)
+                .expect("registered permissions");
+            let ceiling = access.configured_profile();
+            assert!(
+                GRANTABLE_PROFILE_IDS.contains(&ceiling.as_str()),
+                "granting `{scopes}` handed out `{ceiling}`, which the retry matrix \
+                 believes no grant reaches"
+            );
+        }
+    }
+
+    /// D17: the seam that starts a gateway under a named ceiling — how the
+    /// trade-shaping dedup test reaches the `trader` ceiling no grant hands
+    /// out — exists in the test build only. Its module is declared under
+    /// `#[cfg(test)]`, and nowhere else, so a release binary cannot hand that
+    /// ceiling out by calling it; the test above proves no grant can either.
+    #[test]
+    fn the_named_ceiling_seam_is_compiled_for_tests_alone() {
+        let source = include_str!("../../gateway.rs");
+        let declarations: Vec<usize> = source
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == "mod retry_seams;")
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(declarations.len(), 1, "one declaration of the seam module");
+        let above = source.lines().nth(declarations[0] - 1).unwrap_or("");
+        assert_eq!(
+            above.trim(),
+            "#[cfg(test)]",
+            "the seam module ships only in the test build"
+        );
+        assert!(
+            !source.contains("fn enable_for_test_under_ceiling"),
+            "the named-ceiling entry point lives in the test-only seam, not in gateway.rs"
+        );
+    }
+
     /// The floor alone opens nothing, and a scope without the floor opens
     /// nothing either — every cockpit capability requires both, so claiming
     /// the tier on half of it would put a grant on the panel that is refused
