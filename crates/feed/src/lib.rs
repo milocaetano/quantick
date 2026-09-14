@@ -23,6 +23,7 @@
 pub mod binance;
 pub mod clock;
 pub mod config;
+pub mod continuity;
 pub mod history_reach;
 pub mod hooks;
 pub mod hyperliquid;
@@ -47,6 +48,7 @@ pub use quantick_orderbook::DepthEvent;
 
 use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
+pub use continuity::{FeedContinuity, FeedIntegrity};
 pub use metatrader::forced_latency_split;
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
@@ -145,6 +147,9 @@ pub enum FeedEvent {
     },
     /// One live trade.
     Live(Trade),
+    /// Source continuity evidence, ordered before the later data it qualifies.
+    /// Never changes the trade tape or manufactures missing prints.
+    Continuity(FeedContinuity),
     /// Several live trades received or released together.
     ///
     /// A replay at 50× can release hundreds of prints between two frames, and a
@@ -364,8 +369,10 @@ pub enum FeedConnectionState {
     Connected,
 }
 
-/// A stretch of market time no print covers, left by a reconnect that kept the
-/// chart's timeline instead of rebuilding it.
+/// Market-time bounds of incomplete source delivery, including reconnects
+/// that kept the timeline. Missing source messages may be quotes; this does
+/// not assert how many executed trades were lost. Equal bounds can still
+/// bracket confirmed missing message IDs.
 ///
 /// `Tab::reconnect_feed` in the application exists so a feed
 /// that hiccuped costs the trader nothing: the bars, drawings, indicators,
@@ -377,9 +384,9 @@ pub enum FeedConnectionState {
 /// the two halves of the session against each other as if nothing happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedGap {
-    /// Timestamp of the last print before the silence.
+    /// Timestamp of the last ordered source message or print before the gap.
     pub from_ms: i64,
-    /// Timestamp of the first print after it.
+    /// Timestamp of the source message or resumed print after the gap.
     pub to_ms: i64,
 }
 
@@ -569,6 +576,19 @@ pub fn fixed_capabilities(capabilities: FeedCapabilities) -> watch::Receiver<Fee
 }
 
 impl FeedNotice {
+    /// Stable classification and text-presence flags for privacy-preserving
+    /// diagnostics. The caller owns its disclosure policy and serialization.
+    #[must_use]
+    pub fn summary(&self) -> (&'static str, bool, bool) {
+        match self {
+            Self::Connected => ("connected", false, false),
+            Self::Reconnecting { .. } => ("reconnecting", true, false),
+            Self::Clear => ("clear", false, false),
+            Self::Working { .. } => ("working", true, false),
+            Self::Attention { .. } => ("attention", true, true),
+        }
+    }
+
     /// Shorthand for an explicit reconnecting transport transition.
     #[must_use]
     pub fn reconnecting(headline: impl Into<String>) -> Self {

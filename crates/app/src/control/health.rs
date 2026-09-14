@@ -50,12 +50,24 @@ pub(crate) struct FrameHealthSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TabHealthSnapshot {
     pub tab_id: WireU64,
+    /// Cumulative source diagnostics, independent of latency and gap eviction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed_integrity: Option<FeedIntegritySnapshot>,
     pub active_loading_tasks: Vec<LoadingTaskSnapshot>,
     pub panes: Vec<PaneHealthSnapshot>,
     /// How late this tab's tape is, and where the time is going. `None` while
     /// replaying — a recording's prints are as old as the day they were
     /// captured and the playback clock decides when they appear.
     pub tape: Option<TapeHealthSnapshot>,
+}
+
+/// Counts source messages, never estimates how many executed trades were lost.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct FeedIntegritySnapshot {
+    pub anomalies: WireU64,
+    pub missing_messages: WireU64,
+    pub unknown_loss: WireU64,
+    pub non_monotonic: WireU64,
 }
 
 /// Where a tab's tape delay is being spent.
@@ -287,6 +299,15 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab.id),
+                    feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
+                        let integrity = tab.feed_integrity;
+                        FeedIntegritySnapshot {
+                            anomalies: WireU64::new(integrity.anomalies),
+                            missing_messages: WireU64::new(integrity.missing_messages),
+                            unknown_loss: WireU64::new(integrity.unknown_loss),
+                            non_monotonic: WireU64::new(integrity.non_monotonic),
+                        }
+                    }),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
                         .filter_map(|task| {

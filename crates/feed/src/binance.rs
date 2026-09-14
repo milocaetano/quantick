@@ -33,6 +33,13 @@ const DEFAULT_BOOK_DEPTH: u16 = 1_000;
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 const NOTICE_CHANNEL_CAPACITY: usize = 32;
 
+/// Transport inputs kept separate so socket fixtures exercise the real host.
+pub(crate) struct BinanceSource {
+    pub http: BinanceHttp,
+    pub url: String,
+    pub backoff: Backoff,
+}
+
 /// Start the Binance feed for `symbol` on a background thread.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
@@ -41,6 +48,12 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
     let symbol = symbol.to_string();
+    let source = BinanceSource {
+        http: BinanceHttp::new(),
+        url: agg_trade_url(BINANCE_WS_BASE, &symbol),
+        // Fixed seed keeps a single desktop client's retry reproducible.
+        backoff: Backoff::for_feed(0x9E37_79B9_7F4A_7C15),
+    };
     std::thread::Builder::new()
         .name("quantick-feed".into())
         .spawn(move || {
@@ -49,7 +62,7 @@ pub fn spawn(symbol: &str) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx));
+            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx, source));
         })
         .expect("spawn feed thread");
     FeedHandle {
@@ -67,14 +80,15 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     }
 }
 
-async fn feed_task(
+pub(crate) async fn feed_task(
     symbol: String,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
+    source: BinanceSource,
 ) {
-    let http = BinanceHttp::new();
+    let BinanceSource { http, url, backoff } = source;
     // Candles come off a different endpoint with a different paging rule, so
     // they get their own client rather than overloading the aggTrade one.
     let klines = BinanceKlineHttp::new();
@@ -104,10 +118,6 @@ async fn feed_task(
     //    speaks Trade; the loop below tags each as a live FeedEvent and, in the
     //    same select, services UI commands between trades.
     let (live_tx, mut live_rx) = mpsc::channel::<Trade>(4096);
-    let url = agg_trade_url(BINANCE_WS_BASE, &symbol);
-    // Fixed seed: a single desktop client, so jitter needs no cross-client
-    // decorrelation, and a fixed seed keeps behaviour reproducible.
-    let backoff = Backoff::for_feed(0x9E37_79B9_7F4A_7C15);
     let (connected_tx, mut connected_rx) = watch::channel(false);
     let reconnect = tokio::spawn(async move {
         run_with_reconnect(&url, &live_tx, &connected_tx, backoff).await;
@@ -115,6 +125,7 @@ async fn feed_task(
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
     let mut ever_connected = false;
+    let mut continuity = crate::continuity::BinanceContinuity::default();
     // Candle history runs off this loop, not inside it. A week is ~11
     // sequential pages and a trader paging back through a quarter asks for
     // thirteen such runs — seconds on a good day, far longer against a venue
@@ -151,6 +162,11 @@ async fn feed_task(
             maybe_trade = live_rx.recv() => {
                 match maybe_trade {
                     Some(trade) => {
+                        if let Some(event) = continuity.observe(&trade)
+                            && tx.send(FeedEvent::Continuity(event)).await.is_err()
+                        {
+                            break;
+                        }
                         if tx.send(FeedEvent::Live(trade)).await.is_err() {
                             break; // UI gone
                         }

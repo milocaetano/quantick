@@ -33,3 +33,7 @@ dirs = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+futures-util = { workspace = true }
+tokio-tungstenite = { workspace = true }

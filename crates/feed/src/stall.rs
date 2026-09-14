@@ -76,6 +76,15 @@ pub enum Recovery {
 }
 
 impl Recovery {
+    /// Stable machine-readable name, shared by observers and recovery controls.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Reconnect => "reconnect",
+            Self::Reload => "reload",
+        }
+    }
+
     /// The word on the button.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -622,6 +631,8 @@ mod tests {
     fn recovery_names_itself_and_its_opposite() {
         assert_eq!(Recovery::Reconnect.label(), "Reconnect");
         assert_eq!(Recovery::Reload.label(), "Reload");
+        assert_eq!(Recovery::Reconnect.wire_name(), "reconnect");
+        assert_eq!(Recovery::Reload.wire_name(), "reload");
         assert_eq!(Recovery::Reconnect.other(), Recovery::Reload);
         assert_eq!(Recovery::Reload.other(), Recovery::Reconnect);
     }

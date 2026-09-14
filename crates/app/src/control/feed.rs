@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::QuantickApp,
-    feed::{FeedConnectionState, FeedNotice, stall::Recovery},
+    feed::{FeedConnectionState, FeedNotice},
 };
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
@@ -95,8 +95,8 @@ pub(crate) struct FeedTabSnapshot {
     /// exactly the case a client watching for a frozen terminal has to see.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stall: Option<FeedStallSnapshot>,
-    /// Stretches of market time this tab's tape does not cover, left by a
-    /// reconnect that kept the timeline. Bounded, oldest first.
+    /// Market-time bounds of source loss or a reconnect interruption.
+    /// Equal bounds can bracket known missing messages. Bounded, oldest first.
     ///
     /// Omitted when there are none, so a reader written against the scope
     /// before this field existed keeps parsing every payload from a tab that
@@ -285,7 +285,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                     stall: now_ms
                         .and_then(|now| tab.stall_at(config, now))
                         .map(|stall| FeedStallSnapshot {
-                            primary_recovery: recovery(stall.primary).to_owned(),
+                            primary_recovery: stall.primary.wire_name().to_owned(),
                             needs_attention: stall.needs_attention,
                             text_availability: "redacted_pending_attention_scope".to_owned(),
                         }),
@@ -308,15 +308,6 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
     }
 }
 
-/// The wire name of a recovery control, so the snapshot and the capability
-/// registry call the same act the same thing.
-fn recovery(recovery: Recovery) -> &'static str {
-    match recovery {
-        Recovery::Reconnect => "reconnect",
-        Recovery::Reload => "reload",
-    }
-}
-
 pub(crate) fn connection_state(state: FeedConnectionState) -> &'static str {
     match state {
         FeedConnectionState::Connecting => "connecting",
@@ -326,36 +317,16 @@ pub(crate) fn connection_state(state: FeedConnectionState) -> &'static str {
 }
 
 fn notice(notice: &FeedNotice) -> FeedNoticeSnapshot {
-    match notice {
-        FeedNotice::Connected => FeedNoticeSnapshot {
-            kind: "connected".to_owned(),
-            headline_present: false,
-            next_step_present: false,
-            text_availability: "not_applicable".to_owned(),
-        },
-        FeedNotice::Reconnecting { .. } => FeedNoticeSnapshot {
-            kind: "reconnecting".to_owned(),
-            headline_present: true,
-            next_step_present: false,
-            text_availability: "redacted_pending_attention_scope".to_owned(),
-        },
-        FeedNotice::Clear => FeedNoticeSnapshot {
-            kind: "clear".to_owned(),
-            headline_present: false,
-            next_step_present: false,
-            text_availability: "not_applicable".to_owned(),
-        },
-        FeedNotice::Working { .. } => FeedNoticeSnapshot {
-            kind: "working".to_owned(),
-            headline_present: true,
-            next_step_present: false,
-            text_availability: "redacted_pending_attention_scope".to_owned(),
-        },
-        FeedNotice::Attention { .. } => FeedNoticeSnapshot {
-            kind: "attention".to_owned(),
-            headline_present: true,
-            next_step_present: true,
-            text_availability: "redacted_pending_attention_scope".to_owned(),
-        },
+    let (kind, headline_present, next_step_present) = notice.summary();
+    FeedNoticeSnapshot {
+        kind: kind.to_owned(),
+        headline_present,
+        next_step_present,
+        text_availability: if headline_present {
+            "redacted_pending_attention_scope"
+        } else {
+            "not_applicable"
+        }
+        .to_owned(),
     }
 }
