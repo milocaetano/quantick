@@ -583,15 +583,11 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Second frame: the button comes up where it went down, and the menu
-        // that opened on the press stays open.
-        if let Some(position) = self.harness.take_context_menu_release() {
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Secondary,
-                pressed: false,
-                modifiers: egui::Modifiers::default(),
-            });
+        let chart_layers = self.active_tab().flow_pane.chart_layers_menu_center();
+        if self
+            .harness
+            .push_context_menu_followup(raw_input, chart_layers)
+        {
             return;
         }
         // The menu bar's own button, clicked. A menu is a popup egui owns, so

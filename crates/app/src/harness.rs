@@ -199,7 +199,7 @@ impl ContextMenuPane {
     /// typo opens no menu rather than the wrong one.
     pub(crate) fn from_env_value(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "chart" | "candles" => Some(Self::Chart),
+            "chart" | "candles" | "chart-layers" => Some(Self::Chart),
             "tape" | "lane" => Some(Self::Tape),
             "axis" | "scale" => Some(Self::Axis),
             "time" | "clock" => Some(Self::Time),
@@ -421,6 +421,11 @@ pub(crate) struct Harness {
     context_menu: Option<ContextMenuPane>,
     /// That press's matching release, on the frame after it.
     context_menu_release: Option<egui::Pos2>,
+    /// Whether `QUANTICK_CONTEXT_MENU=chart-layers` still owes the primary
+    /// click that expands the chart-layer submenu after the right-click lands.
+    context_menu_layers: bool,
+    /// That submenu press's matching release, on the following frame.
+    context_menu_layers_release: Option<egui::Pos2>,
     /// `QUANTICK_MENU`: which menu bar button to press open.
     menu: Option<ScriptedMenu>,
     /// That press's matching release, on the frame after it.
@@ -539,6 +544,9 @@ impl Harness {
             context_menu: read("QUANTICK_CONTEXT_MENU")
                 .and_then(|value| ContextMenuPane::from_env_value(&value)),
             context_menu_release: None,
+            context_menu_layers: read("QUANTICK_CONTEXT_MENU")
+                .is_some_and(|value| context_menu_expands_chart_layers(&value)),
+            context_menu_layers_release: None,
             menu: read("QUANTICK_MENU").and_then(|value| ScriptedMenu::from_token(value.trim())),
             menu_release: None,
             drawings_demo: read("QUANTICK_DRAWINGS_DEMO")
@@ -705,9 +713,42 @@ impl Harness {
         self.context_menu_release = Some(position);
     }
 
-    /// That release, once.
-    pub(crate) fn take_context_menu_release(&mut self) -> Option<egui::Pos2> {
-        self.context_menu_release.take()
+    /// Release the scripted right-click, then deliver the click that expands
+    /// `chart layers` through its painted button. Returns whether this frame's
+    /// input belongs to either follow-up.
+    pub(crate) fn push_context_menu_followup(
+        &mut self,
+        raw_input: &mut egui::RawInput,
+        position: Option<egui::Pos2>,
+    ) -> bool {
+        let (position, button, pressed) = if let Some(position) = self.context_menu_release.take() {
+            (position, egui::PointerButton::Secondary, false)
+        } else if let Some(position) = self.context_menu_layers_release.take() {
+            (position, egui::PointerButton::Primary, false)
+        } else if self.context_menu_layers {
+            let Some(position) = position else {
+                return false;
+            };
+            self.context_menu_layers = false;
+            self.context_menu_layers_release = Some(position);
+            raw_input.events.push(egui::Event::PointerMoved(position));
+            (position, egui::PointerButton::Primary, true)
+        } else {
+            return false;
+        };
+        raw_input.events.push(egui::Event::PointerButton {
+            pos: position,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_context_menu(&mut self, pane: ContextMenuPane, layers: bool) {
+        self.context_menu = Some(pane);
+        self.context_menu_layers = layers;
     }
 
     /// Which menu bar button still owes a scripted press.
@@ -939,6 +980,31 @@ fn spend<T: Copy>(hook: &mut Option<Budgeted<T>>) -> HookFrame {
 /// One environment variable, or `None` when it is unset or not valid Unicode.
 fn read(name: &str) -> Option<String> {
     std::env::var(name).ok()
+}
+
+fn context_menu_expands_chart_layers(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("chart-layers")
+}
+
+/// A safe scripted click inside the named canvas segment. Chart popups start
+/// high and left so their long, right-opening layer submenu fits the window.
+pub(crate) fn context_menu_canvas_position(
+    pane: ContextMenuPane,
+    rect: egui::Rect,
+    divider: Option<f32>,
+) -> Option<egui::Pos2> {
+    let x = match (pane, divider) {
+        (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
+        (ContextMenuPane::Tape, None) => return None,
+        (_, Some(divider)) => rect.left() + (divider - rect.left()) / 6.0,
+        (_, None) => rect.left() + rect.width() / 6.0,
+    };
+    let y = if pane == ContextMenuPane::Chart {
+        rect.top() + rect.height() / 5.0
+    } else {
+        rect.center().y
+    };
+    Some(egui::pos2(x, y))
 }
 
 /// The `=1` shape most switch hooks share: the value exactly, untrimmed.
@@ -1188,6 +1254,12 @@ mod tests {
             ContextMenuPane::from_env_value("candles"),
             Some(ContextMenuPane::Chart)
         );
+        assert_eq!(
+            ContextMenuPane::from_env_value("chart-layers"),
+            Some(ContextMenuPane::Chart)
+        );
+        assert!(context_menu_expands_chart_layers("CHART-LAYERS"));
+        assert!(!context_menu_expands_chart_layers("chart"));
         assert_eq!(
             ContextMenuPane::from_env_value("Lane"),
             Some(ContextMenuPane::Tape)
