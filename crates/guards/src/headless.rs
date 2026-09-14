@@ -83,6 +83,8 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "pine",
     "replay",
     "sim",
+    "paper",
+    "civil",
     "strategy",
 ];
 

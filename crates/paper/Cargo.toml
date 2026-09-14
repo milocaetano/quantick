@@ -1,0 +1,21 @@
+[package]
+name = "quantick-paper"
+description = "The paper account: orders, sizing, the journal and the report numbers, over a TradingVenue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The deciding half of paper trading, headless so the chart, the backtest and
+# the bot drive one account. It links the domain crates and nothing that
+# draws, runs a thread or reads a clock: the host tells it what time it is.
+[dependencies]
+quantick-civil = { path = "../civil" }
+quantick-engine = { path = "../engine" }
+quantick-sim = { path = "../sim" }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

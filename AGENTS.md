@@ -118,6 +118,8 @@ graph TD
   app --> indicators
   app --> strategy
   app --> sim
+  app --> paper
+  app --> civil
   app --> replay
   app --> orderbook
   app --> orderflow
@@ -130,6 +132,7 @@ graph TD
   backtest --> indicators
   backtest --> replay
   backtest --> sim
+  backtest --> paper
   backtest --> engine
   mcp --> controllocal
   mcp --> control
@@ -140,6 +143,9 @@ graph TD
   controllocal["control-local<br/>local transport"] --> control
   indicators["indicators<br/>bars → plot series"] --> engine
   replay["replay<br/>recorded sessions"] --> engine
+  paper["paper<br/>paper account"] --> sim
+  paper --> engine
+  paper --> civil
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
@@ -156,6 +162,7 @@ graph TD
     engine["engine<br/>trades → bars"]
     orderbook["orderbook<br/>L2 book core"]
     control["control<br/>control-plane contracts"]
+    civil["civil<br/>civil dates"]
   end
 ```
 
@@ -170,6 +177,8 @@ graph TD
 | `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
+| `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; chart, backtest and bot drive one account. |
+| `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |

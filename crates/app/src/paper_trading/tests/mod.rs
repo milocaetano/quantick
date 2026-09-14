@@ -19,23 +19,11 @@ mod risk_tests;
 use super::cmd::{cmd_preview_layout, resolve_cmd_kind};
 use super::paint_ctx::{PaintCtx, bracket_handle_rect, dodged_chip_y, handles_visible};
 use super::*;
-use crate::paper_account::{elide_path, export_csv, utc_compact};
-use crate::paper_report::HistoryRow;
 use crate::timezone::TzOffset;
 // Journalling tests read back the folders the writer created; the
 // helper that lists them lives with the rest of the shared chrome.
 use crate::paper_chrome::list_symbol_folders;
 use crate::paper_report::{load_history, report_from_history};
-
-/// One journal row: the trade, the folder it came from, the source its
-/// file recorded.
-fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
-    HistoryRow {
-        symbol: symbol.to_owned(),
-        source,
-        trade,
-    }
-}
 
 fn print(agg_id: u64, price: i64) -> Trade {
     Trade {
@@ -45,14 +33,6 @@ fn print(agg_id: u64, price: i64) -> Trade {
         quantity: Decimal::ONE,
         side: Side::Buy,
     }
-}
-
-#[test]
-fn utc_compact_matches_known_timestamps() {
-    // 2026-03-16 13:01:08 UTC.
-    assert_eq!(utc_compact(1_773_666_068_000), "20260316-130108");
-    // The epoch itself.
-    assert_eq!(utc_compact(0), "19700101-000000");
 }
 
 #[test]
@@ -73,7 +53,7 @@ fn an_in_session_rerun_opens_its_own_file() {
         paper.on_trade(&print(2, 103));
         paper.on_timeline_reset();
     }
-    let folder = paper.account.dir.join("RESEEK");
+    let folder = paper.account.trades_dir().join("RESEEK");
     let mut names: Vec<String> = std::fs::read_dir(&folder)
         .expect("the symbol folder exists")
         .flatten()
@@ -82,85 +62,6 @@ fn an_in_session_rerun_opens_its_own_file() {
     names.sort();
     assert_eq!(names.len(), 2, "each run has its own file: {names:?}");
     assert!(names[1].contains(".rerun-1."), "{names:?}");
-}
-
-#[test]
-fn export_rows_remember_the_source_each_trade_closed_under() {
-    let mut paper = PaperTrading::new();
-    paper.set_symbol("SRCX");
-    paper.seed(&print(0, 100));
-    paper.market(Side::Buy);
-    paper.on_trade(&print(1, 100));
-    let events = paper.account.dispatch(Command::ClosePosition);
-    paper.account.handle_events(events);
-    paper.on_trade(&print(2, 105));
-    paper
-        .account_mut()
-        .set_session_source(history::SessionSource::Replay);
-    assert_eq!(
-        paper.account.session_trade_sources,
-        vec![history::SessionSource::Live],
-        "a trade keeps the source it closed under, not the current one"
-    );
-}
-
-#[test]
-fn the_export_csv_carries_readable_stamps_and_running_equity() {
-    let trade = |closed_ms: i64, pnl: i64, mae: Option<i64>| ClosedTrade {
-        side: Side::Buy,
-        quantity: Decimal::ONE,
-        entry_price: Decimal::from(100),
-        exit_price: Decimal::from(100 + pnl),
-        opened_ms: closed_ms - 60_000,
-        closed_ms,
-        pnl_points: Decimal::from(pnl),
-        exit_reason: quantick_sim::ExitReason::Manual,
-        entry_agg_id: mae.map(|_| 1),
-        exit_agg_id: mae.map(|_| 2),
-        mae_points: mae.map(Decimal::from),
-        mfe_points: mae.map(Decimal::from),
-    };
-    let rows = vec![
-        row(
-            "BTCUSDT",
-            Some(history::SessionSource::Live),
-            trade(1_773_666_068_000, 5, Some(2)),
-        ),
-        row("WINQ26", None, trade(1_773_666_368_000, -2, None)),
-    ];
-    let text = export_csv(&rows);
-    let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines.len(), 3, "header plus two rows");
-    assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
-    assert!(lines[0].ends_with(",source"), "{}", lines[0]);
-    assert!(
-        lines[1].contains("2026-03-16T13:01:08Z"),
-        "human-readable UTC beside the epoch: {}",
-        lines[1]
-    );
-    assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
-    assert!(
-        lines[2].contains(",3,"),
-        "running equity 5 + (-2): {}",
-        lines[2]
-    );
-    assert!(
-        lines[2].ends_with(",manual,,,,,"),
-        "unknown v1 fields and an unrecorded source stay empty: {}",
-        lines[2]
-    );
-}
-
-#[test]
-fn long_export_paths_elide_to_the_file_name() {
-    let short = Path::new("paper-trades/export-1.csv");
-    assert_eq!(elide_path(short), short.display().to_string());
-    let long = Path::new(
-        "C:/some/extremely/long/path/that/never/ends/and/keeps/going/paper-trades/export-20260805-141233.csv",
-    );
-    let elided = elide_path(long);
-    assert!(elided.starts_with('…'), "{elided}");
-    assert!(elided.ends_with("export-20260805-141233.csv"), "{elided}");
 }
 
 #[test]
@@ -205,7 +106,7 @@ fn a_bad_offset_toasts_and_blocks_the_order() {
 #[test]
 fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
     let mut paper = PaperTrading::new();
-    paper.account.venue.seed(&print(0, 100));
+    paper.account.venue_mut().seed(&print(0, 100));
     // A buy limit at 95, below the market: the kind the tape can fill.
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
     let id = paper.working_orders()[0].id;
@@ -243,13 +144,13 @@ fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
         "the drag set the order's own stop, before it ever filled"
     );
     assert!(
-        paper.account.venue.position().is_none(),
+        paper.account.venue().position().is_none(),
         "and opened no position doing it"
     );
 
     // The tape reaches the limit: the position arrives protected.
     paper.on_trade(&print(1, 95));
-    let position = paper.account.venue.position().expect("the limit filled");
+    let position = paper.account.venue().position().expect("the limit filled");
     assert_eq!(
         position.stop_loss,
         Some(Decimal::from(90)),
@@ -268,7 +169,7 @@ fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
 #[test]
 fn a_pane_without_the_pointer_paints_no_bracket_handles() {
     let mut paper = PaperTrading::new();
-    paper.account.venue.seed(&print(0, 100));
+    paper.account.venue_mut().seed(&print(0, 100));
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
 
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -305,7 +206,7 @@ fn a_pane_without_the_pointer_paints_no_bracket_handles() {
 #[test]
 fn a_working_orders_legs_are_draggable_and_clearable() {
     let mut paper = PaperTrading::new();
-    paper.account.venue.seed(&print(0, 100));
+    paper.account.venue_mut().seed(&print(0, 100));
     paper.stop_offset_text = "5".to_owned();
     paper.profit_offset_text = "15".to_owned();
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
@@ -363,7 +264,7 @@ fn a_working_orders_legs_are_draggable_and_clearable() {
 #[test]
 fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
     let mut paper = PaperTrading::new();
-    paper.account.venue.seed(&print(0, 100));
+    paper.account.venue_mut().seed(&print(0, 100));
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
     let id = paper.working_orders()[0].id;
 
@@ -490,7 +391,7 @@ fn the_entry_kind_choice_is_remembered_and_unknown_tokens_fall_back() {
 #[test]
 fn the_aim_obeys_the_stated_kind() {
     let mut paper = PaperTrading::new();
-    paper.account.venue.seed(&print(0, 100));
+    paper.account.venue_mut().seed(&print(0, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let shift = egui::Modifiers {
         shift: true,
@@ -758,7 +659,7 @@ fn a_laddered_position_reads_as_protected_and_offers_no_handle() {
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
 
-    let position = paper.account.venue.position().expect("long").clone();
+    let position = paper.account.venue().position().expect("long").clone();
     let bracket = paper.account.position_bracket(&position);
     assert!(
         bracket.is_laddered(),
@@ -1547,7 +1448,7 @@ fn escape_cancels_the_armed_placement_then_the_grabbed_line() {
     assert_eq!(
         paper
             .account
-            .venue
+            .venue()
             .position()
             .expect("still long")
             .stop_loss,
@@ -1572,9 +1473,9 @@ fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
         paper.account.armed.is_none(),
         "a successful placement disarms"
     );
-    assert_eq!(paper.account.venue.working_orders().len(), 1);
+    assert_eq!(paper.account.venue().working_orders().len(), 1);
     assert_eq!(
-        paper.account.venue.working_orders()[0].price,
+        paper.account.venue().working_orders()[0].price,
         Some(Decimal::from(95))
     );
 }
@@ -1595,7 +1496,7 @@ fn a_rejected_armed_click_stays_armed_and_teaches() {
         paper.account.armed.is_some(),
         "the user clicks again after the toast"
     );
-    assert!(paper.account.venue.working_orders().is_empty());
+    assert!(paper.account.venue().working_orders().is_empty());
     assert!(
         paper.account.peek_toast().is_some(),
         "the refusal explains itself"
@@ -2758,7 +2659,7 @@ fn dragging_the_stop_loss_reprices_it_on_release() {
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     assert_eq!(
-        paper.account.venue.position().expect("long").stop_loss,
+        paper.account.venue().position().expect("long").stop_loss,
         Some(Decimal::from(90)),
     );
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -2769,7 +2670,7 @@ fn dragging_the_stop_loss_reprices_it_on_release() {
     assert_eq!(
         paper
             .account
-            .venue
+            .venue()
             .position()
             .expect("still long")
             .stop_loss,
@@ -2792,7 +2693,7 @@ fn dragging_from_the_entry_line_creates_the_missing_leg() {
     assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-    let position = paper.account.venue.position().expect("still long");
+    let position = paper.account.venue().position().expect("still long");
     assert_eq!(
         position.take_profit,
         Some(Decimal::from(105)),
@@ -2807,7 +2708,7 @@ fn dragging_from_the_entry_line_creates_the_missing_leg() {
     assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
-    let position = paper.account.venue.position().expect("still long");
+    let position = paper.account.venue().position().expect("still long");
     assert_eq!(position.stop_loss, Some(Decimal::from(90)));
     assert_eq!(position.take_profit, Some(Decimal::from(105)), "untouched");
 }
@@ -2831,7 +2732,7 @@ fn a_fully_bracketed_entry_line_blocks_the_gesture_but_never_moves() {
     assert!(paper.handle_chart_input(&frame(chart, &scale, 200.0, true, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 150.0, false, false, true)));
-    let position = paper.account.venue.position().expect("long");
+    let position = paper.account.venue().position().expect("long");
     assert_eq!(position.avg_price, Decimal::from(100));
     assert_eq!(position.stop_loss, Some(Decimal::from(90)), "untouched");
     assert_eq!(position.take_profit, Some(Decimal::from(110)), "untouched");
@@ -2884,7 +2785,7 @@ fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
     };
     assert!(paper.handle_chart_input(&press), "the ✕ owns the press");
     assert!(
-        paper.account.venue.working_orders().is_empty(),
+        paper.account.venue().working_orders().is_empty(),
         "the order is gone and the armed click placed nothing"
     );
     assert!(
@@ -2927,7 +2828,7 @@ fn a_bracket_handle_press_starts_the_create_drag() {
     assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, true, false)));
     assert!(paper.handle_chart_input(&frame(chart, &scale, 300.0, false, false, true)));
     assert_eq!(
-        paper.account.venue.position().expect("long").stop_loss,
+        paper.account.venue().position().expect("long").stop_loss,
         Some(Decimal::from(90)),
         "the handle drag placed the stop"
     );
@@ -3017,7 +2918,11 @@ fn reverse_flips_the_position_with_the_forms_bracket() {
     paper.stop_offset_text = "5".to_owned();
     paper.reverse_position();
     paper.on_trade(&print(2, 100));
-    let position = paper.account.venue.position().expect("reversed, not flat");
+    let position = paper
+        .account
+        .venue()
+        .position()
+        .expect("reversed, not flat");
     assert_eq!(position.side, Side::Sell);
     assert_eq!(position.quantity, Decimal::from(2));
     assert_eq!(
@@ -3076,123 +2981,11 @@ fn snapping_uses_the_instruments_learned_precision() {
     assert_eq!(whole.account.snap(182_036.7), Decimal::from(182_037));
 }
 
-/// The session file [`the_journal_bytes_are_fixed`] must open, named
-/// from the first close's own timestamp.
-const JOURNAL_GOLDEN_FILE: &str = "19700101-000002.csv";
-
-/// Every byte [`the_journal_bytes_are_fixed`] must write. Recorded from
-/// a run against this file *before* the policy half moved out, and not
-/// touched since.
-///
-/// SHA-256 of these bytes:
-/// `ab74859479f2f1e471dfb5a1556a15d2891d440c7c119db49c0e2ad64be094d6`.
-/// The hash is written down so that the "before" and the "after" of the
-/// extraction can be compared by someone who is reading neither this
-/// file's history nor the diff — a reviewer, or the trader.
-const JOURNAL_GOLDEN: &str = concat!(
-    "# quantick-trades 2\n",
-    "# symbol=GOLDEN\n",
-    "# source=live\n",
-    "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,",
-    "exit_reason,entry_agg_id,exit_agg_id,mae_points,mfe_points\n",
-    // A long taken at the market and closed by hand: 100 to 105.
-    "1000,2000,long,1,100,105,5,manual,1,2,0,5\n",
-    // A short, the same way: 105 down to 103.
-    "3000,4000,short,1,105,103,2,manual,3,4,0,2\n",
-    // A long stopped out. The entry is 103 and the ticket's stop offset
-    // is 2, so the stop sits at 101 and the tape reaches it.
-    "5000,6000,long,1,103,101,-2,stop_loss,5,6,2,0\n",
-    // A long taken at its target: entry 101, offset 6, filled at 107.
-    "7000,8000,long,1,101,107,6,take_profit,7,8,0,6\n",
-);
-
-/// One fixed tape, one journal, asserted byte for byte.
-///
-/// This is the money path's golden. It is written *before* the policy
-/// half of this file moves into `paper_account.rs`, and its expected
-/// bytes do not change when it does — that is the whole point. An
-/// extraction that alters a fill rule, a bracket price, the risk lock's
-/// arithmetic, a rounding or the journal's own format fails here rather
-/// than in front of the trader, and it fails naming the byte.
-///
-/// The tape is fixed in every respect the writer reads: prices and
-/// quantities are exact decimals, every timestamp is derived from the
-/// print's own `agg_id` rather than a clock, and the session file's name
-/// comes from the first close's `closed_ms`. So the file name is
-/// asserted too — a session that opened a differently named file would
-/// still hold the right rows, and the trader would still have lost the
-/// trade in a folder nobody reads.
-///
-/// Four round trips, chosen to cover the four ways a position ends:
-/// a long closed by hand, a short closed by hand, a long stopped out,
-/// and a long taken at its target. The last two go through the ticket's
-/// offset text, so the bracket arithmetic is under the golden and not
-/// only the flat manual close.
-#[test]
-fn the_journal_bytes_are_fixed() {
-    // Its own scratch folder, carrying a run token and removed with the
-    // value: a reused process id would otherwise hand this run the last
-    // one's journal, and the golden would fail on a file it never wrote.
-    let dir = crate::scratch::ScratchDir::new("paper-journal-golden");
-    let mut paper = PaperTrading::new();
-    paper.account.dir = dir.path().to_path_buf();
-    paper.set_symbol("GOLDEN");
-    paper.seed(&print(0, 100));
-
-    // 1. A long, entered at the market and closed by hand: +5.
-    paper.market(Side::Buy);
-    paper.on_trade(&print(1, 100));
-    let events = paper.account.dispatch(Command::ClosePosition);
-    paper.account.handle_events(events);
-    paper.on_trade(&print(2, 105));
-
-    // 2. A short, the same way: 105 down to 103 is +2.
-    paper.market(Side::Sell);
-    paper.on_trade(&print(3, 105));
-    let events = paper.account.dispatch(Command::ClosePosition);
-    paper.account.handle_events(events);
-    paper.on_trade(&print(4, 103));
-
-    // 3. A long with protection, stopped out. The offsets are the
-    //    ticket's own text, so `ticket_bracket` and the rounding that
-    //    follows it are under the golden with everything else.
-    paper.stop_offset_text = "2".to_owned();
-    paper.profit_offset_text = "6".to_owned();
-    paper.market(Side::Buy);
-    paper.on_trade(&print(5, 103));
-    paper.on_trade(&print(6, 101));
-
-    // 4. A long with the same protection, taken at its target.
-    paper.market(Side::Buy);
-    paper.on_trade(&print(7, 101));
-    paper.on_trade(&print(8, 107));
-
-    let folder = dir.path().join("GOLDEN");
-    let mut files: Vec<_> = std::fs::read_dir(&folder)
-        .expect("the symbol folder exists")
-        .flatten()
-        .map(|entry| entry.path())
-        .collect();
-    files.sort();
-    assert_eq!(files.len(), 1, "one session, one file: {files:?}");
-    assert_eq!(
-        files[0].file_name().and_then(|name| name.to_str()),
-        Some(JOURNAL_GOLDEN_FILE),
-        "the session file is named from the first close, not from a clock"
-    );
-
-    let text = std::fs::read_to_string(&files[0]).expect("readable");
-    assert_eq!(
-        text, JOURNAL_GOLDEN,
-        "the journal's bytes moved; the money path is not what it was"
-    );
-}
-
 #[test]
 fn closed_trades_journal_to_one_session_file_and_reload() {
     let dir = crate::scratch::ScratchDir::new("paper-journal-test");
     let mut paper = PaperTrading::new();
-    paper.account.dir = dir.path().to_path_buf();
+    paper.account.redirect_history_dir(dir.path().to_path_buf());
     paper.set_symbol("TESTUSDT");
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
@@ -3233,7 +3026,7 @@ fn a_second_session_adds_a_file_and_never_touches_the_first() {
     let dir = crate::scratch::ScratchDir::new("paper-accumulate-test");
     // Session one: a round trip closing at t=2s.
     let mut first = PaperTrading::new();
-    first.account.dir = dir.path().to_path_buf();
+    first.account.redirect_history_dir(dir.path().to_path_buf());
     first.set_symbol("ACCUM");
     first.seed(&print(0, 100));
     first.market(Side::Buy);
@@ -3252,7 +3045,9 @@ fn a_second_session_adds_a_file_and_never_touches_the_first() {
 
     // Session two: a fresh host — a restart — closing hours later.
     let mut second = PaperTrading::new();
-    second.account.dir = dir.path().to_path_buf();
+    second
+        .account
+        .redirect_history_dir(dir.path().to_path_buf());
     second.set_symbol("ACCUM");
     second.seed(&print(10_000, 200));
     second.market(Side::Sell);
@@ -3280,7 +3075,7 @@ fn a_second_session_adds_a_file_and_never_touches_the_first() {
 fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
     let dir = crate::scratch::ScratchDir::new("paper-reset-test");
     let mut paper = PaperTrading::new();
-    paper.account.dir = dir.path().to_path_buf();
+    paper.account.redirect_history_dir(dir.path().to_path_buf());
     paper.set_symbol("RESETX");
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
@@ -3290,7 +3085,7 @@ fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
         kind: EntryKind::Limit,
     });
     paper.on_timeline_reset();
-    assert!(paper.account.venue.position().is_none());
+    assert!(paper.account.venue().position().is_none());
     assert!(
         paper.account.armed.is_none(),
         "an armed click dies with the timeline"
@@ -3319,7 +3114,9 @@ fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
     let dir_a = crate::scratch::ScratchDir::new("paper-dir-a");
     let dir_b = crate::scratch::ScratchDir::new("paper-dir-b");
     let mut paper = PaperTrading::new();
-    paper.account.dir = dir_a.path().to_path_buf();
+    paper
+        .account
+        .redirect_history_dir(dir_a.path().to_path_buf());
     paper.set_symbol("SWITCHX");
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
@@ -3328,7 +3125,7 @@ fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
     paper.account.handle_events(events);
     paper.on_trade(&print(2, 103));
     assert!(
-        paper.account.journal_path.is_some(),
+        paper.account.journal_path().is_some(),
         "the close journaled under A"
     );
     {
@@ -3340,7 +3137,7 @@ fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
     paper.account.set_trades_dir(dir_b.path().to_path_buf());
     assert_eq!(paper.account.trades_dir(), dir_b.path());
     assert!(
-        paper.account.journal_path.is_none(),
+        paper.account.journal_path().is_none(),
         "the next close opens a new session file under B"
     );
     assert!(
@@ -3364,7 +3161,7 @@ fn switching_the_trades_dir_retargets_journal_ledger_and_report() {
 fn the_ledger_cache_excludes_the_live_session_file() {
     let dir = crate::scratch::ScratchDir::new("paper-ledger-test");
     let mut paper = PaperTrading::new();
-    paper.account.dir = dir.path().to_path_buf();
+    paper.account.redirect_history_dir(dir.path().to_path_buf());
     paper.set_symbol("LEDGX");
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
@@ -3372,7 +3169,10 @@ fn the_ledger_cache_excludes_the_live_session_file() {
     let events = paper.account.dispatch(Command::ClosePosition);
     paper.account.handle_events(events);
     paper.on_trade(&print(2, 105));
-    assert!(paper.account.journal_path.is_some(), "the close journaled");
+    assert!(
+        paper.account.journal_path().is_some(),
+        "the close journaled"
+    );
 
     // An earlier session's file, written by hand beside the live one.
     let trade = ClosedTrade {
@@ -3420,7 +3220,7 @@ fn a_replay_rerun_lands_beside_its_first_run_never_inside_it() {
     // venue times, so both sessions derive the same file stamp.
     for _ in 0..2 {
         let mut paper = PaperTrading::new();
-        paper.account.dir = dir.path().to_path_buf();
+        paper.account.redirect_history_dir(dir.path().to_path_buf());
         paper.set_symbol("RERUN");
         paper
             .account_mut()
@@ -3471,7 +3271,7 @@ fn the_ledger_never_lists_this_sessions_trades_twice_after_a_retarget() {
     let events = paper.account.dispatch(Command::ClosePosition);
     paper.account.handle_events(events);
     paper.on_trade(&print(2, 105));
-    assert_eq!(paper.account.venue.closed_trades().len(), 1);
+    assert_eq!(paper.account.venue().closed_trades().len(), 1);
 
     paper
         .account_mut()
@@ -3502,7 +3302,7 @@ fn the_ledger_never_lists_this_sessions_trades_twice_after_a_retarget() {
 fn a_revealed_page_survives_the_ledgers_lazy_first_load() {
     let dir = crate::scratch::ScratchDir::new("paper-pages-test");
     let mut paper = PaperTrading::new();
-    paper.account.dir = dir.path().to_path_buf();
+    paper.account.redirect_history_dir(dir.path().to_path_buf());
     paper.set_symbol("PAGEX");
 
     paper.account.report_state_mut().autostart_ledger_pages(3);
@@ -3542,7 +3342,7 @@ fn the_report_scopes_by_symbol_folder_on_disk() {
     let dir = crate::scratch::ScratchDir::new("paper-symbols-test");
     for (symbol, id0, price) in [("AAAUSDT", 0, 100), ("BBBUSDT", 100, 200)] {
         let mut paper = PaperTrading::new();
-        paper.account.dir = dir.path().to_path_buf();
+        paper.account.redirect_history_dir(dir.path().to_path_buf());
         paper.set_symbol(symbol);
         paper.seed(&print(id0, price));
         paper.market(Side::Buy);

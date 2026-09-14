@@ -34,18 +34,18 @@ impl PaperTrading {
                 || STRATEGY_NONE.to_owned(),
                 |strategy| strategy.name.clone(),
             );
-            let mut choice = self.account.selected_strategy;
+            let mut choice = self.account.selected_strategy();
             egui::ComboBox::from_id_salt("paper_order_strategy")
                 .width(140.0)
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut choice, None, STRATEGY_NONE);
-                    for (index, strategy) in self.account.strategies.iter().enumerate() {
+                    for (index, strategy) in self.account.order_strategies().iter().enumerate() {
                         ui.selectable_value(&mut choice, Some(index), &strategy.name);
                     }
                 });
-            if choice != self.account.selected_strategy {
-                self.account.selected_strategy = choice;
+            if choice != self.account.selected_strategy() {
+                self.account.select_strategy(choice);
                 changed = true;
             }
             if ui
@@ -54,14 +54,13 @@ impl PaperTrading {
                 .clicked()
             {
                 self.strategy_editor_open = true;
-                self.strategy_editing =
-                    self.account
-                        .selected_strategy
-                        .or(if self.account.strategies.is_empty() {
-                            None
-                        } else {
-                            Some(0)
-                        });
+                self.strategy_editing = self.account.selected_strategy().or(
+                    if self.account.order_strategies().is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    },
+                );
             }
         });
         // The selected ladder, said in words: a trader must be able to read
@@ -107,8 +106,8 @@ impl PaperTrading {
         // ticket's button, or the launch hook, which has no click to carry a
         // choice - it opens on the one the ticket is armed with, else the
         // first.
-        if self.strategy_editing.is_none() && !self.account.strategies.is_empty() {
-            self.strategy_editing = Some(self.account.selected_strategy.unwrap_or(0));
+        if self.strategy_editing.is_none() && !self.account.order_strategies().is_empty() {
+            self.strategy_editing = Some(self.account.selected_strategy().unwrap_or(0));
         }
         let mut changed = false;
         let mut open = true;
@@ -126,9 +125,9 @@ impl PaperTrading {
                     ui.vertical(|ui| {
                         ui.set_min_width(150.0);
                         ui.label(caption("STRATEGIES"));
-                        for index in 0..self.account.strategies.len() {
+                        for index in 0..self.account.order_strategies().len() {
                             let selected = self.strategy_editing == Some(index);
-                            let name = self.account.strategies[index].name.clone();
+                            let name = self.account.order_strategies()[index].name.clone();
                             if ui.selectable_label(selected, name).clicked() {
                                 self.strategy_editing = Some(index);
                             }
@@ -139,10 +138,9 @@ impl PaperTrading {
                             .on_hover_text("start a ladder from one whole-position rung")
                             .clicked()
                         {
-                            self.account
-                                .strategies
-                                .push(new_strategy(self.account.strategies.len()));
-                            self.strategy_editing = Some(self.account.strategies.len() - 1);
+                            let fresh = new_strategy(self.account.order_strategies().len());
+                            self.account.add_order_strategy(fresh);
+                            self.strategy_editing = Some(self.account.order_strategies().len() - 1);
                             self.strategy_dirty = true;
                         }
                         if let Some(index) = self.strategy_editing
@@ -151,27 +149,13 @@ impl PaperTrading {
                                 .on_hover_text("remove this strategy")
                                 .clicked()
                         {
-                            // Read the selection's *name* before the list
-                            // shifts: resolving the index afterwards answers
-                            // with whichever strategy slid into that slot, and
-                            // the ticket would silently arm the neighbour of
-                            // the one that was deleted.
-                            let selected = self
-                                .account()
-                                .selected_order_strategy()
-                                .map(|strategy| strategy.name.clone());
-                            let removed = self.account.strategies.remove(index).name;
-                            self.account.selected_strategy =
-                                selected.filter(|name| *name != removed).and_then(|name| {
-                                    self.account
-                                        .strategies
-                                        .iter()
-                                        .position(|strategy| strategy.name == name)
-                                });
-                            self.strategy_editing = if self.account.strategies.is_empty() {
+                            // The account keeps the selection on the strategy
+                            // it named, not on the slot that shifts under it.
+                            self.account.remove_order_strategy(index);
+                            self.strategy_editing = if self.account.order_strategies().is_empty() {
                                 None
                             } else {
-                                Some(index.min(self.account.strategies.len() - 1))
+                                Some(index.min(self.account.order_strategies().len() - 1))
                             };
                             self.strategy_dirty = true;
                         }
@@ -203,7 +187,7 @@ impl PaperTrading {
             );
             return false;
         };
-        let Some(strategy) = self.account.strategies.get_mut(index) else {
+        let Some(strategy) = self.account.order_strategy_mut(index) else {
             return false;
         };
         let mut changed = false;

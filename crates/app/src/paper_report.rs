@@ -43,7 +43,7 @@ use quantick_sim::{ClosedTrade, PerformanceReport};
 use rust_decimal::Decimal;
 
 // One date law for every trade surface - see `paper_calendar`.
-use crate::paper_calendar::{CalendarState, DateRange, DayIndex};
+use crate::paper_calendar::{CalendarState, DayIndex};
 use crate::paper_chrome::PositionSummary;
 use crate::timezone::TzOffset;
 
@@ -53,13 +53,24 @@ mod rows;
 mod tables;
 mod window;
 
-use curve::EquityWalk;
 use ledger::LedgerTotals;
 /// The ledger's vocabulary, named by the ticket that hosts the tab.
-pub(crate) use ledger::{HistoryRow, LedgerAction, LedgerScope, LoadedHistory, SourceFilter};
+pub(crate) use ledger::{LedgerAction, LedgerScope};
 /// Named by the ticket's own tests, which drive a real journal folder.
 #[cfg(test)]
-pub(crate) use ledger::{load_history, report_from_history};
+pub(crate) use quantick_paper::report::load_history;
+/// The report's numbers — the journal read back, cut and walked — live in
+/// the paper account's crate, so a backtest gets the answer this window
+/// paints. Re-exported where the window's callers already look.
+pub(crate) use quantick_paper::report::{HistoryRow, LoadedHistory, ReportView, SourceFilter};
+
+/// Aggregate loaded history rows — the ticket tests' shortcut from a journal
+/// on disk to a report.
+#[cfg(test)]
+pub(crate) fn report_from_history(history: &LoadedHistory) -> PerformanceReport {
+    let trades: Vec<ClosedTrade> = history.rows.iter().map(|row| row.trade.clone()).collect();
+    PerformanceReport::from_trades(&trades)
+}
 use window::{ReportPeriod, ReportWindow};
 
 /// What the report and the ledger read about the trading session they
@@ -217,37 +228,6 @@ const CUSTOM_PERIOD_FIELD_PX: f32 = 44.0;
 const REPORT_GRID_MIN_H_PX: f32 = 80.0;
 /// Width of the equity curve's y-tick gutter.
 const CURVE_GUTTER_PX: f32 = 52.0;
-/// The report as filtered for display: the period's trades in closing
-/// order, their aggregation, and the anchor the period was measured from.
-struct ReportView {
-    period: ReportPeriod,
-    source: SourceFilter,
-    /// The calendar span in force. `Some` puts the report on absolute
-    /// dates and takes the anchor-relative pills out of the cut; `None`
-    /// leaves them in charge, which is exactly what the report did before
-    /// a calendar existed.
-    range: Option<DateRange>,
-    /// The display timezone the view was cut with — "Today" moves with it,
-    /// and so does which civil day a trade closed on.
-    tz: TzOffset,
-    /// Newest closing time in scope — what the period counts back from.
-    anchor_ms: Option<i64>,
-    /// Saved trades the window keeps out — the honest answer to "where did
-    /// my old trades go": they exist, the filter just stops short of them.
-    hidden_outside: usize,
-    /// Saved trades the Source filter keeps out of this view.
-    hidden_by_source: usize,
-    /// The filtered trades, each still carrying the symbol folder and the
-    /// session source it was journaled under — the report lists them, and
-    /// a list that could not name its instrument would be the very gap
-    /// this window exists to close.
-    rows: Vec<HistoryRow>,
-    /// The realized-equity walk over `rows`, cut with the view rather than
-    /// re-walked on every frame.
-    equity: EquityWalk,
-    report: PerformanceReport,
-}
-
 /// The report as data: what is being asked, and what came back. Handed
 /// out by [`ReportState::snapshot`] so an operator that cannot see the
 /// window can still say which trades produced which numbers.

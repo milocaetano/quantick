@@ -96,7 +96,7 @@ impl PaperTrading {
         {
             return None;
         }
-        let mark = self.account.venue.mark_price()?;
+        let mark = self.account.venue().mark_price()?;
         let raw_price = scale.price_at(pointer.y);
         let price = self.account.snap(raw_price);
         // The context menu's own validity table, plus the trader's stated

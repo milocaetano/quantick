@@ -11,11 +11,12 @@ use quantick_sim::{Bracket, BracketTarget, Command, EntryKind, OrderId, OrderInt
 use rust_decimal::Decimal;
 
 use super::{AccountEnv, Leg, PaperAccount};
+use crate::order_strategies::OrderStrategy;
 
 impl PaperAccount {
     /// Rest an entry at `price`, protected by `ticket`. Answers whether
     /// anything is actually resting, which is what the caller paints.
-    pub(crate) fn place_resting(
+    pub fn place_resting(
         &mut self,
         side: Side,
         kind: EntryKind,
@@ -55,7 +56,7 @@ impl PaperAccount {
     /// The side and mark a reversal would be taken at, or `None` when flat.
     /// Split out because the caller must know the side *before* it can
     /// resolve the protection for it.
-    pub(crate) fn reverse_aim(&self) -> Option<(Side, Decimal)> {
+    pub fn reverse_aim(&self) -> Option<(Side, Decimal)> {
         let position = self.venue.position()?;
         let side = match position.side {
             Side::Buy => Side::Sell,
@@ -66,7 +67,7 @@ impl PaperAccount {
 
     /// Turn the open position around: close it and take the same size the
     /// other way, in one order, protected by `bracket`.
-    pub(crate) fn reverse_position(&mut self, bracket: Bracket) {
+    pub fn reverse_position(&mut self, bracket: Bracket) {
         let (Some(position), Some((side, _))) =
             (self.venue.position().cloned(), self.reverse_aim())
         else {
@@ -86,36 +87,53 @@ impl PaperAccount {
     /// a caller with no pointer has no "where I am relative to the mark" to
     /// infer from, and an action whose meaning depends on the market at the
     /// instant it lands is an action nobody can replay.
-    pub(crate) fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+    pub fn place_intent(&mut self, intent: OrderIntent) -> Vec<VenueEvent> {
+        match self.try_place_intent(intent) {
+            Ok(events) => events,
+            Err(refusal) => {
+                // Nothing is fabricated onto the venue's own event stream:
+                // the lock is this application's policy, not a fact the
+                // venue reported, and a `RejectReason` variant for it would
+                // put that policy inside the domain crate. The trader gets
+                // the toast; a named caller gets the same sentence as an
+                // error, because `control::trade` asks `risk_refusal_for`
+                // first.
+                self.set_toast(format!("SIM: {}", refusal.sentence()));
+                Vec::new()
+            }
+        }
+    }
+
+    /// [`Self::place_intent`] for a caller that branches on a refusal rather
+    /// than reading it: the risk lock's answer as a typed [`RiskRefusal`],
+    /// and no acknowledgement posted. A refused order never reaches the
+    /// venue, so calling this again with the same intent is safe.
+    pub fn try_place_intent(
+        &mut self,
+        intent: OrderIntent,
+    ) -> Result<Vec<VenueEvent>, super::RiskRefusal> {
         // The risk per trade is a ceiling on the account, not on the mouse.
         // A named call is exactly the operator `CLAUDE.md` treats as
         // first-class, so a lock the ticket enforces and this path does not
         // would be a ceiling that holds only while a human is clicking.
-        if let Some(refusal) = self.risk_refusal_for(&intent) {
-            // Nothing is fabricated onto the venue's own event stream: the
-            // lock is this application's policy, not a fact the venue
-            // reported, and a `RejectReason` variant for it would put that
-            // policy inside the domain crate. The trader gets the toast; a
-            // named caller gets the same sentence as an error, because
-            // `control::trade` asks this same function first.
-            self.set_toast(format!("SIM: {refusal}"));
-            return Vec::new();
+        if let Some(refusal) = self.risk_refusal(&intent) {
+            return Err(refusal);
         }
         let events = self.venue.submit(intent);
         self.handle_events(events.clone());
-        events
+        Ok(events)
     }
 
     /// Replace a working order's protective prices — the chart's drag, said
     /// in words.
-    pub(crate) fn set_order_bracket(&mut self, id: OrderId, bracket: Bracket) -> Vec<VenueEvent> {
+    pub fn set_order_bracket(&mut self, id: OrderId, bracket: Bracket) -> Vec<VenueEvent> {
         let events = self.venue.amend_bracket(BracketTarget::Order(id), bracket);
         self.handle_events(events.clone());
         events
     }
 
     /// Remove one working order without trading.
-    pub(crate) fn cancel_order(&mut self, id: OrderId) -> Vec<VenueEvent> {
+    pub fn cancel_order(&mut self, id: OrderId) -> Vec<VenueEvent> {
         let events = self.venue.cancel(id);
         self.handle_events(events.clone());
         events
@@ -127,7 +145,7 @@ impl PaperAccount {
     /// directly; this exists for the callers that already speak `Command`
     /// — the strategy kernel, the scripted demo, and the tests that drive
     /// this host the way the kernel does.
-    pub(crate) fn dispatch(&mut self, command: Command) -> Vec<VenueEvent> {
+    pub fn dispatch(&mut self, command: Command) -> Vec<VenueEvent> {
         command.dispatch(self.venue.as_mut())
     }
 
@@ -141,10 +159,7 @@ impl PaperAccount {
     /// validates against, so a leg the chart lets you drop is a leg the
     /// venue accepts — the two never disagree about which side of the
     /// entry is protective.
-    pub(crate) fn bracket_owner(
-        &self,
-        owner: BracketTarget,
-    ) -> Option<(Side, Decimal, Bracket, Decimal)> {
+    pub fn bracket_owner(&self, owner: BracketTarget) -> Option<(Side, Decimal, Bracket, Decimal)> {
         match owner {
             BracketTarget::Position => self.venue.position().map(|position| {
                 (
@@ -169,7 +184,7 @@ impl PaperAccount {
 
     /// Set or clear one protective leg, keeping the other — the tag cross's
     /// command and the drop of a leg drag, which are the same amendment.
-    pub(crate) fn amend_leg(&mut self, owner: BracketTarget, leg: Leg, level: Option<Decimal>) {
+    pub fn amend_leg(&mut self, owner: BracketTarget, leg: Leg, level: Option<Decimal>) {
         let Some((.., bracket, _)) = self.bracket_owner(owner) else {
             return;
         };
@@ -196,7 +211,7 @@ impl PaperAccount {
     /// allocations a frame for a list that is usually empty. Everything it
     /// borrows is borrowed immutably, so a caller can walk it while asking
     /// `self` about each entry.
-    pub(crate) fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
+    pub fn bracket_owners(&self) -> impl Iterator<Item = BracketTarget> + '_ {
         self.venue
             .position()
             .is_some()
@@ -223,13 +238,7 @@ impl PaperAccount {
     /// strategy is never written to: an order on the chart is the trader's,
     /// and the ladder that shaped it is a template they can still reuse.
     /// A rung left protecting nothing is dropped rather than rested empty.
-    pub(crate) fn amend_rung(
-        &mut self,
-        order: OrderId,
-        index: usize,
-        leg: Leg,
-        level: Option<Decimal>,
-    ) {
+    pub fn amend_rung(&mut self, order: OrderId, index: usize, leg: Leg, level: Option<Decimal>) {
         let Some(entry) = self
             .venue
             .working_orders()
@@ -257,7 +266,7 @@ impl PaperAccount {
     }
 
     /// Cancel every working order (resting and queued), trading nothing.
-    pub(crate) fn cancel_all_orders(&mut self) {
+    pub fn cancel_all_orders(&mut self) {
         let mut ids: Vec<OrderId> = self
             .venue
             .working_orders()
@@ -272,14 +281,62 @@ impl PaperAccount {
     }
 
     /// The strategies the trader keeps, in their own order.
-    pub(crate) fn order_strategies(&self) -> &[crate::order_strategies::OrderStrategy] {
+    pub fn order_strategies(&self) -> &[OrderStrategy] {
         &self.strategies
     }
 
+    /// Keep one more strategy, after the others. Returns its index.
+    pub fn add_order_strategy(&mut self, strategy: OrderStrategy) -> usize {
+        self.strategies.push(strategy);
+        self.strategies.len() - 1
+    }
+
+    /// One kept strategy, for the editor that renames it and edits its rows
+    /// in place. The list's order and the selection stay the account's.
+    pub fn order_strategy_mut(&mut self, index: usize) -> Option<&mut OrderStrategy> {
+        self.strategies.get_mut(index)
+    }
+
+    /// Stop keeping one strategy, and keep the selection on the strategy it
+    /// named rather than on the slot it sat in.
+    ///
+    /// The selection is an index, and removing an earlier strategy shifts
+    /// every later one down a slot: re-resolving by the old index would
+    /// silently arm the neighbour of the one the trader chose. So the
+    /// selection is read by *name* before the list moves and found again
+    /// after; removing the selected strategy itself selects nothing.
+    pub fn remove_order_strategy(&mut self, index: usize) -> Option<OrderStrategy> {
+        if index >= self.strategies.len() {
+            return None;
+        }
+        let selected = self
+            .selected_order_strategy()
+            .map(|strategy| strategy.name.clone());
+        let removed = self.strategies.remove(index);
+        self.selected_strategy = selected
+            .filter(|name| *name != removed.name)
+            .and_then(|name| {
+                self.strategies
+                    .iter()
+                    .position(|strategy| strategy.name == name)
+            });
+        Some(removed)
+    }
+
+    /// Which kept strategy the ticket is set to, by index; `None` is the
+    /// bare order the trader brackets by hand.
+    #[must_use]
+    pub fn selected_strategy(&self) -> Option<usize> {
+        self.selected_strategy
+    }
+
+    /// Set the ticket to one kept strategy by index, or to none.
+    pub fn select_strategy(&mut self, index: Option<usize>) {
+        self.selected_strategy = index;
+    }
+
     /// The strategy the ticket is set to, if any.
-    pub(crate) fn selected_order_strategy(
-        &self,
-    ) -> Option<&crate::order_strategies::OrderStrategy> {
+    pub fn selected_order_strategy(&self) -> Option<&OrderStrategy> {
         self.strategies.get(self.selected_strategy?)
     }
 
@@ -287,11 +344,7 @@ impl PaperAccount {
     ///
     /// A name this build no longer knows selects nothing: telling the trader
     /// their strategy is gone beats silently arming a different one.
-    pub(crate) fn set_order_strategies(
-        &mut self,
-        strategies: Vec<crate::order_strategies::OrderStrategy>,
-        selected: Option<&str>,
-    ) {
+    pub fn set_order_strategies(&mut self, strategies: Vec<OrderStrategy>, selected: Option<&str>) {
         self.selected_strategy =
             selected.and_then(|name| strategies.iter().position(|item| item.name == name));
         self.strategies = strategies;
@@ -300,7 +353,7 @@ impl PaperAccount {
     /// Apply a strategy-issued command through the same funnel manual
     /// orders use — journal, toasts, everything — and hand the simulator's
     /// immediate answer back for the instance to attribute.
-    pub(crate) fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
+    pub fn apply_strategy_command(&mut self, command: Command) -> Vec<VenueEvent> {
         let events = self.dispatch(command);
         self.handle_events(events.clone());
         events
