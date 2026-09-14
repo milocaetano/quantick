@@ -66,6 +66,14 @@ The mission began at small with no interrogation. No design-driving ambiguity em
 - [ ] **G-AI4** — `ai-review-complete` is valid for the current review key.
 <!-- end required-ai-review-goal-gates:v1 -->
 
+## Review repairs
+
+- The low-effort bug pass found and closed two Should-fix items before review
+  publication: canonical paper-trading prose now reflects the removal of
+  market orders, and A1's regression test compares anchored VWAP against both
+  `chart layers` and `trade`. The focused test and repository guards pass at
+  the repair head.
+
 ## Not applicable
 
 - Hot-path benchmarking is not applicable because the changed menu builders run only while the user has opened the context menu; no ingestion, rendering-with-menu-closed, engine, or depth-update path changes.
