@@ -1,7 +1,8 @@
 # Feed continuity evidence (F1, campaign #472)
 
 Initial base: `eb7bb039`, `origin/campaign/outside-eight`. Child issue: #474.
-Current publication base: `05bc95ecfa36339be75411b251edf67cffa79992`.
+Initial publication base: `05bc95ecfa36339be75411b251edf67cffa79992`.
+Current campaign base: `a03dcde95da1b514c5566cbeb993cadda2d47198`.
 
 The Binance transport already retained its continuity tracker across automatic
 reconnects. Its returned anomalies were discarded, leaving only tracing. The
@@ -222,3 +223,36 @@ configuration or build-consumed input changed. Guards, hash equality, NDJSON
 parsing, artifact paths, changed relative links and diff hygiene are checked.
 Final clean-head canonical architecture/AI/delivery reports and exact-head CI
 remain required. No score or mission completion is asserted here.
+
+## Revalidation after C1 campaign integration
+
+After draft PR #488 was published at `4dac9723cc44c6b97cdfa0eff5943cff392f1b58`,
+the coordinator integrated C1 at campaign tip
+`a03dcde95da1b514c5566cbeb993cadda2d47198`. The clean rebase produced head
+`4cdd6da2495f089e48518a179ec2ced7f752ca28`, tree
+`39a6914063244760e37ef8231b8bb9e8807e0e3e`. Earlier raw logs and receipts are
+preserved separately under `evidence/pre-c1-integration-5dd1f20b/` in the
+worktree's private git directory; none is relabelled as this base's execution.
+
+A fresh full ordered loop passed at that tree on 2026-09-14, 17:55:42 to
+17:57:56 (America/Sao_Paulo): fmt, clippy, build and workspace tests all exited
+zero; 3910 passed, zero failed, 21 ignored. App: 2071 passed, zero failed,
+11 ignored. `python tools/read_cost/test_measure.py` separately passed all
+nine tests in 8.555 seconds. The live parent issue's seven-path frozen manifest
+matched initial `eb7bb039434667bb150be9cdf5237e172c4198fe`, HEAD and worktree
+blob identities; the initial-to-head diff of those paths is empty.
+
+Only C1's workflow, read-cost tooling and retained independent baseline/mission
+evidence entered through the changed base. A complete prior-head comparison
+shows no Rust, Cargo, toolchain or runtime-configuration delta. The earlier
+independent pixel report is retained byte-identically with its original input
+and nonsemantic-constant reuse provenance; no new GUI execution is claimed.
+The changed base nevertheless received the new full loop above, and current
+base architecture/AI/delivery reviews and exact-head CI remain required.
+
+Final archive/evidence prose reuses this newly validated tree after full delta
+inspection, guards, artifact hashes/paths, relative links and diff hygiene.
+No tested input changes in that final delta. Lock, toolchain and tracked bubbles
+fixture identities remain as recorded; raw outputs and a current-tree reuse
+receipt remain in the private evidence directory. No score or mission
+completion is claimed.
