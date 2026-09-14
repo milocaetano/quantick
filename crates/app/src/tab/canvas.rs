@@ -703,7 +703,7 @@ impl Tab {
         let wanted_y = if pair_height >= floor * 2.0 {
             wanted_y.clamp(pair_top + floor, pair_bottom - floor)
         } else {
-            wanted_y.clamp(pair_top, pair_bottom)
+            dividers[index].center().y
         };
 
         let mut previous = column.top();

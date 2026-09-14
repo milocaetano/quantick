@@ -1468,6 +1468,28 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         app.active_tab().context_divider_rect(0).is_some(),
         "the handle remains available to reverse the drag"
     );
+
+    let short_window = egui::vec2(TEST_WINDOW.x, 440.0);
+    run_frame_at(&mut app, &ctx, short_window);
+    run_frame_at(&mut app, &ctx, short_window);
+    let divider = app
+        .active_tab()
+        .context_divider_rect(0)
+        .expect("the short canvas keeps its divider");
+    let before = [height(&app, 0), height(&app, 1)];
+    drag_sized(
+        &mut app,
+        &ctx,
+        short_window,
+        divider.center(),
+        egui::pos2(divider.center().x, 0.0),
+    );
+    run_frame_at(&mut app, &ctx, short_window);
+    assert_eq!(
+        [height(&app, 0), height(&app, 1)],
+        before,
+        "a canvas too short for two floors refuses to erase either chart"
+    );
 }
 
 /// Two tabs speaking on one frame: the slot holds one message, and the
