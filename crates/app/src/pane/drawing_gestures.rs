@@ -26,9 +26,9 @@ use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
 use super::{
-    ChartPane, DRAWING_DRAG_COMPLETES_PX, DRAWING_SELECT_RADIUS_PX, FREEHAND_MAX_POINTS,
-    FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX, PaneChrome, anchor_hit,
-    magnet_price_of, snap_bar_to_tape,
+    ChartPane, DRAWING_ANCHOR_RADIUS_PX, DRAWING_DRAG_COMPLETES_PX, DRAWING_SELECT_RADIUS_PX,
+    FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
+    PaneChrome, magnet_price_of, snap_bar_to_tape,
 };
 
 impl ChartPane {
@@ -603,7 +603,8 @@ impl ChartPane {
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
-                    selected: self.drawings.selected() == Some(index),
+                    // Locked selections paint no editable affordances.
+                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
                     halo: false,
                     content_editing: false,
                 };
@@ -640,7 +641,7 @@ impl ChartPane {
                     unit: band.unit(),
                     primary_band: true,
                     style: drawing.style,
-                    selected: self.drawings.selected() == Some(index),
+                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
                     halo: false,
                     content_editing: false,
                 };
@@ -689,11 +690,13 @@ impl ChartPane {
             unit: band.unit(),
             primary_band: true,
             style: drawing.style,
-            selected: self.drawings.selected() == Some(drawing_index),
+            selected: self.drawings.selected() == Some(drawing_index) && !drawing.locked,
             halo: false,
             content_editing: false,
         };
-        anchor_hit(&drawing.tool.handles(band.rect, &projected, &ctxt), pos)
+        drawing
+            .tool
+            .hit_handle(band.rect, &projected, pos, DRAWING_ANCHOR_RADIUS_PX, &ctxt)
     }
 
     /// What a pointer at `pos` is on: a drawing's handle first, then its

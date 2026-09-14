@@ -1,0 +1,32 @@
+Command: cargo test -p quantick-app precise_profile -- --nocapture
+   Compiling quantick-app v0.1.0 (C:\src\quantick-worktrees\fix-volume-profile-precise-hit\crates\app)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1m 52s
+     Running unittests src\main.rs (target\debug\deps\quantick_app-0ece8c1e3dae95db.exe)
+
+running 9 tests
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_frame_benchmark ... ignored, manual frame-cost comparison; prints measurements without timing assertions
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_hit_empty_cache_has_only_drawn_borders ... ok
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_reversed_anchors_developing_edge_and_clip_agree ... ok
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_hit_uses_row_widths_and_leaves_missing_rows_empty ... ok
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_outline_interior_passes_through_but_its_staircase_hits ... ok
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_hit_tracks_visible_poc_and_value_area_lines ... ok
+test drawings::fixed_range_profile::tests::precise_hit::precise_profile_wrapper_has_no_invisible_handle_targets ... ok
+
+thread 'app::tests::profile_pointer_tests::precise_profile_painted_row_moves_and_visible_handle_resizes' (28600) panicked at crates\app\src\app\tests\profile_pointer_tests.rs:139:5:
+assertion `left == right` failed
+  left: Move
+ right: ResizeNwSe
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test app::tests::profile_pointer_tests::precise_profile_painted_row_moves_and_visible_handle_resizes ... FAILED
+test app::tests::profile_pointer_tests::precise_profile_empty_space_pans_and_deselects_without_moving_the_drawing ... ok
+
+failures:
+
+failures:
+    app::tests::profile_pointer_tests::precise_profile_painted_row_moves_and_visible_handle_resizes
+
+test result: FAILED. 7 passed; 1 failed; 1 ignored; 0 measured; 2143 filtered out; finished in 0.08s
+
+error: test failed, to rerun pass `-p quantick-app --bin quantick-app`
+
+Exit: 101

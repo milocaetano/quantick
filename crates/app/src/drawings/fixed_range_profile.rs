@@ -35,6 +35,10 @@ use crate::chart::to_f64;
 use crate::theme;
 use crate::theme::{CASING, CASING_EXTRA_PX};
 
+mod geometry;
+
+use geometry::ProfileGeometry;
+
 pub(super) static TOOL: FixedRangeProfile = FixedRangeProfile;
 
 pub(super) struct FixedRangeProfile;
@@ -745,33 +749,21 @@ impl DrawingToolImpl for FixedRangeProfile {
     }
     fn hit_test(
         &self,
-        _chart_rect: egui::Rect,
+        chart_rect: egui::Rect,
         points: &[egui::Pos2],
         position: egui::Pos2,
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
-        let Some(payload) = ctxt.payload.as_any().downcast_ref::<FrvpPayload>() else {
-            return false;
-        };
-        if points.len() < 2 {
-            return false;
-        }
-        let (left, right) = range_edges(payload, points, ctxt);
-        let (top, bottom) = price_extent(payload, points, ctxt);
-        let in_band = position.y >= top - radius_px && position.y <= bottom + radius_px;
-        if !in_band {
-            return false;
-        }
-        // Either edge grabs like a line; the histogram's own strip grabs as
-        // an interior. The empty middle of a wide range stays click-through —
-        // a full-rect hit would shadow every candle inside the range.
-        let near_edge =
-            (position.x - left).abs() <= radius_px || (position.x - right).abs() <= radius_px;
-        let histogram_right = left + payload.width_frac * (right - left).max(1.0);
-        let in_histogram =
-            position.x >= left - radius_px && position.x <= histogram_right + radius_px;
-        near_edge || in_histogram
+        geometry::hit_profile(chart_rect, points, position, radius_px, ctxt)
+    }
+
+    fn handle_hit_radius(&self, radius_px: f32, ctxt: &DrawContext<'_>) -> Option<f32> {
+        ctxt.selected.then_some(radius_px.min(
+            super::SELECTED_ANCHOR_RADIUS_PX
+                + super::SELECTED_ANCHOR_RING_WIDTH_PX / 2.0
+                + geometry::HIT_SLOP_PX,
+        ))
     }
 
     /// The grab points live on the object, not on the anchors: the profile's
@@ -1042,54 +1034,26 @@ fn paint_body(
     // right of it a fill would compose into the map's cells (worst case
     // measured at 1.002:1 contrast) — so the shape is drawn instead, and
     // not one uncovered pixel of the map is altered.
-    let cut_x = payload
-        .outline_over_heatmap
-        .then(|| cache.and_then(|cache| cache.heat_first_slot))
-        .flatten()
-        .and_then(|slot| {
-            #[allow(clippy::cast_precision_loss)]
-            bar_x(points, ctxt.anchors, slot as f32)
-        })
-        .map(|x| x.max(left));
+    let cut_x = geometry::silhouette_cut(payload, points, ctxt);
     let outline_active = cut_x.is_some_and(|x| x < right);
 
     if let Some((profile, value_area)) = profile {
-        let range_width = (right - left).max(1.0);
-        let height = row_height(profile, ctxt);
-        let max_volume = to_f64(profile.max_level_volume()).max(f64::MIN_POSITIVE);
+        let geometry = ProfileGeometry::new(profile, *value_area, payload, points, ctxt);
         let in_va = |bucket: i64| {
             payload.show_value_area
                 && value_area.is_some_and(|area| bucket >= area.val && bucket <= area.vah)
         };
         let fill_limit = if outline_active { cut_x } else { None };
-        // A display row spans from the bucket's base price toward its
-        // higher edge — which way that is on screen follows the scale's
-        // orientation, so the rows tile the same price intervals either
-        // way up.
-        let row_edges = |bucket: i64| {
-            let base = ctxt.scale.y(to_f64(profile.bucket_price(bucket)));
-            let far = if ctxt.scale.is_inverted() {
-                base + height
-            } else {
-                base - height
-            };
-            (base, far)
-        };
         // The histogram itself — the one part of this object that is
         // *context* rather than annotation, and the reason the tool takes
         // the under-candles pass at all.
         if pass == FrvpPass::Under {
-            for (&bucket, level) in profile.levels() {
-                let (y_base, y_far) = row_edges(bucket);
-                let (row_top, row_bottom) = (y_base.min(y_far), y_base.max(y_far));
-                if row_bottom < chart_rect.top() || row_top > chart_rect.bottom() {
-                    continue;
-                }
-                #[allow(clippy::cast_possible_truncation)]
-                let width = ((to_f64(level.volume()) / max_volume) as f32)
-                    * payload.width_frac
-                    * range_width;
-                let tip = left + width;
+            for row in geometry.rows(chart_rect) {
+                let (row_top, row_bottom) = (row.base.min(row.far), row.base.max(row.far));
+                let bucket = row.bucket;
+                let level = row.level;
+                let tip = row.tip;
+                let width = tip - left;
                 // The fill stops at the map's boundary; the silhouette pass
                 // below carries the rest of the row.
                 let fill_tip = fill_limit.map_or(tip, |cut| tip.min(cut));
@@ -1149,66 +1113,16 @@ fn paint_body(
         // Over the candles, unlike the fill: it is a line, and a line is
         // read as a shape rather than as a wash, so burying it would only
         // lose it.
-        if pass == FrvpPass::Over
-            && outline_active
-            && let Some(base) = cut_x
-        {
+        if pass == FrvpPass::Over && outline_active {
             let mut segments: Vec<SilhouetteSegment> = Vec::new();
-            // bucket, tip x, y of the row's far (higher-price) edge —
-            // which is the next row's base edge, either way up.
-            let mut previous: Option<(i64, f32, f32)> = None;
-            for (&bucket, level) in profile.levels() {
-                let (y_base, y_far) = row_edges(bucket);
-                if y_base.max(y_far) < chart_rect.top() || y_base.min(y_far) > chart_rect.bottom() {
-                    continue;
-                }
-                #[allow(clippy::cast_possible_truncation)]
-                let width = ((to_f64(level.volume()) / max_volume) as f32)
-                    * payload.width_frac
-                    * range_width;
-                let ex = (left + width).max(base);
-                let row_in_va = in_va(bucket);
-                match previous {
-                    Some((prev_bucket, prev_ex, prev_far)) if prev_bucket + 1 == bucket => {
-                        // Contiguous rows: one horizontal at the shared
-                        // boundary, from tip to tip.
-                        segments.push(SilhouetteSegment {
-                            from: egui::pos2(prev_ex, prev_far),
-                            to: egui::pos2(ex, y_base),
-                            in_va: row_in_va,
-                        });
-                    }
-                    other => {
-                        // A gap (or the first row): close the previous
-                        // run down to the boundary and open this one.
-                        if let Some((_, prev_ex, prev_far)) = other {
-                            segments.push(SilhouetteSegment {
-                                from: egui::pos2(prev_ex, prev_far),
-                                to: egui::pos2(base, prev_far),
-                                in_va: row_in_va,
-                            });
-                        }
-                        segments.push(SilhouetteSegment {
-                            from: egui::pos2(base, y_base),
-                            to: egui::pos2(ex, y_base),
-                            in_va: row_in_va,
-                        });
-                    }
-                }
+            geometry.visit_silhouette(chart_rect, |bucket, from, to| {
                 segments.push(SilhouetteSegment {
-                    from: egui::pos2(ex, y_base),
-                    to: egui::pos2(ex, y_far),
-                    in_va: row_in_va,
+                    from,
+                    to,
+                    in_va: bucket.is_some_and(in_va),
                 });
-                previous = Some((bucket, ex, y_far));
-            }
-            if let Some((_, prev_ex, prev_far)) = previous {
-                segments.push(SilhouetteSegment {
-                    from: egui::pos2(prev_ex, prev_far),
-                    to: egui::pos2(base, prev_far),
-                    in_va: false,
-                });
-            }
+                false
+            });
             let ink_width = |in_va: bool| {
                 if in_va {
                     style.width_px.max(OUTLINE_IN_VA_PX)
@@ -1354,6 +1268,7 @@ fn paint_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod precise_hit;
     use crate::chart::PriceScale;
     use crate::drawings::{ChartPoint, ValueUnit};
 

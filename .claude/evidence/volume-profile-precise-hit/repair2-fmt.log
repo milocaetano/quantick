@@ -1,0 +1,3 @@
+Command: cargo fmt --all -- --check
+
+Exit: 0

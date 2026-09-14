@@ -1,0 +1,53 @@
+{
+  "recorded_at": "2026-09-14T03:39:21.065667+00:00",
+  "branch": "fix/volume-profile-precise-hit",
+  "base_ref": "origin/main",
+  "base_tip": "d3d4b23d3741ec82204b2c0f2c77b23a98908ac4",
+  "verified_source_tree": "c129cabc26ac2482017d98430df5b84a09fb041a",
+  "source_tree_scope": "Previous reviewed HEAD f89773648c2655077b4bd8fb6829eabdcb70b585 plus the three repair Rust file changes. Later edits contain only evidence and mission records.",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "environment": {
+    "RUST_TEST_THREADS": "2",
+    "QUANTICK_BUBBLES": "C:\\src\\quantick-worktrees\\fix-volume-profile-precise-hit\\config\\bubbles.toml",
+    "platform": "Windows x86_64 MSVC"
+  },
+  "input_sha256": {
+    "crates/app/src/app/tests/mod.rs": "d7299c097f0f7f85c6500d5dd7df9e8117d9b95aa905cda52abea1678fe32f90",
+    "crates/app/src/app/tests/profile_pointer_tests.rs": "a1209380de7757262032e2ef19b0718c82ec19fdfc81a6a55430cfe16248e914",
+    "crates/app/src/drawings/fixed_range_profile.rs": "8a391b84c1228a53f6e472c122cd6674cc8e20d93e3aeb2fabe77f53e6890276",
+    "crates/app/src/drawings/fixed_range_profile/geometry.rs": "8c5e7d9cff937a400a613743123ff4437c26a640c8df37d5bc7ba294970d512c",
+    "crates/app/src/drawings/fixed_range_profile/tests/precise_hit.rs": "b22584507dc6a12dbd4d3a7f9a863f7eb2fc1fbcf68c7f2430db466ef18be94c",
+    "crates/app/src/drawings/tool.rs": "1942295d7637963bb2e99a8ce64c9b1697ad990d47db9cf729d2ba8f774f0066",
+    "crates/app/src/pane/drawing_gestures.rs": "9bddcf833944404ca2d7e7abe7ed4c9fbf0b7cc76ccd42a5e796fb6c2f1b2b26",
+    "Cargo.toml": "1396a98e0f8f25877f855ee115eb61e661374f7c1c76be6610e69c24b0249878",
+    "Cargo.lock": "02d505e112dcce244b11627708da2815c6068402997a5c0d805b0e483d1c6721",
+    "config/bubbles.toml": "5db6b44a4564f7e0cd26482a3f1badd17eb41788e6959453330f2738bb37cd4d",
+    "crates/app/Cargo.toml": "74760128a4cf47abb14b85c1825404cbfb2f1fe182367a7c9cbe58ffb8cba1e6",
+    "crates/app/src/pane/shared_marks.rs": "917aba11feeb07d347e9b3d44235c7d4b1099fe9e1989cd3f6fec7ebefeec24c"
+  },
+  "ordered_validation": [
+    {
+      "log": "repair1-fmt.log",
+      "exit": 0,
+      "sha256": "e8a3153e6f5259175cd4f0f7aaa5d0585e887ee11e7f8ae78e8fcc912f3c09ad"
+    },
+    {
+      "log": "repair1-clippy.log",
+      "exit": 0,
+      "sha256": "abd38cd467c02f174f51054320e669b9adccd57b1fe7f11de1183f1ae8ffafad"
+    },
+    {
+      "log": "repair1-build.log",
+      "exit": 0,
+      "sha256": "ad1c13de7335fbd6c3cb96115da2193221d4c8584eb3a48823be0ae28a4e95eb"
+    },
+    {
+      "log": "repair1-tests.log",
+      "exit": 0,
+      "sha256": "91fc0f0ae7b577b7393b71f5ae6332d51962f22185246d78d02fca785c74bc56"
+    }
+  ],
+  "finding": "VP-HIT-LOCKED-01",
+  "repair_batch": 1
+}
