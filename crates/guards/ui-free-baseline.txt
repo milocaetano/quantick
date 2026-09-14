@@ -13,8 +13,10 @@
 # in the same change with a comment saying why.
 #
 # Recorded at campaign tip 317772a5 (#443, Q18): 50,795 lines in 130 files,
-# measured by the guard and by an independent script. Q16 (#441, the paper
-# account) and Q17 (#442, the control-plane host) move code out of `app` and
-# will lower it.
-!budget 50795
-crates/app 50795
+# measured by the guard and by an independent script. Lowered by `--tighten`
+# at campaign tip 89bf713b to 47,665 lines in 125 files (-3,130), the code
+# Q16 (#453, the paper account into `paper`) and Q17 (#452, the control-plane
+# host into `control-host`) moved out of `app`; the same independent count
+# agrees. This closes #443's A2.
+!budget 47665
+crates/app 47665
