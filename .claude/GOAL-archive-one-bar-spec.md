@@ -47,7 +47,7 @@ not answer.
   same CSVs, and the backtest asserts the bars its strategy is shown against the
   same CSVs. Safe: every consumer is held to one committed file per kind.
 - **S2** — The backtest inherits the chart's parse rules, including the time
-  bounds `100ms..=1d`. Before, the backtest accepted any positive interval.
+  bounds `100ms..=24h`. Before, the backtest accepted any positive interval.
   Safe: one vocabulary is the ask, and no fixture or test uses an interval outside
   the bounds.
 - **S3** — The backtest's run summary for a volume or dollar spec prints the
@@ -156,16 +156,17 @@ The G-AI evidence lands on the PR: the ai-review report comment and the
 
 - **A1** — `git grep -n "enum BarSpec\|enum BarKind" -- crates` prints
   `crates/engine/src/spec.rs:44` and `:153` only.
-- **A2, G2** — at `7f46592b`: `cargo fmt --all -- --check` exit 0; `cargo clippy
-  --workspace --all-targets` exit 0; `cargo build --workspace` exit 0 (the first
-  attempt failed writing a build-script object, `no such file or directory`, with
-  665 GB free; the unchanged rerun passed); `cargo test --workspace` exit 0,
-  3,888 passed, 0 failed, 19 ignored. Each run on its own.
+- **A2, G2** — at the last code commit `43a31918`: `cargo fmt --all -- --check`
+  exit 0; `cargo clippy --workspace --all-targets` exit 0; `cargo build
+  --workspace` exit 0; `cargo test --workspace` exit 0, 3,890 passed, 0 failed,
+  19 ignored. Each run on its own. (At `7f46592b` a first `cargo build` failed
+  writing a build-script object, `no such file or directory`, with 665 GB free;
+  the unchanged rerun passed.)
 - **A3, G5** — `799fe374 test(engine): pin one bar-spec vocabulary before it
   moves` precedes `0dd6728b feat(engine): own the bar-spec vocabulary`; at
   `799fe374` the test failed to compile with `E0432: unresolved imports
   quantick_engine::BarKind, quantick_engine::BarSpec, ...`.
-- **A4** — `cargo test -p quantick-engine --test bar_spec`: 12 passed, including
+- **A4** — `cargo test -p quantick-engine --test bar_spec`: 13 passed at `43a31918`, including
   `the_builder_a_spec_names_cuts_each_golden_exactly`.
 - **A5** — `state::bar_spec_parity_tests::the_chart_cuts_every_golden_the_engine_pins ... ok`.
 - **A6** — `the_backtest_cuts_every_golden_the_chart_cuts` passed in
@@ -174,11 +175,17 @@ The G-AI evidence lands on the PR: the ai-review report comment and the
   asserts `SpecError::NeedsDealCounter(BarSpec::Trades(2000))` and the message.
 - **A8** — `git diff --stat origin/main...HEAD -- crates/engine/tests/fixtures schemas`
   is empty; `every_bar_spec_survives_the_config_round_trip` passes in the engine.
-- **A9** — guards report before/after: `crate.lines.app` 120748 → 120435,
-  `crate.lines.backtest` 2408 → 2307, `crate.lines.engine` 4506 → 4906, total
-  197907 → 197893; `ratchet.app-ui-free` 47665 → 47351 (tightened); size,
-  cycle, extension-boundary and context budgets unchanged;
-  `cargo test -p quantick-guards` green.
+- **A9** — guards report, `origin/main` → `43a31918`: ratchet ceilings
+  `app-ui-free` 47665 → 47351 (tightened), size, cycle, extension-boundary and
+  context budgets unchanged, no ceiling raised; `cargo test -p quantick-guards`
+  green. Measured lines: `crate.lines.app` 120748 → 120435, `crate.lines.backtest`
+  2408 → 2316, `crate.lines.engine` 4506 → 5018, total 197907 → 198014 — the
+  +107 is the typed `BarSpecError` the ai-review asked for, in the engine,
+  outside every ceiling.
+- **AI-1 (ai-review round 1)** — `BarSpec::parse` failed with a `String`. Fixed
+  test-first: `e6eaea2b` (`a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence`,
+  failing with `E0432`) before `43a31918` (`BarSpecError`, 8 variants, sentences
+  byte-identical); thread `PRRT_kwDOTfuoRs6iPvx2` resolved.
 - **G3** — rates: `BarSpec::parse`, `clamped` and `build` run on a spec change, a
   rebuild or a session start (rare). No builder and no `push` path is edited;
   the clippy-driven edits replace `.clone()` with a copy of the same value.
