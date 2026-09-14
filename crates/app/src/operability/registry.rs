@@ -868,12 +868,12 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.duplicate",
         title: "Copy a drawing: duplicate it in place, or copy it and paste it on any chart",
-        reach: "the object context bar's Duplicate button, Ctrl+D; Ctrl+C then Ctrl+V on the \
-                focused pane",
+        reach: "the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C \
+                then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert)",
         keys: &[(
             Source::Authored,
-            "the Duplicate button and the Ctrl+D, Ctrl+C and Ctrl+V keys are read per frame by \
-             `app/drawing_input.rs` and the context bar, not entries in a hotkey registry",
+            "the Duplicate button, Ctrl+D and the native copy and paste events are read per frame \
+             by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry",
         )],
         mapping: excluded!(
             PendingCapability,
