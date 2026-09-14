@@ -121,8 +121,20 @@ Operational instructions (four checks run each on its own, draft PR against
 - [x] **A7** — No file under `crates/app/` changes. *Evidence:*
       `git diff --stat origin/campaign/lean-a-plus...HEAD -- crates/app`
       empty. → the PR body. *(R7)*
-- [ ] **A8** — The PR body says the ceiling is lowered after Q16/Q17 land
-      and leaves issue A2 open. → the PR body. *(R6)*
+- [x] **A8** — The PR body says the ceiling is lowered after Q16/Q17 land
+      and leaves issue A2 open. → the PR body. *(R6)* Superseded by A9
+      under the amendment below: Q16/Q17 landed before this PR merged.
+- [ ] **A9** — After the rebase onto the campaign tip holding Q16 and Q17,
+      `--tighten` records the lower ceiling in `ui-free-baseline.txt` with a
+      comment naming Q16/Q17, and an independent count agrees; the PR body
+      reports issue A2 closed. *Evidence:* the baseline diff, `--report`
+      rows, the Python count. → the PR body. *(R10)*
+- [ ] **A10** — The rebase keeps both sides of every conflict and raises no
+      context ceiling or budget: `CLAUDE.md` and `AGENTS.md` stay under
+      their `context-baseline.txt` entries, which this branch does not edit.
+      *Evidence:* `git diff origin/campaign/lean-a-plus...HEAD --
+      crates/guards/context-baseline.txt` empty, `wc -c`, the context guard
+      green. → the PR body. *(R10)*
 - [ ] **G1** — Every artifact in English (`arch-review` dimension 8, the
       language guard). → the arch-review report on the PR.
 - [x] **G2** — Four checks green, each run on its own:
@@ -161,6 +173,33 @@ bytes, `AGENTS.md` 13,170 -> 13,169. No `crates/app` or
 `crates/guards/Cargo.toml` change. Edit-time hook: `--file` on an app file
 364-420 ms after vs 358-401 ms before. A8, G1, G4, G-AI1-4 and the closing
 steps land on the PR after this archive; they are not claimed here.
+
+## Amendment, after Q16 and Q17 landed
+
+The coordinator's follow-up (verbatim below) adds one ask, numbered on
+without renumbering anything:
+
+- **R10** — Rebase onto `campaign/lean-a-plus` at `89bf713b` (Q16 #453 and
+  Q17 #452 merged), keeping both sides of the conflicts (`CLAUDE.md`,
+  `AGENTS.md`, `context-baseline.txt`, the guards registry) and trimming
+  prose rather than raising a context ceiling or budget; run `--tighten`
+  for the lower UI-free ceiling with a baseline comment naming Q16/Q17,
+  verified by the independent count, closing issue A2; update the PR body
+  and this goal; the four checks each on its own plus `cargo test -p
+  quantick-guards`; push with `--force-with-lease`; delta follow-ups of
+  arch-review (dimension 8 and step 0 on the rebase and tighten delta),
+  ai-review and delivery-review at the new key; CI green; the ship gate.
+
+It supersedes R6's "leave A2 open" (D1's deferral): A8 is kept as history,
+A9 and A10 are added. Only `CLAUDE.md` conflicted in practice (the headless
+bullet now names `control-host`, `paper` and `civil`); `AGENTS.md`,
+`context-baseline.txt` and the registry merged cleanly.
+
+Status at the amendment: rebased onto `89bf713b`; `--tighten` wrote
+`crates/app 47665` and `!budget 47665` (50,795 -> 47,665, 125 files); the
+independent Python count gives 47,665 in 125 files. `CLAUDE.md` 9,489 on the
+base -> 9,486, `AGENTS.md` 13,613 -> 13,612, `context-baseline.txt`
+untouched.
 
 ## Closing steps
 
@@ -225,3 +264,30 @@ steps land on the PR after this archive; they are not claimed here.
 > recorded after Q16/Q17 and documented in `CLAUDE.md` in one sentence (paid
 > for in the context ratchet). A3: merged into `campaign/lean-a-plus` after
 > the first consolidated PR is cut."
+>
+> The coordinator's follow-up (same session, after Q16 and Q17 merged):
+>
+> Q16 (#453) and Q17 (#452) are both merged into `campaign/lean-a-plus`,
+> and the tip is `89bf713bf321b54fc017cdf15f142a0260661610`. Please finish
+> #450 now, including A2. The trader merged #449 into main as `d3d4b23d`.
+>
+> 1. Fetch, then `git rebase origin/campaign/lean-a-plus`. Expect conflicts
+>    in CLAUDE.md, where the headless sentence now names `paper`, `civil`
+>    and `control-host`, and in the AGENTS.md map and table, which is
+>    exactly at its 13,613-byte ceiling. Also expect them in
+>    `crates/guards/context-baseline.txt` and the guards registry. Keep both
+>    sides, and trim prose rather than raise a context ceiling or budget.
+> 2. Run `cargo run -p quantick-guards -- --tighten` to record the lower
+>    UI-free ceiling after the two moves. Add a baseline comment saying the
+>    drop came from Q16/Q17, and verify the number with your independent
+>    Python count. This closes issue A2. Update the PR body and the goal
+>    file, and use a goal amendment if the archive is already committed.
+> 3. Run the four checks each on its own, plus `cargo test -p
+>    quantick-guards`. Push with `--force-with-lease`.
+> 4. Run delta follow-ups for arch-review (dimension 8 plus step 0 on the
+>    rebase and tighten delta), ai-review and delivery-review at the new
+>    key, with markers recorded through `review_report.sh`. Wait for CI
+>    green, then run `sh .claude/hooks/mission_ship_gate.sh ship 450`.
+>
+> Never merge, never touch main, never use PowerShell for `gh pr`. Return
+> the head, the key, the new ceiling, CI and the ship-gate output.
