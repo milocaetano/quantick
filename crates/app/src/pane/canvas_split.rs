@@ -88,7 +88,7 @@ pub struct TimePaneAreas {
 
 /// One visible pane split into its chart body and its layout-tab footer.
 #[derive(Clone, Copy)]
-pub struct PaneAreas {
+pub(crate) struct PaneAreas {
     pub body: egui::Rect,
     pub layout_strip: egui::Rect,
 }
@@ -131,7 +131,7 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
 /// focus does. Clamping makes a temporarily tiny band spend its available
 /// height on chrome instead of producing an inverted chart rectangle.
 #[must_use]
-pub fn split_pane_layout_strip(area: egui::Rect) -> PaneAreas {
+pub(crate) fn split_pane_layout_strip(area: egui::Rect) -> PaneAreas {
     let split_y = (area.bottom() - crate::layout_strip::STRIP_HEIGHT).max(area.top());
     PaneAreas {
         body: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),

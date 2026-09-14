@@ -88,11 +88,11 @@ pub use frame::PaneFrame;
 pub use gestures::PaneGestures;
 pub use strategies::PaneStrategies;
 
+pub(crate) use canvas_split::split_pane_layout_strip;
 /// The canvas split and the shared-mark contract keep their public paths
 /// here: the tab, the layouts and the control plane name them as `pane::`.
 pub use canvas_split::{
-    CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction,
-    split_pane_layout_strip, split_time_pane,
+    CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction, split_time_pane,
 };
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};
 pub use shared_marks::{PaneIndex, SharedEdit, SharedInteraction, SharedPick};
