@@ -3,8 +3,11 @@
 
 Usage:
     python tools/outside_score/measure.py <tree> [--ui-crate app] [--top 10]
+        [--ui-toolkit egui,eframe]
 
-<tree> is a checkout or an exported revision (`git archive <sha>`). Output is
+<tree> is a checkout or an exported revision (`git archive <sha>`). An unknown
+--ui-crate exits 2; a UI crate that never names --ui-toolkit reports its
+UI-free rows as n/a. Output is
 `metric<TAB>value` rows in a fixed order, so two runs over one tree are
 byte-identical and two revisions diff row by row.
 
@@ -21,11 +24,14 @@ import sys
 from collections import defaultdict
 
 VERSION = 1
-UI_TOOLKIT = re.compile(r"\b(?:egui|eframe)\b")
+DEFAULT_UI_TOOLKIT = "egui,eframe"
 FN_ITEM = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 IMPL = re.compile(r"\bimpl\b")
-TEST_ATTR = re.compile(r"#\[cfg\((?:all\(|any\()?\s*test\b")
-INNER_TEST_ATTR = re.compile(r"#!\[cfg\((?:all\(|any\()?\s*test\b")
+# `cfg(test)`, or `test` anywhere at the top level of `all(...)`/`any(...)`.
+# A nested group such as `not(test)` is consumed whole, so it never matches.
+TEST_CFG = r"cfg\(\s*(?:test\b|(?:all|any)\((?:[^()]|\([^()]*\))*?\btest\b)"
+TEST_ATTR = re.compile(r"#\[" + TEST_CFG)
+INNER_TEST_ATTR = re.compile(r"#!\[" + TEST_CFG)
 CRATE_VIS = re.compile(r"\bpub\s*\(\s*(?:crate|super)\s*\)")
 UNWRAP = re.compile(r"\.unwrap\(\s*\)")
 PANIC = re.compile(r"\b(?:panic|unreachable|todo|unimplemented)!")
@@ -250,12 +256,23 @@ def inherent_impls(prod):
     return names
 
 
-def measure(tree, ui_crate):
+def toolkit_pattern(names):
+    """Whole-identifier matcher for the UI toolkit's crate names."""
+    alternatives = "|".join(re.escape(n.strip()) for n in names.split(",") if n.strip())
+    return re.compile(r"\b(?:" + alternatives + r")\b")
+
+
+class UnknownCrate(ValueError):
+    """The requested UI crate is not in the tree."""
+
+
+def measure(tree, ui_crate, toolkit):
     crates = defaultdict(lambda: defaultdict(int))
     files = []  # (production lines, rel)
     fns = []  # (lines, rel, name)
     impls = defaultdict(lambda: defaultdict(set))
     ui_free_lines = 0
+    names_toolkit = False  # whether any UI-crate file names the toolkit
     hooks = set()  # names the UI crate reads
     all_hooks = set()  # names any crate reads
     crates_dir = os.path.join(tree, "crates")
@@ -300,21 +317,30 @@ def measure(tree, ui_crate):
             all_hooks |= read
             if crate == ui_crate:
                 hooks |= read
-                if not UI_TOOLKIT.search(prod):
+                if toolkit.search(prod):
+                    names_toolkit = True
+                else:
                     ui_free_lines += lines
-    return crates, files, fns, impls, ui_free_lines, hooks, all_hooks
+    ui_free = ui_free_lines if names_toolkit else None
+    return crates, files, fns, impls, ui_free, hooks, all_hooks
 
 
 def ratio(num, den, scale=1.0, places=2):
     return f"{scale * num / den:.{places}f}" if den else "n/a"
 
 
-def render(tree, ui_crate="app", top=10):
-    crates, files, fns, impls, ui_free, hooks, all_hooks = measure(tree, ui_crate)
+def render(tree, ui_crate="app", top=10, toolkit=DEFAULT_UI_TOOLKIT):
+    """The rows for one tree. Raises UnknownCrate when ui_crate is absent, so
+    a misspelt crate never reads as an empty one. When no file of the UI crate
+    names the toolkit, the UI-free rows are `n/a`, not 100 percent."""
+    measured = measure(tree, ui_crate, toolkit_pattern(toolkit))
+    crates, files, fns, impls, ui_free, hooks, all_hooks = measured
+    if ui_crate not in crates:
+        raise UnknownCrate(f"no crate named {ui_crate!r} under {tree}/crates")
     prod = sum(s["prod"] for s in crates.values())
     test = sum(s["test"] for s in crates.values())
     panic = sum(s["panic"] for s in crates.values())
-    ui = crates[ui_crate]["prod"] if ui_crate in crates else 0
+    ui = crates[ui_crate]["prod"]
     lengths = sorted(n for n, _, _ in fns)
     rows = [
         ("measure.version", VERSION),
@@ -324,8 +350,9 @@ def render(tree, ui_crate="app", top=10):
         ("ui_crate", ui_crate),
         ("ui_crate.lines.production", ui),
         ("ui_crate.share_of_production_percent", ratio(ui, prod, 100, 1)),
-        ("ui_crate.ui_free_lines", ui_free),
-        ("ui_crate.ui_free_share_percent", ratio(ui_free, ui, 100, 1)),
+        ("ui_crate.toolkit", toolkit),
+        ("ui_crate.ui_free_lines", "n/a" if ui_free is None else ui_free),
+        ("ui_crate.ui_free_share_percent", "n/a" if ui_free is None else ratio(ui_free, ui, 100, 1)),
         ("ui_crate.harness_hooks", len(hooks)),
         ("harness_hooks", len(all_hooks)),
         ("files.production", len(files)),
@@ -363,7 +390,7 @@ def usage():
 
 def main(argv):
     args = list(argv[1:])
-    options = {"--ui-crate": "app", "--top": "10"}
+    options = {"--ui-crate": "app", "--top": "10", "--ui-toolkit": DEFAULT_UI_TOOLKIT}
     for flag in options:
         if flag in args:
             k = args.index(flag)
@@ -375,7 +402,12 @@ def main(argv):
         return usage()
     if len(args) != 1 or not os.path.isdir(os.path.join(args[0], "crates")):
         return usage()
-    sys.stdout.write(render(args[0], options["--ui-crate"], int(options["--top"])))
+    try:
+        out = render(args[0], options["--ui-crate"], int(options["--top"]), options["--ui-toolkit"])
+    except UnknownCrate as err:
+        sys.stderr.write(f"error: {err}\n")
+        return usage()
+    sys.stdout.write(out)
     return 0
 
 

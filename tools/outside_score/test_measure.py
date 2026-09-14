@@ -137,17 +137,21 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(self.rows["crate.app.impl_spread.Square"], "2")
         self.assertFalse(any(".impl_spread.Iterator" in k for k in self.rows))
 
+    def test_production_lines_are_counted_by_hand(self):
+        # LIB: 23 lines of code outside comments and the cfg(test) module
+        # (the //! line and the block-comment line hold no code). UI_VIEW: 8.
+        # UI_FREE: 4. Sidecar and integration files are test code.
+        self.assertEqual(self.rows["lines.production"], "35")
+        self.assertEqual(self.rows["crate.app.lines.production"], "35")
+
     def test_crate_visibility_counts_pub_crate_and_pub_super(self):
-        prod = int(self.rows["crate.app.lines.production"])
-        expected = f"{1000 * 2 / prod:.2f}"
-        self.assertEqual(self.rows["crate.app.crate_visibility_per_kloc"], expected)
+        # One pub(crate) and one pub(super) over 35 lines: 2000 / 35.
+        self.assertEqual(self.rows["crate.app.crate_visibility_per_kloc"], "57.14")
 
     def test_ui_free_share_and_harness_hooks(self):
-        # hooks.rs never names the toolkit; lib.rs neither. view.rs does.
-        prod = int(self.rows["ui_crate.lines.production"])
-        free = int(self.rows["ui_crate.ui_free_lines"])
-        view_lines = 8  # every non-blank line of UI_VIEW
-        self.assertEqual(prod - free, view_lines)
+        # lib.rs (23) and hooks.rs (4) never name the toolkit; view.rs does.
+        self.assertEqual(self.rows["ui_crate.ui_free_lines"], "27")
+        self.assertEqual(self.rows["ui_crate.ui_free_share_percent"], "77.1")
         # QUANTICK_DEMO_HOOK twice and QUANTICK_OTHER once; the test-only
         # name inside #[cfg(test)] is excluded.
         self.assertEqual(self.rows["ui_crate.harness_hooks"], "2")
@@ -162,7 +166,7 @@ class MeasureTest(unittest.TestCase):
             # 1 signature line + 205 body lines + 1 closing brace = 207.
             body = "    let _x = 1;\n" * 205
             write(root, "crates/core/src/lib.rs", "pub fn big() {\n" + body + "}\n")
-            out = rows(measure.render(root, "app", top=20))
+            out = rows(measure.render(root, "core", top=20))
         self.assertEqual(out["fn.longest.crates/core/src/lib.rs::big"], "207")
         self.assertEqual(out["fns.over_200"], "1")
         self.assertEqual(out["fns.over_200.per_100k"], f"{100000 / 207:.1f}")
@@ -185,16 +189,26 @@ class MeasureTest(unittest.TestCase):
             "crates/app/src/fake.rs",
             '#[cfg(any(test, feature = "fake"))]\npub fn fake() -> u8 {\n    Some(1).unwrap()\n}\n',
         )
+        # `test` after another predicate: 4 lines, all test.
+        write(
+            root,
+            "crates/app/src/late.rs",
+            '#[cfg(all(unix, test))]\npub fn late() -> u8 {\n    Some(2).unwrap()\n}\n',
+        )
+        # `not(test)` is production: 3 lines that stay in the count.
+        write(root, "crates/app/src/live.rs", "#[cfg(not(test))]\npub fn live() {\n}\n")
         out = rows(measure.render(root, "app", top=20))
-        self.assertEqual(out["lines.test"], str(16 + 4 + 4))
+        self.assertEqual(out["lines.test"], str(16 + 4 + 4 + 4))
+        self.assertEqual(out["lines.production"], str(35 + 3))
         self.assertEqual(out["panic_sites"], "1")  # still only `short`'s unwrap
-        self.assertFalse(any(k.endswith("::helper") or k.endswith("::fake") for k in out))
+        for name in ("helper", "fake", "late"):
+            self.assertFalse(any(k.endswith("::" + name) for k in out), name)
 
     def test_an_impl_on_a_trait_object_is_named_by_the_trait(self):
         with tempfile.TemporaryDirectory() as root:
             write(root, "crates/core/src/a.rs", "impl dyn Shape {\n    fn a(&self) {}\n}\n")
             write(root, "crates/core/src/b.rs", "impl dyn Shape {\n    fn b(&self) {}\n}\n")
-            out = rows(measure.render(root, "app", top=20))
+            out = rows(measure.render(root, "core", top=20))
         self.assertEqual(out["crate.core.impl_spread.Shape"], "2")
 
     def test_harness_hooks_count_every_crate_and_the_ui_crate_apart(self):
@@ -205,8 +219,18 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(out["ui_crate.harness_hooks"], "1")
         self.assertEqual(out["harness_hooks"], "2")
 
-    def test_a_flag_without_its_value_prints_usage(self):
-        for argv in (["m", self.tmp.name, "--top"], ["m", self.tmp.name, "--top", "x"], ["m", "--ui-crate"]):
+    def test_a_ui_crate_that_never_names_the_toolkit_is_not_applicable(self):
+        with tempfile.TemporaryDirectory() as root:
+            write(root, "crates/gui/src/lib.rs", "use iced::Element;\npub fn view() {}\n")
+            default = rows(measure.render(root, "gui", top=20))
+            iced = rows(measure.render(root, "gui", top=20, toolkit="iced"))
+        self.assertEqual(default["ui_crate.ui_free_share_percent"], "n/a")
+        self.assertEqual(default["ui_crate.ui_free_lines"], "n/a")
+        self.assertEqual(iced["ui_crate.ui_free_share_percent"], "0.0")
+
+    def test_a_flag_without_its_value_or_an_unknown_crate_prints_usage(self):
+        missing = ["m", self.tmp.name, "--ui-crate", "quantick-app"]
+        for argv in (["m", self.tmp.name, "--top"], ["m", self.tmp.name, "--top", "x"], ["m", "--ui-crate"], missing):
             stderr = sys.stderr
             sys.stderr = io.StringIO()
             try:
