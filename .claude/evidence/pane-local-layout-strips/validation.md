@@ -39,3 +39,22 @@ captures separately held 59-60 fps with zero worker backlog.
   nor its dependencies are changed by this mission. This baseline failure is
   recorded rather than represented as candidate-green; exact-head CI remains
   the final authoritative gate.
+
+## Final correction validation
+
+The runtime tree at `1c2f7f85` moves the addressed create helper into the
+egui-owning strip wiring after CI exposed the app UI-free ratchet. On that
+tree, in mandatory order:
+
+- `cargo fmt --all -- --check`: PASS.
+- `cargo clippy --workspace --all-targets`: PASS.
+- `cargo build --workspace`: PASS.
+- `cargo test --workspace`: the same 2,068/11/two pre-existing order-flow
+  result above; no new or changed failure.
+
+`cargo test -p quantick-guards` then passed all 257 tests across its targets,
+including `app_ui_free_code_stays_within_its_ceiling`, and the focused
+`pane_local_strip_actions_target_the_footer_that_raised_them` test passed.
+The final evidence-only delta changes no executable, fixture, schema, hook,
+generated input, dependency, or runtime configuration; exact-head CI remains
+required rather than inferred from this local baseline exception.
