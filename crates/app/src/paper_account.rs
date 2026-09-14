@@ -18,10 +18,10 @@
 //!
 //! It dereferences to the account, so every caller — the ticket, the dock,
 //! the control plane — keeps asking `account().place_intent(..)` and the
-//! rest of the money path by the names it already used. The three calls that
-//! can journal a close (`on_trade`, `handle_events` and, as a per-frame
-//! backstop, `settle`) are answered here first, so the report never lags the
-//! journal it reads.
+//! rest of the money path by the names it already used. Only `on_trade` and
+//! `handle_events` re-read the report at once; a close any other core call
+//! journals waits for `settle`, which the frame runs before the report window
+//! paints. So the painted report never lags the journal it reads.
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -324,10 +324,10 @@ impl PaperAccount {
         crate::paper_home::resolve(configured, stored)
     }
 
-    /// Drain whatever the export and import threads finished, once a frame,
-    /// and re-read the report if a close reached the journal by a path
-    /// that did not come through [`Self::handle_events`] — a strategy's own
-    /// command, say.
+    /// Drain whatever the export and import threads finished, once a frame
+    /// before the report window paints, and re-read the report if a close
+    /// reached the journal through a core call this host does not shadow —
+    /// `place_intent` or a strategy's own command, say.
     pub(crate) fn settle(&mut self) {
         self.poll_export();
         self.poll_import();

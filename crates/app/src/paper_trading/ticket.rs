@@ -960,15 +960,16 @@ impl PaperTrading {
     // End of frame
     // ------------------------------------------------------------------
 
-    /// Settle this panel's per-frame handshakes. Runs last in the frame, and
-    /// for **every** tab rather than only the one on screen.
+    /// Settle this panel's per-frame handshakes. Runs once a frame, before
+    /// the report window paints, for **every** tab, not only the one shown.
     ///
-    /// Three things happen here: the dock-hover link is cleared (the chart
-    /// has already read it), and the export and import pickers are polled for
-    /// a background job that finished. Both of those jobs belong to the tab
-    /// that started them, and a trader who starts an export and then looks at
-    /// another chart must not have to come back for it to land — which is
-    /// what running this only for the active tab used to mean.
+    /// Here the dock-hover link is cleared (the chart has already read it),
+    /// an open report re-reads a close the journal took since, and the export
+    /// and import pickers are polled for a background job that finished. Both
+    /// jobs belong to the tab that started them, and a trader who starts an
+    /// export and then looks at another chart must not have to come back for
+    /// it to land — which is what running this only for the active tab used
+    /// to mean.
     ///
     /// It no longer draws anything. The message it produces goes to the
     /// window's one toast, through [`Self::take_toast`].

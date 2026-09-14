@@ -712,11 +712,11 @@ impl QuantickApp {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();
-        // Both are window chrome reading the active tab, like the offline
-        // corner and the transport strip: they speak for one market at a time.
+        // Settle before the report paints, so a close any path journaled this
+        // frame is re-read first and the window never shows the journal behind.
+        self.settle_paper_panels(now);
         let tz = self.tz;
         self.active_tab_mut().paper.draw_report_window(ctx, tz);
-        self.settle_paper_panels(now);
         // Both controls go through the tab's own methods, which are also what
         // the registered control-plane actions call: a click and a named call
         // must be able to disagree about nothing.

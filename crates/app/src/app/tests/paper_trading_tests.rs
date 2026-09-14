@@ -2525,3 +2525,61 @@ fn an_order_placed_through_the_registry_names_who_asked_for_it() {
         "and what was asked for, so the attempt is legible"
     );
 }
+
+/// The report window paints every close the frame journaled, in that
+/// frame.
+///
+/// The host re-reads its report at once only for the calls it shadows
+/// (`on_trade`, `handle_events`). A close journaled by a core method reached
+/// through `DerefMut` only raises the account's flag, and `settle` answers
+/// it. The simulator closes on prints, so the core's own `on_trade` stands in
+/// here for every such method: the close is queued through `dispatch` and
+/// filled by a print the host never sees. If the report paints before the
+/// settle, it shows pre-close numbers for a frame.
+#[test]
+fn an_open_report_shows_a_close_in_the_frame_that_journaled_it() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    let dir = crate::scratch::ScratchDir::new("paper-report-same-frame");
+    let print = |agg_id: u64, price: i64| quantick_engine::Trade {
+        agg_id,
+        timestamp_ms: i64::try_from(agg_id).expect("small ids") * 1000,
+        price: rust_decimal::Decimal::from(price),
+        quantity: rust_decimal::Decimal::ONE,
+        side: quantick_engine::Side::Buy,
+    };
+    {
+        let symbol = app.active_tab().symbol.clone();
+        let paper = &mut app.active_tab_mut().paper;
+        paper.redirect_history_dir(dir.path().to_path_buf());
+        paper.set_symbol(&symbol);
+        paper.seed(&print(0, 100));
+        paper.market(quantick_engine::Side::Buy);
+        paper.on_trade(&print(1, 100));
+        assert!(paper.position_summary().is_some(), "a position is open");
+        let (state, env) = paper.report_parts();
+        state.open(&env);
+    }
+    run_frame(&mut app, &ctx);
+    let painted = |app: &QuantickApp| {
+        app.active_tab()
+            .paper
+            .report_state()
+            .snapshot()
+            .map(|snapshot| snapshot.rows.len())
+    };
+    assert_eq!(painted(&app), Some(0), "the report painted, empty");
+
+    {
+        let account = app.active_tab_mut().paper.account_mut();
+        let events = account.dispatch(quantick_sim::Command::ClosePosition);
+        assert!(events.is_empty(), "the close waits for the next print");
+        quantick_paper::PaperAccount::on_trade(account, &print(2, 105));
+    }
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        painted(&app),
+        Some(1),
+        "the report painted the close in the frame that journaled it"
+    );
+}
