@@ -10,8 +10,9 @@
 use std::str::FromStr as _;
 
 use quantick_engine::{
-    Bar, BarKind, BarSpec, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS, ImbalanceUnit,
-    MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, Side, Trade, fixture, fmt_time_interval, golden,
+    Bar, BarKind, BarSpec, BarSpecError, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS,
+    ImbalanceUnit, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, Side, Trade, fixture,
+    fmt_time_interval, golden,
 };
 use rust_decimal::Decimal;
 
@@ -281,15 +282,89 @@ fn a_spec_no_control_could_produce_does_not_parse() {
         "candles:5",
     ] {
         let error = BarSpec::parse(bad).expect_err(bad);
-        assert!(!error.is_empty(), "{bad} must explain itself");
+        assert!(!error.to_string().is_empty(), "{bad} must explain itself");
     }
     // The message is the point: an operator who typed it wrong gets the
     // vocabulary back, not "invalid input".
     assert!(
         BarSpec::parse("candles:5")
             .expect_err("rejected")
+            .to_string()
             .contains("tick")
     );
+}
+
+/// A caller that is not a person — a control call, a script repairing its own
+/// request — reads why a spec was refused from the variant, not by parsing
+/// prose; a person still reads the same sentence as before.
+#[test]
+fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
+    let cases: [(&str, BarSpecError, &str); 8] = [
+        (
+            "tick",
+            BarSpecError::NotKindParameter {
+                text: "tick".to_owned(),
+            },
+            "'tick' is not a kind:parameter bar spec, like 'time:1m'",
+        ),
+        (
+            "candles:5",
+            BarSpecError::UnknownKind {
+                kind: "candles".to_owned(),
+            },
+            "unknown bar kind 'candles'; one of tick, volume, dollar, time, imbalance, trades",
+        ),
+        (
+            "tick:0",
+            BarSpecError::NotPositiveCount {
+                kind: BarKind::Tick,
+                param: "0".to_owned(),
+            },
+            "tick bars need a positive whole number, got '0'",
+        ),
+        (
+            "dollar:nope",
+            BarSpecError::NotPositiveNumber {
+                kind: BarKind::Dollar,
+                param: "nope".to_owned(),
+            },
+            "dollar bars need a positive number, got 'nope'",
+        ),
+        (
+            "imbalance:notional:500",
+            BarSpecError::UnknownImbalanceUnit {
+                unit: "notional".to_owned(),
+            },
+            "unknown imbalance unit 'notional'; one of trades, volume, dollar",
+        ),
+        (
+            "imbalance:volume:1.5",
+            BarSpecError::NotPositiveTarget {
+                target: "1.5".to_owned(),
+            },
+            "imbalance bars need a positive whole trade target, got '1.5'",
+        ),
+        (
+            "time:1w",
+            BarSpecError::NotAnInterval {
+                text: "1w".to_owned(),
+            },
+            "'1w' is not a time interval, like '1m' or '30s'",
+        ),
+        (
+            "time:50ms",
+            BarSpecError::IntervalOutOfRange {
+                ms: 50,
+                param: "50ms".to_owned(),
+            },
+            "time interval '50ms' is outside 100ms..=1d — the domain both time-bar controls accept",
+        ),
+    ];
+    for (text, variant, sentence) in cases {
+        let refusal = BarSpec::parse(text).expect_err(text);
+        assert_eq!(refusal, variant, "{text}");
+        assert_eq!(refusal.to_string(), sentence, "{text}");
+    }
 }
 
 #[test]
