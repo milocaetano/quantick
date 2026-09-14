@@ -187,7 +187,19 @@ pub struct SessionRun {
 ///
 /// Indicator and simulator state are created here and dropped with the
 /// session: nothing carries over into the next recorded day.
+///
+/// # Panics
+///
+/// On a deal-count (`trades:N`) spec: a recorded session carries no deal
+/// counter to cut it on. [`crate::bars::parse_runnable`] refuses that spec
+/// with a typed error before any run, so reaching this is a caller's bug.
 pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy) -> SessionRun {
+    assert!(
+        !spec.kind().needs_deal_counter(),
+        "{} needs the venue's deal counter, which a recorded session does not carry; \
+         bars::parse_runnable refuses it before a run",
+        spec.to_config_string()
+    );
     let mut builder = spec.build();
     let mut host = IndicatorHost::new();
     let slots: Vec<InstanceId> = strategy

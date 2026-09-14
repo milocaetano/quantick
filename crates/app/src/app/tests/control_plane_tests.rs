@@ -5489,7 +5489,7 @@ fn incremental_lane_dense_frame_benchmark() {
     ] {
         let ctx = egui::Context::default();
         let (mut app, events, _commands, _book) = test_app();
-        app.active_tab_mut().flow_pane.spec.set(spec.clone());
+        app.active_tab_mut().flow_pane.spec.set(spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
         assert_eq!(app.active_tab().flow_pane.state.spec(), &spec);

@@ -190,7 +190,7 @@ impl SliceLane {
 fn the_chunked_tape_sends_the_worker_what_the_slice_sent() {
     use quantick_engine::trade_tape::CHUNK_TRADES;
     for spec in [BarSpec::Tick(50), BarSpec::Time(86_400_000)] {
-        let mut state = crate::state::ChartState::new(spec.clone());
+        let mut state = crate::state::ChartState::new(spec);
         let mut contiguous: Vec<Trade> = Vec::new();
         let mut lane = LaneTransport::default();
         let mut oracle = SliceLane::default();

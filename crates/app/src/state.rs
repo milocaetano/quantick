@@ -10,13 +10,13 @@
 //! No egui, no async here, so the ingest, dispatch and rebuild logic is
 //! unit-tested in CI.
 
-/// Re-exported so every consumer of the bar vocabulary finds the imbalance
-/// unit next to [`BarSpec`], not off in the engine.
-pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
-use quantick_engine::{
-    Bar, BarBuilder, BarFootprint, BarProgress, DealBarBuilder, DealSample, DollarBarBuilder,
-    ImbalanceBarBuilder, PriceGrid, TickBarBuilder, TimeBarBuilder, Trade, VolumeBarBuilder,
+use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};
+/// The bar vocabulary lives in the engine, one definition for the chart, the
+/// backtest and the bot. Re-exported so the chart's callers keep finding it
+/// here, with the imbalance unit beside it.
+pub use quantick_engine::{
+    BarKind, BarSpec, ImbalanceUnit, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,
 };
 use rust_decimal::Decimal;
 
@@ -31,133 +31,15 @@ fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
     }
 }
 
-/// Which alternative bar type the chart is showing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BarKind {
-    /// Close every N trades.
-    Tick,
-    /// Close every N units of traded quantity.
-    Volume,
-    /// Close every N notional (price × quantity).
-    Dollar,
-    /// Close every N milliseconds of trade time.
-    Time,
-    /// Close when aggressor imbalance beats an adaptive threshold
-    /// (López de Prado tick imbalance bars).
-    Imbalance,
-    /// Close every N exchange deals, as the venue counts them — ProfitChart's
-    /// *Trades* periodicity. Distinct from [`Tick`](Self::Tick) wherever a
-    /// print folds several deals, which on MetaTrader is every print.
-    Trades,
-}
-
-impl BarKind {
-    /// All bar kinds, for building a selector.
-    pub const ALL: [BarKind; 6] = [
-        BarKind::Tick,
-        BarKind::Volume,
-        BarKind::Dollar,
-        BarKind::Time,
-        BarKind::Imbalance,
-        BarKind::Trades,
-    ];
-
-    /// The spec this kind opens on when nothing has chosen a parameter for
-    /// it yet — the value a fresh chart, and every kind the trader has not
-    /// visited, starts from.
-    ///
-    /// One arm per variant, and the only per-kind table the bar vocabulary
-    /// still needs: [`SpecSelector`] builds its whole retained set by mapping
-    /// this over [`Self::ALL`], so a new kind's default is written here and
-    /// nowhere else.
-    #[must_use]
-    pub fn default_spec(self) -> BarSpec {
-        match self {
-            BarKind::Tick => BarSpec::Tick(50),
-            BarKind::Trades => BarSpec::Trades(2_000),
-            BarKind::Volume => BarSpec::Volume(dec_from_f64(5.0)),
-            BarKind::Dollar => BarSpec::Dollar(dec_from_f64(500_000.0)),
-            // `bars -> time` opens on a real timeframe, not a one-second
-            // chart (audit QW2): the same 1m the split's time pane opens on.
-            BarKind::Time => BarSpec::Time(crate::time_header::DEFAULT_INTERVAL_MS),
-            BarKind::Imbalance => BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
-        }
-    }
-
-    /// A short display label.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            BarKind::Tick => "tick",
-            BarKind::Volume => "volume",
-            BarKind::Dollar => "dollar",
-            BarKind::Time => "time",
-            BarKind::Imbalance => "imbalance",
-            BarKind::Trades => "trades",
-        }
-    }
-
-    /// Whether this rule counts the venue's deals, and so needs a feed whose
-    /// prints come with that count ([`crate::config::FeedCapabilities::deal_counter`]).
-    ///
-    /// Not offered elsewhere rather than greyed out: without a counter the
-    /// rule has nothing to cut on, and a selector entry that can never work
-    /// would only invite the reading "tick is the same thing", which is the
-    /// misunderstanding this kind exists to correct.
-    #[must_use]
-    pub fn needs_deal_counter(self) -> bool {
-        matches!(self, BarKind::Trades)
-    }
-
-    /// Whether this rule measures traded size, and so needs a venue that
-    /// prints one.
-    ///
-    /// Tick, time and imbalance bars all count *events*: imbalance in its
-    /// default trades unit sums a signed ±1 per trade (López de Prado's tick
-    /// imbalance bars), never a quantity. They stay meaningful on a
-    /// quote-driven feed. Volume and dollar bars do not — fed one synthetic
-    /// unit per tick, a "volume 500" bar is a 500-tick bar wearing a
-    /// misleading label. The imbalance *kind* answers for that default: its
-    /// volume/dollar units measure size too, and the toolbar's unit selector
-    /// gates them per feed exactly as this method gates the kinds.
-    #[must_use]
-    pub fn needs_traded_volume(self) -> bool {
-        match self {
-            BarKind::Volume | BarKind::Dollar => true,
-            BarKind::Tick | BarKind::Time | BarKind::Imbalance | BarKind::Trades => false,
-        }
-    }
-
-    /// The unit the closing rule counts in, for the forming bar's countdown.
-    #[must_use]
-    pub fn progress_unit(self) -> &'static str {
-        match self {
-            BarKind::Tick | BarKind::Imbalance => "ticks",
-            BarKind::Volume => "vol",
-            BarKind::Dollar => "notional",
-            BarKind::Time => "ms",
-            BarKind::Trades => "deals",
-        }
-    }
-}
-
-/// The smallest a `Decimal` bar parameter — volume units, dollar notional —
-/// is allowed to be. Bar parameters only: [`dec_from_f64`] carries prices too,
-/// and floors those with its own constant.
-///
-/// Not zero: a bar rule that closes on no quantity closes on every trade, and
-/// the chart that produces is not what anyone asked for. Small enough that no
-/// parameter a trader would choose is touched by it.
-pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
-
 /// Any UI `f64` as a positive [`Decimal`].
 ///
 /// Two kinds of number pass through here and they are not the same kind: a bar
 /// rule's threshold from the toolbar, and — via `pane::strategy_region` — a
 /// drawing's anchor *prices*. The floor below is its own constant for exactly
 /// that reason: it is the positivity floor this conversion has always applied,
-/// not [`DECIMAL_PARAM_FLOOR`], and tuning the bar-parameter floor must not
-/// silently retune where a strategy region's bounds land.
+/// not the engine's bar-parameter floor
+/// ([`DECIMAL_PARAM_FLOOR`](quantick_engine::DECIMAL_PARAM_FLOOR)), and tuning
+/// that floor must not silently retune where a strategy region's bounds land.
 ///
 /// The price case is why that floor is a wart rather than a guard: a region
 /// drawn on a negative-valued band (a CVD) has both bounds collapsed onto it.
@@ -167,218 +49,13 @@ pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
 pub fn dec_from_f64(x: f64) -> Decimal {
     use rust_decimal::prelude::FromPrimitive as _;
     /// The smallest positive `Decimal` this conversion produces. A separate
-    /// number from [`DECIMAL_PARAM_FLOOR`], which it happens to equal: they
-    /// answer to different callers.
+    /// number from the engine's
+    /// [`DECIMAL_PARAM_FLOOR`](quantick_engine::DECIMAL_PARAM_FLOOR), which it
+    /// happens to equal: they answer to different callers.
     const POSITIVE_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
     Decimal::from_f64(x)
         .unwrap_or(Decimal::ONE)
         .max(POSITIVE_FLOOR)
-}
-
-/// A bar type together with its threshold parameter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BarSpec {
-    /// N trades per bar.
-    Tick(u64),
-    /// N units of quantity per bar.
-    Volume(Decimal),
-    /// N notional per bar.
-    Dollar(Decimal),
-    /// N milliseconds per bar. The interval a control may ask for is bounded
-    /// by [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`].
-    Time(i64),
-    /// The adaptive imbalance rule: the measure θ accumulates (trades, volume
-    /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
-    /// bar, which counts trades in every unit.
-    Imbalance(ImbalanceUnit, u64),
-    /// N exchange deals per bar, joined to prints through the venue's session
-    /// counter ([`ChartState::observe_deals`]).
-    Trades(u64),
-}
-
-impl BarSpec {
-    /// The kind, discarding the parameter.
-    #[must_use]
-    pub fn kind(&self) -> BarKind {
-        match self {
-            BarSpec::Tick(_) => BarKind::Tick,
-            BarSpec::Volume(_) => BarKind::Volume,
-            BarSpec::Dollar(_) => BarKind::Dollar,
-            BarSpec::Time(_) => BarKind::Time,
-            BarSpec::Imbalance(..) => BarKind::Imbalance,
-            BarSpec::Trades(_) => BarKind::Trades,
-        }
-    }
-
-    /// This spec with its parameter held to what the engine will accept.
-    ///
-    /// A selector can hold a zero — a workspace written by an older build, a
-    /// config file, or a control call that asked for one — and a zero-length
-    /// bar rule is not a rule: a volume bar that closes on no volume closes on
-    /// every trade.
-    ///
-    /// The floors are the ones the selectors already enforced before the
-    /// parameters moved onto the variants: `1` for the counted kinds, and
-    /// [`DECIMAL_PARAM_FLOOR`] for the two measured in `Decimal`, which is
-    /// what [`dec_from_f64`] has always applied on the way in.
-    #[must_use]
-    pub fn clamped(&self) -> BarSpec {
-        match self {
-            BarSpec::Tick(n) => BarSpec::Tick((*n).max(1)),
-            BarSpec::Trades(n) => BarSpec::Trades((*n).max(1)),
-            BarSpec::Time(ms) => BarSpec::Time((*ms).max(1)),
-            BarSpec::Imbalance(unit, target) => BarSpec::Imbalance(*unit, (*target).max(1)),
-            BarSpec::Volume(units) => BarSpec::Volume((*units).max(DECIMAL_PARAM_FLOOR)),
-            BarSpec::Dollar(notional) => BarSpec::Dollar((*notional).max(DECIMAL_PARAM_FLOOR)),
-        }
-    }
-
-    /// Construct the matching engine builder. This is the whole "bar type →
-    /// builder" dispatch: one place, four consumers of the same engine.
-    #[must_use]
-    pub fn build(&self) -> Box<dyn BarBuilder> {
-        match self {
-            BarSpec::Tick(n) => Box::new(TickBarBuilder::new(*n)),
-            BarSpec::Volume(units) => Box::new(VolumeBarBuilder::new(*units)),
-            BarSpec::Dollar(notional) => Box::new(DollarBarBuilder::new(*notional)),
-            BarSpec::Time(ms) => Box::new(TimeBarBuilder::new(*ms)),
-            BarSpec::Imbalance(unit, target) => {
-                Box::new(ImbalanceBarBuilder::with_unit(*target, *unit))
-            }
-            BarSpec::Trades(n) => Box::new(DealBarBuilder::new(*n)),
-        }
-    }
-
-    /// The interval this spec cuts bars at, when it cuts by time at all.
-    ///
-    /// Only a time spec has one: a tick or volume bar covers whatever span its
-    /// count happened to take, which is not an interval anything can be folded
-    /// to.
-    #[must_use]
-    pub fn time_interval_ms(&self) -> Option<i64> {
-        match self {
-            Self::Time(ms) => Some(*ms),
-            _ => None,
-        }
-    }
-
-    /// A human-readable summary, e.g. `tick(50)` or `time(1m)`.
-    #[must_use]
-    pub fn summary(&self) -> String {
-        match self {
-            BarSpec::Tick(n) => format!("tick({n})"),
-            BarSpec::Volume(u) => format!("volume({u})"),
-            BarSpec::Dollar(d) => format!("dollar({d})"),
-            BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
-            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
-            BarSpec::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
-            BarSpec::Trades(n) => format!("trades({n})"),
-        }
-    }
-
-    /// This spec in the `kind:parameter` vocabulary [`Self::parse`] reads —
-    /// the form `default_bars` uses in the feeds configuration and the saved
-    /// workspace ([`crate::ui_state`]) writes.
-    ///
-    /// The round trip is the point: whatever a chart is showing, a config or a
-    /// workspace file can ask for by name, and the
-    /// `every_bar_spec_survives_the_config_round_trip` test holds the two
-    /// halves together.
-    #[must_use]
-    pub fn to_config_string(&self) -> String {
-        match self {
-            BarSpec::Tick(n) => format!("tick:{n}"),
-            BarSpec::Volume(units) => format!("volume:{units}"),
-            BarSpec::Dollar(notional) => format!("dollar:{notional}"),
-            BarSpec::Time(ms) => format!("time:{}", fmt_time_interval(*ms)),
-            // The trades unit keeps its historical short form, so every spec
-            // a workspace saved before units existed still reads back as the
-            // same chart.
-            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
-            BarSpec::Imbalance(unit, target) => format!("imbalance:{}:{target}", unit.as_str()),
-            BarSpec::Trades(n) => format!("trades:{n}"),
-        }
-    }
-
-    /// Parse a `kind:parameter` spec string, the form `default_bars` uses in
-    /// the feeds configuration: `tick:50`, `volume:5`, `dollar:500000`,
-    /// `imbalance:100` (also `imbalance:volume:500` / `imbalance:dollar:500`
-    /// to pick what θ accumulates), `time:1m` (also `time:30s`, `time:1h`,
-    /// `time:1500ms` or a bare millisecond count).
-    ///
-    /// Every rule a UI control enforces holds here too — a positive
-    /// parameter, and a time interval inside
-    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] — so a config
-    /// cannot open a chart no control could have produced.
-    ///
-    /// # Errors
-    ///
-    /// Returns a human-readable message naming what is wrong, for the config
-    /// loader to surface verbatim.
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let (kind, param) = text
-            .split_once(':')
-            .ok_or_else(|| format!("'{text}' is not a kind:parameter bar spec, like 'time:1m'"))?;
-        let (kind, param) = (kind.trim(), param.trim());
-        let positive_count = |what: &str| -> Result<u64, String> {
-            match param.parse::<u64>() {
-                Ok(n) if n > 0 => Ok(n),
-                _ => Err(format!(
-                    "{what} bars need a positive whole number, got '{param}'"
-                )),
-            }
-        };
-        let positive_decimal = |what: &str| -> Result<Decimal, String> {
-            match param.parse::<Decimal>() {
-                Ok(d) if d > Decimal::ZERO => Ok(d),
-                _ => Err(format!("{what} bars need a positive number, got '{param}'")),
-            }
-        };
-        match kind {
-            "tick" => Ok(BarSpec::Tick(positive_count("tick")?)),
-            "trades" => Ok(BarSpec::Trades(positive_count("trades")?)),
-            "imbalance" => {
-                // The parameter is `target` or `unit:target`. The unit picks
-                // what θ accumulates; the target counts trades in every unit.
-                let (unit, target) = match param.split_once(':') {
-                    None => (ImbalanceUnit::Trades, param),
-                    Some((token, target)) => {
-                        let token = token.trim();
-                        let unit = ImbalanceUnit::parse_token(token).ok_or_else(|| {
-                            format!(
-                                "unknown imbalance unit '{token}'; one of trades, \
-                                 volume, dollar"
-                            )
-                        })?;
-                        (unit, target.trim())
-                    }
-                };
-                match target.parse::<u64>() {
-                    Ok(n) if n > 0 => Ok(BarSpec::Imbalance(unit, n)),
-                    _ => Err(format!(
-                        "imbalance bars need a positive whole trade target, got '{target}'"
-                    )),
-                }
-            }
-            "volume" => Ok(BarSpec::Volume(positive_decimal("volume")?)),
-            "dollar" => Ok(BarSpec::Dollar(positive_decimal("dollar")?)),
-            "time" => {
-                let ms = parse_time_interval(param)?;
-                if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
-                    return Err(format!(
-                        "time interval '{param}' is outside {}..={} — the domain both \
-                         time-bar controls accept",
-                        fmt_time_interval(MIN_TIME_INTERVAL_MS),
-                        fmt_time_interval(MAX_TIME_INTERVAL_MS),
-                    ));
-                }
-                Ok(BarSpec::Time(ms))
-            }
-            _ => Err(format!(
-                "unknown bar kind '{kind}'; one of tick, volume, dollar, time, imbalance, trades"
-            )),
-        }
-    }
 }
 
 /// A bar kind and one retained parameter per kind — the state the BARS group
@@ -516,64 +193,6 @@ impl SpecSelector {
     }
 }
 
-/// Parse a time interval in the same vocabulary [`fmt_time_interval`] emits:
-/// `1h`, `5m`, `90s`, `1500ms`, or a bare millisecond count. The round trip is
-/// deliberate — whatever the status bar can say, a config can ask for.
-fn parse_time_interval(text: &str) -> Result<i64, String> {
-    let parse_scaled = |digits: &str, scale: i64| -> Result<i64, String> {
-        digits
-            .parse::<i64>()
-            .ok()
-            .and_then(|n| n.checked_mul(scale))
-            .filter(|ms| *ms > 0)
-            .ok_or_else(|| format!("'{text}' is not a time interval, like '1m' or '30s'"))
-    };
-    // `ms` before `m` and `s`: the longest suffix owns the string.
-    if let Some(digits) = text.strip_suffix("ms") {
-        parse_scaled(digits, 1)
-    } else if let Some(digits) = text.strip_suffix('h') {
-        parse_scaled(digits, 3_600_000)
-    } else if let Some(digits) = text.strip_suffix('m') {
-        parse_scaled(digits, 60_000)
-    } else if let Some(digits) = text.strip_suffix('s') {
-        parse_scaled(digits, 1_000)
-    } else {
-        parse_scaled(text, 1)
-    }
-}
-
-/// A time-bar interval for humans: `1m`, `5m`, `1h` for round units, `90s`
-/// for whole seconds, raw milliseconds otherwise. The same vocabulary the
-/// timeframe chips speak, so the status bar, the toolbar and the chips can
-/// never disagree about what `60000` means (the audit's MAJOR-6: two time
-/// controls speaking different languages).
-#[must_use]
-pub fn fmt_time_interval(ms: i64) -> String {
-    if ms >= 3_600_000 && ms % 3_600_000 == 0 {
-        format!("{}h", ms / 3_600_000)
-    } else if ms >= 60_000 && ms % 60_000 == 0 {
-        format!("{}m", ms / 60_000)
-    } else if ms >= 1_000 && ms % 1_000 == 0 {
-        format!("{}s", ms / 1_000)
-    } else {
-        format!("{ms}ms")
-    }
-}
-
-/// The bars derived from the retained trade stream, plus the backfill/live
-/// boundary, for the currently selected [`BarSpec`].
-/// Smallest interval a time-bar control may ask for, in milliseconds.
-///
-/// A tenth of a second is already finer than any venue's own bar; below it
-/// the series is a tick chart wearing a clock.
-pub const MIN_TIME_INTERVAL_MS: i64 = 100;
-/// Largest interval a time-bar control may ask for, in milliseconds — one
-/// day, the coarsest that still fits inside a session.
-///
-/// The two time-bar controls (the toolbar's BARS group and the time pane's
-/// own header) read the same bounds: they set the same `BarSpec::Time`, and a
-/// preset one of them offers has to be a value the other accepts.
-pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
 /// Milliseconds per drag point, shared by both controls so the same gesture
 /// moves the same amount wherever it is made.
 ///
@@ -583,6 +202,8 @@ pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
 /// a speed that made an hour a short drag would make a second unreachable.
 pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
 
+/// The bars derived from the retained trade stream, plus the backfill/live
+/// boundary, for the currently selected [`BarSpec`].
 pub struct ChartState {
     spec: BarSpec,
     /// O(1) identity of the current temporal bar partition.
@@ -1197,51 +818,19 @@ impl ChartState {
 }
 
 #[cfg(test)]
+mod bar_spec_parity_tests;
+
+#[cfg(test)]
 mod tape_identity_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_engine::Side;
+    use quantick_engine::{DECIMAL_PARAM_FLOOR, Side};
     use std::str::FromStr as _;
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
-    }
-
-    /// The one thing [`SpecSelector`] takes on trust: that `ALL` is the whole
-    /// of `BarKind`. The match is exhaustive and unmatchable by a wildcard, so
-    /// adding a variant breaks this line at compile time; the assertion then
-    /// catches the variant that was added here but forgotten in `ALL`.
-    #[test]
-    fn barkind_all_lists_every_variant() {
-        let named = [
-            BarKind::Tick,
-            BarKind::Volume,
-            BarKind::Dollar,
-            BarKind::Time,
-            BarKind::Imbalance,
-            BarKind::Trades,
-        ];
-        for kind in named {
-            match kind {
-                BarKind::Tick
-                | BarKind::Volume
-                | BarKind::Dollar
-                | BarKind::Time
-                | BarKind::Imbalance
-                | BarKind::Trades => {}
-            }
-            assert!(
-                BarKind::ALL.contains(&kind),
-                "{kind:?} is a bar kind BarKind::ALL does not list, so SpecSelector has no slot to retain its parameter in"
-            );
-        }
-        assert_eq!(
-            BarKind::ALL.len(),
-            named.len(),
-            "BarKind::ALL and this test disagree about how many kinds there are"
-        );
     }
 
     /// A zero parameter reaches the selector from outside — a workspace file,
@@ -1263,7 +852,7 @@ mod tests {
             BarSpec::Dollar(Decimal::ZERO),
         ];
         for spec in zeroed {
-            let selector = SpecSelector::new(spec.clone());
+            let selector = SpecSelector::new(spec);
             let read_back = selector.spec();
             let floored = match &read_back {
                 BarSpec::Tick(n) => u64::from(*n > 0),
@@ -1294,122 +883,6 @@ mod tests {
             BarSpec::Tick(377),
             "the tick slot was never overwritten by the volume detour"
         );
-    }
-
-    /// Whatever a chart is showing, a config or a saved workspace can name —
-    /// and naming it gets that chart back. Both halves of the vocabulary live
-    /// in this file, and this is what stops one of them drifting.
-    #[test]
-    fn every_bar_spec_survives_the_config_round_trip() {
-        for spec in [
-            BarSpec::Tick(50),
-            BarSpec::Trades(2000),
-            BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
-            BarSpec::Imbalance(ImbalanceUnit::Volume, 500),
-            BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500),
-            BarSpec::Volume(dec("5.25")),
-            BarSpec::Dollar(dec("500000")),
-            BarSpec::Time(60_000),
-            BarSpec::Time(3_600_000),
-            // A parameter with no round unit: the suffix ladder has to fall
-            // through to bare milliseconds rather than rounding it away.
-            BarSpec::Time(1_500),
-        ] {
-            let text = spec.to_config_string();
-            assert_eq!(
-                BarSpec::parse(&text),
-                Ok(spec.clone()),
-                "'{text}' did not come back as the spec that wrote it"
-            );
-        }
-    }
-
-    /// `default_bars` speaks the same vocabulary the UI does — every kind,
-    /// every interval suffix, padding tolerated.
-    #[test]
-    fn bar_specs_parse_in_the_config_vocabulary() {
-        assert_eq!(BarSpec::parse("tick:50"), Ok(BarSpec::Tick(50)));
-        assert_eq!(
-            BarSpec::parse("imbalance:100"),
-            Ok(BarSpec::Imbalance(ImbalanceUnit::Trades, 100)),
-            "the pre-units short form still names tick imbalance bars"
-        );
-        assert_eq!(
-            BarSpec::parse("imbalance:trades:100"),
-            Ok(BarSpec::Imbalance(ImbalanceUnit::Trades, 100))
-        );
-        assert_eq!(
-            BarSpec::parse("imbalance:volume:500"),
-            Ok(BarSpec::Imbalance(ImbalanceUnit::Volume, 500))
-        );
-        assert_eq!(
-            BarSpec::parse("imbalance:dollar:2500"),
-            Ok(BarSpec::Imbalance(ImbalanceUnit::Dollar, 2500))
-        );
-        assert_eq!(BarSpec::parse("volume:5"), Ok(BarSpec::Volume(dec("5"))));
-        assert_eq!(
-            BarSpec::parse("volume:0.5"),
-            Ok(BarSpec::Volume(dec("0.5")))
-        );
-        assert_eq!(
-            BarSpec::parse("dollar:500000"),
-            Ok(BarSpec::Dollar(dec("500000")))
-        );
-        assert_eq!(BarSpec::parse("time:1m"), Ok(BarSpec::Time(60_000)));
-        assert_eq!(BarSpec::parse("time:90s"), Ok(BarSpec::Time(90_000)));
-        assert_eq!(BarSpec::parse("time:1h"), Ok(BarSpec::Time(3_600_000)));
-        assert_eq!(BarSpec::parse("time:1500ms"), Ok(BarSpec::Time(1_500)));
-        assert_eq!(BarSpec::parse("time:60000"), Ok(BarSpec::Time(60_000)));
-        assert_eq!(BarSpec::parse(" time : 5m "), Ok(BarSpec::Time(300_000)));
-    }
-
-    /// Whatever the status bar can say, a config can ask for: the interval
-    /// formatter and the parser are inverses over the whole domain shape.
-    #[test]
-    fn time_interval_labels_round_trip_through_the_parser() {
-        for ms in [
-            MIN_TIME_INTERVAL_MS,
-            1_500,
-            60_000,
-            300_000,
-            3_600_000,
-            MAX_TIME_INTERVAL_MS,
-        ] {
-            let label = fmt_time_interval(ms);
-            assert_eq!(
-                BarSpec::parse(&format!("time:{label}")),
-                Ok(BarSpec::Time(ms)),
-                "{label}"
-            );
-        }
-    }
-
-    /// A spec no live control could produce must not come in through the
-    /// config either — its only symptom would be a chart nobody asked for.
-    #[test]
-    fn a_spec_no_control_could_produce_does_not_parse() {
-        for bad in [
-            "",
-            "tick",
-            "tick:",
-            "tick:0",
-            "tick:-5",
-            "volume:0",
-            "dollar:nope",
-            "imbalance:1.5",
-            "imbalance:volume:0",
-            "imbalance:volume:1.5",
-            "imbalance:notional:500",
-            "imbalance:volume:",
-            "time:0",
-            "time:50ms",
-            "time:25h",
-            "time:1w",
-            "grid:1",
-        ] {
-            let error = BarSpec::parse(bad).expect_err(bad);
-            assert!(!error.is_empty(), "{bad} must explain itself");
-        }
     }
 
     fn trade(agg_id: u64) -> Trade {
@@ -1520,63 +993,6 @@ mod tests {
         .collect();
         chart.ingest_backfill(&history);
         assert_eq!(chart.tape_price_step(), Some(dec("0.5")));
-    }
-
-    #[test]
-    fn only_the_size_measuring_rules_need_a_traded_volume() {
-        // Volume and dollar bars measure size, so a venue that prints none can
-        // only fake them.
-        assert!(BarKind::Volume.needs_traded_volume());
-        assert!(BarKind::Dollar.needs_traded_volume());
-        // The other three count events, not quantity — imbalance answering
-        // for its default trades unit, which sums a signed ±1 per trade; the
-        // unit selector gates its volume/dollar units per feed.
-        assert!(!BarKind::Tick.needs_traded_volume());
-        assert!(!BarKind::Time.needs_traded_volume());
-        assert!(!BarKind::Imbalance.needs_traded_volume());
-    }
-
-    /// One vocabulary for every surface that names a timeframe: the summary
-    /// speaks the chips' own labels, falling back to finer units only where
-    /// no coarser one writes the value back exactly.
-    #[test]
-    fn time_summaries_speak_the_chips_language() {
-        assert_eq!(fmt_time_interval(60_000), "1m");
-        assert_eq!(fmt_time_interval(300_000), "5m");
-        assert_eq!(fmt_time_interval(900_000), "15m");
-        assert_eq!(fmt_time_interval(3_600_000), "1h");
-        assert_eq!(
-            fmt_time_interval(90_000),
-            "90s",
-            "90s is not a round minute"
-        );
-        assert_eq!(fmt_time_interval(1_000), "1s");
-        assert_eq!(fmt_time_interval(1_500), "1500ms");
-        assert_eq!(BarSpec::Time(60_000).summary(), "time(1m)");
-        assert_eq!(BarSpec::Time(500).summary(), "time(500ms)");
-    }
-
-    #[test]
-    fn build_dispatches_every_kind() {
-        // Tick(1) and Imbalance(1) close on the first trade; the others simply
-        // must build and accept a trade without panicking.
-        for spec in [
-            BarSpec::Tick(1),
-            BarSpec::Volume(dec("1.0")),
-            BarSpec::Dollar(dec("100")),
-            BarSpec::Time(1),
-            BarSpec::Imbalance(ImbalanceUnit::Trades, 1),
-            BarSpec::Imbalance(ImbalanceUnit::Volume, 1),
-            BarSpec::Imbalance(ImbalanceUnit::Dollar, 1),
-            BarSpec::Trades(1),
-        ] {
-            let kind = spec.kind();
-            let mut builder = spec.build();
-            let closed = builder.push(&trade(1));
-            if matches!(kind, BarKind::Tick | BarKind::Imbalance) {
-                assert!(closed.is_some(), "{kind:?}(1) closes immediately");
-            }
-        }
     }
 
     /// A recorded day loaded behind the live tape is older than the live

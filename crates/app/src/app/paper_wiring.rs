@@ -198,7 +198,7 @@ impl QuantickApp {
         let spec = spec.unwrap_or_else(|| {
             self.config
                 .startup_spec_for(&feed_id)
-                .unwrap_or_else(|| self.active_tab().flow_pane.state.spec().clone())
+                .unwrap_or_else(|| *self.active_tab().flow_pane.state.spec())
         });
         let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts

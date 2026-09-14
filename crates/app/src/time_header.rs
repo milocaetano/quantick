@@ -33,8 +33,9 @@ pub const PRESETS: [(&str, i64); 4] = [
 ];
 
 /// The interval a time pane opens on when the split is first shown: M1, the
-/// timeframe a flow trader glances at for context.
-pub const DEFAULT_INTERVAL_MS: i64 = 60_000;
+/// timeframe a flow trader glances at for context. The engine's default for a
+/// time spec, so a fresh `bars -> time` and a fresh time pane open alike.
+pub const DEFAULT_INTERVAL_MS: i64 = quantick_engine::DEFAULT_TIME_INTERVAL_MS;
 
 /// The narrowest strip that still gets the layout's name.
 ///
