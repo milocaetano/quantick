@@ -428,22 +428,6 @@ struct PointerCompass {
     time: bool,
 }
 
-/// Which handle of a projected object `pos` grabs, if any.
-///
-/// The one handle rule, shared by a pane's own marks and the mirrored ones,
-/// so the two can never disagree about what a press landed on.
-fn anchor_hit(points: &[egui::Pos2], pos: egui::Pos2) -> Option<usize> {
-    points
-        .iter()
-        .enumerate()
-        .map(|(index, point)| (index, point.distance_sq(pos)))
-        .filter(|(_, distance_sq)| {
-            *distance_sq <= DRAWING_ANCHOR_RADIUS_PX * DRAWING_ANCHOR_RADIUS_PX
-        })
-        .min_by(|left, right| left.1.total_cmp(&right.1))
-        .map(|(index, _)| index)
-}
-
 /// Window chrome borrowed by one pane for input and paint. Mutable because a
 /// tool or the tab-level simulator can change during the input pass.
 pub struct PaneChrome<'a> {

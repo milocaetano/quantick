@@ -1,0 +1,6 @@
+Command: cargo build --workspace
+   Compiling quantick-app v0.1.0 (C:\src\quantick-worktrees\fix-volume-profile-precise-hit\crates\app)
+   Compiling quantick-backtest v0.1.0 (C:\src\quantick-worktrees\fix-volume-profile-precise-hit\crates\backtest)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 2m 03s
+
+Exit: 0
