@@ -189,5 +189,36 @@ untracked/generated input changed. Guards, diff hygiene and the entire record
 delta are checked again. Raw command logs, status timestamps and the exact
 current-tree reuse receipt remain in the worktree's private evidence directory.
 
-The independent delta verdict and repeat pixel observations remain pending.
-No score, final visual PASS or mission completion is asserted here.
+## Independent affected-flow review
+
+The coordinator's [visual and trader-flow report](../../../.claude/evidence/feed-gap-honesty/visual/review.md)
+records PASS for the affected warning flow and closes F1-V1/F1-V2. Its complete
+normal/narrow/short/equal/reconnect/popup/no-gap matrix and actual campaign-base
+popup comparison retain both structured evidence and selected PNGs. The
+[preliminary findings](../../../.claude/evidence/feed-gap-honesty/visual/preliminary.md)
+preserve failed and incomplete attempts; they are not relabelled successful.
+Report bytes match the independent original SHA256
+`B0499359B083FEE608A9559DBEE54AC6DED1B50C672B68CB13B03534D948CAA8`.
+
+The successful pixels were captured from tree
+`a8cebfcffb26dc8a384bcc840895c8b2854c17e2`, before the nonsemantic constant
+repair. The [independent source follow-up](../../../.claude/evidence/feed-gap-honesty/source/followup-staged-5dd1f20b.md)
+closes F1-AR1 in the inspected staged runtime and confirms identical geometry.
+This explicitly supports pixel reuse; an optional final-binary smoke was
+refused by the input guard before launch and is not evidence. The follow-up's
+historical pending-test statement is preserved unchanged; later test completion
+is documented above, not retroactively attributed to that reviewer.
+
+[The hash manifest](../../../.claude/evidence/feed-gap-honesty/manifest.json)
+identifies every copied report, PNG, state and describe transcript. Only
+report-referenced captures and their observer describes are included; there are
+no descriptors, credentials, executable binaries, user stores or raw app logs.
+The initial DPI-invalid crop and incomplete caption attempt are included only
+as the preliminary report's explicitly failed/incomplete history.
+
+This additional publication delta is evidence only and reuses the same verified
+runtime under the delivery contract: no executable, fixture, schema, dependency,
+configuration or build-consumed input changed. Guards, hash equality, NDJSON
+parsing, artifact paths, changed relative links and diff hygiene are checked.
+Final clean-head canonical architecture/AI/delivery reports and exact-head CI
+remain required. No score or mission completion is asserted here.
