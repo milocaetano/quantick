@@ -58,6 +58,7 @@ use crate::Finding;
 pub const ALLOWED: &[(&str, &[&str])] = &[
     ("control", &[]),
     ("control-local", &["control"]),
+    ("control-host", &["control"]),
     ("mcp", &["control", "control-local"]),
     ("engine", &[]),
     ("orderbook", &[]),

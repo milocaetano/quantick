@@ -1,0 +1,19 @@
+[package]
+name = "quantick-control-host"
+description = "Headless host machinery of the Quantick control plane: the snapshot projection registry, capability admission, the idempotency store and the event journal"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-control = { path = "../control" }
+# The journal's lock-free change signal to parked `wait_for_change` waiters.
+crossbeam-channel = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

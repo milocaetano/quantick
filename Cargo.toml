@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/control",
     "crates/control-local",
+    "crates/control-host",
     "crates/mcp",
     "crates/engine",
     "crates/indicators",

@@ -1,0 +1,8 @@
+# A3 (goal): no clock, thread or UI toolkit in control-host production source
+$ grep -rnE 'Instant::now|SystemTime::now|thread::spawn|egui|eframe|tokio|HashMap|HashSet' crates/control-host/src
+crates/control-host/src/idempotency.rs:880:        let _ = std::thread::spawn(move || {
+<end>
+every hit above sits after the '#[cfg(test)]' line of its file:
+crates/control-host/src/idempotency.rs:880 test-module-starts-at=597 in-tests
+git diff 317772a5 -- crates/guards/headless-allowlist.txt lines: 0
+headless guard: test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 154 filtered out; finished in 0.07s
