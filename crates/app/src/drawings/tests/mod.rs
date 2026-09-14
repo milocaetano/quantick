@@ -1754,6 +1754,23 @@ fn a_tool_that_declares_no_handles_is_still_grabbed_by_its_anchors() {
             );
             continue;
         }
+        if drawing_tool.id() == "rectangle" {
+            assert_eq!(handles.len(), 4, "a rectangle exposes all four corners");
+            assert!(
+                drawing_tool
+                    .drag_handle(
+                        chart,
+                        &points,
+                        0,
+                        egui::pos2(1.0, 1.0),
+                        &ctxt,
+                        Constrain::Free
+                    )
+                    .is_some(),
+                "the rectangle owns its four-corner resize gesture"
+            );
+            continue;
+        }
         if drawing_tool.id() == "brush" {
             // The one tool that answers "none", on purpose: a ring on
             // every captured point is a cloud nobody can aim at, over a
