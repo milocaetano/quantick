@@ -132,7 +132,7 @@ graph TD
   backtest --> indicators
   backtest --> replay
   backtest --> sim
-  backtest --> paper
+  backtest -.-> paper
   backtest --> engine
   mcp --> controllocal
   mcp --> control
@@ -178,7 +178,7 @@ graph TD
 | `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
-| `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; chart, backtest and bot drive one account. |
+| `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; the chart drives it; the backtest proves it in a test. |
 | `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
 | `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
@@ -200,9 +200,9 @@ and that file differ, that file wins.
    no wall clock, no randomness, no iteration-order-dependent output.
 2. **One engine, three consumers.** Chart, backtest and bot share the
    aggregator. Never fork bar-building logic per consumer.
-3. **Data honesty.** Inferred or incomplete data is labelled as such, never
-   silently patched. A depth reduction is an "unattributed L2 reduction", not
-   a cancellation, because the tape cannot tell which it was.
+3. **Data honesty.** Inferred or incomplete data is labelled, never silently
+   patched. A depth reduction is an "unattributed L2 reduction", not a
+   cancellation: the tape cannot tell which it was.
 4. **English is the repository's language.** `CLAUDE.md` is the rule's single
    owner — it defines the scope and the four exemptions where the foreign text
    *is* the data. Read it there; `crates/guards/src/language.rs` enforces the
