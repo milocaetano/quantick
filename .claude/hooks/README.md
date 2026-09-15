@@ -195,9 +195,10 @@ lookup is bounded to the latest 100 PR comments and fails closed when absent.
 They are separate files because they answer separate questions. `arch-review`
 asks whether the branch is well built — shape, plus the bug pass its step 0
 runs. `delivery-review` asks whether it is what was asked for, grading every
-ask in the branch's goal file — `.claude/GOAL.md`, or the
-`GOAL-archive-<slug>.md` it becomes, since the mandated order archives it
-before either review runs — and every acceptance criterion in it. A
+ask in the ignored local `.claude/GOAL.md` (or the linked issue on recovery)
+and every acceptance criterion in it. The PR keeps only the concise
+`quantick-mission-summary:v1` block; raw mission and execution artifacts never
+enter the reviewed tree. A
 branch can pass either one while failing the other, so passing one is not
 evidence about the other and the gate never treats it as such. The denial names
 which projection is missing or stale; a generic "review is missing" would
@@ -225,12 +226,9 @@ command synthesizes the normal readiness check, then independently requires an
 open non-draft PR matching the clean worktree's branch/head/base, a mergeable
 GitHub state, at least one registered CI check and every bucket
 passing, current durable reports, and an empty literal thread list. It first
-compares the sole archived goal in the reviewed diff with mission's canonical
-four-line `G-AI` block. The PR kind comes from facts the PR identity then
-verifies, never a caller flag. A main synchronization (base `campaign/*`,
-head `sync/*` or carrying main commits the base lacks) counts only archives
-absent from `origin/main`, zero or one, since it carries every archive main
-merged. A consolidated `campaign/*` PR into main has no single goal: its body
+requires one concise mission-summary block for mission and synchronization
+PRs. The PR kind comes from facts the PR identity then verifies, never a caller
+flag. A consolidated `campaign/*` PR into main has no single goal: its body
 names `Campaign-parent: <issue URL>` in the same repository, whose charter
 must carry `<!-- quantick-campaign:v1 -->` and the branch as a whole ref name. Every
 other check applies to all three. It then writes report URLs and the review key into the
@@ -336,8 +334,8 @@ query. The rules it protects are also written in `CLAUDE.md`.
 - `QUANTICK_ALLOW_MAIN_WRITES=1` in the environment before launching disables
   `worktree-guard`, for the rare deliberate edit on the main checkout.
 - `.claude/GOAL.md` is always allowed because it is untracked working state.
-  Archives, skills, settings, and hooks are tracked artifacts and receive the
-  normal worktree protection.
+  It is never archived. Skills, settings, and hooks are tracked artifacts and
+  receive the normal worktree protection.
 
 - `pr-gate` has **no override**, and that is a real cost rather than a design
   boast. `runs_command` matches the gated command at the start of *any*
