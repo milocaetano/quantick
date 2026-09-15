@@ -204,6 +204,22 @@ pub(crate) const READBACKS: &[Readback] = &[
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
+        "annotate.fib_projection.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_retracement.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
         "annotate.label.create",
         Forbidden,
         DRAWINGS_SCOPE_ID,

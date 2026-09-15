@@ -9,3 +9,4 @@
 # the UI library, is itself a finding: delete the line.
 
 crates/app/src/scratch.rs test scratch directories; the scratch guard requires each crate's tests to mint them through that crate's own scratch module, so `app`'s must live in `app`, and it never touches the UI.
+crates/app/src/control/annotate.rs annotation handlers bind the transport-neutral control contract to private `QuantickApp` drawing state, so dependency direction prevents moving them below `app`.

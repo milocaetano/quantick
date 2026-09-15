@@ -49,7 +49,10 @@ pub(crate) const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
 pub(crate) const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
 pub(crate) const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
 pub(crate) const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
-pub(crate) const PROFILE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+pub(crate) const PROFILE_CAPABILITY_VERSION: u32 = 2;
+pub(crate) const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
+pub(crate) const FIB_PROJECTION_CAPABILITY_ID: &str = "annotate.fib_projection.create";
+pub(crate) const FIB_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub(crate) const REMOVE_CAPABILITY_ID: &str = "annotate.remove";
 
 pub(crate) const ANNOTATION_CREATED_EVENT_KIND: &str = "annotate.object.created";
@@ -125,6 +128,55 @@ pub(crate) struct AnnotationInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = ANNOTATION_NAME_MAX_BYTES))]
     pub name: Option<String>,
+}
+
+/// One coordinate from a chart gesture. Market time is retained when a bar
+/// exists; `bar_position` keeps future chart space expressible without
+/// inventing a timestamp.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ChartAnnotationAnchor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-unit" = "unix_milliseconds"))]
+    time_unix_ms: Option<i64>,
+    bar_position: CanonicalDecimal,
+    price: CanonicalDecimal,
+}
+
+/// Ranged drawings share this future-aware input; the selected tool still
+/// owns whether exactly two or three anchors complete it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ChartAnnotationInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<AnnotationTarget>,
+    #[schemars(length(min = 2, max = 3))]
+    anchors: Vec<ChartAnnotationAnchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = ANNOTATION_NAME_MAX_BYTES))]
+    name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum ChartResolvedAnchor {
+    Market(ResolvedAnchor),
+    Future {
+        bar_position: CanonicalDecimal,
+        price: CanonicalDecimal,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+struct ChartAnnotationResult {
+    annotation_id: WireU64,
+    tab_id: WireU64,
+    pane_id: WireU64,
+    pane_side: PaneSideDto,
+    tool_id: String,
+    anchors: Vec<ChartResolvedAnchor>,
+    author: AnnotationAuthor,
+    label: String,
 }
 
 /// What an annotation returns: the object's stable id, where it actually
@@ -211,6 +263,31 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         create_profile,
     )?;
+    registry.register(
+        chart_descriptor(
+            PROFILE_CAPABILITY_ID,
+            PROFILE_CAPABILITY_VERSION,
+            "Place a fixed-range volume profile",
+            "Folds traded volume over a chart range, including projected space beyond the latest bar.",
+        ),
+        create_chart_profile,
+    )?;
+    registry.register(
+        fib_descriptor(
+            FIB_RETRACEMENT_CAPABILITY_ID,
+            "Place a Fibonacci retracement",
+            "Draws retracement levels over one move between two chart coordinates.",
+        ),
+        create_fib_retracement,
+    )?;
+    registry.register(
+        fib_descriptor(
+            FIB_PROJECTION_CAPABILITY_ID,
+            "Place a Fibonacci projection",
+            "Projects one measured move from a third chart coordinate.",
+        ),
+        create_fib_projection,
+    )?;
     registry.register(remove_descriptor(), remove_annotation)?;
     Ok(())
 }
@@ -262,6 +339,23 @@ fn annotation_descriptor(id: &str, title: &str, description: &str) -> Capability
         },
         pagination: None,
     }
+}
+
+fn fib_descriptor(id: &str, title: &str, description: &str) -> CapabilityDescriptor {
+    chart_descriptor(id, FIB_CAPABILITY_VERSION, title, description)
+}
+
+fn chart_descriptor(
+    id: &str,
+    version: u32,
+    title: &str,
+    description: &str,
+) -> CapabilityDescriptor {
+    let mut descriptor = annotation_descriptor(id, title, description);
+    descriptor.version = version;
+    descriptor.input_schema = generated_schema::<ChartAnnotationInput>();
+    descriptor.output_schema = generated_schema::<ChartAnnotationResult>();
+    descriptor
 }
 
 fn remove_descriptor() -> CapabilityDescriptor {
@@ -339,12 +433,172 @@ fn create_profile(
     place(app, access, actor, input, crate::frvp::TOOL_ID)
 }
 
+fn create_chart_profile(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, crate::frvp::TOOL_ID)
+}
+
+fn create_fib_retracement(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, "fib-retracement")
+}
+
+fn create_fib_projection(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, "fib-extension")
+}
+
+fn place_chart(
+    app: &mut QuantickApp,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+    tool_id: &str,
+) -> Result<Value, ControlError> {
+    let input: ChartAnnotationInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let tool = drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
+        capability_unavailable(format!(
+            "the `{tool_id}` drawing tool is not registered in this build"
+        ))
+    })?;
+    let required = tool.required_points();
+    if input.anchors.len() != required {
+        return Err(ControlError::invalid_request(format!(
+            "`{}` takes exactly {required} anchor(s), not {}",
+            tool.name(),
+            input.anchors.len()
+        )));
+    }
+    let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
+    let author = annotation_author(access, actor);
+    let mut fresh = Some(app.control_new_drawing(tool));
+    let pane = control_pane_mut(app, tab_id, pane_side)?;
+    if pane.drawings.draft().is_some() {
+        return Err(capability_unavailable(
+            "the trader is drawing on that pane right now; an annotation would land in their unfinished object",
+        ));
+    }
+
+    let mut points = Vec::with_capacity(input.anchors.len());
+    let mut resolved = Vec::with_capacity(input.anchors.len());
+    for anchor in &input.anchors {
+        let price = parse_price(&anchor.price)?;
+        if let Some(time) = anchor.time_unix_ms {
+            let (slot, time_ms) = resolve_slot(pane, time)?;
+            points.push(ChartPoint::at_time(
+                slot as f32 + 0.5,
+                price,
+                pane.slot_open_time(slot),
+            ));
+            resolved.push(ChartResolvedAnchor::Market(ResolvedAnchor {
+                slot: wire_usize(slot),
+                time_unix_ms: time_ms,
+                price: canonical_f64(price, ANNOTATION_PRICE_DECIMALS).ok_or_else(|| {
+                    ControlError::invalid_request("an anchor price is not finite")
+                })?,
+            }));
+        } else {
+            let bar = parse_bar_position(&anchor.bar_position)?;
+            points.push(ChartPoint::at_time(bar, price, None));
+            resolved.push(ChartResolvedAnchor::Future {
+                bar_position: canonical_f64(f64::from(bar), 3).ok_or_else(|| {
+                    ControlError::invalid_request("an anchor bar position is not finite")
+                })?,
+                price: canonical_f64(price, ANNOTATION_PRICE_DECIMALS).ok_or_else(|| {
+                    ControlError::invalid_request("an anchor price is not finite")
+                })?,
+            });
+        }
+    }
+
+    let mut completed = false;
+    for point in points {
+        completed = pane
+            .drawings
+            .place_with(tool, &DrawingBand::Price, point, |_| {
+                fresh.take().expect("one opening look per placement")
+            });
+    }
+    if !completed {
+        pane.drawings.cancel_draft();
+        return Err(capability_unavailable(format!(
+            "the `{}` tool did not complete from {required} anchor(s)",
+            tool.name()
+        )));
+    }
+    let Some(drawing) = pane.drawings.selected_mut() else {
+        return Err(capability_unavailable(
+            "the placed annotation could not be read back",
+        ));
+    };
+    drawing.author = author;
+    drawing.name = input.name;
+    let annotation_id = drawing.id.0;
+    let index = pane.drawings.selected().unwrap_or_default();
+    let label = pane
+        .drawings
+        .items()
+        .get(index)
+        .map_or_else(String::new, |drawing| drawing.display_label(index));
+    let result = ChartAnnotationResult {
+        annotation_id: WireU64::new(annotation_id),
+        tab_id: WireU64::new(tab_id),
+        pane_id: WireU64::new(pane.id),
+        pane_side: pane_side.into(),
+        tool_id: tool.id().to_owned(),
+        anchors: resolved,
+        author: AnnotationAuthor {
+            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
+            client_name: actor.client_name.clone(),
+        },
+        label,
+    };
+    journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
+    serde_json::to_value(result)
+        .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
+}
+
 /// Build the typed input the on-chart quick-range action sends through the
 /// same registered capability an operator without a mouse can invoke.
 pub(crate) fn fixed_range_profile_input(
     tab_id: u64,
     pane_side: crate::pane::PaneSide,
     anchors: [ChartPoint; 2],
+) -> Option<Value> {
+    chart_annotation_input(tab_id, pane_side, anchors.to_vec())
+}
+
+/// Build a Fibonacci action input from the settled on-chart range.
+pub(crate) fn fibonacci_input(
+    tab_id: u64,
+    pane_side: crate::pane::PaneSide,
+    anchors: [ChartPoint; 2],
+    projection: bool,
+) -> Option<Value> {
+    let mut anchors = anchors.to_vec();
+    if projection {
+        anchors.push(anchors[1]);
+    }
+    chart_annotation_input(tab_id, pane_side, anchors)
+}
+
+fn chart_annotation_input(
+    tab_id: u64,
+    pane_side: crate::pane::PaneSide,
+    anchors: Vec<ChartPoint>,
 ) -> Option<Value> {
     let pane_slot = match pane_side {
         crate::pane::PaneSide::Flow => None,
@@ -353,20 +607,20 @@ pub(crate) fn fixed_range_profile_input(
     let anchors = anchors
         .into_iter()
         .map(|anchor| {
-            Some(AnnotationAnchor {
-                time_unix_ms: anchor.time_ms?,
+            Some(ChartAnnotationAnchor {
+                time_unix_ms: anchor.time_ms,
+                bar_position: canonical_f64(f64::from(anchor.bar), 3)?,
                 price: canonical_f64(anchor.price, ANNOTATION_PRICE_DECIMALS)?,
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    serde_json::to_value(AnnotationInput {
+    serde_json::to_value(ChartAnnotationInput {
         target: Some(AnnotationTarget {
             tab_id: Some(WireU64::new(tab_id)),
             pane_side: Some(pane_side.into()),
             pane_slot,
         }),
         anchors,
-        text: None,
         name: None,
     })
     .ok()
@@ -406,16 +660,7 @@ fn place(
     // A replay attributes to whoever the recorded run named, so a rerun of a
     // session reproduces its authorship instead of stamping everything as the
     // automation that is replaying it.
-    let author = match access.recorded_author() {
-        Some(recorded) => (recorded.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
-            actor_kind: actor_kind_name(recorded.actor_kind).to_owned(),
-            client_name: recorded.client_name.clone(),
-        }),
-        None => (actor.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
-            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-            client_name: actor.client_name.clone(),
-        }),
-    };
+    let author = annotation_author(access, actor);
     // The look a fresh object opens with is read before the pane is borrowed
     // mutably, through the app's own door: an annotation looks like what the
     // trader would have drawn. One is enough for the whole placement —
@@ -692,6 +937,31 @@ fn parse_price(price: &CanonicalDecimal) -> Result<f64, ControlError> {
         .and_then(|value| value.to_f64())
         .filter(|value| value.is_finite())
         .ok_or_else(|| ControlError::invalid_request("an anchor price is not a finite decimal"))
+}
+
+fn parse_bar_position(position: &CanonicalDecimal) -> Result<f32, ControlError> {
+    position
+        .as_str()
+        .parse::<rust_decimal::Decimal>()
+        .ok()
+        .and_then(|value| value.to_f32())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| {
+            ControlError::invalid_request("an anchor bar position is not a non-negative number")
+        })
+}
+
+fn annotation_author(access: &ControlAccess, actor: &ActorContext) -> Option<DrawingAuthor> {
+    match access.recorded_author() {
+        Some(recorded) => (recorded.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
+            actor_kind: actor_kind_name(recorded.actor_kind).to_owned(),
+            client_name: recorded.client_name.clone(),
+        }),
+        None => (actor.actor_kind != ActorKind::HumanUi).then(|| DrawingAuthor {
+            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
+            client_name: actor.client_name.clone(),
+        }),
+    }
 }
 
 /// A capability that exists but cannot act right now — a pane that is not

@@ -118,29 +118,34 @@ impl ChartPane {
             side: chrome.side,
         };
         if chrome.side == super::PaneSide::Flow {
-            chrome.drawing_chrome.stage_quick_range_demo(owner, || {
-                let band = bands.first()?;
-                let scale = band.scale.as_ref()?;
-                let measure = drawings::DrawingTool::by_id("measure")?;
-                (total >= DEMO_MIN_BARS).then(|| {
-                    let start = total.saturating_sub(70);
-                    let end = total.saturating_sub(12);
-                    let point = |slot: usize, y: f32| {
-                        drawings::ChartPoint::at_time(
-                            slot as f32 + 0.5,
-                            scale.price_at(y),
-                            self.anchor_time(slot as f32 + 0.5),
+            chrome
+                .drawing_chrome
+                .stage_quick_range_demo(owner, |future| {
+                    let band = bands.first()?;
+                    let scale = band.scale.as_ref()?;
+                    let measure = drawings::DrawingTool::by_id("measure")?;
+                    (total >= DEMO_MIN_BARS).then(|| {
+                        let (start, end) = if future {
+                            (total.saturating_sub(28), total.saturating_add(2))
+                        } else {
+                            (total.saturating_sub(70), total.saturating_sub(12))
+                        };
+                        let point = |slot: usize, y: f32| {
+                            drawings::ChartPoint::at_time(
+                                slot as f32 + 0.5,
+                                scale.price_at(y),
+                                self.anchor_time(slot as f32 + 0.5),
+                            )
+                        };
+                        (
+                            [
+                                point(start, band.rect.center().y + band.rect.height() * 0.12),
+                                point(end, band.rect.center().y - band.rect.height() * 0.12),
+                            ],
+                            drawings::new_drawing_from_defaults(chrome.presets, measure),
                         )
-                    };
-                    (
-                        [
-                            point(start, band.rect.center().y + band.rect.height() * 0.12),
-                            point(end, band.rect.center().y - band.rect.height() * 0.12),
-                        ],
-                        drawings::new_drawing_from_defaults(chrome.presets, measure),
-                    )
-                })
-            });
+                    })
+                });
         }
         let geometry = chrome
             .drawing_chrome
