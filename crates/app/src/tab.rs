@@ -792,6 +792,12 @@ impl Tab {
         self.canvas_divider
     }
 
+    /// Where the collapsed context rail landed.
+    #[cfg(test)]
+    pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
+        self.collapsed_rail
+    }
+
     /// Where the dividers between stacked context charts landed.
     #[cfg(test)]
     pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
