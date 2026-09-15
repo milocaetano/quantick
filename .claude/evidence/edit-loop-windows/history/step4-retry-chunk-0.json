@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "step4-retry-chunk-0.json",
+  "original_sha256": "DA5FDF6BC7CD46A16DA8300BD394F957AAF15C9CE4D7B75814A2E01DA4FDDB83",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "{\n  \"chunk_id\": \"265ba3\",\n  \"wall_time_seconds\": 10.005492,\n  \"session_id\": 15665,\n  \"original_token_count\": 218,\n  \"output\": \"STEP=4/4 retry after same-input diagnostic; earlier failure retained\\r\\nSTART_UTC=2026-09-15T01:53:37.4952250Z\\r\\nWRAPPER_PID=36080\\r\\nHEAD=4b13b64a0f4556470cbf6b7a5e1c7f1b000d0f50\\r\\nINDEX_TREE=1e76097a22d620a9f3839ff0c0d49f1f3d636d68\\r\\nCARGO_TARGET_DIR=C:/src/quantick-worktrees/fix-mutation-retry-truth/target\\r\\nCARGO_BUILD_JOBS=1\\r\\nQUANTICK_BUBBLES=C:/src/quantick-worktrees/ci-edit-loop-windows/crates/app/config/bubbles.toml\\r\\nBUBBLES_SHA256=5DB6B44A4564F7E0CD26482A3F1BADD17EB41788E6959453330F2738BB37CD4D\\r\\nCARGO_LOCK_SHA256=8826F73F0589B91F318C40316C18C1925B926BD7A03C0DDB393CA0A84EC795FA\\r\\nTOOLCHAIN_FILE_SHA256=C979712EF4AF4226A5E600DBB6F76708E7416D716E353A030C93500E7D85DB12\\r\\ncargo 1.98.0 (797e8a9bc 2026-08-05)\\nrustc 1.98.0 (88d9e12ae 2026-08-18)\\nCOMMAND=cargo test --workspace\\r\\n   Compiling quantick-app v0.1.0 (C:\\\\src\\\\quantick-worktrees\\\\ci-edit-loop-windows\\\\crates\\\\app)\\n\"\n}\n"
+}

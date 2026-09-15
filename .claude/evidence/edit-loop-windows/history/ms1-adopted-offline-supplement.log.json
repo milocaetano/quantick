@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "ms1-adopted-offline-supplement.log",
+  "original_sha256": "375717F5367DB82D1096477C11D071C38F3825B884B244E69DF4F569616E6E8D",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "SOURCE_HEAD=4b13b64a0f4556470cbf6b7a5e1c7f1b000d0f50\nSTAGED_SOURCE_TREE=1e76097a22d620a9f3839ff0c0d49f1f3d636d68\nPROVENANCE=Concatenated available output chunks from exec session 25639, chunk62f44e then chunk97aa95. Final wrapper exit_code=0. No missing output reconstructed. No experiment timings or score assigned.\nCOMMANDS=python tools/read_cost/test_measure.py; python tools/outside_score/test_measure.py; ruff check --select F tools/edit_loop/; git diff --cached --check; selection-only inputs.ranked_crates(Path.cwd())[:3]\n\n.........\n----------------------------------------------------------------------\nRan 9 tests in 5.856s\n\nOK\n.................\n----------------------------------------------------------------------\nRan 17 tests in 0.243s\n\nOK\nAll checks passed!\n[\n  {\n    \"crate\": \"app\",\n    \"package\": \"quantick-app\",\n    \"production_lines\": 76987,\n    \"source\": \"crates/app/src/control/gateway/server.rs\",\n    \"source_production_lines\": 1207\n  },\n  {\n    \"crate\": \"orderflow\",\n    \"package\": \"quantick-orderflow\",\n    \"production_lines\": 5045,\n    \"source\": \"crates/orderflow/src/engine.rs\",\n    \"source_production_lines\": 1020\n  },\n  {\n    \"crate\": \"pine\",\n    \"package\": \"quantick-pine\",\n    \"production_lines\": 4939,\n    \"source\": \"crates/pine/src/parser.rs\",\n    \"source_production_lines\": 815\n  }\n]\n"
+}
