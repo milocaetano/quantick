@@ -15,7 +15,8 @@ its domain enum case, tool/contract registration, permission and UI metadata
 and corresponding tests; no universal registration shortcut is promised.
 
 The current test command is `cargo test -p quantick-chart-interaction`.
-The complete 13-test suite passed without building app. Before extraction,
+The initial 13-test suite passed without building app; the v4 suite contains
+14 passing tests, including the fractional-slot regression. Before extraction,
 the lifecycle tests imported the toolkit-bearing drawing_chrome module and
 required quantick-app. This measures test/consumer coupling, not UI quality,
 transport admission, runtime performance, or an architecture score.

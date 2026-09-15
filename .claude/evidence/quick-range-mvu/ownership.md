@@ -2,7 +2,8 @@
 
 Comparison input: reviewed campaign 9ff57501249f51d8f75c21f52094ec3dc3c39af2
 merged locally with pinned main a6644bc602e203b17bb29a5581548b03c4898fc6.
-MERGE_HEAD is retained. No root field-removal or score claim is made.
+The combined merge is committed at 1b4bad7ebb257d0c0a016db6994338592b367bda,
+with both source SHAs as parents. No root field-removal or score claim is made.
 
 ## Actual state and decisions
 
@@ -54,6 +55,14 @@ Control now inherits the existing workspace rust_decimal dependency for the
 same annotation wire-number conversion law; this is not a new workspace edge.
 
 ## Measured versus not measured
+
+The following counts describe the initial implementation checkpoint. Current
+v4 inputs (including the two independently found fractional-coordinate repairs)
+pass the unchanged UI-free ceiling at 46907/46911, 302 below the merged input.
+The ordered workspace run has 2075 passing app tests and 14 headless owner
+tests. The feature-enabled run has 2076 passing app tests. See
+ordered-validation-v4.md and feature-validation-current.md. Historical counts
+below are retained as history, not current-head claims.
 
 Merged input UI-free production count: 47209. Candidate checkpoint: 46911,
 298 lower, meeting the prior 46911 ceiling without the incoming annotation

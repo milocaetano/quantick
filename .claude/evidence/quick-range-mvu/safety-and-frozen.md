@@ -11,9 +11,11 @@ tools/outside_score/measure.py: 494ff11e6231f513d500fe935fe27fe3c2d2e2e5 — MAT
 .agents/skills/quantick-score/SKILL.md: 5489246f5748b8b8abc80696d88cb75e331d6179 — MATCH
 docs/quality/quantick-score-rubric.md: c7fd2af3aa108abdff7b3083b4321fd941d8a813 — MATCH
 
-MERGE_HEAD remains a6644bc602e203b17bb29a5581548b03c4898fc6; HEAD remains
-reviewed9ff57501249f51d8f75c21f52094ec3dc3c39af2 until the root coordinator
-commits. Final committed ancestry is not claimed before that commit.
+The precommit receipt above used MERGE_HEAD a6644bc6 and HEAD 9ff57501.
+The combined source is now committed at
+1b4bad7ebb257d0c0a016db6994338592b367bda, with those two exact parents.
+Both ancestry checks pass. Subsequent evidence-only updates do not alter
+either ancestry or any of the seven frozen inputs.
 
 Read-only git diff against9ff found no source changes under crates/feed/src,
 crates/feed-mt5/src, crates/control-host/src, app/control/gateway or

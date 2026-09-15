@@ -23,7 +23,8 @@ tape-lane-baseline.md for exact commands, hashes, owner-state observations and
 ancestor commits. #447 explicitly permits a reasoned non-defect disposition;
 the current map reconciles that original allowance rather than inventing red
 evidence. Historical worktrees and binaries remain intact. Final #447 readback
-and current delivery review remain pending.
+is recorded on #447 in comment 5675552401 and reciprocally on #501 in
+comment 5675566601. Current delivery review remains pending.
 
 All three current actions retain their existing versions, author/admission
 path, and future-coordinate support. Optional exact references do not change
