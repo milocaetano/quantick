@@ -715,7 +715,11 @@ impl Tab {
             .get(index + 1)
             .map_or(column.bottom(), |divider| divider.center().y);
         let pair_height = pair_bottom - pair_top;
-        let floor = canvas_layout::MIN_PANE_WIDTH_PX;
+        // The splitter sizes the whole pane band, while the readability floor
+        // belongs to the chart body. Buy the pane-local layout footer here so
+        // a drag cannot satisfy the old band floor by taking those pixels
+        // back out of the chart.
+        let floor = canvas_layout::MIN_PANE_WIDTH_PX + crate::layout_strip::STRIP_HEIGHT;
         let wanted_y = if pair_height >= floor * 2.0 {
             wanted_y.clamp(pair_top + floor, pair_bottom - floor)
         } else {
