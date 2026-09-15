@@ -36,6 +36,8 @@ indicator-presets.toml
 .claude/GOAL*.md
 .claude/goal-archive-rescued/
 .claude/evidence/
+docs/evidence/
+docs/workflow/evidence/
 
 # Session scratch: the investigation record before it becomes an archive.
 .claude/laudo-scratch.md

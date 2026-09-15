@@ -1148,6 +1148,16 @@ cp "$root/completion/mission-summary" "$root/completion/pr-body"
 cat "$root/completion/mission-summary" >> "$root/completion/pr-body"
 run_completion "completion refuses duplicate mission summaries" \
     mission fail 'exactly one quantick-mission-summary:v1 block'
+sed 's/^Criteria: .*/Criteria: <IDs and disposition>/' "$root/completion/mission-summary" \
+    > "$root/completion/pr-body"
+run_completion "completion refuses a summary field left as the template placeholder" \
+    mission fail 'no filled Criteria: line'
+sed '/^Validation:/d' "$root/completion/mission-summary" > "$root/completion/pr-body"
+run_completion "completion refuses a summary missing a field" \
+    mission fail 'no filled Validation: line'
+sed 's/$/\r/' "$root/completion/mission-summary" > "$root/completion/pr-body"
+rm -f "$root/completion/published-report"
+run_completion "completion accepts a summary saved with CRLF line endings" mission pass
 cp "$root/completion/mission-summary" "$root/completion/pr-body"
 
 printf 'feat/x %s main %s OPEN true MERGEABLE CLEAN https://example.test/pr/42 false\n' \

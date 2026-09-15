@@ -1,4 +1,4 @@
-# Native indicator boundary evidence
+# Native indicator boundary
 
 Issue: https://github.com/milocaetano/quantick/issues/338 (campaign #330, Q6).
 

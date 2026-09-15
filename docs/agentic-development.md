@@ -211,8 +211,10 @@ completion clauses before an agent may call it done.
 
 Mission working state stays local in ignored `.claude/GOAL.md`. After delivery,
 the PR keeps the objective, criteria, decisions and validation in its concise
-`quantick-mission-summary:v1` block. Raw mission files and execution evidence
-do not accumulate in the repository.
+`quantick-mission-summary:v1` block, with the whole goal folded beneath it.
+Raw mission files and execution evidence do not accumulate in the repository:
+the `evidence` guard fails a tracked goal file, evidence folder or `docs/`
+dossier, because prose alone did not hold the rule.
 
 ## What this does not claim
 

@@ -110,12 +110,21 @@ if [ "$kind" = campaign ]; then
         fail "The campaign charter does not name \`$branch\`."
     goal_note="Consolidated campaign: charter $parent names \`$branch\`; delivery-review grades its criteria."
 else
-    summary_count=$(printf '%s\n' "$body" |
+    # A body saved from the GitHub web editor ends its lines in CRLF.
+    lf_body=$(printf '%s\n' "$body" | tr -d '\r')
+    summary_count=$(printf '%s\n' "$lf_body" |
         grep -c '^<!-- quantick-mission-summary:v1 -->$')
-    summary_end_count=$(printf '%s\n' "$body" |
+    summary_end_count=$(printf '%s\n' "$lf_body" |
         grep -c '^<!-- end quantick-mission-summary:v1 -->$')
     [ "$summary_count" -eq 1 ] && [ "$summary_end_count" -eq 1 ] ||
         fail 'Mission and synchronization PRs require exactly one quantick-mission-summary:v1 block.'
+    summary=$(printf '%s\n' "$lf_body" |
+        sed -n '/^<!-- quantick-mission-summary:v1 -->$/,/^<!-- end quantick-mission-summary:v1 -->$/p')
+    # A template placeholder starts with `<`; it is not a filled field.
+    for field in Objective Tier Source Criteria Validation; do
+        printf '%s\n' "$summary" | grep -Eq "^$field: *[^ <]" ||
+            fail "The quantick-mission-summary:v1 block has no filled $field: line."
+    done
 fi
 
 require_green_checks

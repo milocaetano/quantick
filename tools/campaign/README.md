@@ -20,7 +20,7 @@ Q13 names the existing 15-minute renewal, 50-active-task partition trigger and
 five-comment page policy without changing their values or the generated query.
 The maintained source SHA256 is
 `7e73236894f4a64f32b725f232c6a7cfaa0487779f29e2c2161ad60e1811f0c7`.
-See the [final-review correction evidence](../../docs/quality/final-review-corrections-evidence.md)
+See the [final-review correction record](https://github.com/milocaetano/quantick/issues/357)
 for validation status and source attribution. Historical identity constants and
 the import docstring remain unchanged. Operational callers must
 explicitly configure `ROOT` to their own cache directory and `WRITER` to their
@@ -90,4 +90,4 @@ invalid merely for lacking that field.
 [Q12](https://github.com/milocaetano/quantick/issues/353) owns actual adoption
 of the reviewed repository file, the live URL-only replacement exercise and
 integrated independent assessment. Q11's tests do not prove those outcomes or
-award an AD5 point. See the [evidence record](../../docs/quality/campaign-recovery-evidence.md).
+award an AD5 point. See the [evidence record](https://github.com/milocaetano/quantick/issues/352).

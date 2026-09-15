@@ -252,7 +252,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    delivery contract. A criterion without evidence is unmet.
 
    1. **Publish the draft PR** if `ship` has not; reports and threads need it.
-      Add one concise durable block, never the full `GOAL.md` or raw output:
+      Add this block, every field filled (the verifier refuses gaps):
 
       ```text
       <!-- quantick-mission-summary:v1 -->
@@ -264,7 +264,8 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
       <!-- end quantick-mission-summary:v1 -->
       ```
 
-      Keep `.claude/GOAL.md` ignored; never create a `GOAL-archive-*`.
+      Below it, the whole `GOAL.md` in `<details>`, kept current: fresh
+      contexts read the ledger there. Never track `GOAL*` or evidence.
    2. **`Skill(arch-review)`** — every tier; its producer publishes PASS and
       records `arch-review-ok`. Never write the marker directly.
    3. **`Skill(ai-review)`** — every tier, same PR/key; its producer publishes
