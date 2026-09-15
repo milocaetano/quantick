@@ -22,7 +22,7 @@ use super::{
 };
 // The one thing this file borrows from the other side of the seam: the
 // digest helper, so an image and a chunk are hashed the same way.
-use super::store::raw_sha256;
+use quantick_control_host::evidence::raw_sha256;
 
 /// The image format a bundle carries.
 const SCREENSHOT_FORMAT: &str = "png";
