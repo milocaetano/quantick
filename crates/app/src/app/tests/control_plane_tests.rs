@@ -2060,11 +2060,7 @@ fn gateway_exit_shutdown_removes_discovery() {
     let descriptor: quantick_control::descriptor::InstanceDescriptor =
         serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
 
-    app.control
-        .control_access
-        .as_mut()
-        .expect("control access is installed")
-        .shutdown_for_exit();
+    eframe::App::on_exit(&mut app, None);
     assert!(!descriptor_path.exists(), "exit removes discovery");
     assert!(
         app.control

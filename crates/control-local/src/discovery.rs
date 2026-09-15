@@ -19,6 +19,8 @@ use quantick_control::limits::CONTROL_DISCOVERY_MAX_ENTRIES;
 
 const NO_INSTANCE_NEXT_STEP: &str =
     "Start Quantick, open Tools > Local agent access, and enable observer access.";
+/// Covers the Unix boot-time resolution and small wall-clock adjustments.
+const PROCESS_START_TOLERANCE_MS: i64 = 1_000;
 #[cfg(windows)]
 const WINDOWS_MIN_SID_BYTES: usize = 8;
 
@@ -70,17 +72,37 @@ pub struct DescriptorDiscovery {
 }
 
 impl DescriptorDiscovery {
-    fn finish(mut self) -> Self {
+    fn retain_candidate(&mut self, candidate: DescriptorCandidate) -> bool {
+        self.candidates.push(candidate);
         self.candidates.sort_by(|left, right| {
-            (
-                left.descriptor.published_at_unix_ms,
-                &left.descriptor.instance_id,
-            )
-                .cmp(&(
-                    right.descriptor.published_at_unix_ms,
-                    &right.descriptor.instance_id,
-                ))
+            right
+                .descriptor
+                .published_at_unix_ms
+                .cmp(&left.descriptor.published_at_unix_ms)
+                .then_with(|| {
+                    left.descriptor
+                        .instance_id
+                        .cmp(&right.descriptor.instance_id)
+                })
         });
+        if self.candidates.len() > CONTROL_DISCOVERY_MAX_ENTRIES {
+            self.candidates.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn finish(mut self, live_overflow: bool) -> Self {
+        if live_overflow {
+            self.issues.push(DiscoveryIssue {
+                file_name: "<directory>".to_owned(),
+                message: format!(
+                    "more than {CONTROL_DISCOVERY_MAX_ENTRIES} live descriptors; only the newest \
+                     {CONTROL_DISCOVERY_MAX_ENTRIES} were retained"
+                ),
+            });
+        }
         if self.candidates.is_empty() {
             self.next_steps.push(NO_INSTANCE_NEXT_STEP.to_owned());
         }
@@ -147,17 +169,26 @@ pub fn publish_descriptor(
     descriptor: &InstanceDescriptor,
 ) -> Result<PublishedDescriptor, DiscoveryError> {
     let directory = runtime_instances_dir()?;
-    publish_descriptor_in(&directory, descriptor)
+    publish_descriptor_in_with_liveness(&directory, descriptor, &system_process_is_live)
 }
 
 pub fn publish_descriptor_in(
     directory: &Path,
     descriptor: &InstanceDescriptor,
 ) -> Result<PublishedDescriptor, DiscoveryError> {
+    publish_descriptor_in_with_liveness(directory, descriptor, &system_process_is_live)
+}
+
+fn publish_descriptor_in_with_liveness(
+    directory: &Path,
+    descriptor: &InstanceDescriptor,
+    liveness: &impl Fn(&InstanceDescriptor) -> bool,
+) -> Result<PublishedDescriptor, DiscoveryError> {
     descriptor
         .validate()
         .map_err(|error| DiscoveryError::owned(format!("invalid descriptor: {error}")))?;
     ensure_explicit_private_directory(directory)?;
+    prune_stale_descriptors(directory, liveness)?;
 
     let encoded = serde_json::to_vec(descriptor)
         .map_err(|_| DiscoveryError::new("instance descriptor JSON encoding failed"))?;
@@ -234,10 +265,18 @@ pub fn discover_descriptors() -> Result<DescriptorDiscovery, DiscoveryError> {
             });
         }
     };
-    discover_descriptors_in(&directory)
+    discover_descriptors_in_with_liveness(&directory, &system_process_is_live)
 }
 
 pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, DiscoveryError> {
+    discover_descriptors_in_with_liveness(directory, &system_process_is_live)
+}
+
+/// Discover through the deterministic process-probe seam used by tests.
+fn discover_descriptors_in_with_liveness(
+    directory: &Path,
+    liveness: &impl Fn(&InstanceDescriptor) -> bool,
+) -> Result<DescriptorDiscovery, DiscoveryError> {
     if !directory.exists() {
         return Ok(DescriptorDiscovery {
             candidates: Vec::new(),
@@ -251,22 +290,10 @@ pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, 
         issues: Vec::new(),
         next_steps: Vec::new(),
     };
+    let mut live_overflow = false;
     let entries = fs::read_dir(directory)
         .map_err(|error| DiscoveryError::io("read private instance directory", error))?;
-    for (index, entry) in entries.enumerate() {
-        if index >= CONTROL_DISCOVERY_MAX_ENTRIES {
-            // A polluted directory must not make every instance undiscoverable:
-            // the bounded prefix is examined and the overflow is an issue the
-            // client can show, not an error that hides the live instances.
-            report.issues.push(DiscoveryIssue {
-                file_name: "<directory>".to_owned(),
-                message: format!(
-                    "more than {CONTROL_DISCOVERY_MAX_ENTRIES} entries; only the first \
-                     {CONTROL_DISCOVERY_MAX_ENTRIES} were examined"
-                ),
-            });
-            break;
-        }
+    for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -284,7 +311,14 @@ pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, 
         let file_name = entry.file_name().to_string_lossy().into_owned();
         match read_descriptor_file(&path) {
             Ok(descriptor) if descriptor.file_name() == file_name => {
-                report.candidates.push(DescriptorCandidate { descriptor });
+                if liveness(&descriptor) {
+                    live_overflow |= report.retain_candidate(DescriptorCandidate { descriptor });
+                } else if let Err(error) = remove_owned_descriptor(&path) {
+                    report.issues.push(DiscoveryIssue {
+                        file_name,
+                        message: format!("stale descriptor could not be pruned: {error}"),
+                    });
+                }
             }
             Ok(_) => report.issues.push(DiscoveryIssue {
                 file_name,
@@ -296,7 +330,142 @@ pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, 
             }),
         }
     }
-    Ok(report.finish())
+    Ok(report.finish(live_overflow))
+}
+
+fn prune_stale_descriptors(
+    directory: &Path,
+    liveness: &impl Fn(&InstanceDescriptor) -> bool,
+) -> Result<(), DiscoveryError> {
+    let entries = fs::read_dir(directory)
+        .map_err(|error| DiscoveryError::io("read private instance directory", error))?;
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(descriptor) = read_descriptor_file(&path) else {
+            continue;
+        };
+        if descriptor.file_name() == entry.file_name().to_string_lossy() && !liveness(&descriptor) {
+            remove_owned_descriptor(&path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, STILL_ACTIVE},
+        System::Threading::{
+            GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
+    };
+
+    let process =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, descriptor.process_id) };
+    if process.is_null() {
+        return std::io::Error::last_os_error().raw_os_error()
+            != Some(ERROR_INVALID_PARAMETER as i32);
+    }
+    let result = (|| {
+        let mut exit_code = 0;
+        if unsafe { GetExitCodeProcess(process, &mut exit_code) } == 0 {
+            return true;
+        }
+        if exit_code != STILL_ACTIVE as u32 {
+            return false;
+        }
+        let mut created = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let mut exited = created;
+        let mut kernel = created;
+        let mut user = created;
+        if unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) }
+            == 0
+        {
+            return true;
+        }
+        const WINDOWS_TO_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+        let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        let Some(unix_ticks) = ticks.checked_sub(WINDOWS_TO_UNIX_EPOCH_100NS) else {
+            return true;
+        };
+        let created_at_unix_ms = i64::try_from(unix_ticks / 10_000).unwrap_or(i64::MAX);
+        descriptor
+            .process_started_at_unix_ms
+            .saturating_add(PROCESS_START_TOLERANCE_MS)
+            >= created_at_unix_ms
+    })();
+    unsafe { CloseHandle(process) };
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
+    let stat = match fs::read_to_string(format!("/proc/{}/stat", descriptor.process_id)) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    let Some(fields) = stat.rsplit_once(") ").map(|(_, fields)| fields) else {
+        return true;
+    };
+    let fields = fields.split_whitespace().collect::<Vec<_>>();
+    if fields.first().is_some_and(|state| *state == "Z") {
+        return false;
+    }
+    // After the parenthesized command name, index 19 is Linux stat field 22:
+    // process start ticks since boot.
+    let Some(start_ticks) = fields.get(19).and_then(|value| value.parse::<u64>().ok()) else {
+        return true;
+    };
+    let boot_seconds = match fs::read_to_string("/proc/stat") {
+        Ok(stat) => stat.lines().find_map(|line| {
+            line.strip_prefix("btime ")
+                .and_then(|value| value.parse::<u64>().ok())
+        }),
+        Err(_) => None,
+    };
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    let (Some(boot_seconds), Ok(ticks_per_second)) =
+        (boot_seconds, u64::try_from(ticks_per_second))
+    else {
+        return true;
+    };
+    if ticks_per_second == 0 {
+        return true;
+    }
+    let created_at_unix_ms = i64::try_from(
+        boot_seconds
+            .saturating_mul(1_000)
+            .saturating_add(start_ticks.saturating_mul(1_000) / ticks_per_second),
+    )
+    .unwrap_or(i64::MAX);
+    descriptor
+        .process_started_at_unix_ms
+        .saturating_add(PROCESS_START_TOLERANCE_MS)
+        >= created_at_unix_ms
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
+    let Ok(process_id) = i32::try_from(descriptor.process_id) else {
+        return false;
+    };
+    let result = unsafe { libc::kill(process_id, 0) };
+    result == 0 || std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+}
+
+#[cfg(not(any(unix, windows)))]
+const fn system_process_is_live(_descriptor: &InstanceDescriptor) -> bool {
+    true
 }
 
 fn read_descriptor_file(path: &Path) -> Result<InstanceDescriptor, DiscoveryError> {
@@ -1043,14 +1212,15 @@ mod tests {
         handshake::{BearerToken, ProtocolVersionRange},
         id::{InstanceId, ProcessNonce},
     };
+    use std::cell::Cell;
 
     fn descriptor(id: u8, published_at: i64) -> InstanceDescriptor {
         InstanceDescriptor {
             descriptor_version: INSTANCE_DESCRIPTOR_VERSION,
             instance_id: InstanceId::from_bytes([id; 16]),
             process_nonce: ProcessNonce::from_bytes([id.wrapping_add(1); 16]),
-            process_id: u32::from(id) + 1,
-            process_started_at_unix_ms: 1_700_000_000_000,
+            process_id: std::process::id(),
+            process_started_at_unix_ms: i64::MAX,
             application_version: "0.1.0".to_owned(),
             application_commit: "test".to_owned(),
             protocol_versions: ProtocolVersionRange::new(1, 1).unwrap(),
@@ -1097,9 +1267,9 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                later.instance_id,
                 earlier_a.instance_id,
-                earlier_b.instance_id,
-                later.instance_id
+                earlier_b.instance_id
             ]
         );
         drop(published);
@@ -1134,19 +1304,94 @@ mod tests {
     #[test]
     fn discovery_directory_entry_count_is_bounded() {
         let directory = scratch("bounded");
+        let mut published = Vec::new();
         for index in 0..=CONTROL_DISCOVERY_MAX_ENTRIES {
-            fs::write(directory.join(format!("noise-{index}")), b"noise").unwrap();
+            published.push(
+                publish_descriptor_in(
+                    &directory,
+                    &descriptor(u8::try_from(index).unwrap(), index as i64 + 1),
+                )
+                .unwrap(),
+            );
         }
 
         let report = discover_descriptors_in(&directory).unwrap();
-        assert!(report.candidates.is_empty());
+        assert_eq!(report.candidates.len(), CONTROL_DISCOVERY_MAX_ENTRIES);
+        assert_eq!(
+            report.candidates[0].descriptor.published_at_unix_ms,
+            CONTROL_DISCOVERY_MAX_ENTRIES as i64 + 1
+        );
         assert!(
             report
                 .issues
                 .iter()
-                .any(|issue| issue.message.contains("only the first")),
-            "the overflow is reported as an issue, not hidden and not fatal"
+                .any(|issue| issue.message.contains("only the newest")),
+            "the live-descriptor overflow is reported after newest-first ordering"
         );
+        drop(published);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn one_live_descriptor_is_found_before_connect_after_one_hundred_stale_entries() {
+        let directory = scratch("stale-crowd");
+        let mut published = Vec::new();
+        for id in 0..100 {
+            published.push(
+                publish_descriptor_in_with_liveness(
+                    &directory,
+                    &descriptor(id, i64::from(id) + 1),
+                    &|_| true,
+                )
+                .unwrap(),
+            );
+        }
+        let live = descriptor(200, 10_000);
+        published.push(publish_descriptor_in_with_liveness(&directory, &live, &|_| true).unwrap());
+        let probes = Cell::new(0);
+        let liveness = |descriptor: &InstanceDescriptor| {
+            probes.set(probes.get() + 1);
+            descriptor.instance_id == live.instance_id
+        };
+
+        let report = discover_descriptors_in_with_liveness(&directory, &liveness).unwrap();
+
+        assert_eq!(probes.get(), 101);
+        assert_eq!(report.candidates.len(), 1);
+        assert_eq!(
+            report.candidates[0].descriptor.instance_id,
+            live.instance_id
+        );
+        assert!(report.issues.is_empty());
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        drop(published);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn publication_prunes_descriptors_from_dead_processes() {
+        let directory = scratch("publish-prune");
+        let stale = descriptor(31, 1);
+        let stale_path = stale.file_name();
+        let stale_publication =
+            publish_descriptor_in_with_liveness(&directory, &stale, &|_| true).unwrap();
+        let live = descriptor(32, 2);
+        let liveness = |descriptor: &InstanceDescriptor| descriptor.instance_id == live.instance_id;
+
+        let live_publication =
+            publish_descriptor_in_with_liveness(&directory, &live, &liveness).unwrap();
+
+        assert!(!directory.join(stale_path).exists());
+        assert!(live_publication.path().exists());
+        drop(stale_publication);
+        drop(live_publication);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn system_probe_rejects_a_reused_process_id() {
+        let mut stale = descriptor(41, 1);
+        stale.process_started_at_unix_ms = 1;
+        assert!(!system_process_is_live(&stale));
     }
 }
