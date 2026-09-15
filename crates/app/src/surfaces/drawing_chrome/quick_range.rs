@@ -1,207 +1,272 @@
-//! The temporary range raised by a secondary-button drag.
-//!
-//! The pane resolves pointer pixels into chart coordinates and paints the
-//! ruler through the drawing-tool registry. This module owns everything that
-//! outlives that input pass: the pending press, the selected range, the
-//! contextual action bar and the request the host sends through the control
-//! action registry.
+//! View adapter for the headless quick-range owner.
+//! Only toolkit geometry, ruler appearance and feature-gated demo setup live here.
 
-use eframe::egui;
-
+use super::{DrawingChromeAsk, DrawingEnv};
 use crate::drawings::{self, ChartPoint, DrawingPayload, NewDrawing};
 use crate::pane::PaneSide;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
-
-use super::{DrawingChromeAsk, DrawingEnv};
+use eframe::egui;
+pub(crate) use quantick_chart_interaction::quick_range::Action;
+use quantick_chart_interaction::quick_range::{self as core, Command, Effect, Event, Phase};
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
+pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
+pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
+const STALE_REASON_WIDTH_PX: f32 = 180.0;
 
-/// The chart that owns a temporary range. One window has one right mouse
-/// button, so the surface holds one owner rather than one range per pane.
+/// The model owns operation identity; the adapter supplies registry/UI names.
+pub(crate) trait ActionUi {
+    fn index(self) -> usize;
+    fn control_id(self) -> &'static str;
+    fn tool_id(self) -> &'static str;
+    fn capability_id(self) -> &'static str;
+    fn label(self) -> &'static str;
+}
+impl ActionUi for Action {
+    fn index(self) -> usize {
+        match self {
+            Self::Profile => 0,
+            Self::Retracement => 1,
+            Self::Projection => 2,
+        }
+    }
+
+    fn control_id(self) -> &'static str {
+        match self {
+            Self::Profile => ACTION_CONTROL_ID,
+            Self::Retracement => RETRACEMENT_CONTROL_ID,
+            Self::Projection => PROJECTION_CONTROL_ID,
+        }
+    }
+
+    fn tool_id(self) -> &'static str {
+        match self {
+            Self::Profile => crate::frvp::TOOL_ID,
+            Self::Retracement => "fib-retracement",
+            Self::Projection => "fib-extension",
+        }
+    }
+
+    fn capability_id(self) -> &'static str {
+        match self {
+            Self::Profile => crate::control::PROFILE_CAPABILITY_ID,
+            Self::Retracement => crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
+            Self::Projection => crate::control::FIB_PROJECTION_CAPABILITY_ID,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Fixed-range volume profile",
+            Self::Retracement => "Fib retracement",
+            Self::Projection => "Fib projection",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Owner {
     pub tab: u64,
     pub side: PaneSide,
+    pub pane: u64,
+    pub revision: u64,
+    pub layout: Option<u64>,
 }
 
-/// The request emitted by the action bar. It carries settled coordinates by
-/// value because the surface disappears as soon as the host accepts it.
+impl Owner {
+    fn context(self) -> core::RangeContext {
+        core::RangeContext {
+            owner: core::Owner {
+                tab: self.tab,
+                pane: self.pane,
+                layout: self.layout,
+            },
+            revision: self.revision,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PlaceRequest {
-    pub owner: Owner,
-    pub anchors: [ChartPoint; 2],
+    pub operation: core::PlaceRequest,
+    pub side: PaneSide,
 }
 
-/// What the pane needs to paint the ruler through the registered drawing
-/// implementation.
 pub(crate) struct Paint<'a> {
     pub anchors: [ChartPoint; 2],
     pub style: drawings::DrawingStyle,
     pub payload: &'a dyn DrawingPayload,
 }
 
-/// Structured facts about the action control currently on screen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Control {
+    pub action: Action,
     pub rect: egui::Rect,
     pub enabled: bool,
+    pub unavailable_reason: Option<&'static str>,
 }
 
-struct Selection {
-    owner: Owner,
-    anchors: [ChartPoint; 2],
-    look: NewDrawing,
-    ready: bool,
-    chart: Option<egui::Rect>,
-    bounds: Option<egui::Rect>,
-    right_limit: Option<f32>,
+#[derive(Clone, Copy)]
+struct Geometry {
+    chart: egui::Rect,
+    bounds: egui::Rect,
+    right_limit: f32,
 }
 
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    Pressed {
-        owner: Owner,
-        position: egui::Pos2,
-        anchor: ChartPoint,
-    },
-    Selected(Selection),
-}
-
-/// State and chrome for the one temporary range in the window.
 #[derive(Default)]
 pub(crate) struct QuickRange {
-    state: State,
-    action_rect: Option<egui::Rect>,
-    demo_requested: Option<bool>,
+    model: core::QuickRangeModel,
+    side: Option<PaneSide>,
+    look: Option<NewDrawing>,
+    geometry: Option<Geometry>,
+    action_rects: [Option<egui::Rect>; 3],
+    #[cfg(feature = "quick-range-harness")]
+    demo_requested: Option<(bool, bool)>,
+}
+
+fn anchor(point: ChartPoint) -> core::Anchor {
+    core::Anchor {
+        bar: point.bar,
+        price: point.price,
+        time_ms: point.time_ms,
+    }
+}
+
+fn point(anchor: core::Anchor) -> ChartPoint {
+    ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms)
 }
 
 impl QuickRange {
-    pub fn request_demo(&mut self, ready: bool) {
-        self.demo_requested = Some(ready);
+    /// Read-only application adapter. The model handles removal, layout and revision changes.
+    pub fn reconcile_panes(&mut self, tab: &crate::tab::Tab) {
+        self.reconcile_tab(tab.id);
+        let Some(owner) = self.owner() else { return };
+        let current = tab.sides().find_map(|side| {
+            let pane = tab.pane(side);
+            (pane.id == owner.pane).then_some(Owner {
+                tab: tab.id,
+                side,
+                pane: pane.id,
+                revision: pane.pagination_revision(),
+                layout: pane.layout.map(|id| id.0),
+            })
+        });
+        self.reconcile(current);
+    }
+    pub fn reconcile(&mut self, owner: Option<Owner>) {
+        match owner {
+            Some(owner) => self.reconcile_owner(owner),
+            None => self.remove_owner(),
+        }
+    }
+    pub fn owner(&self) -> Option<Owner> {
+        let context = self.model.context()?;
+        Some(Owner {
+            tab: context.owner.tab,
+            side: self.side?,
+            pane: context.owner.pane,
+            revision: context.revision,
+            layout: context.owner.layout,
+        })
     }
 
-    pub fn stage_demo(
+    pub fn reconcile_owner(&mut self, owner: Owner) {
+        self.model.observe(Event::Reconcile, owner.context());
+        if self
+            .model
+            .context()
+            .is_some_and(|c| c.owner.pane == owner.pane)
+        {
+            self.side = Some(owner.side);
+        }
+    }
+
+    pub fn remove_owner(&mut self) {
+        if let Some(context) = self.model.context() {
+            self.model
+                .observe(Event::PaneRemoved(context.owner.pane), context);
+        }
+    }
+
+    pub fn note_selection(&mut self, pane: u64, selected: Option<u64>) {
+        self.model.observe(
+            Event::Selection(selected.map(|drawing| core::Selection { pane, drawing })),
+            self.model.context().unwrap_or_default(),
+        );
+    }
+
+    pub fn press(
         &mut self,
         owner: Owner,
-        opening: impl FnOnce() -> Option<([ChartPoint; 2], NewDrawing)>,
+        position: egui::Pos2,
+        value: ChartPoint,
+        eligibility: core::GestureEligibility,
     ) {
-        let Some(ready) = self.demo_requested else {
-            return;
-        };
-        let Some((anchors, look)) = opening() else {
-            return;
-        };
-        self.demo_requested = None;
-        self.state = State::Selected(Selection {
-            owner,
-            anchors,
-            look,
-            ready,
-            chart: None,
-            bounds: None,
-            right_limit: None,
-        });
+        self.model.update(
+            Command::Press {
+                position: [position.x, position.y],
+                anchor: anchor(value),
+                eligibility,
+            },
+            owner.context(),
+        );
+        if self.model.context() == Some(owner.context()) && self.model.view().is_none() {
+            self.side = Some(owner.side);
+            self.geometry = None;
+            self.action_rects = [None; 3];
+        }
     }
 
-    pub fn press(&mut self, owner: Owner, position: egui::Pos2, anchor: ChartPoint) {
-        self.state = State::Pressed {
-            owner,
-            position,
-            anchor,
-        };
-        self.action_rect = None;
-    }
-
-    /// Advance the held gesture. The caller supplies the ruler's opening look
-    /// only when the press first crosses the drag threshold, so a plain right
-    /// click allocates nothing and remains the chart menu's gesture.
     pub fn drag(
         &mut self,
         owner: Owner,
         position: egui::Pos2,
-        anchor: ChartPoint,
+        value: ChartPoint,
         threshold_px: f32,
         opening: impl FnOnce() -> NewDrawing,
     ) {
-        match &mut self.state {
-            State::Pressed {
-                owner: pressed_owner,
-                position: pressed_at,
-                anchor: start,
-            } if *pressed_owner == owner && pressed_at.distance(position) > threshold_px => {
-                self.state = State::Selected(Selection {
-                    owner,
-                    anchors: [*start, anchor],
-                    look: opening(),
-                    ready: false,
-                    chart: None,
-                    bounds: None,
-                    right_limit: None,
-                });
-            }
-            State::Selected(selection) if selection.owner == owner && !selection.ready => {
-                selection.anchors[1] = anchor;
-            }
-            _ => {}
+        let transition = self.model.update(
+            Command::Drag {
+                position: [position.x, position.y],
+                anchor: anchor(value),
+                threshold_px,
+            },
+            owner.context(),
+        );
+        if transition.opened {
+            self.look = Some(opening());
         }
     }
 
-    /// A release below the threshold was a click; a selected range becomes
-    /// the stable choice the action bar speaks for.
     pub fn release(&mut self, owner: Owner) {
-        match &mut self.state {
-            State::Pressed {
-                owner: pressed_owner,
-                ..
-            } if *pressed_owner == owner => self.dismiss(),
-            State::Selected(selection) if selection.owner == owner => selection.ready = true,
-            _ => {}
-        }
+        self.model.update(Command::Release, owner.context());
     }
 
-    pub fn dismiss(&mut self) {
-        self.state = State::Idle;
-        self.action_rect = None;
+    pub fn dismiss(&mut self) -> bool {
+        let result = self
+            .model
+            .update(Command::Dismiss, self.model.context().unwrap_or_default());
+        self.geometry = None;
+        self.action_rects = [None; 3];
+        result.consumed
     }
 
-    pub fn dismiss_if_present(&mut self) -> bool {
-        if matches!(self.state, State::Idle) {
-            return false;
-        }
-        self.dismiss();
-        true
-    }
-
-    #[must_use]
-    /// `Some(false)` is a range still being dragged, `Some(true)` one waiting
-    /// for its action, and `None` means ordinary drawing chrome may speak.
     pub fn reconcile_tab(&mut self, tab: u64) -> Option<bool> {
-        let belongs_here = match &self.state {
-            State::Idle | State::Pressed { .. } => return None,
-            State::Selected(selection) => selection.owner.tab == tab,
-        };
-        if !belongs_here {
-            self.dismiss();
-            return None;
-        }
-        match &self.state {
-            State::Selected(selection) => Some(selection.ready),
-            State::Idle | State::Pressed { .. } => None,
-        }
+        self.model.observe(
+            Event::ActiveTab(tab),
+            self.model.context().unwrap_or_default(),
+        );
+        self.model.view().map(|view| view.phase != Phase::Dragging)
     }
 
-    #[must_use]
     pub fn paint(&self, owner: Owner) -> Option<Paint<'_>> {
-        let State::Selected(selection) = &self.state else {
-            return None;
-        };
-        (selection.owner == owner).then_some(Paint {
-            anchors: selection.anchors,
-            style: selection.look.style,
-            payload: selection.look.payload.as_ref(),
+        let view = self.model.view()?;
+        let look = self.look.as_ref()?;
+        (view.paintable() && view.context.owner == owner.context().owner).then(|| Paint {
+            anchors: view.anchors.map(point),
+            style: look.style,
+            payload: look.payload.as_ref(),
         })
     }
 
@@ -212,100 +277,173 @@ impl QuickRange {
         bounds: egui::Rect,
         right_limit: f32,
     ) {
-        if let State::Selected(selection) = &mut self.state
-            && selection.owner == owner
+        if let Some(view) = self.model.view()
+            && view.context.owner == owner.context().owner
         {
-            selection.chart = Some(chart);
-            selection.bounds = Some(bounds);
-            selection.right_limit = Some(right_limit);
+            self.geometry = Some(Geometry {
+                chart,
+                right_limit,
+                bounds: if view.paintable() {
+                    bounds
+                } else {
+                    egui::Rect::from_center_size(chart.center(), egui::Vec2::ZERO)
+                },
+            });
         }
     }
 
-    #[must_use]
-    pub fn request(&self) -> Option<PlaceRequest> {
-        let State::Selected(selection) = &self.state else {
-            return None;
-        };
-        selection.ready.then_some(PlaceRequest {
-            owner: selection.owner,
-            anchors: selection.anchors,
+    pub fn stale(&self, owner: Owner) -> bool {
+        self.model.view().is_some_and(|view| {
+            view.context.owner == owner.context().owner && view.phase == Phase::Stale
         })
     }
 
-    #[must_use]
-    pub fn control(&self, active_tab: u64) -> Option<Control> {
-        let request = self.request()?;
-        (request.owner.tab == active_tab).then_some(Control {
-            rect: self.action_rect?,
-            enabled: request
-                .anchors
-                .iter()
-                .all(|anchor| anchor.time_ms.is_some()),
+    #[cfg(test)]
+    pub fn control(&self, tab: u64) -> Option<Control> {
+        self.controls(tab)?
+            .into_iter()
+            .find(|control| control.action == Action::Profile)
+    }
+
+    pub fn controls(&self, tab: u64) -> Option<[Control; 3]> {
+        let view = self.model.view()?;
+        if view.context.owner.tab != tab
+            || view.phase == Phase::Dragging
+            || self.action_rects.iter().any(Option::is_none)
+        {
+            return None;
+        }
+        Some(Action::ALL.map(|action| Control {
+            action,
+            rect: self.action_rects[action.index()].expect("checked rectangles"),
+            enabled: view.actionable(),
+            unavailable_reason: view.unavailable_reason(),
+        }))
+    }
+
+    fn convert(&mut self, action: Action) -> Option<PlaceRequest> {
+        let context = self.model.context()?;
+        let Some(Effect::Place(operation)) =
+            self.model.update(Command::Convert(action), context).effect
+        else {
+            return None;
+        };
+        Some(PlaceRequest {
+            operation,
+            side: self.side?,
         })
+    }
+
+    pub fn completed(&mut self, id: u64, succeeded: bool) -> bool {
+        let event = if succeeded {
+            Event::Completed(id)
+        } else {
+            Event::Refused(id)
+        };
+        self.model
+            .observe(event, self.model.context().unwrap_or_default())
+            .effect
+            == Some(Effect::ExplainRefusal)
+    }
+
+    #[cfg(feature = "quick-range-harness")]
+    pub fn request_demo(&mut self, ready: bool, future: bool) {
+        self.demo_requested = Some((ready, future));
+    }
+
+    #[cfg(feature = "quick-range-harness")]
+    pub fn stage_demo(
+        &mut self,
+        owner: Owner,
+        opening: impl FnOnce(bool) -> Option<([ChartPoint; 2], NewDrawing)>,
+    ) {
+        let Some((ready, future)) = self.demo_requested else {
+            return;
+        };
+        let Some((anchors, look)) = opening(future) else {
+            return;
+        };
+        self.demo_requested = None;
+        self.press(
+            owner,
+            egui::pos2(0.0, 0.0),
+            anchors[0],
+            core::GestureEligibility {
+                pointer_tool: true,
+                unoccluded: true,
+                area: core::GestureArea {
+                    min: [0.0; 2],
+                    max: [20.0; 2],
+                },
+            },
+        );
+        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, || look);
+        if ready {
+            self.release(owner);
+        }
     }
 }
 
-/// Draw the one-action bar after the canvas. The bar borrows the exact frame,
-/// placement rule and icon geometry of the persistent drawing context bar.
 pub(super) fn draw(
     quick: &mut QuickRange,
     ctx: &egui::Context,
-    env: &DrawingEnv<'_>,
+    _env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
-    let Some(request) = quick.request() else {
+    let Some(view) = quick.model.view() else {
         return DrawingChromeAsk::default();
     };
-    if request.owner.tab != env.tab {
-        quick.dismiss();
+    let Some(Geometry {
+        chart,
+        bounds,
+        right_limit,
+    }) = quick.geometry.take()
+    else {
+        quick.action_rects = [None; 3];
         return DrawingChromeAsk::default();
+    };
+    let [Some(profile), Some(retracement), Some(projection)] =
+        Action::ALL.map(|action| drawings::DrawingTool::by_id(action.tool_id()))
+    else {
+        return DrawingChromeAsk::default();
+    };
+    let tools = [profile, retracement, projection];
+    let mut size = drawings::context_bar::single_action_bar_size();
+    size.x += TOOLRAIL_ICON.hit * (Action::ALL.len() - 1) as f32;
+    if view.phase == Phase::Stale {
+        size.x += STALE_REASON_WIDTH_PX;
     }
-    let State::Selected(selection) = &mut quick.state else {
-        return DrawingChromeAsk::default();
-    };
-    // Consumed once per frame: the owning pane measures the range again each
-    // time it paints it, so a pane a layout stopped painting (a collapsed
-    // column, a hidden flow pane) leaves no bar over whatever took its place.
-    let (Some(chart), Some(bounds), Some(right_limit)) = (
-        selection.chart.take(),
-        selection.bounds.take(),
-        selection.right_limit.take(),
-    ) else {
-        quick.action_rect = None;
-        return DrawingChromeAsk::default();
-    };
-    let Some(tool) = drawings::DrawingTool::by_id(crate::frvp::TOOL_ID) else {
-        return DrawingChromeAsk::default();
-    };
-    let size = drawings::context_bar::single_action_bar_size();
     let position = drawings::context_bar::place(chart, right_limit, bounds, size);
     let rect = egui::Rect::from_min_size(position, size);
-    let enabled = request
-        .anchors
-        .iter()
-        .all(|anchor| anchor.time_ms.is_some());
-    let mut clicked = false;
-    let mut action_rect = None;
+    let mut clicked = None;
+    let mut action_rects = [None; 3];
     egui::Area::new(egui::Id::new(BAR_ID))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .interactable(true)
         .show(ctx, |ui| {
             drawings::context_bar::floating_frame().show(ui, |ui| {
-                let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
-                    .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
-                    .enabled(enabled)
-                    .hover_text(tool.name())
-                    .disabled_explanation(
-                        "This range includes chart space with no market time; drag over bars to place a profile",
-                    )
-                    .show(ui);
-                action_rect = Some(response.rect);
-                clicked = response.clicked();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (action, tool) in Action::ALL.into_iter().zip(tools) {
+                        let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
+                            .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
+                            .enabled(view.actionable())
+                            .disabled_explanation("The chart changed. Draw the range again.")
+                            .hover_text(action.label())
+                            .show(ui);
+                        action_rects[action.index()] = Some(response.rect);
+                        if response.clicked() {
+                            clicked = Some(action);
+                        }
+                    }
+                    if view.phase == Phase::Stale {
+                        ui.label("Range changed; draw again.");
+                    }
+                });
             });
         });
-    quick.action_rect = action_rect;
-
-    let dismiss = !clicked
+    quick.action_rects = action_rects;
+    let dismiss = clicked.is_none()
         && ctx.input(|input| {
             input.pointer.primary_pressed()
                 && input
@@ -317,101 +455,44 @@ pub(super) fn draw(
         quick.dismiss();
     }
     DrawingChromeAsk {
-        place_quick_range_profile: (clicked && enabled).then_some(request),
+        place_quick_range: clicked.and_then(|action| quick.convert(action)),
         dismiss_quick_range: dismiss,
         ..DrawingChromeAsk::default()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "quick-range-harness"))]
 mod tests {
     use super::*;
 
-    fn point(bar: f32) -> ChartPoint {
-        ChartPoint::at_time(bar, 100.0 + f64::from(bar), Some(i64::from(bar as i32)))
-    }
-
-    fn opening() -> NewDrawing {
-        let tool = drawings::DrawingTool::by_id("measure").expect("ruler is registered");
-        NewDrawing {
-            style: tool.default_style(),
-            payload: tool.default_payload(),
-        }
-    }
-
     #[test]
-    fn a_click_never_becomes_a_temporary_range() {
+    fn demo_is_one_shot_and_enters_the_production_owner() {
         let owner = Owner {
-            tab: 7,
+            tab: 1,
+            pane: 2,
             side: PaneSide::Flow,
+            revision: 3,
+            layout: Some(4),
         };
         let mut quick = QuickRange::default();
-        quick.press(owner, egui::pos2(10.0, 10.0), point(1.0));
-        quick.drag(owner, egui::pos2(12.0, 10.0), point(2.0), 4.0, opening);
-        quick.release(owner);
-        assert!(quick.request().is_none());
-    }
-
-    #[test]
-    fn a_drag_settles_one_range_and_a_second_press_replaces_it() {
-        let first = Owner {
-            tab: 7,
-            side: PaneSide::Flow,
-        };
-        let second = Owner {
-            tab: 8,
-            side: PaneSide::Time(0),
-        };
-        let mut quick = QuickRange::default();
-        quick.press(first, egui::pos2(10.0, 10.0), point(1.0));
-        quick.drag(first, egui::pos2(20.0, 10.0), point(4.0), 4.0, opening);
-        quick.release(first);
-        assert_eq!(
-            quick.request().expect("ready").anchors,
-            [point(1.0), point(4.0)]
-        );
-
-        quick.press(second, egui::pos2(30.0, 10.0), point(5.0));
-        quick.release(second);
-        assert!(quick.request().is_none());
-    }
-
-    #[test]
-    fn the_demo_is_one_shot_and_uses_the_same_ready_state() {
-        let owner = Owner {
-            tab: 7,
-            side: PaneSide::Flow,
-        };
-        let mut quick = QuickRange::default();
-        quick.request_demo(true);
-        quick.stage_demo(owner, || Some(([point(2.0), point(6.0)], opening())));
-        assert!(quick.request().is_some());
+        quick.request_demo(true, true);
+        quick.stage_demo(owner, |future| {
+            assert!(future);
+            let tool = drawings::DrawingTool::by_id("measure").unwrap();
+            Some((
+                [
+                    ChartPoint::at_time(1.5, 100.0, Some(1)),
+                    ChartPoint::at(10.5, 101.0),
+                ],
+                NewDrawing {
+                    style: tool.default_style(),
+                    payload: tool.default_payload(),
+                },
+            ))
+        });
+        assert!(quick.model.view().unwrap().actionable());
         quick.dismiss();
-        quick.stage_demo(owner, || Some(([point(3.0), point(7.0)], opening())));
-        assert!(quick.request().is_none(), "the launch hook is spent once");
-
-        quick.request_demo(false);
-        quick.stage_demo(owner, || Some(([point(3.0), point(7.0)], opening())));
-        assert!(quick.paint(owner).is_some(), "the active ruler is painted");
-        assert!(
-            quick.request().is_none(),
-            "but raises no action before release"
-        );
-    }
-
-    #[test]
-    fn leaving_the_owning_tab_drops_even_an_unreleased_range() {
-        let owner = Owner {
-            tab: 7,
-            side: PaneSide::Flow,
-        };
-        let mut quick = QuickRange::default();
-        quick.press(owner, egui::pos2(10.0, 10.0), point(1.0));
-        quick.drag(owner, egui::pos2(20.0, 10.0), point(4.0), 4.0, opening);
-
-        assert_eq!(quick.reconcile_tab(7), Some(false));
-        assert_eq!(quick.reconcile_tab(8), None);
-        assert!(quick.paint(owner).is_none());
-        assert!(quick.request().is_none());
+        quick.stage_demo(owner, |_| panic!("the demo was consumed"));
+        assert!(!quick.model.present());
     }
 }

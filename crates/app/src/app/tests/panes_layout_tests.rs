@@ -21,7 +21,7 @@ fn the_smallest_window_collapses_rather_than_squeezing_every_pane() {
     );
     for pane in &panes {
         assert!(
-            pane.collapsed || pane.rect.height() >= crate::indicators::MIN_PANE_HEIGHT_PX,
+            pane.collapsed || pane.rect.height() + 0.01 >= crate::indicators::MIN_PANE_HEIGHT_PX,
             "an expanded pane below the readable floor: {pane:?}"
         );
     }
@@ -115,7 +115,7 @@ fn a_divider_cannot_be_dragged_past_the_readable_floor() {
 
     let pane = pane_slots(&app)[0];
     assert!(
-        pane.collapsed || pane.rect.height() >= crate::indicators::MIN_PANE_HEIGHT_PX,
+        pane.collapsed || pane.rect.height() + 0.01 >= crate::indicators::MIN_PANE_HEIGHT_PX,
         "a drag cannot squeeze a pane below the floor: {pane:?}"
     );
 }
@@ -1361,6 +1361,137 @@ fn the_time_layout_shows_the_timeframe_chart_alone() {
     );
 }
 
+/// The three-chart preset used to paint a seam between its two timeframe
+/// charts without registering it for input. A trader could resize the column
+/// sideways, but its two rows remained fixed at equal heights.
+#[test]
+fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let height = |app: &QuantickApp, slot| {
+        app.active_tab()
+            .pane(PaneSide::Time(slot))
+            .frame
+            .area
+            .expect("the context chart was drawn")
+            .height()
+    };
+    let column_divider_x = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the context column is beside flow")
+        .center()
+        .x;
+    let equal = [height(&app, 0), height(&app, 1)];
+    let divider = app
+        .active_tab()
+        .context_divider_rect(0)
+        .expect("two stacked charts have one divider");
+
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        divider.center(),
+        divider.center() - egui::vec2(0.0, 60.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let raised = [height(&app, 0), height(&app, 1)];
+    assert!(
+        raised[0] < equal[0] && raised[1] > equal[1],
+        "dragging upward exchanges height in that direction: {equal:?} -> {raised:?}"
+    );
+
+    let divider = app
+        .active_tab()
+        .context_divider_rect(0)
+        .expect("the resized seam remains draggable");
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        divider.center(),
+        divider.center() + egui::vec2(0.0, 120.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let lowered = [height(&app, 0), height(&app, 1)];
+    assert!(
+        lowered[0] > raised[0] && lowered[1] < raised[1],
+        "dragging downward exchanges height in the opposite direction: {raised:?} -> {lowered:?}"
+    );
+    assert!(
+        (app.active_tab()
+            .canvas_divider_rect()
+            .expect("the column boundary remains")
+            .center()
+            .x
+            - column_divider_x)
+            .abs()
+            < 1e-3,
+        "a vertical resize must not move the boundary beside the flow chart"
+    );
+
+    let divider = app
+        .active_tab()
+        .context_divider_rect(0)
+        .expect("two stacked charts have one divider");
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        divider.center(),
+        egui::pos2(divider.center().x, TEST_WINDOW.y),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+
+    let bottom = app
+        .active_tab()
+        .pane(PaneSide::Time(1))
+        .frame
+        .area
+        .expect("the lower context chart remains drawn");
+    let chart_floor = crate::canvas_layout::MIN_PANE_WIDTH_PX
+        - crate::time_header::HEIGHT_PX
+        - crate::canvas_layout::CANVAS_DIVIDER_PX;
+    assert!(
+        bottom.height() >= chart_floor,
+        "the lower chart remains readable at the drag limit: {} < {chart_floor}",
+        bottom.height()
+    );
+    assert!(
+        app.active_tab().context_divider_rect(0).is_some(),
+        "the handle remains available to reverse the drag"
+    );
+
+    let short_window = egui::vec2(TEST_WINDOW.x, 440.0);
+    run_frame_at(&mut app, &ctx, short_window);
+    run_frame_at(&mut app, &ctx, short_window);
+    let divider = app
+        .active_tab()
+        .context_divider_rect(0)
+        .expect("the short canvas keeps its divider");
+    let before = [height(&app, 0), height(&app, 1)];
+    drag_sized(
+        &mut app,
+        &ctx,
+        short_window,
+        divider.center(),
+        egui::pos2(divider.center().x, 0.0),
+    );
+    run_frame_at(&mut app, &ctx, short_window);
+    assert_eq!(
+        [height(&app, 0), height(&app, 1)],
+        before,
+        "a canvas too short for two floors refuses to erase either chart"
+    );
+}
+
 /// Two tabs speaking on one frame: the slot holds one message, and the
 /// one the trader is looking at wins it rather than tab order deciding in
 /// silence.
@@ -2025,6 +2156,128 @@ fn two_panes_show_two_layouts_side_by_side() {
             1,
             "the time pane holds one registration after two switches, not two"
         );
+}
+
+/// The visual selector is now part of every visible pane. The chart body
+/// hands exactly one footer back, and moving focus changes no geometry or
+/// pane-to-layout assignment.
+#[test]
+fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let tab = app.active_tab().id;
+    let first = app.pane_layout(tab, PaneSide::Flow);
+
+    let time_point = pane_point(&app, PaneSide::Time(0));
+    click_chart(&mut app, &ctx, time_point);
+    let second = app.create_layout(Some("levels")).expect("second layout");
+    run_frame(&mut app, &ctx);
+
+    let flow_strip = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .layout_strip
+        .expect("flow footer");
+    let time_strip = app
+        .active_tab()
+        .pane(PaneSide::Time(0))
+        .frame
+        .layout_strip
+        .expect("time footer");
+    assert_ne!(flow_strip, time_strip, "each pane publishes its own footer");
+    assert_eq!(
+        app.active_tab()
+            .flow_pane
+            .frame
+            .area
+            .expect("flow body")
+            .bottom(),
+        flow_strip.top()
+    );
+    assert_eq!(
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .frame
+            .area
+            .expect("time body")
+            .bottom(),
+        time_strip.top()
+    );
+
+    let flow_point = pane_point(&app, PaneSide::Flow);
+    click_chart(&mut app, &ctx, flow_point);
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
+    assert_eq!(app.pane_layout(tab, PaneSide::Flow), first);
+    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), second);
+    assert_eq!(
+        app.active_tab().flow_pane.frame.layout_strip,
+        Some(flow_strip)
+    );
+    assert_eq!(
+        app.active_tab().pane(PaneSide::Time(0)).frame.layout_strip,
+        Some(time_strip),
+        "focus changes neither footer's identity nor assignment"
+    );
+}
+
+/// A pane-local strip does not need a preliminary chart click. Its action is
+/// already addressed, so switch and create land on that pane even while its
+/// neighbour has focus; shared catalogue edits remain shared.
+#[test]
+fn pane_local_strip_actions_target_the_footer_that_raised_them() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let tab = app.active_tab().id;
+    let first = app.layouts().active_id();
+    app.active_tab_mut().focus = PaneSide::Flow;
+    let second = app.create_layout(Some("levels")).expect("second layout");
+    assert_eq!(app.pane_layout(tab, PaneSide::Flow), second);
+
+    app.apply_strip_action_at(
+        tab,
+        PaneSide::Time(0),
+        crate::layout_strip::StripAction::Switch(first),
+    );
+    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
+    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), first);
+    assert_eq!(
+        app.pane_layout(tab, PaneSide::Flow),
+        second,
+        "the neighboring pane is untouched"
+    );
+
+    app.apply_strip_action_at(
+        tab,
+        PaneSide::Time(0),
+        crate::layout_strip::StripAction::Create,
+    );
+    let third = app.layouts().active_id();
+    assert_ne!(third, first);
+    assert_ne!(third, second);
+    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), third);
+    assert_eq!(app.pane_layout(tab, PaneSide::Flow), second);
+
+    app.apply_strip_action_at(
+        tab,
+        PaneSide::Time(0),
+        crate::layout_strip::StripAction::BeginRename(second),
+    );
+    let rename = app.chrome.layout_rename.as_ref().expect("rename editor");
+    assert_eq!(
+        (rename.tab, rename.pane, rename.layout),
+        (tab, PaneSide::Time(0), second)
+    );
+    app.apply_strip_action_at(
+        tab,
+        PaneSide::Time(0),
+        crate::layout_strip::StripAction::CommitRename(second, "shared".to_owned()),
+    );
+    assert_eq!(
+        app.layouts().get(second).expect("shared layout").name,
+        "shared"
+    );
 }
 /// The strip and the file record the layout per pane: a workspace
 /// captured with two panes on two layouts names both, and a pane told

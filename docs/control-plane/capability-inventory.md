@@ -25,7 +25,10 @@ capability that cannot change application state.
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fib_projection.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fib_retracement.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fixed_range_profile.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fixed_range_profile.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -74,4 +77,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-49 capabilities registered.
+52 capabilities registered.

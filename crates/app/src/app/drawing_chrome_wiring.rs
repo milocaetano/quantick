@@ -46,6 +46,7 @@ fn drawing_env<'a>(
             .map(|drawing| crate::surfaces::drawing_chrome::SelectedDrawing { index, drawing })
     });
     crate::surfaces::DrawingEnv {
+        pane_id: pane.id,
         selected,
         chart_area: pane.frame.chart_area,
         focused_chart_area: tab.focused_pane().frame.chart_area,
@@ -334,11 +335,9 @@ impl QuantickApp {
             ..
         } = self;
         let env = drawing_env(&tabs[*active_tab], toolrail, drawing_presets, read);
-        if floating {
-            surfaces.drawing_chrome.draw_floating(ctx, &env)
-        } else {
-            surfaces.drawing_chrome.draw_pinned_panel(ctx, &env)
-        }
+        surfaces
+            .drawing_chrome
+            .draw_pass(ctx, &env, &tabs[*active_tab], floating)
     }
 
     /// The `QUANTICK_TEXT_NOTE` hook's other half: place a note in the middle

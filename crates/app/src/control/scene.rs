@@ -413,39 +413,40 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
     SceneOwnerKindDto::TabStrip,
 ];
 
-/// The one contextual action visible after a temporary range settles.
+/// The contextual drawing actions visible after a temporary range settles.
 fn push_quick_range(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let Some(control) = crate::app::control_quick_range(app) else {
+    use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
+    let Some(actions) = crate::app::control_quick_range_actions(app) else {
         return;
     };
-    let bounds = rect_bounds(control.rect);
-    controls.push(SceneControlSnapshot {
-        control_id: crate::surfaces::drawing_chrome::QUICK_RANGE_ACTION_CONTROL_ID.to_owned(),
-        label: "Fixed-range volume profile".to_owned(),
-        role: SceneRoleDto::Action,
-        owner: SceneOwnerSnapshot {
-            // A contextual toolbar over the chart. Reusing the region kind is
-            // also schema-compatible for existing scene clients; the owner ID
-            // distinguishes it from the fixed toolbar above the canvas.
-            kind: SceneOwnerKindDto::Toolbar,
-            id: QUICK_RANGE_OWNER_ID.to_owned(),
-        },
-        selected: false,
-        availability: if control.enabled {
-            available()
-        } else {
-            unavailable("the_range_has_no_market_time")
-        },
-        bounds_availability: match &bounds {
-            Bounds::Rect(_) => available(),
-            Bounds::NotDrawn => unavailable("the_action_has_not_been_drawn_yet"),
-            Bounds::NotReportable => {
-                unavailable("the_actions_rectangle_is_not_a_reportable_number")
-            }
-        },
-        bounds: bounds.into_snapshot(),
-        capability_id: Some(super::annotate::PROFILE_CAPABILITY_ID.to_owned()),
-    });
+    for control in actions {
+        let bounds = rect_bounds(control.rect);
+        controls.push(SceneControlSnapshot {
+            control_id: control.action.control_id().to_owned(),
+            label: control.action.label().to_owned(),
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                // A contextual toolbar over the chart. Reusing the region kind is
+                // also schema-compatible for existing scene clients; the owner ID
+                // distinguishes it from the fixed toolbar above the canvas.
+                kind: SceneOwnerKindDto::Toolbar,
+                id: QUICK_RANGE_OWNER_ID.to_owned(),
+            },
+            selected: false,
+            availability: control
+                .unavailable_reason
+                .map_or_else(available, unavailable),
+            bounds_availability: match &bounds {
+                Bounds::Rect(_) => available(),
+                Bounds::NotDrawn => unavailable("the_action_has_not_been_drawn_yet"),
+                Bounds::NotReportable => {
+                    unavailable("the_actions_rectangle_is_not_a_reportable_number")
+                }
+            },
+            bounds: bounds.into_snapshot(),
+            capability_id: Some(control.action.capability_id().to_owned()),
+        });
+    }
 }
 
 /// The open charts, in strip order, up to the scene's ceiling.

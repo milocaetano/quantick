@@ -36,6 +36,13 @@ pub struct PaneFrame {
     /// offline note is placed against it: an explanation belongs on the pane
     /// with nothing in it, which is precisely the pane that has room for one.
     pub area: Option<egui::Rect>,
+    /// The pane-local layout strip reserved below [`Self::area`].
+    ///
+    /// The tab owns the split because it knows which panes are visible; the
+    /// app reads the published rectangle afterwards to draw the shared layout
+    /// catalogue once for each of them. Keeping the measured rectangle here
+    /// makes the chart, overlays and strip agree about the same boundary.
+    pub layout_strip: Option<egui::Rect>,
     /// The price gutter of the last draw, published for the same reason: the
     /// scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     /// is really on the axis, not a guess about where the gutter probably is.
@@ -81,6 +88,7 @@ impl Default for PaneFrame {
             lane_divider_x: None,
             chart_rect: None,
             area: None,
+            layout_strip: None,
             price_gutter: None,
             time_strip: None,
             lane_reference_ms: None,

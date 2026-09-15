@@ -10,6 +10,14 @@ use eframe::egui;
 
 use crate::window_scale;
 
+/// The one in-place layout rename editor and the pane footer that owns it.
+pub(super) struct LayoutRename {
+    pub(super) tab: u64,
+    pub(super) pane: crate::pane::PaneSide,
+    pub(super) layout: crate::layouts::LayoutId,
+    pub(super) draft: String,
+}
+
 /// The window chrome's transient state: where a control was last drawn,
 /// which picker is open, and what the frame has not told the workspace yet.
 ///
@@ -56,8 +64,10 @@ pub(super) struct ChromeState {
     /// Whether the toolbar's layout popover is open.
     pub(super) layout_picker_open: bool,
 
-    /// The layout being renamed in the strip, with the draft name.
-    pub(super) layout_rename: Option<(crate::layouts::LayoutId, String)>,
+    /// The layout being renamed, its draft, and the pane-local strip that
+    /// opened the editor. The catalogue mutation remains workspace-wide; only
+    /// the transient text box belongs to one footer.
+    pub(super) layout_rename: Option<LayoutRename>,
 
     /// The layout a delete is waiting on: deleting takes its drawings with
     /// it, on disk too, so it is the one strip action behind a confirmation.

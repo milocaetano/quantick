@@ -1,6 +1,5 @@
-//! The layout strip: one tab per layout along the bottom of the canvas,
-//! above the status bar — the door to [`crate::layouts`] a trader reaches
-//! with the mouse.
+//! The layout strip: one tab per layout in the footer of every visible chart
+//! pane — the door to [`crate::layouts`] a trader reaches with the mouse.
 //!
 //! Drawn from the book and nothing else: a tab per layout in strip order,
 //! the active one lit, a `+` after the last. Click switches; double-click
@@ -16,9 +15,9 @@ use egui_phosphor::regular as icons;
 use crate::layouts::{ChartLayout, LayoutId, MAX_LAYOUT_NAME};
 use crate::theme;
 
-/// The strip's height, in pixels. One text line and its padding: a strip,
-/// not a toolbar.
-pub const STRIP_HEIGHT: f32 = 24.0;
+/// The strip's height, in pixels. One text line, its padding, and a floating
+/// horizontal scrollbar when the pane cannot hold the whole catalogue.
+pub const STRIP_HEIGHT: f32 = 28.0;
 /// Horizontal padding inside a tab.
 const TAB_PAD_X_PX: f32 = 10.0;
 /// Gap between tabs.
@@ -49,14 +48,11 @@ const RULE_INSET_X_PX: f32 = 2.0;
 /// What the app hands the strip each frame.
 pub struct StripModel<'a> {
     pub layouts: &'a [ChartLayout],
-    /// The layout the focused pane shows — the one the strip lights.
+    /// The layout this strip's own pane shows — the one it lights.
     pub active: LayoutId,
-    /// What the chrome calls the focused pane ("Flow", "Timeframe 2"): the
-    /// strip switches *that* pane, and says so in front of the tabs.
-    pub owner: &'a str,
-    /// The layout under rename and its draft, owned by the app so a rename
-    /// begun from the keyboard or a hook opens the same box.
-    pub rename: &'a mut Option<(LayoutId, String)>,
+    /// The layout under rename and its draft when this pane owns the editor.
+    /// Other pane strips keep drawing the shared catalogue normally.
+    pub rename: Option<(LayoutId, &'a mut String)>,
     /// Whether another layout may be added.
     pub can_add: bool,
     /// Whether a layout may be deleted (never the last).
@@ -74,39 +70,60 @@ pub enum StripAction {
     Delete(LayoutId),
 }
 
-/// Draw the strip and collect what it asked for.
-pub fn draw(ctx: &egui::Context, model: StripModel<'_>) -> Vec<StripAction> {
+/// Draw one pane-local strip and collect what it asked for.
+///
+/// `salt` is the pane's stable id. Each replica needs independent egui scroll
+/// and interaction memory even though every one reads the same catalogue.
+pub fn draw(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    salt: u64,
+    mut model: StripModel<'_>,
+) -> Vec<StripAction> {
     let mut actions = Vec::new();
-    egui::TopBottomPanel::bottom("layout_strip")
-        .exact_height(STRIP_HEIGHT)
-        .frame(
-            egui::Frame::none()
-                .fill(theme::CHROME)
-                .inner_margin(egui::Margin::symmetric(6.0, 0.0)),
-        )
-        .show(ctx, |ui| {
+    ui.painter().rect_filled(rect, 0.0, theme::CHROME);
+    ui.painter().line_segment(
+        [rect.left_top(), rect.right_top()],
+        egui::Stroke::new(1.0_f32, theme::BORDER),
+    );
+    let mut content = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(("layout_strip", salt))
+            .max_rect(rect.shrink2(egui::vec2(6.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let scroll = &mut content.spacing_mut().scroll;
+    scroll.floating = true;
+    scroll.bar_width = 3.0;
+    scroll.floating_allocated_width = 0.0;
+    let active_memory = egui::Id::new(("layout_strip_active", salt));
+    let reveal_active = ui.ctx().data_mut(|data| {
+        let changed = data.get_temp::<LayoutId>(active_memory) != Some(model.active);
+        data.insert_temp(active_memory, model.active);
+        changed
+    });
+    egui::ScrollArea::horizontal()
+        .id_salt(("layout_strip_tabs", salt))
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+        .auto_shrink([false, false])
+        .drag_to_scroll(true)
+        .show(&mut content, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = TAB_GAP_PX;
-                ui.label(
-                    egui::RichText::new(format!("{} ·", model.owner))
-                        .size(LABEL_SIZE_PX)
-                        .color(theme::TEXT_FAINT),
-                )
-                .on_hover_text(
-                    "the chart the strip switches — click another chart to switch that one",
-                );
                 for layout in model.layouts {
                     let renaming = model
                         .rename
                         .as_ref()
                         .is_some_and(|(id, _)| *id == layout.id);
                     if renaming {
-                        draw_rename_box(ui, layout.id, model.rename, &mut actions);
+                        let (_, draft) = model.rename.as_mut().expect("rename checked above");
+                        draw_rename_box(ui, layout.id, draft, &mut actions);
                     } else {
                         draw_tab(
                             ui,
                             layout,
                             layout.id == model.active,
+                            reveal_active,
                             model.can_delete,
                             &mut actions,
                         );
@@ -136,6 +153,7 @@ fn draw_tab(
     ui: &mut egui::Ui,
     layout: &ChartLayout,
     active: bool,
+    reveal_active: bool,
     can_delete: bool,
     actions: &mut Vec<StripAction>,
 ) {
@@ -155,6 +173,9 @@ fn draw_tab(
     let size = egui::vec2(galley.size().x + 2.0 * TAB_PAD_X_PX, ui.available_height());
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let response = response.on_hover_text("Click to switch · double-click to rename");
+    if active && reveal_active {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         if active || response.hovered() {
@@ -212,12 +233,9 @@ fn draw_tab(
 fn draw_rename_box(
     ui: &mut egui::Ui,
     id: LayoutId,
-    rename: &mut Option<(LayoutId, String)>,
+    draft: &mut String,
     actions: &mut Vec<StripAction>,
 ) {
-    let Some((_, draft)) = rename.as_mut() else {
-        return;
-    };
     let edit = egui::TextEdit::singleline(draft)
         .desired_width(RENAME_WIDTH_PX)
         .char_limit(MAX_LAYOUT_NAME)

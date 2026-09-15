@@ -352,6 +352,18 @@ fn two_anchors(app: &QuantickApp) -> Vec<Value> {
         .collect()
 }
 
+fn chart_anchors(anchors: &[Value]) -> Vec<Value> {
+    anchors
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, mut anchor)| {
+            anchor["bar_position"] = json!(format!("{index}.5"));
+            anchor
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Optional families: a dropped answer, retried under the same key
 // ---------------------------------------------------------------------------
@@ -1011,6 +1023,7 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     enable_test_gateway(&mut app, &ctx, &directory, 8);
     let mut client = connect(&directory, &options("annotator", ANNOTATE_SCOPES));
     let anchors = two_anchors(&app);
+    let fib_anchors = chart_anchors(&anchors);
     let script = "//@version=5\nindicator(\"agent ema\")\nplot(close)\n";
     let rows: Vec<_> = retry_matrix::READBACKS
         .iter()
@@ -1022,9 +1035,13 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     for (index, row) in rows.iter().enumerate() {
         let payload = match row.capability {
             "annotate.label.create" => json!({ "anchors": [anchors[1].clone()], "text": "k" }),
+            "annotate.fib_projection.create" => {
+                json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] })
+            }
             "annotate.arrow.create"
             | "annotate.zone.create"
             | "annotate.fixed_range_profile.create" => json!({ "anchors": anchors }),
+            "annotate.fib_retracement.create" => json!({ "anchors": fib_anchors }),
             "annotate.remove" => json!({ "annotation_id": "1" }),
             "attention.mark.create" => json!({ "note": "keyed" }),
             "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
@@ -1195,6 +1212,7 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
     // mistake the reader for the connection it withdraws.
     let (mut reader, _) = connect_listed(&mut app, &ctx, &directory, &annotator);
     let anchors = two_anchors(&app);
+    let fib_anchors = chart_anchors(&anchors);
     let mine = json!(CLIENT_NAME);
 
     for (capability, payload) in [
@@ -1213,6 +1231,14 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
         (
             "annotate.fixed_range_profile.create",
             json!({ "anchors": anchors.clone() }),
+        ),
+        (
+            "annotate.fib_retracement.create",
+            json!({ "anchors": fib_anchors.clone() }),
+        ),
+        (
+            "annotate.fib_projection.create",
+            json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] }),
         ),
     ] {
         for (lost, applied) in [(Lost::ByRevocation, false), (Lost::AfterQueueing, true)] {
