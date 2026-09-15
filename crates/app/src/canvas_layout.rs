@@ -421,9 +421,7 @@ pub fn split_row(area: egui::Rect, widths: &[PaneWidth]) -> RowAreas {
 
 /// Carve `area` top to bottom instead of left to right.
 ///
-/// Not yet called by the canvas, and the reason is worth writing down rather
-/// than leaving as a gap: laying two context panes out is arithmetic this
-/// function already does, but *drawing* on them is not. `shared_picks`,
+/// Used by the canvas for stacked context panes. `shared_picks`,
 /// `apply_shared_interactions` and `paint_shared_drawings` are pairwise by
 /// construction — each asks "the other pane", singular — and a mark shared
 /// across three panes has two owners, not one. Generalising that decides

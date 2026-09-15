@@ -546,6 +546,12 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// The height rule for each context chart, top to bottom.
+    ///
+    /// Empty entries are seeded as automatic when the chart first appears.
+    /// Kept while a layout hides a chart so returning to the three-pane
+    /// preset does not discard the trader's vertical sizing.
+    context_heights: SmallVec<[crate::canvas_layout::PaneWidth; MAX_CONTEXT_PANES]>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -559,6 +565,8 @@ pub struct Tab {
     time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
     #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
+    #[cfg(test)]
+    context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     #[cfg(test)]
     collapsed_rail: Option<egui::Rect>,
 }
@@ -647,6 +655,7 @@ impl Tab {
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
+            context_heights: SmallVec::new(),
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
@@ -654,6 +663,8 @@ impl Tab {
             time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
+            #[cfg(test)]
+            context_dividers: SmallVec::new(),
             #[cfg(test)]
             collapsed_rail: None,
         }
@@ -779,6 +790,12 @@ impl Tab {
     #[cfg(test)]
     pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
         self.canvas_divider
+    }
+
+    /// Where the dividers between stacked context charts landed.
+    #[cfg(test)]
+    pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.context_dividers.get(index).copied()
     }
 
     /// Forget which candle generation was acted on, so the next poll treats
