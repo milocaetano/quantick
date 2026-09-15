@@ -19,6 +19,8 @@ use quantick_control::limits::CONTROL_DISCOVERY_MAX_ENTRIES;
 
 const NO_INSTANCE_NEXT_STEP: &str =
     "Start Quantick, open Tools > Local agent access, and enable observer access.";
+/// Covers the Unix boot-time resolution and small wall-clock adjustments.
+const PROCESS_START_TOLERANCE_MS: i64 = 1_000;
 #[cfg(windows)]
 const WINDOWS_MIN_SID_BYTES: usize = 8;
 
@@ -386,7 +388,10 @@ fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
             return true;
         };
         let created_at_unix_ms = i64::try_from(unix_ticks / 10_000).unwrap_or(i64::MAX);
-        descriptor.process_started_at_unix_ms.saturating_add(1_000) >= created_at_unix_ms
+        descriptor
+            .process_started_at_unix_ms
+            .saturating_add(PROCESS_START_TOLERANCE_MS)
+            >= created_at_unix_ms
     })();
     unsafe { CloseHandle(process) };
     result
@@ -406,6 +411,8 @@ fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
     if fields.first().is_some_and(|state| *state == "Z") {
         return false;
     }
+    // After the parenthesized command name, index 19 is Linux stat field 22:
+    // process start ticks since boot.
     let Some(start_ticks) = fields.get(19).and_then(|value| value.parse::<u64>().ok()) else {
         return true;
     };
@@ -425,11 +432,16 @@ fn system_process_is_live(descriptor: &InstanceDescriptor) -> bool {
     if ticks_per_second == 0 {
         return true;
     }
-    let created_at_unix_ms = boot_seconds
-        .saturating_mul(1_000)
-        .saturating_add(start_ticks.saturating_mul(1_000) / ticks_per_second);
-    u64::try_from(descriptor.process_started_at_unix_ms)
-        .is_ok_and(|started| started.saturating_add(1_000) >= created_at_unix_ms)
+    let created_at_unix_ms = i64::try_from(
+        boot_seconds
+            .saturating_mul(1_000)
+            .saturating_add(start_ticks.saturating_mul(1_000) / ticks_per_second),
+    )
+    .unwrap_or(i64::MAX);
+    descriptor
+        .process_started_at_unix_ms
+        .saturating_add(PROCESS_START_TOLERANCE_MS)
+        >= created_at_unix_ms
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
