@@ -41,6 +41,36 @@ pub(crate) fn bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> e
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
 }
 
+/// Repair either automatic or parked placement around the measured legend.
+/// Four bounded candidates keep the lane constraint; no paint shapes are scanned.
+fn avoid_legend(
+    position: egui::Pos2,
+    size: egui::Vec2,
+    reachable: egui::Rect,
+    legend: Option<egui::Rect>,
+) -> egui::Pos2 {
+    let position = clamp_into_chart(position, size, reachable);
+    let Some(legend) = legend else {
+        return position;
+    };
+    let gap = drawings::context_bar::OBJECT_GAP_PX;
+    let excluded = legend.expand(gap);
+    if !egui::Rect::from_min_size(position, size).intersects(excluded) {
+        return position;
+    }
+    [
+        egui::pos2(position.x, excluded.bottom()),
+        egui::pos2(excluded.right(), position.y),
+        egui::pos2(position.x, excluded.top() - size.y),
+        egui::pos2(excluded.left() - size.x, position.y),
+    ]
+    .into_iter()
+    .map(|candidate| clamp_into_chart(candidate, size, reachable))
+    .filter(|candidate| !egui::Rect::from_min_size(*candidate, size).intersects(legend))
+    .min_by(|a, b| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
+    .unwrap_or(position)
+}
+
 /// Draw this frame.
 pub(crate) fn draw(
     chrome: &mut DrawingChromeSurface,
@@ -181,7 +211,7 @@ pub(crate) fn draw(
     // pane's own right edge — and that path is reachable with a full-height
     // profile on a narrow split. It also keeps the popover bound below
     // honest, which is derived from where the bar ends up.
-    let position = clamp_into_chart(position, size, reachable);
+    let position = avoid_legend(position, size, reachable, env.flow_legend);
     // What the popovers are clamped into: the same rectangle *without* the
     // bar's width floor, but never narrower than the bar that was actually
     // drawn.
@@ -259,6 +289,34 @@ pub(crate) fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
+        for width in [650.0, 1000.0, 1500.0] {
+            let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(width, 700.0));
+            let size = egui::vec2(460.0, 40.0);
+            let lane = chart.right() - 100.0;
+            let reachable = bounds(chart, lane, size);
+            let legend = egui::Rect::from_min_size(
+                chart.min + egui::vec2(6.0, 42.0),
+                egui::vec2(500.0, 65.0),
+            );
+            let bbox = chart.shrink(10.0);
+            for wanted in [
+                drawings::context_bar::place(chart, lane, bbox, size),
+                legend.min,
+                egui::pos2(4000.0, legend.top()),
+            ] {
+                let placed = egui::Rect::from_min_size(
+                    avoid_legend(wanted, size, reachable, Some(legend)),
+                    size,
+                );
+                assert!(!placed.intersects(legend), "{placed:?} / {legend:?}");
+                assert!(reachable.contains_rect(placed));
+                assert!(placed.right() <= lane);
+            }
+        }
+    }
 
     /// The live lane is off limits to the bar however it got where it is.
     ///

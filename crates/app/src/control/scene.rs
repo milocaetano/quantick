@@ -352,6 +352,7 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
     let focused_pane_id = push_panes(&mut controls, active, focused_side);
+    push_context_dividers(&mut controls, active);
     push_quick_range(&mut controls, app);
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
@@ -445,6 +446,41 @@ fn push_quick_range(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp)
             },
             bounds: bounds.into_snapshot(),
             capability_id: Some(control.action.capability_id().to_owned()),
+        });
+    }
+}
+
+/// Stable pair IDs are shared with the pointer handle and the resize request.
+fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab) {
+    let Some((_, bands)) = tab.context_stack_geometry() else {
+        return;
+    };
+    for (index, divider) in bands.dividers.iter().enumerate() {
+        let upper = tab
+            .pane_at(index + 1)
+            .expect("a drawn upper context pane")
+            .id;
+        let lower = tab
+            .pane_at(index + 2)
+            .expect("a drawn lower context pane")
+            .id;
+        let bounds = rect_bounds(*divider);
+        controls.push(SceneControlSnapshot {
+            control_id: format!("tab.{}.context_divider.{upper}.{lower}", tab.id),
+            label: format!("Resize context panes {upper} and {lower}"),
+            role: SceneRoleDto::Action,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::Tab,
+                id: tab_control_id(tab.id),
+            },
+            selected: false,
+            availability: available(),
+            bounds_availability: match &bounds {
+                Bounds::Rect(_) => available(),
+                _ => unavailable("the_divider_rectangle_is_not_reportable"),
+            },
+            bounds: bounds.into_snapshot(),
+            capability_id: Some(super::layout::stack::RESIZE_PAIR_CAPABILITY_ID.to_owned()),
         });
     }
 }

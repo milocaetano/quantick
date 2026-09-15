@@ -187,6 +187,7 @@ const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's
 /// Every mutable capability's readback. Order is irrelevant: the document is
 /// rendered in the registry's order.
 pub(crate) const READBACKS: &[Readback] = &[
+    super::layout::stack::READBACK,
     snapshot(
         "annotate.arrow.create",
         Forbidden,

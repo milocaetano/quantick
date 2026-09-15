@@ -76,6 +76,36 @@ Evidence: .claude/evidence/quick-range-mvu/validation.md, independent preflight/
 
 ## Implementation boundary and plan
 
+### PR 511 bounded repair batch 1, 2026-09-15
+
+Repair starts from 86e5c9d3460f867115d2e17142828976744bde8a against the
+unchanged campaign base 9ff57501249f51d8f75c21f52094ec3dc3c39af2. The
+coordinator reserved batch 1 and attempt 1 for MVU-V1, MVU-V2,
+AR-STRIP-CONSTANT, AR-RESIZE-ACT and AR-RESIZE-DISCOVER before dispatch
+(PR progress revision 2). This plan does not reset counters or close findings.
+MVU-P1/P2 and their preliminary attempt counts remain preserved.
+
+1. Characterize narrow status overlap and selected-bar/legend collision;
+   preserve every status value, SIM honesty, live lane and legend. Use bounded
+   responsive placement and the legend's actual measured rectangle carried
+   by existing pane-frame geometry. Include parked bars and narrow bounds.
+2. Name and document the layout strip scrollbar width at module scope.
+3. Route pointer and admitted remote vertical resizing through one typed,
+   addressed adjacent-pair operation, preserving neighbor boundaries, floors,
+   horizontal share, permissions and actor semantics. Add truthful operation
+   and divider discovery without changing released resize v1/v2 schemas.
+4. Run focused regressions, guards, then the full ordered fmt/clippy/build/test
+   loop and feature validation. Preserve seven frozen files and UI-free ceiling
+   46911 without exemptions. Record current input hashes and actual outputs.
+5. Return the uncommitted frozen diff to the coordinator for current-source
+   visual/performance evidence and independent delta reviews. No completion,
+   current review PASS or CI reuse is implied by implementation tests.
+
+Rate classes: status/bar placement is bounded per-frame geometry, without
+session scans or paint-shape rescans; resizing runs only on drag/action events;
+capability discovery and schema generation are rare. The existing mission,
+source map and acceptance criteria remain authoritative. No new mission or PR.
+
 ### Draft-delivery evidence checkpoint, 2026-09-15
 
 Runtime source 1b4bad7ebb257d0c0a016db6994338592b367bda, tree

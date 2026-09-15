@@ -71,7 +71,7 @@ The three exclusion classes are closed:
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
-| `layout.pane.resize` | Resize a chart by its splitter | drag the divider between two charts | `layout.pane.resize` | — |
+| `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
 | `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a layer button's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |

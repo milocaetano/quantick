@@ -41,6 +41,7 @@ use quantick_feed::{
 use std::path::PathBuf;
 
 mod canvas;
+pub(crate) mod context_resize;
 mod feed;
 mod history;
 mod layout;
@@ -548,12 +549,8 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
-    /// The height rule for each context chart, top to bottom.
-    ///
-    /// Empty entries are seeded as automatic when the chart first appears.
-    /// Kept while a layout hides a chart so returning to the three-pane
-    /// preset does not discard the trader's vertical sizing.
-    context_heights: SmallVec<[crate::canvas_layout::PaneWidth; MAX_CONTEXT_PANES]>,
+    /// Retained context heights and the geometry of their last drawn stack.
+    context_stack: context_resize::ContextStack,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -658,7 +655,7 @@ impl Tab {
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
-            context_heights: SmallVec::new(),
+            context_stack: context_resize::ContextStack::default(),
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,

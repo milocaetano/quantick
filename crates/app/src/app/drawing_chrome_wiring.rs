@@ -51,6 +51,7 @@ fn drawing_env<'a>(
         chart_area: pane.frame.chart_area,
         focused_chart_area: tab.focused_pane().frame.chart_area,
         lane_divider_x: pane.frame.lane_divider_x,
+        flow_legend: pane.frame.flow_legend,
         auto_range: pane.frame.auto_range,
         selected_bbox: read.selected_bbox,
         selected_band: read.selected_band,

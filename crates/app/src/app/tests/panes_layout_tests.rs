@@ -1492,6 +1492,101 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
     );
 }
 
+#[test]
+fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let upper = app.active_tab().pane(PaneSide::Time(0)).id;
+    let lower = app.active_tab().pane(PaneSide::Time(1)).id;
+    let input = |upper: u64, lower: u64, fraction: &str| {
+        serde_json::json!({
+            "upper_pane_id": upper.to_string(), "lower_pane_id": lower.to_string(),
+            "fraction": fraction
+        })
+    };
+    let width = app.active_tab().split_fraction;
+    let before = app.active_tab().context_divider_rect(0).unwrap();
+    let result = app
+        .control_action(
+            "layout.pane.resize_pair",
+            1,
+            crate::control::ActionOrigin::Human,
+            input(upper, lower, "0.35"),
+        )
+        .unwrap();
+    assert_eq!(result["upper_pane_id"], upper.to_string());
+    assert_eq!(result["lower_pane_id"], lower.to_string());
+    assert_eq!(result["changed"], true);
+    run_frame(&mut app, &ctx);
+    let moved = app.active_tab().context_divider_rect(0).unwrap();
+    assert!(moved.center().y < before.center().y);
+    assert_eq!(app.active_tab().split_fraction, width);
+    for invalid in [
+        input(lower, upper, "0.8"),
+        input(upper, u64::MAX, "0.8"),
+        input(upper, lower, "1.1"),
+        input(upper, lower, "0.1234567"),
+    ] {
+        assert!(
+            app.control_action(
+                "layout.pane.resize_pair",
+                1,
+                crate::control::ActionOrigin::Human,
+                invalid
+            )
+            .is_err()
+        );
+    }
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), moved);
+    let scene = observer_scene(&app);
+    let id = format!(
+        "tab.{}.context_divider.{upper}.{lower}",
+        app.active_tab().id
+    );
+    let divider = scene["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|control| control["control_id"] == id)
+        .expect("the visible divider is discoverable");
+    assert_eq!(divider["capability_id"], "layout.pane.resize_pair");
+    assert!(divider["bounds"].is_object());
+    app.control_action(
+        "layout.pane.resize_pair",
+        1,
+        crate::control::ActionOrigin::Human,
+        input(upper, lower, "1"),
+    )
+    .unwrap();
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(1))
+            .frame
+            .area
+            .unwrap()
+            .height()
+            >= crate::canvas_layout::MIN_PANE_WIDTH_PX
+                - crate::time_header::HEIGHT_PX
+                - crate::canvas_layout::CANVAS_DIVIDER_PX
+    );
+    app.active_tab_mut().set_context_collapsed(true);
+    assert!(
+        app.control_action(
+            "layout.pane.resize_pair",
+            1,
+            crate::control::ActionOrigin::Human,
+            input(upper, lower, "0.5")
+        )
+        .is_err()
+    );
+}
+
 /// Two tabs speaking on one frame: the slot holds one message, and the
 /// one the trader is looking at wins it rather than tab order deciding in
 /// silence.

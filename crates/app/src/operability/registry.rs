@@ -301,10 +301,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "layout.pane.resize",
-        title: "Resize a chart by its splitter",
-        reach: "drag the divider between two charts",
+        title: "Resize columns or adjacent context charts",
+        reach: "drag the horizontal or vertical divider between two charts",
         keys: &[(Source::Authored, "a drag on the divider between two panes")],
-        mapping: capability!("layout.pane.resize"),
+        mapping: capability!("layout.pane.resize", "layout.pane.resize_pair"),
     },
     UiBehaviour {
         id: "layout.preset.apply",

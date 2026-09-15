@@ -152,15 +152,26 @@ impl Tab {
         let mut context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
         #[cfg(test)]
         self.context_dividers.clear();
+        self.context_stack.frame = time_area.map(|column| super::context_resize::StackFrame {
+            column,
+            pane_ids: self
+                .time_panes
+                .iter()
+                .take(context_shown)
+                .map(|pane| pane.id)
+                .collect(),
+        });
         if let Some(column) = time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
-            if self.context_heights.len() < context_shown {
-                self.context_heights
+            if self.context_stack.heights.len() < context_shown {
+                self.context_stack
+                    .heights
                     .resize(context_shown, canvas_layout::PaneWidth::Auto);
             }
-            let bands = canvas_layout::split_column(column, &self.context_heights[..context_shown]);
+            let bands =
+                canvas_layout::split_column(column, &self.context_stack.heights[..context_shown]);
             context_dividers.extend(bands.dividers.iter().copied());
             if split {
                 self.focus_from_pointer(ui, &bands.panes[..context_shown], flow_band);
@@ -357,8 +368,8 @@ impl Tab {
         if let Some(rail) = collapsed_rail {
             self.draw_collapsed_rail(ui, rail);
         }
-        if let Some(column) = time_area {
-            self.draw_context_dividers(ui, column, &context_dividers);
+        if time_area.is_some() {
+            self.draw_context_dividers(ui, &context_dividers);
         }
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
@@ -666,12 +677,7 @@ impl Tab {
     /// Each drag moves one boundary, so the chart above and the chart below
     /// exchange height while every other boundary stays put. Registered after
     /// the pane bodies so a resize wins over the chart pan beneath its handle.
-    fn draw_context_dividers(
-        &mut self,
-        ui: &egui::Ui,
-        column: egui::Rect,
-        dividers: &[egui::Rect],
-    ) {
+    fn draw_context_dividers(&mut self, ui: &egui::Ui, dividers: &[egui::Rect]) {
         #[cfg(test)]
         self.context_dividers.extend(dividers.iter().copied());
 
@@ -680,7 +686,12 @@ impl Tab {
                 .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
             let handle = ui.interact(
                 divider.expand2(egui::vec2(0.0, CANVAS_DIVIDER_HANDLE_PX)),
-                egui::Id::new(("context_divider", self.id, index)),
+                egui::Id::new((
+                    "context_divider",
+                    self.id,
+                    self.time_panes[index].id,
+                    self.time_panes[index + 1].id,
+                )),
                 egui::Sense::drag(),
             );
             if handle.hovered() || handle.dragged() {
@@ -689,56 +700,15 @@ impl Tab {
             if handle.dragged()
                 && let Some(pointer) = ui.ctx().pointer_interact_pos()
             {
-                self.resize_context_pair(index, pointer.y, column, dividers);
+                let _ = self.resize_context_pair(
+                    super::context_resize::ResizeContextPair {
+                        upper_pane_id: self.time_panes[index].id,
+                        lower_pane_id: self.time_panes[index + 1].id,
+                        wanted_y: pointer.y,
+                    },
+                    quantick_control::wire::ActorKind::HumanUi,
+                );
             }
-        }
-    }
-
-    /// Move one context boundary to `wanted_y` without moving its neighbours.
-    fn resize_context_pair(
-        &mut self,
-        index: usize,
-        wanted_y: f32,
-        column: egui::Rect,
-        dividers: &[egui::Rect],
-    ) {
-        if index >= dividers.len() || column.height() <= 0.0 {
-            return;
-        }
-
-        let pair_top = if index == 0 {
-            column.top()
-        } else {
-            dividers[index - 1].center().y
-        };
-        let pair_bottom = dividers
-            .get(index + 1)
-            .map_or(column.bottom(), |divider| divider.center().y);
-        let pair_height = pair_bottom - pair_top;
-        // The splitter sizes the whole pane band, while the readability floor
-        // belongs to the chart body. Buy the pane-local layout footer here so
-        // a drag cannot satisfy the old band floor by taking those pixels
-        // back out of the chart.
-        let floor = canvas_layout::MIN_PANE_WIDTH_PX + crate::layout_strip::STRIP_HEIGHT;
-        let wanted_y = if pair_height >= floor * 2.0 {
-            wanted_y.clamp(pair_top + floor, pair_bottom - floor)
-        } else {
-            dividers[index].center().y
-        };
-
-        let mut previous = column.top();
-        for slot in 0..=dividers.len() {
-            let boundary = if slot == dividers.len() {
-                column.bottom()
-            } else if slot == index {
-                wanted_y
-            } else {
-                dividers[slot].center().y
-            };
-            self.context_heights[slot] = canvas_layout::PaneWidth::Manual(
-                ((boundary - previous) / column.height()).max(0.0),
-            );
-            previous = boundary;
         }
     }
 }

@@ -7535,6 +7535,123 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Moves the divider between the named upper and lower context panes. Uses the same neighbor floors as a pointer drag, keeps other boundaries and column width unchanged, and returns the applied position. The current stack must have been drawn.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.resize_pair",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Divider position in the whole context column, top=0 and bottom=1.\nAt most six decimal places. The applied position obeys both neighbor floors."
+          },
+          "lower_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          },
+          "upper_pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Stable pane IDs from workspace.summary, in upper/lower order."
+          }
+        },
+        "required": [
+          "upper_pane_id",
+          "lower_pane_id",
+          "fraction"
+        ],
+        "title": "ResizePairInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Applied divider position, including any floor clamp."
+          },
+          "lower_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "upper_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "upper_pane_id",
+          "lower_pane_id",
+          "fraction",
+          "changed"
+        ],
+        "title": "ResizePairResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable pane IDs must still name adjacent visible charts; otherwise the request is refused before any height changes.",
+      "title": "Resize adjacent context charts",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Sets one pane's complete alternative-bar rule through the same recut path the toolbar and recording popover use.",
       "destructive": false,
       "dry_run_supported": false,

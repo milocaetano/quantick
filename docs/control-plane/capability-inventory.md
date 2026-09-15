@@ -55,6 +55,7 @@ capability that cannot change application state.
 | `layout.pane.move` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.resize_pair` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_interval` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -77,4 +78,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-52 capabilities registered.
+53 capabilities registered.
