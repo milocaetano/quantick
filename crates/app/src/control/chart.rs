@@ -246,7 +246,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
     let mut panes = Vec::new();
     for (tab_index, tab) in app.control_tabs().iter().enumerate() {
         let focused = tab.focused_side();
-        let shown = tab.context_panes_shown();
+        let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
         for (pane, side) in tab.panes() {
             let visible = match side {
                 PaneSide::Flow => tab.layout.shows_flow(),

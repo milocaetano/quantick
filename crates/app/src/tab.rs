@@ -546,6 +546,8 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// Pixel width and opening direction of the divider drag in flight.
+    canvas_drag: Option<(f32, bool)>,
     /// The height rule for each context chart, top to bottom.
     ///
     /// Empty entries are seeded as automatic when the chart first appears.
@@ -655,6 +657,7 @@ impl Tab {
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
+            canvas_drag: None,
             context_heights: SmallVec::new(),
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
