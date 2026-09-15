@@ -3312,6 +3312,43 @@ fn both_fibonacci_tools_dock_through_the_annotation_registry() {
     }
 }
 
+#[test]
+fn fibonacci_capabilities_reject_incomplete_anchor_sets_without_leaving_a_drawing() {
+    use quantick_control::error::codes;
+
+    for (capability_id, anchor_count) in [
+        (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1),
+        (crate::control::FIB_PROJECTION_CAPABILITY_ID, 2),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        let mut first = anchor_at_slot(&app, 0);
+        let mut last = newest_anchor(&app);
+        first["bar_position"] = serde_json::json!("0.5");
+        last["bar_position"] = serde_json::json!("7.5");
+        let anchors = [first, last]
+            .into_iter()
+            .take(anchor_count)
+            .collect::<Vec<_>>();
+
+        let error = app
+            .control_action(
+                capability_id,
+                crate::control::FIB_CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "anchors": anchors }),
+            )
+            .expect_err("an incomplete Fibonacci anchor set is invalid");
+
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        assert!(
+            app.active_tab().drawing_pane().drawings.items().is_empty(),
+            "a refused Fibonacci request must not leave a drawing"
+        );
+    }
+}
+
 /// Criterion 3: a script that does not compile comes back as spans and
 /// codes, never as a rendered paragraph an agent has to parse.
 #[test]
