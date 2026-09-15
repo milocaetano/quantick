@@ -2367,6 +2367,26 @@ fn the_time_pane_header_costs_the_chart_its_own_height() {
     assert_eq!(areas.header.width(), area.width());
 }
 
+/// A layout selector belongs to one pane, so its footer must be carved from
+/// that pane rather than overlaid on market data or reserved once globally.
+#[test]
+fn the_layout_strip_costs_each_pane_its_own_footer() {
+    let area = egui::Rect::from_min_max(egui::pos2(20.0, 10.0), egui::pos2(420.0, 610.0));
+    let areas = split_pane_layout_strip(area);
+    assert_eq!(
+        areas.layout_strip.height(),
+        crate::layout_strip::STRIP_HEIGHT
+    );
+    assert_eq!(areas.body.bottom(), areas.layout_strip.top(), "no overlap");
+    assert_eq!(areas.layout_strip.bottom(), area.bottom());
+    assert_eq!(areas.body.width(), area.width());
+
+    let tiny = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 10.0));
+    let tiny = split_pane_layout_strip(tiny);
+    assert_eq!(tiny.body.height(), 0.0, "a tiny band never inverts");
+    assert_eq!(tiny.layout_strip.height(), 10.0, "the footer stays bounded");
+}
+
 /// The rung budget is the lane's width in pixels, not a constant: a lane
 /// narrow enough to be a sliver is not worth sixty evaluations, and a
 /// chart with no lane at all is worth none.
