@@ -72,7 +72,8 @@ pub struct DescriptorDiscovery {
 }
 
 impl DescriptorDiscovery {
-    fn finish(mut self) -> Self {
+    fn retain_candidate(&mut self, candidate: DescriptorCandidate) -> bool {
+        self.candidates.push(candidate);
         self.candidates.sort_by(|left, right| {
             right
                 .descriptor
@@ -85,7 +86,15 @@ impl DescriptorDiscovery {
                 })
         });
         if self.candidates.len() > CONTROL_DISCOVERY_MAX_ENTRIES {
-            self.candidates.truncate(CONTROL_DISCOVERY_MAX_ENTRIES);
+            self.candidates.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn finish(mut self, live_overflow: bool) -> Self {
+        if live_overflow {
             self.issues.push(DiscoveryIssue {
                 file_name: "<directory>".to_owned(),
                 message: format!(
@@ -281,6 +290,7 @@ fn discover_descriptors_in_with_liveness(
         issues: Vec::new(),
         next_steps: Vec::new(),
     };
+    let mut live_overflow = false;
     let entries = fs::read_dir(directory)
         .map_err(|error| DiscoveryError::io("read private instance directory", error))?;
     for entry in entries {
@@ -302,7 +312,7 @@ fn discover_descriptors_in_with_liveness(
         match read_descriptor_file(&path) {
             Ok(descriptor) if descriptor.file_name() == file_name => {
                 if liveness(&descriptor) {
-                    report.candidates.push(DescriptorCandidate { descriptor });
+                    live_overflow |= report.retain_candidate(DescriptorCandidate { descriptor });
                 } else if let Err(error) = remove_owned_descriptor(&path) {
                     report.issues.push(DiscoveryIssue {
                         file_name,
@@ -320,7 +330,7 @@ fn discover_descriptors_in_with_liveness(
             }),
         }
     }
-    Ok(report.finish())
+    Ok(report.finish(live_overflow))
 }
 
 fn prune_stale_descriptors(
