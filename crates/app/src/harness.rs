@@ -197,6 +197,8 @@ pub(crate) enum ContextMenuPane {
     /// half). The candles' segment of it: past the lane divider the strip is
     /// the tape's window and carries no menu.
     Time,
+    /// The first expanded non-price indicator band.
+    Indicator,
 }
 
 impl ContextMenuPane {
@@ -208,6 +210,7 @@ impl ContextMenuPane {
             "tape" | "lane" => Some(Self::Tape),
             "axis" | "scale" => Some(Self::Axis),
             "time" | "clock" => Some(Self::Time),
+            "indicator" | "study" => Some(Self::Indicator),
             _ => None,
         }
     }
@@ -417,6 +420,9 @@ pub(crate) struct Harness {
     /// the dialog on, and on which tab, once its view exists. Cleared by the
     /// first open, so a dialog the run then closes stays closed.
     settings_autostart: Option<(usize, SettingsTab)>,
+    /// `QUANTICK_INDICATOR_MOUSE_LINE=<index>`: enable the guide once the
+    /// named worker-created view exists.
+    indicator_mouse_line: Option<usize>,
     /// `QUANTICK_POINTER`: where to park the mouse, as a fraction of the flow
     /// pane's candle area. Re-delivered every frame, because a pointer is a
     /// position the app is *told* about continuously.
@@ -535,6 +541,8 @@ impl Harness {
                 .is_some_and(|value| value == "1"),
             settings_autostart: read("QUANTICK_INDICATOR_SETTINGS")
                 .and_then(|value| parse_settings_hook(&value)),
+            indicator_mouse_line: read("QUANTICK_INDICATOR_MOUSE_LINE")
+                .and_then(|value| value.trim().parse().ok()),
             pointer: read("QUANTICK_POINTER").and_then(|value| {
                 let parsed = parse_pointer_fraction(&value);
                 if parsed.is_none() {
@@ -693,6 +701,14 @@ impl Harness {
     /// That dialog opened: disarm, for the same reason.
     pub(crate) fn settings_autostart_opened(&mut self) {
         self.settings_autostart = None;
+    }
+
+    pub(crate) fn indicator_mouse_line(&self) -> Option<usize> {
+        self.indicator_mouse_line
+    }
+
+    pub(crate) fn indicator_mouse_line_opened(&mut self) {
+        self.indicator_mouse_line = None;
     }
 
     /// Where the pointer is parked, as a fraction of the flow pane's candle
@@ -1123,6 +1139,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_FRVP_DEMO_SELECT",
     "QUANTICK_HISTORY_NOTE",
     "QUANTICK_INDICATOR_SETTINGS",
+    "QUANTICK_INDICATOR_MOUSE_LINE",
     "QUANTICK_LAYOUT_PICKER",
     "QUANTICK_LOAD_OLDER",
     "QUANTICK_LOAD_OLDER_CANDLES",

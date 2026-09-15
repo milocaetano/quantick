@@ -6084,6 +6084,101 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Shows or hides a subtle dashed vertical line in one non-price indicator pane at the x coordinate hovered in its price chart. The choice is stored in the pane's workspace layout.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "indicator.mouse_vertical_line.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "slot_id",
+          "enabled"
+        ],
+        "title": "IndicatorGuideInput",
+        "type": "object"
+      },
+      "module": "indicator",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "slot_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "slot_id",
+          "enabled"
+        ],
+        "title": "IndicatorGuideResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the exact tab, pane and live indicator slot; repeating the same state is harmless and the result reads it back.",
+      "title": "Set an indicator's mouse vertical line",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Compiles Quantick Pine and attaches the indicator it produces to the focused pane. A script that does not compile is refused with its diagnostics as structured data — code, span, line, column, message and notes — never as a rendered string.",
       "destructive": false,
       "dry_run_supported": false,
@@ -11144,6 +11239,11 @@
               "kind": {
                 "description": "The constructor it was added through (`native.cvd`, `script.zigzag`),\ndurable across remove and re-add in a way the slot is not.",
                 "type": "string"
+              },
+              "mouse_vertical_line": {
+                "default": false,
+                "description": "Whether price-chart hover is mirrored into this non-price pane.",
+                "type": "boolean"
               },
               "ordinal": {
                 "description": "Which instance of that kind this is, assigned once at birth. Two EMAs\non one pane are told apart by this, never by position.",

@@ -125,6 +125,10 @@ impl ChartPane {
         self.frame.time_strip =
             Some(split_time_strip(areas.time_strip, self.frame.lane_divider_x).0);
         let pane_rects = areas.indicator_panes.clone();
+        let indicator_guide_x = self
+            .hover_pos
+            .filter(|position| chart_rect.contains(*position))
+            .map(|position| position.x);
         if total == 0 {
             painter.text(
                 area.center(),
@@ -564,6 +568,12 @@ impl ChartPane {
                 // candles' does, and this pane's series starts at the prefix.
                 partial_visible.map(|_| closed_total),
             );
+            if view.mouse_vertical_line
+                && !pane.collapsed
+                && let Some(x) = indicator_guide_x
+            {
+                crate::indicator_guide::paint(painter, frame.rect, x);
+            }
         }
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame

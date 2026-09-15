@@ -75,12 +75,14 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
             SavedIndicator {
                 kind: SavedKind::native("native.ema"),
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
                 plot_styles: Vec::new(),
             },
             SavedIndicator {
                 kind: SavedKind::native("native.cvd"),
                 hidden: true,
+                mouse_vertical_line: false,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
             },
@@ -89,6 +91,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
                     name: "not-in-the-library.pine".to_owned(),
                 },
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
             },
@@ -279,6 +282,47 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         app.layouts().active().indicators[0].kind,
         crate::indicators::state_file::SavedKind::native("native.ema")
     );
+}
+
+#[test]
+fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+
+    let tab_id = app.active_tab().id;
+    let pane_id = app.active_tab().flow_pane.id;
+    let cvd = app.active_tab().flow_pane.indicators.all()[0].slot;
+    app.active_tab_mut()
+        .flow_pane
+        .request_indicator_guide(cvd, true);
+    app.open_requested_indicator_settings();
+
+    for side in [PaneSide::Flow, PaneSide::Time(0)] {
+        let views = app.active_tab().pane(side).indicators.all();
+        assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
+        assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
+    }
+    assert!(app.layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!app.layouts().active().indicators[1].mouse_vertical_line);
+
+    let result = app
+        .control_action(
+            crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "tab_id": tab_id.to_string(),
+                "pane_id": pane_id.to_string(),
+                "slot_id": cvd.0.to_string(),
+                "enabled": false,
+            }),
+        )
+        .unwrap();
+    assert_eq!(result["enabled"], false);
+    assert!(!app.layouts().active().indicators[0].mouse_vertical_line);
 }
 
 /// The four doors into the dialog have to be one door: whichever gesture a
@@ -708,6 +752,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
         &[SavedIndicator {
             kind: SavedKind::native("native.from.the.future"),
             hidden: false,
+            mouse_vertical_line: false,
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         }],
