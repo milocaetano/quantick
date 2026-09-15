@@ -3329,6 +3329,51 @@ fn the_gear_on_the_context_bar_opens_the_inspector() {
     );
 }
 
+/// Sharing is a frequent view action, so it belongs beside Hide rather than
+/// behind the inspector. The real context-bar button must take the selected
+/// drawing there and back without opening another surface.
+#[test]
+fn the_context_bar_shares_a_drawing_across_charts_in_one_click() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    run_frame(&mut app, &ctx);
+
+    let sharing = app
+        .surfaces
+        .drawing_chrome
+        .context_bar()
+        .sharing_rect()
+        .expect("a shareable drawing renders the all-charts button");
+    click_chart(&mut app, &ctx, sharing.center());
+    run_frame(&mut app, &ctx);
+
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].scope,
+        drawings::DrawingScope::AllCharts
+    );
+    assert!(
+        !app.surfaces.drawing_chrome.inspector_open(),
+        "the quick action must not open the inspector"
+    );
+
+    let sharing = app
+        .surfaces
+        .drawing_chrome
+        .context_bar()
+        .sharing_rect()
+        .expect("the active all-charts button remains available");
+    click_chart(&mut app, &ctx, sharing.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items()[0].scope,
+        drawings::DrawingScope::ThisChart
+    );
+}
+
 /// Condition (c) of the bare-glyph contract: the protected object still
 /// asks. Without this the Del key on a locked drawing is a silent no-op
 /// now that the panel is not there to raise the question.

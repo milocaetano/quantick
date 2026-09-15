@@ -139,6 +139,8 @@ pub(crate) fn draw(
         author: author.as_deref(),
         locked,
         hidden: drawing.hidden,
+        shared: drawing.scope == drawings::DrawingScope::AllCharts,
+        shareable: drawing.shareable(),
         supports_fill: tool.supports_fill(),
         // Pinned, the full panel is already on screen: a gear leading where
         // the eye already is would be the dead slot the bar's own contract
@@ -216,21 +218,29 @@ pub(crate) fn draw(
     } else if intent.drag_delta != egui::Vec2::ZERO {
         chrome.bar.bar.set_manual(position + intent.drag_delta);
     }
+    let edited = intent.edited || intent.toggle_shared;
     let actions = InspectorActions {
         toggle_hidden: intent.toggle_hidden,
         toggle_lock: intent.actions.toggle_lock,
         delete: intent.actions.delete,
         force_delete: intent.force_delete,
         cancel_delete: intent.cancel_delete,
-        edited: intent.edited,
+        edited,
         ..InspectorActions::default()
     };
-    if intent.edited {
+    if edited {
         // The copy the trader is editing, handed back rather than written
         // through a `&mut` into the pane: the host owns every object every
         // renderer reads.
         let mut edited = drawing.clone();
         edited.style = style;
+        if intent.toggle_shared {
+            edited.scope = if edited.scope == drawings::DrawingScope::AllCharts {
+                drawings::DrawingScope::ThisChart
+            } else {
+                drawings::DrawingScope::AllCharts
+            };
+        }
         if let Some(size) = glyph_after {
             tool.set_glyph_size(&mut edited, size.px);
         }
