@@ -1,8 +1,6 @@
 # Precise Volume Profile pointer capture
 
-Mission: `.claude/GOAL-archive-volume-profile-precise-hit.md`, high tier.
 Base: `origin/main` at `d3d4b23d3741ec82204b2c0f2c77b23a98908ac4`.
-Raw records: [evidence directory](../../../.claude/evidence/volume-profile-precise-hit).
 
 ## Behavior and regression proof
 

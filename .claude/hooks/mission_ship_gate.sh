@@ -71,35 +71,8 @@ case "$base:$branch" in
             ! git -C "$worktree" merge-base --is-ancestor "$main_fork" "$base" && kind=sync
         ;;
 esac
-goal_paths=$(git -C "$worktree" diff --name-only "$base...HEAD" -- '.claude/GOAL-archive-*.md') ||
-    fail 'The archived mission goal could not be located.'
-if [ "$kind" = sync ]; then
-    # A sync carries every archive main merged since the last one; only an
-    # archive new against both its base and main is the sync's own goal.
-    main_paths=$(git -C "$worktree" diff --name-only "origin/main...HEAD" -- '.claude/GOAL-archive-*.md') ||
-        fail 'The synchronization archives could not be compared with origin/main.'
-    goal_paths=$(printf '%s\n%s\n' "$goal_paths" "$main_paths" | sed -n '/./p' | sort | uniq -d)
-fi
-goal_count=$(printf '%s\n' "$goal_paths" | sed -n '/./p' | wc -l | tr -d ' ')
-case "$kind:$goal_count" in
-    mission:1|sync:1|campaign:*) ;;
-    sync:0) goal_note='Main synchronization: no archived goal of its own; archives main holds are not counted.' ;;
-    sync:*) fail 'A main synchronization may add at most one archived goal of its own.' ;;
-    *) fail 'Exactly one archived mission goal must exist in the reviewed diff.' ;;
-esac
-if [ "$kind" != campaign ] && [ "$goal_count" -eq 1 ]; then
-    goal_path=$worktree/$goal_paths
-    canonical_ai_gates=$(sed -n \
-        '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$skill" |
-        sed 's/^   //; s/^- \[[ xX]\]/- [ ]/')
-    goal_ai_gates=$(sed -n \
-        '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' "$goal_path" |
-        sed 's/^- \[[ xX]\]/- [ ]/')
-    [ -n "$canonical_ai_gates" ] && [ "$goal_ai_gates" = "$canonical_ai_gates" ] ||
-        fail 'The archived goal does not literally contain the four canonical AI-review gates.'
-    goal_note="Archived goal: $goal_paths (four canonical AI-review gates matched literally)"
-    [ "$kind" = mission ] || goal_note="Main synchronization. $goal_note"
-fi
+goal_note='Mission source stayed local; the PR carries its concise durable summary.'
+[ "$kind" != sync ] || goal_note='Main synchronization: the PR carries its concise durable summary.'
 
 remote=$(cd "$worktree" && gh pr view "$pr" \
     --json headRefName,headRefOid,baseRefName,baseRefOid,state,isDraft,mergeable,mergeStateStatus,url,isCrossRepository \
@@ -136,6 +109,13 @@ if [ "$kind" = campaign ]; then
     printf '%s\n' "$charter" | tr -c 'A-Za-z0-9._/-' '\n' | sed 's/\.*$//' | grep -Fxq -- "$branch" ||
         fail "The campaign charter does not name \`$branch\`."
     goal_note="Consolidated campaign: charter $parent names \`$branch\`; delivery-review grades its criteria."
+else
+    summary_count=$(printf '%s\n' "$body" |
+        grep -c '^<!-- quantick-mission-summary:v1 -->$')
+    summary_end_count=$(printf '%s\n' "$body" |
+        grep -c '^<!-- end quantick-mission-summary:v1 -->$')
+    [ "$summary_count" -eq 1 ] && [ "$summary_end_count" -eq 1 ] ||
+        fail 'Mission and synchronization PRs require exactly one quantick-mission-summary:v1 block.'
 fi
 
 require_green_checks
@@ -188,7 +168,7 @@ while IFS= read -r clause; do
         '- **D3**'*) clause_id=D3; evidence="$arch_url" ;;
         '- **D4**'*) clause_id=D4; evidence="$delivery_url" ;;
         '- **D5**'*) clause_id=D5; evidence="$ai_url; ai_review_threads.sh list returned zero" ;;
-        '- **D6**'*) clause_id=D6; evidence='the PR body contains the current quantick-delivery-evidence:v1 block' ;;
+        '- **D6**'*) clause_id=D6; evidence='the PR body contains the concise mission summary and current quantick-delivery-evidence:v1 block' ;;
         '- **D7**'*) clause_id=D7; evidence='this literal report is published and verified before the command returns PASS' ;;
         '- **D8**'*) clause_id=D8; evidence='this verifier performs no merge; main remains a human action' ;;
         *) fail "Unknown What done means clause: $clause" ;;

@@ -64,7 +64,7 @@ fi
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/paperwork" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -86,9 +86,6 @@ git -C "$root/mainco" update-ref refs/remotes/origin/main HEAD
 git -C "$root/mainco" worktree add -q -b feat/x "$root/wt" >/dev/null 2>&1
 echo two > "$root/wt/src/a.txt"
 mkdir -p "$root/wt/.claude"
-sed -n '/<!-- required-ai-review-goal-gates:v1 -->/,/<!-- end required-ai-review-goal-gates:v1 -->/p' \
-    "$root/wt/.claude/skills/mission/SKILL.md" | sed 's/^   //; s/^- \[ \]/- [x]/' \
-    > "$root/wt/.claude/GOAL-archive-fixture.md"
 git -C "$root/wt" add -A
 git -C "$root/wt" commit -qm "second"
 
@@ -134,29 +131,6 @@ binary_sha=$(git -C "$root/binary" rev-parse HEAD)
 binary_git_dir=$(git -C "$root/binary" rev-parse --absolute-git-dir)
 if [ -z "$binary_git_dir" ]; then
     printf 'FAIL the binary-asset fixture worktree was not created\n'
-    failed=$((failed + 1))
-fi
-
-# A two-line change carrying a goal archive larger than the whole ceiling.
-# `mission` requires that archive as the branch's *last* commit, and this repo
-# has produced one bigger than the ceiling itself - so counting it would push a
-# genuinely small mission out of its own tier by the paperwork the tier obliged
-# it to write, with a denial telling it to make an escalation the skill calls
-# irreversible.
-git -C "$root/mainco" worktree add -q -b feat/paperwork "$root/paperwork"
-mkdir -p "$root/paperwork/.claude"
-printf 'changed\n' > "$root/paperwork/src/a.txt"
-paper_line=0
-: > "$root/paperwork/.claude/GOAL-archive-paperwork.md"
-while [ "$paper_line" -le "$small_ceiling" ]; do
-    echo "line $paper_line" >> "$root/paperwork/.claude/GOAL-archive-paperwork.md"
-    paper_line=$((paper_line + 1))
-done
-git -C "$root/paperwork" add -A
-git -C "$root/paperwork" commit -qm "a two-line fix and its goal archive"
-paperwork_git_dir=$(git -C "$root/paperwork" rev-parse --absolute-git-dir)
-if [ -z "$paperwork_git_dir" ]; then
-    printf 'FAIL the goal-archive fixture worktree was not created\n'
     failed=$((failed + 1))
 fi
 
@@ -919,27 +893,6 @@ run "and the reminder does not tell it to raise the tier" \
     commit-reminder "$(json_bash "$root/binary" "git commit -m x")" \
     context "of the $small_ceiling changed lines"
 
-# The exclusion the size measurement applies, which had no case at all: delete
-# `SIZE_EXCLUDES` from the hook and every other case here still passes, while
-# every small mission is thrown out of its tier the moment it files its own
-# goal file. The branch below is over the ceiling by paperwork and under it by
-# work, so it can only pass through the exclusion.
-set_tier "$root/paperwork" small
-set_marker_in "$paperwork_git_dir" arch-review-ok "$(marker_key "$root/paperwork")"
-set_marker_in "$paperwork_git_dir" delivery-review-ok ""
-
-if [ "$(LC_ALL=C git -C "$root/paperwork" diff --numstat origin/main...HEAD |
-        cut -f1 | paste -sd+ - | sed 's/^/0+/' | xargs -I{} sh -c 'echo $(({}))')" \
-        -gt "$small_ceiling" ]; then
-    passed=$((passed + 1))
-else
-    printf 'FAIL the goal-archive fixture is not actually over the ceiling, so its case proves nothing\n'
-    failed=$((failed + 1))
-fi
-
-run "a goal archive does not push a small mission over the ceiling" \
-    pr-gate "$(json_bash "$root/paperwork" "gh pr create --fill")" silent
-
 # Fail-closed, where the size cannot be measured at all. Without this the
 # git-error branch of `changed_lines` could be 'simplified' to return 0 - which
 # looks harmless next to the empty-diff case that legitimately yields 0 - and
@@ -1129,7 +1082,8 @@ run_completion() {
 }
 
 mkdir -p "$root/completion"
-: > "$root/completion/pr-body"
+printf '<!-- quantick-mission-summary:v1 -->\nObjective: fixture\nTier: high\nSource: fixture\nCriteria: A1 delivered\nValidation: fixture pass\n<!-- end quantick-mission-summary:v1 -->\n' \
+    > "$root/completion/pr-body"
 printf 'pass\n' > "$root/completion/checks"
 printf 'current\n' > "$root/completion/reports"
 printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
@@ -1186,27 +1140,15 @@ else
 fi
 set_threads 0
 
-cp "$root/wt/.claude/GOAL-archive-fixture.md" "$root/completion/goal-archive"
-sed -i '/G-AI2/d' "$root/wt/.claude/GOAL-archive-fixture.md"
-git -C "$root/wt" add .claude/GOAL-archive-fixture.md
-git -C "$root/wt" commit -qm 'remove a required goal gate'
-head_sha=$(git -C "$root/wt" rev-parse HEAD)
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
-    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
-run_completion "completion refuses an archived goal missing one canonical AI gate" \
-    mission fail 'does not literally contain the four canonical AI-review gates'
-cp "$root/completion/goal-archive" "$root/wt/.claude/GOAL-archive-fixture.md"
-git -C "$root/wt" add .claude/GOAL-archive-fixture.md
-git -C "$root/wt" commit -qm 'restore required goal gates'
-head_sha=$(git -C "$root/wt" rev-parse HEAD)
-set_marker arch-review-ok "$(marker_key "$root/wt")"
-set_marker delivery-review-ok "$(marker_key "$root/wt")"
-set_marker ai-review-complete "feat/x $(marker_key "$root/wt")"
-printf 'feat/x %s main %s OPEN false MERGEABLE CLEAN https://example.test/pr/42 false\n' \
-    "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
+cp "$root/completion/pr-body" "$root/completion/mission-summary"
+: > "$root/completion/pr-body"
+run_completion "completion refuses a mission PR without its concise summary" \
+    mission fail 'exactly one quantick-mission-summary:v1 block'
+cp "$root/completion/mission-summary" "$root/completion/pr-body"
+cat "$root/completion/mission-summary" >> "$root/completion/pr-body"
+run_completion "completion refuses duplicate mission summaries" \
+    mission fail 'exactly one quantick-mission-summary:v1 block'
+cp "$root/completion/mission-summary" "$root/completion/pr-body"
 
 printf 'feat/x %s main %s OPEN true MERGEABLE CLEAN https://example.test/pr/42 false\n' \
     "$head_sha" "$(git -C "$root/wt" rev-parse origin/main)" > "$root/completion/pr-identity"
@@ -1251,28 +1193,20 @@ set_marker delivery-review-ok "$(marker_key "$root/wt")"
 printf 'current\n' > "$root/completion/reports"
 
 # --- completion by PR kind (#439) -------------------------------------------
-#
-# PR #437, a main synchronization, carried five archives main had merged, and
-# a consolidated campaign PR carries every child's. Neither can hold the single
-# goal a mission PR must, so the gate tells the three kinds apart from the
-# head, the base and main. The campaign here holds two child archives and main
-# advances by two of its own before the synchronizations are cut.
+# The gate distinguishes mission, synchronization and consolidated campaign
+# PRs from verified head/base facts. Mission and sync PRs use a concise body
+# summary; the consolidated campaign uses its parent charter.
 main_first=$(git -C "$root/mainco" rev-parse origin/main)
 kind_commit() { git -C "$1" add -A && git -C "$1" commit -qm "$2"; }
-own_goal() { cp "$root/wt/.claude/GOAL-archive-fixture.md" "$1/.claude/GOAL-archive-$2.md"; }
 
 git -C "$root/mainco" worktree add -q -b campaign/demo "$root/camp" "$main_first" >/dev/null 2>&1
-mkdir -p "$root/camp/.claude"
-own_goal "$root/camp" child-one
-own_goal "$root/camp" child-two
-kind_commit "$root/camp" 'two integrated children'
+echo campaign > "$root/camp/src/a.txt"
+kind_commit "$root/camp" 'integrated campaign change'
 git -C "$root/mainco" update-ref refs/remotes/origin/campaign/demo "$(git -C "$root/camp" rev-parse HEAD)"
 
 git -C "$root/mainco" worktree add -q -b main-next "$root/mainnext" "$main_first" >/dev/null 2>&1
-mkdir -p "$root/mainnext/.claude"
-echo main > "$root/mainnext/.claude/GOAL-archive-main-one.md"
-echo main > "$root/mainnext/.claude/GOAL-archive-main-two.md"
-kind_commit "$root/mainnext" 'main merges two missions'
+echo main-next > "$root/mainnext/src/main-next.txt"
+kind_commit "$root/mainnext" 'main advances'
 git -C "$root/mainco" update-ref refs/remotes/origin/main "$(git -C "$root/mainnext" rev-parse HEAD)"
 
 # kind_pr <worktree> <PR base ref> [campaign parent URL] - reviewed markers at
@@ -1294,8 +1228,8 @@ kind_pr() {
     printf '%s %s %s OPEN false false %s CLEAN\n' \
         "$2" "$kind_branch" "$kind_head" "$kind_tip" > "$root/completion/pr-context"
 }
-# kind_report <case> <text> - the published reconciliation names the goal the
-# gate actually chose, so a pass cannot come from the wrong archive.
+# kind_report <case> <text> - the published reconciliation names the verified
+# PR kind and durable source.
 kind_report() {
     if grep -qF -- "$2" "$root/completion/published-report" 2>/dev/null; then
         passed=$((passed + 1))
@@ -1305,67 +1239,38 @@ kind_report() {
     fi
 }
 parent=https://github.com/owner/repo/issues/7
-: > "$root/completion/pr-body"
+cp "$root/completion/mission-summary" "$root/completion/pr-body"
 
 # A mission child of the campaign stays a mission after main moves on.
 git -C "$root/mainco" worktree add -q -b feat/child "$root/child" origin/campaign/demo >/dev/null 2>&1
 completion_wt=$root/child
 echo child > "$root/child/src/a.txt"
-kind_commit "$root/child" 'child code without its archive'
+kind_commit "$root/child" 'child code'
 kind_pr "$root/child" campaign/demo "$parent"
-run_completion "a campaign mission child with no archive still fails" \
-    ship fail 'Exactly one archived mission goal'
-own_goal "$root/child" child-three
-kind_commit "$root/child" 'archive the child mission'
-kind_pr "$root/child" campaign/demo
 rm -f "$root/completion/published-report"
-run_completion "a campaign mission child with one archive completes" ship pass
-kind_report "the mission child's report" 'Archived goal: .claude/GOAL-archive-child-three.md'
-own_goal "$root/child" child-four
-kind_commit "$root/child" 'a second archive'
-kind_pr "$root/child" campaign/demo
-run_completion "a campaign mission child with two archives still fails" \
-    ship fail 'Exactly one archived mission goal'
+run_completion "a campaign mission child with one concise summary completes" ship pass
+kind_report "the mission child's report" 'Mission source stayed local; the PR carries its concise durable summary.'
 
-# A sync/* branch: main's archives are not its own, whatever their number.
+# A sync/* branch carries the same concise summary contract.
 git -C "$root/mainco" worktree add -q -b sync/main-demo "$root/sync" origin/campaign/demo >/dev/null 2>&1
 completion_wt=$root/sync
 git -C "$root/sync" merge -q --no-ff --no-edit origin/main
 kind_pr "$root/sync" campaign/demo "$parent"
 rm -f "$root/completion/published-report"
-run_completion "a sync carrying only main's two archives completes" ship pass
-kind_report "the goal-less sync's report" 'no archived goal of its own'
-own_goal "$root/sync" sync-demo
-kind_commit "$root/sync" 'archive the sync mission'
-kind_pr "$root/sync" campaign/demo
-rm -f "$root/completion/published-report"
-run_completion "a sync with main's archives and its own goal completes" mission pass
-kind_report "the sync's report" 'Main synchronization. Archived goal: .claude/GOAL-archive-sync-demo.md'
-sed -i '/G-AI2/d' "$root/sync/.claude/GOAL-archive-sync-demo.md"
-kind_commit "$root/sync" 'drop a required gate from the sync goal'
-kind_pr "$root/sync" campaign/demo
-run_completion "a sync's own goal still needs the four canonical AI gates" \
-    ship fail 'does not literally contain the four canonical AI-review gates'
-own_goal "$root/sync" sync-demo
-own_goal "$root/sync" sync-extra
-kind_commit "$root/sync" 'a second own archive'
-kind_pr "$root/sync" campaign/demo
-run_completion "a sync with two archives of its own fails" \
-    ship fail 'at most one archived goal of its own'
+run_completion "a synchronization with one concise summary completes" ship pass
+kind_report "the sync's report" 'Main synchronization: the PR carries its concise durable summary.'
 
 # Not the name: a branch carrying main commits its campaign base lacks is a sync.
 git -C "$root/mainco" worktree add -q -b feat/main-into-demo "$root/merged" origin/campaign/demo >/dev/null 2>&1
 completion_wt=$root/merged
 git -C "$root/merged" merge -q --no-ff --no-edit origin/main
-own_goal "$root/merged" merged-sync
-kind_commit "$root/merged" 'archive the unnamed sync'
 kind_pr "$root/merged" campaign/demo "$parent"
 rm -f "$root/completion/published-report"
 run_completion "a sync detected by its main merge, not its name, completes" ship pass
-kind_report "the unnamed sync's report" 'Main synchronization. Archived goal: .claude/GOAL-archive-merged-sync.md'
+kind_report "the unnamed sync's report" 'Main synchronization: the PR carries its concise durable summary.'
 
-# The consolidated campaign PR: every child's archive, verified against the
-# parent charter it names instead of one goal.
+# The consolidated campaign PR is verified against its parent charter instead
+# of a mission summary.
 completion_wt=$root/camp
 kind_pr "$root/camp" main
 printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
@@ -1398,7 +1303,7 @@ printf '<!-- quantick-campaign:v1 -->\nExact branch: campaign/demo.\n' > "$root/
 run_completion "a charter naming the branch in plain text completes" ship pass
 printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
 rm -f "$root/completion/published-report"
-run_completion "a consolidated campaign PR with two child archives completes" ship pass
+run_completion "a consolidated campaign PR with its verified charter completes" ship pass
 kind_report "the consolidated report" "Consolidated campaign: charter $parent names \`campaign/demo\`"
 set_threads 3
 run_completion "a consolidated campaign PR still needs zero AI-review threads" \
@@ -1889,11 +1794,11 @@ for required in 'At every tier copy the four reserved `G-AI` lines' \
     fi
 done
 
-if grep -qF -- 'goal_ai_gates" = "$canonical_ai_gates' \
+if grep -qF -- 'quantick-mission-summary:v1 block' \
     "$repo_root/.claude/hooks/mission_ship_gate.sh"; then
     passed=$((passed + 1))
 else
-    printf 'FAIL final completion no longer compares the archived AI gates literally\n'
+    printf 'FAIL final completion no longer requires the concise mission summary\n'
     failed=$((failed + 1))
 fi
 

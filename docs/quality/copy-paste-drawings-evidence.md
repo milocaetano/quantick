@@ -40,7 +40,7 @@ the next step, while paste itself is visible as the newly selected offset copy.
 ## Visual QA
 
 The screenshots named below were captured locally and are intentionally not
-tracked; `.gitignore` excludes `.claude/evidence/**/*.png`. Every run used the
+tracked; `.gitignore` excludes `.claude/evidence/`. Every run used the
 worktree-built executable, selected a real drawing through an existing harness
 hook, and pointed all persistent cockpit stores at a run-specific scratch
 directory. No trader store or unrelated Quantick process was changed.

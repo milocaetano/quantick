@@ -1,8 +1,0 @@
-Command: cargo clippy --workspace --all-targets
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-    Blocking waiting for file lock on package cache
-   Compiling quantick-app v0.1.0 (C:\src\quantick-worktrees\fix-volume-profile-precise-hit\crates\app)
-    Finished `dev` profile [optimized + debuginfo] target(s) in 20.52s
-
-Exit: 0

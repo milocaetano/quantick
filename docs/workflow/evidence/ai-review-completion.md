@@ -52,7 +52,7 @@ command limitations remain. Main merging is exclusively the user's action.
 | `.claude/skills/ai-review/SKILL.md` | On-demand instructions; completion procedure and report identity. |
 | `.claude/skills/ship/SKILL.md`, `mission/SKILL.md` | On-demand instructions. Explicit draft/AI/readiness ordering; shorter existing ship prose pays for the producer instructions. |
 | `docs/campaign/integration.md` | Documentation linking to the canonical producer with the same campaign key. |
-| `.claude/GOAL-archive-ai-review-completion.md`, this file | Mission and evidence bookkeeping, no runtime path. |
+| This file | Maintained change summary, no runtime path. |
 
 No Rust source, Cargo manifest/lock, financial behavior, product contract,
 hot path, UI surface or runtime dependency changes. No baseline is raised.

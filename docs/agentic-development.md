@@ -207,20 +207,12 @@ verifier closes the other boundary: an already-ready PR that never crosses a
 gated command still has to prove reports, threads, CI and the literal mission
 completion clauses before an agent may call it done.
 
-## The mission archive
+## The mission record
 
-Each completed objective leaves its mission file behind as
-`.claude/GOAL-archive-<slug>.md` — 45 of them at the time of writing. They are
-not changelogs. A mission file records what the objective *was*, the decisions
-taken with the trader and on what date, and the acceptance criteria the work
-had to meet, all written before the code existed.
-
-That makes them the design record git history cannot reconstruct: a commit
-shows what changed, and the archived mission shows what question the change
-was answering, and which alternatives were rejected in a conversation that
-would otherwise have evaporated. When a later reader asks why the strategy's
-audible alarm deliberately fires before the strategy could ever place an
-order, the answer is in the mission file, in the trader's own reasoning.
+Mission working state stays local in ignored `.claude/GOAL.md`. After delivery,
+the PR keeps the objective, criteria, decisions and validation in its concise
+`quantick-mission-summary:v1` block. Raw mission files and execution evidence
+do not accumulate in the repository.
 
 ## What this does not claim
 

@@ -56,15 +56,17 @@ repository rules to obtain access.
    reset of the integration branch. Validate conflicts and integration risk,
    then apply the same authorized campaign merge gate. Dependent reviews stale
    when the campaign tip moves. Record the source main SHA and resulting tip.
-   `mission_ship_gate.sh` counts only archives absent from main: zero or one.
+   `mission_ship_gate.sh` requires the synchronization PR's concise mission
+   summary and does not inspect or create goal archives.
 7. At the campaign completion criteria, create the consolidated PR from the
    campaign branch to main. Its review base is main, with fresh full-diff
    architecture, AI and delivery reviews and integration CI. Its body carries
    `Campaign-parent: <parent issue URL>`; `mission_ship_gate.sh` requires that
-   charter to name the branch, not one goal archive. Run the applicable
+   charter to name the branch instead of a mission-summary block. Run the applicable
    scorecard at the campaign SHA, label it as a campaign candidate and retain
    rubric limitations: a default-branch gate does not become a campaign gate
-   by renaming it. Never present that candidate as main's score. Record the
+   by renaming it. Never present that candidate as main's score. Publish the
+   score report on the PR/parent issue rather than committing it. Record the
    final PR/evidence, set `ready_for_evaluation`, and give the user the PR.
 
 `close` may finalize autonomous execution as `ready_for_evaluation` once the

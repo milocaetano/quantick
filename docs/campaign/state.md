@@ -114,7 +114,7 @@ On the parent issue append `<!-- campaign-operation:v1 -->` followed by JSON:
 `owner`, `lease_expires_at`, `target`, `intent`, `expected_readback`, `status`
 (`pending`, `succeeded` or `failed`) and `evidence` (result/error URLs). The
 pending record precedes the operation; its result uses the same key and attempt.
-Keep each journal body within 8 KiB by linking payload/evidence artifacts, never
+Keep each journal body within 8 KiB by linking PR/issue comments or CI artifacts, never
 omitting authority, identity or readback information. Identical records are
 idempotent; conflicting payloads for one key/attempt require reconciliation.
 After an uncertain append, search/read that exact record before retrying.

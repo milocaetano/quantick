@@ -77,9 +77,7 @@ found no confirmed issues in its bounded source/diff inspection at 22:46:31Z.
 It predates the full workspace run and this archive update. It is a review
 input, not a final committed-diff architecture/AI/delivery verdict or CI result.
 
-The [mission archive](../../.claude/GOAL-archive-campaign-recovery-regressions.md)
-retains every original R/A/G/C clause and the verbatim delegated issue;
-the [original source](../../.claude/GOAL-source-campaign-recovery.md) is unchanged.
+The linked issue comments retain the original request and acceptance ledger.
 A1-A4 record the implemented evidence. A5 remains open for current-head CI;
 closing reviews and integration remain open too. Q12's transferred live
 outcomes retain their separate owner and dependency below.
