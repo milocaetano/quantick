@@ -84,6 +84,23 @@ The source-first completeness pass reviewed this map after the clarification. It
 - The new-action capability gate does not apply: this mission adds no action and only relocates existing mouse surfaces. Switch/create/rename retain their existing keyboard, menu, and control-plane reach. Delete retains its existing confirmed keyboard/menu surface and remains deliberately absent from the control plane because the current effect policy forbids destructive capabilities.
 - Docs/skills-only waivers do not apply because Rust runtime UI code changes.
 
+## Deferred
+
+- **DC-1 — Missing contemporaneous pre-edit arming receipt.** The retained
+  high-tier marker proves the tier was recorded, but no durable artifact
+  preserves the required pre-edit `cargo build -p quantick-guards` and
+  `cargo check -p quantick-app --all-targets` output. This record does not
+  claim that unavailable evidence exists or reconstruct it retrospectively.
+- **DC-2 — Missing contemporaneous source-first review report.** The original
+  source-first review informed the retained request map, but its report was
+  not written to a durable artifact before implementation. The chronology is
+  therefore unproven and remains disclosed rather than manufactured later.
+- The authenticated user explicitly authorized these two narrowly scoped
+  retrospective process exceptions after they were explained, recorded in
+  [the PR authorization record](https://github.com/milocaetano/quantick/pull/485#issuecomment-5673227775).
+  The grant waives no product outcome, current test, review, exact-head CI, or
+  the user's exclusive authority to merge into `main`.
+
 ## Verification evidence before review
 
 - A1-A5 and G1/G3-G6 are evidenced in
