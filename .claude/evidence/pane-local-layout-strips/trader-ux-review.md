@@ -15,6 +15,7 @@ Verdict: **PASS**. No Blocker or Should-fix remains.
   which pane had focus.
 
 Evidence: `wide-distinct-layouts.png`, `narrow-max-layouts.png`,
+`stacked-three-pane.png`,
 `pane_local_strip_actions_target_the_footer_that_raised_them`, and
 `per_pane_layouts_are_recorded_and_restored`.
 
