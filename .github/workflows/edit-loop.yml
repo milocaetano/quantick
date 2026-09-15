@@ -1,0 +1,55 @@
+name: Edit loop
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/edit-loop.yml'
+      - 'tools/edit_loop/**'
+      - 'tools/outside_score/measure.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**/Cargo.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edit-loop-${{ github.event.pull_request.number || github.ref }}
+  # Preserve partial evidence rather than cancelling an older sample series.
+  cancel-in-progress: false
+
+jobs:
+  edit-loop:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: |
+          rustc --version
+          cargo --version
+          cargo clippy --version
+          cargo fmt --version
+      - name: Measure and enforce fixed edit-loop budgets
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python tools/edit_loop/measure.py run --repo . --sha "$env:SOURCE_SHA" `
+            --worktree "$env:RUNNER_TEMP/edit-loop-worktree" `
+            --target "$env:RUNNER_TEMP/edit-loop-targets" `
+            --output "$env:RUNNER_TEMP/edit-loop-evidence" `
+            --budgets tools/edit_loop/budgets.json
+      - name: Retain raw timing and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edit-loop-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/edit-loop-evidence
+          if-no-files-found: error
