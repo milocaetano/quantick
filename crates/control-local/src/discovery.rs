@@ -168,7 +168,7 @@ pub fn publish_descriptor_in(
     publish_descriptor_in_with_liveness(directory, descriptor, &system_process_is_live)
 }
 
-pub fn publish_descriptor_in_with_liveness(
+fn publish_descriptor_in_with_liveness(
     directory: &Path,
     descriptor: &InstanceDescriptor,
     liveness: &impl Fn(&InstanceDescriptor) -> bool,
@@ -262,7 +262,7 @@ pub fn discover_descriptors_in(directory: &Path) -> Result<DescriptorDiscovery, 
 }
 
 /// Discover through the deterministic process-probe seam used by tests.
-pub fn discover_descriptors_in_with_liveness(
+fn discover_descriptors_in_with_liveness(
     directory: &Path,
     liveness: &impl Fn(&InstanceDescriptor) -> bool,
 ) -> Result<DescriptorDiscovery, DiscoveryError> {
