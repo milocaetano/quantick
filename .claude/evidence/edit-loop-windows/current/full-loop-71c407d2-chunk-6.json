@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "full-loop-71c407d2-chunk-6.json",
+  "original_sha256": "F5B6502DC53A1E0BAF9BB916E875229281ED0FB79E8CBDC3A8A470AE00C81759",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "{\n  \"chunk_id\": \"28765c\",\n  \"wall_time_seconds\": 5.0051437,\n  \"session_id\": 4128,\n  \"original_token_count\": 0,\n  \"output\": \"\"\n}\n"
+}

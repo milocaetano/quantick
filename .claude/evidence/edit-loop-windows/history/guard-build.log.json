@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "guard-build.log",
+  "original_sha256": "EDC0B88B020686432C21E7351CFE45FD2E3DB8DDE34B896EA5A52530AE61FFF3",
+  "source_encoding": "utf-16le",
+  "source_bom_hex": "fffe",
+  "source_text": "cargo :    Compiling quantick-guards v0.1.0 (C:\\src\\quantick-worktrees\\ci-edit-loop-windows\\crates\\guards)\r\nNo linha:2 caractere:831\r\n+ ... g\" -Append; cargo build -p quantick-guards --target-dir 'C:/src/quant ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (   Compiling qu...\\crates\\guards):String) [], RemoteException\r\n    + FullyQualifiedErrorId : NativeCommandError\r\n \r\n    Finished `dev` profile [optimized + debuginfo] target(s) in 10.64s\r\n"
+}

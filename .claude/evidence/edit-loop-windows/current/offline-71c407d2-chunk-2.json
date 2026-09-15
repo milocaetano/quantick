@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "offline-71c407d2-chunk-2.json",
+  "original_sha256": "E04E1E788DD0A95FD3EA7CB180231718BFC55AD3B1A4CB64EE7395E4D49AA952",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "{\n  \"chunk_id\": \"fba12c\",\n  \"wall_time_seconds\": 0.0000017,\n  \"exit_code\": 0,\n  \"original_token_count\": 112,\n  \"output\": \".......\\r\\n----------------------------------------------------------------------\\r\\nRan 9 tests in 40.369s\\r\\n\\r\\nOK\\r\\nREAD_COST_EXIT=0\\r\\nCOMMAND=python tools/outside_score/test_measure.py\\r\\n.................\\r\\n----------------------------------------------------------------------\\r\\nRan 17 tests in 1.488s\\r\\n\\r\\nOK\\r\\nFROZEN_LEXER_EXIT=0\\r\\nCOMMAND=ruff check --select F tools/edit_loop/\\r\\nAll checks passed!\\nRUFF_EXIT=0\\r\\nCHECK_END_UTC=2026-09-15T02:11:16.3498640Z\\r\\n\"\n}\n"
+}

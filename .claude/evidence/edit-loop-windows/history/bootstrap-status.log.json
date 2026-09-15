@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "bootstrap-status.log",
+  "original_sha256": "1393D54C825921DC7DE8F6CCD344CF115162B0C0DD689A4AE6AD866C8D2C4425",
+  "source_encoding": "utf-16le",
+  "source_bom_hex": "fffe",
+  "source_text": "C2_BASELINE_HEAD a03dcde95da1b514c5566cbeb993cadda2d47198\r\nC2_BOOTSTRAP_START 2026-09-14T18:24:04.9900521-03:00\r\nC2_GUARD_BUILD_EXIT 0 2026-09-14T18:24:15.7197692-03:00\r\nC2_APP_PRE_EDIT_CHECK_EXIT 0 2026-09-14T18:25:11.3573585-03:00\r\n"
+}

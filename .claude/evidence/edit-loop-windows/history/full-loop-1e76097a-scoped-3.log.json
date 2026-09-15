@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "full-loop-1e76097a-scoped-3.log",
+  "original_sha256": "1C4069F7FA83572DDBF719CF75852649AB8FE60E655D57B0601EAF5F61CDB132",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "EXEC_SESSION_ID=95914\nTOOL_CHUNK_ID=3e6097\nWRAPPER_EXIT_CODE=running\nORIGINAL_TOKEN_COUNT=126\n   Compiling quantick-backtest v0.1.0 (C:\\src\\quantick-worktrees\\ci-edit-loop-windows\\crates\\backtest)\n    Finished `dev` profile [optimized + debuginfo] target(s) in 4m 54s\nEXIT_CODE=0\nFINISH_UTC=2026-09-15T01:23:35.2953154Z\nSTEP=4/4\nSTART_UTC=2026-09-15T01:23:35.5153473Z\nHEAD=4b13b64a0f4556470cbf6b7a5e1c7f1b000d0f50\nINDEX_TREE=1e76097a22d620a9f3839ff0c0d49f1f3d636d68\nCOMMAND=cargo test --workspace\n   Compiling quantick-app v0.1.0 (C:\\src\\quantick-worktrees\\ci-edit-loop-windows\\crates\\app)\n"
+}

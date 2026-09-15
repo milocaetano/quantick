@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "offline-71c407d2-chunk-0.json",
+  "original_sha256": "2FEC0E4386AC65659C7AE593F3327468D3207DA1D45333ED633863C81A9415D0",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "{\n  \"chunk_id\": \"8c8a8f\",\n  \"wall_time_seconds\": 10.0296131,\n  \"session_id\": 42496,\n  \"original_token_count\": 56,\n  \"output\": \"CHECK_START_UTC=2026-09-15T02:09:33.1261830Z\\r\\nHEAD=0ca889b9e3c3b6b60dd52002f737d17af56082d8\\r\\nSOURCE_TREE=71c407d226dc6fc80858506d4eb1831729cbd97b\\r\\nCOMMAND=python -m unittest discover -s tools/edit_loop -p test_*.py\\r\\n.......\"\n}\n"
+}

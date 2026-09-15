@@ -1,0 +1,8 @@
+{
+  "schema": "c2-source-receipt-v1",
+  "original_name": "diagnose-full-app.ps1",
+  "original_sha256": "AAAFE933ED938CF731838D4C7CC93DD9638AF45201719B537E2E48E49CBFFBDB",
+  "source_encoding": "utf-8",
+  "source_bom_hex": "",
+  "source_text": "$ErrorActionPreference = 'Stop'\n$taskRoot = 'C:/src/quantick-worktrees/ci-edit-loop-windows'\n$binary = 'C:/src/quantick-worktrees/fix-mutation-retry-truth/target/debug/deps/quantick_app-bdab7f0be3d8e6fd.exe'\nSet-Location -LiteralPath $taskRoot\nif ((Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash -ne 'A2D7AADF0E084D66FE5343EABBE4E7C47DC8FE5B6A59D1647297C62CCAE45053') { throw 'Diagnostic binary changed' }\nif (Test-Path Env:QUANTICK_DRAWING_INSPECTOR) { throw 'Unexpected inherited inspector hook' }\nif (Test-Path Env:RUST_TEST_THREADS) { throw 'Unexpected inherited test concurrency override' }\n$env:QUANTICK_BUBBLES = \"$taskRoot/crates/app/config/bubbles.toml\"\n'DIAGNOSIS=One complete unchanged app test binary, default libtest behavior; not workspace acceptance'\n\"START_UTC=$((Get-Date).ToUniversalTime().ToString('o'))\"\n\"WRAPPER_PID=$PID\"\n\"HEAD=$(git rev-parse HEAD)\"\n\"INDEX_TREE=$(git write-tree)\"\n\"BINARY_SHA256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash)\"\n\"ENV_QUANTICK_BUBBLES=$env:QUANTICK_BUBBLES\"\n\"BUBBLES_SHA256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $env:QUANTICK_BUBBLES).Hash)\"\n'ENV_INSPECTOR=absent'\n'ENV_RUST_TEST_THREADS=absent'\n\"COMMAND=& '$binary'\"\n& $binary\n$testExit = $LASTEXITCODE\n\"TEST_EXIT_CODE=$testExit\"\n\"END_UTC=$((Get-Date).ToUniversalTime().ToString('o'))\"\nexit $testExit\n"
+}
