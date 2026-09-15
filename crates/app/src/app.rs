@@ -457,6 +457,7 @@ impl QuantickApp {
                 slot_kinds: Vec::new(),
                 pending_hidden: Vec::new(),
                 pending_styles: Vec::new(),
+                pending_mouse_vertical_lines: Vec::new(),
                 last_script_poll: Instant::now(),
                 operator_slots: std::collections::BTreeSet::new(),
                 indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),

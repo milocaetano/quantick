@@ -495,6 +495,7 @@ impl QuantickApp {
         self.indicators.script_files.clear();
         self.indicators.pending_hidden.clear();
         self.indicators.pending_styles.clear();
+        self.indicators.pending_mouse_vertical_lines.clear();
         self.mark_indicator_state_dirty();
     }
 

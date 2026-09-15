@@ -192,6 +192,9 @@ impl QuantickApp {
         if entry.hidden {
             self.indicators.pending_hidden.push(owner);
         }
+        if entry.mouse_vertical_line {
+            self.indicators.pending_mouse_vertical_lines.push(owner);
+        }
         if !entry.plot_styles.is_empty() {
             self.indicators.pending_styles.push((
                 owner,
@@ -255,6 +258,24 @@ impl QuantickApp {
                 }
             }
         }
+        if !self.indicators.pending_mouse_vertical_lines.is_empty() {
+            let pending = std::mem::take(&mut self.indicators.pending_mouse_vertical_lines);
+            for owner in pending {
+                let known = self
+                    .indicators
+                    .slot_kinds
+                    .iter()
+                    .any(|(candidate, _)| *candidate == owner);
+                match self
+                    .pane_mut_at(owner.tab, owner.side)
+                    .and_then(|pane| pane.indicators.view_mut(owner.slot))
+                {
+                    Some(view) if !view.descriptor.overlay => view.mouse_vertical_line = true,
+                    None if known => self.indicators.pending_mouse_vertical_lines.push(owner),
+                    Some(_) | None => {}
+                }
+            }
+        }
     }
 
     /// The origin pane's layout and the index of the slot in it — the two
@@ -272,6 +293,67 @@ impl QuantickApp {
             .get_mut(layout)?
             .indicators
             .get_mut(index)
+    }
+
+    /// Set the price-hover guide through the one path shared by the pane menu
+    /// and the control capability. The layout is the durable owner; every
+    /// pane showing it follows by indicator position.
+    fn set_indicator_mouse_vertical_line_at(&mut self, origin: TabSlot, enabled: bool) -> bool {
+        let Some((layout, index)) = self.edit_coordinates(origin) else {
+            return false;
+        };
+        if let Some(view) = self
+            .pane_mut_at(origin.tab, origin.side)
+            .and_then(|pane| pane.indicators.view_mut(origin.slot))
+            .filter(|view| !view.descriptor.overlay)
+        {
+            view.mouse_vertical_line = enabled;
+        } else {
+            return false;
+        };
+        if let Some(entry) = self.layout_entry_mut(layout, index) {
+            entry.mouse_vertical_line = enabled;
+        }
+        for (tab, side) in self.mirror_targets(origin, layout) {
+            if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied()
+                && let Some(view) = self
+                    .pane_mut_at(tab, side)
+                    .and_then(|pane| pane.indicators.view_mut(slot))
+                && !view.descriptor.overlay
+            {
+                view.mouse_vertical_line = enabled;
+            }
+        }
+        self.mark_layouts_dirty();
+        true
+    }
+
+    pub(crate) fn set_indicator_mouse_vertical_line(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+        slot: SlotId,
+        enabled: bool,
+    ) -> bool {
+        let side = self
+            .control_tabs()
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| {
+                tab.panes()
+                    .find(|(pane, _)| pane.id == pane_id)
+                    .map(|(_, side)| side)
+            });
+        side.is_some_and(|side| {
+            self.set_indicator_mouse_vertical_line_at(
+                TabSlot {
+                    tab: tab_id,
+                    side,
+                    slot,
+                },
+                enabled,
+            )
+        })
     }
 
     /// The other panes an edit on `origin` reaches: every pane on the same
@@ -295,6 +377,7 @@ impl QuantickApp {
         let entry = SavedIndicator {
             kind: kind.clone(),
             hidden: false,
+            mouse_vertical_line: false,
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         };

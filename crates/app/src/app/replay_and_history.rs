@@ -102,6 +102,9 @@ impl QuantickApp {
         if pane == ContextMenuPane::Time {
             return Some(flow.frame.time_strip?.center());
         }
+        if pane == ContextMenuPane::Indicator {
+            return flow.first_indicator_pane_center();
+        }
         crate::harness::context_menu_canvas_position(
             pane,
             flow.frame.chart_rect?,

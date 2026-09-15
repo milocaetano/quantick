@@ -194,6 +194,9 @@ impl QuantickApp {
         self.indicators
             .pending_styles
             .retain(|(owner, _)| owner.tab != closed.id);
+        self.indicators
+            .pending_mouse_vertical_lines
+            .retain(|owner| owner.tab != closed.id);
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
     }

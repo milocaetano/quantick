@@ -67,6 +67,8 @@ pub(super) struct IndicatorState {
     /// lands — the same deferral [`Self::pending_hidden`] performs, for the
     /// same reason.
     pub(super) pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
+    /// Saved mouse guides waiting for their worker-created view.
+    pub(super) pending_mouse_vertical_lines: Vec<TabSlot>,
 
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
@@ -92,6 +94,7 @@ impl IndicatorState {
             script_files: &mut self.script_files,
             pending_hidden: &mut self.pending_hidden,
             pending_styles: &mut self.pending_styles,
+            pending_mouse_vertical_lines: &mut self.pending_mouse_vertical_lines,
         }
     }
 }
@@ -180,6 +183,35 @@ impl QuantickApp {
                 }
             }
         }
+        if let Some(index) = self.harness.indicator_mouse_line() {
+            let target = self
+                .active_tab()
+                .flow_pane
+                .indicators
+                .all()
+                .get(index)
+                .map(|view| {
+                    (
+                        self.active_tab().id,
+                        self.active_tab().flow_pane.id,
+                        view.slot,
+                    )
+                });
+            if let Some((tab_id, pane_id, slot)) = target {
+                self.harness.indicator_mouse_line_opened();
+                let _ = self.control_action(
+                    crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                    1,
+                    crate::control::ActionOrigin::Human,
+                    serde_json::json!({
+                        "tab_id": tab_id.to_string(),
+                        "pane_id": pane_id.to_string(),
+                        "slot_id": slot.0.to_string(),
+                        "enabled": true,
+                    }),
+                );
+            }
+        }
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
             return;
         };
@@ -194,6 +226,36 @@ impl QuantickApp {
                     side,
                     slot,
                 });
+            }
+        }
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let guide_requests: SmallVec<[(PaneSide, SlotId, bool); MAX_CANVAS_PANES]> = tab
+            .panes_with_sides_mut()
+            .filter_map(|(pane, side)| {
+                pane.take_indicator_guide_request()
+                    .map(|(slot, enabled)| (side, slot, enabled))
+            })
+            .collect();
+        for (side, slot, enabled) in guide_requests {
+            let pane_id = self
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .map(|tab| tab.pane(side).id);
+            if let Some(pane_id) = pane_id {
+                let _ = self.control_action(
+                    crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                    1,
+                    crate::control::ActionOrigin::Human,
+                    serde_json::json!({
+                        "tab_id": tab_id.to_string(),
+                        "pane_id": pane_id.to_string(),
+                        "slot_id": slot.0.to_string(),
+                        "enabled": enabled,
+                    }),
+                );
             }
         }
     }

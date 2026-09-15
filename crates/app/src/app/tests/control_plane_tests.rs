@@ -5238,7 +5238,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 48);
+    assert_eq!(documents.len(), 50);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");

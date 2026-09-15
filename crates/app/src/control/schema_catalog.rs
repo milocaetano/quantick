@@ -19,6 +19,7 @@ use super::{
     },
     feed::FeedSnapshot,
     health::HealthSnapshot,
+    indicator_guide::{IndicatorGuideInput, IndicatorGuideResult},
     interaction::{CursorSnapshot, SelectionSnapshot},
     journal::EventPage,
     layout::{LayoutResultV2, ResizeInputV2},
@@ -86,6 +87,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<AttachResult>("indicator-script-attach-result-v1.schema.json"),
         document::<DetachInput>("indicator-script-detach-input-v1.schema.json"),
         document::<DetachResult>("indicator-script-detach-result-v1.schema.json"),
+        document::<IndicatorGuideInput>("indicator-mouse-vertical-line-input-v1.schema.json"),
+        document::<IndicatorGuideResult>("indicator-mouse-vertical-line-result-v1.schema.json"),
         // The shape a failed compile puts in `error.context.details`, so a
         // client can generate a reader for its own diagnostics.
         document::<ScriptDiagnostic>("indicator-script-diagnostic-v1.schema.json"),

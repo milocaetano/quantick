@@ -529,6 +529,11 @@ impl QuantickApp {
                 owner.side = reside(owner.side);
             }
         }
+        for owner in &mut self.indicators.pending_mouse_vertical_lines {
+            if owner.tab == tab_id {
+                owner.side = reside(owner.side);
+            }
+        }
         for (owner, ..) in &mut self.indicators.script_files {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);

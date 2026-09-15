@@ -6,6 +6,7 @@
 #   powershell -File capture_window.ps1 -ProcessName quantick-app -OutPath shot.png
 param(
     [string]$ProcessName = "quantick-app",
+    [int]$ProcessId = 0,
     [string]$OutPath = "shot.png"
 )
 
@@ -16,6 +17,8 @@ using System;
 using System.Runtime.InteropServices;
 public class WinCap {
     [DllImport("user32.dll")]
+    public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32.dll")]
     public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
@@ -24,13 +27,19 @@ public class WinCap {
 }
 '@
 Add-Type -TypeDefinition $sig
+[WinCap]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
 
-$proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+$candidates = if ($ProcessId -gt 0) {
+    Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+} else {
+    Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
+}
+$proc = $candidates |
     Where-Object { $_.MainWindowHandle -ne 0 } |
     Select-Object -First 1
 
 if (-not $proc) {
-    Write-Output "NOT_FOUND: no process '$ProcessName' with a window (is the app running?)"
+    Write-Output "NOT_FOUND: no matching process with a window (is the app running?)"
     exit 2
 }
 
