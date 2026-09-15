@@ -104,12 +104,13 @@ The source-first completeness pass reviewed this map after the clarification. It
 ## Verification evidence before review
 
 - A1-A5 and G1/G3-G6 are evidenced in
-  `.claude/evidence/pane-local-layout-strips/`, including four durable
+  `.claude/evidence/pane-local-layout-strips/`, including five durable
   screenshots, the control-plane evidence manifest and health summaries, the
   visual-QA verdict, the trader-persona review, and the dense-frame comparison.
 - The ordered fmt, clippy, and build commands pass. `cargo test --workspace`
-  passed 2,068 app tests and reproduced two unrelated order-flow worker-test
-  failures identically on clean `main` at `eb7bb039`; G2 remains unchecked
+  passed 2,064 app tests and reported two unrelated order-flow worker-test
+  failures; the first reproduced identically on clean `main` at `aaae6f32`.
+  G2 remains unchecked
   until exact-head CI supplies an authoritative green result or the upstream
   baseline is repaired.
 - G7, G-AI1 through G-AI4, and C1 through C3 intentionally remain unchecked:
