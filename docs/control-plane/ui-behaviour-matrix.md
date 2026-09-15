@@ -47,7 +47,7 @@ The three exclusion classes are closed:
 | Excluded: `pending_capability` | 59 |
 | **Total** | **103** |
 
-82 of the 103 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 21 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 103 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 22 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
