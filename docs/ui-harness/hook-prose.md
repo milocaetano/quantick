@@ -110,7 +110,7 @@ and the one thing a grep of the source cannot supply.
 | `QUANTICK_FRVP_DEMO=compare` | two adjacent profiles over the same stretch of liquidity map, one per over-heatmap mode (outline vs always-fill) — the silhouette decision's before/after in a single frame |
 | `QUANTICK_FRVP_DEMO=stress` | stages 25 000 venue candles and a whole-time-pane profile in its bounded `loading N of M bars` state; pair with `QUANTICK_FRVP_FOLD_BUDGET=1` to hold it for capture |
 | `QUANTICK_FRVP_DEMO_SELECT=1` | leaves the demo profile selected with its editing context bar visible |
-| `QUANTICK_QUICK_RANGE_DEMO=<active\|ready>` | stages the held or released temporary ruler on the flow chart; `ready` includes its fixed-range-profile action. It adds no drawing; `=1` aliases `ready`; unknown values do nothing |
+| `QUANTICK_QUICK_RANGE_DEMO=<active\|ready\|future>` | stages the flow-chart ruler without adding a drawing: `active` holds it, `ready` exposes three icons, and `future` ends past the tape; `=1` aliases `ready`; unknown values do nothing |
 | `QUANTICK_FRVP_FOLD_BUDGET=<bars>` | how much a profile's fold spends per frame (default 1500 bars-worth of map touches). `=1` advances one bar per frame, holding the filling state on screen for as long as a capture needs; a non-positive or unparseable value is refused and the default stands |
 
 | `QUANTICK_PAPER_CALENDAR=1` | the Simulated performance window with its **month grid expanded** and nothing picked — the state that shows which days hold trades (tinted by the day's net, trade count under the day number) before any filtering happens. Takes the report's own open path, so it stacks with `QUANTICK_PAPER_REPORT_AUTOSTART` rather than racing it |

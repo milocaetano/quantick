@@ -261,6 +261,552 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Projects one measured move from a third chart coordinate.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.fib_projection.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartAnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One coordinate from a chart gesture. Market time is retained when a bar\nexists; `bar_position` keeps future chart space expressible without\ninventing a timestamp.",
+            "properties": {
+              "bar_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "bar_position",
+              "price"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Ranged drawings share this future-aware input; the selected tool still\nowns whether exactly two or three anchors complete it.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartAnnotationAnchor"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "ChartAnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartResolvedAnchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedAnchor"
+              },
+              {
+                "properties": {
+                  "bar_position": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "price": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "bar_position",
+                  "price"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "ChartAnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a Fibonacci projection",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Draws retracement levels over one move between two chart coordinates.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.fib_retracement.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartAnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One coordinate from a chart gesture. Market time is retained when a bar\nexists; `bar_position` keeps future chart space expressible without\ninventing a timestamp.",
+            "properties": {
+              "bar_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "bar_position",
+              "price"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Ranged drawings share this future-aware input; the selected tool still\nowns whether exactly two or three anchors complete it.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartAnnotationAnchor"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "ChartAnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartResolvedAnchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedAnchor"
+              },
+              {
+                "properties": {
+                  "bar_position": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "price": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "bar_position",
+                  "price"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "ChartAnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a Fibonacci retracement",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Folds traded volume over the market-time range between two chart coordinates and places the result as an attributed drawing.",
       "destructive": false,
       "dry_run_supported": false,
@@ -511,6 +1057,279 @@
       "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
       "title": "Place a fixed-range volume profile",
       "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Folds traded volume over a chart range, including projected space beyond the latest bar.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "annotate",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.fixed_range_profile.create",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "AnnotationTarget": {
+            "additionalProperties": false,
+            "description": "Where an annotation goes. Omitting both halves means the chart the trader\nis looking at — the same default the toolbar's own placement uses.",
+            "properties": {
+              "pane_side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PaneSideDto"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The pane within that tab. Omitted: the pane drawings go to."
+              },
+              "pane_slot": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Which context chart `pane_side = \"time\"` means, top to bottom from\n`0`. Omitted: the top one. Ignored for the flow pane, which has no\nstack to pick from."
+              },
+              "tab_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The tab, by the id every snapshot reports. Omitted: the active tab."
+              }
+            },
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartAnnotationAnchor": {
+            "additionalProperties": false,
+            "description": "One coordinate from a chart gesture. Market time is retained when a bar\nexists; `bar_position` keeps future chart space expressible without\ninventing a timestamp.",
+            "properties": {
+              "bar_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "bar_position",
+              "price"
+            ],
+            "type": "object"
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Ranged drawings share this future-aware input; the selected tool still\nowns whether exactly two or three anchors complete it.",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartAnnotationAnchor"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 120,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AnnotationTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "anchors"
+        ],
+        "title": "ChartAnnotationInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "AnnotationAuthor": {
+            "description": "Who placed an object, as the interface shows it.",
+            "properties": {
+              "actor_kind": {
+                "description": "The actor kind on the wire: `agent`, `automation`, `human_ui`.",
+                "type": "string"
+              },
+              "client_name": {
+                "description": "The client's own name from its handshake.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_kind",
+              "client_name"
+            ],
+            "type": "object"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "ChartResolvedAnchor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ResolvedAnchor"
+              },
+              {
+                "properties": {
+                  "bar_position": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "price": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "bar_position",
+                  "price"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "PaneSideDto": {
+            "enum": [
+              "flow",
+              "time"
+            ],
+            "type": "string"
+          },
+          "ResolvedAnchor": {
+            "properties": {
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "time_unix_ms": {
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "unix_milliseconds"
+              }
+            },
+            "required": [
+              "slot",
+              "time_unix_ms",
+              "price"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "anchors": {
+            "items": {
+              "$ref": "#/$defs/ChartResolvedAnchor"
+            },
+            "type": "array"
+          },
+          "annotation_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "author": {
+            "$ref": "#/$defs/AnnotationAuthor"
+          },
+          "label": {
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_side": {
+            "$ref": "#/$defs/PaneSideDto"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tool_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "annotation_id",
+          "tab_id",
+          "pane_id",
+          "pane_side",
+          "tool_id",
+          "anchors",
+          "author",
+          "label"
+        ],
+        "title": "ChartAnnotationResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "annotate",
+        "annotate.chart"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action.",
+      "title": "Place a fixed-range volume profile",
+      "version": 2
     },
     {
       "availability": {

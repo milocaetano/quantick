@@ -16,6 +16,60 @@ use super::{DrawingChromeAsk, DrawingEnv};
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
+pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
+pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
+
+/// One durable drawing offered for the settled temporary range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Action {
+    Profile,
+    Retracement,
+    Projection,
+}
+
+impl Action {
+    pub const ALL: [Self; 3] = [Self::Profile, Self::Retracement, Self::Projection];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Profile => 0,
+            Self::Retracement => 1,
+            Self::Projection => 2,
+        }
+    }
+
+    pub const fn control_id(self) -> &'static str {
+        match self {
+            Self::Profile => ACTION_CONTROL_ID,
+            Self::Retracement => RETRACEMENT_CONTROL_ID,
+            Self::Projection => PROJECTION_CONTROL_ID,
+        }
+    }
+
+    pub const fn tool_id(self) -> &'static str {
+        match self {
+            Self::Profile => crate::frvp::TOOL_ID,
+            Self::Retracement => "fib-retracement",
+            Self::Projection => "fib-extension",
+        }
+    }
+
+    pub const fn capability_id(self) -> &'static str {
+        match self {
+            Self::Profile => crate::control::PROFILE_CAPABILITY_ID,
+            Self::Retracement => crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
+            Self::Projection => crate::control::FIB_PROJECTION_CAPABILITY_ID,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Fixed-range volume profile",
+            Self::Retracement => "Fib retracement",
+            Self::Projection => "Fib projection",
+        }
+    }
+}
 
 /// The chart that owns a temporary range. One window has one right mouse
 /// button, so the surface holds one owner rather than one range per pane.
@@ -29,6 +83,7 @@ pub(crate) struct Owner {
 /// value because the surface disappears as soon as the host accepts it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PlaceRequest {
+    pub action: Action,
     pub owner: Owner,
     pub anchors: [ChartPoint; 2],
 }
@@ -44,6 +99,7 @@ pub(crate) struct Paint<'a> {
 /// Structured facts about the action control currently on screen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Control {
+    pub action: Action,
     pub rect: egui::Rect,
     pub enabled: bool,
 }
@@ -74,24 +130,30 @@ enum State {
 #[derive(Default)]
 pub(crate) struct QuickRange {
     state: State,
-    action_rect: Option<egui::Rect>,
-    demo_requested: Option<bool>,
+    action_rects: [Option<egui::Rect>; 3],
+    demo_requested: Option<DemoRequest>,
+}
+
+#[derive(Clone, Copy)]
+struct DemoRequest {
+    ready: bool,
+    future: bool,
 }
 
 impl QuickRange {
-    pub fn request_demo(&mut self, ready: bool) {
-        self.demo_requested = Some(ready);
+    pub fn request_demo(&mut self, ready: bool, future: bool) {
+        self.demo_requested = Some(DemoRequest { ready, future });
     }
 
     pub fn stage_demo(
         &mut self,
         owner: Owner,
-        opening: impl FnOnce() -> Option<([ChartPoint; 2], NewDrawing)>,
+        opening: impl FnOnce(bool) -> Option<([ChartPoint; 2], NewDrawing)>,
     ) {
-        let Some(ready) = self.demo_requested else {
+        let Some(request) = self.demo_requested else {
             return;
         };
-        let Some((anchors, look)) = opening() else {
+        let Some((anchors, look)) = opening(request.future) else {
             return;
         };
         self.demo_requested = None;
@@ -99,7 +161,7 @@ impl QuickRange {
             owner,
             anchors,
             look,
-            ready,
+            ready: request.ready,
             chart: None,
             bounds: None,
             right_limit: None,
@@ -112,7 +174,7 @@ impl QuickRange {
             position,
             anchor,
         };
-        self.action_rect = None;
+        self.action_rects = [None; 3];
     }
 
     /// Advance the held gesture. The caller supplies the ruler's opening look
@@ -164,7 +226,7 @@ impl QuickRange {
 
     pub fn dismiss(&mut self) {
         self.state = State::Idle;
-        self.action_rect = None;
+        self.action_rects = [None; 3];
     }
 
     pub fn dismiss_if_present(&mut self) -> bool {
@@ -222,26 +284,44 @@ impl QuickRange {
     }
 
     #[must_use]
-    pub fn request(&self) -> Option<PlaceRequest> {
+    fn range(&self) -> Option<(Owner, [ChartPoint; 2])> {
         let State::Selected(selection) = &self.state else {
             return None;
         };
-        selection.ready.then_some(PlaceRequest {
-            owner: selection.owner,
-            anchors: selection.anchors,
+        selection
+            .ready
+            .then_some((selection.owner, selection.anchors))
+    }
+
+    #[cfg(test)]
+    fn request(&self) -> Option<PlaceRequest> {
+        let (owner, anchors) = self.range()?;
+        Some(PlaceRequest {
+            action: Action::Profile,
+            owner,
+            anchors,
         })
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn control(&self, active_tab: u64) -> Option<Control> {
-        let request = self.request()?;
-        (request.owner.tab == active_tab).then_some(Control {
-            rect: self.action_rect?,
-            enabled: request
-                .anchors
-                .iter()
-                .all(|anchor| anchor.time_ms.is_some()),
-        })
+        self.controls(active_tab)?
+            .into_iter()
+            .find(|control| control.action == Action::Profile)
+    }
+
+    #[must_use]
+    pub fn controls(&self, active_tab: u64) -> Option<[Control; 3]> {
+        let (owner, _) = self.range()?;
+        if owner.tab != active_tab || self.action_rects.iter().any(Option::is_none) {
+            return None;
+        }
+        Some(Action::ALL.map(|action| Control {
+            action,
+            rect: self.action_rects[action.index()].expect("all action rectangles were checked"),
+            enabled: true,
+        }))
     }
 }
 
@@ -252,10 +332,10 @@ pub(super) fn draw(
     ctx: &egui::Context,
     env: &DrawingEnv<'_>,
 ) -> DrawingChromeAsk {
-    let Some(request) = quick.request() else {
+    let Some((owner, anchors)) = quick.range() else {
         return DrawingChromeAsk::default();
     };
-    if request.owner.tab != env.tab {
+    if owner.tab != env.tab {
         quick.dismiss();
         return DrawingChromeAsk::default();
     }
@@ -270,42 +350,45 @@ pub(super) fn draw(
         selection.bounds.take(),
         selection.right_limit.take(),
     ) else {
-        quick.action_rect = None;
+        quick.action_rects = [None; 3];
         return DrawingChromeAsk::default();
     };
-    let Some(tool) = drawings::DrawingTool::by_id(crate::frvp::TOOL_ID) else {
+    let [Some(profile), Some(retracement), Some(projection)] =
+        Action::ALL.map(|action| drawings::DrawingTool::by_id(action.tool_id()))
+    else {
         return DrawingChromeAsk::default();
     };
-    let size = drawings::context_bar::single_action_bar_size();
+    let tools = [profile, retracement, projection];
+    let mut size = drawings::context_bar::single_action_bar_size();
+    size.x += TOOLRAIL_ICON.hit * (Action::ALL.len() - 1) as f32;
     let position = drawings::context_bar::place(chart, right_limit, bounds, size);
     let rect = egui::Rect::from_min_size(position, size);
-    let enabled = request
-        .anchors
-        .iter()
-        .all(|anchor| anchor.time_ms.is_some());
-    let mut clicked = false;
-    let mut action_rect = None;
+    let mut clicked = None;
+    let mut action_rects = [None; 3];
     egui::Area::new(egui::Id::new(BAR_ID))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .interactable(true)
         .show(ctx, |ui| {
             drawings::context_bar::floating_frame().show(ui, |ui| {
-                let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
-                    .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
-                    .enabled(enabled)
-                    .hover_text(tool.name())
-                    .disabled_explanation(
-                        "This range includes chart space with no market time; drag over bars to place a profile",
-                    )
-                    .show(ui);
-                action_rect = Some(response.rect);
-                clicked = response.clicked();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for (action, tool) in Action::ALL.into_iter().zip(tools) {
+                        let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
+                            .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
+                            .hover_text(action.label())
+                            .show(ui);
+                        action_rects[action.index()] = Some(response.rect);
+                        if response.clicked() {
+                            clicked = Some(action);
+                        }
+                    }
+                });
             });
         });
-    quick.action_rect = action_rect;
+    quick.action_rects = action_rects;
 
-    let dismiss = !clicked
+    let dismiss = clicked.is_none()
         && ctx.input(|input| {
             input.pointer.primary_pressed()
                 && input
@@ -317,7 +400,11 @@ pub(super) fn draw(
         quick.dismiss();
     }
     DrawingChromeAsk {
-        place_quick_range_profile: (clicked && enabled).then_some(request),
+        place_quick_range: clicked.map(|action| PlaceRequest {
+            action,
+            owner,
+            anchors,
+        }),
         dismiss_quick_range: dismiss,
         ..DrawingChromeAsk::default()
     }
@@ -383,15 +470,18 @@ mod tests {
             side: PaneSide::Flow,
         };
         let mut quick = QuickRange::default();
-        quick.request_demo(true);
-        quick.stage_demo(owner, || Some(([point(2.0), point(6.0)], opening())));
+        quick.request_demo(true, false);
+        quick.stage_demo(owner, |_| Some(([point(2.0), point(6.0)], opening())));
         assert!(quick.request().is_some());
         quick.dismiss();
-        quick.stage_demo(owner, || Some(([point(3.0), point(7.0)], opening())));
+        quick.stage_demo(owner, |_| Some(([point(3.0), point(7.0)], opening())));
         assert!(quick.request().is_none(), "the launch hook is spent once");
 
-        quick.request_demo(false);
-        quick.stage_demo(owner, || Some(([point(3.0), point(7.0)], opening())));
+        quick.request_demo(false, true);
+        quick.stage_demo(owner, |future| {
+            assert!(future);
+            Some(([point(3.0), point(7.0)], opening()))
+        });
         assert!(quick.paint(owner).is_some(), "the active ruler is painted");
         assert!(
             quick.request().is_none(),
@@ -413,5 +503,32 @@ mod tests {
         assert_eq!(quick.reconcile_tab(8), None);
         assert!(quick.paint(owner).is_none());
         assert!(quick.request().is_none());
+    }
+
+    #[test]
+    fn a_future_space_range_keeps_its_action_enabled() {
+        let owner = Owner {
+            tab: 7,
+            side: PaneSide::Flow,
+        };
+        let mut quick = QuickRange::default();
+        quick.press(owner, egui::pos2(10.0, 10.0), point(4.0));
+        quick.drag(
+            owner,
+            egui::pos2(30.0, 10.0),
+            ChartPoint::at(12.0, 112.0),
+            4.0,
+            opening,
+        );
+        quick.release(owner);
+        quick.action_rects = [Some(egui::Rect::from_min_size(
+            egui::pos2(20.0, 20.0),
+            egui::vec2(24.0, 24.0),
+        )); 3];
+
+        assert!(
+            quick.control(owner.tab).expect("the action").enabled,
+            "future chart space is a valid drawing coordinate"
+        );
     }
 }

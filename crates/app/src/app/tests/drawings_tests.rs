@@ -33,6 +33,46 @@ fn drag_quick_range(
     );
 }
 
+fn quick_range_action(
+    app: &QuantickApp,
+    action: crate::surfaces::drawing_chrome::QuickRangeAction,
+) -> crate::surfaces::drawing_chrome::QuickRangeControl {
+    crate::app::control_quick_range_actions(app)
+        .expect("the quick-range actions are visible")
+        .into_iter()
+        .find(|control| control.action == action)
+        .expect("the requested quick-range action is present")
+}
+
+fn click_quick_range_action(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    action: crate::surfaces::drawing_chrome::QuickRangeAction,
+) {
+    // The floating area's hit rectangle is learned from the frame that first
+    // paints the expanded three-button bar. Let egui carry that geometry into
+    // input before pressing a button outside the original one-button width.
+    run_frame(app, ctx);
+    let pressed_at = quick_range_action(app, action).rect.center();
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(pressed_at),
+            pointer_button(pressed_at, true),
+        ],
+    );
+    let released_at = quick_range_action(app, action).rect.center();
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(released_at),
+            pointer_button(released_at, false),
+        ],
+    );
+}
+
 /// The complete secondary-button flow: its ruler is temporary, an ordinary
 /// chart click drops it, and its one action replaces it with the registered
 /// fixed-range profile drawing.
@@ -75,6 +115,24 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
         semantic_action.capability_id.as_deref(),
         Some(crate::control::PROFILE_CAPABILITY_ID)
     );
+    for (control_id, capability_id) in [
+        (
+            "quick_range.fib_retracement",
+            crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
+        ),
+        (
+            "quick_range.fib_projection",
+            crate::control::FIB_PROJECTION_CAPABILITY_ID,
+        ),
+    ] {
+        let control = scene
+            .controls
+            .iter()
+            .find(|control| control.control_id == control_id)
+            .expect("each Fibonacci action has a stable semantic control");
+        assert_eq!(control.capability_id.as_deref(), Some(capability_id));
+        assert!(control.availability.available);
+    }
     assert!(
         app.active_tab().flow_pane.drawings.items().is_empty(),
         "the ruler is transient, not a persistent drawing"
@@ -100,6 +158,94 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
     let drawings = app.active_tab().flow_pane.drawings.items();
     assert_eq!(drawings.len(), 1);
     assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
+}
+
+#[test]
+fn quick_range_fibonacci_actions_use_the_dragged_move() {
+    for (action, expected_tool, expected_points) in [
+        (
+            crate::surfaces::drawing_chrome::QuickRangeAction::Retracement,
+            "fib-retracement",
+            2,
+        ),
+        (
+            crate::surfaces::drawing_chrome::QuickRangeAction::Projection,
+            "fib-extension",
+            3,
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        let (_, start, end) = quick_range_ends(&app);
+
+        drag_quick_range(&mut app, &ctx, start, end);
+        let control = quick_range_action(&app, action);
+        click_quick_range_action(&mut app, &ctx, action);
+
+        assert!(
+            crate::app::control_quick_range(&app).is_none(),
+            "clicking {action:?} consumes the temporary range at {:?}",
+            control.rect
+        );
+        let drawings = app.active_tab().flow_pane.drawings.items();
+        assert_eq!(drawings.len(), 1);
+        assert_eq!(drawings[0].tool.id(), expected_tool);
+        assert_eq!(drawings[0].points.len(), expected_points);
+        assert!((drawings[0].points[0].bar - 80.5).abs() < 0.01);
+        assert!((drawings[0].points[1].bar - 160.5).abs() < 0.01);
+        if action == crate::surfaces::drawing_chrome::QuickRangeAction::Projection {
+            assert_eq!(drawings[0].points[2], drawings[0].points[1]);
+        }
+    }
+}
+
+#[test]
+fn a_future_space_range_still_creates_a_volume_profile() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let total = app.active_tab().flow_pane.slots();
+    app.active_tab_mut()
+        .flow_pane
+        .viewport
+        .pan_pixels(-160.0, total);
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.expect("the chart was laid out");
+    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let start = egui::pos2(
+        pane.viewport
+            .x_at_bar_position(160.5, history_right, pane.slots()),
+        chart.center().y + 55.0,
+    );
+    let end = egui::pos2(
+        pane.viewport
+            .x_at_bar_position(204.5, history_right, pane.slots()),
+        chart.center().y - 55.0,
+    );
+
+    drag_quick_range(&mut app, &ctx, start, end);
+    let profile = quick_range_action(
+        &app,
+        crate::surfaces::drawing_chrome::QuickRangeAction::Profile,
+    );
+    assert!(profile.enabled, "future-space ranges remain actionable");
+    click_quick_range_action(
+        &mut app,
+        &ctx,
+        crate::surfaces::drawing_chrome::QuickRangeAction::Profile,
+    );
+
+    let drawings = app.active_tab().flow_pane.drawings.items();
+    assert_eq!(drawings.len(), 1);
+    assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
+    assert!(
+        drawings[0].points[1].time_ms.is_none(),
+        "the future endpoint stays honest instead of inventing market time"
+    );
+    assert!(drawings[0].points[1].bar > app.active_tab().flow_pane.slots() as f32);
+    assert!(crate::app::control_quick_range(&app).is_none());
 }
 
 /// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
