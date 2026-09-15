@@ -11,20 +11,18 @@ An agent meets this repository in one of two ways, and they are different jobs:
 | **1. Change the code** | editing a Rust workspace | [The map](#the-map) → [Verification loop](#verification-loop-mandatory) → [`CLAUDE.md`](CLAUDE.md) |
 | **2. Drive the application** | an MCP client talking to a running Quantick window | [Driving Quantick over MCP](#driving-quantick-over-mcp) |
 
-The second one is the unusual part: **Quantick ships its own MCP server.** The
-desktop app is not only a program you can modify — it is a program you can
-*operate*, through a versioned capability contract with a consent model, over
-a local authenticated transport. The contract, the ADR behind the transport
-choice and the threat model are in [`docs/control-plane/`](docs/control-plane/).
+**Quantick ships an MCP server.** Operate the desktop app through its versioned
+capability contract, consent model and local authenticated transport. See
+[`docs/control-plane/`](docs/control-plane/) for the contract, transport ADR
+and threat model.
 
 ---
 
 ## Driving Quantick over MCP
 
-`quantick-mcp` is a local STDIO MCP server. It attaches to a Quantick window
-that is **already running** with local agent access enabled, authenticates
-against that instance's private descriptor, and exposes a tool set whose
-ceiling is the profile the trader granted.
+`quantick-mcp` is a local STDIO server for an **already-running** window with
+local agent access enabled. It authenticates using the private instance
+descriptor; tools cannot exceed the trader-granted profile.
 
 ```sh
 cargo build --release -p quantick-mcp
@@ -127,6 +125,7 @@ graph TD
   app --> controllocal
   app --> controlhost
   app --> engine
+  app --> chartinteraction
   backtest --> strategy
   backtest --> pine
   backtest --> indicators
@@ -160,6 +159,7 @@ graph TD
   orderflow --> orderbook
 
   subgraph pure["Pure domain — no workspace dependencies"]
+    chartinteraction["chart-interaction<br/>interaction owners"]
     engine["engine<br/>trades → bars"]
     orderbook["orderbook<br/>L2 book core"]
     control["control<br/>control-plane contracts"]
@@ -169,6 +169,7 @@ graph TD
 
 | Crate | What it owns |
 | --- | --- |
+| `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | The order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections. Headless; its caller passes it the clock. The chart draws it today, `backtest` may consume it next. |

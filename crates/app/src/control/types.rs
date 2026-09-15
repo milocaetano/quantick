@@ -12,12 +12,7 @@ use crate::{
     tab::{CanvasLayout, Tab},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PaneSideDto {
-    Flow,
-    Time,
-}
+pub(crate) use quantick_control::annotation::PaneSideDto;
 
 impl From<PaneSide> for PaneSideDto {
     fn from(side: PaneSide) -> Self {

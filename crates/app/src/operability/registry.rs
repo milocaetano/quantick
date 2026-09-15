@@ -38,15 +38,13 @@ macro_rules! excluded {
 
 /// A drawing tool the rail arms, for which no capability places the object.
 ///
-/// `annotate.label.create`, `annotate.arrow.create`, `annotate.zone.create` and
-/// `annotate.fixed_range_profile.create` place the text, arrow, rectangle and
-/// fixed-range volume profile respectively; the other eighteen registered tools
-/// have no counterpart, so an operator can draw four of the twenty-two shapes a
-/// trader can.
+/// The six registered `annotate.*.create` capabilities place text, arrows,
+/// rectangles, fixed-range profiles and both Fibonacci tools; the other
+/// sixteen registered tools have no counterpart.
 const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
     class: ExclusionClass::PendingCapability,
-    reason: "no `annotate.*` capability places this shape; only the text, arrow, rectangle and \
-             fixed-range volume profile tools have one. Tracked in issue 401",
+    reason: "no `annotate.*` capability places this shape; only text, arrow, rectangle, \
+             fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401",
 };
 
 /// A chart layer switch with no capability behind it.
@@ -303,10 +301,10 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "layout.pane.resize",
-        title: "Resize a chart by its splitter",
-        reach: "drag the divider between two charts",
+        title: "Resize columns or adjacent context charts",
+        reach: "drag the horizontal or vertical divider between two charts",
         keys: &[(Source::Authored, "a drag on the divider between two panes")],
-        mapping: capability!("layout.pane.resize"),
+        mapping: capability!("layout.pane.resize", "layout.pane.resize_pair"),
     },
     UiBehaviour {
         id: "layout.preset.apply",
@@ -754,14 +752,14 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         title: "Arm the Fibonacci extension",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "fib-extension")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.fib_projection.create"),
     },
     UiBehaviour {
         id: "tool.fib-retracement",
         title: "Arm the Fibonacci retracement",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "fib-retracement")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.fib_retracement.create"),
     },
     UiBehaviour {
         id: "tool.fixed-range-profile",
@@ -893,6 +891,28 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
              entry in a registry the drift guard walks",
         )],
         mapping: capability!("annotate.fixed_range_profile.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_fib_retracement",
+        title: "Measure a range with a right-drag and turn it into a Fibonacci retracement",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Fib Retracement action",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar delegates to the registered Fibonacci retracement tool",
+        )],
+        mapping: capability!("annotate.fib_retracement.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_fib_projection",
+        title: "Measure a range with a right-drag and project it from the final point",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Fib Projection action",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar delegates to the registered Fibonacci projection tool",
+        )],
+        mapping: capability!("annotate.fib_projection.create"),
     },
     UiBehaviour {
         id: "drawing.rename",

@@ -51,6 +51,7 @@ mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_pointer_tests;
 mod published_schema_compatibility_tests;
+mod quick_range_control_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
@@ -559,6 +560,25 @@ fn painted_text(output: &egui::FullOutput) -> Vec<String> {
         walk(&clipped.shape, &mut found);
     }
     found
+}
+
+/// The visual centre of one exact painted label, for tests that operate the
+/// same egui popup or submenu a trader clicks.
+fn painted_text_center(output: &egui::FullOutput, wanted: &str) -> Option<egui::Pos2> {
+    fn walk(shape: &egui::Shape, wanted: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                Some(text.visual_bounding_rect().center())
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| walk(shape, wanted)),
+            _ => None,
+        }
+    }
+
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| walk(&clipped.shape, wanted))
 }
 
 /// Whether the frame drew the price axis over the test's price range —

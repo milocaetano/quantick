@@ -48,6 +48,9 @@ pub struct PaneContextMenu {
     /// the menu's clock, not a press's: it is the menu's own drawing, traced.
     #[cfg(test)]
     pub menu_rects: Vec<(&'static str, egui::Rect)>,
+    /// The chart-layer submenu's latest painted rectangle. A launch hook uses
+    /// the same button geometry to expand it for visual validation.
+    pub(crate) chart_layers_rect: Option<egui::Rect>,
 }
 
 impl ChartPane {
@@ -96,6 +99,7 @@ impl ChartPane {
                 drawing.id
             });
             self.context_menu.places.clear();
+            self.context_menu.chart_layers_rect = None;
             for tool in drawings::DRAWING_TOOLS {
                 if tool.context_menu_label().is_none() {
                     continue;
@@ -136,5 +140,13 @@ impl ChartPane {
                 }
             }
         }
+    }
+
+    /// Where the chart-layer submenu button was painted, for the scripted
+    /// pointer event that opens the real egui menu during capture.
+    pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
+        self.context_menu
+            .chart_layers_rect
+            .map(|rect| rect.center())
     }
 }

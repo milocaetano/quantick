@@ -333,16 +333,7 @@ impl QuantickApp {
     /// the strip as it was rather than with a tab nobody asked to keep.
     pub(crate) fn create_layout(&mut self, name: Option<&str>) -> Result<LayoutId, LayoutError> {
         let (tab, side) = self.focused_target();
-        if !self.pane_is_real(tab, side) {
-            return Err(LayoutError::Unknown);
-        }
-        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
-            return Err(refusal);
-        }
-        let id = self.workspace.layouts_mut().book_mut().create(name)?;
-        self.mark_layouts_dirty();
-        self.switch_pane_layout(tab, side, id)?;
-        Ok(id)
+        self.create_layout_at(tab, side, name)
     }
 
     pub(crate) fn rename_layout(&mut self, id: LayoutId, name: &str) -> Result<bool, LayoutError> {

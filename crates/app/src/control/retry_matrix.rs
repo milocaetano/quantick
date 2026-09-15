@@ -187,6 +187,7 @@ const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's
 /// Every mutable capability's readback. Order is irrelevant: the document is
 /// rendered in the registry's order.
 pub(crate) const READBACKS: &[Readback] = &[
+    super::layout::stack::READBACK,
     snapshot(
         "annotate.arrow.create",
         Forbidden,
@@ -197,6 +198,22 @@ pub(crate) const READBACKS: &[Readback] = &[
     ),
     snapshot(
         "annotate.fixed_range_profile.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_projection.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_retracement.create",
         Forbidden,
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",

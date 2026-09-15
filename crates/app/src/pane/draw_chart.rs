@@ -41,6 +41,7 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         self.paper_hud_anchor = None;
+        self.frame.flow_legend = None;
         // Published before anything can return early, so an empty pane still
         // says where it is.
         self.frame.area = Some(area);
@@ -601,7 +602,7 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
         {
-            orderflow.draw_legend(
+            self.frame.flow_legend = orderflow.draw_legend(
                 painter,
                 chart_rect,
                 &self.viewport,
