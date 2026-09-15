@@ -225,6 +225,9 @@ pub(crate) struct SavedIndicator {
     /// Render-side eye toggle.
     #[serde(default)]
     pub hidden: bool,
+    /// Whether price-chart hover paints a vertical guide in this sub-pane.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mouse_vertical_line: bool,
     /// Bound input values, in declaration order.
     #[serde(default)]
     pub inputs: Vec<SavedInput>,
@@ -361,6 +364,7 @@ mod tests {
             SavedIndicator {
                 kind: SavedKind::native("native.ema"),
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: vec![SavedInput::Int(21), SavedInput::Source("delta".to_owned())],
                 plot_styles: Vec::new(),
             },
@@ -369,6 +373,7 @@ mod tests {
                     name: "zigzag.pine".to_owned(),
                 },
                 hidden: true,
+                mouse_vertical_line: true,
                 inputs: vec![SavedInput::Int(5)],
                 plot_styles: vec![SavedPlotStyle {
                     visible: Some(false),
@@ -456,6 +461,7 @@ name = \"zigzag.pine\"
             &[SavedIndicator {
                 kind: SavedKind::native("native.ema"),
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
             }],
@@ -548,6 +554,7 @@ id = \"native.from.the.future\"
             &[SavedIndicator {
                 kind: SavedKind::native("native.ema"),
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: vec![SavedInput::Int(21)],
                 plot_styles: Vec::new(),
             }],

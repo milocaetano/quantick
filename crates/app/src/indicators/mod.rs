@@ -85,6 +85,9 @@ pub(crate) struct IndicatorView {
     /// Eye toggle: hidden is render-side only — no recompute, state keeps
     /// flowing so unhiding is instant.
     pub hidden: bool,
+    /// Mirror the price chart's hovered x coordinate into this non-overlay
+    /// pane as a subtle vertical guide. Render-only and persisted by layout.
+    pub mouse_vertical_line: bool,
     /// Committed draw objects (a preview's transient set, when present,
     /// replaces this at render time).
     pub objects: ObjectSnapshot,
@@ -310,6 +313,7 @@ impl IndicatorViews {
                         lane: Vec::new(),
                         error: None,
                         hidden: false,
+                        mouse_vertical_line: false,
                         objects: ObjectSnapshot::default(),
                         input_values: inputs,
                         stale,

@@ -67,6 +67,8 @@ pub(super) struct IndicatorState {
     /// lands — the same deferral [`Self::pending_hidden`] performs, for the
     /// same reason.
     pub(super) pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
+    /// Saved mouse guides waiting for their worker-created view.
+    pub(super) pending_mouse_vertical_lines: Vec<TabSlot>,
 
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
@@ -92,6 +94,63 @@ impl IndicatorState {
             script_files: &mut self.script_files,
             pending_hidden: &mut self.pending_hidden,
             pending_styles: &mut self.pending_styles,
+        }
+    }
+}
+
+fn apply_indicator_guide_requests(app: &mut QuantickApp, tab_id: u64) {
+    if let Some(index) = app.harness.indicator_mouse_line() {
+        let target = app
+            .active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .get(index)
+            .map(|view| (app.active_tab().flow_pane.id, view.slot));
+        if let Some((pane_id, slot)) = target {
+            app.harness.indicator_mouse_line_opened();
+            let _ = app.control_action(
+                crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "tab_id": tab_id.to_string(),
+                    "pane_id": pane_id.to_string(),
+                    "slot_id": slot.0.to_string(),
+                    "enabled": true,
+                }),
+            );
+        }
+    }
+
+    let Some(tab) = app.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+        return;
+    };
+    let requests: SmallVec<[(PaneSide, SlotId, bool); MAX_CANVAS_PANES]> = tab
+        .panes_with_sides_mut()
+        .filter_map(|(pane, side)| {
+            pane.take_indicator_guide_request()
+                .map(|(slot, enabled)| (side, slot, enabled))
+        })
+        .collect();
+    for (side, slot, enabled) in requests {
+        let pane_id = app
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.pane(side).id);
+        if let Some(pane_id) = pane_id {
+            let _ = app.control_action(
+                crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "tab_id": tab_id.to_string(),
+                    "pane_id": pane_id.to_string(),
+                    "slot_id": slot.0.to_string(),
+                    "enabled": enabled,
+                }),
+            );
         }
     }
 }
@@ -196,6 +255,7 @@ impl QuantickApp {
                 });
             }
         }
+        apply_indicator_guide_requests(self, tab_id);
     }
 
     /// Fold or unfold one pane's indicator legend.

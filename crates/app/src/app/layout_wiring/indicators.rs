@@ -10,6 +10,9 @@ use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, Saved
 use crate::layouts::LayoutId;
 use crate::pane::PaneSide;
 
+mod guide;
+pub(crate) use guide::set_indicator_mouse_vertical_line;
+
 impl QuantickApp {
     /// Where a slot sits in its pane's layout, or `None` for a slot the
     /// layout does not carry — an operator's, or one a validation hook added.
@@ -192,6 +195,7 @@ impl QuantickApp {
         if entry.hidden {
             self.indicators.pending_hidden.push(owner);
         }
+        guide::queue_saved(self, owner, entry);
         if !entry.plot_styles.is_empty() {
             self.indicators.pending_styles.push((
                 owner,
@@ -255,6 +259,7 @@ impl QuantickApp {
                 }
             }
         }
+        guide::apply_pending(self);
     }
 
     /// The origin pane's layout and the index of the slot in it — the two
@@ -295,6 +300,7 @@ impl QuantickApp {
         let entry = SavedIndicator {
             kind: kind.clone(),
             hidden: false,
+            mouse_vertical_line: false,
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         };
