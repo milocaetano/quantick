@@ -42,7 +42,6 @@ pub(super) struct IndicatorSlots<'a> {
     pub script_files: &'a mut Vec<(TabSlot, usize, SystemTime)>,
     pub pending_hidden: &'a mut Vec<TabSlot>,
     pub pending_styles: &'a mut Vec<(TabSlot, StyleOverride)>,
-    pub pending_mouse_vertical_lines: &'a mut Vec<TabSlot>,
 }
 
 /// The adapter has enough information to mirror a human change without the
@@ -123,8 +122,6 @@ impl IndicatorSlots<'_> {
         self.script_files.retain(|(owner, ..)| *owner != target);
         self.pending_hidden.retain(|owner| *owner != target);
         self.pending_styles.retain(|(owner, _)| *owner != target);
-        self.pending_mouse_vertical_lines
-            .retain(|owner| *owner != target);
     }
 }
 
@@ -159,14 +156,12 @@ mod tests {
         let mut files = Vec::new();
         let mut hidden = Vec::new();
         let mut styles = Vec::new();
-        let mut guides = Vec::new();
         let mut slots = IndicatorSlots {
             slot_kinds: &mut kinds,
             operator_slots: &mut operators,
             script_files: &mut files,
             pending_hidden: &mut hidden,
             pending_styles: &mut styles,
-            pending_mouse_vertical_lines: &mut guides,
         };
         let mut human_host = FakeHost::default();
         let mut first_host = FakeHost::default();
@@ -275,14 +270,12 @@ mod tests {
             let mut files = Vec::new();
             let mut hidden = Vec::new();
             let mut styles = Vec::new();
-            let mut guides = Vec::new();
             let mut slots = IndicatorSlots {
                 slot_kinds: &mut kinds,
                 operator_slots: &mut operators,
                 script_files: &mut files,
                 pending_hidden: &mut hidden,
                 pending_styles: &mut styles,
-                pending_mouse_vertical_lines: &mut guides,
             };
             let mut host = NativeHost::default();
             let attached = slots.attach_native(&mut host, (73, PaneSide::Time(1)), id);

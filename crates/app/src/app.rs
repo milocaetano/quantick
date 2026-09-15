@@ -34,6 +34,7 @@ mod indicator_manager;
 mod indicator_operations;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
+pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod menu_bar;
 mod paper_wiring;
 mod replay_and_history;

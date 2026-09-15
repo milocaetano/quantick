@@ -97,7 +97,8 @@ fn set(
 ) -> Result<Value, ControlError> {
     let input: IndicatorGuideInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let changed = app.set_indicator_mouse_vertical_line(
+    let changed = crate::app::set_indicator_mouse_vertical_line(
+        app,
         input.tab_id.get(),
         input.pane_id.get(),
         SlotId(input.slot_id.get()),

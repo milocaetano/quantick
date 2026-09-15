@@ -52,6 +52,7 @@ use super::{QuantickApp, TabSlot};
 use crate::workspace_store::LayoutSave;
 
 mod indicators;
+pub(crate) use indicators::set_indicator_mouse_vertical_line;
 mod strip;
 
 /// The feed half of a drawing key while a tab plays a recording.
