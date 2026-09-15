@@ -162,6 +162,14 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
         .scripted_context_menu_pos(ContextMenuPane::Chart)
         .expect("and so can the candles");
     assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
+    assert!(
+        chart.x < 700.0 / 2.0,
+        "the right-opening layer submenu needs room beside its scripted popup: {chart:?}"
+    );
+    assert!(
+        chart.y < rect.center().y,
+        "the long menu needs room below its scripted popup: {chart:?}"
+    );
     assert!(rect.contains(tape) && rect.contains(chart));
 
     // No lane: the candles still answer, the tape has nothing to open.

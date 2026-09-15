@@ -540,12 +540,14 @@ offsets; `Shift+R` reverses; `Shift+F` flattens (close + cancel all);
 down while any text field owns the keyboard — a capital letter typed into
 a symbol box must never become an order.
 
-The pane's right-click menu (on the pane that owns order entry) opens with
-a **trade** section anchored at the clicked price: buy/sell at market, and
-the resting types that are valid on that side of the market — `Buy limit @
-p` below it, `Buy stop @ p` above it, mirrored for sells. The invalid two
-stay visible but disabled, wearing the sim core's own rejection text
-(disabled ≠ hidden; the curriculum again).
+The pane's right-click menu (on the pane that owns order entry) starts with
+anchored VWAP, then groups display switches under the right-opening **chart
+layers** submenu. Its **trade** section keeps market orders out of the pointer
+path and offers only the resting types valid on the clicked side — `Buy limit
+@ p` below it, `Buy stop @ p` above it, mirrored for sells. The invalid two
+stay visible but disabled, wearing the sim core's own rejection text (disabled
+≠ hidden; the curriculum again). Market entry remains in the trading ticket
+and its explicit hotkeys.
 
 ## 9b. The same three things, without a hand
 

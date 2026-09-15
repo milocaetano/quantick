@@ -89,11 +89,7 @@ impl QuantickApp {
 
     /// Where a scripted right-click should land to reach `pane`'s menu.
     ///
-    /// Mid-height, and mid-pane horizontally, off the geometry the draw
-    /// published — so the click lands on the canvas rather than on the axis,
-    /// the legend or the divider handle. `None` until the pane has drawn once
-    /// (no divider yet), and `None` for the tape on a canvas that has none:
-    /// there is no tape menu to open where there is no tape.
+    /// Uses geometry published by the draw; `None` until that geometry exists.
     pub(super) fn scripted_context_menu_pos(&self, pane: ContextMenuPane) -> Option<egui::Pos2> {
         let flow = &self.active_tab().flow_pane;
         // The axis's menu lives on the gutter, off the canvas entirely — the
@@ -106,17 +102,11 @@ impl QuantickApp {
         if pane == ContextMenuPane::Time {
             return Some(flow.frame.time_strip?.center());
         }
-        let rect = flow.frame.chart_rect?;
-        let divider = flow.frame.lane_divider_x;
-        let x = match (pane, divider) {
-            (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
-            (ContextMenuPane::Tape, None) => return None,
-            // Axis and Time returned above; anything else is the candles'
-            // canvas.
-            (_, Some(divider)) => (rect.left() + divider) / 2.0,
-            (_, None) => rect.center().x,
-        };
-        Some(egui::pos2(x, rect.center().y))
+        crate::harness::context_menu_canvas_position(
+            pane,
+            flow.frame.chart_rect?,
+            flow.frame.lane_divider_x,
+        )
     }
 
     /// Where `QUANTICK_POINTER` puts the mouse this frame, in window points.

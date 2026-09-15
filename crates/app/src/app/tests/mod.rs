@@ -561,6 +561,25 @@ fn painted_text(output: &egui::FullOutput) -> Vec<String> {
     found
 }
 
+/// The visual centre of one exact painted label, for tests that operate the
+/// same egui popup or submenu a trader clicks.
+fn painted_text_center(output: &egui::FullOutput, wanted: &str) -> Option<egui::Pos2> {
+    fn walk(shape: &egui::Shape, wanted: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                Some(text.visual_bounding_rect().center())
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| walk(shape, wanted)),
+            _ => None,
+        }
+    }
+
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| walk(&clipped.shape, wanted))
+}
+
 /// Whether the frame drew the price axis over the test's price range —
 /// the labels only exist once the chart really scaled and painted itself.
 fn has_price_axis(texts: &[String]) -> bool {

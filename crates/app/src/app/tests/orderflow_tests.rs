@@ -286,12 +286,12 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
         });
     };
 
-    // The candles' own menu is exactly the menu it always was.
+    // The candles keep their long inventory behind the chart-layers submenu.
     menu_frame(&mut app, false);
     assert_eq!(
         app.active_tab().flow_pane.layer_menu_rects.len(),
-        chart_menu_entries(),
-        "a click on the candles still lists every chart layer up front"
+        0,
+        "a click on the candles does not spill layer switches into the primary menu"
     );
 
     // The tape's menu answers for the tape: its own three switches at the
@@ -320,13 +320,10 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
         );
     }
 
-    // And back: aiming at the candles restores the full list, so the two
-    // menus cannot leak into each other across frames.
+    // And back: aiming at the candles removes the tape switches again, so the
+    // two primary menus cannot leak into each other across frames.
     menu_frame(&mut app, false);
-    assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
-        chart_menu_entries()
-    );
+    assert!(app.active_tab().flow_pane.layer_menu_rects.is_empty());
     std::fs::remove_file(&path).ok();
 }
 
