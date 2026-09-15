@@ -43,7 +43,7 @@ use std::collections::BTreeSet;
 
 use quantick_control::{
     canonical::{Sha256Digest, canonical_json},
-    cursor::{EventCursor, Page, PageCursor},
+    cursor::{EventCursor, PageCursor},
     error::{ControlError, codes},
     id::{EvidenceId, InstanceId, PermissionId, ProcessNonce, ResourceId, SnapshotScopeId},
     limits::{
@@ -70,14 +70,13 @@ use super::{
 };
 
 mod image;
-mod store;
 
 // Re-exported at the visibility they had: the gateway hands a frame over as
 // `RawScreenshot`, and the contract and the gateway share the store by path.
 use image::encode_screenshot;
 pub(crate) use image::{RawScreenshot, ScreenshotPixels};
-pub(crate) use store::EvidenceStore;
-use store::RetainedBundle;
+use quantick_control_host::evidence::{BUNDLE_MEDIA_TYPE, MAX_CHUNKS_PER_BUNDLE, RetainedBundle};
+pub(crate) use quantick_control_host::evidence::{EvidenceChunkPage, EvidenceStore};
 
 /// The module that owns both evidence capabilities.
 pub(crate) const EVIDENCE_MODULE_ID: &str = "evidence";
@@ -92,15 +91,6 @@ const USER_TEXT_PERMISSION_ID: &str = "observe.user_text";
 pub(crate) const CAPTURE_CAPABILITY_ID: &str = "evidence.capture";
 pub(crate) const READ_CAPABILITY_ID: &str = "evidence.read";
 
-/// The name the page cursor carries for the resource it walks.
-///
-/// Shaped like a snapshot scope because that is the field the contract's
-/// cursor declares, but it names a *retained resource*, not a projection: no
-/// module registers it and no capture builds it.
-pub(crate) const EVIDENCE_RESOURCE_SCOPE_ID: &str = "evidence.bundle";
-
-/// The encoding a reassembled bundle is in.
-const BUNDLE_MEDIA_TYPE: &str = "application/json; charset=utf-8";
 /// The renderer this build links, from the `eframe` feature the application
 /// manifest selects. Reported so a defect that reproduces on one backend can
 /// be told apart from one that does not.
@@ -130,14 +120,6 @@ const MAX_CONFIGURATION_SYMBOLS: usize = 64;
 /// bounded, so this is a backstop rather than a working limit; meeting it is
 /// reported like every other gap.
 const MAX_UNAVAILABLE_FIELDS: usize = 256;
-
-/// Chunks the largest permitted bundle takes.
-///
-/// Derived from the two limits that decide it rather than written down beside
-/// them, so the manifest's declared bound cannot drift from the chunking that
-/// produces it.
-const MAX_CHUNKS_PER_BUNDLE: usize =
-    CONTROL_EVIDENCE_MAX_BUNDLE_BYTES.div_ceil(CONTROL_EVIDENCE_CHUNK_BYTES);
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -428,38 +410,6 @@ pub(crate) struct EvidencePaperConfiguration {
     /// Whether the trade journal has been pointed somewhere other than its
     /// default home. Where, is a path.
     pub trades_dir_configured: bool,
-}
-
-// ---------------------------------------------------------------------------
-// The paged resource
-// ---------------------------------------------------------------------------
-
-/// One page of a retained bundle.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct EvidenceChunkPage {
-    pub evidence_id: EvidenceId,
-    pub resource_id: ResourceId,
-    pub content_digest: Sha256Digest,
-    pub media_type: String,
-    #[schemars(extend("x-unit" = "bytes"))]
-    pub encoded_bytes: WireU64,
-    #[schemars(range(max = MAX_CHUNKS_PER_BUNDLE))]
-    pub chunk_count: usize,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub expires_at_unix_ms: i64,
-    pub page: Page<EvidenceChunk>,
-}
-
-/// One byte run of the canonical document.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct EvidenceChunk {
-    pub index: usize,
-    #[schemars(extend("x-unit" = "bytes"))]
-    pub byte_offset: WireU64,
-    #[schemars(extend("x-unit" = "bytes"))]
-    pub byte_length: WireU64,
-    pub digest: Sha256Digest,
-    pub data: Base64Bytes,
 }
 
 // ---------------------------------------------------------------------------
