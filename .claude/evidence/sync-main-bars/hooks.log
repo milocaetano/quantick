@@ -1,0 +1,84 @@
+HOOK_START_UTC=2026-09-14T22:44:55.5594322Z
+HEAD=b558b0c2e32da7a0dd298f81bdef79ee2e292412
+TREE=bee98ce07dc2c440f59f0c8272e48170623cd390
+COMMAND=sh .claude/hooks/guardrails_test.sh
+67 campaign context tests passed
+8 passed, 0 failed
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 0.008s
+
+OK
+test_corrupt_part_digest_refused (__main__.CoordinatorTests.test_corrupt_part_digest_refused) ... ok
+test_counter_removal_and_decrease_block (__main__.CoordinatorTests.test_counter_removal_and_decrease_block) ... ok
+test_duplicate_json_key_rejected (__main__.CoordinatorTests.test_duplicate_json_key_rejected) ... ok
+test_duplicate_part_url_refused (__main__.CoordinatorTests.test_duplicate_part_url_refused) ... ok
+test_duplicate_task_identity_refused (__main__.CoordinatorTests.test_duplicate_task_identity_refused) ... ok
+test_expired_lease_stops_writes (__main__.CoordinatorTests.test_expired_lease_stops_writes) ... ok
+test_failed_attempt_retry_keeps_counts (__main__.CoordinatorTests.test_failed_attempt_retry_keeps_counts) ... ok
+test_failed_history_after_checkpoint_preserves_next_attempt (__main__.CoordinatorTests.test_failed_history_after_checkpoint_preserves_next_attempt) ... ok
+test_fifty_active_entries_force_partition (__main__.CoordinatorTests.test_fifty_active_entries_force_partition) ... ok
+test_foreign_writer_and_new_boundary_stop_writes (__main__.CoordinatorTests.test_foreign_writer_and_new_boundary_stop_writes) ... ok
+test_fork_arriving_during_append_invalidates_publication (__main__.CoordinatorTests.test_fork_arriving_during_append_invalidates_publication) ... ok
+test_inactive_import_and_gh (__main__.CoordinatorTests.test_inactive_import_and_gh) ... ok
+test_legacy_checkpoint_exact_read (__main__.CoordinatorTests.test_legacy_checkpoint_exact_read) ... ok
+test_lost_checkpoint_response_reread_no_duplicate (__main__.CoordinatorTests.test_lost_checkpoint_response_reread_no_duplicate) ... ok
+test_lost_part_response_reread_no_duplicate (__main__.CoordinatorTests.test_lost_part_response_reread_no_duplicate) ... ok
+test_manifest_wrong_task_count_refused (__main__.CoordinatorTests.test_manifest_wrong_task_count_refused) ... ok
+test_missing_part_refuses_complete_state (__main__.CoordinatorTests.test_missing_part_refuses_complete_state) ... ok
+test_new_boundary_stops_old_coordinator (__main__.CoordinatorTests.test_new_boundary_stops_old_coordinator) ... ok
+test_operation_conflicting_payload_blocks (__main__.CoordinatorTests.test_operation_conflicting_payload_blocks) ... ok
+test_operation_lost_response_readback_is_idempotent (__main__.CoordinatorTests.test_operation_lost_response_readback_is_idempotent) ... ok
+test_operation_pending_duplicate_idempotent (__main__.CoordinatorTests.test_operation_pending_duplicate_idempotent) ... ok
+test_operation_result_requires_pending (__main__.CoordinatorTests.test_operation_result_requires_pending) ... ok
+test_oversized_journal_no_write (__main__.CoordinatorTests.test_oversized_journal_no_write) ... ok
+test_partial_publication_is_uncommitted_and_resumable (__main__.CoordinatorTests.test_partial_publication_is_uncommitted_and_resumable) ... ok
+test_partition_utf8_integrity_and_bounds (__main__.CoordinatorTests.test_partition_utf8_integrity_and_bounds) ... ok
+test_pending_result_and_checkpoint_fold (__main__.CoordinatorTests.test_pending_result_and_checkpoint_fold) ... ok
+test_result_without_evidence_refused (__main__.CoordinatorTests.test_result_without_evidence_refused) ... ok
+test_sibling_before_cached_boundary_is_not_timestamp_winner (__main__.CoordinatorTests.test_sibling_before_cached_boundary_is_not_timestamp_winner) ... ok
+test_small_checkpoint_preserves_unknown_fields (__main__.CoordinatorTests.test_small_checkpoint_preserves_unknown_fields) ... ok
+test_success_and_unknown_history_after_checkpoint_refuse_retry (__main__.CoordinatorTests.test_success_and_unknown_history_after_checkpoint_refuse_retry) ... ok
+test_success_is_not_retried_as_new_attempt (__main__.CoordinatorTests.test_success_is_not_retried_as_new_attempt) ... ok
+test_unobserved_append_stops_without_automatic_retry (__main__.CoordinatorTests.test_unobserved_append_stops_without_automatic_retry) ... ok
+test_unresolved_operation_blocks_new_work_and_snapshot (__main__.CoordinatorTests.test_unresolved_operation_blocks_new_work_and_snapshot) ... ok
+test_unsupported_manifest_format_refused (__main__.CoordinatorTests.test_unsupported_manifest_format_refused) ... ok
+test_whole_snapshot_digest_mismatch_refused (__main__.CoordinatorTests.test_whole_snapshot_digest_mismatch_refused) ... ok
+test_wrapper_folds_terminal_operation_evidence (__main__.CoordinatorTests.test_wrapper_folds_terminal_operation_evidence) ... ok
+test_wrapper_pending_checkpoint_persists_failed_response (__main__.CoordinatorTests.test_wrapper_pending_checkpoint_persists_failed_response) ... ok
+test_ir01_unchanged_unknown_survives_checkpoint (__main__.ReservedRepairTests.test_ir01_unchanged_unknown_survives_checkpoint) ... ok
+test_ir01_unknown_attempt_refuses_even_with_failed_status (__main__.ReservedRepairTests.test_ir01_unknown_attempt_refuses_even_with_failed_status) ... ok
+test_ir01_unknown_history_cannot_be_numbered (__main__.ReservedRepairTests.test_ir01_unknown_history_cannot_be_numbered) ... ok
+test_ir01_unknown_history_deletion_refused (__main__.ReservedRepairTests.test_ir01_unknown_history_deletion_refused) ... ok
+test_ir02_failed_retry_folds_actual_outcome_and_retains_prior_urls (__main__.ReservedRepairTests.test_ir02_failed_retry_folds_actual_outcome_and_retains_prior_urls) ... ok
+test_ir02_historical_status_evidence_and_urls_preserved (__main__.ReservedRepairTests.test_ir02_historical_status_evidence_and_urls_preserved) ... ok
+test_ir02_observed_success_cannot_be_downgraded (__main__.ReservedRepairTests.test_ir02_observed_success_cannot_be_downgraded) ... ok
+test_ir03_frozen_publication_blocks_direct_journal (__main__.ReservedRepairTests.test_ir03_frozen_publication_blocks_direct_journal) ... ok
+test_ir03_frozen_publication_blocks_intent_then_exact_resume_allows_it (__main__.ReservedRepairTests.test_ir03_frozen_publication_blocks_intent_then_exact_resume_allows_it) ... ok
+test_ir04_actual_partial_publication_retains_frozen_cache_until_exact_resume (__main__.ReservedSecondRepairTests.test_ir04_actual_partial_publication_retains_frozen_cache_until_exact_resume) ... ok
+test_ir04_known_invalid_proposals_do_not_freeze (__main__.ReservedSecondRepairTests.test_ir04_known_invalid_proposals_do_not_freeze) ... ok
+test_ir04_premature_checkpoint_leaves_result_and_later_checkpoint_available (__main__.ReservedSecondRepairTests.test_ir04_premature_checkpoint_leaves_result_and_later_checkpoint_available) ... ok
+test_ir05_actual_review_repair_batches_cannot_decrease_or_disappear (__main__.ReservedSecondRepairTests.test_ir05_actual_review_repair_batches_cannot_decrease_or_disappear) ... ok
+test_ir05_known_review_batch_increase_allows_stalled_batch_reset (__main__.ReservedSecondRepairTests.test_ir05_known_review_batch_increase_allows_stalled_batch_reset) ... ok
+test_ir05_unknown_review_repair_batches_cannot_be_numbered_or_deleted (__main__.ReservedSecondRepairTests.test_ir05_unknown_review_repair_batches_cannot_be_numbered_or_deleted) ... ok
+test_ir05_unknown_review_repair_batches_is_retained (__main__.ReservedSecondRepairTests.test_ir05_unknown_review_repair_batches_is_retained) ... ok
+
+----------------------------------------------------------------------
+Ran 53 tests in 0.151s
+
+OK
+test_missing_boundary_refused_after_all_three_raw_cli_pages (__main__.CliPaginationTests.test_missing_boundary_refused_after_all_three_raw_cli_pages) ... ok
+test_three_bounded_raw_cli_pages_preserve_order_and_find_boundary (__main__.CliPaginationTests.test_three_bounded_raw_cli_pages_preserve_order_and_find_boundary) ... ok
+test_changed_business_readback_refuses_result_and_dependent_publication (__main__.FreshProcessRecoveryTests.test_changed_business_readback_refuses_result_and_dependent_publication) ... ok
+test_current_dependency_failure_refuses_audit_after_recovery (__main__.FreshProcessRecoveryTests.test_current_dependency_failure_refuses_audit_after_recovery) ... ok
+test_fresh_process_reconciles_once_and_completes_dependency_audit (__main__.FreshProcessRecoveryTests.test_fresh_process_reconciles_once_and_completes_dependency_audit) ... ok
+test_fresh_process_refuses_broken_partition_pending_identity_owner_or_lease (__main__.FreshProcessRecoveryTests.test_fresh_process_refuses_broken_partition_pending_identity_owner_or_lease) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 2.243s
+
+OK
+
+277 passed, 0 failed
+HOOK_EXIT_CODE=0
+HOOK_FINISH_UTC=2026-09-14T22:54:53.1323131Z

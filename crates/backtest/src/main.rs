@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
 
-use quantick_backtest::bars::BarSpec;
+use quantick_backtest::bars::{self, BarSpec};
 use quantick_backtest::diagnostics::Event;
 use quantick_backtest::report::render_run;
 use quantick_backtest::run::{RunOutcome, SessionRun, run_session};
@@ -272,7 +272,7 @@ fn parse_args() -> Result<Args, String> {
                     Some(Day::parse(&text).ok_or_else(|| format!("--to `{text}` is not a day"))?);
             }
             "--limit" => args.limit = Some(positive_count("--limit", &value()?)?),
-            "--bars" => args.bars = BarSpec::parse(&value()?)?,
+            "--bars" => args.bars = bars::parse_runnable(&value()?).map_err(|e| e.to_string())?,
             "--strategy" => {
                 let name = value()?;
                 args.strategy = Some(StrategyKind::parse(&name).ok_or_else(|| {

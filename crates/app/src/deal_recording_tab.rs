@@ -160,7 +160,7 @@ impl Tab {
         self.pane_at_mut(index)
             .expect("pane checked above")
             .spec
-            .set(spec.clone());
+            .set(spec);
         self.recut_pane_with(
             index,
             quantick_strategy::DisarmReason::BarSpecChanged,

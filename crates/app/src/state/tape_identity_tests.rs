@@ -111,7 +111,7 @@ fn specs() -> Vec<BarSpec> {
 
 /// A chart on `spec` with the footprint as asked, before any print.
 fn chart(spec: &BarSpec, footprint: bool) -> ChartState {
-    let mut state = ChartState::new(spec.clone());
+    let mut state = ChartState::new(*spec);
     state.set_footprint_enabled(footprint);
     state
 }
@@ -193,7 +193,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                     for trade in rest {
                         switched.ingest_live(trade);
                     }
-                    switched.set_spec(spec.clone());
+                    switched.set_spec(*spec);
                     switched.set_footprint_enabled(footprint);
                     assert_eq!(
                         Shown::of(&switched),
@@ -353,7 +353,7 @@ fn deal_bars_on_a_chunked_tape_show_what_a_contiguous_tape_showed() {
         let mut switched = chart(&BarSpec::Tick(7), false);
         switched.observe_deals_batch(&readings);
         switched.ingest_backfill(&tape);
-        switched.set_spec(spec.clone());
+        switched.set_spec(spec);
         switched.set_footprint_enabled(footprint);
         assert_eq!(
             Shown::of(&switched),
@@ -361,7 +361,7 @@ fn deal_bars_on_a_chunked_tape_show_what_a_contiguous_tape_showed() {
             "switched into the deal rule: {what}"
         );
 
-        backfilled.reset_series(spec.clone());
+        backfilled.reset_series(spec);
         assert_eq!(backfilled.deal_samples(), readings.as_slice());
         // A reset is a fresh chart, the footprint off, as `ChartState::new`
         // is; the pane turns it back on as it does after any reset.
