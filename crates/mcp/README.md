@@ -25,6 +25,7 @@ one, the routed ones name a fixed set and let a property pick which, and
 | `quantick_get_scene` | `scene.read` | Every control on screen with a frame-stable ID, its owner, whether it is selected, and a coded reason when it cannot be operated. Chart canvases carry their rectangle in logical points, not device pixels. |
 | `quantick_get_diagnostics` | `health.diagnostics.read` | The bounded health view: frame timing, feed arrival, order-flow engine state, worker and queue metrics, recent error counts. |
 | `quantick_capture_evidence` | `evidence.capture` | A hashed, redacted bundle of the named scopes, the events around them and the effective configuration, held in memory for a bounded time. Answers with a manifest and says in codes — never prose — what it does *not* carry. Read it back through `quantick_invoke` on `evidence.read`. Nothing is written to disk. |
+| `quantick_capture_chart` | `evidence.capture`, `evidence.read` | A native MCP PNG image of the entire Quantick window plus capture metadata. Validates every chunk and the assembled document/image before returning pixels; requires the screenshot and evidence grants. |
 | `quantick_read_events` | `events.read` | A page of the semantic event journal after a cursor or from `oldest`/`latest`, with `dropped_before` when retention passed the cursor. |
 | `quantick_wait_for_change` | `events.wait` | Parks (≤ 30 s) until the journal moves past the cursor, then the page that completes the call. |
 | `quantick_search_capabilities` | `control.describe`, filtered | Capabilities and scopes by substring or module, with availability and the reason when one is unavailable. |
@@ -73,6 +74,75 @@ quantick-mcp setup --client codex|claude [--profile observer|annotator|cockpit]
 the registration command for the client (see
 `docs/control-plane/control-contract.md` §13) with this binary's absolute
 path. It writes no configuration file, embeds no token and launches nothing.
+
+## Native chart image: observer setup and real smoke test
+
+From the task checkout, build both executables. In PowerShell:
+
+```powershell
+cargo build -p quantick-app -p quantick-mcp
+& .\target\debug\quantick-mcp.exe setup --client codex --profile observer
+```
+
+Run the `codex mcp add quantick -- "<absolute executable path>" --profile observer`
+command printed by setup. Setup itself changes no configuration. If a Quantick
+registration already exists, inspect it before replacing it. Restart the Codex
+connection after registration or an executable update.
+
+Start the tested Quantick executable with a real desktop/GPU. In **Tools >
+Local agent access**, choose observer and enable only the required permissions:
+`observe`, `observe.workspace`, `observe.attention`, `observe.market` (for
+`scene.controls`), `observe.events`, `observe.system` (for the bundle),
+`observe.evidence`, and `observe.screenshot`. The `observe` floor is automatic,
+not a selectable checkbox or a token accepted by the scope hook.
+Capture does not require paper, user-text, annotate,
+cockpit or trade grants. For an isolated harness launch, the equivalent is:
+
+```powershell
+$env:QUANTICK_CONTROL_ACCESS = "1"
+$env:QUANTICK_CONTROL_SCOPES = "observe.workspace,observe.attention,observe.market,observe.events,observe.system,observe.evidence,observe.screenshot"
+```
+
+Use the UI harness's isolated store overrides and a replay fixture when
+launching a validation window; an ordinary unisolated launch can persist the
+user's workspace. Do not reuse an occupied MT5 port or close another instance.
+
+In Codex:
+
+1. Call `quantick_describe` and select the tested window's `instance_id`.
+2. Call `quantick_describe` with that ID; verify observer and the granted scopes.
+3. Call `quantick_capture_chart` with `{"instance_id":"<selected ID>"}`.
+4. Verify `isError: false`, one `content` item with `type: "image"` and
+   `mimeType: "image/png"`, and decode its base64 with a PNG viewer. Check that
+   it shows the tested window and its chart, not a blank framebuffer.
+5. Check `structuredContent.image_available`, `capture_revision`,
+   `screenshot.width_px/height_px`, `control_regions`, and `coverage`. The
+   base64 must occur only in the image item. The window displays its normal
+   capture notice. Confirm the observer tool list contains no order tools.
+6. Revoke screenshot access and call again: it must refuse without an image.
+   Close the validation window through its normal close path when finished.
+
+Record executable SHA-256, source revision/dirty diff, dimensions, image hash,
+tool metadata and the viewed PNG as smoke evidence outside the source tree.
+Unit tests inject pixels and exercise MCP framing; they do not prove GPU
+presentation or that a particular Codex version displays the returned image.
+
+The tool requests only `scene.controls` and one recent event, reads the retained
+resource in bounded pages, pins all reads to the instance that captured it,
+checks chunk offsets/sizes/digests, the document digest and identities, and PNG
+size/digest/header geometry. It forwards the already encoded PNG without
+decompressing/re-encoding it. The gateway rechecks grants and lifetime on every
+page; any refusal stops the call without retry or partial image. A missing
+screenshot is an error with `image_available: false` and the gateway's coverage
+reasons. No image or bundle is written to disk by the adapter.
+
+**Privacy and timing:** the image covers the whole window, including visible
+user text and account information. JSON redaction does not mask those pixels;
+the separate screenshot grant is essential. `screenshot.state_skew` remains in
+coverage: the image can precede numerical projections by one feed drain. A shared
+capture revision correlates the scene and image; it does not prove identical
+market values at the same instant. Capture is a read, but it displays a notice
+and creates a short-lived evidence resource, so it is not marked idempotent.
 
 ## Shape
 
