@@ -36,6 +36,7 @@ use super::{
     gateway::ControlAccess,
 };
 
+pub(super) mod stack;
 mod v2;
 #[cfg(test)]
 pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
@@ -244,6 +245,7 @@ pub(crate) struct LayoutResult {
 }
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    stack::register(registry)?;
     registry.register(
         descriptor(
             APPLY_PRESET_CAPABILITY_ID,

@@ -308,6 +308,7 @@ impl QuantickApp {
         let shown = self.active_tab().context_panes_shown();
         let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = self.active_tab().sides().collect();
         for side in sides {
+            self.active_tab_mut().pane_mut(side).frame.indicator_legend = None;
             // Only a context chart on screen draws a legend: the stack may
             // hold a pane the layout no longer shows.
             if let PaneSide::Time(slot) = side
@@ -344,14 +345,16 @@ impl QuantickApp {
                         && self.indicators.indicator_settings_target.side == side
                 })
                 .map(|dialog| dialog.slot);
-            for action in indicator_legend::draw(
+            let (actions, footprint) = indicator_legend::draw(
                 ctx,
                 pane.id,
                 rect,
                 pane.indicators.all(),
                 preview_slot,
                 pane.legend_collapsed,
-            ) {
+            );
+            self.active_tab_mut().pane_mut(side).frame.indicator_legend = footprint;
+            for action in actions {
                 pending.push((side, action));
             }
         }

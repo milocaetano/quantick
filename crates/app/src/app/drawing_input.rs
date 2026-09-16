@@ -107,43 +107,62 @@ fn paste_copied_drawing(tab: &mut Tab, clipboard: &mut DrawingChromeSurface) {
 }
 
 /// Apply the temporary range's response through the registered annotation
-/// action. Kept outside `impl QuantickApp`: the drawing-chrome response is the
-/// port, and growing the application root for an extension would bypass it.
+/// action. Its future-aware input carries chart position alongside optional
+/// market time, so projected space never needs a second placement path.
+/// Kept outside `impl QuantickApp`: the drawing-chrome response is the port.
 fn apply_quick_range(
     app: &mut QuantickApp,
     ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
     now: Instant,
 ) {
     if ask.dismiss_quick_range {
-        app.surfaces.drawing_chrome.dismiss_quick_range();
+        app.surfaces.drawing_chrome.quick_range.dismiss();
     }
-    let Some(request) = ask.place_quick_range_profile.take() else {
+    let Some(request) = ask.place_quick_range.take() else {
         return;
     };
-    let Some(input) = crate::control::fixed_range_profile_input(
-        request.owner.tab,
-        request.owner.side,
-        request.anchors,
-    ) else {
+    use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
+    let operation = request.operation;
+    let Some(input) = crate::control::quick_range_input(&operation, request.side) else {
+        app.surfaces
+            .drawing_chrome
+            .quick_range
+            .completed(operation.id, false);
+        tracing::warn!(
+            target: "quantick::control",
+            event_code = "QUICK_RANGE_INPUT_INVALID",
+            "the quick-range drawing coordinates could not be serialized"
+        );
         return;
     };
-    match app.control_action(
-        crate::control::PROFILE_CAPABILITY_ID,
-        crate::control::PROFILE_CAPABILITY_VERSION,
+    let version = match operation.action {
+        crate::surfaces::drawing_chrome::QuickRangeAction::Profile => {
+            crate::control::PROFILE_CAPABILITY_VERSION
+        }
+        _ => crate::control::FIB_CAPABILITY_VERSION,
+    };
+    let result = app.control_action(
+        operation.action.capability_id(),
+        version,
         crate::control::ActionOrigin::Human,
         input,
-    ) {
-        Ok(_) => app.surfaces.drawing_chrome.dismiss_quick_range(),
-        Err(error) => {
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "QUICK_RANGE_PROFILE_REFUSED",
-                code = %error.code,
-                error = %error.message,
-                "the quick-range profile could not be placed"
-            );
+    );
+    let explain = app
+        .surfaces
+        .drawing_chrome
+        .quick_range
+        .completed(operation.id, result.is_ok());
+    if let Err(error) = result {
+        tracing::warn!(
+            target: "quantick::control",
+            event_code = "QUICK_RANGE_PROFILE_REFUSED",
+            code = %error.code,
+            error = %error.message,
+            "the quick-range drawing could not be placed"
+        );
+        if explain {
             app.surfaces.toast.note(
-                "The volume profile could not be placed; the temporary range is still available.",
+                "The drawing could not be placed; the temporary range is still available.",
                 now,
             );
         }
@@ -178,7 +197,7 @@ impl QuantickApp {
                 // no pointer over it to arm or grab with.
             } else if self.surfaces.drawing_chrome.delete_confirm() {
                 self.surfaces.drawing_chrome.set_delete_confirm(false);
-            } else if self.surfaces.drawing_chrome.take_quick_range() {
+            } else if self.surfaces.drawing_chrome.quick_range.dismiss() {
                 // A secondary-drag choice is temporary by definition.
             } else if self.inline_text_editing().is_some() {
                 // A note being typed is its own layer, and it has to be one:

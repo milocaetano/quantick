@@ -25,6 +25,10 @@ pub struct PaneFrame {
     /// Where the history pane ended last frame — the lane's divider, and the
     /// handle that resizes it. The input pass runs before the draw computes it.
     pub lane_divider_x: Option<f32>,
+    /// Actual visible legend footprint, published by its painter for chrome placement.
+    pub flow_legend: Option<egui::Rect>,
+    /// Actual indicator legend footprint, published before floating chrome.
+    pub indicator_legend: Option<egui::Rect>,
     /// The canvas the last draw used. Published for the same reason the divider
     /// is: something outside the draw needs a point on this pane — the scripted
     /// right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
@@ -36,6 +40,13 @@ pub struct PaneFrame {
     /// offline note is placed against it: an explanation belongs on the pane
     /// with nothing in it, which is precisely the pane that has room for one.
     pub area: Option<egui::Rect>,
+    /// The pane-local layout strip reserved below [`Self::area`].
+    ///
+    /// The tab owns the split because it knows which panes are visible; the
+    /// app reads the published rectangle afterwards to draw the shared layout
+    /// catalogue once for each of them. Keeping the measured rectangle here
+    /// makes the chart, overlays and strip agree about the same boundary.
+    pub layout_strip: Option<egui::Rect>,
     /// The price gutter of the last draw, published for the same reason: the
     /// scripted right-click of `QUANTICK_CONTEXT_MENU=axis` needs a point that
     /// is really on the axis, not a guess about where the gutter probably is.
@@ -79,8 +90,11 @@ impl Default for PaneFrame {
     fn default() -> Self {
         Self {
             lane_divider_x: None,
+            flow_legend: None,
+            indicator_legend: None,
             chart_rect: None,
             area: None,
+            layout_strip: None,
             price_gutter: None,
             time_strip: None,
             lane_reference_ms: None,

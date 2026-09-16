@@ -3,8 +3,11 @@
 //! applying what a click on it asked for.
 
 use super::QuantickApp;
-use crate::app::chrome::ChromeState;
+use crate::app::chrome::{ChromeState, LayoutRename};
+use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::layouts::{self, LayoutBook, LayoutError, LayoutId};
+use crate::pane::PaneSide;
+use smallvec::SmallVec;
 use std::time::Instant;
 
 impl QuantickApp {
@@ -72,74 +75,63 @@ impl QuantickApp {
 
     /// Open the rename box on `id`, seeded with its current name.
     pub(crate) fn begin_layout_rename(&mut self, id: LayoutId) {
+        let (tab, pane) = self.focused_target();
+        self.begin_layout_rename_at(tab, pane, id);
+    }
+
+    /// Add a layout and put it on the pane whose footer asked for it.
+    pub(crate) fn create_layout_at(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+        name: Option<&str>,
+    ) -> Result<LayoutId, LayoutError> {
+        if !self.pane_is_real(tab, side) {
+            return Err(LayoutError::Unknown);
+        }
+        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
+            return Err(refusal);
+        }
+        let id = self.workspace.layouts_mut().book_mut().create(name)?;
+        self.mark_layouts_dirty();
+        self.switch_pane_layout(tab, side, id)?;
+        Ok(id)
+    }
+
+    /// Open one pane footer's rename box on `id`.
+    fn begin_layout_rename_at(&mut self, tab: u64, pane: PaneSide, id: LayoutId) {
         if let Some(layout) = self.layouts().get(id) {
-            self.chrome.layout_rename = Some((id, layout.name.clone()));
+            self.chrome.layout_rename = Some(LayoutRename {
+                tab,
+                pane,
+                layout: id,
+                draft: layout.name.clone(),
+            });
         }
     }
 
-    /// Draw the strip and apply what it asked for.
-    pub(in crate::app) fn draw_layout_strip(&mut self, ctx: &eframe::egui::Context) {
-        let actions = {
-            let can_add = self.layouts().layouts().len() < layouts::MAX_LAYOUTS;
-            let can_delete = self.layouts().layouts().len() > 1;
-            let active = self.focused_pane_layout();
-            let owner = self.active_tab().focused_side().title();
-            let Self {
-                chrome: ChromeState { layout_rename, .. },
-                workspace,
-                ..
-            } = self;
-            crate::layout_strip::draw(
-                ctx,
-                crate::layout_strip::StripModel {
-                    layouts: workspace.layouts().book().layouts(),
-                    active,
-                    owner: &owner,
-                    rename: layout_rename,
-                    can_add,
-                    can_delete,
-                },
-            )
-        };
-        for action in actions {
-            self.apply_strip_action(action);
+    /// Draw one strip in every visible pane footer and apply their addressed
+    /// actions after the shared catalogue borrow is released.
+    pub(in crate::app) fn draw_layout_strips(&mut self, ui: &mut eframe::egui::Ui) {
+        for (tab, pane, action) in pane_strip_actions(self, ui) {
+            self.apply_strip_action_at(tab, pane, action);
         }
     }
 
     /// One door for the strip, the menu and the keyboard's rename box.
     pub(crate) fn apply_strip_action(&mut self, action: crate::layout_strip::StripAction) {
-        use crate::layout_strip::StripAction;
-        let outcome: Result<(), LayoutError> = match action {
-            StripAction::Switch(id) => self.switch_layout(id).map(|_| ()),
-            StripAction::Create => self.create_layout(None).map(|_| ()),
-            StripAction::BeginRename(id) => {
-                self.begin_layout_rename(id);
-                Ok(())
-            }
-            StripAction::CommitRename(id, name) => {
-                self.chrome.layout_rename = None;
-                // An empty box is a cancelled rename, not an error to show.
-                match layouts::clean_name(&name) {
-                    Some(_) => self.rename_layout(id, &name).map(|_| ()),
-                    None => Ok(()),
-                }
-            }
-            StripAction::CancelRename => {
-                self.chrome.layout_rename = None;
-                Ok(())
-            }
-            // Deleting takes the layout's drawings with it, on disk as well
-            // as on screen: the one strip action that asks first.
-            StripAction::Delete(id) => {
-                if self.layouts().get(id).is_some() {
-                    self.chrome.layout_delete_confirm = Some(id);
-                }
-                Ok(())
-            }
-        };
-        if let Err(error) = outcome {
-            self.note_workspace(error.to_string());
-        }
+        let (tab, pane) = self.focused_target();
+        self.apply_strip_action_at(tab, pane, action);
+    }
+
+    /// Apply an action from the pane-local strip that produced it.
+    pub(in crate::app) fn apply_strip_action_at(
+        &mut self,
+        tab: u64,
+        pane: PaneSide,
+        action: crate::layout_strip::StripAction,
+    ) {
+        apply_addressed_strip_action(self, tab, pane, action);
     }
     /// The confirmation a delete waits on: the layout's name, what goes with
     /// it, and the two buttons. Enter deletes and Escape cancels — both
@@ -214,5 +206,100 @@ impl QuantickApp {
         if let Err(error) = self.delete_layout(id) {
             self.note_workspace(error.to_string());
         }
+    }
+}
+
+type AddressedStripAction = (u64, PaneSide, crate::layout_strip::StripAction);
+type PaneStripTarget = (u64, PaneSide, u64, eframe::egui::Rect, LayoutId);
+
+/// Compose the shared catalogue into each visible pane without making the
+/// root application implementation own the per-frame walk.
+fn pane_strip_actions(
+    app: &mut QuantickApp,
+    ui: &mut eframe::egui::Ui,
+) -> Vec<AddressedStripAction> {
+    let targets: SmallVec<[PaneStripTarget; MAX_CANVAS_PANES]> = {
+        let tab = app.active_tab();
+        tab.panes()
+            .filter_map(|(pane, side)| {
+                pane.frame
+                    .layout_strip
+                    .map(|rect| (tab.id, side, pane.id, rect, app.pane_layout(tab.id, side)))
+            })
+            .collect()
+    };
+    let can_add = app.layouts().layouts().len() < layouts::MAX_LAYOUTS;
+    let can_delete = app.layouts().layouts().len() > 1;
+    let QuantickApp {
+        chrome: ChromeState { layout_rename, .. },
+        workspace,
+        ..
+    } = app;
+    let layouts = workspace.layouts().book().layouts();
+    let mut addressed = Vec::new();
+    for (tab, pane, pane_id, rect, active) in targets {
+        let rename = layout_rename
+            .as_mut()
+            .filter(|rename| rename.tab == tab && rename.pane == pane)
+            .map(|rename| (rename.layout, &mut rename.draft));
+        let actions = crate::layout_strip::draw(
+            ui,
+            rect,
+            pane_id,
+            crate::layout_strip::StripModel {
+                layouts,
+                active,
+                rename,
+                can_add,
+                can_delete,
+            },
+        );
+        addressed.extend(actions.into_iter().map(|action| (tab, pane, action)));
+    }
+    addressed
+}
+
+/// Dispatch one pane-local strip action after the drawing borrow ends.
+fn apply_addressed_strip_action(
+    app: &mut QuantickApp,
+    tab: u64,
+    pane: PaneSide,
+    action: crate::layout_strip::StripAction,
+) {
+    use crate::layout_strip::StripAction;
+    if !app.pane_is_real(tab, pane) {
+        app.note_workspace(LayoutError::Unknown.to_string());
+        return;
+    }
+    if let Some(tab) = app.tabs.iter_mut().find(|candidate| candidate.id == tab) {
+        tab.focus = pane;
+    }
+    let outcome: Result<(), LayoutError> = match action {
+        StripAction::Switch(id) => app.switch_pane_layout(tab, pane, id).map(|_| ()),
+        StripAction::Create => app.create_layout_at(tab, pane, None).map(|_| ()),
+        StripAction::BeginRename(id) => {
+            app.begin_layout_rename_at(tab, pane, id);
+            Ok(())
+        }
+        StripAction::CommitRename(id, name) => {
+            app.chrome.layout_rename = None;
+            match layouts::clean_name(&name) {
+                Some(_) => app.rename_layout(id, &name).map(|_| ()),
+                None => Ok(()),
+            }
+        }
+        StripAction::CancelRename => {
+            app.chrome.layout_rename = None;
+            Ok(())
+        }
+        StripAction::Delete(id) => {
+            if app.layouts().get(id).is_some() {
+                app.chrome.layout_delete_confirm = Some(id);
+            }
+            Ok(())
+        }
+    };
+    if let Err(error) = outcome {
+        app.note_workspace(error.to_string());
     }
 }

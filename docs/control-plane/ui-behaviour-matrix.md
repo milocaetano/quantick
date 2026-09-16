@@ -41,13 +41,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 31 |
+| Reachable by capability | 35 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 61 |
-| **Total** | **100** |
+| Excluded: `pending_capability` | 59 |
+| **Total** | **102** |
 
-81 of the 100 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 19 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 102 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 21 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -71,7 +71,7 @@ The three exclusion classes are closed:
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
-| `layout.pane.resize` | Resize a chart by its splitter | drag the divider between two charts | `layout.pane.resize` | — |
+| `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
 | `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a layer button's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -112,32 +112,34 @@ The three exclusion classes are closed:
 | `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `tool.crosshair` | Arm the crosshair | tool rail, key 2 | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
 | `tool.pointer` | Arm the pointer — pan, zoom, select and move | tool rail, key 1, Escape | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
-| `tool.anchored-vwap` | Arm the anchored VWAP | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
+| `tool.anchored-vwap` | Arm the anchored VWAP | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
 | `tool.arrow` | Arm the arrow | tool rail, family flyout, canvas right-click | `annotate.arrow.create` | — |
-| `tool.arrow-mark-down` | Arm the down arrow mark | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.arrow-mark-up` | Arm the up arrow mark | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.brush` | Arm the freehand brush | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.date-range` | Arm the date range | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.ellipse` | Arm the ellipse | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.extended-line` | Arm the extended line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.fib-extension` | Arm the Fibonacci extension | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.fib-retracement` | Arm the Fibonacci retracement | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
+| `tool.arrow-mark-down` | Arm the down arrow mark | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.arrow-mark-up` | Arm the up arrow mark | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.brush` | Arm the freehand brush | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.date-range` | Arm the date range | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.ellipse` | Arm the ellipse | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.extended-line` | Arm the extended line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.fib-extension` | Arm the Fibonacci extension | tool rail, family flyout, canvas right-click | `annotate.fib_projection.create` | — |
+| `tool.fib-retracement` | Arm the Fibonacci retracement | tool rail, family flyout, canvas right-click | `annotate.fib_retracement.create` | — |
 | `tool.fixed-range-profile` | Arm the fixed-range volume profile | tool rail, family flyout, canvas right-click | `annotate.fixed_range_profile.create` | — |
-| `tool.horizontal-line` | Arm the horizontal line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.horizontal-ray` | Arm the horizontal ray | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.measure` | Arm the measure | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.parallel-channel` | Arm the parallel channel | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.price-range` | Arm the price range | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.ray` | Arm the ray | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
+| `tool.horizontal-line` | Arm the horizontal line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.horizontal-ray` | Arm the horizontal ray | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.measure` | Arm the measure | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.parallel-channel` | Arm the parallel channel | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.price-range` | Arm the price range | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.ray` | Arm the ray | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
 | `tool.rectangle` | Arm the rectangle | tool rail, family flyout, canvas right-click | `annotate.zone.create` | — |
 | `tool.text` | Arm the text label | tool rail, family flyout, canvas right-click | `annotate.label.create` | — |
-| `tool.trend-line` | Arm the trend line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
-| `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only the text, arrow, rectangle and fixed-range volume profile tools have one. Tracked in issue 401 |
+| `tool.trend-line` | Arm the trend line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
+| `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
 | `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.quick_range_profile` | Measure a range with a right-drag and turn it into a volume profile | a secondary-button drag on the price band with the Pointer tool, then the range's action bar; a chart click or Escape dismisses the temporary range | `annotate.fixed_range_profile.create` | — |
+| `drawing.quick_range_fib_retracement` | Measure a range with a right-drag and turn it into a Fibonacci retracement | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Retracement action | `annotate.fib_retracement.create` | — |
+| `drawing.quick_range_fib_projection` | Measure a range with a right-drag and project it from the final point | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Projection action | `annotate.fib_projection.create` | — |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
 | `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
@@ -175,7 +177,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 19 |
+| `authored` | 21 |
 
 ## Appendix: rows no registry stands behind
 
@@ -204,6 +206,8 @@ declares nothing here is a guard failure.
 | `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |
+| `drawing.quick_range_fib_retracement` | the quick-range action bar delegates to the registered Fibonacci retracement tool |
+| `drawing.quick_range_fib_projection` | the quick-range action bar delegates to the registered Fibonacci projection tool |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
 

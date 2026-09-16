@@ -326,8 +326,6 @@ impl QuantickApp {
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
-        // Above the status bar, below the canvas: the layout tabs.
-        self.draw_layout_strip(ctx);
         self.draw_layout_delete_confirm(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
@@ -601,6 +599,10 @@ impl QuantickApp {
                     };
                     tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
                 }
+                // Each visible pane published its own reserved footer during
+                // the canvas split. Draw the shared catalogue into every one
+                // now, while their exact same-frame rectangles are available.
+                self.draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
                 self.apply_layer_actions();
@@ -653,14 +655,23 @@ impl QuantickApp {
                 // second badge beside it would be the interface talking about
                 // itself twice.
                 // The deal-recording chip, left of the offline chip's corner.
-                crate::deal_recording_ui::draw_corner(ui, area, tab, stall.as_ref());
+                let corner_area = tab
+                    .panes()
+                    .filter_map(|(pane, _)| pane.frame.area)
+                    .max_by(|left, right| {
+                        left.right()
+                            .total_cmp(&right.right())
+                            .then(left.bottom().total_cmp(&right.bottom()))
+                    })
+                    .unwrap_or(area);
+                crate::deal_recording_ui::draw_corner(ui, corner_area, tab, stall.as_ref());
                 if let Some(report) = feed_notice::report(&tab.notice, stall.as_ref())
                     && report.is_offline()
                 {
                     // Measured once, then handed to everything that needs
                     // it: the chip's own hit test, the popup's anchor, the
                     // dismissal test, and the scene's bounds.
-                    let chip = feed_notice::chip_rect(ui.painter(), area);
+                    let chip = feed_notice::chip_rect(ui.painter(), corner_area);
                     chip_rect = Some(chip);
                     chip_clicked = feed_notice::draw_chip(ui, chip, &report, popup_open);
                     // A pane with nothing on it has room to say why, and a

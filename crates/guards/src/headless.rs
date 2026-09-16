@@ -73,6 +73,7 @@ use crate::{Finding, size};
 /// against that sentence, so a crate added to one and forgotten in the other
 /// fails rather than going quietly unguarded.
 pub const HEADLESS_CRATES: &[&str] = &[
+    "chart-interaction",
     "engine",
     "orderbook",
     "orderflow",

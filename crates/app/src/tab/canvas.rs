@@ -15,7 +15,7 @@ use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
-    SharedPick, clamp_pane_fraction, split_time_pane,
+    SharedPick, clamp_pane_fraction, split_pane_layout_strip, split_time_pane,
 };
 use crate::state::BarKind;
 use crate::style::ChartStyle;
@@ -117,7 +117,7 @@ impl Tab {
         // One visible pane is handed the whole canvas and the rest of this
         // reduces to nothing: no divider, no focus rule — though a lone time
         // pane keeps its header.
-        let (time_area, divider, flow_area) = if split {
+        let (time_area, divider, flow_band) = if split {
             let width = if self.context_collapsed {
                 canvas_layout::PaneWidth::Collapsed {
                     restore: self.split_fraction,
@@ -147,19 +147,38 @@ impl Tab {
         // The context column, carved into one band per chart it shows, top to
         // bottom. Each band spends its own header strip and hands back the
         // chart rect below it.
-        let mut context_charts: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
+        let mut context_charts: SmallVec<[(egui::Rect, egui::Rect); MAX_CONTEXT_PANES]> =
+            SmallVec::new();
+        let mut context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
+        #[cfg(test)]
+        self.context_dividers.clear();
+        self.context_stack.frame = time_area.map(|column| super::context_resize::StackFrame {
+            column,
+            pane_ids: self
+                .time_panes
+                .iter()
+                .take(context_shown)
+                .map(|pane| pane.id)
+                .collect(),
+        });
         if let Some(column) = time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
-            let heights: SmallVec<[canvas_layout::PaneWidth; MAX_CONTEXT_PANES]> =
-                SmallVec::from_elem(canvas_layout::PaneWidth::Auto, context_shown);
-            let bands = canvas_layout::split_column(column, &heights);
+            if self.context_stack.heights.len() < context_shown {
+                self.context_stack
+                    .heights
+                    .resize(context_shown, canvas_layout::PaneWidth::Auto);
+            }
+            let bands =
+                canvas_layout::split_column(column, &self.context_stack.heights[..context_shown]);
+            context_dividers.extend(bands.dividers.iter().copied());
             if split {
-                self.focus_from_pointer(ui, &bands.panes[..context_shown], flow_area);
+                self.focus_from_pointer(ui, &bands.panes[..context_shown], flow_band);
             }
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
-                let areas = split_time_pane(*band);
+                let pane_areas = split_pane_layout_strip(*band);
+                let areas = split_time_pane(pane_areas.body);
                 // Each context chart carries its own timeframe selector (§11):
                 // its BARS group, beside the toolbar's, which keeps governing
                 // the flow pane.
@@ -183,9 +202,10 @@ impl Tab {
                     let pane = &mut self.time_panes[slot];
                     pane.spec.set(crate::state::BarSpec::Time(interval_ms));
                 }
-                context_charts.push(areas.chart);
+                context_charts.push((areas.chart, pane_areas.layout_strip));
             }
         }
+        let flow_areas = show_flow.then(|| split_pane_layout_strip(flow_band));
 
         // Which shared mark the pointer is over, on each pane, against the
         // other pane's store. Answered here because answering it needs both
@@ -214,8 +234,10 @@ impl Tab {
             // offline note — off the visible canvas, on a chart that is not
             // there.
             flow_pane.frame.area = None;
+            flow_pane.frame.layout_strip = None;
             for pane in time_panes.iter_mut() {
                 pane.frame.area = None;
+                pane.frame.layout_strip = None;
             }
             // The time pane has no tape of its own (§11), so its footprint
             // rows adopt the flow pane's capture bucket — the instrument's
@@ -248,8 +270,8 @@ impl Tab {
             let addressed: SmallVec<[(PaneIndex, egui::Rect); MAX_CANVAS_PANES]> = context_charts
                 .iter()
                 .enumerate()
-                .map(|(slot, rect)| (slot + 1, *rect))
-                .chain(show_flow.then_some((0 as PaneIndex, flow_area)))
+                .map(|(slot, (chart, _))| (slot + 1, *chart))
+                .chain(flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
                 .collect();
             let trading_pane = trading_pane(
                 ui.ctx().pointer_latest_pos(),
@@ -289,9 +311,17 @@ impl Tab {
                 .iter_mut()
                 .zip(context_charts.iter().copied())
                 .enumerate()
-                .map(|(slot, (pane, chart))| (pane, chart, slot + 1));
-            let flow = show_flow.then_some((&mut *flow_pane, flow_area, 0 as PaneIndex));
-            for (pane, rect, side) in context.chain(flow) {
+                .map(|(slot, (pane, (chart, strip)))| (pane, chart, strip, slot + 1));
+            let flow = flow_areas.map(|areas| {
+                (
+                    &mut *flow_pane,
+                    areas.body,
+                    areas.layout_strip,
+                    0 as PaneIndex,
+                )
+            });
+            for (pane, rect, strip, side) in context.chain(flow) {
+                pane.frame.layout_strip = Some(strip);
                 chrome.side = PaneSide::from_index(side);
                 chrome.paper_takes_input = side == trading_pane;
                 // The HUD is one card and follows focus, so it does not
@@ -338,6 +368,9 @@ impl Tab {
         if let Some(rail) = collapsed_rail {
             self.draw_collapsed_rail(ui, rail);
         }
+        if time_area.is_some() {
+            self.draw_context_dividers(ui, &context_dividers);
+        }
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
@@ -345,8 +378,11 @@ impl Tab {
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
-            PaneSide::Time(slot) => context_charts.get(slot).copied().unwrap_or(time_area),
-            PaneSide::Flow => flow_area,
+            PaneSide::Time(slot) => context_charts
+                .get(slot)
+                .map(|(chart, _)| *chart)
+                .unwrap_or(time_area),
+            PaneSide::Flow => flow_areas.map_or(flow_band, |areas| areas.body),
         };
         ui.painter().line_segment(
             [
@@ -632,6 +668,46 @@ impl Tab {
             } else {
                 self.set_context_collapsed(false);
                 self.split_fraction = clamp_pane_fraction(wanted_px / canvas_width);
+            }
+        }
+    }
+
+    /// The horizontal dividers between context charts.
+    ///
+    /// Each drag moves one boundary, so the chart above and the chart below
+    /// exchange height while every other boundary stays put. Registered after
+    /// the pane bodies so a resize wins over the chart pan beneath its handle.
+    fn draw_context_dividers(&mut self, ui: &egui::Ui, dividers: &[egui::Rect]) {
+        #[cfg(test)]
+        self.context_dividers.extend(dividers.iter().copied());
+
+        for (index, divider) in dividers.iter().copied().enumerate() {
+            ui.painter()
+                .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
+            let handle = ui.interact(
+                divider.expand2(egui::vec2(0.0, CANVAS_DIVIDER_HANDLE_PX)),
+                egui::Id::new((
+                    "context_divider",
+                    self.id,
+                    self.time_panes[index].id,
+                    self.time_panes[index + 1].id,
+                )),
+                egui::Sense::drag(),
+            );
+            if handle.hovered() || handle.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+            if handle.dragged()
+                && let Some(pointer) = ui.ctx().pointer_interact_pos()
+            {
+                let _ = self.resize_context_pair(
+                    super::context_resize::ResizeContextPair {
+                        upper_pane_id: self.time_panes[index].id,
+                        lower_pane_id: self.time_panes[index + 1].id,
+                        wanted_y: pointer.y,
+                    },
+                    quantick_control::wire::ActorKind::HumanUi,
+                );
             }
         }
     }

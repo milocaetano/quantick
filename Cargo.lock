@@ -2906,6 +2906,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.3.4",
  "png",
+ "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
  "quantick-control-host",
@@ -2954,6 +2955,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-chart-interaction"
+version = "0.1.0"
+
+[[package]]
 name = "quantick-civil"
 version = "0.1.0"
 
@@ -2963,6 +2968,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "jsonschema",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",

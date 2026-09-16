@@ -93,6 +93,11 @@ impl ChartPane {
         out
     }
 
+    /// The geometry and scale used to paint this drawing's band this frame.
+    pub(crate) fn drawing_band(&self, drawing: &Drawing) -> Option<&Band> {
+        bands::band_of(&self.frame.bands, drawing)
+    }
+
     /// What the chrome says about the band an object lives on.
     ///
     /// Answered from the indicator list rather than from the last frame's
