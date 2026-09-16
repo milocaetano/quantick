@@ -40,7 +40,7 @@ A tier buys less ceremony **on the record**, with a gate that knows it did.
 | **2** — request ledger | required, terse | required | required | required |
 | **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
 | **4** — injected gates | English, and *Any code change* whole. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
-| **5** — `GOAL.md` | short form: objective, **the `**Tier:**` line**, ledger, `S`, criteria, verbatim request | full | full | full |
+| **5** — local `GOAL.md` | short form: objective, **the `**Tier:**` line**, ledger, `S`, criteria, verbatim request | full | full | full |
 | **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `low` | at `medium` | at `high`, and the trader is told `/code-review ultra` exists |
 | **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
 | **8** — `delivery-review` | **not run** | **completeness pass only**, inline | runs in full | runs in full |
@@ -147,7 +147,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
 
    | The mission… | Injected acceptance criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** under `CLAUDE.md`, graded by `arch-review` dimension 8 and the language guard. At every tier copy the four reserved `G-AI` lines below verbatim into the goal. Declare their PR evidence destinations before archival; do not claim they already ran. |
+   | Any mission at all | **every artifact in English** under `CLAUDE.md`, graded by `arch-review` dimension 8 and the language guard. At every tier copy the four reserved `G-AI` lines below verbatim into the local goal. Declare their PR/CI evidence destinations before review; do not claim they already ran. |
    | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
    | Touches a hot path | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
    | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook, added in the same change; `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
@@ -165,7 +165,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    under **Closing steps**. **At `small` the first is not listed at all** — a
    closing step the mission is exempt from is not one it owes, and writing it
    down leaves the archive recording an obligation nothing will discharge.
-   Archiving `GOAL.md` is not among them: step 8 puts it before the reviews.
+   Step 8 puts the concise mission summary in the PR before review.
 
    Show the checklist before work; no routine approval is required.
 
@@ -189,7 +189,7 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
          whether it happened>.
          *Evidence:* <what proves it — a named test, a command's exit code, a
          screenshot, a review verdict, a quoted section of a file>.
-         → <path where that evidence will be written>. *(R3, R4)*
+         → <PR/issue section or CI artifact URL>. *(R3, R4)*
    ```
 
    Each item has a stable ID (`A` mission-specific, `G` injected), one outcome,
@@ -197,7 +197,8 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    transcript-only claims are UNPROVEN.
 
    Every tier includes this exact block under its acceptance criteria. The
-   final verifier compares it literally with the archived goal.
+   delivery review compares it with the local goal; the final verifier checks
+   the PR summary and review reports.
 
    <!-- required-ai-review-goal-gates:v1 -->
    - [ ] **G-AI1** — AI review is executed for the current PR review.
@@ -246,42 +247,38 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    checklist in the todo list so progress is visible. Narrowing the user's
    stated scope is a step 3 question, whenever it surfaces.
 
-8. **Verify, then be graded.** Check off each criterion with its own evidence —
-   command output, test result, screenshot path, review verdict — and write
-   that evidence where the criterion said it would land. A criterion without
-   evidence is unmet.
+8. **Verify, then be graded.** Check off each criterion with its own evidence.
+   Put results and links in the PR; keep raw evidence outside Git under the
+   delivery contract. A criterion without evidence is unmet.
 
-   **Archive before review.** The archive belongs in the reviewed diff.
+   1. **Publish the draft PR** if `ship` has not; reports and threads need it.
+      Add this block, every field filled (the verifier refuses gaps):
 
-   1. **Archive**, as the mission's last commit, before either review runs.
-      Assign the slug first — an unquoted `<slug>` is two shell redirections.
-
-      ```sh
-      WT=/path/to/worktree
-      SLUG=my-mission-slug
-      # `mv`, not `git mv`: `.gitignore` lists `.claude/GOAL.md`, so the live
-      # file is never tracked and `git mv` aborts with "not under version
-      # control". Only the archive it becomes is tracked.
-      cd "$WT" &&
-        mv .claude/GOAL.md ".claude/GOAL-archive-$SLUG.md" &&
-        git add ".claude/GOAL-archive-$SLUG.md" &&
-        git commit -m "docs: archive the $SLUG mission"
+      ```text
+      <!-- quantick-mission-summary:v1 -->
+      Objective: <one sentence>
+      Tier: <tier>
+      Source: <linked issue or retained user-request reference>
+      Criteria: <IDs and delivered/deferred/open disposition>
+      Validation: <commands/scenarios and results; link external raw artifacts>
+      <!-- end quantick-mission-summary:v1 -->
       ```
 
-   2. **Publish the draft PR** if `ship` has not; reports and threads need it.
-   3. **`Skill(arch-review)`** — every tier; its producer publishes PASS and
+      Below it, the whole `GOAL.md` in `<details>`, kept current: fresh
+      contexts read the ledger there. Never track `GOAL*` or evidence.
+   2. **`Skill(arch-review)`** — every tier; its producer publishes PASS and
       records `arch-review-ok`. Never write the marker directly.
-   4. **`Skill(ai-review)`** — every tier, same PR/key; its producer publishes
+   3. **`Skill(ai-review)`** — every tier, same PR/key; its producer publishes
       and records `ai-review-complete`. Close every thread returned by `list`.
-   5. **`Skill(delivery-review)`** — last; its producer publishes PASS and
+   4. **`Skill(delivery-review)`** — last; its producer publishes PASS and
       records `delivery-review-ok`. **Skipped only at `small`.**
-   6. **Final completion** — after exact-head CI and any needed ready transition:
+   5. **Final completion** — after exact-head CI and any needed ready transition:
       `sh .claude/hooks/mission_ship_gate.sh mission <pr>` from the task
       worktree. Run it for already-ready PRs too. It reuses `pr-gate`, lists AI
       threads, checks reports/PR/head/CI and publishes the literal reconciliation.
       No mission is complete without PASS.
-
-   A `small` mission still archives `GOAL.md` as its durable objective record.
+   6. After that PASS, delete the ignored local `.claude/GOAL.md`. The PR/issue
+      and published review reports are the durable record.
 
    After repairs, obtain current verdicts under the delivery contract's delta
    follow-up rules before replacing stale markers. Reviewers never edit.
@@ -311,7 +308,7 @@ The final verifier reads these stable clauses literally and refuses ID drift.
 - **D3** — Architecture has a current projection and durable PASS report.
 - **D4** — Delivery has both when applicable; only bounded `small` is exempt.
 - **D5** — AI has current completion, a durable report and zero listed threads.
-- **D6** — The PR body carries current-head evidence and report URLs.
+- **D6** — The PR body carries the concise mission summary, current-head evidence and report URLs.
 - **D7** — The final verifier publishes and verifies this literal reconciliation.
 - **D8** — Only the user merges to `main`.
 <!-- end what-done-means:v1 -->

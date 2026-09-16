@@ -79,15 +79,10 @@ DELIVERY_MARKER_NAME="delivery-review-ok"
 # prefixes the shared key with its branch, so branch reuse cannot inherit it.
 AI_MARKER_NAME="ai-review-complete"
 
-# Paths whose churn is mission bookkeeping rather than the change under review.
-# The goal file and its archive are written by `mission` itself, and the archive
-# is required to be the branch's *last* commit - so counting it against the
-# ceiling lets a small branch be pushed out of its own tier by the paperwork the
-# tier obliged it to file. Measured: one real archive in this repo is larger
-# than the entire ceiling. Excluded from the *size* only. The review key below
-# still covers it, because both reviews read that file and a change to it is a
-# change they should see again.
-SIZE_EXCLUDES=":(exclude).claude/GOAL.md :(exclude).claude/GOAL-archive-*.md"
+# The ignored local goal is mission bookkeeping rather than product change.
+# Goal archives are no longer created: durable summaries and reports live on
+# the PR, so new tracked archive churn receives no exclusion.
+SIZE_EXCLUDES=":(exclude).claude/GOAL.md"
 
 # What ceremony a mission declared for this branch, written by the `mission`
 # skill into the same per-branch git dir as the markers above and never

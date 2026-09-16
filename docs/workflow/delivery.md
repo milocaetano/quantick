@@ -1,9 +1,13 @@
 # Delivery without repeated reconstruction
 
-This contract owns requirement reconciliation, review progress and proportional
-validation. `CLAUDE.md` delegates those decisions here; task skills retain their
-review roles, tier rules and exact-diff markers. Apply it in Claude and Codex.
-It never grants a merge, waives an outcome or changes the score rubric.
+This contract owns requirement reconciliation, review progress and validation.
+It changes no review role, merge authority, outcome or score rubric.
+
+## Keep execution evidence out of Git
+
+Do not commit execution evidence or `GOAL-archive-*`. Keep raw output temporary
+or in GitHub/CI; summarize it in the PR. `.claude/GOAL.md` stays ignored and is
+deleted after PASS. Reusable fixtures, contracts and docs are exempt.
 
 ## Reconcile requirements before implementation
 
@@ -24,11 +28,9 @@ Lower tiers reconcile inline. Amend the map when source requirements change;
 never freeze away a real omission. Existing missions can establish this map
 from their retained sources without restarting implementation.
 
-At delivery, independently identify distinct outcomes, constraints and gates
-from the retained source before reading the map. Then reconcile them with the
-existing IDs and evidence; do not renumber equivalent asks. A new omission must cite
-the source span and explain the distinct uncovered outcome/constraint or gate;
-a different wording or atomization alone is not a finding.
+At delivery, derive outcomes, constraints and gates from the retained source
+before reading the map, then reconcile IDs and evidence. An omission cites its
+source and distinct uncovered requirement; rewording alone is not a finding.
 
 Distinguish:
 

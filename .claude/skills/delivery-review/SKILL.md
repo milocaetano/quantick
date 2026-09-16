@@ -84,8 +84,8 @@ that distinguishes what this branch did from what it inherited.
 In order of preference. Say which source was used; the answer changes how much
 the verdict is worth.
 
-1. **`.claude/GOAL.md`** on the branch (or `.claude/GOAL-archive-<slug>.md` if
-   the mission already archived it), in `mission`'s documented format: a ledger
+1. **The ignored local `.claude/GOAL.md`** in the task worktree, or the
+   *Mission goal* the PR body carries, in `mission`'s documented format: a ledger
    `R1`…`Rn`, decisions `D1`…`Dn`, assumptions `S1`…`Sn`, criteria `A1`…`An`
    and `G1`…`Gn`. The strong source.
 2. **The linked issue**, for a branch started from `/new-task`. `gh issue view
@@ -93,9 +93,9 @@ the verdict is worth.
    `## Scope` are the request. There is no `R` ledger — say so, and derive the
    asks from the issue body yourself.
 
-**There is no third source.** Commit messages and the PR description are the
-author's account of what they did, which is the one thing this skill exists not
-to take on trust.
+**There is no third source.** Commit messages and the rest of the PR
+description are the author's account of what they did, which is the one thing
+this skill exists not to take on trust.
 
 Return **NOT GRADEABLE**, record nothing, and stop when: neither source exists;
 the `GOAL.md` carries no criteria in the documented format; or it carries no
@@ -141,7 +141,8 @@ follow-up include the prior independent verdict, stable finding IDs and exact
 delta; the delivery contract governs carrying forward unaffected conclusions.
 
 If the draft PR does not yet exist, write evidence destined for its body into
-the dossier first. Publish that artifact later, not a recollection of the run.
+the scratch dossier first. Publish a concise result later; never commit the
+dossier or its raw command output to the repository.
 
 **Inputs it may not receive — this list is the skill:** the implementing
 session's transcript, summary, plan or narrative; your explanation of why a

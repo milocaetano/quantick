@@ -18,9 +18,8 @@ other session, and it went looking for a target named `my-branch medium`. That
 second half is what the *Check the scope it comes back with* warning had been
 catching without ever naming its cause.
 
-Measured on this repository, not inferred:
-`.claude/evidence/arch-review-effort-level/reproduction.md` records the CLI's
-own published argument hint, the cached level actually sitting on this machine,
+Measured on this repository, not inferred: PR #275 records the CLI's own
+published argument hint, the cached level actually sitting on this machine,
 and two live invocations differing only in token order.
 
 ## Why the tier ladder sits one notch low
