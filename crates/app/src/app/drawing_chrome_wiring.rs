@@ -51,7 +51,12 @@ fn drawing_env<'a>(
         chart_area: pane.frame.chart_area,
         focused_chart_area: tab.focused_pane().frame.chart_area,
         lane_divider_x: pane.frame.lane_divider_x,
-        flow_legend: pane.frame.flow_legend,
+        legends: pane
+            .frame
+            .flow_legend
+            .into_iter()
+            .chain(pane.frame.indicator_legend)
+            .reduce(|a, b| a.union(b)),
         auto_range: pane.frame.auto_range,
         selected_bbox: read.selected_bbox,
         selected_band: read.selected_band,
@@ -400,19 +405,16 @@ impl QuantickApp {
         chart: egui::Rect,
         index: usize,
     ) -> Option<egui::Rect> {
-        let total = self.drawing_pane().slots();
-        let auto = self.drawing_pane().frame.auto_range?;
-        let scale = self.drawing_pane().price_view.scale(
-            auto,
-            self.drawing_pane().frame.chart_top,
-            self.drawing_pane().frame.chart_top + self.drawing_pane().frame.chart_height,
-        );
+        let pane = self.drawing_pane();
+        let total = pane.slots();
+        let drawing = pane.drawings.items().get(index)?;
+        let band = pane.drawing_band(drawing)?;
+        let scale = band.scale?;
         let history_right = self
             .drawing_pane()
             .frame
             .lane_divider_x
             .unwrap_or(chart.right());
-        let drawing = self.drawing_pane().drawings.items().get(index)?;
         let points =
             self.drawing_pane()
                 .projected_drawing_points(drawing, history_right, total, &scale);
@@ -426,7 +428,7 @@ impl QuantickApp {
         // popup that keeps clear of an object reads this rectangle, so asking
         // the anchors alone is what let a panel land in the middle of a
         // profile while believing it had walked around it.
-        let bbox = drawing.tool.painted_bounds(bbox, chart);
+        let bbox = drawing.tool.painted_bounds(bbox, band.rect);
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
 }

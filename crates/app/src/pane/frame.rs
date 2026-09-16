@@ -27,6 +27,8 @@ pub struct PaneFrame {
     pub lane_divider_x: Option<f32>,
     /// Actual visible legend footprint, published by its painter for chrome placement.
     pub flow_legend: Option<egui::Rect>,
+    /// Actual indicator legend footprint, published before floating chrome.
+    pub indicator_legend: Option<egui::Rect>,
     /// The canvas the last draw used. Published for the same reason the divider
     /// is: something outside the draw needs a point on this pane — the scripted
     /// right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
@@ -89,6 +91,7 @@ impl Default for PaneFrame {
         Self {
             lane_divider_x: None,
             flow_legend: None,
+            indicator_legend: None,
             chart_rect: None,
             area: None,
             layout_strip: None,

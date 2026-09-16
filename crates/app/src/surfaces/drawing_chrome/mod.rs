@@ -253,8 +253,8 @@ pub(crate) struct DrawingEnv<'a> {
     /// Where the live lane begins. Every popup keeps clear of it: that strip
     /// is where the price the trader is reading is being formed.
     pub lane_divider_x: Option<f32>,
-    /// Actual painted flow legend on the selection's pane.
-    pub flow_legend: Option<egui::Rect>,
+    /// Measured footprint of the stacked flow and indicator legends.
+    pub legends: Option<egui::Rect>,
     /// The visible price range, which is what makes a coordinate drag move at
     /// the same speed on a two-dollar symbol and a hundred-thousand one.
     pub auto_range: Option<(f64, f64)>,

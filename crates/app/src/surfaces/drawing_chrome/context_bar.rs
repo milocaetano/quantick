@@ -211,7 +211,7 @@ pub(crate) fn draw(
     // pane's own right edge — and that path is reachable with a full-height
     // profile on a narrow split. It also keeps the popover bound below
     // honest, which is derived from where the bar ends up.
-    let position = avoid_legend(position, size, reachable, env.flow_legend);
+    let position = avoid_legend(position, size, reachable, env.legends);
     // What the popovers are clamped into: the same rectangle *without* the
     // bar's width floor, but never narrower than the bar that was actually
     // drawn.
