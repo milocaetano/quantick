@@ -707,7 +707,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
         &crate::state::BarSpec::Tick(377),
         "the selector moved with the rule"
     );
-    assert_eq!(pane.spec.kind, crate::state::BarKind::Tick);
+    assert_eq!(pane.spec.selected_id(), "tick");
 }
 
 /// The interval a reply carries is tagged rather than assumed. A base this

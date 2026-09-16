@@ -38,6 +38,7 @@ use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 
+mod bar_registry_tests;
 mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;
@@ -915,7 +916,14 @@ fn split_with_a_shared_line(
         .active_tab_mut()
         .time_pane_mut()
         .expect("two frames is enough for the deferred layout to build it");
-    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     pane.spec.retain(crate::state::BarSpec::Time(1_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();

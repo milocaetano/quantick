@@ -16,11 +16,14 @@ use quantick_paper::order_strategies;
 
 use crate::state::BarSpec;
 
+#[cfg(test)]
+#[path = "../../engine/tests/support/seventh_bar.rs"]
+mod bar_extension_fixture;
+
 mod app;
 mod audio;
 mod avwap;
 mod bands;
-mod bar_kind_reason;
 mod bubble_presets;
 mod candle_view;
 mod canvas_layout;
@@ -313,9 +316,13 @@ fn main() -> eframe::Result {
         .tabs
         .first()
         .filter(|_| !env_chose_market)
-        .and_then(|tab| BarSpec::parse(&tab.flow_bars).ok())
+        .and_then(|tab| {
+            quantick_engine::bar_registry::BUILTIN_BARS
+                .parse(&tab.flow_bars)
+                .ok()
+        })
         .or_else(|| config.startup_spec_for(&feed_id))
-        .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
+        .unwrap_or_else(|| BarSpec::Tick(INITIAL_TICK_SIZE).into());
 
     let feed = feed::spawn_live(
         provider,

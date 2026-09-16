@@ -9,7 +9,7 @@
 
 use crate::drawings;
 use crate::pane;
-use crate::state::BarSpec;
+use crate::state::BarConfiguration;
 use crate::tab::Tab;
 use quantick_feed::FeedHandle;
 
@@ -180,7 +180,7 @@ impl QuantickApp {
         feed_id: String,
         symbol: String,
         feed: FeedHandle,
-        spec: Option<BarSpec>,
+        spec: Option<BarConfiguration>,
     ) {
         let id = self.next_tab_id;
         self.next_tab_id += 1;

@@ -12,7 +12,7 @@ use eframe::egui;
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
-use crate::state::BarSpec;
+use crate::state::BarConfiguration;
 use crate::symbols_file;
 use crate::tabstrip::TabAction;
 use quantick_feed::history_reach;
@@ -28,9 +28,11 @@ use super::{QuantickApp, TabSlot};
 /// workspace that recorded `tick:50` for a context chart is a file written by
 /// hand, and the chart opens on the default rather than on a guess.
 fn saved_time_interval(text: Option<&str>) -> Option<i64> {
-    text.and_then(|text| match BarSpec::parse(text) {
-        Ok(BarSpec::Time(ms)) => Some(ms),
-        _ => None,
+    text.and_then(|text| {
+        quantick_engine::bar_registry::BUILTIN_BARS
+            .parse(text)
+            .ok()?
+            .time_interval_ms()
     })
 }
 
@@ -120,7 +122,12 @@ impl QuantickApp {
     /// listeners on one port, and the second one loses the bind: that tab
     /// shows the bridge's own bind-failure notice, which is the honest answer
     /// and the reason `[metatrader.ports]` maps a port per symbol.
-    pub(super) fn open_tab(&mut self, feed_id: String, symbol: String, spec: Option<BarSpec>) {
+    pub(super) fn open_tab(
+        &mut self,
+        feed_id: String,
+        symbol: String,
+        spec: Option<BarConfiguration>,
+    ) {
         let Some(provider) = self.config.provider_of(&feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -179,21 +186,7 @@ impl QuantickApp {
         );
         // Its slots are gone with its panes; the bookkeeping must not outlive
         // them or a later tab reusing a slot number would inherit its kind.
-        self.indicators
-            .slot_kinds
-            .retain(|(owner, _)| owner.tab != closed.id);
-        self.indicators
-            .operator_slots
-            .retain(|owner| owner.tab != closed.id);
-        self.indicators
-            .script_files
-            .retain(|(owner, ..)| owner.tab != closed.id);
-        self.indicators
-            .pending_hidden
-            .retain(|owner| owner.tab != closed.id);
-        self.indicators
-            .pending_styles
-            .retain(|(owner, _)| owner.tab != closed.id);
+        self.indicators.forget_tab(closed.id);
         self.active_tab = self.active_tab.min(self.tabs.len() - 1);
         drop(closed);
     }

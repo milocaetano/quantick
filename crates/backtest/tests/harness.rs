@@ -27,6 +27,31 @@ use rust_decimal::Decimal;
 /// Included rather than copied: one recording, one copy of the truth.
 const OPENING_AUCTION: &str = include_str!("../../replay/tests/fixtures/WINQ26-2026-08-12.csv");
 
+#[path = "../../engine/tests/support/seventh_bar.rs"]
+mod seventh_bar;
+
+#[test]
+fn registered_extension_runs_the_real_session_without_a_legacy_variant() {
+    use quantick_engine::bar_registry::{BUILTIN_BARS, BarRegistry};
+    let registry = BarRegistry::new(
+        BUILTIN_BARS
+            .definitions()
+            .iter()
+            .copied()
+            .chain([&seventh_bar::SEVENTH]),
+    )
+    .unwrap();
+    let config = quantick_backtest::bars::parse_with_registry(&registry, "probe:3").unwrap();
+    let session = synthetic(OPENING_AUCTION);
+    let mut registered = ScriptedOrders::new(Vec::new());
+    let mut legacy = ScriptedOrders::new(Vec::new());
+    let actual = run_session(&session, config, &mut registered);
+    let expected = run_session(&session, BarSpec::Tick(3), &mut legacy);
+    assert_eq!(actual.bars, expected.bars);
+    assert_eq!(registered.seen, legacy.seen);
+    assert_eq!(registered.sessions_ended, 1);
+}
+
 const VALUE: PlotId = PlotId::new(0);
 
 /// A strategy that issues pre-arranged commands at pre-arranged bars, and

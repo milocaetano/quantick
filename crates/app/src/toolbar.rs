@@ -22,7 +22,12 @@ use egui_phosphor::regular as icons;
 use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
 use crate::dock::DockTab;
-use crate::state::{BarKind, BarSpec, ImbalanceUnit, SpecSelector};
+use crate::state::SpecSelector;
+#[cfg(test)]
+use crate::state::{BarKind, BarSpec};
+use quantick_engine::bar_registry::BarDefinition;
+use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
+mod bar_parameters;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use quantick_feed::history_reach;
@@ -189,11 +194,14 @@ pub fn trade_width(paper: &PaperTradeModel) -> f32 {
 /// plan: the time kind carries the preset chips (audit QW1), so its row is
 /// wider than the single label + drag every other kind shows.
 #[must_use]
-pub fn param_width(kind: BarKind) -> f32 {
-    match kind {
-        BarKind::Time => W_TIME_PARAM,
-        BarKind::Imbalance => W_IMBALANCE_PARAM,
-        _ => W_BAR_PARAM,
+pub fn param_width(kind: impl Into<&'static BarDefinition>) -> f32 {
+    let kind = kind.into();
+    if !kind.parameter.editor.presets.is_empty() {
+        W_TIME_PARAM
+    } else if !kind.choices.is_empty() {
+        W_IMBALANCE_PARAM
+    } else {
+        W_BAR_PARAM
     }
 }
 
@@ -229,9 +237,8 @@ pub struct ToolbarModel<'a> {
     pub replay: Option<ReplaySource>,
     /// The selected bar kind and the parameter every kind is holding.
     ///
-    /// One field, not one per kind: the BARS group edits the parameter of the
-    /// variant it is on, through [`SpecSelector::active_mut`], so an eighth
-    /// bar kind adds an arm to [`draw_bar_param`] and nothing here.
+    /// The BARS group renders registered parameter descriptors and returns
+    /// typed selection commands. Adding a definition needs no editor arm.
     pub spec: &'a mut SpecSelector,
     /// The deal recorder shown beside the symbol, when supported.
     pub deal_recording: Option<crate::deal_recording::RecordingView>,
@@ -428,7 +435,7 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
             let plan = collapse_plan(
                 ui.available_width() - rec_width,
                 trade_width(&model.paper),
-                param_width(model.spec.kind),
+                param_width(model.spec.spec().definition()),
             );
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -531,7 +538,7 @@ fn draw_source(
         && let Some(action) = crate::deal_recording_ui::draw_button(
             ui,
             view,
-            model.spec.kind,
+            model.spec.spec().definition(),
             model.deal_recording_menu,
         )
     {
@@ -544,16 +551,14 @@ fn draw_source(
 fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     ui.label(egui::RichText::new("bars").color(theme::TEXT_MUTED));
     let selected = if plan.param_inline {
-        model.spec.kind.label().to_owned()
+        model.spec.spec().definition().label().to_owned()
     } else {
-        format!("{} · {}", model.spec.kind.label(), param_summary(model))
+        format!(
+            "{} · {}",
+            model.spec.spec().definition().label(),
+            param_summary(model)
+        )
     };
-    let traded_volume = model.capabilities.traded_volume;
-    let deal_counter = model.capabilities.deal_counter;
-    let deal_count_available = model
-        .deal_recording
-        .as_ref()
-        .is_some_and(crate::deal_recording::RecordingView::deal_count_available);
     if std::mem::take(model.bars_menu) {
         let popup = ui
             .make_persistent_id(egui::Id::new("bar_kind"))
@@ -563,24 +568,29 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
     egui::ComboBox::from_id_salt("bar_kind")
         .selected_text(selected)
         .show_ui(ui, |ui| {
-            for kind in BarKind::ALL {
-                // A rule that counts traded size is offered only where size is
-                // real. On a quote-driven feed it would silently become a tick
-                // bar under another name.
-                let disabled_reason = crate::bar_kind_reason::disabled_reason(
-                    kind,
-                    &crate::bar_kind_reason::BarInputAvailability {
-                        traded_volume,
-                        deal_counter,
-                        deal_count: deal_count_available,
-                    },
+            let mut selected = None;
+            for definition in model.spec.registry().definitions() {
+                let reason = model
+                    .spec
+                    .availability(definition.id, bar_inputs(model))
+                    .expect("registered kind");
+                let item = ui.add_enabled(
+                    reason.is_none(),
+                    egui::SelectableLabel::new(
+                        model.spec.selected_id() == definition.id,
+                        definition.label(),
+                    ),
                 );
-                ui.add_enabled_ui(disabled_reason.is_none(), |ui| {
-                    let item = ui.selectable_value(&mut model.spec.kind, kind, kind.label());
-                    if let Some(reason) = disabled_reason {
-                        item.on_disabled_hover_text(reason);
-                    }
-                });
+                if item.clicked() {
+                    selected = Some(definition.id);
+                }
+                if let Some(reason) = reason {
+                    item.on_disabled_hover_text(reason.reason());
+                }
+            }
+            if let Some(id) = selected {
+                let inputs = bar_inputs(model);
+                let _ = model.spec.update(SelectionCommand::Select(id), inputs);
             }
         });
     if plan.param_inline {
@@ -591,152 +601,23 @@ fn draw_bars(ui: &mut egui::Ui, model: &mut ToolbarModel, plan: CollapsePlan) {
 /// The one parameter of the selected bar kind. Lives beside the combo, or in
 /// the overflow menu when the plan folded it.
 fn draw_bar_param(ui: &mut egui::Ui, model: &mut ToolbarModel) {
-    // Matched on the *spec*, not on the kind beside it: the parameter a
-    // widget drags is the variant's own field, so a kind that has no arm here
-    // cannot be edited into a parameter that does not belong to it.
-    let traded_volume = model.capabilities.traded_volume;
-    match model.spec.active_mut() {
-        BarSpec::Tick(n) => {
-            ui.label("N ticks");
-            ui.add(egui::DragValue::new(n).range(1.0..=5000.0));
-        }
-        BarSpec::Trades(n) => {
-            ui.label("N deals");
-            ui.add(egui::DragValue::new(n).range(1.0..=100_000.0).speed(50.0));
-        }
-        BarSpec::Volume(units) => {
-            ui.label("units");
-            ui.add(decimal_drag(units).range(0.1..=1000.0).speed(0.1));
-        }
-        BarSpec::Dollar(notional) => {
-            ui.label("notional");
-            ui.add(
-                decimal_drag(notional)
-                    .range(1000.0..=1_000_000_000.0)
-                    .speed(1000.0),
-            );
-        }
-        BarSpec::Time(interval_ms) => {
-            // The same four presets the time pane's header offers — one
-            // list, two surfaces (§11) — with the drag as the custom escape
-            // hatch. `bars → time` must not require knowing that a minute is
-            // 60000 (audit QW1).
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                for (label, preset_ms) in crate::time_header::PRESETS {
-                    let selected = *interval_ms == preset_ms;
-                    // The selected timeframe wears the chip language (solid
-                    // accent, dark ink) — the unselected ones stay quiet.
-                    let (fill, ink) = if selected {
-                        (theme::ACCENT, theme::CHIP_INK)
-                    } else {
-                        (theme::CONTROL, theme::TEXT_MUTED)
-                    };
-                    let chip = ui.add(
-                        egui::Button::new(egui::RichText::new(label).color(ink).small())
-                            .fill(fill)
-                            .stroke(egui::Stroke::NONE)
-                            .rounding(egui::Rounding::same(9.0))
-                            .min_size(egui::vec2(28.0, 18.0)),
-                    );
-                    if chip.clicked() && !selected {
-                        *interval_ms = preset_ms;
-                    }
-                }
-                ui.add(
-                    egui::DragValue::new(interval_ms)
-                        .range(
-                            crate::state::MIN_TIME_INTERVAL_MS as f64
-                                ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                        )
-                        .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
-                        .suffix(" ms"),
-                )
-                .on_hover_text("custom interval, in milliseconds");
-            });
-        }
-        BarSpec::Imbalance(selected_unit, target) => {
-            // The unit picks what θ accumulates; the target counts trades in
-            // every unit. Size-measuring units are offered only where the
-            // venue prints a real size, mirroring the kind combo's gate.
-            for unit in ImbalanceUnit::ALL {
-                // The chip label is the unit's own spec token, so what the
-                // trader clicks is the word the spec string says.
-                let hover = match unit {
-                    ImbalanceUnit::Trades => "θ sums ±1 per trade — tick imbalance bars",
-                    ImbalanceUnit::Volume => "θ sums ±quantity — volume imbalance bars",
-                    ImbalanceUnit::Dollar => "θ sums ±(price × quantity) — dollar imbalance bars",
-                };
-                let usable = traded_volume || unit == ImbalanceUnit::Trades;
-                ui.add_enabled_ui(usable, |ui| {
-                    let chip = ui
-                        .selectable_value(selected_unit, unit, unit.as_str())
-                        .on_hover_text(hover);
-                    if !usable {
-                        chip.on_disabled_hover_text(
-                            "this source quotes prices but prints no traded volume",
-                        );
-                    }
-                });
-            }
-            ui.label("target trades");
-            // A promise the engine now keeps, so the tooltip can state it
-            // plainly. `E[T]` used to be an EWMA seeded with this number
-            // while the threshold was linear in it — a feedback loop that
-            // parked on a clamp and delivered `3 * target` or a fraction of
-            // it instead, which is what made a trader set 1500, then 2000,
-            // and get two unrecognisably different charts.
-            // `quantick_engine`'s `a_bar_is_about_the_target_long_in_balanced_flow`
-            // is what keeps the sentence honest.
-            ui.add(
-                egui::DragValue::new(target)
-                    .range(2.0..=1_000_000.0)
-                    .speed(25.0),
-            )
-            .on_hover_text(
-                "expected trades per bar in balanced flow — a real \
-                 expectation, not a fixed length: one-sided aggression closes \
-                 a bar well short of it, which is what this bar type is for",
-            );
-        }
+    let inputs = bar_inputs(model);
+    bar_parameters::draw(ui, model.spec, inputs);
+}
+
+fn bar_inputs(model: &ToolbarModel) -> BarInputAvailability {
+    BarInputAvailability {
+        traded_volume: model.capabilities.traded_volume,
+        deal_counter: model.capabilities.deal_counter,
+        deal_count: model
+            .deal_recording
+            .as_ref()
+            .is_some_and(crate::deal_recording::RecordingView::deal_count_available),
     }
 }
 
-/// Short parameter readout for the merged kind combo, e.g. `tick · 50` or
-/// `time · 1m` — the chips' own vocabulary, never raw milliseconds (QW3).
 fn param_summary(model: &ToolbarModel) -> String {
-    match model.spec.retained(model.spec.kind) {
-        BarSpec::Tick(n) => n.to_string(),
-        BarSpec::Trades(n) => n.to_string(),
-        BarSpec::Volume(units) => format!("{:.1}", dec_to_f64(*units)),
-        BarSpec::Dollar(notional) => format!("{:.0}", dec_to_f64(*notional)),
-        BarSpec::Time(ms) => crate::state::fmt_time_interval(*ms),
-        BarSpec::Imbalance(ImbalanceUnit::Trades, target) => target.to_string(),
-        BarSpec::Imbalance(unit, target) => format!("{} {}", unit.as_str(), target),
-    }
-}
-
-/// A `DragValue` over a spec's [`Decimal`] parameter.
-///
-/// egui drags `f64`, and the parameter the engine wants is a `Decimal`. The
-/// pair of conversions is not new — the pane performed exactly these two on
-/// every spec it built — but it now happens as the trader drags rather than
-/// when the drag is applied, which is the one behavioural difference in
-/// moving the parameters onto the variants.
-fn decimal_drag(value: &mut rust_decimal::Decimal) -> egui::DragValue<'_> {
-    egui::DragValue::from_get_set(|new| {
-        if let Some(new) = new {
-            *value = crate::state::dec_from_f64(new);
-        }
-        dec_to_f64(*value)
-    })
-}
-
-/// A spec's [`Decimal`] parameter as the `f64` a widget reads. See
-/// [`decimal_drag`].
-fn dec_to_f64(value: rust_decimal::Decimal) -> f64 {
-    use rust_decimal::prelude::ToPrimitive as _;
-    value.to_f64().unwrap_or_default()
+    model.spec.spec().parameter_summary()
 }
 
 /// HISTORY: the `+ older ▾` split button. The page size lives in the caret
@@ -1699,7 +1580,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(1_000));
-        selector.kind = BarKind::Tick;
+        selector.set(*selector.retained(BarKind::Tick));
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
@@ -1785,7 +1666,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(60_000));
-        selector.kind = BarKind::Time;
+        selector.set(*selector.retained(BarKind::Time));
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
@@ -1858,8 +1739,8 @@ mod tests {
             );
         }
         assert_eq!(
-            selector.kind,
-            BarKind::Time,
+            selector.selected_id(),
+            "time",
             "an un-clicked frame changes nothing"
         );
         assert_eq!(selector.spec(), BarSpec::Time(60_000));
@@ -1882,7 +1763,7 @@ mod tests {
         // must draw it rather than panic.
         for kind in BarKind::ALL {
             let mut selector = SpecSelector::default();
-            selector.kind = kind;
+            selector.set(*selector.retained(kind));
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
                     let mut layout_picker_open = false;
@@ -1942,7 +1823,7 @@ mod tests {
         let mut symbol = "BTCUSDT".to_owned();
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(1_000));
-        selector.kind = BarKind::Tick;
+        selector.set(*selector.retained(BarKind::Tick));
         let mut history_step = 2_000_usize;
         let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;

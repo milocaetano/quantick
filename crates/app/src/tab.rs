@@ -31,7 +31,7 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
-use crate::state::BarSpec;
+use crate::state::BarConfiguration;
 use quantick_feed::history_reach::{self, Campaign, HistoryReach};
 use quantick_feed::stall::{self};
 use quantick_feed::{
@@ -584,7 +584,7 @@ impl Tab {
         flow_pane_id: u64,
         feed_id: String,
         symbol: String,
-        spec: BarSpec,
+        spec: impl Into<BarConfiguration>,
         feed: FeedHandle,
         trades_dir: PathBuf,
     ) -> Self {

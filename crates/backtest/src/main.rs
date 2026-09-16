@@ -142,7 +142,7 @@ struct Args {
     symbol: Option<String>,
     from: Option<Day>,
     to: Option<Day>,
-    bars: BarSpec,
+    bars: quantick_engine::bar_registry::BarConfiguration,
     /// `None` until resolved: an explicit `--strategy` wins, a bare
     /// `--script` implies `script`, and the default is the EMA cross.
     strategy: Option<StrategyKind>,
@@ -240,7 +240,7 @@ fn parse_args() -> Result<Args, String> {
         symbol: None,
         from: None,
         to: None,
-        bars: DEFAULT_BARS,
+        bars: DEFAULT_BARS.into(),
         strategy: None,
         fast: DEFAULT_FAST_EMA,
         slow: DEFAULT_SLOW_EMA,
@@ -272,7 +272,9 @@ fn parse_args() -> Result<Args, String> {
                     Some(Day::parse(&text).ok_or_else(|| format!("--to `{text}` is not a day"))?);
             }
             "--limit" => args.limit = Some(positive_count("--limit", &value()?)?),
-            "--bars" => args.bars = bars::parse_runnable(&value()?).map_err(|e| e.to_string())?,
+            "--bars" => {
+                args.bars = bars::parse_configuration(&value()?).map_err(|e| e.to_string())?
+            }
             "--strategy" => {
                 let name = value()?;
                 args.strategy = Some(StrategyKind::parse(&name).ok_or_else(|| {

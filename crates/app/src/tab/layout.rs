@@ -300,7 +300,7 @@ impl Tab {
         }
         let rebuilding = self
             .panes()
-            .any(|(pane, _side)| pane.spec.pending.is_some());
+            .any(|(pane, _side)| pane.spec.pending().is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -319,29 +319,17 @@ impl Tab {
     /// the focused pane and the time pane's own header governs the time pane
     /// (§11), so a change to one pane must not rebuild the chart beside it.
     fn apply_spec_change_at(&mut self, index: PaneIndex) {
-        let Some(desired) = self.pane_at(index).map(ChartPane::current_spec) else {
-            return;
-        };
         let Some(pane) = self.pane_at_mut(index) else {
             return;
         };
-        if desired == *pane.state.spec() {
-            // Selection and chart agree — nothing is pending any more (a feed
-            // switch or reset may have rebuilt the state under a pending spec).
-            pane.spec.pending = None;
-            return;
-        }
-        match pane.spec.pending.take() {
-            // The frame that changed the selector: arm the indicator, paint.
-            None => pane.spec.pending = Some(desired),
-            // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => pane.spec.pending = Some(desired),
-            // Settled since last frame: do the rebuild.
-            Some(_) => self.recut_pane_with(
+        if let quantick_engine::bar_selection::SelectionEffect::Rebuild(desired) =
+            pane.spec.settle(*pane.state.spec())
+        {
+            self.recut_pane_with(
                 index,
                 quantick_strategy::DisarmReason::BarSpecChanged,
                 |pane| pane.set_spec(desired),
-            ),
+            );
         }
     }
 

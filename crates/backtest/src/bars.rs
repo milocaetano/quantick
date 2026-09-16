@@ -1,13 +1,18 @@
 //! Which bar rule a run uses, in the vocabulary the chart already speaks.
 //!
-//! The spec is the engine's [`BarSpec`] — `tick:100`, `volume:5`,
+//! The configuration is the engine's [`BarConfiguration`] — `tick:100`, `volume:5`,
 //! `dollar:500000`, `time:1m`, `imbalance:volume:2500` — so the spec a trader
 //! reads off a tab is the spec they hand to a backtest, and both cut bars
-//! through the same [`BarSpec::build`]. What lives here is only the harness's
-//! own boundary: the one kind it cannot run, refused by name.
+//! through the same registered factory. [`parse_runnable`] retains the closed
+//! legacy enum API; the CLI uses [`parse_configuration`]. This module owns only
+//! the harness boundary: missing deal-counter data is refused, never invented.
 
 use std::fmt;
 
+use quantick_engine::bar_registry::{
+    BUILTIN_BARS, BarConfiguration, BarConfigurationError, BarRegistry,
+};
+use quantick_engine::bar_selection::BarInputAvailability;
 pub use quantick_engine::{BarSpec, BarSpecError};
 
 /// Why a spec the vocabulary accepts cannot be run here.
@@ -55,10 +60,55 @@ impl std::error::Error for SpecError {
 /// spec that counts deals.
 pub fn parse_runnable(text: &str) -> Result<BarSpec, SpecError> {
     let spec = BarSpec::parse(text).map_err(SpecError::Unparsable)?;
-    if spec.kind().needs_deal_counter() {
+    if BarInputAvailability::PRINTS
+        .refusal(BarConfiguration::from(spec).requirements())
+        .is_some()
+    {
         return Err(SpecError::NeedsDealCounter(spec));
     }
     Ok(spec)
+}
+
+/// Refusals for the open registry API. The closed legacy error remains unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunnableConfigurationError {
+    Invalid(BarConfigurationError),
+    NeedsDealCounter(BarConfiguration),
+}
+impl fmt::Display for RunnableConfigurationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(error) => error.fmt(f),
+            Self::NeedsDealCounter(config) => write!(
+                f,
+                "{} counts the venue's deal counter, which no exported session carries yet; the chart cuts it live and from its own recording",
+                config.to_config_string()
+            ),
+        }
+    }
+}
+impl std::error::Error for RunnableConfigurationError {}
+
+/// Resolve a runnable definition without passing through the legacy enum.
+pub fn parse_with_registry(
+    registry: &BarRegistry,
+    text: &str,
+) -> Result<BarConfiguration, RunnableConfigurationError> {
+    let config = registry
+        .parse(text)
+        .map_err(RunnableConfigurationError::Invalid)?;
+    if BarInputAvailability::PRINTS
+        .refusal(config.requirements())
+        .is_some()
+    {
+        return Err(RunnableConfigurationError::NeedsDealCounter(config));
+    }
+    Ok(config)
+}
+
+/// The CLI keeps the resolved configuration through the actual runner.
+pub fn parse_configuration(text: &str) -> Result<BarConfiguration, RunnableConfigurationError> {
+    parse_with_registry(&BUILTIN_BARS, text)
 }
 
 #[cfg(test)]

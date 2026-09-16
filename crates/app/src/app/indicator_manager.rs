@@ -84,6 +84,16 @@ pub(super) struct IndicatorState {
 }
 
 impl IndicatorState {
+    /// A closed tab cannot leave persistence or deferred slot work behind.
+    /// Slot numbers may be reused on other tabs, so the tab is the identity.
+    pub(super) fn forget_tab(&mut self, tab: u64) {
+        self.slot_kinds.retain(|(owner, _)| owner.tab != tab);
+        self.operator_slots.retain(|owner| owner.tab != tab);
+        self.script_files.retain(|(owner, ..)| owner.tab != tab);
+        self.pending_hidden.retain(|owner| owner.tab != tab);
+        self.pending_styles.retain(|(owner, _)| owner.tab != tab);
+    }
+
     /// Lend only slot bookkeeping to operations; UI/library/poll state stays here.
     pub(super) fn slots_mut(&mut self) -> super::indicator_operations::IndicatorSlots<'_> {
         super::indicator_operations::IndicatorSlots {

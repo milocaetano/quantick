@@ -200,7 +200,14 @@ impl Tab {
                 }
                 if header_layout.changed {
                     let pane = &mut self.time_panes[slot];
-                    pane.spec.set(crate::state::BarSpec::Time(interval_ms));
+                    pane.spec
+                        .update(
+                            quantick_engine::bar_selection::SelectionCommand::Replace(
+                                crate::state::BarSpec::Time(interval_ms).into(),
+                            ),
+                            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+                        )
+                        .expect("time control stays in the interval domain");
                 }
                 context_charts.push((areas.chart, pane_areas.layout_strip));
             }

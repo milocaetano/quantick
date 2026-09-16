@@ -11,14 +11,14 @@ use smallvec::SmallVec;
 
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
-use crate::state::{BarSpec, ChartState};
+use crate::state::{BarConfiguration, ChartState};
 use crate::viewport::Viewport;
 
 use super::{ChartPane, prefix_differs};
 
 impl ChartPane {
     /// The bar spec implied by the current selector state.
-    pub fn current_spec(&self) -> BarSpec {
+    pub fn current_spec(&self) -> BarConfiguration {
         self.spec.spec()
     }
 
