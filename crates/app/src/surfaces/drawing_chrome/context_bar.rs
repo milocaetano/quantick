@@ -146,7 +146,12 @@ pub(crate) fn draw(
     if chrome.bar.bar.suppressed(now_ms) {
         return ask;
     }
-    let (Some(chart), Some(bbox)) = (env.chart_area, env.selected_bbox) else {
+    let chart_area = if chrome.bar.bar.manual_position().is_none() {
+        env.automatic_bar_area.or(env.chart_area)
+    } else {
+        env.chart_area
+    };
+    let (Some(chart), Some(bbox)) = (chart_area, env.selected_bbox) else {
         return ask;
     };
     // Read the object, never clone it, on the way in. This runs every frame

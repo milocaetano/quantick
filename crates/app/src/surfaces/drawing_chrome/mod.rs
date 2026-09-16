@@ -245,6 +245,9 @@ pub(crate) struct DrawingEnv<'a> {
     pub selected: Option<SelectedDrawing<'a>>,
     /// That pane's chart rectangle, or `None` before it has been laid out.
     pub chart_area: Option<egui::Rect>,
+    /// Selected indicator band's body, excluding its header. Parked chrome
+    /// keeps its existing pane-relative placement instead.
+    pub automatic_bar_area: Option<egui::Rect>,
     /// The *focused* pane's rectangle, which is not always the one above: a
     /// shared mark can be selected from the chart it is mirrored on. The
     /// object manager opens beside the toolbox button that opened it, and that

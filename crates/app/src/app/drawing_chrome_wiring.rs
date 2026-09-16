@@ -45,10 +45,25 @@ fn drawing_env<'a>(
             .get(index)
             .map(|drawing| crate::surfaces::drawing_chrome::SelectedDrawing { index, drawing })
     });
+    let automatic_bar_area = selected.as_ref().and_then(|selection| {
+        if !matches!(selection.drawing.band, drawings::DrawingBand::Indicator(_)) {
+            return None;
+        }
+        let band = pane.drawing_band(selection.drawing)?;
+        let header = crate::indicator_render::pane_header_rect(band.rect, false);
+        Some(egui::Rect::from_min_max(
+            egui::pos2(
+                band.rect.left(),
+                header.bottom() + drawings::context_bar::OBJECT_GAP_PX,
+            ),
+            band.rect.max,
+        ))
+    });
     crate::surfaces::DrawingEnv {
         pane_id: pane.id,
         selected,
         chart_area: pane.frame.chart_area,
+        automatic_bar_area,
         focused_chart_area: tab.focused_pane().frame.chart_area,
         lane_divider_x: pane.frame.lane_divider_x,
         legends: pane

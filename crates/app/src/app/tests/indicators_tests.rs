@@ -24,6 +24,35 @@ fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
 }
 
 #[test]
+fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_footer() {
+    let (app, _ctx, _index, _) = selected_cvd_line();
+    let band = pane_body(&app, 0);
+    let price = app
+        .drawing_pane()
+        .frame
+        .chart_area
+        .expect("price chart drawn");
+    let header = crate::indicator_render::pane_header_rect(band, false);
+    let bar = app
+        .surfaces
+        .drawing_chrome
+        .context_bar_rect()
+        .expect("selected bar drawn");
+    assert!(
+        bar.top() >= price.bottom(),
+        "indicator controls must not cover the price footer: {bar:?}, {price:?}"
+    );
+    assert!(
+        band.contains_rect(bar),
+        "indicator controls belong to their own band: {bar:?}, {band:?}"
+    );
+    assert!(
+        !bar.intersects(header),
+        "indicator header must stay readable: {bar:?}, {header:?}"
+    );
+}
+
+#[test]
 fn selected_indicator_bounds_use_the_drawn_band_scale() {
     let (app, _ctx, index, anchor) = selected_cvd_line();
     let chart = app
