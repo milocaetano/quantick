@@ -1163,6 +1163,18 @@ fn key_press_with(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     }
 }
 
+/// The release half of a chord — the only half the platform is guaranteed
+/// to deliver for a paste shortcut.
+fn key_release_with(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers,
+    }
+}
+
 /// Whether any painted line segment uses `color` — proof a stroke of that
 /// colour reached the screen (or, negated, that a hidden object did not).
 fn painted_line_with_color(output: &egui::FullOutput, color: egui::Color32) -> bool {
