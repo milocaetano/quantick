@@ -382,7 +382,11 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     // with is a different question, and `test_app` keeps the shipped
     // answer intact for the test that reads it
     // (`each_layer_switch_moves_exactly_one_owner`).
-    app.active_tab_mut().flow_pane.live_strip_visible = false;
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        ChartLayer::LiveStrip,
+        false,
+        &mut Default::default(),
+    );
     app.active_tab_mut()
         .flow_pane
         .spec
@@ -453,7 +457,7 @@ fn with_flow_pane<R>(
         drawing_presets,
         style,
         tz,
-        layer_actions,
+        workspace,
         footprint_config,
         surfaces,
         ..
@@ -480,7 +484,7 @@ fn with_flow_pane<R>(
         capabilities,
         side_inferred,
         footprint: footprint_config,
-        layers: layer_actions,
+        layers: &mut workspace.layers_mut().actions,
     };
     body(&mut tab.flow_pane, &mut chrome)
 }
@@ -1594,7 +1598,7 @@ fn place_range_profile_with_the_layer_off(app: &mut QuantickApp) {
     pane.set_layer_visible(
         ChartLayer::Footprint,
         false,
-        &mut chart_layers::LayerActions::default(),
+        &mut quantick_layers::LayerActions::default(),
     );
     assert!(
         !pane

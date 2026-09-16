@@ -3,12 +3,12 @@
 
 use super::Tab;
 use crate::canvas_layout::PaneKind;
-use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
 use crate::pane::{ChartPane, PaneIndex, PaneSide};
 use crate::style::ChartStyle;
 use quantick_feed::{FeedConnectionState, FeedNotice};
+use quantick_layers::{ChartLayer, LayerBlock};
 
 impl Tab {
     /// Put the context column away, or bring it back.
@@ -255,35 +255,11 @@ impl Tab {
     /// time pane has focus would report a layer the trader is not looking at.
     /// The other three read the tape, and only the flow pane has one.
     fn layer_toggle_side(&self, layer: ChartLayer) -> PaneSide {
-        match layer {
-            // Read off the tape, and only the flow pane has one. A time pane
-            // asked about these answers for machinery it does not own, which
-            // is what `ChartPane::layer_blocked` says in words.
-            ChartLayer::TapeChart
-            | ChartLayer::TapeHeatmap
-            | ChartLayer::TapeBubbles
-            | ChartLayer::Heatmap
-            | ChartLayer::Bubbles
-            | ChartLayer::LiveStrip
-            | ChartLayer::LaneMarks
-            | ChartLayer::FlowLegend
-            | ChartLayer::BookStatus
-            | ChartLayer::DepthGaps => PaneSide::Flow,
-            // The pane's own: the footprint folds the pane's retained trades,
-            // the rest are that canvas's chrome and its objects. A lamp lit
-            // from the flow pane while the time pane has focus would report a
-            // layer the trader is not looking at.
-            ChartLayer::Footprint
-            | ChartLayer::Grid
-            | ChartLayer::LastPrice
-            | ChartLayer::BackfillDivider
-            | ChartLayer::SeamDivider
-            | ChartLayer::Crosshair
-            | ChartLayer::PointerPrice
-            | ChartLayer::PointerTime
-            | ChartLayer::PaperTrading
-            | ChartLayer::TradePaint
-            | ChartLayer::Drawings => self.focused_side(),
+        match layer.0.scope {
+            quantick_layers::LayerScope::FlowPane => PaneSide::Flow,
+            quantick_layers::LayerScope::Pane | quantick_layers::LayerScope::Window => {
+                self.focused_side()
+            }
         }
     }
 

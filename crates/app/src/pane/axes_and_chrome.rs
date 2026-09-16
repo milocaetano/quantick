@@ -14,27 +14,20 @@
 //! from, and callers on both sides of the cut still reach them there.
 
 use eframe::egui;
-use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::chart::{self, PriceScale};
-use crate::chart_layers::ChartLayer;
+use crate::chart::PriceScale;
 use crate::drawings::DrawingBand;
 use crate::plot_area::{fmt_time_as, split_time_strip};
 use crate::pointer_compass;
 use crate::theme;
 use crate::toolrail::Tool;
+use quantick_layers::ChartLayer;
 use quantick_orderflow::{format_window_ms, lane_lag_label};
 
 use super::{
-    ChartPane, LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LAST_PRICE_CHIP_TEXT, LAST_PRICE_DASH_PX,
-    LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, PaneChrome, PointerCompass, PriceAxisClaims,
-    PriceAxisLevel, SEAM_DASH_PX, SEAM_GAP_PX, SEAM_LABEL_INSET_PX, SEAM_LABEL_PT,
-    draw_dashed_vertical, grid_color,
+    ChartPane, LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, PaneChrome, PointerCompass, PriceAxisClaims,
+    PriceAxisLevel, grid_color,
 };
-
-/// Logical pixels reserved above the chart bottom: three caption text rows
-/// keep gap labels clear of the footer and backfill captions below them.
-const GAP_CAPTION_BOTTOM_CLEARANCE_PX: f32 = 3.0 * SEAM_LABEL_PT;
 
 impl ChartPane {
     /// Bottom time strip: a top border and a few `HH:MM:SS` labels for the
@@ -230,53 +223,15 @@ impl ChartPane {
         claims: &PriceAxisClaims<'_>,
         chrome: &PaneChrome<'_>,
     ) {
-        let grid = grid_color(chrome.style);
-        let (lo, hi) = scale.range();
-        let font = egui::FontId::monospace(chart::AXIS_LABEL_FONT_PX);
-        // Measured once per frame, the way the time strip measures its own:
-        // every label on this axis is one line of the same font, so one
-        // layout answers for all of them.
-        let label_height = painter
-            .layout_no_wrap("0".to_owned(), font.clone(), theme::TEXT_MUTED)
-            .size()
-            .y;
-        for tick in crate::chart::nice_ticks(lo, hi, 8) {
-            let y = scale.y(tick);
-            if y < chart_rect.top() || y > chart_rect.bottom() {
-                continue;
-            }
-            // The *line* is drawn either way: a gridline under a chip is
-            // still the grid, and hiding it would put a gap in the chart
-            // wherever the pointer went.
-            painter.line_segment(
-                [
-                    egui::pos2(chart_rect.left(), y),
-                    egui::pos2(chart_rect.right(), y),
-                ],
-                egui::Stroke::new(1.0_f32, grid),
-            );
-            // The chips on this axis are the same font and padding as the
-            // labels, so one extent answers for both — unlike the time strip,
-            // where they differ.
-            if pointer_compass::claimed(y, label_height, label_height, claims.heights()) {
-                continue;
-            }
-            painter.text(
-                egui::pos2(axis_x + chart::AXIS_LABEL_GAP_PX, y),
-                egui::Align2::LEFT_CENTER,
-                pointer_compass::price_text(tick),
-                font.clone(),
-                theme::TEXT_MUTED,
-            );
-        }
-        // The axis dividing line.
-        painter.line_segment(
-            [
-                egui::pos2(axis_x, chart_rect.top()),
-                egui::pos2(axis_x, chart_rect.bottom()),
-            ],
-            egui::Stroke::new(1.0_f32, grid),
-        );
+        self.layer_renderers
+            .grid(&mut super::render_registry::GridPass {
+                painter,
+                chart_rect,
+                axis_x,
+                scale,
+                claims,
+                style: chrome.style,
+            });
     }
 
     /// The current price: a dashed line across the chart and a solid chip on
@@ -294,41 +249,15 @@ impl ChartPane {
         bar: &quantick_engine::Bar,
         chrome: &PaneChrome<'_>,
     ) {
-        let Some(price) = bar.close.to_f64() else {
-            return;
-        };
-        let y = scale.y(price);
-        if y < chart_rect.top() || y > chart_rect.bottom() {
-            return;
-        }
-        // Same predicate and same two colours the candle wears, so the chip
-        // and the bar it reports can never disagree about direction.
-        let rgb = if crate::candle_view::is_bullish(bar) {
-            chrome.style.candles.bull_outline
-        } else {
-            chrome.style.candles.bear_outline
-        };
-        let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-
-        // Runs through the live strip when one is shown (`axis_x` then sits
-        // past it): the depth silhouette is read against this exact line.
-        painter.extend(egui::Shape::dashed_line(
-            &[egui::pos2(chart_rect.left(), y), egui::pos2(axis_x, y)],
-            egui::Stroke::new(1.0_f32, color.gamma_multiply(LAST_PRICE_LINE_ALPHA)),
-            LAST_PRICE_DASH_PX,
-            LAST_PRICE_GAP_PX,
-        ));
-
-        // Same geometry as the crosshair tag and the compass's, because it is
-        // the same code: one owner for where a price sits on this axis.
-        pointer_compass::paint_price_tag(
-            painter,
-            axis_x,
-            y,
-            pointer_compass::price_text(price),
-            color,
-            LAST_PRICE_CHIP_TEXT,
-        );
+        self.layer_renderers
+            .last_price(&mut super::render_registry::LastPricePass {
+                painter,
+                chart_rect,
+                axis_x,
+                scale,
+                bar,
+                style: chrome.style,
+            });
     }
 
     /// Crosshair following the pointer, with the price shown on the axis.
@@ -342,44 +271,15 @@ impl ChartPane {
         scale: &PriceScale,
         chrome: &PaneChrome<'_>,
     ) {
-        if chrome.toolrail.tool() != Tool::Crosshair {
-            return;
-        }
-        let Some(pos) = self.hover_pos else {
-            return;
-        };
-        if !chart_rect.contains(pos) {
-            return;
-        }
-        let stroke = egui::Stroke::new(1.0_f32, theme::TEXT_FAINT);
-        painter.line_segment(
-            [
-                egui::pos2(pos.x, chart_rect.top()),
-                egui::pos2(pos.x, chart_rect.bottom()),
-            ],
-            stroke,
-        );
-        // Reaches the axis through the live strip when one is shown, so the
-        // cursor height can be read against the depth silhouette too.
-        painter.line_segment(
-            [
-                egui::pos2(chart_rect.left(), pos.y),
-                egui::pos2(axis_x, pos.y),
-            ],
-            stroke,
-        );
-
-        // Price tag on the axis at the cursor height, through the axis's one
-        // tag owner — the compass and the last-price chip write theirs the
-        // same way, so the marks that share this gutter cannot drift apart.
-        pointer_compass::paint_price_tag(
-            painter,
-            axis_x,
-            pos.y,
-            pointer_compass::price_text(scale.price_at(pos.y)),
-            theme::TAG_BG,
-            egui::Color32::WHITE,
-        );
+        self.layer_renderers
+            .crosshair(&mut super::render_registry::CrosshairPass {
+                painter,
+                chart_rect,
+                axis_x,
+                scale,
+                pointer: self.hover_pos,
+                armed: chrome.toolrail.tool() == Tool::Crosshair,
+            });
     }
 
     /// Every price a visible drawing on the price band declares, in the order
@@ -589,13 +489,15 @@ impl ChartPane {
         time_strip: egui::Rect,
         chrome: &PaneChrome<'_>,
     ) {
-        if compass.price {
-            pointer_compass::paint_price_mark(painter, axis_x, &compass.readout);
-        }
-        if compass.time {
-            let (history_strip, _) = split_time_strip(time_strip, self.frame.lane_divider_x);
-            pointer_compass::paint_time_mark(painter, history_strip, &compass.readout, chrome.tz);
-        }
+        self.layer_renderers
+            .pointer(&mut super::render_registry::PointerPass {
+                painter,
+                compass,
+                axis_x,
+                time_strip,
+                divider_x: self.frame.lane_divider_x,
+                tz: chrome.tz,
+            });
     }
 
     /// A vertical marker where venue candles give way to bars this app built
@@ -617,45 +519,18 @@ impl ChartPane {
         total: usize,
         candle_width: f32,
     ) {
-        let seam = self.seam_slot();
-        if seam == 0 || seam >= total {
-            return;
-        }
-        let x = self.viewport.x_center(seam, pane.right(), total) - candle_width / 2.0;
-        if x < pane.left() || x > pane.right() {
-            return; // off-screen
-        }
-        draw_dashed_vertical(
-            painter,
-            x,
-            pane,
-            SEAM_DASH_PX,
-            SEAM_GAP_PX,
-            theme::SEAM_LINE,
-        );
-        painter.text(
-            egui::pos2(x - SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
-            egui::Align2::RIGHT_TOP,
-            "venue",
-            egui::FontId::proportional(SEAM_LABEL_PT),
-            theme::SEAM_LABEL,
-        );
-    }
-
-    /// The bar the tape resumed into after a gap: the first closed bar opening
-    /// at or after the gap's far side.
-    ///
-    /// A binary search rather than a scan. This runs per gap per frame, and a
-    /// linear walk over a chart holding thousands of bars would put that on the
-    /// render thread every frame of a session that reconnected once.
-    ///
-    /// Only the trade-derived series is searched. A gap is left by a live
-    /// reconnect, and the venue prefix in front of it is candle history the
-    /// venue summarized long before this session opened its socket.
-    fn gap_slot(&self, gap: quantick_feed::FeedGap) -> Option<usize> {
-        let bars = self.state.bars();
-        let index = bars.partition_point(|bar| bar.open_time < gap.to_ms);
-        (index < bars.len()).then(|| self.history_prefix.len() + index)
+        self.layer_renderers
+            .seam(&mut super::render_registry::DividerPass {
+                painter,
+                pane,
+                total,
+                candle_width,
+                viewport: &self.viewport,
+                seam: self.seam_slot(),
+                boundary: self.state.backfill_boundary(),
+                bars: self.state.bars(),
+                gaps: &[],
+            });
     }
 
     /// Vertical markers where the tape has a hole no print covers.
@@ -674,32 +549,18 @@ impl ChartPane {
         candle_width: f32,
         gaps: &[quantick_feed::FeedGap],
     ) {
-        for gap in gaps {
-            let Some(slot) = self.gap_slot(*gap) else {
-                continue;
-            };
-            if slot == 0 || slot >= total {
-                continue;
-            }
-            let x = self.viewport.x_center(slot, pane.right(), total) - candle_width / 2.0;
-            if x < pane.left() || x > pane.right() {
-                continue; // off-screen
-            }
-            draw_dashed_vertical(painter, x, pane, SEAM_DASH_PX, SEAM_GAP_PX, theme::GAP_LINE);
-            // Above the bottom footer/backfill labels, away from the top
-            // foreground loading overlay and flow legend. Keep the caption
-            // to the right of its line, opposite the venue seam's caption.
-            painter.text(
-                egui::pos2(
-                    x + SEAM_LABEL_INSET_PX,
-                    pane.bottom() - GAP_CAPTION_BOTTOM_CLEARANCE_PX.min(pane.height() / 2.0),
-                ),
-                egui::Align2::LEFT_BOTTOM,
-                format!("{} gap", gap.duration_label()),
-                egui::FontId::proportional(SEAM_LABEL_PT),
-                theme::GAP_LABEL,
-            );
-        }
+        self.layer_renderers
+            .feed_gaps(&mut super::render_registry::DividerPass {
+                painter,
+                pane,
+                total,
+                candle_width,
+                viewport: &self.viewport,
+                seam: self.seam_slot(),
+                boundary: self.state.backfill_boundary(),
+                bars: self.state.bars(),
+                gaps,
+            });
     }
 
     /// A vertical marker separating backfilled history (left) from live (right),
@@ -714,38 +575,17 @@ impl ChartPane {
         total: usize,
         candle_width: f32,
     ) {
-        let Some(boundary) = self.state.backfill_boundary() else {
-            return;
-        };
-        if boundary == 0 {
-            return; // nothing backfilled
-        }
-        // The engine counts its own bars; the venue prefix sits in front of
-        // them, so the slot is offset by however many bars that is.
-        let boundary = boundary + self.seam_slot();
-        // The divider sits at the left edge of the first live bar.
-        let x = self.viewport.x_center(boundary, pane.right(), total) - candle_width / 2.0;
-        if x < pane.left() || x > pane.right() {
-            return; // off-screen
-        }
-        painter.line_segment(
-            [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
-            egui::Stroke::new(1.0_f32, theme::AMBER),
-        );
-        let font = egui::FontId::proportional(11.0);
-        painter.text(
-            egui::pos2(x - 4.0, pane.bottom() - 4.0),
-            egui::Align2::RIGHT_BOTTOM,
-            "backfill",
-            font.clone(),
-            theme::TEXT_MUTED,
-        );
-        painter.text(
-            egui::pos2(x + 4.0, pane.bottom() - 4.0),
-            egui::Align2::LEFT_BOTTOM,
-            "live",
-            font,
-            theme::AMBER,
-        );
+        self.layer_renderers
+            .backfill(&mut super::render_registry::DividerPass {
+                painter,
+                pane,
+                total,
+                candle_width,
+                viewport: &self.viewport,
+                seam: self.seam_slot(),
+                boundary: self.state.backfill_boundary(),
+                bars: self.state.bars(),
+                gaps: &[],
+            });
     }
 }

@@ -2917,6 +2917,7 @@ dependencies = [
  "quantick-feed-hyperliquid",
  "quantick-feed-mt5",
  "quantick-indicators",
+ "quantick-layers",
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-paper",
@@ -3083,6 +3084,14 @@ dependencies = [
  "libm",
  "quantick-engine",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-layers"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.20",
 ]
 
 [[package]]

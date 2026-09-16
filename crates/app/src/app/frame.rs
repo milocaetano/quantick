@@ -580,7 +580,7 @@ impl QuantickApp {
                         drawing_presets,
                         style,
                         tz,
-                        layer_actions,
+                        workspace,
                         footprint_config,
                         surfaces,
                         ..
@@ -595,7 +595,7 @@ impl QuantickApp {
                         capabilities,
                         side_inferred,
                         footprint: footprint_config,
-                        layers: layer_actions,
+                        layers: &mut workspace.layers_mut().actions,
                     };
                     tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
                 }

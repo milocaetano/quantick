@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use crate::chart_layers::{self, ChartLayer};
+use crate::chart_layers;
 
 use super::QuantickApp;
 
@@ -20,7 +20,7 @@ impl QuantickApp {
     /// the frame that applies it. Both wishes reach the real owner — the shared
     /// style, the indicator state file — instead of a second copy on the pane.
     pub(super) fn apply_layer_actions(&mut self) {
-        let actions = std::mem::take(&mut self.layer_actions);
+        let actions = std::mem::take(&mut self.workspace.layers_mut().actions);
         if let Some(visible) = actions.grid {
             self.style.canvas.grid_enabled = visible;
             // The appearance panel's own edits bump this; the renderer and the
@@ -141,130 +141,17 @@ impl QuantickApp {
         self.active_tab().flow_pane.layer_mask(&self.style)
     }
 
-    /// Save the layer visibility when it differs from what is on disk.
-    ///
-    /// Called once per frame instead of from each switch: the layers are owned
-    /// by four different pieces of chrome, and a save hook on each is four
-    /// chances to forget one.
     pub(super) fn maintain_chart_layers(&mut self) {
-        let mask = self.layer_mask();
-        // Layer state is per-pane, and this reads the *active* tab's flow pane
-        // — so activating a tab whose chart is set up differently changes the
-        // mask with nobody having touched a switch. Left alone, Ctrl+Tab
-        // records the other tab's opinion as the trader's choice, thrashes the
-        // file between two of them, and fills the log below with switches no
-        // hand moved. A different chart answering is a re-baseline, not an
-        // edit; the file keeps whatever the last real switch put there.
-        let tab = self.active_tab().id;
-        if tab != self.workspace.layers().tab() {
-            self.workspace.layers_mut().rebaseline(tab, mask);
-            return;
-        }
-        if mask == self.workspace.layers().mask() {
-            return;
-        }
-        // Name every switch that moved, before writing it down.
-        //
-        // This file is the trader's own answer, and it outranks the shipped
-        // default from the next launch on — so a layer that goes off without a
-        // click is not a display glitch, it is a choice attributed to someone
-        // who never made it, and it lasts. The bug that motivated this line was
-        // exactly that shape and cost a day to chase, because the only record
-        // was the file itself: a trio of `false`s with no timestamp, no
-        // sequence and nothing to say whether a hand had been near them.
-        //
-        // Off the frame path in every sense that matters: the mask compare
-        // above already gates it, so this runs on the frames a switch actually
-        // moves — a handful in a session — and not one of the other 60 a
-        // second.
-        let flipped = mask ^ self.workspace.layers().mask();
-        for (bit, layer) in ChartLayer::ALL.into_iter().enumerate() {
-            if flipped & (1 << bit) == 0 {
-                continue;
-            }
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "CHART_LAYER_SWITCHED",
-                layer = layer.id(),
-                on = mask & (1 << bit) != 0,
-                action = "persist_switch",
-                "a chart layer switch moved; recording it as the trader's choice"
-            );
-        }
-        chart_layers::save(
-            self.workspace.chart_layers_path(),
-            &self.active_tab().flow_pane.layer_states(&self.style),
-        );
-        self.workspace.layers_mut().record(mask);
+        let tab = &self.tabs[self.active_tab];
+        chart_layers::maintain(&mut self.workspace, tab.id, &tab.flow_pane, &self.style);
     }
 
-    /// Apply the saved layer visibility to the tab the app opened with.
-    ///
-    /// Runs before the autostart env vars so an explicit `QUANTICK_*_AUTOSTART`
-    /// still wins for the run it was set on: a validation session asks for the
-    /// heatmap on the command line and gets it, whatever the file remembers.
     pub(super) fn restore_chart_layers(&mut self) {
-        let defaults = chart_layers::load(self.workspace.chart_layers_path());
-        // Whatever the file said (including nothing at all) is now on screen;
-        // only a change from here is worth another write.
-        if defaults.is_empty() {
-            // Only reachable when the *shipped* config failed to parse, since
-            // every other path in `load` falls back to it — a build-time
-            // mistake, and the one launch where saying nothing would be worst:
-            // the chart opens on whatever the code decided and no one is told
-            // the product's own answer never arrived.
-            tracing::error!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "CHART_LAYERS_UNAVAILABLE",
-                path = %self.workspace.chart_layers_path().display(),
-                action = "keep_code_defaults",
-                "no layer visibility to apply; the shipped config did not parse"
-            );
-            let (tab, mask) = (self.active_tab().id, self.layer_mask());
-            self.workspace.layers_mut().rebaseline(tab, mask);
-            return;
-        }
-        if let Some(grid) = defaults.get(&ChartLayer::Grid) {
-            self.style.canvas.grid_enabled = *grid;
-        }
-        self.apply_layer_defaults(&defaults);
-        let (tab, mask) = (self.active_tab().id, self.layer_mask());
-        self.workspace.layers_mut().rebaseline(tab, mask);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "CHART_LAYERS_RESTORED",
-            path = %self.workspace.chart_layers_path().display(),
-            // `off`, not `hidden`: the map now always speaks for every layer,
-            // the shipped-off `backfill_divider` included, so a count over it
-            // is no longer "how many the trader switched off". Renamed rather
-            // than quietly redefined — a field that keeps its name and changes
-            // its meaning misleads every dashboard already reading it.
-            off = defaults.values().filter(|visible| !**visible).count(),
-            layers = defaults.len(),
-            "chart layer visibility restored"
+        chart_layers::restore(
+            &mut self.workspace,
+            &mut self.tabs,
+            self.active_tab,
+            &mut self.style,
         );
-    }
-
-    /// Put every open pane on the saved visibility, once, at startup.
-    ///
-    /// A tab opened later does *not* come through here: it inherits the layers
-    /// the active tab is showing at that moment (`inherited_layers` in
-    /// [`Self::adopt_tab`]), which is the live state rather than the map read
-    /// off disk during boot. The two policies differ on purpose — see the note
-    /// there — so a reader arriving here for new-tab behaviour is in the wrong
-    /// function.
-    fn apply_layer_defaults(&mut self, states: &std::collections::BTreeMap<ChartLayer, bool>) {
-        for tab in &mut self.tabs {
-            // Every pane, by address: a default applied to "the flow pane and
-            // the time pane" left the second stacked chart on whatever the
-            // previous defaults were, so one canvas drew the same layer two
-            // ways.
-            for pane in tab.panes_mut() {
-                pane.apply_layer_states(states);
-            }
-        }
     }
 }

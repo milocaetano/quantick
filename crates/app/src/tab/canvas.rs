@@ -42,7 +42,7 @@ pub struct CanvasChrome<'a> {
     /// The footprint layer's signal tunables (see [`PaneChrome::footprint`]).
     pub footprint: &'a mut crate::footprint_config::FootprintConfig,
     /// Where a pane's layer menu leaves the switches it does not own.
-    pub layers: &'a mut crate::chart_layers::LayerActions,
+    pub layers: &'a mut quantick_layers::LayerActions,
 }
 
 /// Which pane order entry belongs to this frame.

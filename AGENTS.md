@@ -126,6 +126,7 @@ graph TD
   app --> controlhost
   app --> engine
   app --> chartinteraction
+  app --> layers
   backtest --> strategy
   backtest --> pine
   backtest --> indicators
@@ -160,6 +161,7 @@ graph TD
 
   subgraph pure["Pure domain — no workspace dependencies"]
     chartinteraction["chart-interaction<br/>interaction owners"]
+    layers["layers<br/>visibility policy"]
     engine["engine<br/>trades → bars"]
     orderbook["orderbook<br/>L2 book core"]
     control["control<br/>control-plane contracts"]
@@ -170,19 +172,20 @@ graph TD
 | Crate | What it owns |
 | --- | --- |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
+| `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects preserve feature owners. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
-| `orderflow` | The order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections. Headless; its caller passes it the clock. The chart draws it today, `backtest` may consume it next. |
+| `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
+| `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, by-time history reach/campaign and session export. Owns runtimes, threads and clock below `app`. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; the chart drives it; the backtest proves it in a test. |
 | `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
 | `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
-| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
+| `control` | Transport-neutral contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors and public `fake` host/client ports. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
 | `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
 | `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |

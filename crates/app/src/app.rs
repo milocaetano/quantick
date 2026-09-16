@@ -237,9 +237,6 @@ pub struct QuantickApp {
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
-    /// Where a pane's layer menu leaves the grid switch and the "an indicator
-    /// was hidden" flag; drained right after the canvas is drawn.
-    layer_actions: chart_layers::LayerActions,
     /// The footprint layer's signal tunables — resolved at boot (env >
     /// `config/footprint.toml` preset > saved edits > defaults), edited live
     /// by the layer menu's controls.
@@ -472,7 +469,6 @@ impl QuantickApp {
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
-            layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             audio: replay_and_history::AlertState {
                 alerts: Box::new(crate::audio::Speaker::default()),

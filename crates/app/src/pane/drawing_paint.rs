@@ -10,15 +10,14 @@
 //! module scope in [`super`], where callers on both sides of the cut reach them.
 
 use eframe::egui;
-use smallvec::SmallVec;
 
 use crate::bands::{self, Band, BandLabel, Bands};
 use crate::chart::PriceScale;
-use crate::drawings::{ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle};
+use crate::drawings::{ChartPoint, Drawing, DrawingBand};
 use crate::indicators::PaneSizing;
 use crate::plot_area::PlotAreas;
 
-use super::{ChartPane, DrawPass, paint_placement_hint};
+use super::{ChartPane, DrawPass};
 
 impl ChartPane {
     pub(super) fn drawing_screen_point(
@@ -217,72 +216,26 @@ impl ChartPane {
         total: usize,
         pass: DrawPass,
     ) {
-        let Some(scale) = band.scale.as_ref() else {
-            return;
+        let mut view = super::render_registry::DrawingPass {
+            painter,
+            band,
+            band_index,
+            drawings: &self.drawings,
+            viewport: &self.viewport,
+            history_right,
+            total,
+            pass,
+            content_editing: self.gestures.content_editing,
+            hover: self.gestures.hover,
         };
-        let chart_rect = band.rect;
-        let clipped = painter.with_clip_rect(chart_rect);
-        for (index, drawing) in self.drawings.items().iter().enumerate() {
-            if !self.drawings.is_visible(index) || !bands::drawing_in_band(drawing, band) {
-                continue;
-            }
-            let points = self.projected_drawing_points(drawing, history_right, total, scale);
-            let selected = self.drawings.selected() == Some(index);
-            // An object that crosses every band draws its stroke in each and
-            // its readout and handles in the first: three copies of
-            // "17 bars 4m 21s" stacked down the screen is not three facts.
-            let primary_band = drawing.band != DrawingBand::AllBands || band_index == 0;
-            // A mark this chart's data does not back: its anchors are outside
-            // the loaded series, or it was drawn on the instrument this tab
-            // used to show. It survived the change, because only the trader
-            // deletes a drawing, and it says what it is by fading rather than
-            // by passing itself off as a level on this market. Same opacity
-            // the mirrored marks use for the same reason.
-            let style = if drawing.off_series || drawing.foreign_market {
-                DrawingStyle {
-                    color: Self::painted_color(drawing),
-                    fill_alpha: 0,
-                    ..drawing.style
-                }
-            } else {
-                drawing.style
-            };
-            let ctxt = DrawContext {
-                payload: drawing.payload.as_ref(),
-                anchors: &drawing.points,
-                scale,
-                px_per_bar: self.viewport.px_per_bar(),
-                unit: band.unit(),
-                primary_band,
-                style,
-                selected,
-                halo: false,
-                content_editing: self.gestures.content_editing == Some(index),
-            };
-            // A locked object shows no resize handles: its geometry is not
-            // editable, so the affordance would lie.
-            if pass == DrawPass::UnderCandles {
-                // The body only. Everything below this line — the caret, the
-                // badges, the rubber band — is chrome about the object, and
-                // chrome under the price is chrome nobody can read.
-                drawing
-                    .tool
-                    .paint_under(&clipped, chart_rect, style, &points, &ctxt);
-                continue;
-            }
-            drawing.tool.paint(
-                &clipped,
-                chart_rect,
-                style,
-                &points,
-                &ctxt,
-                selected && !drawing.locked && primary_band,
-            );
-            bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
-        }
+        self.layer_renderers.drawings(&mut view);
         if pass == DrawPass::UnderCandles {
             return;
         }
+        let Some(scale) = band.scale.as_ref() else {
+            return;
+        };
+        let clipped = painter.with_clip_rect(band.rect);
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
@@ -301,57 +254,6 @@ impl ChartPane {
             self.paint_strategy_badge(&clipped, instance, drawing, &points);
         }
 
-        // With hide-all engaged the finished object would be invisible, so
-        // the rubber-band must not pretend otherwise (audit M8) — placement
-        // itself releases hide-all when it commits, in `place_with`.
-        if let Some(draft) = self
-            .drawings
-            .draft()
-            .filter(|draft| bands::drawing_in_band(draft, band))
-            .filter(|_| !self.drawings.all_hidden())
-        {
-            let mut points = self.projected_drawing_points(draft, history_right, total, scale);
-            // The preview completes the geometry with the hovered anchor, in
-            // both screen and chart space, so payload-driven tools can show
-            // their real shape while placing.
-            let mut anchors: SmallVec<[ChartPoint; 4]> = SmallVec::from_slice(&draft.points);
-            if points.len() < draft.tool.required_points()
-                && let Some(hover) = self.gestures.hover
-            {
-                points.push(self.drawing_screen_point(hover, history_right, total, scale));
-                anchors.push(hover);
-            }
-            let ctxt = DrawContext {
-                payload: draft.payload.as_ref(),
-                anchors: &anchors,
-                scale,
-                px_per_bar: self.viewport.px_per_bar(),
-                unit: band.unit(),
-                primary_band: draft.band != DrawingBand::AllBands || band_index == 0,
-                style: draft.style,
-                selected: false,
-                halo: false,
-                content_editing: false,
-            };
-            // Both halves, in order. A tool whose body lives in the
-            // background pass would otherwise preview as an empty outline
-            // while it is being dragged out — the profile's own histogram is
-            // already folded for a draft, so there is data to show.
-            // Over the candles rather than under them: a preview is a thing
-            // in flight, and burying it would hide the gesture.
-            draft
-                .tool
-                .paint_under(&clipped, chart_rect, draft.style, &points, &ctxt);
-            draft
-                .tool
-                .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
-            // What the next click will do, printed where the eye already is.
-            // The rail's `n/N` badge says the same thing on the far side of
-            // the screen, which is why a trader who drags a three-anchor tool
-            // and lets go reads the waiting object as frozen.
-            if let Some(cursor) = points.last().copied() {
-                paint_placement_hint(&clipped, chart_rect, cursor, draft.tool, draft.points.len());
-            }
-        }
+        self.layer_renderers.drawing_draft(&mut view);
     }
 }

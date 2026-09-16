@@ -509,7 +509,7 @@ fn layout_permissions() -> BTreeSet<PermissionId> {
         .collect()
 }
 
-fn descriptor(
+pub(super) fn descriptor(
     id: &str,
     title: &str,
     description: &str,
@@ -565,7 +565,7 @@ fn descriptor(
 /// A tab id that no longer exists is refused rather than resolved to the
 /// active one: a caller that named a tab meant that tab, and quietly acting on
 /// a different market is the worst answer available.
-fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
+pub(super) fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
     let Some(id) = target.tab_id else {
         return Ok(app.control_active_tab_index());
     };

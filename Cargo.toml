@@ -15,6 +15,7 @@ members = [
     "crates/sim",
     "crates/paper",
     "crates/civil",
+    "crates/layers",
     "crates/trading",
     "crates/strategy",
     "crates/feed",

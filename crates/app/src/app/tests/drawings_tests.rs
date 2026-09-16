@@ -4628,7 +4628,7 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
         app.active_tab_mut().pane_mut(side).set_layer_visible(
             ChartLayer::BackfillDivider,
             true,
-            &mut chart_layers::LayerActions::default(),
+            &mut quantick_layers::LayerActions::default(),
         );
     }
     // The view follows the live edge, and the venue history is far behind

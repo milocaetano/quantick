@@ -109,10 +109,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 15 |
+| deduplicated per connection | 16 |
 | key refused; not retryable, read back | 13 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **35** |
+| **Total** | **36** |
 
 ## Capabilities
 
@@ -131,6 +131,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `feed.reload` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].feed_generation` | the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation) | `a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_feed_generation_advances_on_every_respawn_and_reads_back` |
 | `indicator.script.attach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.attached` | `payload.script.slot_id` | an event after the pre-call cursor names a new `slot_id` | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `indicator.script.detach` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `indicator.script.detached` | `payload.script.slot_id` | an event after the pre-call cursor names the `slot_id` asked for | `an_interrupted_script_attach_or_detach_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `layers.visibility.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `layers.visibility.set` | `payload.result` | an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `layout.focus.set` | 1, 2 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].panes[].focused` | the pane at the address asked for is the focused one, per pane since two context charts share a side; the flag is reported for the active tab only, and a collapsed column reports the flow pane, so reconcile a background or collapsed tab once it is shown | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `layout_v2_answers_with_the_exact_share_and_v1_is_still_there` |
 | `layout.pane.collapse` | 1, 2 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].context_collapsed` | the tab's context column reads collapsed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `layout_v2_answers_with_the_exact_share_and_v1_is_still_there`, `a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted` |
 | `layout.pane.expand` | 1, 2 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `workspace.summary` | `tabs[].context_collapsed` | the tab's context column no longer reads collapsed | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `layout_v2_answers_with_the_exact_share_and_v1_is_still_there` |
@@ -154,4 +155,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-35 mutable capabilities registered, 35 with a readback.
+36 mutable capabilities registered, 36 with a readback.
