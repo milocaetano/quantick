@@ -1,0 +1,14 @@
+[package]
+name = "quantick-layers"
+description = "Headless chart-layer registration, visibility policy and persistence transitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+[lints]
+workspace = true

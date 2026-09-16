@@ -13,9 +13,9 @@
 
 use eframe::egui;
 
-use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::drawings::{self, DrawingBand};
 use crate::theme;
+use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
     lane_window_label, same_lane_window,
@@ -65,7 +65,15 @@ impl ChartPane {
     /// each layer belongs to, so neither menu can offer a switch for the canvas
     /// beside it.
     fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| !layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| !layer.on_tape())
+        {
             let blocked = self.layer_checkbox(ui, layer, chrome);
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
@@ -109,7 +117,15 @@ impl ChartPane {
         // checkbox reads and writes the lane's own field through
         // `layer_visible` / `set_layer_visible`, which is also what puts these
         // three in the layer state file.
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.on_tape())
+        {
             let _ = self.layer_checkbox(ui, layer, chrome);
         }
 

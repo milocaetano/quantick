@@ -20,6 +20,7 @@ mod interaction;
 pub(crate) mod inventory;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
+mod layers;
 mod layout;
 mod notify;
 mod orderflow;
@@ -104,5 +105,6 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     orderflow::register(&mut registry)?;
     session::register(&mut registry)?;
     scene::register(&mut registry)?;
+    layers::register(&mut registry)?;
     Ok(registry)
 }

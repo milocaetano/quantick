@@ -51,6 +51,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "layer_control_tests.rs"]
+mod layer_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 
@@ -572,6 +574,7 @@ const LAYOUT_V2: u32 = 2;
 /// store this test is about.
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
+        ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         (
             "layout.preset.apply",
             LAYOUT_V2,
@@ -725,6 +728,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "layers.visibility.set" => json!({
+                "tab_id": app.active_tab().id.to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "layer_id": "grid", "visible": !app.style.canvas.grid_enabled,
+            }),
             "layout.tab.switch" => json!({ "name": first_layout }),
             "layout.pane.resize_pair" => json!({
                 "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),

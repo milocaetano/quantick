@@ -21,6 +21,7 @@ use super::{
     health::HealthSnapshot,
     interaction::{CursorSnapshot, SelectionSnapshot},
     journal::EventPage,
+    layers::{LayersSnapshot, SetVisibilityInput, VisibilityResult},
     layout::{LayoutResultV2, ResizeInputV2},
     notify::{NotifyInput, NotifyResult},
     orderflow::{BubblesSnapshot, FootprintSnapshot, HeatmapSnapshot, L2Snapshot, TapeSnapshot},
@@ -94,6 +95,9 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         // across the wire. Version 1's schemas were never published as files.
         document::<LayoutResultV2>("layout-result-v2.schema.json"),
         document::<ResizeInputV2>("layout-resize-input-v2.schema.json"),
+        document::<LayersSnapshot>("observer-layers-visibility-v1.schema.json"),
+        document::<SetVisibilityInput>("layers-visibility-set-input-v1.schema.json"),
+        document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
     ]
 }
 

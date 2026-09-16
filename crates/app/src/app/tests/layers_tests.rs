@@ -227,6 +227,26 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     );
 }
 
+#[test]
+fn inherited_drawing_visibility_opens_without_undo_but_user_changes_are_undoable() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(120);
+    switch_layer(&mut app, ChartLayer::Drawings, false);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    let pane = &mut app.active_tab_mut().time_panes[0];
+    assert!(pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 0);
+    assert!(!pane.drawings.undo());
+
+    let mut actions = quantick_layers::LayerActions::default();
+    pane.set_layer_visible(ChartLayer::Drawings, true, &mut actions);
+    assert!(!pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 1);
+    assert!(pane.drawings.undo());
+    assert!(pane.drawings.all_hidden());
+}
+
 /// A tab opened mid-session inherits what is on screen *now*, not what the
 /// file said at startup.
 ///
@@ -928,7 +948,12 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     // The toggles still reached the flow pane, which is what owns them.
     assert!(app.active_tab().tape().depth_visible());
     assert!(app.active_tab().tape().bubbles_enabled());
-    assert!(app.active_tab().flow_pane.live_strip_visible);
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .layers
+            .requested(ChartLayer::LiveStrip)
+    );
 }
 
 /// The instrument's price grid is a fact about the market, so both panes
@@ -975,7 +1000,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         app.active_tab_mut().pane_mut(side).set_layer_visible(
             ChartLayer::Footprint,
             false,
-            &mut chart_layers::LayerActions::default(),
+            &mut quantick_layers::LayerActions::default(),
         );
     }
     let frvp = crate::drawings::DRAWING_TOOLS

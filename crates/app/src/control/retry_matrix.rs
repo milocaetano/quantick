@@ -188,6 +188,14 @@ const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's
 /// rendered in the registry's order.
 pub(crate) const READBACKS: &[Readback] = &[
     super::layout::stack::READBACK,
+    journal(
+        "layers.visibility.set",
+        Optional,
+        super::layers::EVENT_KIND,
+        "payload.result",
+        "an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown",
+        &[EVERY_OPTIONAL_TEST],
+    ),
     snapshot(
         "annotate.arrow.create",
         Forbidden,

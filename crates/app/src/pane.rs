@@ -13,14 +13,11 @@
 //! [`ChartPane::id`] for the same reason — two panes registering one id would
 //! share a drag.
 
-use std::collections::BTreeSet;
-
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bands;
 use crate::chart::PriceScale;
-use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{self, Drawings};
 use crate::indicator_worker::{IndicatorWorker, LaneTransport, MAX_LANE_RUNGS, SlotId};
@@ -36,6 +33,7 @@ use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::viewport::Viewport;
+use quantick_layers::{ChartLayer, LayerActions};
 
 // The tests in `pane/tests/` reach these through `use super::*`; the production
 // code that read them moved to the siblings, so only the tests still need
@@ -70,6 +68,16 @@ mod frame;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod render_registry;
+pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
+    render_registry::standard().layers()
+}
+#[cfg(test)]
+impl ChartPane {
+    pub(crate) fn install_layer_probe(&mut self) {
+        render_registry::probe::install(self);
+    }
+}
 mod menus;
 mod pointer_hit;
 mod primary_button;
@@ -589,20 +597,14 @@ pub struct ChartPane {
     /// pane at all. Expanded by default, which is what every chart did before
     /// the fold existed.
     pub legend_collapsed: bool,
-    /// Whether the user wants the live strip shown. The pixels it actually
-    /// gets are still capability-gated — see [`Self::live_strip_width`].
-    pub live_strip_visible: bool,
+    /// Requested switches not already owned by another feature, and the
+    /// headless catalog that resolves policy for every layer.
+    pub layers: quantick_layers::LayerState,
+    layer_renderers: &'static render_registry::RenderRegistry,
     /// The candle footprint layer as this pane has it — see
     /// [`PaneFootprint`].
     pub footprint: PaneFootprint,
 
-    /// Layers switched off that nothing else on this pane owns.
-    ///
-    /// The rest of the right-click menu resolves to the field that already owns
-    /// its layer (see [`Self::layer_visible`]); only the chart's own marks —
-    /// which had no switch before the menu existed — are held here, so the menu
-    /// can never hold a second opinion about a pixel.
-    pub hidden_layers: BTreeSet<ChartLayer>,
     /// Where each layer's switch landed in the last menu frame, so a test can
     /// click the real widget instead of calling the setter behind it.
     #[cfg(test)]
@@ -736,14 +738,14 @@ impl ChartPane {
             drawings_key: None,
             drawings_saved_revision: 0,
             legend_collapsed: false,
-            live_strip_visible: false,
+            layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
+            layer_renderers: render_registry::standard(),
             footprint: PaneFootprint::default(),
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
             // the mark is one click away in the layer menu, and the bars
             // either side of it are exactly what they were.
-            hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
             #[cfg(test)]
             layer_menu_rects: Vec::new(),
             viewport: Viewport::new(),
@@ -859,8 +861,11 @@ impl ChartPane {
         // `layer_blocked` states: the running feed is resolved once per frame
         // by the caller, and a copy kept here would be one more thing to keep
         // in step when MetaTrader narrows its capabilities mid-session.
-        let source_fills_it = capabilities.book_capture || capabilities.traded_volume;
-        if self.live_strip_visible && self.orderflow.is_some() && source_fills_it {
+        if quantick_layers::LayerState::effective(
+            ChartLayer::LiveStrip,
+            self.layers.requested(ChartLayer::LiveStrip),
+            self.layer_facts(Some(capabilities)),
+        ) {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0

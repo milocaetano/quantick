@@ -3,7 +3,11 @@ use super::*;
 fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let (mut app, events, commands, _book) = test_app();
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.live_strip_visible = false;
+    pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::LiveStrip,
+        false,
+        &mut Default::default(),
+    );
     pane.spec.retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();

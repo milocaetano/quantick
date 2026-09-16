@@ -247,21 +247,35 @@ impl QuantickApp {
                     .request_older_ohlcv_history(capabilities);
             }
             ToolbarAction::SetHeatmap(shown) => {
-                self.active_tab_mut().tape_mut().set_depth_visible(shown);
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::Heatmap,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::SetBubbles(enabled) => {
-                self.active_tab_mut()
-                    .tape_mut()
-                    .set_bubbles_enabled(enabled);
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::Bubbles,
+                    enabled,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::SetLiveStrip(shown) => {
-                self.active_tab_mut().flow_pane.live_strip_visible = shown;
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::LiveStrip,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             // The focused pane's own field, through the same setter the pane's
             // layer menu calls — so the button, the menu and the lamp can
             // never disagree about which chart the command described.
             ToolbarAction::SetFootprint(shown) => {
-                self.focused_pane_mut().footprint.visible = shown;
+                self.focused_pane_mut().set_layer_visible(
+                    crate::chart_layers::ChartLayer::Footprint,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),

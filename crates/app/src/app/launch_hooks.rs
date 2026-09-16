@@ -66,7 +66,11 @@ impl QuantickApp {
         // Same convenience for the live strip; its pixels stay
         // capability-gated either way (see live_strip_width).
         if std::env::var("QUANTICK_LIVE_STRIP_AUTOSTART").is_ok_and(|value| value == "1") {
-            self.active_tab_mut().flow_pane.live_strip_visible = true;
+            self.active_tab_mut().flow_pane.set_layer_visible(
+                crate::chart_layers::ChartLayer::LiveStrip,
+                true,
+                &mut Default::default(),
+            );
         }
     }
 

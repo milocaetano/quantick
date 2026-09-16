@@ -13,12 +13,12 @@
 use eframe::egui;
 
 use crate::bands::{self, Bands};
-use crate::chart_layers::ChartLayer;
 use crate::drawings;
 use crate::indicator_render;
 use crate::paper_trading::ChartInput;
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
+use quantick_layers::ChartLayer;
 
 use super::axes_and_panes::PANE_DIVIDER_HANDLE_PX;
 use super::{

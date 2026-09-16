@@ -6373,6 +6373,142 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layers.visibility.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "layer_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Stable identity from chart.summary, never a position that a pane move can change."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "layer_id",
+          "visible"
+        ],
+        "title": "SetVisibilityInput",
+        "type": "object"
+      },
+      "module": "layers",
+      "output_schema": {
+        "$defs": {
+          "LayerSnapshot": {
+            "properties": {
+              "blocked_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "effective": {
+                "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "persistence": {
+                "type": "string"
+              },
+              "requested": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "scope",
+              "persistence",
+              "requested",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "layer": {
+            "$ref": "#/$defs/LayerSnapshot"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "layer",
+          "changed"
+        ],
+        "title": "VisibilityResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.",
+      "title": "Set chart layer visibility",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
       "destructive": false,
       "dry_run_supported": false,
@@ -10708,6 +10844,11 @@
       "title": "Interaction"
     },
     {
+      "description": "Registered chart visibility and availability, including hidden panes.",
+      "id": "layers",
+      "title": "Chart layers"
+    },
+    {
       "description": "The canvas: which charts are on screen, where they sit, and how wide.",
       "id": "layout",
       "title": "Layout"
@@ -13333,6 +13474,106 @@
       },
       "schema_version": 1,
       "title": "Current selection"
+    },
+    {
+      "description": "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid is window-wide.",
+      "id": "layers.visibility",
+      "module_id": "layers",
+      "required_permissions": [
+        "observe",
+        "observe.market",
+        "observe.workspace"
+      ],
+      "schema": {
+        "$defs": {
+          "LayerSnapshot": {
+            "properties": {
+              "blocked_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "effective": {
+                "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "persistence": {
+                "type": "string"
+              },
+              "requested": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "scope",
+              "persistence",
+              "requested",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "PaneLayersSnapshot": {
+            "properties": {
+              "layers": {
+                "items": {
+                  "$ref": "#/$defs/LayerSnapshot"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "layers"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "omitted_panes": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "panes": {
+            "items": {
+              "$ref": "#/$defs/PaneLayersSnapshot"
+            },
+            "maxItems": 64,
+            "type": "array"
+          }
+        },
+        "required": [
+          "panes",
+          "omitted_panes"
+        ],
+        "title": "LayersSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Layer visibility"
     },
     {
       "description": "Reports whether aggression bubbles are drawn over the chart and the lane, and what the display floor keeps off the canvas.",

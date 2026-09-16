@@ -93,6 +93,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account below `app` and by the chart above it.
     ("civil", &[]),
+    ("layers", &[]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),

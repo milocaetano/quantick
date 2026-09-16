@@ -217,6 +217,21 @@ impl QuantickApp {
         &self.style
     }
 
+    pub(crate) fn control_set_layer(
+        &mut self,
+        tab: usize,
+        side: crate::pane::PaneSide,
+        layer: crate::chart_layers::ChartLayer,
+        visible: bool,
+    ) {
+        self.tabs[tab].pane_mut(side).set_layer_visible(
+            layer,
+            visible,
+            &mut self.workspace.layers_mut().actions,
+        );
+        self.apply_layer_actions();
+    }
+
     /// The drawing tool rail: which tool is armed, and whether it is on
     /// screen at all.
     pub(crate) fn control_tool_rail(&self) -> &ToolRail {
