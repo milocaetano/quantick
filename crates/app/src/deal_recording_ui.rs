@@ -11,9 +11,11 @@ use eframe::egui;
 
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView, fmt_count, fmt_hms};
 use crate::feed_notice;
+#[cfg(test)]
 use crate::state::BarKind;
 use crate::tab::Tab;
 use crate::theme;
+use quantick_engine::bar_registry::BarDefinition;
 use quantick_feed::stall::Stall;
 
 /// The popover's width, in points.
@@ -53,9 +55,10 @@ fn palette(state: RecState) -> (egui::Color32, egui::Color32, egui::Color32) {
 pub fn draw_button(
     ui: &mut egui::Ui,
     view: &RecordingView,
-    pane_kind: BarKind,
+    pane_kind: impl Into<&'static BarDefinition>,
     request_open: bool,
 ) -> Option<DealRecordingAction> {
+    let pane_kind = pane_kind.into();
     if !view.supported() {
         return None;
     }
@@ -96,9 +99,10 @@ pub fn draw_button(
 fn draw_popover(
     ui: &mut egui::Ui,
     view: &RecordingView,
-    pane_kind: BarKind,
+    pane_kind: impl Into<&'static BarDefinition>,
     action: &mut Option<DealRecordingAction>,
 ) {
+    let pane_kind = pane_kind.into();
     ui.label(egui::RichText::new(view.headline()).strong());
     ui.label(
         egui::RichText::new(
@@ -311,10 +315,11 @@ pub struct DealChip {
 #[must_use]
 pub fn chip_for(
     view: &RecordingView,
-    pane_kind: BarKind,
+    pane_kind: impl Into<&'static BarDefinition>,
     reading_in_pane: bool,
     uncounted_prints: u64,
 ) -> Option<DealChip> {
+    let pane_kind = pane_kind.into();
     let since = view
         .since_ms
         .map(|ms| fmt_hms(ms, view.tz_minutes))

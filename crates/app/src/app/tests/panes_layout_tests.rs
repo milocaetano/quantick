@@ -1751,7 +1751,14 @@ fn the_bars_selectors_govern_the_focused_pane() {
     // The exact selector fields the toolbar's BARS group borrows for the
     // focused pane, written through the same deferred-spec path.
     let pane = app.active_tab_mut().focused_pane_mut();
-    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     pane.spec.retain(crate::state::BarSpec::Time(300_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
@@ -2868,7 +2875,16 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
 
     // The toolbar route: `bars → time`. The kind's default interval is a
     // real timeframe (QW2), so the spec that lands is one minute.
-    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Time;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
@@ -2899,7 +2915,16 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
 
     // And leaving the time kind hands the prefix back: a tick chart is
     // the tape's alone.
-    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Tick;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Tick.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(

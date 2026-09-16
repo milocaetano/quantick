@@ -7,7 +7,6 @@
 //! is long because a cockpit has many parts; it is here rather than in
 //! `app.rs` because nothing else in the window needs to see it.
 
-use crate::state::BarSpec;
 use crate::tab::{CanvasLayout, LegendFold};
 use crate::ui_state;
 
@@ -94,7 +93,9 @@ impl QuantickApp {
         for (index, saved) in workspace.tabs.iter().enumerate() {
             // `restore` has already dropped anything unparseable, so a spec
             // reaching here is one a control could have produced.
-            let flow = BarSpec::parse(&saved.flow_bars).ok();
+            let flow = quantick_engine::bar_registry::BUILTIN_BARS
+                .parse(&saved.flow_bars)
+                .ok();
             if index == 0 && adopt_first {
                 // Tab zero is the one `main` spawned. Its market matches this
                 // entry (that is where `main` read it from), so only its bar

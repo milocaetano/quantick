@@ -15,13 +15,16 @@
 //! - [`Bar`] — the OHLCV + order-flow summary of the trades in one sampling
 //!   bucket. The bucketing rule (tick / volume / dollar / time) lives in a bar
 //!   *builder*; the summary shape is shared.
-//! - [`BarSpec`] — which builder, and its parameter, as the `kind:parameter`
-//!   vocabulary every consumer reads. The chart, the backtest and the bot all
-//!   build through [`BarSpec::build`].
+//! - [`bar_registry`] — stable definitions, parameter contracts and factories.
+//!   Chart, backtest and bot retain its resolved configurations. [`BarSpec`]
+//!   preserves the original enum API as an adapter to those definitions.
 //!
 //! The [`fixture`] module defines the plain-text trade format that golden tests
 //! replay to guard determinism.
 
+pub mod bar_registry;
+pub mod bar_selection;
+pub mod bar_timeline;
 pub mod fixture;
 pub mod forming_run;
 pub mod golden;

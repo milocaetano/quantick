@@ -39,7 +39,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, DeclaredLayout};
-use crate::state::BarSpec;
 
 /// Environment override for the workspace file location.
 pub const UI_STATE_ENV: &str = "QUANTICK_UI_STATE";
@@ -196,7 +195,7 @@ impl From<SavedDockTab> for crate::dock::DockTab {
 /// Bar specs are stored as the `kind:parameter` text `default_bars` already
 /// uses (`tick:50`, `time:1m`) rather than as a tagged struct: the file stays
 /// hand-editable in the vocabulary the config documents, and
-/// [`BarSpec::parse`] is the one gate both go through — so a hand-edited
+/// [`quantick_engine::bar_registry::BarRegistry::parse`] is the one gate both go through — so a hand-edited
 /// workspace can never open a chart no control could have produced.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedTab {
@@ -782,7 +781,7 @@ fn filter_tabs(tabs: &mut Vec<SavedTab>, active_tab: usize, config: &AppConfig) 
             );
             return false;
         }
-        if let Err(error) = BarSpec::parse(&tab.flow_bars) {
+        if let Err(error) = quantick_engine::bar_registry::BUILTIN_BARS.parse(&tab.flow_bars) {
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -821,7 +820,9 @@ fn filter_tabs(tabs: &mut Vec<SavedTab>, active_tab: usize, config: &AppConfig) 
         // perfectly good chart, and dropping a whole market over the second
         // pane's parameter would be out of proportion.
         if let Some(spec) = &tab.time_bars
-            && !matches!(BarSpec::parse(spec), Ok(BarSpec::Time(_)))
+            && !quantick_engine::bar_registry::BUILTIN_BARS
+                .parse(spec)
+                .is_ok_and(|spec| spec.time_interval_ms().is_some())
         {
             tab.time_bars = None;
         }

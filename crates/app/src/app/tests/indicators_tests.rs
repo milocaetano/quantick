@@ -112,6 +112,67 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
     }
 }
 
+#[test]
+fn forgetting_a_tab_clears_all_five_slot_collections_without_touching_other_tabs() {
+    let (mut app, _commands) = app_with_history(1);
+    let owners = [7, 9].map(|tab| super::super::TabSlot {
+        tab,
+        side: PaneSide::Flow,
+        slot: SlotId(0),
+    });
+    let state = &mut app.indicators;
+    for owner in owners {
+        state.slot_kinds.push((
+            owner,
+            crate::indicators::state_file::SavedKind::native("cvd"),
+        ));
+        state.operator_slots.insert(owner);
+        state
+            .script_files
+            .push((owner, 0, std::time::SystemTime::UNIX_EPOCH));
+        state.pending_hidden.push(owner);
+        state
+            .pending_styles
+            .push((owner, crate::indicator_style::StyleOverride::default()));
+    }
+    state.forget_tab(7);
+    assert_eq!(
+        state
+            .slot_kinds
+            .iter()
+            .map(|(owner, _)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(
+        state.operator_slots.iter().copied().collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(
+        state
+            .script_files
+            .iter()
+            .map(|(owner, ..)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(state.pending_hidden, [owners[1]]);
+    assert_eq!(
+        state
+            .pending_styles
+            .iter()
+            .map(|(owner, _)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    state.forget_tab(7);
+    assert_eq!(
+        state.pending_hidden,
+        [owners[1]],
+        "repeated close notification is harmless"
+    );
+}
+
 /// An anchor dropped in an indicator pane belongs to that pane.
 #[test]
 fn a_click_in_an_indicator_pane_draws_on_that_band() {
@@ -271,7 +332,7 @@ fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().apply_spec_changes();
     assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
-    assert!(app.active_tab().flow_pane.spec.pending.is_none());
+    assert!(app.active_tab().flow_pane.spec.pending().is_none());
 }
 
 /// Both folded legends come back folded — the time pane's included.
@@ -625,7 +686,14 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     // The BARS group borrows the focused pane's selector fields.
     let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
     let pane = app.active_tab_mut().focused_pane_mut();
-    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     pane.spec.retain(crate::state::BarSpec::Time(900_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();

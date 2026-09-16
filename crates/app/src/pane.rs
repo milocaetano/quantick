@@ -30,7 +30,7 @@ use crate::paper_trading::PaperTrading;
 use crate::plot_area::{self, PlotAreas, plot_split};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
-use crate::state::{BarSpec, ChartState, SpecSelector};
+use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -704,8 +704,8 @@ impl ChartPane {
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
     /// with the tape and every layer read off it.
     #[must_use]
-    pub fn flow(id: u64, spec: BarSpec, symbol: String) -> Self {
-        Self::new(id, spec, Some(OrderflowView::new(symbol)))
+    pub fn flow(id: u64, spec: impl Into<BarConfiguration>, symbol: String) -> Self {
+        Self::new(id, spec.into(), Some(OrderflowView::new(symbol)))
     }
 
     /// The time pane: the context view beside the flow pane (§11). Time bars
@@ -717,8 +717,9 @@ impl ChartPane {
 
     /// `id` namespaces the pane's egui interaction ids and must be unique
     /// among the panes on screen.
-    fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
+    fn new(id: u64, spec: impl Into<BarConfiguration>, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
+        let spec = spec.into();
         let selector = SpecSelector::new(spec);
 
         Self {
@@ -799,7 +800,8 @@ impl ChartPane {
     /// setting the state alone would restore a chart whose own controls
     /// disagreed with it, and the trader's first touch of the parameter would
     /// snap the chart back to a rule they never chose.
-    pub fn set_spec(&mut self, spec: BarSpec) {
+    pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
+        let spec = spec.into();
         let changed = self.state.spec() != &spec;
         self.spec.set(spec);
         self.state.set_spec(spec);

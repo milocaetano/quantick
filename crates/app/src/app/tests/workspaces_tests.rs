@@ -563,7 +563,7 @@ fn a_restored_workspace_puts_the_window_back() {
     );
     assert_eq!(
         tab.time_pane().map(|pane| *pane.state.spec()),
-        Some(BarSpec::Time(300_000)),
+        Some(BarSpec::Time(300_000).into()),
         "and the time pane on its saved interval, not the header default"
     );
     assert_eq!(app.tz.minutes(), 330);

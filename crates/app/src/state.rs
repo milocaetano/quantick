@@ -10,14 +10,14 @@
 //! No egui, no async here, so the ingest, dispatch and rebuild logic is
 //! unit-tested in CI.
 
+#[cfg(test)]
+pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};
 /// The bar vocabulary lives in the engine, one definition for the chart, the
 /// backtest and the bot. Re-exported so the chart's callers keep finding it
 /// here, with the imbalance unit beside it.
-pub use quantick_engine::{
-    BarKind, BarSpec, ImbalanceUnit, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,
-};
+pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS};
 use rust_decimal::Decimal;
 
 use crate::footprint_series::{self, FootprintSeries};
@@ -58,140 +58,9 @@ pub fn dec_from_f64(x: f64) -> Decimal {
         .max(POSITIVE_FLOOR)
 }
 
-/// A bar kind and one retained parameter per kind — the state the BARS group
-/// of the toolbar edits, and the pane's answer to "what rule am I on?".
-///
-/// The parameters used to live one field per kind on `ChartPane`: `tick_n`,
-/// `volume_units`, `dollar_notional`, `time_interval_ms`, `imbalance_target`
-/// and `imbalance_unit`, beside `kind` and `pending_spec`. That is one field
-/// per variant on the struct every variant shares, so a seventh bar kind cost
-/// a field on a chart pane that has nothing to do with bar kinds — and the
-/// pane grew one every time the vocabulary did.
-///
-/// Here the parameter travels with the variant that owns it. [`Self::retained`]
-/// is one [`BarSpec`] per entry of [`BarKind::ALL`], built from
-/// [`BarKind::default_spec`], so a new kind is a variant, an `ALL` entry and a
-/// default — and no field anywhere else.
-///
-/// Retention is the point of the array. A trader who moves tick → volume →
-/// tick gets their own tick count back rather than a default, because the
-/// tick slot was never overwritten by the detour.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpecSelector {
-    /// The kind the selectors are on. The parameter it reads is
-    /// [`Self::retained`]'s entry for this kind.
-    pub kind: BarKind,
-    /// One spec per [`BarKind::ALL`], in `ALL`'s order, each holding the
-    /// parameter that kind was last set to. Only the entry for
-    /// [`Self::kind`] is live; the rest are what the trader gets back on
-    /// returning to them.
-    retained: Vec<BarSpec>,
-    /// The spec the selectors ask for, applied one frame after they settle so
-    /// the frame carrying the change paints the loading overlay before the
-    /// synchronous rebuild holds this thread. See `Tab::apply_spec_change`.
-    pub pending: Option<BarSpec>,
-}
-
-impl Default for SpecSelector {
-    fn default() -> Self {
-        Self {
-            kind: BarKind::Tick,
-            retained: BarKind::ALL
-                .iter()
-                .map(|kind| kind.default_spec())
-                .collect(),
-            pending: None,
-        }
-    }
-}
-
-impl SpecSelector {
-    /// Defaults for every kind, with `spec`'s own parameter applied and its
-    /// kind selected.
-    #[must_use]
-    pub fn new(spec: BarSpec) -> Self {
-        let mut selector = Self::default();
-        selector.set(spec);
-        selector
-    }
-
-    /// Where `kind`'s parameter lives in [`Self::retained`].
-    ///
-    /// Derived from [`BarKind::ALL`] rather than written out, which is what
-    /// makes an eighth bar kind free here: it lands in `ALL`, and this finds
-    /// it.
-    ///
-    /// The `expect` is guarded by `barkind_all_lists_every_variant`, which
-    /// stops compiling the day a variant is added and not listed — so the
-    /// only way to reach the panic is to make the test fail first.
-    fn slot(kind: BarKind) -> usize {
-        BarKind::ALL
-            .iter()
-            .position(|candidate| *candidate == kind)
-            .expect("BarKind::ALL lists every kind")
-    }
-
-    /// The spec the selectors currently ask for, parameters clamped to what
-    /// the engine will accept.
-    ///
-    /// Because it clamps, a caller reading a parameter off the result needs no
-    /// positivity guard of its own: `spec().time_interval_ms()` is `None` on a
-    /// pane that does not cut by time, and at least 1 ms on one that does.
-    /// Two callers in `pane` rely on exactly that.
-    #[must_use]
-    pub fn spec(&self) -> BarSpec {
-        self.retained(self.kind).clamped()
-    }
-
-    /// `kind`'s retained parameter, whether or not it is the selected kind.
-    ///
-    /// Asserts the slot invariant on the way out, which is where a slot
-    /// written through [`Self::retained_mut`] with the wrong variant surfaces.
-    #[must_use]
-    pub fn retained(&self, kind: BarKind) -> &BarSpec {
-        let spec = &self.retained[Self::slot(kind)];
-        debug_assert_eq!(
-            spec.kind(),
-            kind,
-            "the {kind:?} slot holds a {:?} spec: retained_mut was given another kind's rule, and the selector now paints one kind's parameter under another kind's label",
-            spec.kind()
-        );
-        spec
-    }
-
-    /// `kind`'s retained parameter, to edit in place. The widget that drags a
-    /// parameter binds to the variant's own field through this, so a new
-    /// kind's editor needs no new state to bind to.
-    ///
-    /// Edit the parameter, never the variant: a slot holds its own kind, and
-    /// assigning another kind's spec through this leaves [`Self::spec`]
-    /// returning one rule while [`Self::kind`] names another — the toolbar
-    /// would then drag a volume threshold under a "tick" label.
-    /// [`Self::retained`] asserts it in debug builds; [`Self::retain`] is the
-    /// safe way to store a whole spec.
-    pub(crate) fn retained_mut(&mut self, kind: BarKind) -> &mut BarSpec {
-        let slot = Self::slot(kind);
-        &mut self.retained[slot]
-    }
-
-    /// The selected kind's retained parameter, to edit in place.
-    pub fn active_mut(&mut self) -> &mut BarSpec {
-        self.retained_mut(self.kind)
-    }
-
-    /// Store `spec` as its kind's retained parameter, leaving the selected
-    /// kind alone.
-    pub fn retain(&mut self, spec: BarSpec) {
-        let kind = spec.kind();
-        *self.retained_mut(kind) = spec;
-    }
-
-    /// Store `spec` and select its kind.
-    pub fn set(&mut self, spec: BarSpec) {
-        self.kind = spec.kind();
-        self.retain(spec);
-    }
-}
+pub use quantick_engine::bar_registry::BarConfiguration;
+/// The engine owns retained selection and rebuild debounce policy.
+pub use quantick_engine::bar_selection::BarSelection as SpecSelector;
 
 /// Milliseconds per drag point, shared by both controls so the same gesture
 /// moves the same amount wherever it is made.
@@ -200,12 +69,12 @@ impl SpecSelector {
 /// because that is where dragging is the right gesture. Crossing to the
 /// coarse end is what the time pane's presets and click-to-type are for, and
 /// a speed that made an hour a short drag would make a second unreachable.
-pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
+pub use quantick_engine::bar_registry::TIME_INTERVAL_DRAG_SPEED;
 
 /// The bars derived from the retained trade stream, plus the backfill/live
 /// boundary, for the currently selected [`BarSpec`].
 pub struct ChartState {
-    spec: BarSpec,
+    spec: BarConfiguration,
     /// O(1) identity of the current temporal bar partition.
     timeline_revision: u64,
     /// O(1) identity of the closed bars *and their ladders* — see
@@ -289,7 +158,8 @@ fn fold_print<B: BarBuilder + ?Sized>(
 impl ChartState {
     /// A fresh chart building bars per `spec`.
     #[must_use]
-    pub fn new(spec: BarSpec) -> Self {
+    pub fn new(spec: impl Into<BarConfiguration>) -> Self {
+        let spec = spec.into();
         let builder = spec.build();
         Self {
             spec,
@@ -408,7 +278,7 @@ impl ChartState {
     /// pass joined to, and dropping them would leave the morning uncounted
     /// wherever nothing on disk holds them — REC off, or a day not yet
     /// flushed.
-    pub fn reset_series(&mut self, spec: BarSpec) {
+    pub fn reset_series(&mut self, spec: impl Into<BarConfiguration>) {
         let readings = std::mem::take(&mut self.deal_samples);
         *self = Self::new(spec);
         // Into the fresh builder too, ahead of the prints that will come:
@@ -514,7 +384,8 @@ impl ChartState {
 
     /// Switch the bar type/parameter, rebuilding all bars from the retained
     /// trades. A no-op if `spec` is unchanged.
-    pub fn set_spec(&mut self, spec: BarSpec) {
+    pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
+        let spec = spec.into();
         if spec == self.spec {
             return;
         }
@@ -617,7 +488,7 @@ impl ChartState {
 
     /// The current bar spec.
     #[must_use]
-    pub fn spec(&self) -> &BarSpec {
+    pub fn spec(&self) -> &BarConfiguration {
         &self.spec
     }
 
@@ -772,11 +643,8 @@ impl ChartState {
     /// got.
     #[must_use]
     pub fn slot_open_time(&self, index: usize) -> Option<i64> {
-        match self.bars.get(index) {
-            Some(bar) => Some(bar.open_time),
-            None if index == self.bars.len() => self.partial.as_ref().map(|bar| bar.open_time),
-            None => None,
-        }
+        quantick_engine::bar_timeline::BarTimeline::new(&self.bars, self.partial.as_ref())
+            .slot_open_time(index)
     }
 
     /// The slot showing market time `timestamp_ms`: the newest bar that opened
@@ -788,21 +656,8 @@ impl ChartState {
     /// no series to point into.
     #[must_use]
     pub fn slot_at_time(&self, timestamp_ms: i64) -> Option<usize> {
-        let slots = self.bars.len() + usize::from(self.partial.is_some());
-        if slots == 0 {
-            return None;
-        }
-        if self
-            .partial
-            .as_ref()
-            .is_some_and(|bar| bar.open_time <= timestamp_ms)
-        {
-            return Some(self.bars.len());
-        }
-        let after = self
-            .bars
-            .partition_point(|bar| bar.open_time <= timestamp_ms);
-        Some(after.saturating_sub(1))
+        quantick_engine::bar_timeline::BarTimeline::new(&self.bars, self.partial.as_ref())
+            .slot_at_time(timestamp_ms)
     }
 
     /// How far the forming bar is from closing, in the rule's own measure, and
@@ -826,63 +681,11 @@ mod tape_identity_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_engine::{DECIMAL_PARAM_FLOOR, Side};
+    use quantick_engine::Side;
     use std::str::FromStr as _;
 
     fn dec(s: &str) -> Decimal {
         Decimal::from_str(s).unwrap()
-    }
-
-    /// A zero parameter reaches the selector from outside — a workspace file,
-    /// a config line, a control call — and no kind may pass one on. The
-    /// counted kinds floor at one bar's worth; the two measured in `Decimal`
-    /// floor at [`DECIMAL_PARAM_FLOOR`], which is the floor `dec_from_f64`
-    /// applied on the way in before the parameters moved onto the variants.
-    ///
-    /// Volume is the one that bites: a bar closing on no quantity closes on
-    /// every trade.
-    #[test]
-    fn no_kind_can_be_read_back_with_a_zero_parameter() {
-        let zeroed = [
-            BarSpec::Tick(0),
-            BarSpec::Trades(0),
-            BarSpec::Time(0),
-            BarSpec::Imbalance(ImbalanceUnit::Trades, 0),
-            BarSpec::Volume(Decimal::ZERO),
-            BarSpec::Dollar(Decimal::ZERO),
-        ];
-        for spec in zeroed {
-            let selector = SpecSelector::new(spec);
-            let read_back = selector.spec();
-            let floored = match &read_back {
-                BarSpec::Tick(n) => u64::from(*n > 0),
-                BarSpec::Trades(n) => u64::from(*n > 0),
-                BarSpec::Time(ms) => u64::from(*ms > 0),
-                BarSpec::Imbalance(_, target) => u64::from(*target > 0),
-                BarSpec::Volume(units) => u64::from(*units >= DECIMAL_PARAM_FLOOR),
-                BarSpec::Dollar(notional) => u64::from(*notional >= DECIMAL_PARAM_FLOOR),
-            };
-            assert_eq!(
-                floored, 1,
-                "{spec:?} was read back as {read_back:?}, a rule that closes on nothing"
-            );
-        }
-    }
-
-    /// Retention is the whole reason the selector keeps an array rather than
-    /// one live spec: a detour through another kind must give the trader
-    /// their own parameter back, not a default.
-    #[test]
-    fn a_detour_through_another_kind_returns_the_original_parameter() {
-        let mut selector = SpecSelector::new(BarSpec::Tick(377));
-        selector.set(BarSpec::Volume(dec_from_f64(12.5)));
-        assert_eq!(selector.spec(), BarSpec::Volume(dec_from_f64(12.5)));
-        selector.kind = BarKind::Tick;
-        assert_eq!(
-            selector.spec(),
-            BarSpec::Tick(377),
-            "the tick slot was never overwritten by the volume detour"
-        );
     }
 
     fn trade(agg_id: u64) -> Trade {

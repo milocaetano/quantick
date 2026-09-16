@@ -68,6 +68,7 @@ use crate::indicators::preset_file;
 use crate::indicators::state_file;
 use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
+#[cfg(test)]
 use crate::state::BarSpec;
 use crate::style::ChartStyle;
 use crate::symbols_file::{self, AddedSymbols};
@@ -302,7 +303,7 @@ impl QuantickApp {
         config: AppConfig,
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
-        spec: BarSpec,
+        spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
     ) -> Self {
         Self::new_with_workspace(
@@ -332,7 +333,7 @@ impl QuantickApp {
         config: AppConfig,
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
-        spec: BarSpec,
+        spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
     ) -> Self {
