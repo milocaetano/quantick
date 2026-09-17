@@ -101,6 +101,7 @@ pub enum Slot {
     Duplicate,
     Lock,
     Hide,
+    Sharing,
     Settings,
     Delete,
 }
@@ -130,6 +131,9 @@ pub struct Capabilities {
     /// Whether the gear earns its slot. It does not when the inspector is
     /// pinned: its destination is already on screen.
     pub settings: bool,
+    /// Whether this drawing has enough market-time information to be shown
+    /// on the tab's other charts.
+    pub sharing: bool,
 }
 
 /// The cells of a bar for an object with these capabilities.
@@ -137,7 +141,7 @@ pub struct Capabilities {
 /// A `SmallVec`, not a `Vec`: this is rebuilt on every frame something is
 /// selected, and the bar never holds more cells than fit inline.
 #[must_use]
-pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 12]> {
+pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 13]> {
     let mut slots = SmallVec::from_slice(&[Slot::Grip]);
     if caps.authored {
         slots.push(Slot::Author);
@@ -154,6 +158,9 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 12]> {
     slots.push(Slot::Duplicate);
     slots.push(Slot::Lock);
     slots.push(Slot::Hide);
+    if caps.sharing {
+        slots.push(Slot::Sharing);
+    }
     if caps.settings {
         slots.push(Slot::Settings);
     }
@@ -349,6 +356,8 @@ pub struct ContextBar {
     #[cfg(test)]
     gear_rect: Option<egui::Rect>,
     #[cfg(test)]
+    sharing_rect: Option<egui::Rect>,
+    #[cfg(test)]
     color_rect: Option<egui::Rect>,
     #[cfg(test)]
     swatch_rects: Vec<egui::Rect>,
@@ -484,6 +493,12 @@ impl ContextBar {
 
     #[cfg(test)]
     #[must_use]
+    pub fn sharing_rect(&self) -> Option<egui::Rect> {
+        self.sharing_rect
+    }
+
+    #[cfg(test)]
+    #[must_use]
     pub fn color_rect(&self) -> Option<egui::Rect> {
         self.color_rect
     }
@@ -515,6 +530,7 @@ pub struct ContextBarIntent {
     /// Lock and delete, in the one shape every host reports them in.
     pub actions: ActionBarIntent,
     pub toggle_hidden: bool,
+    pub toggle_shared: bool,
     pub duplicate: bool,
     pub open_settings: bool,
     /// The second step of a protected delete was taken.
@@ -538,6 +554,8 @@ pub struct BarObject<'a> {
     pub glyph_size: Option<GlyphSize>,
     pub locked: bool,
     pub hidden: bool,
+    pub shared: bool,
+    pub shareable: bool,
     pub supports_fill: bool,
     /// Whether the gear earns a slot — false while the inspector is pinned.
     pub settings_available: bool,
@@ -573,6 +591,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         glyph_size: object.glyph_size.is_some(),
         authored: object.author.is_some(),
         settings: object.settings_available,
+        sharing: object.shareable,
     }
 }
 
@@ -692,6 +711,20 @@ fn draw_slot(
                 intent.toggle_hidden = true;
             }
         }
+        Slot::Sharing => {
+            let (glyph, hover) = sharing_control(object.shared);
+            let sharing = IconButton::new(glyph, TOOLRAIL_ICON)
+                .active(object.shared)
+                .hover_text(hover)
+                .show(ui);
+            #[cfg(test)]
+            {
+                bar.sharing_rect = Some(sharing.rect);
+            }
+            if sharing.clicked() {
+                intent.toggle_shared = true;
+            }
+        }
         Slot::Settings => {
             let gear = IconButton::new(icons::GEAR, TOOLRAIL_ICON)
                 .hover_text("Settings - every property of this drawing")
@@ -735,6 +768,14 @@ fn draw_slot(
                 intent.actions.delete = true;
             }
         }
+    }
+}
+
+fn sharing_control(shared: bool) -> (&'static str, &'static str) {
+    if shared {
+        (icons::GRID_FOUR, "Show only on this chart")
+    } else {
+        (icons::GRID_FOUR, "Show on all charts")
     }
 }
 
@@ -1196,6 +1237,7 @@ mod tests {
         authored: false,
         glyph_size: false,
         settings: true,
+        sharing: true,
     };
 
     #[test]
@@ -1242,6 +1284,7 @@ mod tests {
             authored: false,
             glyph_size: true,
             settings: true,
+            sharing: true,
         });
         assert!(!glyph_tool.contains(&Slot::Width));
         assert!(glyph_tool.contains(&Slot::GlyphSize));
@@ -1289,6 +1332,7 @@ mod tests {
                 authored: false,
                 glyph_size: true,
                 settings: false,
+                sharing: true,
             },
         ] {
             let cells = slots(caps);
@@ -1299,6 +1343,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sharing_sits_beside_hide_and_names_both_states() {
+        let cells = slots(PLAIN);
+        let hide = cells.iter().position(|slot| *slot == Slot::Hide).unwrap();
+        assert_eq!(cells[hide + 1], Slot::Sharing);
+        assert_eq!(sharing_control(false).1, "Show on all charts");
+        assert_eq!(sharing_control(true).1, "Show only on this chart");
+        assert_eq!(sharing_control(false).0, icons::GRID_FOUR);
+        assert_eq!(sharing_control(true).0, icons::GRID_FOUR);
+    }
+
+    #[test]
+    fn an_unshareable_drawing_has_no_dead_sharing_control() {
+        let cells = slots(Capabilities {
+            sharing: false,
+            ..PLAIN
+        });
+        assert!(!cells.contains(&Slot::Sharing));
     }
 
     #[test]

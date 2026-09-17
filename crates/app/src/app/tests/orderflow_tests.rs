@@ -6,7 +6,16 @@ use super::*;
 #[test]
 fn switching_only_the_imbalance_unit_recuts_the_series() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Imbalance;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Imbalance.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
@@ -15,15 +24,17 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
         "the kind switch lands on the default trades unit first"
     );
 
-    let retained = app
-        .active_tab_mut()
+    app.active_tab_mut()
         .flow_pane
         .spec
-        .retained_mut(crate::state::BarKind::Imbalance);
-    let BarSpec::Imbalance(unit, _) = retained else {
-        panic!("the imbalance slot holds an imbalance spec")
-    };
-    *unit = crate::state::ImbalanceUnit::Volume;
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Choice {
+                name: "imbalance_unit",
+                value: "volume",
+            },
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     app.active_tab_mut().apply_spec_changes();
     assert!(
         app.active_tab().loading.is_active(LoadingTask::BarRebuild),
@@ -286,12 +297,12 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
         });
     };
 
-    // The candles' own menu is exactly the menu it always was.
+    // The candles keep their long inventory behind the chart-layers submenu.
     menu_frame(&mut app, false);
     assert_eq!(
         app.active_tab().flow_pane.layer_menu_rects.len(),
-        chart_menu_entries(),
-        "a click on the candles still lists every chart layer up front"
+        0,
+        "a click on the candles does not spill layer switches into the primary menu"
     );
 
     // The tape's menu answers for the tape: its own three switches at the
@@ -320,13 +331,10 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
         );
     }
 
-    // And back: aiming at the candles restores the full list, so the two
-    // menus cannot leak into each other across frames.
+    // And back: aiming at the candles removes the tape switches again, so the
+    // two primary menus cannot leak into each other across frames.
     menu_frame(&mut app, false);
-    assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
-        chart_menu_entries()
-    );
+    assert!(app.active_tab().flow_pane.layer_menu_rects.is_empty());
     std::fs::remove_file(&path).ok();
 }
 

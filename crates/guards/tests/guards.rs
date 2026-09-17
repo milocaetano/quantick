@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 12] = [
+const TESTED: [&str; 13] = [
     "size",
     "language",
     "encoding",
@@ -30,6 +30,7 @@ const TESTED: [&str; 12] = [
     "extension-boundary",
     "instruction_links",
     "app-ui-free",
+    "evidence",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -122,6 +123,13 @@ fn no_test_mints_a_temporary_path_outside_its_scratch_module() {
 #[test]
 fn app_ui_free_code_stays_within_its_ceiling() {
     assert_clean(TESTED[11]);
+}
+
+/// Execution evidence and mission files stay out of Git: a tracked archive,
+/// capture or run dossier is 31 MB of history nobody reads again.
+#[test]
+fn no_execution_evidence_or_mission_file_is_carried_by_git() {
+    assert_clean(TESTED[12]);
 }
 
 // --- `--report`, the mode that measures rather than judges -------------------

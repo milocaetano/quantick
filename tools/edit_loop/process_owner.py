@@ -25,6 +25,7 @@ class OwnedTree:
     def __init__(self):
         self.process = None
         self.job = WindowsJob() if os.name == "nt" else None
+        self.observations = []
 
     @staticmethod
     def options():
@@ -42,13 +43,20 @@ class OwnedTree:
 
     def stop(self):
         if self.job:
-            descendants = self.job.active() > 1
+            active = self.job.active()
+            descendants = active > 1
+            # Diagnostics follow the result/timeout, before cleanup. Preserve
+            # the accounting decision even if a listed process exits meanwhile.
+            self.observations.append({"stage": "before_termination", "accounting_active": active})
+            self.observations[-1].update(self.job.snapshot("before_termination"))
             self.job.terminate()
             deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
             while self.job.active():
                 if time.monotonic() >= deadline:
                     raise ProcessStillRunning("Windows job still has active processes")
                 time.sleep(STOP_POLL_SECONDS)
+            self.observations.append({"stage": "after_quiescence", "accounting_active": 0})
+            self.observations[-1].update(self.job.snapshot("after_quiescence"))
         else:
             # The helper remains alive after reporting Cargo's result. Holding
             # this session leader avoids signalling a potentially recycled group.
@@ -163,6 +171,10 @@ class WindowsJob:
 
     def terminate(self):
         self.check(self.kernel.TerminateJobObject(self.handle, OWNED_CLEANUP_EXIT_CODE))
+
+    def snapshot(self, stage):
+        from job_diagnostics import snapshot
+        return snapshot(self, stage)
 
     def close(self):
         if self.handle is not None:

@@ -86,6 +86,13 @@ pub struct TimePaneAreas {
     pub chart: egui::Rect,
 }
 
+/// One visible pane split into its chart body and its layout-tab footer.
+#[derive(Clone, Copy)]
+pub(crate) struct PaneAreas {
+    pub body: egui::Rect,
+    pub layout_strip: egui::Rect,
+}
+
 /// Hold a stored split inside the canvas.
 ///
 /// A sanity clamp, not a floor. The floor is
@@ -114,5 +121,20 @@ pub fn split_time_pane(area: egui::Rect) -> TimePaneAreas {
     TimePaneAreas {
         header: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
         chart: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
+    }
+}
+
+/// Reserve a layout-tab strip inside the bottom of one visible pane.
+///
+/// The footer is part of the pane rather than the canvas around it: two panes
+/// beside or above one another therefore keep two stable selectors, whatever
+/// focus does. Clamping makes a temporarily tiny band spend its available
+/// height on chrome instead of producing an inverted chart rectangle.
+#[must_use]
+pub(crate) fn split_pane_layout_strip(area: egui::Rect) -> PaneAreas {
+    let split_y = (area.bottom() - crate::layout_strip::STRIP_HEIGHT).max(area.top());
+    PaneAreas {
+        body: egui::Rect::from_min_max(area.min, egui::pos2(area.right(), split_y)),
+        layout_strip: egui::Rect::from_min_max(egui::pos2(area.left(), split_y), area.max),
     }
 }

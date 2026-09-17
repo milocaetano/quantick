@@ -25,7 +25,10 @@ capability that cannot change application state.
 | Capability | Version | Module | Read-only | Permissions |
 | --- | --- | --- | --- | --- |
 | `annotate.arrow.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fib_projection.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fib_retracement.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fixed_range_profile.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.fixed_range_profile.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -40,8 +43,10 @@ capability that cannot change application state.
 | `feed.reconnect` | 1 | `feed` | no | `cockpit` |
 | `feed.reload` | 1 | `feed` | no | `cockpit`, `cockpit.recover` |
 | `health.diagnostics.read` | 1 | `health` | yes | `observe`, `observe.health`, `observe.indicators`, `observe.orderflow` |
+| `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
+| `layers.visibility.set` | 1 | `layers` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -52,6 +57,7 @@ capability that cannot change application state.
 | `layout.pane.move` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.resize_pair` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_interval` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -74,4 +80,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-49 capabilities registered.
+55 capabilities registered.

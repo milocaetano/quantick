@@ -68,13 +68,19 @@ pub struct Tool {
     pub annotations: ToolAnnotations,
 }
 
-/// One item of a tool result's unstructured content. Only text is produced
-/// here: the structured content carries the data, and the text block repeats
-/// it for clients that read nothing else.
+/// One item of a tool result. Image bytes belong only in the image block,
+/// never in the accompanying text or structured metadata.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Content {
-    Text { text: String },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }
 
 /// A `tools/call` result.
@@ -147,7 +153,9 @@ mod tests {
             result.structured_content.as_ref().unwrap()["error"]["code"],
             "control.invalid_request"
         );
-        let Content::Text { text } = &result.content[0];
+        let Content::Text { text } = &result.content[0] else {
+            panic!("an error returns text");
+        };
         assert!(text.starts_with("control.invalid_request: nope"));
     }
 }

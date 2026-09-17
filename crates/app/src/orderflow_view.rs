@@ -21,6 +21,7 @@ use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
 mod frame;
+mod layers;
 mod settings;
 
 /// Borrowed chart timeline handed to one order-flow projection request.

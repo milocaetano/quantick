@@ -26,6 +26,7 @@ use quantick_control::{
     schema::{CompiledSchema, generated_schema},
     wire::{ActorContext, ActorKind, WireU64},
 };
+use quantick_control_host::contract::ExternalSchemas;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -169,6 +170,18 @@ impl ActionRegistry {
         self.actions.values().map(|action| &action.descriptor)
     }
 
+    /// Borrow the actual registered identity and validators without cloning
+    /// an execution handle or exposing handlers and canonical-input machinery.
+    pub fn schemas(&self, id: &CapabilityId, version: u32) -> Option<ExternalSchemas<'_>> {
+        let action = self.actions.get(&(id.clone(), version))?;
+        Some(ExternalSchemas {
+            capability_id: &action.descriptor.id,
+            version: action.descriptor.version,
+            input: &action.input,
+            output: &action.output,
+        })
+    }
+
     /// One registered action, owned: the handler needs `&mut ControlAccess`,
     /// so the registry cannot stay borrowed across the call.
     pub fn lookup(&self, capability_id: &str, version: u32) -> Option<Arc<RegisteredAction>> {
@@ -190,8 +203,10 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::annotate::register(&mut registry)?;
     super::notify::register(&mut registry)?;
     super::layout::register(&mut registry)?;
+    super::layers::register_action(&mut registry)?;
     super::recovery::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
+    super::indicator_guide::register(&mut registry)?;
     super::script::register(&mut registry)?;
     super::trade::register(&mut registry)?;
     Ok(registry)
@@ -398,6 +413,23 @@ fn create_mark(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_schemas_name_the_same_registered_action_and_refuse_other_versions() {
+        let registry = standard_actions().unwrap();
+        let action = registry.lookup(MARK_CAPABILITY_ID, 1).unwrap();
+        let schemas = registry.schemas(&action.descriptor.id, 1).unwrap();
+        assert!(std::ptr::eq(schemas.capability_id, &action.descriptor.id));
+        assert!(std::ptr::eq(schemas.input, &action.input));
+        assert!(std::ptr::eq(schemas.output, &action.output));
+        assert_eq!(schemas.version, action.descriptor.version);
+        assert!(registry.schemas(&action.descriptor.id, 2).is_none());
+        assert!(
+            registry
+                .schemas(&CapabilityId::new("action.unknown").unwrap(), 1)
+                .is_none()
+        );
+    }
 
     #[test]
     fn the_standard_actions_register_and_validate_their_schemas() {

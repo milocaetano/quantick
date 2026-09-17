@@ -227,6 +227,26 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     );
 }
 
+#[test]
+fn inherited_drawing_visibility_opens_without_undo_but_user_changes_are_undoable() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(120);
+    switch_layer(&mut app, ChartLayer::Drawings, false);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    let pane = &mut app.active_tab_mut().time_panes[0];
+    assert!(pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 0);
+    assert!(!pane.drawings.undo());
+
+    let mut actions = quantick_layers::LayerActions::default();
+    pane.set_layer_visible(ChartLayer::Drawings, true, &mut actions);
+    assert!(!pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 1);
+    assert!(pane.drawings.undo());
+    assert!(pane.drawings.all_hidden());
+}
+
 /// A tab opened mid-session inherits what is on screen *now*, not what the
 /// file said at startup.
 ///
@@ -294,9 +314,9 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let (mut app, _events, _commands, _book) = test_app();
     app.workspace.set_chart_layers_path(path.clone());
 
-    let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
+    let menu_frame = |ctx: &egui::Context, app: &mut QuantickApp, events: Vec<egui::Event>| {
         with_flow_pane(app, |pane, chrome| {
-            let _ = ctx.run(
+            ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     events,
@@ -305,11 +325,27 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| pane.draw_layer_menu(ui, chrome));
                 },
-            );
-        });
+            )
+        })
     };
 
-    menu_frame(&mut app, Vec::new());
+    let open_chart_layers = |ctx: &egui::Context, app: &mut QuantickApp| {
+        let initial = menu_frame(ctx, app, Vec::new());
+        let layers = painted_text_center(&initial, "chart layers")
+            .expect("the chart layer submenu is offered");
+        menu_frame(
+            ctx,
+            app,
+            vec![
+                egui::Event::PointerMoved(layers),
+                pointer_button(layers, true),
+            ],
+        );
+        menu_frame(ctx, app, vec![pointer_button(layers, false)]);
+        menu_frame(ctx, app, Vec::new())
+    };
+
+    open_chart_layers(&ctx, &mut app);
     assert_eq!(
         app.active_tab().flow_pane.layer_menu_rects.len(),
         chart_menu_entries(),
@@ -335,6 +371,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
         .center();
     assert!(layer_on(&app, ChartLayer::Crosshair));
     menu_frame(
+        &ctx,
         &mut app,
         vec![
             egui::Event::PointerMoved(crosshair),
@@ -347,6 +384,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
         ],
     );
     menu_frame(
+        &ctx,
         &mut app,
         vec![egui::Event::PointerButton {
             pos: crosshair,
@@ -392,7 +430,8 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
         "the band itself is still the trader's to show: it carries the marks \
              and the time axis whatever the source can produce"
     );
-    menu_frame(&mut quote_only, Vec::new());
+    let quote_ctx = egui::Context::default();
+    open_chart_layers(&quote_ctx, &mut quote_only);
     assert_eq!(
         quote_only.active_tab().flow_pane.layer_menu_rects.len(),
         chart_menu_entries(),
@@ -401,7 +440,89 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     std::fs::remove_file(&path).ok();
 }
 
-/// §11 keeps the tape on the flow pane, so the time pane's menu says the
+/// The bare chart menu keeps the frequent chart action short and leaves the
+/// long visibility inventory one level to the right. Market entries belong in
+/// the trading ticket and hotkeys, while price-specific resting orders remain
+/// available here.
+#[test]
+fn the_chart_menu_leads_with_anchored_vwap_and_nests_display_controls() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    let target = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the first frame laid out the chart")
+        .center();
+    let secondary = |pressed| egui::Event::PointerButton {
+        pos: target,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(target), secondary(true)],
+    );
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(target), secondary(false)],
+    );
+    let open = run_frame(&mut app, &ctx);
+    let top_level = painted_text(&open);
+
+    let anchor =
+        painted_text_center(&open, "Anchor VWAP here").expect("the placing action is offered");
+    let layers =
+        painted_text_center(&open, "chart layers").expect("the submenu has a visible label");
+    let trade = painted_text_center(&open, "trade").expect("the resting-order section is offered");
+    assert!(
+        anchor.y < layers.y && anchor.y < trade.y,
+        "anchored VWAP leads both general sections: {anchor:?}, {layers:?}, {trade:?}"
+    );
+    assert!(
+        !top_level.iter().any(|text| text.ends_with(" market")),
+        "market buy and sell are absent from the chart menu: {top_level:?}"
+    );
+    assert!(
+        top_level.iter().any(|text| text.contains(" limit @ "))
+            && top_level.iter().any(|text| text.contains(" stop @ ")),
+        "the price-specific resting orders remain available: {top_level:?}"
+    );
+    assert!(top_level.iter().any(|text| text == "chart layers"));
+    assert!(
+        ChartLayer::ALL
+            .into_iter()
+            .filter(|layer| !layer.on_tape())
+            .all(|layer| !top_level.iter().any(|text| text == layer.label())),
+        "layer toggles stay out of the primary menu: {top_level:?}"
+    );
+
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![
+            egui::Event::PointerMoved(layers),
+            pointer_button(layers, true),
+        ],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(layers, false)]);
+    let expanded = run_frame(&mut app, &ctx);
+    let expanded_text = painted_text(&expanded);
+    assert!(
+        ChartLayer::ALL
+            .into_iter()
+            .filter(|layer| !layer.on_tape())
+            .all(|layer| expanded_text.iter().any(|text| text == layer.label())),
+        "opening chart layers exposes every existing chart toggle: {expanded_text:?}"
+    );
+}
+
+/// Section 11 keeps the tape on the flow pane, so the time pane's menu says the
 /// flow layers are drawn elsewhere instead of offering dead switches.
 #[test]
 fn the_time_pane_offers_the_flow_layers_as_drawn_elsewhere() {
@@ -600,7 +721,7 @@ fn only_the_secondary_button_opens_the_layer_menu() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
     let (mut app, _events, _commands, _book) = test_app();
 
-    let click = |app: &mut QuantickApp, button: egui::PointerButton| -> usize {
+    let click = |app: &mut QuantickApp, button: egui::PointerButton| -> Vec<String> {
         with_flow_pane(app, |pane, chrome| {
             let target = screen.center();
             for pressed in [true, false] {
@@ -626,19 +747,33 @@ fn only_the_secondary_button_opens_the_layer_menu() {
                     },
                 );
             }
-            pane.layer_menu_rects.len()
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let area = ui.available_rect_before_wrap();
+                        pane.handle_navigation(ui, area, chrome);
+                    });
+                },
+            );
+            painted_text(&output)
         })
     };
 
-    assert_eq!(
-        click(&mut app, egui::PointerButton::Primary),
-        0,
+    assert!(
+        !click(&mut app, egui::PointerButton::Primary)
+            .iter()
+            .any(|text| text == "chart layers"),
         "a left click is a pan or a placement; it must not open the menu"
     );
-    assert_eq!(
-        click(&mut app, egui::PointerButton::Secondary),
-        chart_menu_entries(),
-        "a right click on the canvas has to open the layer menu"
+    assert!(
+        click(&mut app, egui::PointerButton::Secondary)
+            .iter()
+            .any(|text| text == "chart layers"),
+        "a right click on the canvas has to open the menu with its layer submenu"
     );
 }
 
@@ -813,7 +948,12 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     // The toggles still reached the flow pane, which is what owns them.
     assert!(app.active_tab().tape().depth_visible());
     assert!(app.active_tab().tape().bubbles_enabled());
-    assert!(app.active_tab().flow_pane.live_strip_visible);
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .layers
+            .requested(ChartLayer::LiveStrip)
+    );
 }
 
 /// The instrument's price grid is a fact about the market, so both panes
@@ -860,7 +1000,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         app.active_tab_mut().pane_mut(side).set_layer_visible(
             ChartLayer::Footprint,
             false,
-            &mut chart_layers::LayerActions::default(),
+            &mut quantick_layers::LayerActions::default(),
         );
     }
     let frvp = crate::drawings::DRAWING_TOOLS

@@ -156,7 +156,7 @@ fn a_range_profile_wants_the_ladders_without_asking_for_the_layer() {
     pane.set_layer_visible(
         ChartLayer::Footprint,
         true,
-        &mut crate::chart_layers::LayerActions::default(),
+        &mut quantick_layers::LayerActions::default(),
     );
     assert!(
         pane.layer_visible(ChartLayer::Footprint, &style),
@@ -1148,7 +1148,7 @@ fn drive_navigation(
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
-    let mut layers = crate::chart_layers::LayerActions::default();
+    let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -1204,7 +1204,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
-    let mut layers = crate::chart_layers::LayerActions::default();
+    let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     body(&mut PaneChrome {
         tab: 1,
@@ -1250,7 +1250,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
     let mut pane = pane_with_timed_bars(200);
     let areas = test_areas(&pane, TEST_PLOT);
     let scale = test_scale();
-    let mut discarded = crate::chart_layers::LayerActions::default();
+    let mut discarded = quantick_layers::LayerActions::default();
     // The time half off, so this measures the price half alone.
     pane.set_layer_visible(ChartLayer::PointerTime, false, &mut discarded);
     pane.hover_pos = Some(areas.chart.center());
@@ -1387,7 +1387,7 @@ fn an_axis_tag_follows_its_object_and_leaves_with_it() {
     // The layer that hides the objects hides what the axis says about
     // them: a gutter still marked at a level whose line is gone would be
     // the chart claiming something it is not drawing.
-    let mut discarded = crate::chart_layers::LayerActions::default();
+    let mut discarded = quantick_layers::LayerActions::default();
     pane.set_layer_visible(ChartLayer::Drawings, false, &mut discarded);
     assert!(
         axis_levels_of(&pane, &scale).is_empty(),
@@ -2365,6 +2365,26 @@ fn the_time_pane_header_costs_the_chart_its_own_height() {
     );
     assert_eq!(areas.chart.bottom(), area.bottom());
     assert_eq!(areas.header.width(), area.width());
+}
+
+/// A layout selector belongs to one pane, so its footer must be carved from
+/// that pane rather than overlaid on market data or reserved once globally.
+#[test]
+fn the_layout_strip_costs_each_pane_its_own_footer() {
+    let area = egui::Rect::from_min_max(egui::pos2(20.0, 10.0), egui::pos2(420.0, 610.0));
+    let areas = split_pane_layout_strip(area);
+    assert_eq!(
+        areas.layout_strip.height(),
+        crate::layout_strip::STRIP_HEIGHT
+    );
+    assert_eq!(areas.body.bottom(), areas.layout_strip.top(), "no overlap");
+    assert_eq!(areas.layout_strip.bottom(), area.bottom());
+    assert_eq!(areas.body.width(), area.width());
+
+    let tiny = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 10.0));
+    let tiny = split_pane_layout_strip(tiny);
+    assert_eq!(tiny.body.height(), 0.0, "a tiny band never inverts");
+    assert_eq!(tiny.layout_strip.height(), 10.0, "the footer stays bounded");
 }
 
 /// The rung budget is the lane's width in pixels, not a constant: a lane

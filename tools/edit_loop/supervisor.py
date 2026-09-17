@@ -67,6 +67,7 @@ def supervise(command, repo, env, output, timeout_seconds, record):
                     record["cleanup_error"] = str(error)
                     raise ProcessStillRunning("owned tree cleanup could not be proved") from error
     finally:
+        record["ownership_observations"] = owner.observations
         owner.close()
         if process:
             # A failed attachment/cleanup may leave our waiting helper. Its

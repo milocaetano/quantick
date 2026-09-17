@@ -1,7 +1,7 @@
 //! Exact canonical root/port shapes and per-root implementation line caps.
 //!
 //! This protects explicit source authority, not arbitrary semantic coupling.
-//! See `docs/quality/native-indicator-boundary-evidence.md` for the grammar,
+//! See `docs/quality/native-indicator-boundary.md` for the grammar,
 //! origin contributions and macro/alias/free-helper limits.
 
 mod lex;

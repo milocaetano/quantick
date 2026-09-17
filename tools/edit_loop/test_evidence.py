@@ -234,6 +234,13 @@ class ProcessTests(Fixture):
             self.assertEqual(result["exit_code"], 0)
             self.assertTrue(result["tree_quiescent"])
             self.assertTrue(result["orphaned_descendants"])
+            observation = result["ownership_observations"][0]
+            self.assertGreater(observation["accounting_active"], 1)
+            children = [row for row in observation["processes"]
+                        if row["pid"] != result["supervisor_pid"]]
+            self.assertTrue(children, "the live fixture child must remain visible in diagnostics")
+            self.assertTrue(all(row["in_owned_job"] for row in children))
+            self.assertTrue(all(row["creation_filetime"] > 0 for row in children))
             with self.assertRaises(ValueError):
                 sampling.validate_sample(result, "fixture", True)
         else:
@@ -298,6 +305,21 @@ class ConfigurationTests(Fixture):
 
 
 class RunnerTests(Fixture):
+    def test_real_orchestrator_rejects_a_different_source_checkout(self):
+        self.measurement_inputs()
+        sha = self.commit()
+        other = self.root / "other-checkout"
+        other.mkdir()
+        args = SimpleNamespace(repo=str(self.repo), sha=sha, worktree=str(self.root / "bench"),
+                               target=str(self.root / "targets"), output=str(self.root / "run-output"),
+                               budgets=str(self.repo / "tools/edit_loop/budgets.json"))
+        error_output = io.StringIO()
+        with patch("inputs.ROOT", other.resolve()), redirect_stderr(error_output):
+            self.assertEqual(measure.run(args), 1)
+        self.assertIn("exact named source checkout", error_output.getvalue())
+        self.assertFalse(Path(args.worktree).exists())
+        self.assertFalse(Path(args.target).exists())
+
     def test_uncalibrated_real_orchestrator_fails_with_complete_fake_raw_series(self):
         self.measurement_inputs()
         for name in ("a", "b", "c"):
@@ -324,7 +346,9 @@ class RunnerTests(Fixture):
         def fake_series(*args):
             return actual_series(*args, process=fake_process, sleep=lambda _: None, observe=lambda: [])
 
-        with (patch("inputs.ROOT", self.repo), patch("inputs.command_environment", return_value=({}, [])),
+        # Production ROOT is canonical (__file__.resolve()). Windows TEMP can
+        # use an 8.3 ancestor spelling; the injected root must obey that contract.
+        with (patch("inputs.ROOT", self.repo.resolve()), patch("inputs.command_environment", return_value=({}, [])),
               patch("inputs.cargo_configuration", return_value={}),
               patch("inputs.host_identity", return_value={"class": "fixture"}),
               patch("measure.version", return_value="fixture"), patch("measure.series", fake_series),

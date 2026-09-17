@@ -13,8 +13,8 @@ used as a fallback.
 Use Python 3.11 or newer. Run from a clean checkout containing the committed tool. The source checkout,
 new detached benchmark worktree, new target root and new evidence directory
 must be disjoint. All three new paths must not exist; nothing is cleaned or
-deleted. The exact 40-character source commit is **H**. A later commit that
-archives this evidence is **E**, not a newly measured runtime.
+deleted. The exact 40-character source commit is **H**. A later candidate or
+fixed-budget commit is **E**, not a newly measured runtime.
 
 ```powershell
 python tools/edit_loop/measure.py run --repo . --sha FULL_COMMIT_SHA `
@@ -100,6 +100,17 @@ always-upload step retains failures and itself fails if artifacts are absent.
 The weekly schedule can execute only after the workflow reaches the default
 branch; a candidate PR run is not evidence that cron already ran.
 
+Keep raw measurements, manifests, recovery records and one-run reports outside
+Git, in temporary directories and CI artifacts. The PR and linked issue carry
+the concise result, exact source SHA, UTC date, host/protocol identity, hashes
+and artifact links. Preserve original failed artifacts when a repair produces
+a newer run; an artifact's age or failure is not permission to rewrite it.
+Only reusable runner/checker code, fixtures, protocol documentation and the
+reviewed fixed budget contract belong in source control. The budget contract
+retains the minimal calibration identity, rationale and values needed to
+enforce it; it is not a renamed raw-evidence archive. This follows the
+[delivery contract](../../docs/workflow/delivery.md#keep-execution-evidence-out-of-git).
+
 ## Source safety and interruption
 
 Source bytes must equal H before touching. Symbolic/hard links, junctions, escapes and
@@ -112,6 +123,15 @@ before it can start Cargo. The supervisor terminates that job and requires
 zero active processes before restoration. A successful Cargo parent exit
 with surviving children is a failed sample, not a passing shortcut. The
 helper's startup/ownership setup is outside the Cargo stopwatch.
+
+Raw process records also retain bounded Windows owned-job snapshots before
+termination and after accounting reaches zero: PID, verified membership,
+image, creation/exit FILETIME and process-handle wait status. For completed
+commands these read-only diagnostics follow Cargo's stopped stopwatch; a
+timeout remains a failure, never an inferred duration. Observations never
+replace the result or accounting/orphan decision. A vanished/recycled PID remains explicitly
+unresolved; it is never a PID-based kill target. Incomplete diagnostic queries
+fail closed. No process name is an exemption for surviving descendants.
 
 On Linux, the helper remains a session leader and subreaper after Cargo exits,
 so orphaned descendants do not disappear merely because their parent exited.

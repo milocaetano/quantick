@@ -181,7 +181,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
             .map(|(index, tab)| {
                 let active = index == active_index;
                 let focused = tab.focused_side();
-                let shown = tab.context_panes_shown();
+                let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
                 let panes: Vec<WorkspacePane> = tab
                     .panes()
                     .map(|(pane, side)| {

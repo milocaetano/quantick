@@ -168,7 +168,7 @@ impl ChartPane {
     /// empty space past the newest bar is future the tape has not written, and
     /// naming a time there would be an invention. `None` is the honest answer
     /// there, and it is what keeps such an anchor out of a shared drawing.
-    pub(super) fn anchor_time(&self, bar: f32) -> Option<i64> {
+    pub(crate) fn anchor_time(&self, bar: f32) -> Option<i64> {
         let slot = Viewport::slot_of(bar)?;
         let slots = self.slots();
         if slot < slots {

@@ -74,6 +74,11 @@ use eframe::egui;
 use crate::indicator_panel::SettingsTab;
 use quantick_feed::history_reach::CampaignEnd;
 
+/// Horizontal point inside the candle canvas that leaves room for a submenu.
+const CONTEXT_MENU_CHART_X_FRACTION: f32 = 1.0 / 6.0;
+/// Vertical point that leaves room below for the complete layer inventory.
+const CONTEXT_MENU_CHART_Y_FRACTION: f32 = 1.0 / 5.0;
+
 /// Frames the `QUANTICK_LOAD_OLDER` hook waits for a chart worth paging from.
 ///
 /// It cannot fire at startup: paging asks for trades older than the ones on
@@ -192,6 +197,8 @@ pub(crate) enum ContextMenuPane {
     /// half). The candles' segment of it: past the lane divider the strip is
     /// the tape's window and carries no menu.
     Time,
+    /// The first expanded non-price indicator band.
+    Indicator,
 }
 
 impl ContextMenuPane {
@@ -199,10 +206,11 @@ impl ContextMenuPane {
     /// typo opens no menu rather than the wrong one.
     pub(crate) fn from_env_value(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "chart" | "candles" => Some(Self::Chart),
+            "chart" | "candles" | "chart-layers" => Some(Self::Chart),
             "tape" | "lane" => Some(Self::Tape),
             "axis" | "scale" => Some(Self::Axis),
             "time" | "clock" => Some(Self::Time),
+            "indicator" | "study" => Some(Self::Indicator),
             _ => None,
         }
     }
@@ -412,6 +420,9 @@ pub(crate) struct Harness {
     /// the dialog on, and on which tab, once its view exists. Cleared by the
     /// first open, so a dialog the run then closes stays closed.
     settings_autostart: Option<(usize, SettingsTab)>,
+    /// `QUANTICK_INDICATOR_MOUSE_LINE=<index>`: enable the guide once the
+    /// named worker-created view exists.
+    indicator_mouse_line: Option<usize>,
     /// `QUANTICK_POINTER`: where to park the mouse, as a fraction of the flow
     /// pane's candle area. Re-delivered every frame, because a pointer is a
     /// position the app is *told* about continuously.
@@ -421,6 +432,11 @@ pub(crate) struct Harness {
     context_menu: Option<ContextMenuPane>,
     /// That press's matching release, on the frame after it.
     context_menu_release: Option<egui::Pos2>,
+    /// Whether `QUANTICK_CONTEXT_MENU=chart-layers` still owes the primary
+    /// click that expands the chart-layer submenu after the right-click lands.
+    context_menu_layers: bool,
+    /// That submenu press's matching release, on the following frame.
+    context_menu_layers_release: Option<egui::Pos2>,
     /// `QUANTICK_MENU`: which menu bar button to press open.
     menu: Option<ScriptedMenu>,
     /// That press's matching release, on the frame after it.
@@ -525,6 +541,8 @@ impl Harness {
                 .is_some_and(|value| value == "1"),
             settings_autostart: read("QUANTICK_INDICATOR_SETTINGS")
                 .and_then(|value| parse_settings_hook(&value)),
+            indicator_mouse_line: read("QUANTICK_INDICATOR_MOUSE_LINE")
+                .and_then(|value| value.trim().parse().ok()),
             pointer: read("QUANTICK_POINTER").and_then(|value| {
                 let parsed = parse_pointer_fraction(&value);
                 if parsed.is_none() {
@@ -539,6 +557,9 @@ impl Harness {
             context_menu: read("QUANTICK_CONTEXT_MENU")
                 .and_then(|value| ContextMenuPane::from_env_value(&value)),
             context_menu_release: None,
+            context_menu_layers: read("QUANTICK_CONTEXT_MENU")
+                .is_some_and(|value| context_menu_expands_chart_layers(&value)),
+            context_menu_layers_release: None,
             menu: read("QUANTICK_MENU").and_then(|value| ScriptedMenu::from_token(value.trim())),
             menu_release: None,
             drawings_demo: read("QUANTICK_DRAWINGS_DEMO")
@@ -682,6 +703,14 @@ impl Harness {
         self.settings_autostart = None;
     }
 
+    pub(crate) fn indicator_mouse_line(&self) -> Option<usize> {
+        self.indicator_mouse_line
+    }
+
+    pub(crate) fn indicator_mouse_line_opened(&mut self) {
+        self.indicator_mouse_line = None;
+    }
+
     /// Where the pointer is parked, as a fraction of the flow pane's candle
     /// area. Resolving that into window points needs the pane, so the trunk
     /// does it.
@@ -705,9 +734,42 @@ impl Harness {
         self.context_menu_release = Some(position);
     }
 
-    /// That release, once.
-    pub(crate) fn take_context_menu_release(&mut self) -> Option<egui::Pos2> {
-        self.context_menu_release.take()
+    /// Release the scripted right-click, then deliver the click that expands
+    /// `chart layers` through its painted button. Returns whether this frame's
+    /// input belongs to either follow-up.
+    pub(crate) fn push_context_menu_followup(
+        &mut self,
+        raw_input: &mut egui::RawInput,
+        position: Option<egui::Pos2>,
+    ) -> bool {
+        let (position, button, pressed) = if let Some(position) = self.context_menu_release.take() {
+            (position, egui::PointerButton::Secondary, false)
+        } else if let Some(position) = self.context_menu_layers_release.take() {
+            (position, egui::PointerButton::Primary, false)
+        } else if self.context_menu_layers {
+            let Some(position) = position else {
+                return false;
+            };
+            self.context_menu_layers = false;
+            self.context_menu_layers_release = Some(position);
+            raw_input.events.push(egui::Event::PointerMoved(position));
+            (position, egui::PointerButton::Primary, true)
+        } else {
+            return false;
+        };
+        raw_input.events.push(egui::Event::PointerButton {
+            pos: position,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_context_menu(&mut self, pane: ContextMenuPane, layers: bool) {
+        self.context_menu = Some(pane);
+        self.context_menu_layers = layers;
     }
 
     /// Which menu bar button still owes a scripted press.
@@ -941,6 +1003,31 @@ fn read(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 
+fn context_menu_expands_chart_layers(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("chart-layers")
+}
+
+/// A safe scripted click inside the named canvas segment. Chart popups start
+/// high and left so their long, right-opening layer submenu fits the window.
+pub(crate) fn context_menu_canvas_position(
+    pane: ContextMenuPane,
+    rect: egui::Rect,
+    divider: Option<f32>,
+) -> Option<egui::Pos2> {
+    let x = match (pane, divider) {
+        (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
+        (ContextMenuPane::Tape, None) => return None,
+        (_, Some(divider)) => rect.left() + (divider - rect.left()) * CONTEXT_MENU_CHART_X_FRACTION,
+        (_, None) => rect.left() + rect.width() * CONTEXT_MENU_CHART_X_FRACTION,
+    };
+    let y = if pane == ContextMenuPane::Chart {
+        rect.top() + rect.height() * CONTEXT_MENU_CHART_Y_FRACTION
+    } else {
+        rect.center().y
+    };
+    Some(egui::pos2(x, y))
+}
+
 /// The `=1` shape most switch hooks share: the value exactly, untrimmed.
 ///
 /// Exactly, because that is what each of these hooks did before they were
@@ -1052,6 +1139,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_FRVP_DEMO_SELECT",
     "QUANTICK_HISTORY_NOTE",
     "QUANTICK_INDICATOR_SETTINGS",
+    "QUANTICK_INDICATOR_MOUSE_LINE",
     "QUANTICK_LAYOUT_PICKER",
     "QUANTICK_LOAD_OLDER",
     "QUANTICK_LOAD_OLDER_CANDLES",
@@ -1188,6 +1276,12 @@ mod tests {
             ContextMenuPane::from_env_value("candles"),
             Some(ContextMenuPane::Chart)
         );
+        assert_eq!(
+            ContextMenuPane::from_env_value("chart-layers"),
+            Some(ContextMenuPane::Chart)
+        );
+        assert!(context_menu_expands_chart_layers("CHART-LAYERS"));
+        assert!(!context_menu_expands_chart_layers("chart"));
         assert_eq!(
             ContextMenuPane::from_env_value("Lane"),
             Some(ContextMenuPane::Tape)

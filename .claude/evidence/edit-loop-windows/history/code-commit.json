@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "code-commit.json",
-  "original_sha256": "F7F920F18A7C56AFE0126D3906B78C141C14D63AD03CCD4CEC50144E3F335037",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "{\n  \"chunk_id\": \"e3245d\",\n  \"wall_time_seconds\": 0.4149511,\n  \"exit_code\": 0,\n  \"original_token_count\": 241,\n  \"output\": \"[feat/edit-loop-windows 331947ab] feat(ci): measure edit loops and verify Windows parity\\n 16 files changed, 1923 insertions(+), 8 deletions(-)\\n create mode 100644 .github/workflows/edit-loop.yml\\n create mode 100644 tools/edit_loop/README.md\\n create mode 100644 tools/edit_loop/budgets.json\\n create mode 100644 tools/edit_loop/budgets.py\\n create mode 100644 tools/edit_loop/evidence.py\\n create mode 100644 tools/edit_loop/inputs.py\\n create mode 100644 tools/edit_loop/measure.py\\n create mode 100644 tools/edit_loop/process_owner.py\\n create mode 100644 tools/edit_loop/sampling.py\\n create mode 100644 tools/edit_loop/snapshot.py\\n create mode 100644 tools/edit_loop/source_time.py\\n create mode 100644 tools/edit_loop/supervisor.py\\n create mode 100644 tools/edit_loop/test_evidence.py\\n create mode 100644 tools/edit_loop/test_measure.py\\n create mode 100644 tools/edit_loop/worker.py\\n331947ab001025e3e296706c5343a492714a70b4\\n1e76097a22d620a9f3839ff0c0d49f1f3d636d68\\n\"\n}\n"
-}

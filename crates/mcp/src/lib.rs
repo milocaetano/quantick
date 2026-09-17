@@ -26,6 +26,7 @@
 //! - [`setup`]: the Codex / Claude Code registration assistant;
 //! - [`fake`]: a second implementation of the port, for tests.
 
+mod capture_chart;
 pub mod fake;
 pub mod jsonrpc;
 pub mod link;

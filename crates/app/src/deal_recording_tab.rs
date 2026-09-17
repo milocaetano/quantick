@@ -11,7 +11,6 @@ use crate::deal_recording::{DealRecordingAction, DealRecordingError, RecState, R
 use crate::deal_recording_ui::{self, DealChip};
 use crate::metrics;
 use crate::state::BarKind;
-use crate::state::BarSpec;
 use crate::tab::Tab;
 
 impl Tab {
@@ -128,17 +127,16 @@ impl Tab {
             // through.
             DealRecordingAction::ShowAsTrades => {
                 let index = self.focused_side().index();
-                let deals = self.pane_at(index).map_or_else(
-                    || match BarKind::Trades.default_spec() {
-                        BarSpec::Trades(n) => n,
-                        _ => unreachable!("the trades kind owns a trades spec"),
+                let spec = self.pane_at(index).map_or_else(
+                    || {
+                        quantick_engine::bar_registry::BUILTIN_BARS
+                            .find("trades")
+                            .expect("registered trades")
+                            .default_config()
                     },
-                    |pane| match pane.spec.retained(BarKind::Trades) {
-                        BarSpec::Trades(n) => *n,
-                        _ => unreachable!("the selector retains one spec per kind"),
-                    },
+                    |pane| *pane.spec.retained(BarKind::Trades),
                 );
-                self.set_pane_bar_spec(index, BarSpec::Trades(deals));
+                let _ = self.set_pane_bar_spec(index, spec);
             }
             DealRecordingAction::OpenFolder => {
                 crate::paper_trading::reveal_folder(&self.deal_recorder.view(None).dir);
@@ -149,24 +147,38 @@ impl Tab {
 
     /// Apply one complete rule through the shared selector-and-recut path.
     /// The toolbar, REC popover, and control plane all land here.
-    pub(crate) fn set_pane_bar_spec(&mut self, index: usize, spec: BarSpec) -> bool {
+    pub(crate) fn set_pane_bar_spec(
+        &mut self,
+        index: usize,
+        spec: impl Into<crate::state::BarConfiguration>,
+    ) -> Result<bool, quantick_engine::bar_selection::SelectionError> {
+        let spec = spec.into();
         let Some(pane) = self.pane_at(index) else {
-            return false;
+            return Ok(false);
         };
-        let spec = spec.clamped();
-        if pane.current_spec() == spec && pane.state.spec() == &spec {
-            return false;
+        let capabilities = *self.feed_capabilities.borrow();
+        let inputs = quantick_engine::bar_selection::BarInputAvailability {
+            traded_volume: capabilities.traded_volume,
+            deal_counter: capabilities.deal_counter,
+            deal_count: !pane.state.deal_samples().is_empty(),
+        };
+        let pane = self.pane_at_mut(index).expect("pane checked above");
+        let effect = pane.spec.update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(spec),
+            inputs,
+        )?;
+        let spec = pane.spec.spec();
+        if effect == quantick_engine::bar_selection::SelectionEffect::Unchanged
+            && pane.state.spec() == &spec
+        {
+            return Ok(false);
         }
-        self.pane_at_mut(index)
-            .expect("pane checked above")
-            .spec
-            .set(spec);
         self.recut_pane_with(
             index,
             quantick_strategy::DisarmReason::BarSpecChanged,
             |pane| pane.set_spec(spec),
         );
-        true
+        Ok(true)
     }
 
     /// The recorder as the chrome sees it now, or none on a feed with no
@@ -211,7 +223,7 @@ impl Tab {
         let pane = &self.flow_pane;
         deal_recording_ui::chip_for(
             &view,
-            pane.spec.kind,
+            pane.spec.spec().definition(),
             pane.state.deal_samples().last().is_some(),
             pane.state.uncounted_trades(),
         )

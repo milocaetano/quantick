@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "offline-tests-30-1e76097a.log",
-  "original_sha256": "52AD7E52F491CDACCDB0194B84AB5D2F914D052B9981F1023DE3174BA6D95910",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "AUTHORITATIVE_WRAPPER_EXIT_CODE=0\nSTART_UTC=2026-09-15T00:49:40.7666880Z\nHEAD=4b13b64a0f4556470cbf6b7a5e1c7f1b000d0f50\nINDEX_TREE=1e76097a22d620a9f3839ff0c0d49f1f3d636d68\nPython 3.12.10\n..............................\n----------------------------------------------------------------------\nRan 30 tests in 19.053s\n\nOK\nFIXTURE_EXIT_CODE=0\nFINISH_UTC=2026-09-15T00:50:00.1063401Z\n"
-}

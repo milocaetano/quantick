@@ -64,6 +64,7 @@ use super::{
     events::READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID,
     feed,
     gateway::GRANTABLE_PROFILE_IDS,
+    indicator_guide::INDICATOR_GUIDE_EVENT_KIND,
     inventory::standard_contract,
     notify::NOTIFICATION_EVENT_KIND,
     script::{SCRIPT_ATTACHED_EVENT_KIND, SCRIPT_DETACHED_EVENT_KIND},
@@ -187,6 +188,15 @@ const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's
 /// Every mutable capability's readback. Order is irrelevant: the document is
 /// rendered in the registry's order.
 pub(crate) const READBACKS: &[Readback] = &[
+    super::layout::stack::READBACK,
+    journal(
+        "layers.visibility.set",
+        Optional,
+        super::layers::EVENT_KIND,
+        "payload.result",
+        "an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown",
+        &[EVERY_OPTIONAL_TEST],
+    ),
     snapshot(
         "annotate.arrow.create",
         Forbidden,
@@ -197,6 +207,22 @@ pub(crate) const READBACKS: &[Readback] = &[
     ),
     snapshot(
         "annotate.fixed_range_profile.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_projection.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_retracement.create",
         Forbidden,
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",
@@ -257,6 +283,14 @@ pub(crate) const READBACKS: &[Readback] = &[
         feed::SCOPE_ID,
         "tabs[].deal_recording.state",
         "the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+    journal(
+        "indicator.mouse_vertical_line.set",
+        Optional,
+        INDICATOR_GUIDE_EVENT_KIND,
+        "payload.indicator_guide.enabled",
+        "an event after the pre-call cursor carries the requested boolean and its payload names the exact tab, pane and slot",
         &[EVERY_OPTIONAL_TEST],
     ),
     // The journal rather than `analysis.indicators`: that scope carries the

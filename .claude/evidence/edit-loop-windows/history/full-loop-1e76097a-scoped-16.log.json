@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "full-loop-1e76097a-scoped-16.log",
-  "original_sha256": "5237943568DAFE6768DC3F45AA00EDB502AF5AE8E7A0DBB677130451FC3D52F8",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "EXEC_SESSION_ID=95914\nTOOL_CHUNK_ID=be3b90\nWRAPPER_EXIT_CODE=1\nORIGINAL_TOKEN_COUNT=34\nTranscrição interrompida, o arquivo de saída é C:\\src\\quantick\\.git\\worktrees\\ci-edit-loop-windows\\evidence\\full-loop-1e76097a.log\n"
-}

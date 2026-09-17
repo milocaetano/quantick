@@ -22,8 +22,8 @@ validation. They do not establish a measured throughput gain.
 
 Two fresh, read-only agents received the repository instructions and
 [supplied histories](delivery-cases.md), without expected answers. Their full
-responses are retained in [cases 1-6](evidence/exercises-a.md) and
-[cases 7-11](evidence/exercises-b.md). They did not execute or merge live PRs.
+responses for cases 1-11 were reviewed on PR #345. They did not execute or
+merge live PRs.
 
 The retained responses reject frozen-map omissions (case 3), stale/executable
 input reuse (4-7), counter resets (8), unauthorized merges (9), unreviewed scope

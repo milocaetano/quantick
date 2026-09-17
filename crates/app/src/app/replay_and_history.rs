@@ -48,6 +48,24 @@ pub(super) struct AlertState {
     pub(super) alert_failure: Option<String>,
 }
 
+fn context_menu_pos(app: &QuantickApp, pane: ContextMenuPane) -> Option<egui::Pos2> {
+    let flow = &app.active_tab().flow_pane;
+    if pane == ContextMenuPane::Axis {
+        return Some(flow.frame.price_gutter?.center());
+    }
+    if pane == ContextMenuPane::Time {
+        return Some(flow.frame.time_strip?.center());
+    }
+    if pane == ContextMenuPane::Indicator {
+        return flow.first_indicator_pane_center();
+    }
+    crate::harness::context_menu_canvas_position(
+        pane,
+        flow.frame.chart_rect?,
+        flow.frame.lane_divider_x,
+    )
+}
+
 impl QuantickApp {
     /// Carry out what the replay interface asked for.
     /// Whether the action reached its destination. Only a transport control
@@ -89,34 +107,9 @@ impl QuantickApp {
 
     /// Where a scripted right-click should land to reach `pane`'s menu.
     ///
-    /// Mid-height, and mid-pane horizontally, off the geometry the draw
-    /// published — so the click lands on the canvas rather than on the axis,
-    /// the legend or the divider handle. `None` until the pane has drawn once
-    /// (no divider yet), and `None` for the tape on a canvas that has none:
-    /// there is no tape menu to open where there is no tape.
+    /// Uses geometry published by the draw; `None` until that geometry exists.
     pub(super) fn scripted_context_menu_pos(&self, pane: ContextMenuPane) -> Option<egui::Pos2> {
-        let flow = &self.active_tab().flow_pane;
-        // The axis's menu lives on the gutter, off the canvas entirely — the
-        // draw publishes that band the same way it publishes the divider.
-        if pane == ContextMenuPane::Axis {
-            return Some(flow.frame.price_gutter?.center());
-        }
-        // The time axis, likewise off the canvas — and its own published band,
-        // because the segment past the lane divider is the tape's.
-        if pane == ContextMenuPane::Time {
-            return Some(flow.frame.time_strip?.center());
-        }
-        let rect = flow.frame.chart_rect?;
-        let divider = flow.frame.lane_divider_x;
-        let x = match (pane, divider) {
-            (ContextMenuPane::Tape, Some(divider)) => (divider + rect.right()) / 2.0,
-            (ContextMenuPane::Tape, None) => return None,
-            // Axis and Time returned above; anything else is the candles'
-            // canvas.
-            (_, Some(divider)) => (rect.left() + divider) / 2.0,
-            (_, None) => rect.center().x,
-        };
-        Some(egui::pos2(x, rect.center().y))
+        context_menu_pos(self, pane)
     }
 
     /// Where `QUANTICK_POINTER` puts the mouse this frame, in window points.

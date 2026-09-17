@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "tests-metadata-handle.log",
-  "original_sha256": "D05572D360F2FBDCFBF5A77AA3A841E17BB2D0CBAFE7C7F501554BA816C82367",
-  "source_encoding": "utf-16le",
-  "source_bom_hex": "fffe",
-  "source_text": "python : ..........\r\nNo linha:2 caractere:1\r\n+ python tools/edit_loop/test_measure.py 2>&1 | Tee-Object -FilePath 'C ...\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (..........:String) [], RemoteException\r\n    + FullyQualifiedErrorId : NativeCommandError\r\n \r\n----------------------------------------------------------------------\r\nRan 10 tests in 1.425s\r\n\r\nOK\r\n"
-}

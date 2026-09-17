@@ -38,6 +38,7 @@ use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 
+mod bar_registry_tests;
 mod chart_view_tests;
 mod control_plane_tests;
 mod drawings_tests;
@@ -51,6 +52,7 @@ mod panes_layout_tests;
 mod paper_trading_tests;
 mod profile_pointer_tests;
 mod published_schema_compatibility_tests;
+mod quick_range_control_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
@@ -380,7 +382,11 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     // with is a different question, and `test_app` keeps the shipped
     // answer intact for the test that reads it
     // (`each_layer_switch_moves_exactly_one_owner`).
-    app.active_tab_mut().flow_pane.live_strip_visible = false;
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        ChartLayer::LiveStrip,
+        false,
+        &mut Default::default(),
+    );
     app.active_tab_mut()
         .flow_pane
         .spec
@@ -451,7 +457,7 @@ fn with_flow_pane<R>(
         drawing_presets,
         style,
         tz,
-        layer_actions,
+        workspace,
         footprint_config,
         surfaces,
         ..
@@ -478,7 +484,7 @@ fn with_flow_pane<R>(
         capabilities,
         side_inferred,
         footprint: footprint_config,
-        layers: layer_actions,
+        layers: &mut workspace.layers_mut().actions,
     };
     body(&mut tab.flow_pane, &mut chrome)
 }
@@ -559,6 +565,25 @@ fn painted_text(output: &egui::FullOutput) -> Vec<String> {
         walk(&clipped.shape, &mut found);
     }
     found
+}
+
+/// The visual centre of one exact painted label, for tests that operate the
+/// same egui popup or submenu a trader clicks.
+fn painted_text_center(output: &egui::FullOutput, wanted: &str) -> Option<egui::Pos2> {
+    fn walk(shape: &egui::Shape, wanted: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == wanted => {
+                Some(text.visual_bounding_rect().center())
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| walk(shape, wanted)),
+            _ => None,
+        }
+    }
+
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| walk(&clipped.shape, wanted))
 }
 
 /// Whether the frame drew the price axis over the test's price range —
@@ -895,7 +920,14 @@ fn split_with_a_shared_line(
         .active_tab_mut()
         .time_pane_mut()
         .expect("two frames is enough for the deferred layout to build it");
-    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     pane.spec.retain(crate::state::BarSpec::Time(1_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
@@ -1139,6 +1171,18 @@ fn key_press_with(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         key,
         physical_key: None,
         pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// The release half of a chord — the only half the platform is guaranteed
+/// to deliver for a paste shortcut.
+fn key_release_with(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: false,
         repeat: false,
         modifiers,
     }
@@ -1566,7 +1610,7 @@ fn place_range_profile_with_the_layer_off(app: &mut QuantickApp) {
     pane.set_layer_visible(
         ChartLayer::Footprint,
         false,
-        &mut chart_layers::LayerActions::default(),
+        &mut quantick_layers::LayerActions::default(),
     );
     assert!(
         !pane

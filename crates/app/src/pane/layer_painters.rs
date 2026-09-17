@@ -11,41 +11,23 @@
 //! are borrowed across the frame and a `&mut self` method cannot run under
 //! them.
 
-use std::sync::Arc;
-
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::bands::Bands;
-use crate::candle_view::draw_candle;
-use crate::chart;
-use crate::chart_layers::ChartLayer;
-use crate::indicator_render::{self, PlotX};
-use crate::orderflow_view::OrderflowView;
 use crate::plot_area::split_time_strip;
 use crate::pointer_compass;
-use crate::style::CandleStyle;
 use crate::theme;
 use crate::toolrail::Tool;
-use quantick_orderflow::engine::VisibleOrderflow;
+use quantick_layers::ChartLayer;
 
 use super::draw_frame::{AxisChips, DrawFrame};
-use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
 use super::{
-    ChartPane, DrawPass, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
+    ChartPane, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
 };
 
 /// Font size, in points, of the "nothing in view" line drawn where the candles
 /// would be. Matches the "connecting…" line: same voice, same weight.
 const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
-
-/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
-/// half-lane.
-///
-/// Seven tenths, so the body reads as a body and the wick still shows either
-/// side of it. Derived from the lane rather than fixed, so widening the lane
-/// widens the candle instead of leaving a wider gap around the same sliver.
-const SIDEBAR_BODY_FRAC: f32 = 0.35;
 
 impl ChartPane {
     /// What the axes stand aside for this frame: the pointer compass, the
@@ -117,193 +99,6 @@ impl ChartPane {
         }
     }
 
-    /// The candles' own pass: the heat cleared behind each body, the
-    /// under-candles drawings on the price band, then one candle per visible
-    /// bar, dressed for the footprint style that will paint over them.
-    ///
-    /// `carved` is the pane's band buffer, taken by the caller and carved
-    /// here on the price band only — see the comment inside for why that is a
-    /// correctness bound and not an optimisation.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn paint_candles(
-        &self,
-        frame: &DrawFrame<'_>,
-        clip: &egui::Painter,
-        carved: &mut Bands,
-        orderflow_frame: Option<&Arc<VisibleOrderflow>>,
-        half: f32,
-        candle_lane: f32,
-        content_half: f32,
-        candles: &CandleStyle,
-    ) {
-        let &DrawFrame {
-            painter,
-            areas,
-            right,
-            total,
-            scale,
-            closed_start,
-            closed_total,
-            partial_visible,
-            visible_prefix,
-            visible_state,
-            canvas_background,
-            ..
-        } = frame;
-        let viewport = &self.viewport;
-        let visible_closed = || visible_prefix.iter().chain(visible_state);
-        // Every candle this frame draws, in order: its bar index, the bar
-        // itself, and whether it is still forming. One bar, one candle — the
-        // law `Viewport::candle_width` states — so this is simply the visible
-        // bars, borrowed.
-        let visible_candles = |paint: &mut dyn FnMut(usize, &quantick_engine::Bar, bool)| {
-            for (offset, bar) in visible_closed().enumerate() {
-                paint(closed_start + offset, bar, false);
-            }
-            if let Some(partial) = partial_visible {
-                paint(closed_total, partial, true);
-            }
-        };
-        // Clear the heat behind each candle's high–low span so a translucent
-        // candle stays a clean divider — no liquidity band shows through it.
-        // Where the price swept, the wall reads as consumed; bands survive only
-        // in the gaps between candles and above/below each bar.
-        if orderflow_frame.is_some()
-            && self
-                .orderflow
-                .as_ref()
-                .is_some_and(OrderflowView::depth_visible)
-        {
-            let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
-                let (top, bottom) = scale.band(
-                    bar.high.to_f64().unwrap_or(0.0),
-                    bar.low.to_f64().unwrap_or(0.0),
-                );
-                clip.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(xc - half, top),
-                        egui::pos2(xc + half, bottom),
-                    ),
-                    egui::Rounding::ZERO,
-                    canvas_background,
-                );
-            };
-            visible_candles(&mut |index, bar, _forming| {
-                clear_bar(viewport.x_center(index, right, total), bar);
-            });
-        }
-        // Objects that are *context* rather than annotation go down here,
-        // between the liquidity map and the candles: a volume profile is read
-        // the way the heatmap is, and drawn over the price it tints every body
-        // it covers.
-        //
-        // The **price band only**, and that is a correctness bound rather than
-        // an optimisation. An indicator band's scale is written when its own
-        // curve draws, further down this function, so a band carved here would
-        // be a frame behind the plot it belongs to — which is exactly the
-        // invariant the over-candles carve says it exists to keep. The price
-        // band has no such dependency, so it is the one band that can be
-        // carved this early and still be right. A tool wanting a background
-        // pass on an indicator band would need its own carve after that pane
-        // draws; there is none, and inventing a stale one for it would be
-        // worse than not offering it.
-        self.carve_bands(areas, carved);
-        if let Some(price_band) = carved.iter().next() {
-            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
-        }
-        // Asked once for the whole frame: on a chart where no indicator paints
-        // — every chart until a script calls `barcolor` — the per-bar lookup
-        // below never runs at all.
-        let painted = self.indicators.paints_any();
-        visible_candles(&mut |index, bar, forming| {
-            let xc = viewport.x_center(index, right, total);
-            // Plot rows map 1:1 onto bars (see `PlotX`), and one bar is one
-            // candle at every zoom, so a drawn candle covers exactly its own
-            // row.
-            let paint = painted
-                .then(|| self.indicators.slot_paint(index..index + 1, forming))
-                .flatten();
-            // A sidebar candle moves into the lane the footprint left it at
-            // the slot's left edge; every other case draws where it always
-            // did, at full body width. One call, two geometries — never a
-            // second candle path, which would drift from this one.
-            let slot = if candle_lane > 0.0 {
-                // A third of the lane each side, so the body is a body and the
-                // wick still has room to show either side of it.
-                let sliver = (candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
-                crate::candle_view::BarSlot {
-                    xc: xc - content_half + sliver + 1.0,
-                    half_width: sliver,
-                }
-            } else {
-                crate::candle_view::BarSlot {
-                    xc,
-                    half_width: half,
-                }
-            };
-            draw_candle(clip, slot, &scale, bar, forming, candles, paint);
-        });
-    }
-
-    /// Overlay indicator plots and their draw objects, on the candles' own
-    /// clip, scale and x-mapping — after the candles, before the bubbles.
-    pub(super) fn paint_overlays(
-        &self,
-        frame: &DrawFrame<'_>,
-        clip: &egui::Painter,
-        plot_x: &PlotX<'_>,
-    ) {
-        let &DrawFrame {
-            scale,
-            start,
-            end,
-            closed_total,
-            prefix,
-            closed,
-            partial,
-            partial_visible,
-            ..
-        } = frame;
-        // Slot -> (high_y, low_y) in pixels, for above/below-bar markers.
-        let bar_extents = |slot: usize| -> Option<(f32, f32)> {
-            let bar = if slot < prefix.len() {
-                prefix.get(slot)
-            } else if slot < closed_total {
-                closed.get(slot - prefix.len())
-            } else if slot == closed_total {
-                partial
-            } else {
-                None
-            }?;
-            Some((
-                scale.y(chart::to_f64(bar.high)),
-                scale.y(chart::to_f64(bar.low)),
-            ))
-        };
-        indicator_render::draw_overlays(
-            clip,
-            self.indicators.visible_overlays(),
-            plot_x,
-            &scale,
-            start,
-            end,
-            partial_visible.map(|_| closed_total),
-            &bar_extents,
-        );
-        // Draw objects (lines/boxes/labels) share the overlays' paint slot:
-        // after candles, before aggression bubbles.
-        for view in self.indicators.visible_overlays() {
-            indicator_render::draw_objects(
-                clip,
-                view.render_objects(),
-                plot_x,
-                |v| scale.y(v),
-                start,
-                end,
-            );
-        }
-    }
-
     /// The session's closed-trade marks, between the drawings and the live
     /// paper lines, on the bars this pane's tape actually reaches.
     pub(super) fn paint_trade_marks(&self, frame: &DrawFrame<'_>, chrome: &PaneChrome<'_>) {
@@ -337,17 +132,18 @@ impl ChartPane {
             // The window once, not once per fill: `draw` asks about every
             // closed round trip of the session, twice each, every frame.
             let covered = self.covered_window();
-            crate::trade_paint::draw(
-                &frame,
-                chrome.paper.session_trades(),
-                chrome.paper.account().selected_trade_index(),
-                |ms| {
-                    covered
-                        .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
-                        .and_then(|_| self.slot_at_time(ms))
-                },
-                |slot| self.viewport.x_center(slot, right, total),
-            );
+            self.layer_renderers
+                .trades(&mut super::render_registry::TradesPass {
+                    frame: &frame,
+                    trades: chrome.paper.session_trades(),
+                    selected: chrome.paper.account().selected_trade_index(),
+                    slot: &|ms| {
+                        covered
+                            .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
+                            .and_then(|_| self.slot_at_time(ms))
+                    },
+                    x: &|slot| self.viewport.x_center(slot, right, total),
+                });
         }
     }
 
@@ -470,8 +266,13 @@ impl ChartPane {
         // shares the top-right corner with the tape switch, which is drawn last
         // and holds the corner itself.
         if let Some(orderflow) = self.orderflow.as_ref() {
-            orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
+            self.layer_renderers
+                .status(&mut super::render_registry::StatusPass {
+                    owner: orderflow,
+                    painter,
+                    rect: chart_rect,
+                });
         }
-        self.draw_tape_switch(painter, chart_rect);
+        self.draw_canvas_contributions(painter, chart_rect, chrome.capabilities);
     }
 }

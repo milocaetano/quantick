@@ -65,7 +65,7 @@ impl FakeGateway {
             instance_id: instance_id.clone(),
             process_nonce: process_nonce.clone(),
             process_id: std::process::id(),
-            process_started_at_unix_ms: published_at_unix_ms - 1_000,
+            process_started_at_unix_ms: i64::MAX,
             application_version: "0.1.0-fake".to_owned(),
             application_commit: "fake".to_owned(),
             protocol_versions: ProtocolVersionRange::new(

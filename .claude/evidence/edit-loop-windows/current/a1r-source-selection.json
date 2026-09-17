@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "a1r-source-selection.json",
-  "original_sha256": "17C1F7D514EDBFCB71B7983B01DA33E6663CA844C76E5AC654CAB3D61D90E1E2",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "{\n  \"chunk_id\": \"87f51f\",\n  \"wall_time_seconds\": 6.6549715,\n  \"exit_code\": 0,\n  \"original_token_count\": 193,\n  \"output\": \"HEAD=0ca889b9e3c3b6b60dd52002f737d17af56082d8\\r\\nCLASS=Source selection only, not a timed run or score\\r\\n[\\r\\n  {\\r\\n    \\\"crate\\\": \\\"app\\\",\\r\\n    \\\"package\\\": \\\"quantick-app\\\",\\r\\n    \\\"production_lines\\\": 76683,\\r\\n    \\\"source\\\": \\\"crates/app/src/control/gateway/server.rs\\\",\\r\\n    \\\"source_production_lines\\\": 1207\\r\\n  },\\r\\n  {\\r\\n    \\\"crate\\\": \\\"orderflow\\\",\\r\\n    \\\"package\\\": \\\"quantick-orderflow\\\",\\r\\n    \\\"production_lines\\\": 5045,\\r\\n    \\\"source\\\": \\\"crates/orderflow/src/engine.rs\\\",\\r\\n    \\\"source_production_lines\\\": 1020\\r\\n  },\\r\\n  {\\r\\n    \\\"crate\\\": \\\"pine\\\",\\r\\n    \\\"package\\\": \\\"quantick-pine\\\",\\r\\n    \\\"production_lines\\\": 4939,\\r\\n    \\\"source\\\": \\\"crates/pine/src/parser.rs\\\",\\r\\n    \\\"source_production_lines\\\": 815\\r\\n  }\\r\\n]\\r\\nSELECTION_EXIT=0\\r\\nSOURCE_GOAL_SHA256=8225DD2784E0D5455C8C4096F752246F1A408BAB857813D3E0B981EFC4050D8E\\r\\n\"\n}\n"
-}

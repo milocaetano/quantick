@@ -51,6 +51,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "layer_control_tests.rs"]
+mod layer_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 
@@ -352,6 +354,18 @@ fn two_anchors(app: &QuantickApp) -> Vec<Value> {
         .collect()
 }
 
+fn chart_anchors(anchors: &[Value]) -> Vec<Value> {
+    anchors
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, mut anchor)| {
+            anchor["bar_position"] = json!(format!("{index}.5"));
+            anchor
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Optional families: a dropped answer, retried under the same key
 // ---------------------------------------------------------------------------
@@ -560,6 +574,7 @@ const LAYOUT_V2: u32 = 2;
 /// store this test is about.
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
+        ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         (
             "layout.preset.apply",
             LAYOUT_V2,
@@ -597,6 +612,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("layout.pane.expand", LAYOUT_V2, json!({}), Readback::Moves),
+        ("layout.pane.resize_pair", 1, Value::Null, Readback::Moves),
         // Seven places cannot come back as they were sent, so v2 refuses
         // them — and the readback stays where it was.
         (
@@ -633,7 +649,52 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "enabled": false }),
             Readback::Stays,
         ),
+        (
+            "indicator.mouse_vertical_line.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
     ]
+}
+
+#[test]
+fn context_pair_resize_requires_the_granted_layout_scope() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("resize-pair-scopes");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let input = json!({
+        "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
+        "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
+        "fraction": "0.4"
+    });
+    let before = app.active_tab().context_divider_rect(0).unwrap();
+    for options in [options("observer", &[]), options("cockpit", &["cockpit"])] {
+        let mut client = connect(&directory, &options);
+        let (response, served) = keyed_call(
+            &mut app,
+            &mut client,
+            "denied",
+            "layout.pane.resize_pair",
+            input.clone(),
+            "denied-pair",
+        );
+        assert!(matches!(
+            error_code(&response),
+            Some(codes::SCOPE_DENIED | codes::PERMISSION_DENIED)
+        ));
+        assert!(served.iter().all(|request| !request.began));
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), before);
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
@@ -647,10 +708,23 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    settle_indicators(&mut app);
     let directory = gateway_test_directory("retry-every-optional");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout,cockpit.recover");
+    grant_annotate_for_test(
+        &mut app,
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover",
+    );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let cockpit = options("cockpit", &["cockpit", "cockpit.layout", "cockpit.recover"]);
+    let cockpit = options(
+        "cockpit",
+        &[
+            "observe.user_text",
+            "cockpit",
+            "cockpit.layout",
+            "cockpit.recover",
+        ],
+    );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
         .iter()
         .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Optional)
@@ -673,7 +747,27 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "layers.visibility.set" => json!({
+                "tab_id": app.active_tab().id.to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "layer_id": "grid", "visible": !app.style.canvas.grid_enabled,
+            }),
             "layout.tab.switch" => json!({ "name": first_layout }),
+            "layout.pane.resize_pair" => json!({
+                "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
+                "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
+                "fraction": "0.4"
+            }),
+            "indicator.mouse_vertical_line.set" => {
+                let tab = app.active_tab();
+                let view = &tab.flow_pane.indicators.all()[0];
+                json!({
+                    "tab_id": tab.id.to_string(),
+                    "pane_id": tab.flow_pane.id.to_string(),
+                    "slot_id": view.slot.0.to_string(),
+                    "enabled": true,
+                })
+            }
             _ => payload,
         };
         let before = readback(&mut app, &ctx, &mut client, capability);
@@ -1011,6 +1105,7 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     enable_test_gateway(&mut app, &ctx, &directory, 8);
     let mut client = connect(&directory, &options("annotator", ANNOTATE_SCOPES));
     let anchors = two_anchors(&app);
+    let fib_anchors = chart_anchors(&anchors);
     let script = "//@version=5\nindicator(\"agent ema\")\nplot(close)\n";
     let rows: Vec<_> = retry_matrix::READBACKS
         .iter()
@@ -1022,9 +1117,13 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
     for (index, row) in rows.iter().enumerate() {
         let payload = match row.capability {
             "annotate.label.create" => json!({ "anchors": [anchors[1].clone()], "text": "k" }),
+            "annotate.fib_projection.create" => {
+                json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] })
+            }
             "annotate.arrow.create"
             | "annotate.zone.create"
             | "annotate.fixed_range_profile.create" => json!({ "anchors": anchors }),
+            "annotate.fib_retracement.create" => json!({ "anchors": fib_anchors }),
             "annotate.remove" => json!({ "annotation_id": "1" }),
             "attention.mark.create" => json!({ "note": "keyed" }),
             "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
@@ -1195,6 +1294,7 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
     // mistake the reader for the connection it withdraws.
     let (mut reader, _) = connect_listed(&mut app, &ctx, &directory, &annotator);
     let anchors = two_anchors(&app);
+    let fib_anchors = chart_anchors(&anchors);
     let mine = json!(CLIENT_NAME);
 
     for (capability, payload) in [
@@ -1213,6 +1313,14 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
         (
             "annotate.fixed_range_profile.create",
             json!({ "anchors": anchors.clone() }),
+        ),
+        (
+            "annotate.fib_retracement.create",
+            json!({ "anchors": fib_anchors.clone() }),
+        ),
+        (
+            "annotate.fib_projection.create",
+            json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] }),
         ),
     ] {
         for (lost, applied) in [(Lost::ByRevocation, false), (Lost::AfterQueueing, true)] {

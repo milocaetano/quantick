@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "offline-tests-23-pre-ms1.log",
-  "original_sha256": "5032446C156EBB41CD044A90BA5F957D22E2FA40F48264F11B2F7F98A4F3A030",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": ".......................\n----------------------------------------------------------------------\nRan 23 tests in 6.443s\n\nOK\n"
-}

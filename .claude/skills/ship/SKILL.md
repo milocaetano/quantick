@@ -37,14 +37,16 @@ for the base, review key and authorized merge command; normal tasks use main.
    commands, outputs and input identity; distinguish reused evidence from new
    execution. Never infer success from an empty log or an old checkmark.
 
-2. **Archive and commit.** `mission` step 8 owns the archive procedure. Include
-   the archive and evidence in the frozen reviewed tree before final reviews.
-   Use conventional English commits. Batch compatible repairs; later edits
-   require new verdicts before replacing stale markers.
+2. **Freeze the product change.** Use conventional English commits. Never add
+   `GOAL-archive-*`, logs, screenshots, NDJSON, generated dossiers or other raw
+   execution evidence to the reviewed tree. Keep raw material temporary or in
+   GitHub/CI artifacts and summarize it in the PR. Batch compatible repairs;
+   later tracked edits require new verdicts before replacing stale markers.
 
 3. **Publish the draft.** Push the owned task branch and create/reuse its draft
-   PR with explicit base and linked issue. Follow the PR template; name the
-   mission tier and precisely label local, reused and CI verification. Open it
+   PR with explicit base and linked issue. Follow the PR template; include the
+   `quantick-mission-summary:v1` block from `mission`, name the mission tier and
+   precisely label local, reused and CI verification. Open it
    with `gh pr create --draft --body-file -` and a heredoc, the form `pr-gate`
    sees and exempts. A draft is not permission to merge.
    Campaign bases require explicit issue closure only after integration proof;
@@ -83,9 +85,9 @@ for the base, review key and authorized merge command; normal tasks use main.
    `sh .claude/hooks/mission_ship_gate.sh ship <n>` from that worktree. This
    shared gate revalidates the current PR/head, every applicable review and
    durable report, exact-head CI, and the literal mission `What done means`
-   clauses; it publishes and verifies the final reconciliation. Goal check by PR
-   kind: mission, one archive; main sync, zero or one not on main; consolidated,
-   the `Campaign-parent:` charter (integration steps 6-7). Refuse
+   clauses; it publishes and verifies the final reconciliation. Mission and
+   synchronization PRs carry one concise mission-summary block; consolidated
+   campaign PRs carry the `Campaign-parent:` charter (integration steps 6-7). Refuse
    delivery unless it prints `MISSION-COMPLETION:PASS`. Then report the PR URL and exact-head
    CI. The user alone merges to main: no
    auto-merge, queue, direct push or protection override. An authorized campaign

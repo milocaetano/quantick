@@ -155,7 +155,7 @@ impl OrderflowView {
         canvas_background: egui::Color32,
         lane_width_px: f32,
         top_inset_px: f32,
-    ) {
+    ) -> Option<egui::Rect> {
         let layout = ProjectedLayout::new(
             chart_rect,
             viewport,
@@ -167,7 +167,7 @@ impl OrderflowView {
         let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
         style.legend_top_inset = top_inset_px;
         let context = RenderContext::new(&frame.projection, layout, &style);
-        draw_compact_legend(painter, &context);
+        draw_compact_legend(painter, &context)
     }
 
     /// `right_inset_px` is the room another piece of chrome has already claimed

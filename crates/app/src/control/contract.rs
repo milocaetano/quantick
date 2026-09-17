@@ -1,10 +1,6 @@
 //! Immutable observer authority, capability, and request-dispatch contract.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use quantick_control::{
     error::{ControlError, codes},
@@ -24,10 +20,10 @@ use quantick_control::{
     wire::{ModuleRevision, RequestEnvelope, WireU64},
 };
 use quantick_control_host::{
-    admission::{
-        self, CompiledCapabilitySchemas, TierPolicy, admit_capability, register_capability,
+    admission::TierPolicy,
+    contract::{
+        AdmittedRoute, CapabilityContract, ContractBuilder, ReadPreparation, ScopeCatalogue,
     },
-    catalogue,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -67,6 +63,9 @@ use super::{
 
 mod reads;
 
+#[cfg(test)]
+#[path = "contract/tests/preparation.rs"]
+mod preparation;
 // `EventsReadInvocation` is re-exported: the gateway completes a parked wait
 // with it and reaches it by the path it always had.
 pub(crate) use reads::EventsReadInvocation;
@@ -417,18 +416,11 @@ struct PreparedCapability {
     dynamic_permissions: BTreeSet<PermissionId>,
 }
 
-type PrepareHandler = fn(&ObserverContract, &Value) -> Result<PreparedCapability, ControlError>;
+type PrepareHandler = fn(ScopeCatalogue<'_>, &Value) -> Result<PreparedCapability, ControlError>;
 
 pub(crate) struct ObserverContract {
-    registry: ControlRegistry,
+    contract: CapabilityContract<PrepareHandler>,
     actions: Arc<ActionRegistry>,
-    handlers: BTreeMap<(CapabilityId, u32), PrepareHandler>,
-    input_validators: CompiledCapabilitySchemas,
-    output_validators: CompiledCapabilitySchemas,
-    profiles: Vec<ProfileDescriptor>,
-    permissions: Vec<PermissionDescriptor>,
-    snapshot_scopes: Vec<SnapshotScopeDescriptor>,
-    scope_permissions: BTreeMap<SnapshotScopeId, BTreeSet<PermissionId>>,
     /// The retained evidence bundles of this instance.
     ///
     /// Held here because a worker read reaches the contract and nothing else:
@@ -626,14 +618,7 @@ impl ObserverContract {
             },
         ];
 
-        let mut registry = ControlRegistry::new();
-        for descriptor in &profiles {
-            registry.register_profile(descriptor.clone())?;
-        }
-        for descriptor in &permissions {
-            registry.register_permission(descriptor.clone())?;
-        }
-        registry.finalize_authority()?;
+        let mut registry = ContractBuilder::new(profiles, permissions)?;
 
         registry.register_module(ModuleDescriptor {
             id: module("control"),
@@ -836,17 +821,9 @@ impl ObserverContract {
             },
         })?;
 
-        let (scope_permissions, snapshot_scopes) =
-            catalogue::snapshot_scope_catalogue(projections.inner(), &permissions)?;
-
-        let mut handlers: BTreeMap<(CapabilityId, u32), PrepareHandler> = BTreeMap::new();
-        let mut input_validators = CompiledCapabilitySchemas::new();
-        let mut output_validators = CompiledCapabilitySchemas::new();
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        let mut contract: CapabilityContract<PrepareHandler> =
+            registry.build(projections.inner())?;
+        contract.register_read(
             read_capability::<EmptyInput, DescribeResult, _>(
                 DESCRIBE_CAPABILITY_ID,
                 "control",
@@ -857,11 +834,7 @@ impl ObserverContract {
             ),
             prepare_describe,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<SnapshotReadInput, SerializedSnapshotCapture, _>(
                 SNAPSHOT_CAPABILITY_ID,
                 "snapshot",
@@ -872,11 +845,7 @@ impl ObserverContract {
             ),
             prepare_snapshot,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<ChartWindowInput, ChartWindowPage, _>(
                 CHART_WINDOW_CAPABILITY_ID,
                 "chart",
@@ -890,11 +859,7 @@ impl ObserverContract {
             ),
             prepare_chart_window,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EmptyInput, SerializedSnapshotCapture, _>(
                 DIAGNOSTICS_CAPABILITY_ID,
                 "health",
@@ -910,11 +875,7 @@ impl ObserverContract {
             ),
             prepare_diagnostics,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EmptyInput, SerializedSnapshotCapture, _>(
                 SCENE_CAPABILITY_ID,
                 "scene",
@@ -932,11 +893,7 @@ impl ObserverContract {
             ),
             prepare_scene,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EventsReadInput, EventPage, _>(
                 EVENTS_READ_CAPABILITY_ID,
                 EVENTS_MODULE_ID,
@@ -947,11 +904,7 @@ impl ObserverContract {
             ),
             prepare_events_read,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EventsWaitInput, EventPage, _>(
                 EVENTS_WAIT_CAPABILITY_ID,
                 EVENTS_MODULE_ID,
@@ -967,11 +920,7 @@ impl ObserverContract {
         // the trader. What it creates is the answer itself — bounded by its
         // own named limits, expiring on its own, and gone the moment access
         // is withdrawn.
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EvidenceCaptureInput, EvidenceManifest, _>(
                 EVIDENCE_CAPTURE_CAPABILITY_ID,
                 EVIDENCE_MODULE_ID,
@@ -985,11 +934,7 @@ impl ObserverContract {
             ),
             prepare_evidence_capture,
         )?;
-        register_capability(
-            &mut registry,
-            &mut handlers,
-            &mut input_validators,
-            &mut output_validators,
+        contract.register_read(
             read_capability::<EvidenceReadInput, EvidenceChunkPage, _>(
                 EVIDENCE_READ_CAPABILITY_ID,
                 EVIDENCE_MODULE_ID,
@@ -1003,29 +948,20 @@ impl ObserverContract {
             ),
             prepare_evidence_read,
         )?;
-        // Actions are discoverable through the same registry as the reads;
-        // they have no prepare handler here, so a remote request for one that
-        // passes the permission check still fails closed before dispatch.
+        // Actions bind explicitly; missing read handlers never become actions.
         for descriptor in actions.descriptors() {
-            registry.register_capability(descriptor.clone())?;
+            contract.register_external(descriptor.clone())?;
         }
 
         Ok(Self {
-            registry,
+            contract,
             actions,
-            handlers,
-            input_validators,
-            output_validators,
             evidence,
-            profiles,
-            permissions,
-            snapshot_scopes,
-            scope_permissions,
         })
     }
 
     pub fn registry(&self) -> &ControlRegistry {
-        &self.registry
+        self.contract.registry()
     }
 
     pub fn validate_output(
@@ -1034,18 +970,10 @@ impl ObserverContract {
         capability_version: u32,
         result: &Value,
     ) -> bool {
-        if let Some(action) = self
-            .actions
-            .lookup(capability_id.as_str(), capability_version)
-        {
-            return action.output.validate(result).is_ok();
-        }
-        admission::output_is_valid(
-            &self.output_validators,
-            capability_id,
-            capability_version,
-            result,
-        )
+        self.contract
+            .validate_output(capability_id, capability_version, result, |id, version| {
+                self.actions.schemas(id, version)
+            })
     }
 
     pub fn default_grant(&self) -> BTreeSet<PermissionId> {
@@ -1061,19 +989,21 @@ impl ObserverContract {
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
     /// here or in whatever asked.
     pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
-        catalogue::readable_scopes(&self.snapshot_scopes, grant)
+        self.contract.readable_scopes(grant)
     }
 
     /// One registered snapshot scope, by id — what the retry matrix checks a
     /// named readback against.
     pub fn snapshot_scope(&self, id: &str) -> Option<&SnapshotScopeDescriptor> {
-        self.snapshot_scopes
+        self.contract
+            .snapshot_scopes()
             .iter()
             .find(|descriptor| descriptor.id.as_str() == id)
     }
 
     pub fn selectable_permissions(&self) -> impl Iterator<Item = &PermissionDescriptor> {
-        self.permissions
+        self.contract
+            .permissions()
             .iter()
             .filter(|descriptor| descriptor.id.as_str() != OBSERVE_PERMISSION_ID)
     }
@@ -1095,11 +1025,11 @@ impl ObserverContract {
             effective_profile,
             effective_scopes,
             effective_limits,
-            modules: self.registry.modules().cloned().collect(),
-            profiles: self.profiles.clone(),
-            permissions: self.permissions.clone(),
-            capabilities: self.registry.capabilities().cloned().collect(),
-            snapshot_scopes: self.snapshot_scopes.clone(),
+            modules: self.contract.registry().modules().cloned().collect(),
+            profiles: self.contract.profiles().to_vec(),
+            permissions: self.contract.permissions().to_vec(),
+            capabilities: self.contract.registry().capabilities().cloned().collect(),
+            snapshot_scopes: self.contract.snapshot_scopes().to_vec(),
         }
     }
 
@@ -1108,52 +1038,30 @@ impl ObserverContract {
         envelope: RequestEnvelope,
         effective_scopes: &BTreeSet<PermissionId>,
     ) -> Result<PreparedRequest, ControlError> {
-        // An action validates against its own compiled schema — the same
-        // one the hotkey's call passes — so the two paths cannot drift.
-        let admitted = admit_capability(&self.registry, &envelope, effective_scopes)?
-            .admit_payload(
-                &envelope,
-                |id, version| self.actions.lookup(id.as_str(), version),
-                |action| &action.input,
-                &self.input_validators,
-                TierPolicy::STRICT,
-            )?;
-        let descriptor = admitted.descriptor();
-        if admitted.own().is_some() {
-            let dispatch = PreparedDispatch::Action(PreparedAction {
-                capability_id: descriptor.id.clone(),
-                capability_version: descriptor.version,
-                input: envelope.payload.clone(),
-            });
-            return Ok(PreparedRequest {
-                required_permissions: descriptor.required_permissions.clone(),
-                envelope,
-                dispatch,
-            });
-        }
-
-        let handler = self
-            .handlers
-            .get(&(descriptor.id.clone(), descriptor.version))
-            .ok_or_else(|| {
-                known_error(
-                    codes::CAPABILITY_UNAVAILABLE,
-                    "registered observer capability has no handler",
-                    false,
-                )
-            })?;
-        let PreparedCapability {
-            dispatch,
-            dynamic_permissions,
-        } = handler(self, &envelope.payload)?;
-
-        admitted.admit_scopes(&dynamic_permissions, effective_scopes)?;
-
-        let mut required_permissions = descriptor.required_permissions.clone();
-        required_permissions.extend(dynamic_permissions);
-        Ok(PreparedRequest {
+        let admitted = self.contract.admit(
             envelope,
-            required_permissions,
+            effective_scopes,
+            TierPolicy::STRICT,
+            |id, version| self.actions.schemas(id, version),
+            |handler, payload, scopes| {
+                let prepared = handler(scopes, payload)?;
+                Ok(ReadPreparation {
+                    prepared: prepared.dispatch,
+                    dynamic_permissions: prepared.dynamic_permissions,
+                })
+            },
+        )?;
+        let dispatch = match admitted.route {
+            AdmittedRoute::Read(dispatch) => dispatch,
+            AdmittedRoute::External => PreparedDispatch::Action(PreparedAction {
+                capability_id: admitted.envelope.capability_id.clone(),
+                capability_version: admitted.envelope.capability_version,
+                input: admitted.envelope.payload.clone(),
+            }),
+        };
+        Ok(PreparedRequest {
+            envelope: admitted.envelope,
+            required_permissions: admitted.required_permissions,
             dispatch,
         })
     }
@@ -1184,62 +1092,6 @@ mod tests {
     use super::*;
     use quantick_control::handshake::ProfileAuthority as _;
     use quantick_control::{id::RequestId, wire::RequestEnvelope};
-
-    /// The three envelope fields this tier used to refuse together, now that
-    /// only two of them are still refused together.
-    ///
-    /// `layout.*`, `feed.*` and the `trade.*` shaping family publish
-    /// `IdempotencyPolicy::Optional`; a read publishes `Forbidden`. Before
-    /// this trio the gateway refused every key regardless, so the descriptors
-    /// and the door disagreed. These pin both halves: the refusal a
-    /// descriptor asks for still happens, and the two refusals that were
-    /// never in dispute are untouched.
-    #[test]
-    fn a_read_still_refuses_the_idempotency_key_its_descriptor_forbids() {
-        let contract = contract();
-        let grant = contract.default_grant();
-        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
-        envelope.idempotency_key = Some(
-            quantick_control::id::IdempotencyKey::new("key-1".to_owned())
-                .expect("a printable ASCII key is valid"),
-        );
-        let error = contract.prepare(envelope, &grant).unwrap_err();
-        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
-        assert!(
-            error.message.contains("forbids idempotency keys"),
-            "the refusal names the policy that caused it: {}",
-            error.message
-        );
-    }
-
-    #[test]
-    fn a_dry_run_is_still_refused_by_this_tier() {
-        let contract = contract();
-        let grant = contract.default_grant();
-        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
-        envelope.dry_run = true;
-        let error = contract.prepare(envelope, &grant).unwrap_err();
-        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
-        assert!(error.message.contains("dry runs"), "{}", error.message);
-    }
-
-    #[test]
-    fn an_expected_revision_is_still_refused_by_this_tier() {
-        let contract = contract();
-        let grant = contract.default_grant();
-        let mut envelope = request(SNAPSHOT_CAPABILITY_ID, json!({ "scopes": ["system.info"] }));
-        envelope.expected_revisions = vec![quantick_control::wire::ModuleRevision {
-            module_id: ModuleId::new("chart").expect("static module ID is valid"),
-            revision: quantick_control::wire::WireU64::new(1),
-        }];
-        let error = contract.prepare(envelope, &grant).unwrap_err();
-        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
-        assert!(
-            error.message.contains("expected revisions"),
-            "{}",
-            error.message
-        );
-    }
 
     /// The access panel offers no way to grant the trade tier — and above
     /// all not under "Read scopes for the next connection".
@@ -1376,12 +1228,12 @@ mod tests {
         // until the trader grants the annotator profile.
         const READ_CAPABILITIES: usize = 9;
         let contract = contract();
-        let capabilities = contract.registry.capabilities().collect::<Vec<_>>();
+        let capabilities = contract.registry().capabilities().collect::<Vec<_>>();
         let actions = contract.actions.descriptors().count();
         assert_eq!(capabilities.len(), READ_CAPABILITIES + actions);
-        assert_eq!(contract.handlers.len(), READ_CAPABILITIES);
+        assert_eq!(contract.contract.read_count(), READ_CAPABILITIES);
         let observer_ceiling = contract
-            .registry
+            .registry()
             .permission_ceiling(&profile(OBSERVER_PROFILE_ID))
             .expect("the observer profile has a ceiling");
         for capability in &capabilities {
@@ -1414,22 +1266,20 @@ mod tests {
     #[test]
     fn a_second_registered_handler_docks_without_changing_gateway_dispatch() {
         let mut contract = contract();
-        register_capability(
-            &mut contract.registry,
-            &mut contract.handlers,
-            &mut contract.input_validators,
-            &mut contract.output_validators,
-            read_capability::<EmptyInput, DescribeResult, _>(
-                "control.second",
-                "control",
-                "Second observer handler",
-                "Exercises the registered capability handler port.",
-                [OBSERVE_PERMISSION_ID],
-                None,
-            ),
-            prepare_describe,
-        )
-        .unwrap();
+        contract
+            .contract
+            .register_read(
+                read_capability::<EmptyInput, DescribeResult, _>(
+                    "control.second",
+                    "control",
+                    "Second observer handler",
+                    "Exercises the registered capability handler port.",
+                    [OBSERVE_PERMISSION_ID],
+                    None,
+                ),
+                prepare_describe,
+            )
+            .unwrap();
 
         let prepared = contract
             .prepare(

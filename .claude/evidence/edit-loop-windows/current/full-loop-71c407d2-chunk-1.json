@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "full-loop-71c407d2-chunk-1.json",
-  "original_sha256": "BA6564D27B0D2D41C1C708D173146716B307D4C1A40523554D45CF0D35F622CB",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "{\n  \"chunk_id\": \"718cf6\",\n  \"wall_time_seconds\": 5.0096552,\n  \"session_id\": 4128,\n  \"original_token_count\": 104,\n  \"output\": \"    Finished `dev` profile [optimized + debuginfo] target(s) in 49.93s\\nSTEP_EXIT_CODE=0\\r\\nEND_UTC=2026-09-15T02:09:36.9785130Z\\r\\nSTEP=3/4\\r\\nSTART_UTC=2026-09-15T02:09:37.1062509Z\\r\\nCOMMAND=cargo build --workspace\\r\\n   Compiling quantick-app v0.1.0 (C:\\\\src\\\\quantick-worktrees\\\\ci-edit-loop-windows\\\\crates\\\\app)\\n   Compiling quantick-control-host v0.1.0 (C:\\\\src\\\\quantick-worktrees\\\\ci-edit-loop-windows\\\\crates\\\\control-host)\\n\"\n}\n"
-}

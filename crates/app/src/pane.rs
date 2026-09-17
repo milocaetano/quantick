@@ -13,14 +13,11 @@
 //! [`ChartPane::id`] for the same reason — two panes registering one id would
 //! share a drag.
 
-use std::collections::BTreeSet;
-
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bands;
 use crate::chart::PriceScale;
-use crate::chart_layers::{ChartLayer, LayerActions};
 use crate::config::FeedCapabilities;
 use crate::drawings::{self, Drawings};
 use crate::indicator_worker::{IndicatorWorker, LaneTransport, MAX_LANE_RUNGS, SlotId};
@@ -30,12 +27,13 @@ use crate::paper_trading::PaperTrading;
 use crate::plot_area::{self, PlotAreas, plot_split};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
-use crate::state::{BarSpec, ChartState, SpecSelector};
+use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
 use crate::toolrail::ToolRail;
 use crate::viewport::Viewport;
+use quantick_layers::{ChartLayer, LayerActions};
 
 // The tests in `pane/tests/` reach these through `use super::*`; the production
 // code that read them moved to the siblings, so only the tests still need
@@ -70,6 +68,16 @@ mod frame;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod render_registry;
+pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
+    render_registry::standard().layers()
+}
+#[cfg(test)]
+impl ChartPane {
+    pub(crate) fn install_layer_probe(&mut self) {
+        render_registry::probe::install(self);
+    }
+}
 mod menus;
 mod pointer_hit;
 mod primary_button;
@@ -88,6 +96,7 @@ pub use frame::PaneFrame;
 pub use gestures::PaneGestures;
 pub use strategies::PaneStrategies;
 
+pub(crate) use canvas_split::split_pane_layout_strip;
 /// The canvas split and the shared-mark contract keep their public paths
 /// here: the tab, the layouts and the control plane name them as `pane::`.
 pub use canvas_split::{
@@ -588,20 +597,14 @@ pub struct ChartPane {
     /// pane at all. Expanded by default, which is what every chart did before
     /// the fold existed.
     pub legend_collapsed: bool,
-    /// Whether the user wants the live strip shown. The pixels it actually
-    /// gets are still capability-gated — see [`Self::live_strip_width`].
-    pub live_strip_visible: bool,
+    /// Requested switches not already owned by another feature, and the
+    /// headless catalog that resolves policy for every layer.
+    pub layers: quantick_layers::LayerState,
+    layer_renderers: &'static render_registry::RenderRegistry,
     /// The candle footprint layer as this pane has it — see
     /// [`PaneFootprint`].
     pub footprint: PaneFootprint,
 
-    /// Layers switched off that nothing else on this pane owns.
-    ///
-    /// The rest of the right-click menu resolves to the field that already owns
-    /// its layer (see [`Self::layer_visible`]); only the chart's own marks —
-    /// which had no switch before the menu existed — are held here, so the menu
-    /// can never hold a second opinion about a pixel.
-    pub hidden_layers: BTreeSet<ChartLayer>,
     /// Where each layer's switch landed in the last menu frame, so a test can
     /// click the real widget instead of calling the setter behind it.
     #[cfg(test)]
@@ -697,14 +700,17 @@ pub struct ChartPane {
     /// this pane's input pass, holding borrows the app's state cannot cross.
     /// The same shape [`SpecSelector::pending`] uses for the other direction.
     pending_settings: Option<SlotId>,
+    /// A guide switch chosen in an indicator pane's context menu, parked
+    /// until the app can update its layout and mirrored panes.
+    pending_indicator_guide: Option<(SlotId, bool)>,
 }
 
 impl ChartPane {
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
     /// with the tape and every layer read off it.
     #[must_use]
-    pub fn flow(id: u64, spec: BarSpec, symbol: String) -> Self {
-        Self::new(id, spec, Some(OrderflowView::new(symbol)))
+    pub fn flow(id: u64, spec: impl Into<BarConfiguration>, symbol: String) -> Self {
+        Self::new(id, spec.into(), Some(OrderflowView::new(symbol)))
     }
 
     /// The time pane: the context view beside the flow pane (§11). Time bars
@@ -716,8 +722,9 @@ impl ChartPane {
 
     /// `id` namespaces the pane's egui interaction ids and must be unique
     /// among the panes on screen.
-    fn new(id: u64, spec: BarSpec, orderflow: Option<OrderflowView>) -> Self {
+    fn new(id: u64, spec: impl Into<BarConfiguration>, orderflow: Option<OrderflowView>) -> Self {
         // Defaults for every kind, with the initial spec's parameter applied.
+        let spec = spec.into();
         let selector = SpecSelector::new(spec);
 
         Self {
@@ -734,14 +741,14 @@ impl ChartPane {
             drawings_key: None,
             drawings_saved_revision: 0,
             legend_collapsed: false,
-            live_strip_visible: false,
+            layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
+            layer_renderers: render_registry::standard(),
             footprint: PaneFootprint::default(),
             // The backfill divider opens off: it is a full-height rule across
             // the candles for a boundary that matters once, when reading how
             // far the live tape goes back. Nothing is hidden about the data —
             // the mark is one click away in the layer menu, and the bars
             // either side of it are exactly what they were.
-            hidden_layers: BTreeSet::from([ChartLayer::BackfillDivider]),
             #[cfg(test)]
             layer_menu_rects: Vec::new(),
             viewport: Viewport::new(),
@@ -761,6 +768,7 @@ impl ChartPane {
             pending_reanchor: None,
             strip_expanded: None,
             pending_settings: None,
+            pending_indicator_guide: None,
         }
     }
 
@@ -798,7 +806,8 @@ impl ChartPane {
     /// setting the state alone would restore a chart whose own controls
     /// disagreed with it, and the trader's first touch of the parameter would
     /// snap the chart back to a rule they never chose.
-    pub fn set_spec(&mut self, spec: BarSpec) {
+    pub fn set_spec(&mut self, spec: impl Into<BarConfiguration>) {
+        let spec = spec.into();
         let changed = self.state.spec() != &spec;
         self.spec.set(spec);
         self.state.set_spec(spec);
@@ -856,8 +865,11 @@ impl ChartPane {
         // `layer_blocked` states: the running feed is resolved once per frame
         // by the caller, and a copy kept here would be one more thing to keep
         // in step when MetaTrader narrows its capabilities mid-session.
-        let source_fills_it = capabilities.book_capture || capabilities.traded_volume;
-        if self.live_strip_visible && self.orderflow.is_some() && source_fills_it {
+        if quantick_layers::LayerState::effective(
+            ChartLayer::LiveStrip,
+            self.layers.requested(ChartLayer::LiveStrip),
+            self.layer_facts(Some(capabilities)),
+        ) {
             crate::live_strip::LIVE_STRIP_WIDTH_PX
         } else {
             0.0
@@ -881,6 +893,19 @@ impl ChartPane {
     /// so a request is acted on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {
         self.pending_settings.take()
+    }
+
+    pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {
+        self.pending_indicator_guide.take()
+    }
+
+    pub(crate) fn first_indicator_pane_center(&self) -> Option<egui::Pos2> {
+        self.frame.bands.get(1).map(|band| band.rect.center())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
+        self.pending_indicator_guide = Some((slot, enabled));
     }
 
     /// Stand in for the gesture that raises a settings request, so the app's

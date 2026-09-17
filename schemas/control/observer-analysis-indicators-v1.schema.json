@@ -116,6 +116,11 @@
           "description": "The constructor it was added through (`native.cvd`, `script.zigzag`),\ndurable across remove and re-add in a way the slot is not.",
           "type": "string"
         },
+        "mouse_vertical_line": {
+          "default": false,
+          "description": "Whether price-chart hover is mirrored into this non-price pane.",
+          "type": "boolean"
+        },
         "ordinal": {
           "description": "Which instance of that kind this is, assigned once at birth. Two EMAs\non one pane are told apart by this, never by position.",
           "format": "uint32",

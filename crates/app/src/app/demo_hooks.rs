@@ -64,6 +64,16 @@ const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
 /// unambiguous at every timeframe the chart offers.
 const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
 
+fn demo_recut_count(parameter: rust_decimal::Decimal) -> rust_decimal::Decimal {
+    use rust_decimal::prelude::ToPrimitive;
+    parameter
+        .to_u64()
+        .expect("registered count")
+        .saturating_mul(2)
+        .max(2)
+        .into()
+}
+
 impl QuantickApp {
     /// The `QUANTICK_CONTROL_EVIDENCE` hook: capture one evidence bundle
     /// through the very read a connected client calls.
@@ -1002,11 +1012,23 @@ impl QuantickApp {
         // Half the bars, same trades — the plainest re-cut there is. Two
         // settle frames because a spec change waits for the selector to hold
         // still for one (`Tab::apply_spec_change`).
-        if let crate::state::BarSpec::Tick(n) = pane.spec.retained_mut(crate::state::BarKind::Tick)
-        {
-            *n = n.saturating_mul(2).max(2);
+        let spec = *pane.spec.retained(crate::state::BarKind::Tick);
+        let value = demo_recut_count(spec.parameter());
+        pane.spec
+            .retain(spec.with_parameter("count", value).expect("positive count"));
+        self.active_tab_mut().apply_spec_changes();
+        self.active_tab_mut().apply_spec_changes();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::demo_recut_count;
+
+    #[test]
+    fn demo_recut_preserves_the_count_upper_bound() {
+        for (count, expected) in [(0, 2), (50, 100), (u64::MAX, u64::MAX)] {
+            assert_eq!(demo_recut_count(count.into()), expected.into());
         }
-        self.active_tab_mut().apply_spec_changes();
-        self.active_tab_mut().apply_spec_changes();
     }
 }

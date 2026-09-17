@@ -67,6 +67,8 @@ pub(super) struct IndicatorState {
     /// lands — the same deferral [`Self::pending_hidden`] performs, for the
     /// same reason.
     pub(super) pending_styles: Vec<(TabSlot, crate::indicator_style::StyleOverride)>,
+    /// Saved mouse guides waiting for their worker-created view.
+    pub(super) pending_mouse_vertical_lines: Vec<TabSlot>,
 
     /// Last hot-reload poll instant (the poll runs about once a second;
     /// file metadata every frame would be waste).
@@ -84,6 +86,18 @@ pub(super) struct IndicatorState {
 }
 
 impl IndicatorState {
+    /// A closed tab cannot leave persistence or deferred slot work behind.
+    /// Slot numbers may be reused on other tabs, so the tab is the identity.
+    pub(super) fn forget_tab(&mut self, tab: u64) {
+        self.slot_kinds.retain(|(owner, _)| owner.tab != tab);
+        self.operator_slots.retain(|owner| owner.tab != tab);
+        self.script_files.retain(|(owner, ..)| owner.tab != tab);
+        self.pending_hidden.retain(|owner| owner.tab != tab);
+        self.pending_styles.retain(|(owner, _)| owner.tab != tab);
+        self.pending_mouse_vertical_lines
+            .retain(|owner| owner.tab != tab);
+    }
+
     /// Lend only slot bookkeeping to operations; UI/library/poll state stays here.
     pub(super) fn slots_mut(&mut self) -> super::indicator_operations::IndicatorSlots<'_> {
         super::indicator_operations::IndicatorSlots {
@@ -92,6 +106,63 @@ impl IndicatorState {
             script_files: &mut self.script_files,
             pending_hidden: &mut self.pending_hidden,
             pending_styles: &mut self.pending_styles,
+        }
+    }
+}
+
+fn apply_indicator_guide_requests(app: &mut QuantickApp, tab_id: u64) {
+    if let Some(index) = app.harness.indicator_mouse_line() {
+        let target = app
+            .active_tab()
+            .flow_pane
+            .indicators
+            .all()
+            .get(index)
+            .map(|view| (app.active_tab().flow_pane.id, view.slot));
+        if let Some((pane_id, slot)) = target {
+            app.harness.indicator_mouse_line_opened();
+            let _ = app.control_action(
+                crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "tab_id": tab_id.to_string(),
+                    "pane_id": pane_id.to_string(),
+                    "slot_id": slot.0.to_string(),
+                    "enabled": true,
+                }),
+            );
+        }
+    }
+
+    let Some(tab) = app.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+        return;
+    };
+    let requests: SmallVec<[(PaneSide, SlotId, bool); MAX_CANVAS_PANES]> = tab
+        .panes_with_sides_mut()
+        .filter_map(|(pane, side)| {
+            pane.take_indicator_guide_request()
+                .map(|(slot, enabled)| (side, slot, enabled))
+        })
+        .collect();
+    for (side, slot, enabled) in requests {
+        let pane_id = app
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.pane(side).id);
+        if let Some(pane_id) = pane_id {
+            let _ = app.control_action(
+                crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+                1,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({
+                    "tab_id": tab_id.to_string(),
+                    "pane_id": pane_id.to_string(),
+                    "slot_id": slot.0.to_string(),
+                    "enabled": enabled,
+                }),
+            );
         }
     }
 }
@@ -196,6 +267,7 @@ impl QuantickApp {
                 });
             }
         }
+        apply_indicator_guide_requests(self, tab_id);
     }
 
     /// Fold or unfold one pane's indicator legend.
@@ -308,6 +380,7 @@ impl QuantickApp {
         let shown = self.active_tab().context_panes_shown();
         let sides: SmallVec<[PaneSide; MAX_CANVAS_PANES]> = self.active_tab().sides().collect();
         for side in sides {
+            self.active_tab_mut().pane_mut(side).frame.indicator_legend = None;
             // Only a context chart on screen draws a legend: the stack may
             // hold a pane the layout no longer shows.
             if let PaneSide::Time(slot) = side
@@ -344,14 +417,16 @@ impl QuantickApp {
                         && self.indicators.indicator_settings_target.side == side
                 })
                 .map(|dialog| dialog.slot);
-            for action in indicator_legend::draw(
+            let (actions, footprint) = indicator_legend::draw(
                 ctx,
                 pane.id,
                 rect,
                 pane.indicators.all(),
                 preview_slot,
                 pane.legend_collapsed,
-            ) {
+            );
+            self.active_tab_mut().pane_mut(side).frame.indicator_legend = footprint;
+            for action in actions {
                 pending.push((side, action));
             }
         }

@@ -27,7 +27,7 @@
 //!
 //! One naming rule, enforced here: every capability identifier reaches the
 //! registry through a `const <NAME>_CAPABILITY_ID: &str = "…";` in
-//! `crates/app/src/control/`. That was almost true already — twelve `layout.*`
+//! `crates/app/src/control/` or the shared annotation contract. Twelve `layout.*`
 //! and `feed.*` capabilities used a bare `_ID` suffix — and making it exactly
 //! true was cheaper than teaching this guard a denylist of the six other
 //! suffixes (`_SCOPE_ID`, `_PERMISSION_ID`, `_EVENT_KIND`, `_CONTROL_ID`,
@@ -57,6 +57,8 @@ pub const INVENTORY_PATH: &str = "docs/control-plane/capability-inventory.md";
 
 /// Where the capability identifiers are declared.
 const CONTROL_DIR: &str = "crates/app/src/control";
+/// The extracted contract remains scanned; moving ownership creates no exemption.
+const ANNOTATION_CONTRACT: &str = "crates/control/src/annotation.rs";
 
 /// The generated hook registry a session loads.
 pub const REGISTRY_PATH: &str = ".claude/skills/ui-harness/references/hook-registry.md";
@@ -309,6 +311,7 @@ pub fn check_file(path: &Path, _contents: &str) -> Vec<Finding> {
         || relative.ends_with(MATRIX_PATH)
         || relative.ends_with(RETRY_MATRIX_PATH)
         || relative.contains(CONTROL_DIR)
+        || relative.ends_with(ANNOTATION_CONTRACT)
         || relative.ends_with(PROSE_PATH)
         || relative.ends_with(REGISTRY_PATH)
         || HOOK_SOURCE_DIRS.iter().any(|dir| relative.contains(dir));
@@ -343,7 +346,7 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
             findings.push(Finding::new(
                 format!(
                     "{INVENTORY_PATH}:{line}: `{id}` is documented but no \
-                     `*_CAPABILITY_ID` constant under {CONTROL_DIR} declares it"
+                     `*_CAPABILITY_ID` constant under {CONTROL_DIR} or {ANNOTATION_CONTRACT} declares it"
                 ),
                 REMEDY_REGENERATE,
             ));
@@ -702,6 +705,7 @@ fn declared_capabilities(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut files = Vec::new();
     collect_rust_files(&root.join(CONTROL_DIR), &mut files);
+    files.push(root.join(ANNOTATION_CONTRACT));
     files.sort();
     for file in files {
         let Ok(source) = std::fs::read_to_string(&file) else {
@@ -842,6 +846,14 @@ mod tests {
             capability_constant("pub(crate) const READ_CAPABILITY_ID: &str = \"evidence.read\";"),
             Some("evidence.read".to_owned())
         );
+    }
+
+    #[test]
+    fn extracted_annotation_contract_and_application_capabilities_are_both_scanned() {
+        let declared = declared_capabilities(&workspace_root());
+        assert!(declared["annotate.fixed_range_profile.create"].starts_with(ANNOTATION_CONTRACT));
+        assert!(declared["feed.reconnect"].starts_with(CONTROL_DIR));
+        assert!(!declared.contains_key("annotate.created"));
     }
 
     /// The six suffixes that also name dotted lowercase strings in the control

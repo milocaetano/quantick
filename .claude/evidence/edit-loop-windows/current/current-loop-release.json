@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "current-loop-release.json",
-  "original_sha256": "4640040F2C0392CFC3D1D5890C5E185D533766796021608563A6612F5D0F3048",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "{\n  \"chunk_id\": \"664bdd\",\n  \"wall_time_seconds\": 0.3624224,\n  \"exit_code\": 0,\n  \"original_token_count\": 257,\n  \"output\": \"RELEASE_UTC=2026-09-15T02:29:06.2061384Z\\r\\nWRAPPER_COUNT=0\\r\\nHEAD=0ca889b9e3c3b6b60dd52002f737d17af56082d8\\r\\nTREE=71c407d226dc6fc80858506d4eb1831729cbd97b\\r\\n\\r\\nAlgorithm       Hash                                                                   Path                                                                                                                     \\r\\n---------       ----                                                                   ----                                                                                                                     \\r\\nSHA256          58C3C81D99C076F6AC50558B24C38232EC2DE6770E4ACE1431D57CF7911018F5       C:\\\\src\\\\quantick-worktrees\\\\fix-mutation-retry-truth\\\\target\\\\debug\\\\quantick-guards.exe                                      \\r\\nSHA256          B5126C5CEB5F5D8D42BD9FB195F7D1A3F9F0CCBB1634088E8EDC855CB804980E       C:\\\\src\\\\quantick-worktrees\\\\ci-edit-loop-windows\\\\target\\\\debug\\\\quantick-guards.exe                                          \\r\\nGUARD_SOURCE_DIFF_EXIT=0\\r\\n\\r\\n\\r\\n\"\n}\n"
-}

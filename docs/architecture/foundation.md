@@ -33,11 +33,9 @@ Source links identify files; line numbers are coordinates at the audited commit.
 | Layer identity | [ChartLayer](../../crates/app/src/chart_layers.rs), lines 80 and 191, is a closed enum/list; [layer wiring](../../crates/app/src/app/chart_layers_wiring.rs), line 181, derives mask bits from ordering. | Audit stable identity separately from ordinal storage before extending a registry. Do not reorder persisted bits as cleanup. |
 
 PRs #310 and #311 already grouped application and pane fields by owner; #311
-also moved bar parameters into their variant. Their
-[app](../../.claude/GOAL-archive-app-fields-by-owner.md) and
-[pane](../../.claude/GOAL-archive-pane-field-groups.md) mission records explain the
-limits: grouping was deliberate, not full service encapsulation. Further work
-must reduce actual dependencies, not merely split more files.
+also moved bar parameters into their variant. Their changes deliberately stop
+short of full service encapsulation. Further work must reduce actual
+dependencies, not merely split more files.
 
 ## Target responsibilities
 

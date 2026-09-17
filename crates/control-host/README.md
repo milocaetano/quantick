@@ -12,6 +12,14 @@ that needs no UI:
   step returning the only value the next accepts;
 - `catalogue` — the snapshot scopes a projection registry declares, as the
   contract publishes them;
+- `contract` — the private registered capability state and complete admission
+  transaction. `ContractBuilder` validates ordered authority and projection
+  scopes; `CapabilityContract<P>` atomically registers opaque read tokens or
+  explicit external bindings. Its preparation callback receives only the token,
+  payload and scope-permission view, and no prepared value is returned before
+  final dynamic authorization. External schemas stay with their host and must
+  name the exact registered ID/version. `tests/capability_contract.rs` proves
+  this public API with a plain second host, two reads and an external provider;
 - `idempotency` — the per-connection store that replays a keyed call's
   recorded outcome instead of executing it twice;
 - `journal` — the bounded semantic event journal and its change signal;

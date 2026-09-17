@@ -1,8 +1,0 @@
-{
-  "schema": "c2-source-receipt-v1",
-  "original_name": "profile-hook-launch-failure.json",
-  "original_sha256": "7BFD60EF44A8EB2E9E8D92333BD09FD1F540BE8F9A91257E3C6088D13CF5A678",
-  "source_encoding": "utf-8",
-  "source_bom_hex": "",
-  "source_text": "{\n  \"chunk_id\": \"dbc7d8\",\n  \"wall_time_seconds\": 0.2936081,\n  \"exit_code\": 1,\n  \"original_token_count\": 152,\n  \"output\": \"& : O arquivo C:\\\\src\\\\quantick\\\\.git\\\\worktrees\\\\ci-edit-loop-windows\\\\evidence\\\\diagnose-profile-hook.ps1 não pode ser carregado porque a execução de scripts foi desabilitada neste sistema. Para obter mais \\r\\ninformações, consulte about_Execution_Policies em https://go.microsoft.com/fwlink/?LinkID=135170.\\r\\nNo linha:2 caractere:3\\r\\n+ & 'C:/src/quantick/.git/worktrees/ci-edit-loop-windows/evidence/diagn ...\\r\\n+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\\r\\n    + CategoryInfo          : ErrodeSegurança: (:) [], PSSecurityException\\r\\n    + FullyQualifiedErrorId : UnauthorizedAccess\\r\\n\"\n}\n"
-}

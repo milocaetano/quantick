@@ -31,7 +31,7 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
-use crate::state::BarSpec;
+use crate::state::BarConfiguration;
 use quantick_feed::history_reach::{self, Campaign, HistoryReach};
 use quantick_feed::stall::{self};
 use quantick_feed::{
@@ -41,6 +41,7 @@ use quantick_feed::{
 use std::path::PathBuf;
 
 mod canvas;
+pub(crate) mod context_resize;
 mod feed;
 mod history;
 mod layout;
@@ -548,6 +549,10 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// Retained context heights and the geometry of their last drawn stack.
+    context_stack: context_resize::ContextStack,
+    /// Pixel width and opening direction of the divider drag in flight.
+    canvas_drag: Option<(f32, bool)>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -561,6 +566,8 @@ pub struct Tab {
     time_header_chips: [egui::Rect; crate::time_header::PRESETS.len()],
     #[cfg(test)]
     canvas_divider: Option<egui::Rect>,
+    #[cfg(test)]
+    context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     #[cfg(test)]
     collapsed_rail: Option<egui::Rect>,
 }
@@ -579,7 +586,7 @@ impl Tab {
         flow_pane_id: u64,
         feed_id: String,
         symbol: String,
-        spec: BarSpec,
+        spec: impl Into<BarConfiguration>,
         feed: FeedHandle,
         trades_dir: PathBuf,
     ) -> Self {
@@ -650,6 +657,8 @@ impl Tab {
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
+            context_stack: context_resize::ContextStack::default(),
+            canvas_drag: None,
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
@@ -657,6 +666,8 @@ impl Tab {
             time_header_chips: [egui::Rect::NOTHING; crate::time_header::PRESETS.len()],
             #[cfg(test)]
             canvas_divider: None,
+            #[cfg(test)]
+            context_dividers: SmallVec::new(),
             #[cfg(test)]
             collapsed_rail: None,
         }
@@ -783,6 +794,18 @@ impl Tab {
     #[cfg(test)]
     pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
         self.canvas_divider
+    }
+
+    /// Where the collapsed context rail landed.
+    #[cfg(test)]
+    pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
+        self.collapsed_rail
+    }
+
+    /// Where the dividers between stacked context charts landed.
+    #[cfg(test)]
+    pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
+        self.context_dividers.get(index).copied()
     }
 
     /// Forget which candle generation was acted on, so the next poll treats
