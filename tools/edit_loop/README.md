@@ -102,6 +102,16 @@ series must pass every original ceiling for all five samples, with unchanged
 host, toolchain, jobs, protocol, ranking, representatives and restoration rules.
 Historical PASS, TOML equality or a faster median cannot substitute for it.
 
+The subsequent [reviewed owner-integration identity amendment](https://github.com/milocaetano/quantick/issues/480#issuecomment-5722085851)
+retains that history and every numerical ceiling while binding active root SHA256
+`dc32620aed0ef89ac9f7f9199650e60b940b8ea39d8a02ea8ad31c70cc731152`.
+Relative to the LAYOUT identity above, only `crates/anchored-studies` and
+`crates/indicator-session` members are added; all other parsed manifest values
+are equal. This is applicability, not recalibration or evidence of unchanged
+package-test cost. The same fresh ordinary final-head five-sample enforcement,
+limits, host, toolchain, jobs, protocol, ranking, representatives and restoration
+rules remain mandatory. No automatic future identity refresh is authorized.
+
 Do not replace these reviewed limits with automatic proposal output,
 recalibrate from each checked run, discard slow samples, relax a limit to
 hide a failure, or substitute smaller crates. The same workflow must pass
@@ -115,7 +125,7 @@ python tools/edit_loop/measure.py check C:/bench/run-002-evidence/report.json --
 replacement JSON file. A host-class, pinned toolchain, jobs, root profile,
 top-three or representative-source change requires explicit reviewed
 recalibration, except for the exact explicitly reviewed member-only identity
-amendment above. Any further root identity or selected-source drift requires
+amendments above. Any further root identity or selected-source drift requires
 a new scoped review; this exception permits no automatic hash refresh. The
 fixed baseline also binds the runner/frozen-lexer protocol
 hash, so an executable measurement change cannot silently reuse old limits.

@@ -98,6 +98,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("workspace", &[]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
+    ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),
     (
         "backtest",

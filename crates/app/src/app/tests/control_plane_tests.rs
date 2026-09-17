@@ -1504,7 +1504,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
             inputs: Vec::new(),
         };
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 Vec::new(),
@@ -1737,7 +1737,7 @@ fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
             }],
         };
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 vec![vec![1.5, 2.25, 3.125]],

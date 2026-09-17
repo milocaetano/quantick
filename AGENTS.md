@@ -93,9 +93,7 @@ The tool reference, including evidence hashing and limitations, is in [`crates/m
 
 ## The map
 
-A Cargo workspace under `crates/`. The dependency direction is one-way,
-enforced by `crates/guards/src/graph.rs`; never add a reverse edge.
-An arrow reads *depends on*.
+`crates/` workspace; arrows mean *depends on*. [Graph guard](crates/guards/src/graph.rs) forbids reverse edges.
 
 ```mermaid
 graph TD
@@ -108,6 +106,8 @@ graph TD
 
   app --> anchoredstudies
   app --> workspace
+  app --> session["indicator-session"]
+  session --> pine & indicators & engine
   app --> pine
   app --> indicators
   app --> strategy
@@ -177,8 +177,9 @@ graph TD
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |
-| `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
-| `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
+| `indicator-session` | Headless source binding, batches and deltas. |
+| `indicators` | Headless host, `Indicator` commit/preview rollback, incremental `ta.*`, draw objects. |
+| `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes and interpreter; no external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
 | `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, by-time history reach/campaign and session export. Owns runtimes, threads and clock below `app`. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
@@ -193,7 +194,7 @@ graph TD
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
 | `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies, so asking them costs a second. |
-| `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
+| `app` | Desktop chart (egui), engine consumer and session transport. |
 
 ## The non-negotiable design rules
 

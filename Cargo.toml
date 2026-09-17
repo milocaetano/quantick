@@ -9,6 +9,7 @@ members = [
     "crates/mcp",
     "crates/engine",
     "crates/indicators",
+    "crates/indicator-session",
     "crates/orderbook",
     "crates/orderflow",
     "crates/pine",

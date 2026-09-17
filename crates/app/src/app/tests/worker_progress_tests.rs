@@ -1,5 +1,5 @@
 use super::*;
-use crate::indicator_worker::{IndicatorCommand, IndicatorWorker};
+use crate::indicator_worker::IndicatorWorker;
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::worker_progress::{Phase, WorkerProgress, tests::Gate};
 use std::io::Write;
@@ -93,11 +93,11 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
         let normal_at = app.health.last_summary + Duration::from_secs(2);
         app.maybe_emit_summary(normal_at, &ctx);
         let worker = &app.tabs[1].flow_pane.indicator_worker;
-        worker.send(IndicatorCommand::Flush(first_tx));
+        worker.send(crate::indicator_worker::WorkerCommand::Flush(first_tx));
         let thread = std::thread::spawn(run_indicator);
         indicator_hold.reached();
         indicator_clock.at(10);
-        worker.send(IndicatorCommand::Flush(ack_tx));
+        worker.send(crate::indicator_worker::WorkerCommand::Flush(ack_tx));
         indicator_clock.at(40);
         app.maybe_emit_summary(normal_at + Duration::from_secs(2), &ctx);
         indicator_hold.release();

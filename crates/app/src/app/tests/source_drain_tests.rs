@@ -234,7 +234,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
 fn finish_indicator_commands(pane: &mut pane::ChartPane) {
     let (tx, rx) = std::sync::mpsc::channel();
     pane.indicator_worker
-        .send(crate::indicator_worker::IndicatorCommand::Flush(tx));
+        .send(crate::indicator_worker::WorkerCommand::Flush(tx));
     assert_eq!(
         pane.indicator_worker.await_reply(&rx),
         Some(()),

@@ -25,6 +25,7 @@ quantick-control-local = { path = "../control-local" }
 # The headless host machinery: projection registry, admission, idempotency, journal.
 quantick-control-host = { path = "../control-host" }
 quantick-engine = { path = "../engine" }
+quantick-indicator-session = { path = "../indicator-session" }
 # The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
 # it, and the feed-shaped config types this crate re-exports.
 quantick-feed = { path = "../feed" }
