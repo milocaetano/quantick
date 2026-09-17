@@ -63,11 +63,13 @@ mod draw_chart;
 mod draw_frame;
 mod drawing_gestures;
 mod drawing_paint;
+mod drawing_projection;
 mod footprint;
 mod frame;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod pointer_gestures;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
@@ -699,6 +701,21 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
+    fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
+        drawing_projection::PaneSeriesRead {
+            history_prefix: &self.history_prefix,
+            state: &self.state,
+            spec: &self.spec,
+        }
+    }
+    fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
+        drawing_projection::DrawingProjection {
+            series: self.series_read(),
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        }
+    }
+
     /// Current membership, or the pending imported/opening choice before seeding.
     pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
         self.opening_layout
@@ -1026,16 +1043,40 @@ impl ChartPane {
         };
         let paper_gesture =
             self.handle_paper_input(ui, chrome, &areas, &bands, &pointer, tool_armed);
-        let drawing_drag_consumes_gesture = self.handle_pointer_tool(
-            ui,
-            chrome,
-            &chart,
-            &areas,
-            &bands,
-            &pointer,
-            pointer_delta,
-            paper_gesture,
+        let projection = drawing_projection::DrawingProjection {
+            series: drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        };
+        let outcome = self.gestures.handle_pointer_tool(
+            &mut self.drawings,
+            &projection,
+            pointer_gestures::PointerFrame {
+                ui,
+                chart: &chart,
+                areas: &areas,
+                bands: &bands,
+                cached_bands: &self.frame.bands,
+                pointer: &pointer,
+                pointer_delta,
+                paper_gesture,
+                tool: chrome.toolrail.tool(),
+                shared_pick: chrome.shared_pick,
+                shared: chrome.shared,
+            },
         );
+        if let Some(cursor) = outcome.cursor {
+            ui.ctx().set_cursor_icon(cursor);
+        }
+        if outcome.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        chrome.shared = outcome.shared;
+        let drawing_drag_consumes_gesture = outcome.consumed;
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
         // take it — and only it. Everything that is not the primary button

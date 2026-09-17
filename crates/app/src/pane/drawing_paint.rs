@@ -27,11 +27,8 @@ impl ChartPane {
         total: usize,
         scale: &PriceScale,
     ) -> egui::Pos2 {
-        egui::pos2(
-            self.viewport
-                .x_at_bar_position(point.bar, history_right, total),
-            scale.y(point.price),
-        )
+        self.drawing_projection()
+            .drawing_screen_point(point, history_right, total, scale)
     }
 
     /// The colour an object is really painted in, honesty fade included.

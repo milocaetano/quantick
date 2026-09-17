@@ -2377,6 +2377,47 @@ fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
 }
 
 #[test]
+fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .selected_mut()
+        .expect("placed line")
+        .scope = drawings::DrawingScope::AllCharts;
+    let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
+    let pane = &app.active_tab().flow_pane;
+    let before = pane.drawings.items()[0].points[0];
+    let undo_before = pane.drawings.undo_depth();
+    let viewport_before = pane.viewport.right_edge_bar(pane.slots());
+
+    drag_chart(&mut app, &ctx, start, start + egui::vec2(40.0, 40.0));
+
+    let pane = &app.active_tab().flow_pane;
+    let after = pane.drawings.items()[0].points[0];
+    assert!(
+        after.bar > before.bar,
+        "the actual pointer drag moved the mark"
+    );
+    assert_ne!(
+        after.time_ms, before.time_ms,
+        "the mirror must follow its owner"
+    );
+    assert_eq!(
+        pane.slot_at_time(after.time_ms.expect("dragged anchor has market time")),
+        Some(slot_of(after.bar))
+    );
+    assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
+    assert_eq!(pane.viewport.right_edge_bar(pane.slots()), viewport_before);
+    assert_eq!(pane.gestures.drag, DrawingDrag::None);
+}
+
+#[test]
 fn a_press_on_the_inspector_never_grabs_the_stroke_beneath_it() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();

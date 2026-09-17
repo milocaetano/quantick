@@ -1,7 +1,6 @@
-//! Placing, picking and dragging a drawing: the arithmetic between a pointer
-//! and an anchor.
+//! Drawing placement and adapters to the shared borrowed projection.
 //!
-//! Everything here answers one of three questions — where in the chart is this
+//! These entry points answer one of three questions — where in the chart is this
 //! pixel (`drawing_point_at`, `anchor_time`, the magnet), what object is under
 //! it (`drawing_at`, `drawing_pick_at`, `drawing_handle_at`), and what does the
 //! next click do to the object being placed (`handle_drawing_placement` and the
@@ -9,26 +8,17 @@
 //! system: a fractional bar slot on the x axis and the band's own scale on the
 //! y, so a drawing follows pan and zoom instead of sticking to a screen pixel.
 //!
-//! [`super::ChartPane::interact_shared`] stays in the parent deliberately. It
-//! reads like a gesture, but it is cross-pane shared-mark work — its answers
-//! leave in market time and price so neither pane learns the other's bar space
-//! — and its only caller is `handle_navigation`, which does not move.
-
 use eframe::egui;
-use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
 use crate::bands::{self, Band};
 use crate::chart::PriceScale;
-use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand};
+use crate::drawings::{self, ChartPoint, DrawingBand};
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
-use crate::viewport::Viewport;
 
 use super::{
-    ChartPane, DRAWING_ANCHOR_RADIUS_PX, DRAWING_DRAG_COMPLETES_PX, DRAWING_SELECT_RADIUS_PX,
-    FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
-    PaneChrome, magnet_price_of, snap_bar_to_tape,
+    ChartPane, DRAWING_DRAG_COMPLETES_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, PaneChrome,
 };
 
 impl ChartPane {
@@ -46,119 +36,14 @@ impl ChartPane {
         snap: drawings::AnchorSnap,
         band: &Band,
     ) -> Option<ChartPoint> {
-        let scale = band.scale.as_ref()?;
-        if total == 0 || band.rect.height() <= 1.0 {
-            return None;
-        }
-        let bar = self.viewport.bar_at_x(pos.x, history_right, total);
-        // A candle-magnet anchor cannot land where no candle is: the bar
-        // clamps to the tape before the snap reads it.
-        let bar = if snap == drawings::AnchorSnap::NearestOhlc {
-            snap_bar_to_tape(bar, total)
-        } else {
-            bar
-        };
-        let value = match snap {
-            // A mark's own rule beats the magnet toggle in both directions:
-            // it snaps with the magnet off, and it snaps to *its* extreme
-            // rather than to whichever of the four OHLC prices is nearest.
-            drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
-            drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
-            drawings::AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
-            drawings::AnchorSnap::Pointer => magnet
-                .then(|| self.magnet_value(band, bar, pos.y, scale))
-                .flatten(),
-        }
-        .unwrap_or_else(|| scale.price_at(pos.y));
-        Some(ChartPoint::at_time(bar, value, self.anchor_time(bar)))
-    }
-
-    /// The high or low of the bar `bar` falls on, on the price band only.
-    ///
-    /// An indicator band has no candle, so a mark dropped there keeps the
-    /// pointer's own value: inventing a high for a CVD pane would be the
-    /// data-honesty failure this repo refuses, and refusing the click
-    /// outright would read as a bug.
-    fn bar_extreme(&self, band: &Band, bar: f32, high: bool) -> Option<f64> {
-        if !matches!(band.key, DrawingBand::Price) {
-            return None;
-        }
-        let slot = Viewport::slot_of(bar)?;
-        // The forming bar counts. Marking the bar that is running *is* the
-        // live use of this tool — marking a closed one is review — and
-        // `closed_bar` stops one slot short of it, which would drop the mark
-        // back onto the pointer's own price: exactly the failure the snap
-        // exists to prevent, in the only moment it is used under pressure.
-        //
-        // The extreme is read at the instant of the click. A low that
-        // deepens afterwards leaves the mark where the bar was when it was
-        // marked, which is what the mark is a record of.
-        let candle = self.candle_at_slot(slot)?;
-        if high { candle.high } else { candle.low }.to_f64()
+        self.drawing_projection()
+            .drawing_point_at(pos, history_right, total, magnet, snap, band)
     }
 
     /// The candle behind a slot, the forming bar included — the one lookup
     /// every candle-reading snap shares.
     pub(super) fn candle_at_slot(&self, slot: usize) -> Option<&quantick_engine::Bar> {
-        self.closed_bar(slot)
-            .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)
-    }
-
-    /// The magnet, applied to the bar the pointer is over, on the band it
-    /// is over.
-    ///
-    /// Only that bar is considered: snapping to a neighbour would move the
-    /// anchor sideways, and the trader chose the bar by pointing at it. On an
-    /// indicator band the candidates are that pane's own plotted values plus
-    /// zero — without them a "CVD zero line" is drawn by eye while the pane's
-    /// own zero rule sits right there. Never across bands: a price would be a
-    /// meaningless place to snap a CVD level to.
-    fn magnet_value(
-        &self,
-        band: &Band,
-        bar: f32,
-        pointer_y: f32,
-        scale: &PriceScale,
-    ) -> Option<f64> {
-        let row = Viewport::slot_of(bar)?;
-        match &band.key {
-            // `candle_at_slot`, not `closed_bar`: the forming bar is a slot
-            // like any other and pointing at the live candle is when a magnet
-            // is used under pressure. Its two siblings — `bar_extreme` and
-            // `candle_nearest_ohlc` — already read it that way, and the odd
-            // one out silently returned "nothing to snap to" on the bar the
-            // trader was actually on.
-            DrawingBand::Price => {
-                magnet_price_of(self.candle_at_slot(row)?, pointer_y, scale, MAGNET_REACH_PX)
-            }
-            // A time-only object has no value to snap.
-            DrawingBand::AllBands => None,
-            DrawingBand::Indicator(_) => {
-                let view = self.indicators.visible_panes().find(|view| {
-                    DrawingBand::Indicator(self.indicators.pane_key(view)) == band.key
-                })?;
-                bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
-            }
-        }
-    }
-
-    /// The unconditional candle magnet: the nearest of the bar's OHLC with
-    /// no reach limit, the forming bar included — [`AnchorSnap::NearestOhlc`]'s
-    /// value rule. Price band only; a band with no candles answers `None`
-    /// and the caller keeps the pointer's own value.
-    fn candle_nearest_ohlc(
-        &self,
-        band: &Band,
-        bar: f32,
-        pointer_y: f32,
-        scale: &PriceScale,
-    ) -> Option<f64> {
-        if !matches!(band.key, DrawingBand::Price) {
-            return None;
-        }
-        let slot = Viewport::slot_of(bar)?;
-        let candle = self.candle_at_slot(slot)?;
-        magnet_price_of(candle, pointer_y, scale, MAGNET_REACH_UNLIMITED_PX)
+        self.series_read().candle_at_slot(slot)
     }
 
     /// The market time behind a fractional bar slot, for anchors that may have
@@ -169,29 +54,7 @@ impl ChartPane {
     /// naming a time there would be an invention. `None` is the honest answer
     /// there, and it is what keeps such an anchor out of a shared drawing.
     pub(crate) fn anchor_time(&self, bar: f32) -> Option<i64> {
-        let slot = Viewport::slot_of(bar)?;
-        let slots = self.slots();
-        if slot < slots {
-            return self.slot_open_time(slot);
-        }
-        // Past the newest bar. Traders draw here constantly — a channel or a
-        // trend line pointing into the empty space to the right of the tape
-        // is the normal way to say "if this continues". Refusing the whole
-        // gesture a time would block sharing exactly where it is most used.
-        //
-        // On a *time* chart that space has an exact clock: the bars are one
-        // fixed interval apart, so the slot after the last one is the last
-        // one plus that interval. Nothing is inferred.
-        //
-        // On a tick or volume chart it does not: the next bar happens when
-        // enough trades happen, and no elapsed time can be named for it. That
-        // stays `None` — an invented timestamp is worse than a control that
-        // says why it is off.
-        let interval = self.spec.spec().time_interval_ms()?;
-        let last = slots.checked_sub(1)?;
-        let ahead = i64::try_from(slot - last).ok()?;
-        self.slot_open_time(last)?
-            .checked_add(ahead.checked_mul(interval)?)
+        self.series_read().anchor_time(bar)
     }
 
     /// Placement consumes clicks while a drawing tool is armed, preventing a
@@ -568,11 +431,8 @@ impl ChartPane {
         total: usize,
         scale: &PriceScale,
     ) -> SmallVec<[egui::Pos2; 4]> {
-        drawing
-            .points
-            .iter()
-            .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
-            .collect()
+        self.drawing_projection()
+            .projected_drawing_points(drawing, history_right, total, scale)
     }
 
     /// The topmost object of `band` under the pointer. Objects of the other
@@ -584,198 +444,8 @@ impl ChartPane {
         history_right: f32,
         total: usize,
     ) -> Option<usize> {
-        let scale = band.scale.as_ref()?;
-        self.drawings
-            .items()
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(index, drawing)| {
-                self.drawings.is_visible(*index) && bands::drawing_in_band(drawing, band)
-            })
-            .find_map(|(index, drawing)| {
-                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-                let ctxt = DrawContext {
-                    payload: drawing.payload.as_ref(),
-                    anchors: &drawing.points,
-                    scale,
-                    px_per_bar: self.viewport.px_per_bar(),
-                    unit: band.unit(),
-                    primary_band: true,
-                    style: drawing.style,
-                    // Locked selections paint no editable affordances.
-                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
-                    halo: false,
-                    content_editing: false,
-                };
-                drawing
-                    .tool
-                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
-                    .then_some(index)
-            })
-    }
-
-    /// Alt+click: deterministic z-order cycling through every visible object
-    /// under the pointer. From the current selection, the next hit beneath
-    /// it wins; past the bottom it wraps back to the top.
-    pub(super) fn drawing_below_selection(
-        &self,
-        pos: egui::Pos2,
-        band: &Band,
-        history_right: f32,
-        total: usize,
-    ) -> Option<usize> {
-        let scale = band.scale.as_ref()?;
-        let hits: Vec<usize> = (0..self.drawings.items().len())
-            .rev()
-            .filter(|&index| self.drawings.is_visible(index))
-            .filter(|&index| bands::drawing_in_band(&self.drawings.items()[index], band))
-            .filter(|&index| {
-                let drawing = &self.drawings.items()[index];
-                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-                let ctxt = DrawContext {
-                    payload: drawing.payload.as_ref(),
-                    anchors: &drawing.points,
-                    scale,
-                    px_per_bar: self.viewport.px_per_bar(),
-                    unit: band.unit(),
-                    primary_band: true,
-                    style: drawing.style,
-                    selected: self.drawings.selected() == Some(index) && !drawing.locked,
-                    halo: false,
-                    content_editing: false,
-                };
-                drawing
-                    .tool
-                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
-            })
-            .collect();
-        match self
-            .drawings
-            .selected()
-            .and_then(|current| hits.iter().position(|&index| index == current))
-        {
-            Some(at) => Some(hits[(at + 1) % hits.len()]),
-            None => hits.first().copied(),
-        }
-    }
-
-    /// Which handle of one object the pointer is on. The tool answers what
-    /// its handles are, so the ring the trader sees is the ring they grab —
-    /// a channel's width handle sits at the centre of a rail, not on the
-    /// corner anchor that happens to define it.
-    pub(super) fn drawing_handle_in(
-        &self,
-        drawing_index: usize,
-        pos: egui::Pos2,
-        band: &Band,
-        history_right: f32,
-        total: usize,
-    ) -> Option<usize> {
-        if !self.drawings.is_visible(drawing_index) {
-            return None;
-        }
-        let scale = band.scale.as_ref()?;
-        let drawing = self
-            .drawings
-            .items()
-            .get(drawing_index)
-            .filter(|drawing| bands::drawing_in_band(drawing, band))?;
-        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-        let ctxt = DrawContext {
-            payload: drawing.payload.as_ref(),
-            anchors: &drawing.points,
-            scale,
-            px_per_bar: self.viewport.px_per_bar(),
-            unit: band.unit(),
-            primary_band: true,
-            style: drawing.style,
-            selected: self.drawings.selected() == Some(drawing_index) && !drawing.locked,
-            halo: false,
-            content_editing: false,
-        };
-        drawing
-            .tool
-            .hit_handle(band.rect, &projected, pos, DRAWING_ANCHOR_RADIUS_PX, &ctxt)
-    }
-
-    /// What a pointer at `pos` is on: a drawing's handle first, then its
-    /// body. One function, so the press and the click that follows it can
-    /// never answer differently — grabbing a handle *is* clicking the object,
-    /// and the handle radius is the wider of the two.
-    pub(super) fn drawing_pick_at(
-        &self,
-        pos: egui::Pos2,
-        band: &Band,
-        history_right: f32,
-        total: usize,
-    ) -> Option<usize> {
-        self.drawing_handle_at(pos, band, history_right, total)
-            .map(|(drawing_index, _)| drawing_index)
-            .or_else(|| self.drawing_at(pos, band, history_right, total))
-    }
-
-    /// Apply one frame of a handle drag, with the pointer already resolved to
-    /// the chart point the trader is on (magnet included).
-    ///
-    /// A tool that owns its handles answers with every anchor's new screen
-    /// position and the host projects them back; the anchors it *derived* are
-    /// exact by construction and are never snapped a second time — the magnet
-    /// belongs to the point under the pointer, not to a rail computed from it.
-    /// Everything else is the plain "handle `handle` is anchor `handle`" move.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn drag_drawing_handle(
-        &mut self,
-        drawing_index: usize,
-        handle: usize,
-        target: ChartPoint,
-        band: &Band,
-        history_right: f32,
-        total: usize,
-        constrain: drawings::Constrain,
-    ) {
-        let moved = band.scale.as_ref().and_then(|scale| {
-            let drawing = self.drawings.items().get(drawing_index)?;
-            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-            let ctxt = DrawContext {
-                payload: drawing.payload.as_ref(),
-                anchors: &drawing.points,
-                scale,
-                px_per_bar: self.viewport.px_per_bar(),
-                unit: band.unit(),
-                primary_band: true,
-                style: drawing.style,
-                selected: true,
-                halo: false,
-                content_editing: false,
-            };
-            let to = self.drawing_screen_point(target, history_right, total, scale);
-            drawing
-                .tool
-                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)
-        });
-        let Some(moved) = moved else {
-            self.drawings.move_anchor(drawing_index, handle, target);
-            return;
-        };
-        let anchors: Option<SmallVec<[ChartPoint; 4]>> = moved
-            .iter()
-            // Derived anchors are exact by construction — neither the magnet
-            // nor a tool's own snap rule applies to them a second time.
-            .map(|point| {
-                self.drawing_point_at(
-                    *point,
-                    history_right,
-                    total,
-                    false,
-                    drawings::AnchorSnap::Pointer,
-                    band,
-                )
-            })
-            .collect();
-        if let Some(anchors) = anchors {
-            self.drawings.set_points(drawing_index, &anchors);
-        }
+        self.drawing_projection()
+            .drawing_at(&self.drawings, pos, band, history_right, total)
     }
 
     pub(super) fn drawing_handle_at(
@@ -785,19 +455,7 @@ impl ChartPane {
         history_right: f32,
         total: usize,
     ) -> Option<(usize, usize)> {
-        let selected = self.drawings.selected();
-        if let Some(drawing_index) = selected
-            && let Some(handle) =
-                self.drawing_handle_in(drawing_index, pos, band, history_right, total)
-        {
-            return Some((drawing_index, handle));
-        }
-        (0..self.drawings.items().len())
-            .rev()
-            .filter(|drawing_index| Some(*drawing_index) != selected)
-            .find_map(|drawing_index| {
-                self.drawing_handle_in(drawing_index, pos, band, history_right, total)
-                    .map(|handle| (drawing_index, handle))
-            })
+        self.drawing_projection()
+            .drawing_handle_at(&self.drawings, pos, band, history_right, total)
     }
 }
