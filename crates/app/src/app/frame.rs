@@ -117,16 +117,20 @@ impl QuantickApp {
             self.control.control_access = Some(access);
         }
         self.apply_scripted_view();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_demo();
         self.apply_load_older();
         self.apply_load_older_candles();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_draft();
         self.apply_venue_history_demo();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_frvp_demo();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_avwap_demo();
         self.apply_strategy_demo();
         self.apply_replay_restart();
-        self.apply_maximize_hook(ctx);
+        self.chrome.window_startup.apply(ctx);
         self.maybe_emit_summary(now, ctx);
         self.maintain_workspace(ctx);
 

@@ -120,10 +120,6 @@ use quantick_feed::{self as feed, FeedCommand, ReplayControl};
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
-/// objects across. Close to what a default viewport shows, so every object
-/// lands on screen — a demo the camera cannot see proves nothing.
-const DEMO_VISIBLE_SLOTS: usize = 90;
 /// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
 /// the pane, so a scripted run photographs both shapes. Named by catalog id
 /// rather than "all of them", because the hook's contract is a fixed,
@@ -287,6 +283,19 @@ struct TabSlot {
     slot: SlotId,
 }
 
+/// Constructor-only inputs, consumed at the owners' existing launch phases.
+/// This value is never retained on the app or used as a frame context.
+#[derive(Default)]
+pub(crate) struct AppLaunch {
+    pub window: crate::launch::WindowStartupState,
+    #[cfg(any(feature = "drawing-harness", test))]
+    pub toolrail: crate::toolrail::ToolRailLaunch,
+    #[cfg(feature = "quick-range-harness")]
+    pub quick_range: crate::surfaces::drawing_chrome::QuickRangeLaunch,
+    #[cfg(any(feature = "drawing-harness", test))]
+    pub drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch,
+}
+
 impl QuantickApp {
     /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
     /// (already streaming through `feed`) and bar `spec`, with no saved
@@ -311,6 +320,7 @@ impl QuantickApp {
             spec,
             feed,
             ui_state::Workspace::default(),
+            AppLaunch::default(),
         )
     }
 
@@ -334,6 +344,7 @@ impl QuantickApp {
         spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
+        launch: AppLaunch,
     ) -> Self {
         let state_path = crate::paper_state::default_path();
         // Read before `config` is moved into the struct below: this seeds the
@@ -419,6 +430,7 @@ impl QuantickApp {
             harness: Harness::from_env(),
             next_tab_id: FIRST_TAB_ID + 1,
             chrome: chrome::ChromeState {
+                window_startup: launch.window,
                 record_deals: None,
                 layout_picker_open: false,
                 layout_rename: None,
@@ -528,10 +540,22 @@ impl QuantickApp {
         // the user's own answer to what a feed declares) and before the
         // autostart hooks, which are explicit requests for this one run.
         app.restore_workspace(workspace);
-        // Every `QUANTICK_*` launch hook, applied to the built window in one
-        // place with one name -- see `launch_hooks`, whose doc comment owns
-        // the order they are read in.
-        app.apply_launch_hooks();
+        // Install staged drawing inputs before applying the remaining legacy
+        // hooks and the captured rail inputs. `launch_hooks` owns their
+        // construction-phase order after workspace restoration.
+        #[cfg(feature = "quick-range-harness")]
+        app.surfaces
+            .drawing_chrome
+            .quick_range
+            .queue_launch(launch.quick_range);
+        #[cfg(any(feature = "drawing-harness", test))]
+        app.surfaces
+            .drawing_chrome
+            .queue_launch(launch.drawing_chrome);
+        app.apply_launch_hooks(
+            #[cfg(any(feature = "drawing-harness", test))]
+            launch.toolrail,
+        );
         if let Some(notice) = crate::store_home::rescue_notice() {
             app.tabs[0].paper.show_toast(notice);
         }

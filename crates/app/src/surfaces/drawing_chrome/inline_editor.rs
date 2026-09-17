@@ -110,7 +110,8 @@ fn draw_inner(
     // laid-out pane and no bar to place at, and a hook that fired once into
     // that would photograph nothing at all.
     let mut ask = DrawingChromeAsk {
-        place_text_note: chrome.pending_text_note,
+        #[cfg(any(feature = "drawing-harness", test))]
+        place_text_note: chrome.scenario.note_requested(),
         ..DrawingChromeAsk::default()
     };
     // A placement that asked for the caret gets it here, on the frame it

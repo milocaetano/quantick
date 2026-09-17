@@ -17,7 +17,7 @@ use crate::pane::{DRAWING_ANCHOR_RADIUS_PX, PaneSide};
 use crate::tab::Tab;
 use crate::toolrail::{Tool, ToolRail};
 
-use super::{DEMO_VISIBLE_SLOTS, QuantickApp};
+use super::QuantickApp;
 
 /// The slice the drawing chrome reads, assembled from the pieces of the
 /// application it is allowed to see.
@@ -160,13 +160,10 @@ impl QuantickApp {
         }
     }
 
-    /// Put the caret in a note, on the chart — the one call that opens the
-    /// editor, whether a placement, a double click or a script asked for it.
-    ///
-    /// The surface decides whether the caret is allowed: an object that holds
-    /// no words, or a locked one, refuses it, because an editor that opened and
-    /// then dropped every keystroke would be worse than none. The store command
-    /// and the per-pane stand-down are the host's, so they happen here.
+    /// Open the editor immediately after scripted placement, preserving the
+    /// ordinary owner's locked/text checks, selection and pane stand-down.
+    /// Manual placement requests its editor through the normal frame path.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub fn begin_inline_text_edit(&mut self, index: usize) -> bool {
         let Self {
             tabs,
@@ -365,36 +362,28 @@ impl QuantickApp {
     /// of the window and open its editor, through the same two calls a click
     /// makes.
     ///
-    /// Here rather than in the surface because every line of it is the host's:
-    /// where the visible window is, what the tape last closed at, and the saved
-    /// defaults a fresh object opens with.
+    /// Project fresh focused-pane facts into the scenario's placement policy,
+    /// then use the ordinary drawing store, saved defaults and editor path.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(super) fn place_text_note(&mut self) -> bool {
-        let Some(tool) = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.holds_text())
-        else {
+        let Some(tool) = crate::surfaces::drawing_chrome::launch::NotePlacement::tool() else {
             return false;
         };
         let point = {
             let pane = self.drawing_pane();
             let slots = pane.slots();
-            if pane.frame.chart_area.is_none() || slots == 0 {
-                // No laid-out pane yet, and nothing to place against. The ask
-                // stands and the next frame tries again.
-                return false;
-            }
             let close = pane
                 .closed_bar(slots.saturating_sub(1))
-                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
-                .unwrap_or(1.0);
-            let centre = pane
-                .frame
-                .auto_range
-                .filter(|(lo, hi)| hi > lo)
-                .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
-            let visible = DEMO_VISIBLE_SLOTS.min(slots);
-            let slot = (slots - visible / 2).min(slots.saturating_sub(1));
-            drawings::ChartPoint::at_time(slot as f32 + 0.5, centre, pane.slot_open_time(slot))
+                .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close));
+            let Some(plan) = crate::surfaces::drawing_chrome::launch::NotePlacement::plan(
+                pane.frame.chart_area.is_some(),
+                slots,
+                close,
+                pane.frame.auto_range,
+            ) else {
+                return false;
+            };
+            plan.point(pane.slot_open_time(plan.slot))
         };
         // Through the same door the click path uses, saved defaults and all —
         // and on the same pane every drawing surface reads, so the index the

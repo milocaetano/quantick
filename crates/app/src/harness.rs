@@ -30,14 +30,8 @@
 //! than inventing a second one. A hook never reaches back into `QuantickApp`,
 //! so it cannot grow a dependency on the trunk — everything here parses
 //! strings and counts frames, which is why the whole module is testable
-//! without a window. And **every multi-valued hook is a struct with
-//! defaulting fields, not an enum**: [`DrawingsDemo`], [`FrvpDemo`],
-//! [`DrawingDraft`] and [`HookFrame`] all grow a new option as an added field
-//! that defaults to "did not ask", never as a `match` arm that reopens every
-//! existing caller. That is the failure mode dimension 9 names in
-//! `ChartLayer`'s 21 variants across 264 call sites, and it is why
-//! `QUANTICK_DRAWINGS_DEMO_SHARED`, `_SELECT` and `QUANTICK_DRAWING_CONSTRAIN`
-//! are fields here instead of the mid-frame `std::env::var` calls they were.
+//! without a window. Drawing demo requests now belong to the feature-gated
+//! drawing-chrome owner; the remaining legacy hook families stay here.
 //!
 //! The four enums that remain — [`ScriptedMenu`], [`ContextMenuPane`],
 //! [`VenueHistoryDemo`], [`StrategyDemoMode`] — are hook *values*, not
@@ -267,60 +261,6 @@ impl ScriptedMenu {
     }
 }
 
-/// What the `QUANTICK_DRAWINGS_DEMO` family asks the drawings demo for.
-///
-/// A struct rather than an enum of scenes, and this is the hook the rule was
-/// written for: the demo already carries three independent switches
-/// (`_SHARED`, `_SELECT`, and the `bands` spelling of the main variable), and
-/// each of them used to be its own `std::env::var` call read halfway through
-/// the applier. Every future one is another field defaulting to "did not
-/// ask", visible to a reader of this file and to nobody else.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct DrawingsDemo {
-    /// `QUANTICK_DRAWINGS_DEMO=bands`: a band set on every indicator pane as
-    /// well. `=1` stays exactly what it was, so every screenshot taken of the
-    /// old hook still is.
-    pub bands: bool,
-    /// `QUANTICK_DRAWINGS_DEMO_SHARED=1`: open the split and share a drawing
-    /// across it — a shared object has nothing to be shared *with* on one
-    /// pane.
-    pub shared: bool,
-    /// `QUANTICK_DRAWINGS_DEMO_SELECT=<tool id>`: which object ends up
-    /// selected. Selection is what puts an object's handles on screen, so
-    /// "show me the channel's handles" is a question no screenshot could
-    /// answer while only the last-placed tool was ever selected.
-    pub select_tool: Option<String>,
-}
-
-/// What the `QUANTICK_FRVP_DEMO` family asks the fixed-range profile demo for.
-///
-/// Same shape and same reason as [`DrawingsDemo`]: `compare` and `stress` are
-/// spellings of the main variable, `select` is a satellite of its own, and a
-/// fourth scene is a fourth field.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct FrvpDemo {
-    /// `=compare`: two adjacent profiles over the same stretch of map, one in
-    /// each over-heatmap mode.
-    pub compare: bool,
-    /// `=stress`: a venue history longer than any single fold pass, with one
-    /// profile over the whole of it.
-    pub stress: bool,
-    /// `QUANTICK_FRVP_DEMO_SELECT=1`: leave the profile selected, so the strip
-    /// a trader edits it from is on screen too.
-    pub select: bool,
-}
-
-/// What `QUANTICK_DRAWING_DRAFT` asks for: the half-placed state that lives
-/// between two clicks, and how the parked hand is constrained while it waits.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DrawingDraft {
-    /// How many anchors of the armed tool are already down when the run opens.
-    pub anchors: usize,
-    /// `QUANTICK_DRAWING_CONSTRAIN=1`: the parked hand holds a level, as a
-    /// held modifier would.
-    pub constrain: bool,
-}
-
 /// What one frame's tick of a budgeted hook came to.
 ///
 /// A struct with defaulting fields, for the reason this whole module states:
@@ -386,9 +326,6 @@ pub(crate) struct Harness {
     /// `QUANTICK_BARS_MENU`: open the bar-kind combo on the first frame,
     /// once, for a capture of the entries a source cannot offer.
     bars_menu: bool,
-    /// `QUANTICK_WINDOW_MAXIMIZED`: maximise on the first frame that has a
-    /// window to maximise.
-    maximize: bool,
     /// `QUANTICK_FOOTPRINT_AUTOSTART`, kept rather than applied and forgotten,
     /// so tabs opened later (a replay autostart) get it too.
     footprint: bool,
@@ -441,19 +378,6 @@ pub(crate) struct Harness {
     menu: Option<ScriptedMenu>,
     /// That press's matching release, on the frame after it.
     menu_release: Option<egui::Pos2>,
-    /// `QUANTICK_DRAWINGS_DEMO`: one of every registered drawing on the flow
-    /// pane as soon as it has bars to anchor them to. Consumed once.
-    drawings_demo: Option<DrawingsDemo>,
-    /// `QUANTICK_DRAWINGS_DEMO_RECUT`: the re-cut scene — objects still on
-    /// their own instants, and one the new series cannot reach.
-    drawings_demo_recut: bool,
-    /// `QUANTICK_FRVP_DEMO`: one fixed-range volume profile, placed to
-    /// straddle the venue-prefix seam when there is one.
-    frvp_demo: Option<FrvpDemo>,
-    /// `QUANTICK_AVWAP_DEMO`: one anchored VWAP placed on the flow pane once
-    /// it has bars — the band stack and anchor marker, photographable from a
-    /// fresh launch. Consumed once, like the other demos.
-    avwap_demo: bool,
     /// `QUANTICK_VENUE_HISTORY_DEMO`: a venue candle prefix delivered to the
     /// focused tab through the feed's own path, so the seam divider — and,
     /// with `=partial`, a run still arriving — can be photographed from a
@@ -478,10 +402,6 @@ pub(crate) struct Harness {
     /// by pressing Restart mid-session, which a scripted capture cannot do,
     /// and it is the state the marks used to pile up in. Consumed once.
     replay_restart: Option<usize>,
-    /// `QUANTICK_DRAWING_DRAFT`: how many anchors of the armed tool are
-    /// already placed when the run opens, with the pointer parked where the
-    /// next one would go. Consumed once.
-    drawing_draft: Option<DrawingDraft>,
     /// `QUANTICK_LOAD_OLDER`: pages of older *trades* still owed, and the
     /// frame budget left to wait for a chart to ask from.
     load_older: Option<Budgeted<usize>>,
@@ -530,7 +450,6 @@ impl Harness {
                     .as_deref(),
             ),
             bars_menu: flag("QUANTICK_BARS_MENU"),
-            maximize: flag("QUANTICK_WINDOW_MAXIMIZED"),
             footprint: flag("QUANTICK_FOOTPRINT_AUTOSTART"),
             candle_width: read("QUANTICK_CANDLE_WIDTH")
                 .and_then(|value| value.trim().parse::<f32>().ok()),
@@ -562,22 +481,6 @@ impl Harness {
             context_menu_layers_release: None,
             menu: read("QUANTICK_MENU").and_then(|value| ScriptedMenu::from_token(value.trim())),
             menu_release: None,
-            drawings_demo: read("QUANTICK_DRAWINGS_DEMO")
-                .filter(|value| matches!(value.as_str(), "1" | "bands"))
-                .map(|value| DrawingsDemo {
-                    bands: value == "bands",
-                    shared: flag("QUANTICK_DRAWINGS_DEMO_SHARED"),
-                    select_tool: read("QUANTICK_DRAWINGS_DEMO_SELECT"),
-                }),
-            drawings_demo_recut: flag("QUANTICK_DRAWINGS_DEMO_RECUT"),
-            frvp_demo: read("QUANTICK_FRVP_DEMO")
-                .filter(|value| matches!(value.trim(), "1" | "compare" | "stress"))
-                .map(|value| FrvpDemo {
-                    compare: value.trim() == "compare",
-                    stress: value.trim() == "stress",
-                    select: read("QUANTICK_FRVP_DEMO_SELECT").is_some_and(|v| v.trim() == "1"),
-                }),
-            avwap_demo: read("QUANTICK_AVWAP_DEMO").is_some_and(|value| value.trim() == "1"),
             venue_history_demo: read("QUANTICK_VENUE_HISTORY_DEMO")
                 .and_then(|value| VenueHistoryDemo::from_token(&value)),
             strategy_demo: read("QUANTICK_STRATEGY_DEMO")
@@ -589,16 +492,6 @@ impl Harness {
             replay_restart: read("QUANTICK_REPLAY_RESTART_AFTER")
                 .and_then(|value| value.trim().parse::<usize>().ok())
                 .filter(|trades| *trades > 0),
-            // How many anchors of the armed tool are already down when the run
-            // opens — the half-placed state a screenshot cannot otherwise
-            // reach, because it lives between two clicks.
-            drawing_draft: read("QUANTICK_DRAWING_DRAFT")
-                .and_then(|value| value.trim().parse::<usize>().ok())
-                .filter(|anchors| *anchors > 0)
-                .map(|anchors| DrawingDraft {
-                    anchors,
-                    constrain: flag("QUANTICK_DRAWING_CONSTRAIN"),
-                }),
             // Pages of older trades fetched at launch — the "+ older" button
             // pressed, without a hand. The button's whole point is what it
             // does *after* the click, and the bars it prepends are the
@@ -657,11 +550,6 @@ impl Harness {
         } else {
             false
         }
-    }
-
-    /// Whether the window should maximise itself, once.
-    pub(crate) fn take_maximize(&mut self) -> bool {
-        std::mem::take(&mut self.maximize)
     }
 
     /// Whether every tab — including one opened later by a replay autostart —
@@ -788,54 +676,6 @@ impl Harness {
         self.menu_release.take()
     }
 
-    /// Whether the drawings demo is still owed.
-    ///
-    /// A bare `bool` rather than the request itself, because this is asked on
-    /// **every frame** the applier is waiting for bars, and the request owns a
-    /// `String`: handing it out would allocate sixty times a second to answer
-    /// "not yet". The applier asks this, checks its bars, and only then takes
-    /// the request with [`Self::take_drawings_demo`].
-    pub(crate) fn drawings_demo_armed(&self) -> bool {
-        self.drawings_demo.is_some()
-    }
-
-    /// The demo can place its objects: hand over what was asked for and
-    /// consume the hook, so it never re-places ones the trader then deletes.
-    pub(crate) fn take_drawings_demo(&mut self) -> Option<DrawingsDemo> {
-        self.drawings_demo.take()
-    }
-
-    /// Whether the re-cut scene was asked for.
-    pub(crate) fn drawings_demo_recut(&self) -> bool {
-        self.drawings_demo_recut
-    }
-
-    /// What the fixed-range profile demo was asked for, if it was.
-    pub(crate) fn frvp_demo(&self) -> Option<FrvpDemo> {
-        self.frvp_demo
-    }
-
-    /// The demo placed its profile: consumed.
-    pub(crate) fn frvp_demo_placed(&mut self) {
-        self.frvp_demo = None;
-    }
-
-    /// Put the profile demo back: the scene it asked for needs more bars than
-    /// this frame has, and it tries again on the next one.
-    pub(crate) fn rearm_frvp_demo(&mut self, demo: FrvpDemo) {
-        self.frvp_demo = Some(demo);
-    }
-
-    /// Whether the anchored-VWAP demo was asked for.
-    pub(crate) fn avwap_demo(&self) -> bool {
-        self.avwap_demo
-    }
-
-    /// It placed its anchor: consumed.
-    pub(crate) fn avwap_demo_placed(&mut self) {
-        self.avwap_demo = false;
-    }
-
     /// Which venue-history frame to stage, if one was asked for.
     pub(crate) fn venue_history_demo(&self) -> Option<VenueHistoryDemo> {
         self.venue_history_demo
@@ -867,16 +707,6 @@ impl Harness {
     /// otherwise.
     pub(crate) fn replay_restart_taken(&mut self) {
         self.replay_restart = None;
-    }
-
-    /// The half-placed drawing the run opens on, if one was asked for.
-    pub(crate) fn drawing_draft(&self) -> Option<DrawingDraft> {
-        self.drawing_draft
-    }
-
-    /// The draft was staged: consumed.
-    pub(crate) fn drawing_draft_staged(&mut self) {
-        self.drawing_draft = None;
     }
 
     /// Pages of older trades still owed.
@@ -963,10 +793,6 @@ impl Harness {
 
     pub(crate) fn arm_replay_restart(&mut self, after: usize) {
         self.replay_restart = Some(after);
-    }
-
-    pub(crate) fn arm_drawings_demo(&mut self, demo: DrawingsDemo) {
-        self.drawings_demo = Some(demo);
     }
 
     pub(crate) fn arm_load_older(&mut self, pages: usize, frames: u32) {
@@ -1124,19 +950,10 @@ fn parse_history_note(token: String) -> Option<Budgeted<CampaignEnd>> {
 }
 
 crate::hooks::declare_hooks![
-    "QUANTICK_AVWAP_DEMO",
     "QUANTICK_BARS_MENU",
     "QUANTICK_CANDLE_WIDTH",
     "QUANTICK_CONTEXT_MENU",
-    "QUANTICK_DRAWINGS_DEMO",
-    "QUANTICK_DRAWINGS_DEMO_RECUT",
-    "QUANTICK_DRAWINGS_DEMO_SELECT",
-    "QUANTICK_DRAWINGS_DEMO_SHARED",
-    "QUANTICK_DRAWING_CONSTRAIN",
-    "QUANTICK_DRAWING_DRAFT",
     "QUANTICK_FOOTPRINT_AUTOSTART",
-    "QUANTICK_FRVP_DEMO",
-    "QUANTICK_FRVP_DEMO_SELECT",
     "QUANTICK_HISTORY_NOTE",
     "QUANTICK_INDICATOR_SETTINGS",
     "QUANTICK_INDICATOR_MOUSE_LINE",
@@ -1149,7 +966,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_REPLAY_RESTART_AFTER",
     "QUANTICK_STRATEGY_DEMO",
     "QUANTICK_VENUE_HISTORY_DEMO",
-    "QUANTICK_WINDOW_MAXIMIZED"
 ];
 
 #[cfg(test)]

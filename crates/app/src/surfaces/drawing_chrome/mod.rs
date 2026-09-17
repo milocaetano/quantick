@@ -54,10 +54,18 @@
 //! actually open, which is what the trunk paid before.
 
 pub(crate) mod context_bar;
+#[cfg(any(feature = "drawing-harness", test))]
+pub(crate) mod demo;
 pub(crate) mod inline_editor;
 pub(crate) mod inspector;
+#[cfg(any(feature = "drawing-harness", test))]
+pub(crate) mod launch;
 pub(crate) mod manager;
 mod quick_range;
+#[cfg(any(feature = "drawing-harness", test))]
+pub(crate) use launch::DrawingChromeLaunch;
+#[cfg(feature = "quick-range-harness")]
+pub(crate) use quick_range::QuickRangeLaunch;
 
 pub(crate) use quick_range::{
     Action as QuickRangeAction, ActionUi as QuickRangeActionUi, Control as QuickRangeControl,
@@ -573,6 +581,7 @@ pub(crate) struct DrawingChromeAsk {
     /// Place a text note in the middle of the pane and open its editor — the
     /// `QUANTICK_TEXT_NOTE` hook, which needs the placement rules the host
     /// owns.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub place_text_note: bool,
     /// Record this object's pre-edit copy as one undo entry: the inline
     /// editor closed, on the pane the note actually lives on, which is not
@@ -629,7 +638,10 @@ impl DrawingChromeAsk {
         self.force_delete |= other.force_delete;
         self.cancel_delete |= other.cancel_delete;
         self.duplicate |= other.duplicate;
-        self.place_text_note |= other.place_text_note;
+        #[cfg(any(feature = "drawing-harness", test))]
+        {
+            self.place_text_note |= other.place_text_note;
+        }
         self.record_inline_edit = self.record_inline_edit.take().or(other.record_inline_edit);
         self.content_editing_changed |= other.content_editing_changed;
         self.manager_select = self.manager_select.or(other.manager_select);
@@ -683,7 +695,8 @@ pub(crate) struct DrawingChromeSurface {
     /// One-shot: the `QUANTICK_TEXT_NOTE` hook wants a note placed and typed.
     /// The placement rules belong to the host, so this leaves through
     /// [`DrawingChromeAsk::place_text_note`].
-    pending_text_note: bool,
+    #[cfg(any(feature = "drawing-harness", test))]
+    scenario: launch::DrawingScenario,
     /// One-shot: the object just placed asked for its settings panel. Applied
     /// *after* the new-selection reset, because the placement that made the
     /// request also made the selection change that clears it.
@@ -803,8 +816,9 @@ impl DrawingChromeSurface {
     /// there is no chart to place against and no bar to place at: the hook
     /// waits for a laid-out pane rather than firing once into an empty one
     /// and photographing nothing.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub fn note_text_note_placed(&mut self) {
-        self.pending_text_note = false;
+        self.scenario.acknowledge_placement(true);
     }
 
     /// Whether the open inline edit belongs to this pane — asked before its
@@ -834,6 +848,7 @@ impl DrawingChromeSurface {
     /// object over; refused for one that holds no words or is locked, because
     /// an editor that opened and then dropped every keystroke would be worse
     /// than none.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub fn begin_inline_text_edit(
         &mut self,
         tab: u64,
@@ -851,8 +866,8 @@ impl DrawingChromeSurface {
     }
 
     /// Park the inspector where a hand put it. The hook that stands in for one
-    /// reaches [`inspector::Inspector::place_by_hand`] directly, from
-    /// [`super::Surface::apply_env_hook`].
+    /// reaches [`inspector::Inspector::place_by_hand`] through the opt-in
+    /// owner launch scenario.
     #[cfg(test)]
     pub fn place_inspector_by_hand(&mut self, position: egui::Pos2) {
         self.inspector.place_by_hand(position);
@@ -1001,7 +1016,7 @@ impl DrawingChromeSurface {
 
     #[cfg(test)]
     pub fn set_pending_text_note(&mut self, pending: bool) {
-        self.pending_text_note = pending;
+        self.scenario.request_note(pending);
     }
 
     /// Forget the rectangle the bar was last drawn at, so a test can prove a
@@ -1130,82 +1145,12 @@ fn apply_actions(
 ///
 /// Here rather than in `app.rs` because the fields are here: a hook that
 /// stops matching its field stops compiling.
+#[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
 pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
     #[cfg(feature = "quick-range-harness")]
-    if let Ok(value) = std::env::var("QUANTICK_QUICK_RANGE_DEMO") {
-        match value.trim() {
-            "active" => chrome.quick_range.request_demo(false, false),
-            "1" | "ready" => chrome.quick_range.request_demo(true, false),
-            "future" => chrome.quick_range.request_demo(true, true),
-            other => tracing::warn!(value = other, "unknown quick-range demo state"),
-        }
-    }
-    // The object manager: where the "off series", "other market" and band
-    // badges live, and the only place a mark clamped to an edge can be found
-    // when it is nowhere near the visible window.
-    if std::env::var("QUANTICK_DRAWINGS_MANAGER").is_ok_and(|value| value == "1") {
-        chrome.manager.open = true;
-    }
-    // The context bar only exists while something is selected, so the hook
-    // that reaches it is a hook that *selects*: pair this with
-    // QUANTICK_DRAWINGS_DEMO_SELECT. This one opens the panel behind the gear
-    // on top, which is the state a screenshot cannot otherwise reach without a
-    // click.
-    if std::env::var("QUANTICK_DRAWING_INSPECTOR").is_ok_and(|value| value == "1") {
-        chrome.shared.open = true;
-    }
-    // The on-chart note editor exists only between a placement and the first
-    // click elsewhere, so no click-free launch could photograph it without a
-    // hook — the same gap `QUANTICK_DRAWING_DRAFT` fills for a half-placed
-    // object. The placement itself is the host's, so this raises the ask
-    // rather than making the object.
-    if std::env::var("QUANTICK_TEXT_NOTE").is_ok_and(|value| value == "1") {
-        chrome.pending_text_note = true;
-    }
-    // Which tab the panel opens on. The panel is one hook away, but its
-    // tool-owned tab — where a Fib's levels and colours are built, and where
-    // the two default controls sit — is a click deeper, and a capture has no
-    // hand for it.
-    if let Ok(tab) = std::env::var("QUANTICK_DRAWING_INSPECTOR_TAB") {
-        match tab.trim() {
-            "style" => chrome.inspector.tab = InspectorTab::Style,
-            "extra" => chrome.inspector.tab = InspectorTab::Extra,
-            "coordinates" => chrome.inspector.tab = InspectorTab::Coordinates,
-            // Refused rather than guessed: a typo shows the default tab, never
-            // a confident capture of the wrong one.
-            other => tracing::warn!(tab = other, "unknown drawing inspector tab"),
-        }
-    }
-    // The trader's own drag, scripted: `x,y` in screen points parks the
-    // properties popup exactly as a hand on the title bar would, through that
-    // gesture's own function. Without it the remembered position is
-    // unreachable from a launch — a drag is the only way to set one, and a
-    // capture run has no hand. Nonsense is refused rather than guessed, so a
-    // typo photographs automatic placement instead of an invented pixel.
-    if let Some(position) = std::env::var("QUANTICK_DRAWING_INSPECTOR_POS")
-        .ok()
-        .and_then(|value| parse_point(&value))
-    {
-        chrome.inspector.place_by_hand(position);
-    }
-    // And the same drag on the context bar, which keeps its position across
-    // selections too. Its own gesture is the grip, and a capture run has no
-    // more hand for that one than for the title bar.
-    if let Some(position) = std::env::var("QUANTICK_CONTEXT_BAR_POS")
-        .ok()
-        .and_then(|value| parse_point(&value))
-    {
-        chrome.bar.bar.set_manual(position);
-    }
-}
-
-/// `x,y` in screen points, or nothing. Refused rather than guessed: a typo
-/// photographs the automatic behaviour, never an invented pixel.
-fn parse_point(raw: &str) -> Option<egui::Pos2> {
-    let (x, y) = raw.split_once(',')?;
-    let x: f32 = x.trim().parse().ok()?;
-    let y: f32 = y.trim().parse().ok()?;
-    (x.is_finite() && y.is_finite()).then_some(egui::pos2(x, y))
+    chrome.quick_range.apply_launch();
+    #[cfg(any(feature = "drawing-harness", test))]
+    chrome.apply_launch();
 }
 
 /// Clamp a window of `size` at `position` into `chart`, top-left biased when
@@ -1224,6 +1169,15 @@ pub(crate) fn clamp_into_chart(
 }
 
 crate::hooks::declare_hooks![
+    "QUANTICK_AVWAP_DEMO",
+    "QUANTICK_DRAWINGS_DEMO",
+    "QUANTICK_DRAWINGS_DEMO_RECUT",
+    "QUANTICK_DRAWINGS_DEMO_SELECT",
+    "QUANTICK_DRAWINGS_DEMO_SHARED",
+    "QUANTICK_DRAWING_CONSTRAIN",
+    "QUANTICK_DRAWING_DRAFT",
+    "QUANTICK_FRVP_DEMO",
+    "QUANTICK_FRVP_DEMO_SELECT",
     "QUANTICK_CONTEXT_BAR_POS",
     "QUANTICK_DRAWINGS_MANAGER",
     "QUANTICK_DRAWING_INSPECTOR",
@@ -1309,17 +1263,6 @@ mod tests {
             store.has_default_config("fib")
         );
         let _ = std::fs::remove_file(store.path());
-    }
-
-    /// A harness hook that guessed would photograph an invented pixel and call
-    /// it the trader's. Refuse instead, and the capture shows the default.
-    #[test]
-    fn the_popup_position_hook_refuses_what_is_not_a_point() {
-        assert_eq!(parse_point("420,200"), Some(egui::pos2(420.0, 200.0)));
-        assert_eq!(parse_point(" 420 , 200.5 "), Some(egui::pos2(420.0, 200.5)));
-        for raw in ["", "420", "420,", ",200", "left,top", "420x200"] {
-            assert_eq!(parse_point(raw), None, "{raw:?} is not a point");
-        }
     }
 
     /// A frame that deletes a preset and saves under the freed name must not

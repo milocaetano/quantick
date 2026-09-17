@@ -465,6 +465,7 @@ impl QuantickApp {
         if ask.unlock_all {
             self.drawing_pane_mut().drawings.set_all_locked(false);
         }
+        #[cfg(any(feature = "drawing-harness", test))]
         if ask.place_text_note && self.place_text_note() {
             self.surfaces.drawing_chrome.note_text_note_placed();
         }

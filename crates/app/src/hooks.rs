@@ -1,51 +1,30 @@
-//! Where every launch hook declares that it exists.
+//! Discovery for declared startup configuration and opt-in scenario hooks.
 //!
-//! A *hook* is a `QUANTICK_*` environment variable the application reads to
-//! put itself into a state a hand would otherwise have to click it into.
-//! `ui-harness` documents them, `visual-qa` and `trader-ux-review` drive the
-//! application through them, and until this module existed the documentation
-//! was the only record that a hook was real.
+//! Each owner declares its `QUANTICK_*` names in `HOOKS`; [`OWNERS`] joins
+//! those slices into the catalog. Declarations remain available when a
+//! scenario's Cargo feature is disabled. A registered name therefore does
+//! not prove that the current executable reads it or performs its scenario.
 //!
-//! That record was wrong in both directions. Three hooks the application reads
-//! had no row at all. One row — `QUANTICK_DRAWING_MANAGER`, singular — named a
-//! variable nothing has ever read; the code reads `QUANTICK_DRAWINGS_MANAGER`,
-//! and the same file spells it correctly two rows further down. A capture run
-//! setting the documented spelling got a window that simply did not open the
-//! object manager, which reads exactly like a defect in the surface.
+//! `docs/ui-harness/hook-prose.md` owns each hook's behavior and any required
+//! feature. `quantick-app --dump-hook-registry` joins those descriptions with
+//! owner paths into `.claude/skills/ui-harness/references/hook-registry.md`.
+//! The complete `Reaches` cells pass through unchanged. Authored prose stays
+//! under `docs/`; the generated catalog is the skill's discovery reference.
 //!
-//! # The two halves, and why they are apart
+//! The guard checks declarations, source names and documented names for
+//! parity. Disabled scenario implementations still exist in source and keep
+//! their declarations; feature gating is not permission to omit a name or
+//! weaken that check. Adding an owner requires a declaration slice, one
+//! registration here and authored descriptions, followed by regeneration.
 //!
-//! **The code owns which hooks exist.** Each module that reads one declares it
-//! in its own `HOOKS` slice, beside the read, and [`OWNERS`] below carries one
-//! line per module. Adding a hook is a slice entry where the read is; adding a
-//! module that owns hooks is one line here.
+//! Historical drift included the unimplemented `QUANTICK_DRAWING_MANAGER`
+//! spelling alongside the real `QUANTICK_DRAWINGS_MANAGER`. Declaration
+//! parity detects that mismatch; it does not establish runtime availability.
 //!
-//! **The prose owns what each hook means.** `docs/ui-harness/hook-prose.md`
-//! holds the long `Reaches` cells — the paragraphs that explain which class of
-//! defect is invisible without that hook, which is the most valuable content in
-//! the harness and is deliberately not compressed. It stays prose because
-//! prose is what it is, and it stays under `docs/` rather than
-//! `.claude/skills/` because the context ratchet weighs that tree and a second
-//! seventy-kilobyte file there would cost every session what the generated one
-//! already costs it.
-//!
-//! `.claude/skills/ui-harness/references/hook-registry.md` is neither: it is
-//! **generated** by fusing the two, through
-//! `quantick-app --dump-hook-registry`. A hook missing from either half fails
-//! `cargo test -p quantick-guards`, so the pair cannot drift apart the way the
-//! single hand-kept file drifted from the code.
-//!
-//! # `UNKNOWN_HOOK`
-//!
-//! [`log_unknown_hooks`] runs once at startup and warns about any `QUANTICK_*`
-//! in the environment that no slice declares. That is the other half of the
-//! `QUANTICK_DRAWING_MANAGER` story: a dead hook used to present as a surface
-//! that did not open, which sends the reader looking at the surface. Now it
-//! says so on the first line of the log.
-//!
-//! It warns rather than exits. A typo in a capture script should be loud, but
-//! an unbootable application is a worse failure than the one being fixed, and
-//! the variable may belong to something else entirely.
+//! [`log_unknown_hooks`] warns once at startup about undeclared names, except
+//! for the documented [`NOT_HOOKS`] entries. A declared but disabled scenario
+//! is known, so it is not `UNKNOWN_HOOK`. This warning does not enable hooks
+//! or refuse startup: availability follows the owner's feature and behavior.
 
 use std::collections::BTreeSet;
 
@@ -97,6 +76,7 @@ pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[
 /// checks the two agree: a slice registered under the wrong path, or a file
 /// that reads a `QUANTICK_*` without registering a slice at all, is a finding.
 pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
+    ("crates/app/src/toolrail.rs", crate::toolrail::HOOKS),
     (
         "crates/app/src/app/launch_hooks.rs",
         crate::app::launch_hooks::HOOKS,
@@ -150,7 +130,7 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         crate::indicators::state_file::HOOKS,
     ),
     ("crates/app/src/layouts.rs", crate::layouts::HOOKS),
-    ("crates/app/src/main.rs", crate::MAIN_HOOKS),
+    ("crates/app/src/launch.rs", crate::launch::HOOKS),
     ("crates/app/src/paper_home.rs", crate::paper_home::HOOKS),
     ("crates/app/src/paper_state.rs", crate::paper_state::HOOKS),
     (
@@ -243,7 +223,7 @@ pub(crate) fn unknown_hooks<'a>(
     out
 }
 
-/// Warn, once at startup, about every `QUANTICK_*` nothing reads.
+/// Warn once at startup about undeclared, non-exempt `QUANTICK_*` names.
 pub(crate) fn log_unknown_hooks() {
     let declared = declared_names();
     let environment: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
@@ -267,12 +247,9 @@ pub(crate) const PROSE_PATH: &str = "docs/ui-harness/hook-prose.md";
 
 /// Render `.claude/skills/ui-harness/references/hook-registry.md`.
 ///
-/// The index comes from the specs, so it cannot name a hook the application
-/// does not read. The prose comes from [`PROSE_PATH`] and is copied through
-/// **unaltered** — no reflow, no truncation, no summarising. The long cells
-/// are the point of the file: each says which class of defect is invisible
-/// without that hook, which is the one thing a grep of the source cannot tell
-/// you.
+/// Declarations supply names and owner paths, including disabled scenarios.
+/// The authored `Reaches` cells supply behavior and feature requirements;
+/// they are copied unchanged, without reflow, truncation or summarizing.
 pub(crate) fn hook_registry_markdown() -> Result<String, String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -293,16 +270,16 @@ const OWNER_PREFIX: &str = "crates/app/src/";
 
 /// Fuse the declared hooks into the authored prose.
 ///
-/// One table, not two. An index beside the prose would repeat every hook name
-/// a second time; adding the owner *to the row that already describes the
-/// hook* puts the new fact where a reader is already looking and costs the
-/// context budget a column instead of a page.
+/// Hook rows retain their authored order and complete descriptions.
+/// Repeated owner paths use readable keys; the legend resolves each key
+/// to its full path. Single-use paths remain in their rows. The legend
+/// contains owner paths only, so it never duplicates the hook inventory.
 ///
 /// Prose lines that are not table rows pass through untouched, and a row's
 /// `Reaches` cell is never rewritten — [`PROSE_PATH`] is the authored half and
 /// this function is not allowed an opinion about it.
 fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> String {
-    let owners: std::collections::BTreeMap<&str, &str> = hooks
+    let owners: std::collections::BTreeMap<&str, &'static str> = hooks
         .iter()
         .map(|(path, spec)| (spec.name, path.strip_prefix(OWNER_PREFIX).unwrap_or(path)))
         .collect();
@@ -312,23 +289,23 @@ fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> 
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n");
     out.push_str(concat!(
-        "Every `QUANTICK_*` the application reads, what it reaches, and where it
+        "Declared `QUANTICK_*` inputs: behavior, feature requirements and owners.
 ",
-        "is declared (paths relative to `crates/app/src/`).
+        "Paths relative to `crates/app/src/`; declaration does not enable a hook.
 ",
         "
 ",
-        "Generated: existence from the `declare_hooks!` line beside each read,
+        "Generated: owner `declare_hooks!` slices include disabled hooks,
 ",
         "prose from `docs/ui-harness/hook-prose.md` — edit there, then
 ",
         "`cargo run -p quantick-app -- --dump-hook-registry > <this file>`.
 ",
-        "`cargo test -p quantick-guards` fails when a hook is read but not
+        "`cargo test -p quantick-guards` checks source/declaration/prose parity;
 ",
-        "described, or described but not read; an unrecognised `QUANTICK_*` in the
+        "disabled hooks remain cataloged. Undeclared, non-exempt names in the
 ",
-        "environment is logged at startup as `UNKNOWN_HOOK`.
+        "environment are logged at startup as `UNKNOWN_HOOK`.
 ",
         "
 ",
@@ -343,12 +320,22 @@ fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> 
         None => prose,
     };
 
+    let keys = owner_keys(&owners, body);
+    if !keys.is_empty() {
+        out.push_str(
+            "\nOwner keys (other paths appear in full):\n\n| Key | Declared in |\n| --- | --- |\n",
+        );
+        for (path, key) in &keys {
+            out.push_str(&format!("| {key} | `{path}` |\n"));
+        }
+        out.push('\n');
+    }
     for line in body.lines() {
         if line.starts_with("| Hook ") {
-            out.push_str("| Hook | Declared in | Reaches |\n");
+            out.push_str("| Hook | Owner | Reaches |\n");
         } else if line.starts_with("| --- ") {
             out.push_str("| --- | --- | --- |\n");
-        } else if let Some(fused) = fuse_row(line, &owners) {
+        } else if let Some(fused) = fuse_row(line, &owners, &keys) {
             out.push_str(&fused);
             out.push('\n');
         } else {
@@ -360,28 +347,91 @@ fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> 
     out
 }
 
-/// Turn `| <hook cell> | <reaches> |` into `| <hook cell> | <owners> | <reaches> |`.
-///
-/// A row may name more than one hook — several of them do, because the hooks
-/// are used together — so the owner cell lists each distinct file once, in the
-/// order the names appear.
-fn fuse_row(line: &str, owners: &std::collections::BTreeMap<&str, &str>) -> Option<String> {
+/// Readable presentation keys; full paths remain canonical in the legend.
+fn owner_keys(
+    owners: &std::collections::BTreeMap<&str, &'static str>,
+    body: &str,
+) -> std::collections::BTreeMap<&'static str, String> {
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for line in body.lines() {
+        if let Some((_, _, paths)) = row_paths(line, owners) {
+            for path in paths {
+                *counts.entry(path).or_default() += 1;
+            }
+        }
+    }
+    let mut assigned: std::collections::BTreeMap<_, _> = owners
+        .values()
+        .map(|path| (*path, (*path).to_owned()))
+        .collect();
+    for path in assigned.keys().copied().collect::<Vec<_>>() {
+        let key = owner_key_candidates(path)
+            .into_iter()
+            .find(|key| {
+                assigned
+                    .iter()
+                    .all(|(other, value)| *other == path || value != key)
+            })
+            .expect("the exact owner path is unique");
+        assigned.insert(path, key);
+    }
+    assigned.retain(|path, _| counts.get(path).is_some_and(|count| *count > 1));
+    assigned
+}
+
+fn owner_key_candidates(path: &str) -> Vec<String> {
+    let stem = path
+        .strip_suffix("/mod.rs")
+        .or_else(|| path.strip_suffix("/src/lib.rs"))
+        .unwrap_or_else(|| path.strip_suffix(".rs").unwrap_or(path));
+    let parts: Vec<_> = stem.split('/').collect();
+    let words: Vec<_> = parts
+        .last()
+        .expect("a path has a segment")
+        .split('_')
+        .collect();
+    let mut candidates: Vec<_> = (1..=words.len())
+        .map(|length| words[words.len() - length..].join("_"))
+        .collect();
+    candidates.extend((2..=parts.len()).map(|length| parts[parts.len() - length..].join("/")));
+    candidates.push(path.to_owned());
+    candidates
+}
+
+/// Keep complete cells and the order of distinct owners within each row.
+fn row_paths<'a>(
+    line: &'a str,
+    owners: &std::collections::BTreeMap<&str, &'static str>,
+) -> Option<(&'a str, &'a str, Vec<&'static str>)> {
     let body = line.strip_prefix("| ")?.strip_suffix(" |")?;
     let (hook_cell, reaches) = body.split_once(" | ")?;
-    let mut paths: Vec<&str> = Vec::new();
+    let mut paths = Vec::new();
     for name in hook_names(hook_cell) {
         if let Some(path) = owners.get(name.as_str())
             && !paths.contains(path)
         {
-            paths.push(path);
+            paths.push(*path);
         }
     }
+    Some((hook_cell, reaches, paths))
+}
+
+fn fuse_row(
+    line: &str,
+    owners: &std::collections::BTreeMap<&str, &'static str>,
+    keys: &std::collections::BTreeMap<&str, String>,
+) -> Option<String> {
+    let (hook_cell, reaches, paths) = row_paths(line, owners)?;
     let owner_cell = if paths.is_empty() {
         "—".to_owned()
     } else {
         paths
             .iter()
-            .map(|path| format!("`{path}`"))
+            .map(|path| {
+                keys.get(path)
+                    .cloned()
+                    .unwrap_or_else(|| format!("`{path}`"))
+            })
             .collect::<Vec<_>>()
             .join(", ")
     };
@@ -502,6 +552,130 @@ mod tests {
             .expect("crates/app sits two levels below the workspace root");
         for (path, _) in OWNERS {
             assert!(root.join(path).is_file(), "{path} is not a file");
+        }
+    }
+
+    #[test]
+    fn readable_owners_preserve_complete_cells_notes_modes_and_missing_owners() {
+        static A: HookSpec = HookSpec::new("QUANTICK_ALPHA");
+        static B: HookSpec = HookSpec::new("QUANTICK_BETA");
+        let hooks = [
+            ("crates/app/src/first_owner.rs", &A),
+            ("crates/app/src/second_owner.rs", &B),
+        ];
+        let prose = "Intro\n| Hook | Reaches |\n| --- | --- |\n\
+            | `QUANTICK_ALPHA=one` | Complete \\| escaped pipe, `code`, and Unicode — kept. |\n\
+            Notes stay between these rows.\n\
+            | `QUANTICK_BETA` / `QUANTICK_ALPHA=two` | Both owners, in this order. |\n\
+            | `QUANTICK_MISSING` | Missing stays missing. |\n";
+        let rendered = render_registry(&hooks, prose);
+        assert!(rendered.contains("| owner | `first_owner.rs` |"));
+        assert!(rendered.contains("| `QUANTICK_ALPHA=one` | owner | Complete \\| escaped pipe, `code`, and Unicode — kept. |"));
+        assert!(rendered.contains("| `QUANTICK_BETA` / `QUANTICK_ALPHA=two` | `second_owner.rs`, owner | Both owners, in this order. |"));
+        assert!(rendered.contains("| `QUANTICK_MISSING` | — | Missing stays missing. |"));
+        let first = rendered.find("`QUANTICK_ALPHA=one`").unwrap();
+        let note = rendered.find("Notes stay between these rows.").unwrap();
+        let second = rendered.find("`QUANTICK_BETA` / ").unwrap();
+        assert!(first < note && note < second);
+        assert_eq!(rendered.matches("`QUANTICK_ALPHA=one`").count(), 1);
+        assert_eq!(rendered.matches("`QUANTICK_ALPHA=two`").count(), 1);
+    }
+
+    #[test]
+    fn owner_keys_are_deterministic_and_avoid_singleton_and_basename_collisions() {
+        static A: HookSpec = HookSpec::new("QUANTICK_ALPHA");
+        static B: HookSpec = HookSpec::new("QUANTICK_BETA");
+        static C: HookSpec = HookSpec::new("QUANTICK_GAMMA");
+        let hooks = [
+            ("crates/app/src/a/shared_owner.rs", &A),
+            ("crates/app/src/b/shared_owner.rs", &B),
+            ("crates/app/src/c/shared_owner.rs", &C),
+        ];
+        let prose = "| Hook | Reaches |\n| --- | --- |\n\
+            | `QUANTICK_ALPHA=one` | A one. |\n\
+            | `QUANTICK_ALPHA=two` | A two. |\n\
+            | `QUANTICK_BETA` | B singleton. |\n\
+            | `QUANTICK_GAMMA=one` | C one. |\n\
+            | `QUANTICK_GAMMA=two` | C two. |\n";
+        let rendered = render_registry(&hooks, prose);
+        assert_eq!(
+            rendered,
+            render_registry(&[hooks[2], hooks[0], hooks[1]], prose)
+        );
+        assert!(rendered.contains("| owner | `a/shared_owner.rs` |"));
+        assert!(rendered.contains("| c/shared_owner | `c/shared_owner.rs` |"));
+        assert!(rendered.contains("| `QUANTICK_BETA` | `b/shared_owner.rs` | B singleton. |"));
+        assert!(
+            !rendered.contains("| shared_owner |"),
+            "the singleton reserves this readable key"
+        );
+    }
+
+    #[test]
+    fn owner_key_candidates_normalize_modules_and_keep_exact_fallback() {
+        assert_eq!(
+            owner_key_candidates("surfaces/drawing_chrome/mod.rs"),
+            [
+                "chrome",
+                "drawing_chrome",
+                "surfaces/drawing_chrome",
+                "surfaces/drawing_chrome/mod.rs"
+            ]
+        );
+        assert_eq!(
+            owner_key_candidates("crates/feed/src/lib.rs"),
+            ["feed", "crates/feed", "crates/feed/src/lib.rs"]
+        );
+        assert_eq!(owner_key_candidates("plain.rs"), ["plain", "plain.rs"]);
+    }
+
+    #[test]
+    fn singleton_or_missing_owners_need_no_legend() {
+        static A: HookSpec = HookSpec::new("QUANTICK_ALPHA");
+        let rendered = render_registry(
+            &[("crates/app/src/one.rs", &A)],
+            "| Hook | Reaches |\n| --- | --- |\n| `QUANTICK_ALPHA` | One. |\n| `QUANTICK_MISSING` | None. |\n",
+        );
+        assert!(!rendered.contains("Owner keys"));
+        assert!(rendered.contains("| `QUANTICK_ALPHA` | `one.rs` | One. |"));
+        assert!(rendered.contains("| `QUANTICK_MISSING` | — | None. |"));
+    }
+
+    #[test]
+    fn an_exact_path_remains_available_when_every_short_key_is_taken() {
+        let owners = std::collections::BTreeMap::from([
+            ("QUANTICK_ALPHA", "a/foo.rs"),
+            ("QUANTICK_BETA", "foo.rs"),
+        ]);
+        let body = "| `QUANTICK_ALPHA=one` | A. |\n| `QUANTICK_ALPHA=two` | A. |\n\
+            | `QUANTICK_BETA=one` | B. |\n| `QUANTICK_BETA=two` | B. |\n";
+        let keys = owner_keys(&owners, body);
+        assert_eq!(keys["a/foo.rs"], "foo");
+        assert_eq!(keys["foo.rs"], "foo.rs");
+    }
+
+    #[test]
+    fn keys_reconstruct_each_distinct_owner_in_original_row_order() {
+        let owners = std::collections::BTreeMap::from([
+            ("QUANTICK_ALPHA", "a/owner.rs"),
+            ("QUANTICK_BETA", "b/owner.rs"),
+        ]);
+        let body = "| `QUANTICK_BETA` / `QUANTICK_ALPHA` | Both. |\n\
+            | `QUANTICK_ALPHA` / `QUANTICK_BETA` | Reverse. |\n";
+        let keys = owner_keys(&owners, body);
+        let reverse: std::collections::BTreeMap<_, _> = keys
+            .iter()
+            .map(|(path, key)| (key.as_str(), *path))
+            .collect();
+        assert_eq!(reverse.len(), keys.len(), "no two paths share a key");
+        for (line, expected) in body.lines().zip([
+            vec!["b/owner.rs", "a/owner.rs"],
+            vec!["a/owner.rs", "b/owner.rs"],
+        ]) {
+            let rendered = fuse_row(line, &owners, &keys).unwrap();
+            let owner_cell = rendered.split(" | ").nth(1).unwrap();
+            let reconstructed: Vec<_> = owner_cell.split(", ").map(|key| reverse[key]).collect();
+            assert_eq!(reconstructed, expected);
         }
     }
 }

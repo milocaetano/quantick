@@ -1038,29 +1038,6 @@ impl QuantickApp {
         });
     }
 
-    /// Take the window manager's own maximise, once, on the first frame.
-    ///
-    /// Through [`egui::ViewportCommand::Maximized`] rather than the viewport
-    /// builder's `with_maximized`: eframe 0.29 does not honour that flag beside
-    /// an `inner_size`, and a hook that silently opens a 1100×650 window while
-    /// reporting success is worse than no hook — a validation run would
-    /// photograph the wrong state and call it a pass. The command is the one
-    /// the platform runs when a hand hits the title bar, which is the state
-    /// this hook exists to reach.
-    pub(super) fn apply_maximize_hook(&mut self, ctx: &egui::Context) {
-        if !self.harness.take_maximize() {
-            return;
-        }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "WINDOW_MAXIMIZE_AUTOSTART",
-            action = "maximize",
-            "QUANTICK_WINDOW_MAXIMIZED asked for the maximised layout"
-        );
-    }
-
     /// Keep the window size the workspace would record, flush a popup the
     /// trader just re-parked, and take the exit save when the window is
     /// closing.

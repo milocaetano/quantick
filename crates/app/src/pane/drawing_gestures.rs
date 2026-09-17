@@ -212,9 +212,16 @@ impl ChartPane {
         let constrain = if ui.input(|input| input.modifiers.shift) {
             drawings::Constrain::Level
         } else {
-            self.gestures
-                .parked_hand
-                .map_or(drawings::Constrain::Free, |hand| hand.constrain)
+            #[cfg(any(feature = "drawing-harness", test))]
+            {
+                self.gestures
+                    .parked_hand
+                    .map_or(drawings::Constrain::Free, |hand| hand.constrain)
+            }
+            #[cfg(not(any(feature = "drawing-harness", test)))]
+            {
+                drawings::Constrain::Free
+            }
         };
         let Some(tool) = chrome.toolrail.tool().drawing_tool() else {
             self.drawings.cancel_draft();
@@ -277,8 +284,10 @@ impl ChartPane {
         // is — in any host.
         let preview_pos = ui
             .input(|input| input.pointer.latest_pos())
-            .filter(|position| surface.contains(*position))
-            .or_else(|| self.gestures.parked_hand.map(|hand| hand.position));
+            .filter(|position| surface.contains(*position));
+        #[cfg(any(feature = "drawing-harness", test))]
+        let preview_pos =
+            preview_pos.or_else(|| self.gestures.parked_hand.map(|hand| hand.position));
         self.gestures.hover = preview_pos
             .filter(|position| !over_chrome(ui, *position))
             .and_then(|position| {

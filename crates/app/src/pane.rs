@@ -143,6 +143,7 @@ const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
 /// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook.
+#[cfg(any(feature = "drawing-harness", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,

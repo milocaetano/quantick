@@ -164,6 +164,10 @@ jobs:
         run: cargo test --workspace
       - name: Test opt-in quick-range harness
         run: cargo test -p quantick-app --features quick-range-harness
+      - name: Test opt-in drawing harness
+        run: cargo test -p quantick-app --features drawing-harness
+      - name: Test combined drawing harnesses
+        run: cargo test -p quantick-app --features drawing-harness,quick-range-harness
 
   # The second operating system the README is allowed to claim. It exists so
   # that sentence is backed by a workflow file rather than by memory: the

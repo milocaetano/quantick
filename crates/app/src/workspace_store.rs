@@ -310,6 +310,7 @@ impl WorkspaceSession {
     }
 
     /// Note that a harness hook dressed the rail this run.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn stage_favorites(&mut self) {
         self.favorites_are_staged = true;
     }

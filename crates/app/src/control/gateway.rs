@@ -195,6 +195,8 @@ struct GatewayOptions {
     /// Test build only: see [`server::AnswerWritten`].
     #[cfg(test)]
     answer_written: Option<server::AnswerWritten>,
+    #[cfg(test)]
+    answer_before_write: Option<server::AnswerBeforeWrite>,
 }
 
 impl Default for GatewayOptions {
@@ -209,6 +211,8 @@ impl Default for GatewayOptions {
             descriptor_directory: None,
             #[cfg(test)]
             answer_written: None,
+            #[cfg(test)]
+            answer_before_write: None,
         }
     }
 }
@@ -480,6 +484,8 @@ pub(crate) struct ControlAccess {
     show_panel: bool,
     notice: Option<String>,
     last_drain: DrainObservation,
+    #[cfg(test)]
+    observed_completion: Option<retry_seams::ObservedCompletion>,
     /// The semantic event journal. Written only on the application thread;
     /// read through the UI queue; signalled to parked waiters without a lock.
     journal: EventJournal,
@@ -555,6 +561,8 @@ impl ControlAccess {
             show_panel: false,
             notice: None,
             last_drain: DrainObservation::default(),
+            #[cfg(test)]
+            observed_completion: None,
             journal,
             journal_ticks,
             actions,
@@ -748,6 +756,8 @@ impl ControlAccess {
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
+            #[cfg(test)]
+            self.observe_completion_for_test(&request.prepared.envelope.request_id);
         });
         self.last_drain = drain;
         // A rasterised frame is worth exactly one frame. Whatever is still
