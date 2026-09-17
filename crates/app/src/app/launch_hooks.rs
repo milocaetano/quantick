@@ -806,10 +806,12 @@ impl QuantickApp {
         // write and really replace the cockpit, so point `QUANTICK_UI_STATE`
         // and its sibling stores at scratchpad files first.
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_EXPORT") {
-            self.export_workspace_to(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .export_workspace_to(std::path::Path::new(&path));
         }
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_IMPORT") {
-            self.import_workspace_from(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .import_workspace_from(std::path::Path::new(&path));
         }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every

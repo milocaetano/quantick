@@ -59,6 +59,8 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod toolrail_tests;
+mod workspace_bundle_menu_baseline_tests;
+mod workspace_bundle_runtime_baseline_tests;
 mod workspace_commit_baseline_tests;
 mod workspaces_tests;
 

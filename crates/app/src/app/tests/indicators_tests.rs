@@ -210,11 +210,11 @@ fn a_click_in_an_indicator_pane_draws_on_that_band() {
 fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
     let (mut app, _evt, _cmd, _book) = test_app();
     let file = crate::scratch::ScratchFile::new("app-persist", "workspace.qws.toml");
-    app.export_workspace_to(&file);
+    app.workspace_bundle_adapter().export_workspace_to(&file);
     // A market the live tab is not on, so the import replaces the strip.
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    app.import_workspace_from(&file);
+    app.workspace_bundle_adapter().import_workspace_from(&file);
 
     assert!(
         app.tabs

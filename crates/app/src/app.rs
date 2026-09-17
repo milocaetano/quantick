@@ -43,6 +43,7 @@ mod paper_wiring;
 mod replay_and_history;
 mod tabs;
 mod toolbar_wiring;
+mod workspace_bundle_adapter;
 mod workspace_restore;
 mod workspace_save;
 mod workspace_save_adapter;
@@ -286,6 +287,34 @@ struct TabSlot {
 }
 
 impl QuantickApp {
+    pub(crate) fn workspace_bundle_adapter(
+        &mut self,
+    ) -> workspace_bundle_adapter::WorkspaceBundleAdapter<'_> {
+        workspace_bundle_adapter::WorkspaceBundleAdapter {
+            tabs: &mut self.tabs,
+            workspace: &mut self.workspace,
+            indicators: &mut self.indicators,
+            config: &self.config,
+            style: &mut self.style,
+            pane_ids: &mut self.pane_ids,
+            harness: &self.harness,
+            toolrail: &mut self.toolrail,
+            tz: &mut self.tz,
+            dock: &mut self.dock,
+            show_perf: &mut self.health.show_perf,
+            record_deals: &mut self.chrome.record_deals,
+            history: &mut self.history,
+            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            toast: &mut self.surfaces.toast,
+            replay_view: &self.replay_view,
+            layout_rename: &mut self.chrome.layout_rename,
+            layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
+            added_symbols: &mut self.added_symbols,
+            drawing_presets: &mut self.drawing_presets,
+            footprint_config: &mut self.footprint_config,
+            footprint_settings: &mut self.surfaces.footprint_settings,
+        }
+    }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
         arrangement_adapter::ArrangementAdapter {
             tabs: &mut self.tabs,

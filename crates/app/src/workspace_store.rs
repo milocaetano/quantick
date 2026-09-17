@@ -142,7 +142,7 @@ pub(crate) struct WorkspaceStore {
     recent_on_disk: Vec<PathBuf>,
     /// The native file dialog, while one is open, and what it is for. One at a
     /// time, and off the UI thread — the OS dialog never blocks a frame.
-    picker: Option<(WorkspacePick, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
+    picker: crate::workspace_picker::WorkspacePickerHost,
     /// Where trades save this run — resolved once at boot (environment > the
     /// user's stored pick > config) and updated by the panel's folder picker;
     /// new tabs journal here too.
@@ -151,15 +151,8 @@ pub(crate) struct WorkspaceStore {
     trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
 }
 
-/// What the open workspace file dialog is for, so the one poll can land either
-/// answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WorkspacePick {
-    /// Choosing where to write a workspace file.
-    Export,
-    /// Choosing a workspace file to open.
-    Import,
-}
+#[cfg(test)]
+pub(crate) use crate::workspace_picker::WorkspacePick;
 
 impl WorkspaceStore {
     /// Build the handle from paths each store has already resolved for itself.
@@ -174,7 +167,7 @@ impl WorkspaceStore {
             layers: SavedLayers::default(),
             session: WorkspaceCommitSession::default(),
             recent_on_disk: Vec::new(),
-            picker: None,
+            picker: crate::workspace_picker::WorkspacePickerHost::default(),
             trades_dir,
             trades_dir_picker: None,
         }
@@ -246,30 +239,13 @@ impl WorkspaceStore {
         (&mut self.session, &self.paths.ui_state)
     }
 
+    #[cfg(test)]
     /// Whether a workspace file dialog is already open. One at a time.
     pub(crate) fn picker_open(&self) -> bool {
-        self.picker.is_some()
+        self.picker.is_open()
     }
-
-    /// Hand the in-flight dialog over, so its poll can read the channel.
-    pub(crate) fn picker(
-        &self,
-    ) -> Option<&(WorkspacePick, std::sync::mpsc::Receiver<Option<PathBuf>>)> {
-        self.picker.as_ref()
-    }
-
-    /// A dialog just opened.
-    pub(crate) fn open_picker(
-        &mut self,
-        intent: WorkspacePick,
-        receiver: std::sync::mpsc::Receiver<Option<PathBuf>>,
-    ) {
-        self.picker = Some((intent, receiver));
-    }
-
-    /// The dialog answered, or the channel died.
-    pub(crate) fn close_picker(&mut self) {
-        self.picker = None;
+    pub(crate) fn picker_mut(&mut self) -> &mut crate::workspace_picker::WorkspacePickerHost {
+        &mut self.picker
     }
 
     /// Point a store at a scratch file for the length of one test.

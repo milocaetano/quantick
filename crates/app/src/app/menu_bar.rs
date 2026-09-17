@@ -635,73 +635,7 @@ impl QuantickApp {
                             self.workspace_save_adapter().delete_named_workspace(&name);
                         }
                         ui.separator();
-                        // Files, named apart from the two groups above again:
-                        // those live inside quantick, these are documents the
-                        // trader owns, can copy, back up and carry to another
-                        // machine. That is the difference the wording carries.
-                        if ui
-                            .button("Export to file…")
-                            .on_hover_text(
-                                "Save the whole cockpit — tabs, indicators, layers, drawing \
-                                 colours, footprint and added symbols — as one file in your \
-                                 documents",
-                            )
-                            .clicked()
-                        {
-                            self.open_workspace_export_picker();
-                            ui.close_menu();
-                        }
-                        if ui
-                            .button("Open from file…")
-                            .on_hover_text(
-                                "Open a workspace file. It replaces the cockpit on screen; a \
-                                 file that cannot be read changes nothing.",
-                            )
-                            .clicked()
-                        {
-                            self.open_workspace_import_picker();
-                            ui.close_menu();
-                        }
-                        // Read off the field, not the filesystem: this body
-                        // runs every frame the menu is open.
-                        let mut reopen: Option<std::path::PathBuf> = None;
-                        ui.add_enabled_ui(!self.workspace.recent_on_disk().is_empty(), |ui| {
-                            ui.menu_button("Open recent", |ui| {
-                                for path in self.workspace.recent_on_disk() {
-                                    if ui
-                                        .button(crate::workspace_bundle::recent_label(path))
-                                        // The same warning the bookmark list
-                                        // carries: this replaces the cockpit,
-                                        // and a trader mid-tape has to read
-                                        // that before the click, not after.
-                                        .on_hover_text(format!(
-                                            "Replaces the cockpit on screen\n{}",
-                                            path.display()
-                                        ))
-                                        .clicked()
-                                    {
-                                        reopen = Some(path.clone());
-                                        ui.close_menu();
-                                    }
-                                }
-                            })
-                            .response
-                            .on_disabled_hover_text("No workspace files opened yet");
-                        });
-                        if let Some(path) = reopen {
-                            self.import_workspace_from(&path);
-                        }
-                        if ui
-                            .button("Show where it's saved")
-                            .on_hover_text(
-                                "Open the folder quantick keeps your cockpit in, so you can see \
-                                 it and back it up",
-                            )
-                            .clicked()
-                        {
-                            self.reveal_cockpit_home();
-                            ui.close_menu();
-                        }
+                        self.workspace_bundle_adapter().show_file_actions(ui);
                         ui.separator();
                         let mut save_on_exit = self.workspace.session().save_on_exit();
                         if ui

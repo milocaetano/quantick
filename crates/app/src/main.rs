@@ -108,6 +108,7 @@ mod window_scale;
 mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
+mod workspace_picker;
 mod workspace_store;
 
 // The test binary counts heap work per thread (`work_meter`); production

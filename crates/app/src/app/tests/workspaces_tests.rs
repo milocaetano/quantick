@@ -1,5 +1,39 @@
 use super::*;
 
+#[test]
+fn bundle_baseline_refused_import_still_flushes_pending_layouts() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let layout = crate::scratch::ScratchFile::new("bundle-preflush", "layouts.toml");
+    app.workspace.set_layouts_path(layout.to_path_buf());
+    app.workspace.layouts_mut().set_blocked(false);
+    app.workspace
+        .layouts_mut()
+        .mark_changed(std::time::Instant::now());
+    let input = crate::scratch::ScratchFile::new("bundle-invalid", "future.qws.toml");
+    std::fs::write(&input, "version = 99\n").unwrap();
+    assert!(!layout.exists());
+    let recent = app.workspace.session().recent().to_vec();
+    app.workspace_bundle_adapter().import_workspace_from(&input);
+    assert!(layout.is_file());
+    assert!(!app.workspace.layouts().is_dirty());
+    assert_eq!(app.workspace.session().recent(), recent);
+}
+
+#[test]
+fn bundle_baseline_export_continues_after_workspace_save_fails() {
+    let (mut app, _evt, _cmd, _book) = test_app();
+    let blocker = crate::scratch::ScratchDir::new("bundle-save-blocker");
+    app.workspace.set_ui_state_path(blocker.to_path_buf());
+    let output = crate::scratch::ScratchFile::new("bundle-best-effort", "export.qws.toml");
+    app.workspace_bundle_adapter().export_workspace_to(&output);
+    assert!(blocker.is_dir());
+    assert!(output.is_file());
+    assert_eq!(
+        app.workspace.session().recent(),
+        [output.to_string_lossy().into_owned()]
+    );
+}
+
 /// The whole point of the feature, end to end inside a running app:
 /// export a cockpit, change it, open the file back, and the cockpit the
 /// trader saved is the cockpit on screen.
@@ -17,7 +51,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.workspace_save_adapter().save_workspace("test");
 
     let file = crate::scratch::ScratchFile::new("app-bundle", "workspace.qws.toml");
-    app.export_workspace_to(&file);
+    app.workspace_bundle_adapter().export_workspace_to(&file);
     assert!(file.is_file(), "the export reached the disk");
     assert_eq!(
         app.workspace.session().recent().len(),
@@ -32,7 +66,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
 
-    app.import_workspace_from(&file);
+    app.workspace_bundle_adapter().import_workspace_from(&file);
 
     assert!(
         app.added_symbols.contains("binance", "WINQ26"),
@@ -110,7 +144,7 @@ fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
 
     let file = crate::scratch::ScratchFile::new("app-bad-bundle", "workspace.qws.toml");
     std::fs::write(&file, "version = 99\nname = \"from tomorrow\"\n").unwrap();
-    app.import_workspace_from(&file);
+    app.workspace_bundle_adapter().import_workspace_from(&file);
 
     assert_eq!(
         app.workspace_state().starred_tool_ids(),
