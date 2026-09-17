@@ -11,7 +11,6 @@ use crate::drawings;
 use crate::pane;
 use crate::state::BarConfiguration;
 use crate::tab::Tab;
-use quantick_feed::FeedHandle;
 
 use super::QuantickApp;
 
@@ -179,7 +178,7 @@ impl QuantickApp {
         &mut self,
         feed_id: String,
         symbol: String,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
         spec: Option<BarConfiguration>,
     ) {
         let id = self.next_tab_id;

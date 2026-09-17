@@ -214,13 +214,176 @@ fn remote_bar_call(
     let request_id = client
         .send_versioned("layout.pane.set_bar_spec", 2, payload)
         .unwrap();
-    for _ in 0..400 {
-        run_frame(app, ctx);
-        if client.reply_pending(std::time::Duration::from_millis(5)) {
-            break;
-        }
-    }
+    wait_for_bar_response(app, ctx, client, &request_id);
     let response = client.read().unwrap();
     assert_eq!(response.request_id, request_id);
     response
+}
+
+// A UI operation is complete before its worker necessarily serializes the reply.
+// An extra frame here would be a new passive editor operation, not part of the call.
+fn wait_for_bar_response(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    client: &mut quantick_control_local::client::LocalClient,
+    request_id: &quantick_control::id::RequestId,
+) {
+    app.control
+        .control_access
+        .as_mut()
+        .unwrap()
+        .arm_completion_for_test(request_id.clone());
+    for _ in 0..400 {
+        run_frame(app, ctx);
+        if app
+            .control
+            .control_access
+            .as_ref()
+            .unwrap()
+            .completed_for_test(request_id)
+            || client.reply_pending(std::time::Duration::from_millis(5))
+        {
+            break;
+        }
+    }
+}
+
+/// Owns the only response gate; unwinding releases the worker as well.
+struct BarResponseGate {
+    target: std::sync::Arc<std::sync::Mutex<Option<quantick_control::id::RequestId>>>,
+    reached: crossbeam_channel::Receiver<quantick_control::id::RequestId>,
+    release: crossbeam_channel::Sender<()>,
+}
+
+impl BarResponseGate {
+    fn install(app: &mut QuantickApp, ctx: &egui::Context, directory: &std::path::Path) -> Self {
+        let target = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let observed_target = std::sync::Arc::clone(&target);
+        let (reached_tx, reached) = crossbeam_channel::bounded(1);
+        let (release, release_rx) = crossbeam_channel::bounded(1);
+        let before_write =
+            std::sync::Arc::new(move |request_id: &quantick_control::id::RequestId| {
+                if observed_target.lock().unwrap().as_ref() != Some(request_id) {
+                    return;
+                }
+                reached_tx.try_send(request_id.clone()).unwrap();
+                release_rx
+                    .recv_timeout(Self::window())
+                    .expect("the test releases its response gate");
+            });
+        app.control
+            .control_access
+            .as_mut()
+            .unwrap()
+            .enable_before_write_for_test(ctx, directory.to_path_buf(), before_write);
+        wait_for_test_gateway_descriptor(app, ctx);
+        Self {
+            target,
+            reached,
+            release,
+        }
+    }
+
+    fn window() -> std::time::Duration {
+        std::time::Duration::from_millis(quantick_control::limits::CONTROL_REQUEST_TIMEOUT_MS)
+    }
+
+    fn arm(&self, app: &mut QuantickApp, request_id: &quantick_control::id::RequestId) {
+        *self.target.lock().unwrap() = Some(request_id.clone());
+        app.control
+            .control_access
+            .as_mut()
+            .unwrap()
+            .arm_completion_for_test(request_id.clone());
+    }
+
+    fn wait_until_held(&self, request_id: &quantick_control::id::RequestId) {
+        assert_eq!(
+            &self.reached.recv_timeout(Self::window()).unwrap(),
+            request_id
+        );
+    }
+}
+
+impl Drop for BarResponseGate {
+    fn drop(&mut self) {
+        let _ = self.release.try_send(());
+    }
+}
+
+#[test]
+fn delayed_bar_response_preserves_focused_operation_value() {
+    delayed_bar_response_fixture(false);
+    delayed_bar_response_fixture(true);
+}
+
+fn delayed_bar_response_fixture(unwind: bool) {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("bar-registry-delayed-response");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    let gate = BarResponseGate::install(&mut app, &ctx, &directory);
+    let mut client =
+        quantick_control_local::client::discover_in(&directory, &cockpit_test_options())
+            .unwrap()
+            .select(None)
+            .unwrap();
+    let config = BUILTIN_BARS.parse("dollar:500").unwrap();
+    let request_id = client
+        .send_versioned(
+            "layout.pane.set_bar_spec",
+            2,
+            serde_json::json!({"pane":"0", "spec":"dollar:500"}),
+        )
+        .unwrap();
+    gate.arm(&mut app, &request_id);
+    wait_for_bar_response(&mut app, &ctx, &mut client, &request_id);
+    assert!(
+        app.control
+            .control_access
+            .as_ref()
+            .unwrap()
+            .completed_for_test(&request_id)
+    );
+    gate.wait_until_held(&request_id);
+    assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
+    assert_eq!(
+        app.active_tab().flow_pane.spec.pending(),
+        Some(BUILTIN_BARS.parse("dollar:1000").unwrap())
+    );
+    assert!(!client.reply_pending(std::time::Duration::from_millis(5)));
+    if unwind {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _owned_gate = gate;
+            panic!("exercise response-gate cleanup during assertion unwinding");
+        }));
+        assert!(result.is_err());
+    } else {
+        drop(gate);
+    }
+    let response = client.read().unwrap();
+    assert_eq!(response.request_id, request_id);
+    assert!(matches!(
+        response.outcome,
+        quantick_control::wire::ResponseOutcome::Success { .. }
+    ));
+    assert_eq!(app.active_tab().flow_pane.state.spec(), &config);
+    assert!(
+        !app.control
+            .control_access
+            .as_ref()
+            .unwrap()
+            .completed_for_test(
+                &quantick_control::id::RequestId::new("unrelated-request").unwrap()
+            )
+    );
+    // A deliberate later idle frame still obeys the unchanged editor contract.
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().flow_pane.state.spec(),
+        &BUILTIN_BARS.parse("dollar:1000").unwrap()
+    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
 }

@@ -6,6 +6,12 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Literal local transports for cross-crate app tests; absent from normal builds.
+test-support = ["dep:futures-util", "dep:tokio-tungstenite"]
+# Explicit native evidence harness; never enabled by normal builds.
+live-fixture = ["test-support"]
+
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
@@ -27,6 +33,8 @@ serde_json = { workspace = true }
 # Exact prices and quantities across the port; the venue crates speak it too.
 rust_decimal = { workspace = true }
 tracing = { workspace = true }
+futures-util = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
 # Locating the bridge's own installation under the user's data folder. The
 # clock-cache directory is *not* found this way — the application hands it in.
 dirs = { workspace = true }

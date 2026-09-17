@@ -5,6 +5,7 @@ use quantick_control::{
     registry::ModuleDescriptor,
     wire::{CanonicalDecimal, WireU64},
 };
+use quantick_control_host::feed;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -52,69 +53,28 @@ pub(crate) struct TabHealthSnapshot {
     pub tab_id: WireU64,
     /// Cumulative source diagnostics, independent of latency and gap eviction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feed_integrity: Option<FeedIntegritySnapshot>,
+    pub feed_integrity: Option<feed::FeedIntegritySnapshot>,
     pub active_loading_tasks: Vec<LoadingTaskSnapshot>,
     pub panes: Vec<PaneHealthSnapshot>,
     /// How late this tab's tape is, and where the time is going. `None` while
     /// replaying — a recording's prints are as old as the day they were
     /// captured and the playback clock decides when they appear.
-    pub tape: Option<TapeHealthSnapshot>,
+    pub tape: Option<feed::TapeHealthSnapshot>,
 }
 
-/// Counts source messages, never estimates how many executed trades were lost.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct FeedIntegritySnapshot {
-    pub anomalies: WireU64,
-    pub missing_messages: WireU64,
-    pub unknown_loss: WireU64,
-    pub non_monotonic: WireU64,
+pub(super) fn integrity_snapshot(
+    integrity: quantick_feed::FeedIntegrity,
+) -> Option<feed::FeedIntegritySnapshot> {
+    (integrity.anomalies > 0).then(|| {
+        feed::SourceCounts {
+            anomalies: integrity.anomalies,
+            missing_messages: integrity.missing_messages,
+            unknown_loss: integrity.unknown_loss,
+            non_monotonic: integrity.non_monotonic,
+        }
+        .into()
+    })
 }
-
-/// Where a tab's tape delay is being spent.
-///
-/// The whole point of the breakdown is that "the chart is eighteen seconds
-/// behind" is not actionable on its own: it reads the same whether the venue's
-/// adapter was late, the wire was late, or this process drained late, and those
-/// have different fixes. An investigation that starts here can name the hop
-/// without a screenshot and without a person watching the corner of a window.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TapeHealthSnapshot {
-    /// Newest print: venue stamp to this chart drawing it. The end-to-end
-    /// figure the status bar shows.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub arrival_latency_ms: Option<i64>,
-    /// The same measurement taken where the feed read the print off the wire,
-    /// one hop earlier.
-    ///
-    /// The gap between this and `arrival_latency_ms` is what quantick's own
-    /// queue and frame drain cost. It is a *derived* reading, not a measured
-    /// one — the two are sampled at different instants — but a gap of seconds
-    /// between them is unambiguous, and it is the only way to see that hop at
-    /// all. `None` on a provider that cannot cut its own chain.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub feed_arrival_latency_ms: Option<i64>,
-    /// Venue stamp to the source handing the print over: everything upstream
-    /// of quantick.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub source_latency_ms: Option<i64>,
-    /// The worst `source_latency_ms` over the sampled prints.
-    ///
-    /// The only peak reported, and deliberately: it is two source-side stamps
-    /// subtracted per print, so every print contributes with no clock involved.
-    /// A peak on the arrival or wire figures would need the reader's clock
-    /// applied to a print that arrived earlier, which measures that print's age
-    /// rather than its delay — on a quiet tape, the sampling interval itself.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub source_latency_peak_ms: Option<i64>,
-    /// The source handing it over to quantick reading it: the wire.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub transport_latency_ms: Option<i64>,
-    /// The provider's own name for the hop that owns most of the delay.
-    pub dominant_hop: Option<String>,
-    /// How many live prints the split covers.
-    pub sampled_prints: WireU64,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct LoadingTaskSnapshot {
     pub task: String,
@@ -194,11 +154,11 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
             title: "Health".to_owned(),
             description: "Frame cost and subsystem readiness observations.".to_owned(),
         },
-        revision,
+        |app| (revision(app), super::feed_delivery::snapshot(app)),
     )?;
     registry.register_scope(
         SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
+        module_id.clone(),
         SCHEMA_VERSION,
         "Health summary",
         "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
@@ -209,7 +169,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
             "observe.orderflow",
         ],
         project,
-    )
+    )?;
+    super::feed_delivery::register(registry, module_id)
 }
 
 /// The module's revision key: the per-tab subsystem state, without the
@@ -230,7 +191,10 @@ fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
         .tabs
         .into_iter()
         .map(|mut tab| {
-            let tape = tab.tape.as_ref().map(tape_revision_key);
+            let tape = tab
+                .tape
+                .as_ref()
+                .map(|tape| tape.revision_key(crate::metrics::HIGH_LAG_MS));
             // Dropped from the key, not from the projection: these are the
             // per-print milliseconds the doc above explains.
             tab.tape = None;
@@ -244,25 +208,7 @@ fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TabRevisionKey {
     tab: TabHealthSnapshot,
-    tape: Option<TapeRevisionKey>,
-}
-
-/// What a waiter is told about the tape: which hop, and late or not.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TapeRevisionKey {
-    dominant_hop: Option<String>,
-    late: bool,
-}
-
-fn tape_revision_key(tape: &TapeHealthSnapshot) -> TapeRevisionKey {
-    TapeRevisionKey {
-        dominant_hop: tape.dominant_hop.clone(),
-        // The chart's own threshold, so a waiter and a trader are told the
-        // tape went late at the same instant rather than at two.
-        late: tape
-            .arrival_latency_ms
-            .is_some_and(|ms| ms > crate::metrics::HIGH_LAG_MS),
-    }
+    tape: Option<feed::TapeRevisionKey>,
 }
 
 fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
@@ -299,15 +245,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab.id),
-                    feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
-                        let integrity = tab.feed_integrity;
-                        FeedIntegritySnapshot {
-                            anomalies: WireU64::new(integrity.anomalies),
-                            missing_messages: WireU64::new(integrity.missing_messages),
-                            unknown_loss: WireU64::new(integrity.unknown_loss),
-                            non_monotonic: WireU64::new(integrity.non_monotonic),
-                        }
-                    }),
+                    feed_integrity: integrity_snapshot(tab.feed_integrity),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
                         .filter_map(|task| {
@@ -330,13 +268,13 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
 ///
 /// `None` when there is nothing measured to report at all: a tab that has not
 /// seen a live print, and any tab playing a recording.
-fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
+fn tape_health(tab: &Tab) -> Option<feed::TapeHealthSnapshot> {
     let arrival_latency_ms = tab.trade_arrival_ms();
     let split = tab.feed_latency();
     if arrival_latency_ms.is_none() && split.is_none() {
         return None;
     }
-    Some(TapeHealthSnapshot {
+    Some(feed::TapeHealthSnapshot {
         arrival_latency_ms,
         feed_arrival_latency_ms: split.map(|s| s.arrival_lag_ms),
         source_latency_ms: split.and_then(|s| s.source_lag_ms),

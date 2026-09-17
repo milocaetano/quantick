@@ -97,9 +97,11 @@ pub(crate) async fn feed_task(
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
     let mut earliest_id: Option<u64> = None;
+    let mut continuity = crate::continuity::BinanceContinuity::after_backfill(None);
     match backfill(&http, &symbol, target).await {
         Ok(trades) => {
             earliest_id = trades.first().map(|t| t.agg_id);
+            continuity = crate::continuity::BinanceContinuity::after_backfill(trades.last());
             info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
             if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
                 return; // UI gone
@@ -125,7 +127,6 @@ pub(crate) async fn feed_task(
     let snapshot_limit = initial_book_depth();
     let mut book_capture: Option<BookCaptureTask> = None;
     let mut ever_connected = false;
-    let mut continuity = crate::continuity::BinanceContinuity::default();
     // Candle history runs off this loop, not inside it. A week is ~11
     // sequential pages and a trader paging back through a quarter asks for
     // thirteen such runs — seconds on a good day, far longer against a venue

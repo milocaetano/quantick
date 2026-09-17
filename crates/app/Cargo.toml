@@ -9,6 +9,7 @@ publish.workspace = true
 [features]
 default = []
 quick-range-harness = []
+feed-integrity-harness = ["quantick-feed/live-fixture"]
 
 [dependencies]
 quantick-chart-interaction = { path = "../chart-interaction" }
@@ -86,6 +87,8 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+# Exercise actual source/host events through the normal app drain.
+quantick-feed = { path = "../feed", features = ["test-support"] }
 # The same crate the `[dependencies]` table already carries, asking for the
 # throwaway native the docking port is tested through. Feature resolution
 # keeps a dev-dependency's features out of the normal build, so the binary

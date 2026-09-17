@@ -135,3 +135,53 @@ impl ControlAccess {
         })
     }
 }
+
+/// One specifically armed operation, observed only after the normal drain replies.
+#[derive(Clone, Debug)]
+pub(super) struct ObservedCompletion {
+    request_id: quantick_control::id::RequestId,
+    completed: bool,
+}
+
+impl ControlAccess {
+    pub(crate) fn arm_completion_for_test(&mut self, request_id: quantick_control::id::RequestId) {
+        self.observed_completion = Some(ObservedCompletion {
+            request_id,
+            completed: false,
+        });
+    }
+
+    pub(super) fn observe_completion_for_test(
+        &mut self,
+        request_id: &quantick_control::id::RequestId,
+    ) {
+        if let Some(observation) = &mut self.observed_completion
+            && observation.request_id == *request_id
+        {
+            observation.completed = true;
+        }
+    }
+
+    pub(crate) fn completed_for_test(&self, request_id: &quantick_control::id::RequestId) -> bool {
+        self.observed_completion
+            .as_ref()
+            .is_some_and(|observation| {
+                observation.request_id == *request_id && observation.completed
+            })
+    }
+
+    pub(crate) fn enable_before_write_for_test(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        descriptor_directory: PathBuf,
+        before_write: super::server::AnswerBeforeWrite,
+    ) {
+        let options = GatewayOptions {
+            request_queue_capacity: 4,
+            descriptor_directory: Some(descriptor_directory),
+            answer_before_write: Some(before_write),
+            ..GatewayOptions::default()
+        };
+        self.request_enable(ctx, options);
+    }
+}

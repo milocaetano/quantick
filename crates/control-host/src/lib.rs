@@ -18,6 +18,7 @@ pub mod clock;
 pub mod contract;
 pub mod dispatch;
 pub mod evidence;
+pub mod feed;
 pub mod idempotency;
 pub mod journal;
 pub mod projection;

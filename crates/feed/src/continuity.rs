@@ -74,34 +74,51 @@ impl FeedIntegrity {
 pub(crate) struct BinanceContinuity {
     highest_id: Option<u64>,
     highest_ms: Option<i64>,
+    unknown_handoff: bool,
 }
 
 impl BinanceContinuity {
+    pub(crate) fn after_backfill(last: Option<&Trade>) -> Self {
+        Self {
+            highest_id: last.map(|trade| trade.agg_id),
+            highest_ms: last.map(|trade| trade.timestamp_ms),
+            unknown_handoff: last.is_none(),
+        }
+    }
+
     #[inline]
     pub(crate) fn observe(&mut self, trade: &Trade) -> Option<FeedContinuity> {
-        let event = self.highest_id.and_then(|highest| {
-            if trade.agg_id > highest && trade.agg_id - highest > 1 {
-                Some(FeedContinuity {
-                    gap: self
-                        .highest_ms
-                        .filter(|from| *from <= trade.timestamp_ms)
-                        .map(|from_ms| FeedGap {
-                            from_ms,
-                            to_ms: trade.timestamp_ms,
-                        }),
-                    missing_messages: Some(trade.agg_id - highest - 1),
-                    non_monotonic: false,
-                })
-            } else if trade.agg_id <= highest {
-                Some(FeedContinuity {
-                    gap: None,
-                    missing_messages: Some(0),
-                    non_monotonic: true,
-                })
-            } else {
-                None
-            }
-        });
+        let event = if std::mem::take(&mut self.unknown_handoff) {
+            Some(FeedContinuity {
+                gap: None,
+                missing_messages: None,
+                non_monotonic: false,
+            })
+        } else {
+            self.highest_id.and_then(|highest| {
+                if trade.agg_id > highest && trade.agg_id - highest > 1 {
+                    Some(FeedContinuity {
+                        gap: self
+                            .highest_ms
+                            .filter(|from| *from <= trade.timestamp_ms)
+                            .map(|from_ms| FeedGap {
+                                from_ms,
+                                to_ms: trade.timestamp_ms,
+                            }),
+                        missing_messages: Some(trade.agg_id - highest - 1),
+                        non_monotonic: false,
+                    })
+                } else if trade.agg_id <= highest {
+                    Some(FeedContinuity {
+                        gap: None,
+                        missing_messages: Some(0),
+                        non_monotonic: true,
+                    })
+                } else {
+                    None
+                }
+            })
+        };
         if self.highest_id.is_none_or(|highest| trade.agg_id > highest) {
             self.highest_id = Some(trade.agg_id);
             self.highest_ms = Some(trade.timestamp_ms);
