@@ -70,7 +70,7 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
     // Bound the whole production host run, including its initial REST boundary.
     let received = tokio::time::timeout(Duration::from_secs(5), async {
         let mut events = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             events.push(rx.recv().await.unwrap());
         }
         events
@@ -78,16 +78,24 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
     .await
     .unwrap();
     assert!(matches!(&received[0], FeedEvent::Backfilled(t) if t.is_empty()));
-    assert!(matches!(&received[1], FeedEvent::Live(t) if t.agg_id == 10));
     assert!(matches!(
-        &received[2],
+        &received[1],
+        FeedEvent::Continuity(FeedContinuity {
+            gap: None,
+            missing_messages: None,
+            non_monotonic: false,
+        })
+    ));
+    assert!(matches!(&received[2], FeedEvent::Live(t) if t.agg_id == 10));
+    assert!(matches!(
+        &received[3],
         FeedEvent::Continuity(FeedContinuity {
             missing_messages: Some(3),
             ..
         })
     ));
-    assert!(matches!(&received[3], FeedEvent::Live(t) if t.agg_id == 14));
-    assert!(matches!(&received[4], FeedEvent::Live(t) if t.agg_id == 15));
+    assert!(matches!(&received[4], FeedEvent::Live(t) if t.agg_id == 14));
+    assert!(matches!(&received[5], FeedEvent::Live(t) if t.agg_id == 15));
     assert!(
         rx.try_recv().is_err(),
         "contiguous reconnect must not invent loss"
@@ -99,6 +107,104 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
         .unwrap();
     server.await.unwrap();
     rest_server.await.unwrap();
+}
+
+#[tokio::test]
+async fn binance_backfill_watermark_orders_equal_time_gap_before_first_live_trade() {
+    use futures_util::SinkExt as _;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
+
+    const BACKFILL: &str = r#"[{"a":10,"p":"1","q":"1","f":1,"l":1,"T":100,"m":false}]"#;
+    const FIRST_LIVE: &str =
+        r#"{"e":"aggTrade","s":"BTCUSDT","a":14,"p":"1","q":"1","f":1,"l":1,"T":100,"m":false}"#;
+
+    let rest = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let rest_url = format!("http://{}", rest.local_addr().unwrap());
+    let rest_server = tokio::spawn(async move {
+        // A one-row history causes the paging algorithm to make one no-progress
+        // request after the newest page. Both replies are literal and equal.
+        for _ in 0..2 {
+            let (mut socket, _) = rest.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let mut read = 0;
+            while read < request.len() && !request[..read].ends_with(b"\r\n\r\n") {
+                let received = socket.read(&mut request[read..]).await.unwrap();
+                assert!(received > 0, "HTTP request ended before its header");
+                read += received;
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{BACKFILL}",
+                BACKFILL.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+
+    let websocket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let websocket_url = format!("ws://{}", websocket.local_addr().unwrap());
+    let websocket_server = tokio::spawn(async move {
+        let (socket, _) = websocket.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        socket.send(Message::Text(FIRST_LIVE.into())).await.unwrap();
+        socket.close(None).await.unwrap();
+    });
+
+    let (tx, mut rx) = mpsc::channel(8);
+    let (book_tx, _book_rx) = mpsc::channel(8);
+    let (notice_tx, _notice_rx) = mpsc::channel(8);
+    let (cmd_tx, cmd_rx) = mpsc::channel(8);
+    let host = tokio::spawn(crate::binance::feed_task(
+        "BTCUSDT".into(),
+        tx,
+        book_tx,
+        notice_tx,
+        cmd_rx,
+        crate::binance::BinanceSource {
+            http: quantick_feed_binance::BinanceHttp::with_base_url(rest_url),
+            url: websocket_url,
+            backoff: quantick_feed_binance::Backoff::new(
+                Duration::from_millis(1),
+                Duration::from_millis(1),
+                7,
+            ),
+        },
+    ));
+
+    let received = tokio::time::timeout(Duration::from_secs(5), async {
+        [
+            rx.recv().await.unwrap(),
+            rx.recv().await.unwrap(),
+            rx.recv().await.unwrap(),
+        ]
+    })
+    .await
+    .unwrap();
+    assert!(matches!(&received[0], FeedEvent::Backfilled(trades) if trades == &[trade(10, 100)]));
+    assert!(matches!(
+        &received[1],
+        FeedEvent::Continuity(FeedContinuity {
+            gap: Some(FeedGap {
+                from_ms: 100,
+                to_ms: 100,
+            }),
+            missing_messages: Some(3),
+            non_monotonic: false,
+        })
+    ));
+    assert!(matches!(&received[2], FeedEvent::Live(t) if t == &trade(14, 100)));
+    assert!(rx.try_recv().is_err());
+
+    drop(rx);
+    drop(cmd_tx);
+    tokio::time::timeout(Duration::from_secs(5), host)
+        .await
+        .unwrap()
+        .unwrap();
+    rest_server.await.unwrap();
+    websocket_server.await.unwrap();
 }
 
 fn trade(agg_id: u64, timestamp_ms: i64) -> Trade {
@@ -180,7 +286,7 @@ fn missing_ticks_and_unknown_interruptions_have_distinct_saturating_counters() {
             anomalies: 2,
             missing_messages: 4,
             unknown_loss: 1,
-            non_monotonic: 0
+            non_monotonic: 0,
         }
     );
     integrity.missing_messages = u64::MAX;

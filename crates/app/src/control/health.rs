@@ -70,6 +70,17 @@ pub(crate) struct FeedIntegritySnapshot {
     pub non_monotonic: WireU64,
 }
 
+impl FeedIntegritySnapshot {
+    pub(super) fn from_integrity(integrity: quantick_feed::FeedIntegrity) -> Option<Self> {
+        (integrity.anomalies > 0).then(|| Self {
+            anomalies: WireU64::new(integrity.anomalies),
+            missing_messages: WireU64::new(integrity.missing_messages),
+            unknown_loss: WireU64::new(integrity.unknown_loss),
+            non_monotonic: WireU64::new(integrity.non_monotonic),
+        })
+    }
+}
+
 /// Where a tab's tape delay is being spent.
 ///
 /// The whole point of the breakdown is that "the chart is eighteen seconds
@@ -299,15 +310,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab.id),
-                    feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
-                        let integrity = tab.feed_integrity;
-                        FeedIntegritySnapshot {
-                            anomalies: WireU64::new(integrity.anomalies),
-                            missing_messages: WireU64::new(integrity.missing_messages),
-                            unknown_loss: WireU64::new(integrity.unknown_loss),
-                            non_monotonic: WireU64::new(integrity.non_monotonic),
-                        }
-                    }),
+                    feed_integrity: FeedIntegritySnapshot::from_integrity(tab.feed_integrity),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
                         .filter_map(|task| {

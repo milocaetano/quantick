@@ -28,6 +28,27 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
             }))
             .unwrap();
     }
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: Some(2),
+            non_monotonic: false,
+        }))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: Some(3),
+            non_monotonic: true,
+        }))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: None,
+            non_monotonic: false,
+        }))
+        .unwrap();
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
     app.active_tab_mut().drain_feed();
     assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
@@ -43,7 +64,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     );
     assert_eq!(
         app.active_tab().feed_integrity.missing_messages,
-        count as u64 * 3
+        count as u64 * 3 + 5
     );
     let after = registry
         .capture(&app, &observer_instance(), &scopes)
@@ -51,8 +72,10 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
         .into_serialized()
         .unwrap();
     let health = &after.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
-    assert_eq!(health["missing_messages"], (count * 3).to_string());
-    assert_eq!(health["unknown_loss"], "0");
+    assert_eq!(health["anomalies"], (count + 3).to_string());
+    assert_eq!(health["missing_messages"], (count * 3 + 5).to_string());
+    assert_eq!(health["unknown_loss"], "1");
+    assert_eq!(health["non_monotonic"], "1");
     assert_ne!(
         before.scopes[&scopes[0]].value,
         after.scopes[&scopes[0]].value
@@ -63,6 +86,8 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
         quantick_feed::MAX_REMEMBERED_GAPS
     );
     assert_eq!(gaps[0]["duration_ms"], 0);
+    let feed_integrity = &after.scopes[&scopes[1]].value["tabs"][0]["feed_integrity"];
+    assert_eq!(feed_integrity, health);
     app.active_tab_mut().reset_market_state(true);
     assert_eq!(
         app.active_tab().feed_integrity,

@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
 use crate::reconnect::Backoff;
-use crate::wire::{TradeMapper, TradeMessage, parse_trade_message};
+use crate::wire::{MappedBatch, TradeMapper, TradeMessage, parse_trade_message};
 
 /// Hyperliquid mainnet WebSocket endpoint.
 pub const HYPERLIQUID_WS_URL: &str = "wss://api.hyperliquid.xyz/ws";
@@ -29,6 +29,70 @@ pub enum TradeSessionError {
     Decode(String),
     /// Server sent a close frame or ended the stream.
     ServerClosed { reason: Option<String> },
+}
+
+/// One ordered fact from the Hyperliquid trade transport.
+///
+/// Batches retain their mapping ledger even when they contain no usable trade;
+/// connection transitions share the same bounded channel so rapid or quiet
+/// reconnects cannot be coalesced away from the facts they qualify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TradeStreamEvent {
+    /// The venue acknowledged this connection's trade subscription.
+    Connected,
+    /// A previously acknowledged connection ended before the next attempt.
+    Disconnected,
+    /// One venue batch, including empty, all-overlap, stale, or malformed
+    /// outcomes.
+    Batch(MappedBatch),
+}
+
+enum SessionOutput<'a> {
+    Legacy {
+        trades: &'a Sender<Vec<Trade>>,
+        connected: &'a watch::Sender<bool>,
+    },
+    Ordered(&'a Sender<TradeStreamEvent>),
+}
+
+impl SessionOutput<'_> {
+    async fn closed(&self) {
+        match self {
+            Self::Legacy { trades, .. } => trades.closed().await,
+            Self::Ordered(events) => events.closed().await,
+        }
+    }
+
+    async fn publish_connected(&self) -> Result<(), TradeSessionError> {
+        match self {
+            Self::Legacy { connected, .. } => {
+                let _ = connected.send(true);
+                Ok(())
+            }
+            Self::Ordered(events) => events
+                .send(TradeStreamEvent::Connected)
+                .await
+                .map_err(|_| TradeSessionError::ConsumerClosed),
+        }
+    }
+
+    async fn publish_batch(&self, batch: MappedBatch) -> Result<(), TradeSessionError> {
+        match self {
+            Self::Legacy { trades, .. } => {
+                if !batch.trades.is_empty() {
+                    trades
+                        .send(batch.trades)
+                        .await
+                        .map_err(|_| TradeSessionError::ConsumerClosed)?;
+                }
+                Ok(())
+            }
+            Self::Ordered(events) => events
+                .send(TradeStreamEvent::Batch(batch))
+                .await
+                .map_err(|_| TradeSessionError::ConsumerClosed),
+        }
+    }
 }
 
 impl TradeSessionError {
@@ -78,10 +142,28 @@ pub async fn run_trade_session(
     connected: &watch::Sender<bool>,
     mapper: &mut TradeMapper,
 ) -> Result<(), TradeSessionError> {
+    let mut acknowledged = false;
+    run_trade_session_core(
+        url,
+        symbol,
+        &SessionOutput::Legacy { trades, connected },
+        mapper,
+        &mut acknowledged,
+    )
+    .await
+}
+
+async fn run_trade_session_core(
+    url: &str,
+    symbol: &str,
+    output: &SessionOutput<'_>,
+    mapper: &mut TradeMapper,
+    acknowledged: &mut bool,
+) -> Result<(), TradeSessionError> {
     let symbol = symbol.to_uppercase();
     info!(target: "quantick::feed", symbol, url, "connecting Hyperliquid trades websocket");
     let connection = tokio::select! {
-        () = trades.closed() => return Err(TradeSessionError::ConsumerClosed),
+        () = output.closed() => return Err(TradeSessionError::ConsumerClosed),
         result = tokio_tungstenite::connect_async(url) => result,
     }
     .map_err(|error| TradeSessionError::Transport(error.to_string()))?;
@@ -101,7 +183,7 @@ pub async fn run_trade_session(
     heartbeat.tick().await;
     loop {
         tokio::select! {
-            () = trades.closed() => return Err(TradeSessionError::ConsumerClosed),
+            () = output.closed() => return Err(TradeSessionError::ConsumerClosed),
             _ = heartbeat.tick() => {
                 socket
                     .send(Message::Text(r#"{"method":"ping"}"#.into()))
@@ -140,15 +222,13 @@ pub async fn run_trade_session(
                                         "suppressed Hyperliquid recovery overlap"
                                     );
                                 }
-                                if !batch.trades.is_empty() {
-                                    trades
-                                        .send(batch.trades)
-                                        .await
-                                        .map_err(|_| TradeSessionError::ConsumerClosed)?;
-                                }
+                                output.publish_batch(batch).await?;
                             }
                             TradeMessage::Subscribed => {
-                                let _ = connected.send(true);
+                                if !*acknowledged {
+                                    *acknowledged = true;
+                                    output.publish_connected().await?;
+                                }
                                 debug!(target: "quantick::feed", symbol, "trade subscription acknowledged");
                             }
                             TradeMessage::Pong => {}
@@ -170,6 +250,71 @@ pub async fn run_trade_session(
                     Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => {}
                 }
             }
+        }
+    }
+}
+
+/// Keep the full-fidelity ordered event stream alive across disconnects.
+///
+/// Unlike the compatibility trade/watch API, connection transitions and every
+/// mapped batch share one bounded channel. A connection that never reached an
+/// acknowledged subscription does not fabricate a disconnect transition.
+pub async fn run_trade_events_with_reconnect(
+    url: &str,
+    symbol: &str,
+    events: &Sender<TradeStreamEvent>,
+    mut mapper: TradeMapper,
+    mut backoff: Backoff,
+) {
+    let symbol = symbol.to_uppercase();
+    loop {
+        let published_before = mapper.published_count();
+        let mut acknowledged = false;
+        let result = run_trade_session_core(
+            url,
+            &symbol,
+            &SessionOutput::Ordered(events),
+            &mut mapper,
+            &mut acknowledged,
+        )
+        .await;
+        if mapper.published_count() > published_before {
+            backoff.reset();
+        }
+        match result {
+            Ok(()) => unreachable!("the open-ended trade session never returns success"),
+            Err(TradeSessionError::ConsumerClosed) => {
+                info!(target: "quantick::feed", symbol, "trade event consumer gone; stopping Hyperliquid feed");
+                return;
+            }
+            Err(error) => {
+                if acknowledged && events.send(TradeStreamEvent::Disconnected).await.is_err() {
+                    return;
+                }
+                warn!(
+                    target: "quantick::feed",
+                    symbol,
+                    error_class = error.error_class(),
+                    %error,
+                    action = "reconnect",
+                    "Hyperliquid trade session ended"
+                );
+            }
+        }
+        if events.is_closed() {
+            return;
+        }
+        let delay = backoff.next_delay();
+        info!(
+            target: "quantick::feed",
+            symbol,
+            attempt = backoff.attempt(),
+            delay_ms = delay.as_millis() as u64,
+            "backing off before Hyperliquid trade reconnect"
+        );
+        tokio::select! {
+            () = events.closed() => return,
+            () = tokio::time::sleep(delay) => {}
         }
     }
 }
@@ -320,6 +465,117 @@ mod tests {
 
         drop(trades_rx);
         close_second.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), feed)
+            .await
+            .expect("feed did not stop")
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server did not stop")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn ordered_events_retain_quiet_cycles_empty_overlap_and_rejected_batches() {
+        const ACK: &str = r#"{"channel":"subscriptionResponse","data":{}}"#;
+        const EMPTY: &str = r#"{"channel":"trades","data":[]}"#;
+        const MIXED: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7},
+            {"coin":"BTC","side":"X","px":"1","sz":"1","time":201,"tid":8}
+        ]}"#;
+        const OVERLAP: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7}
+        ]}"#;
+        const STALE: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"A","px":"1","sz":"1","time":199,"tid":9}
+        ]}"#;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            // Cycle one is quiet: an acknowledged connection closes without
+            // any trade batch. Its transition must not be inferred from tape.
+            let mut socket = accept_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            // A repeated acknowledgement is not a second connection edge.
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+
+            // Cycle two proves that an empty recovery unit and a partially
+            // malformed unit are both first-class ordered source facts.
+            let mut socket = accept_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.send(Message::Text(EMPTY.into())).await.unwrap();
+            socket.send(Message::Text(MIXED.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+
+            // Cycle three is rapid and contains no usable trade: one replayed
+            // overlap plus one previously unseen stale row.
+            let mut socket = accept_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.send(Message::Text(OVERLAP.into())).await.unwrap();
+            socket.send(Message::Text(STALE.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+
+        let (events_tx, mut events_rx) = tokio::sync::mpsc::channel(2);
+        let feed = tokio::spawn(async move {
+            run_trade_events_with_reconnect(
+                &format!("ws://{address}"),
+                "BTC",
+                &events_tx,
+                TradeMapper::new("BTC"),
+                Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
+            )
+            .await;
+        });
+
+        let events = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut events = Vec::new();
+            for _ in 0..10 {
+                events.push(events_rx.recv().await.unwrap());
+            }
+            events
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(events[0], TradeStreamEvent::Connected));
+        assert!(matches!(events[1], TradeStreamEvent::Disconnected));
+        assert!(matches!(events[2], TradeStreamEvent::Connected));
+        assert!(
+            matches!(&events[3], TradeStreamEvent::Batch(batch) if batch == &MappedBatch::default())
+        );
+        assert!(matches!(
+            &events[4],
+            TradeStreamEvent::Batch(batch)
+                if batch.trades.len() == 1
+                    && batch.trades[0].timestamp_ms == 200
+                    && batch.errors.len() == 1
+                    && batch.stale == 0
+                    && batch.duplicates == 0
+        ));
+        assert!(matches!(events[5], TradeStreamEvent::Disconnected));
+        assert!(matches!(events[6], TradeStreamEvent::Connected));
+        assert!(matches!(
+            &events[7],
+            TradeStreamEvent::Batch(batch)
+                if batch.trades.is_empty()
+                    && batch.errors.is_empty()
+                    && batch.stale == 0
+                    && batch.duplicates == 1
+        ));
+        assert!(matches!(
+            &events[8],
+            TradeStreamEvent::Batch(batch)
+                if batch.trades.is_empty()
+                    && batch.errors.is_empty()
+                    && batch.stale == 1
+                    && batch.duplicates == 0
+        ));
+        assert!(matches!(events[9], TradeStreamEvent::Disconnected));
+
+        drop(events_rx);
         tokio::time::timeout(Duration::from_secs(2), feed)
             .await
             .expect("feed did not stop")
