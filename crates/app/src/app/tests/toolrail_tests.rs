@@ -52,7 +52,7 @@ fn starring_a_tool_is_written_with_autosave_off_and_drags_nothing_along() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("star-no-autosave"));
-    *app.workspace.session_mut().save_on_exit_mut() = false;
+    app.workspace.session_mut().set_save_on_exit(false);
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
@@ -101,14 +101,14 @@ fn opening_a_bookmark_leaves_the_starred_tools_alone() {
     app.workspace
         .set_ui_state_path(scratch_ui_state("bookmark-stars"));
     // Named while the rail was empty, which is the case that used to hurt.
-    app.save_named_workspace("scalp");
+    app.workspace_save_adapter().save_named_workspace("scalp");
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
     app.arrangement_adapter().open_named_workspace("scalp");
 
     assert_eq!(
-        app.starred_tool_ids(),
+        app.workspace_state().starred_tool_ids(),
         vec!["measure".to_owned()],
         "the tools the trader keeps at hand outlive the arrangement"
     );
@@ -124,11 +124,11 @@ fn resetting_the_startup_layout_keeps_the_starred_tools() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("reset-stars"));
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(
@@ -206,7 +206,7 @@ fn a_restored_workspace_with_no_stars_leaves_the_rail_alone() {
     );
 
     assert_eq!(
-        app.starred_tool_ids(),
+        app.workspace_state().starred_tool_ids(),
         vec!["measure".to_owned()],
         "silence about the stars is not an instruction to drop them"
     );
@@ -232,7 +232,7 @@ fn the_next_session_opens_on_the_stars_the_last_one_left() {
     next.arrangement_adapter().restore_workspace(saved);
 
     assert_eq!(
-        next.starred_tool_ids(),
+        next.workspace_state().starred_tool_ids(),
         vec!["measure".to_owned()],
         "the rail opens on what the trader starred"
     );

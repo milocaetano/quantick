@@ -95,3 +95,25 @@ fn idle_arrangement_selection_and_borrowed_order_allocate_nothing() {
     TRACK.with(|track| track.set(false));
     assert_eq!(ALLOCATIONS.with(Cell::get), 0);
 }
+
+#[test]
+fn idle_commit_policy_and_session_reads_allocate_nothing() {
+    use quantick_workspace::workspace_commit::{FrameFacts, FrameSave, WorkspaceCommitSession};
+    let mut session = WorkspaceCommitSession::default();
+    ALLOCATIONS.with(|n| n.set(0));
+    TRACK.with(|track| track.set(true));
+    for _ in 0..1000 {
+        assert_eq!(
+            session.frame(FrameFacts {
+                size: Some([640.0, 480.0]),
+                closing: false
+            }),
+            FrameSave::Wait
+        );
+        std::hint::black_box(session.bookmarks());
+        std::hint::black_box(session.recent());
+        std::hint::black_box(session.saved());
+    }
+    TRACK.with(|track| track.set(false));
+    assert_eq!(ALLOCATIONS.with(Cell::get), 0);
+}

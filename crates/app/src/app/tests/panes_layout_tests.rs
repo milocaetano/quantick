@@ -1643,10 +1643,10 @@ fn resetting_the_startup_layout_leaves_this_session_alone() {
     app.workspace.set_ui_state_path(scratch_ui_state("reset"));
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     assert!(app.workspace.ui_state_path().exists());
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     assert!(
         !app.workspace.ui_state_path().exists(),
@@ -1716,10 +1716,12 @@ fn resetting_the_startup_layout_keeps_the_other_standing_choices() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("reset-standing"));
-    *app.workspace.session_mut().recent_mut() = vec!["D:/desk/scalp.qws.toml".to_owned()];
-    app.save_workspace("test");
+    app.workspace
+        .session_mut()
+        .adopt_recent(vec!["D:/desk/scalp.qws.toml".to_owned()]);
+    app.workspace_save_adapter().save_workspace("test");
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(

@@ -14,7 +14,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.added_symbols.add("binance", "WINQ26");
     symbols_file::save(app.workspace.symbols_path(), &app.added_symbols).expect("symbols written");
     app.toolrail.set_favorites(&["measure".to_owned()]);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
 
     let file = crate::scratch::ScratchFile::new("app-bundle", "workspace.qws.toml");
     app.export_workspace_to(&file);
@@ -29,7 +29,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
     app.added_symbols.remove("binance", "WINQ26");
     symbols_file::save(app.workspace.symbols_path(), &app.added_symbols).expect("symbols written");
     app.toolrail.set_favorites(&[]);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     assert!(!app.added_symbols.contains("binance", "WINQ26"));
 
     app.import_workspace_from(&file);
@@ -39,7 +39,7 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
         "the added symbol came back"
     );
     assert_eq!(
-        app.starred_tool_ids(),
+        app.workspace_state().starred_tool_ids(),
         vec!["measure".to_owned()],
         "and so did the toolbar favourite"
     );
@@ -106,13 +106,17 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
 fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.toolrail.set_favorites(&["measure".to_owned()]);
-    let before = app.starred_tool_ids();
+    let before = app.workspace_state().starred_tool_ids();
 
     let file = crate::scratch::ScratchFile::new("app-bad-bundle", "workspace.qws.toml");
     std::fs::write(&file, "version = 99\nname = \"from tomorrow\"\n").unwrap();
     app.import_workspace_from(&file);
 
-    assert_eq!(app.starred_tool_ids(), before, "the cockpit is untouched");
+    assert_eq!(
+        app.workspace_state().starred_tool_ids(),
+        before,
+        "the cockpit is untouched"
+    );
     let _ = std::fs::remove_file(&file);
 }
 
@@ -126,7 +130,7 @@ fn opening_a_file_that_is_not_a_workspace_changes_nothing_on_screen() {
 fn a_workspace_save_never_invents_a_replay_folder() {
     let (app, _evt, _cmd, _book) = test_app();
     assert_eq!(
-        app.capture_workspace().replay_folder,
+        app.workspace_state().capture_workspace().replay_folder,
         None,
         "nothing was chosen, so nothing is stored"
     );
@@ -139,7 +143,10 @@ fn a_workspace_save_carries_the_pick_that_was_made() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.replay_view = ReplayView::new(Some("D:/tape"), None);
     assert_eq!(
-        app.capture_workspace().replay_folder.as_deref(),
+        app.workspace_state()
+            .capture_workspace()
+            .replay_folder
+            .as_deref(),
         Some("D:/tape")
     );
 }
@@ -650,7 +657,7 @@ fn saving_the_workspace_acknowledges_itself() {
     app.workspace.set_ui_state_path(scratch_ui_state("notice"));
     assert!(app.surfaces.toast.message().is_none());
 
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
 
     let toast = app
         .surfaces
@@ -683,13 +690,13 @@ fn naming_an_arrangement_does_not_change_what_opens() {
         .set_ui_state_path(scratch_ui_state("named-startup"));
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     run_frame(&mut app, &ctx);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     let startup_before = ui_state::load(app.workspace.ui_state_path()).tabs;
 
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.save_named_workspace("scalp");
+    app.workspace_save_adapter().save_named_workspace("scalp");
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(
@@ -712,9 +719,9 @@ fn saving_the_startup_screen_keeps_the_bookmarks() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("bookmarks-survive"));
-    app.save_named_workspace("scalp");
+    app.workspace_save_adapter().save_named_workspace("scalp");
 
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
 
     assert!(
         ui_state::load(app.workspace.ui_state_path())
@@ -734,12 +741,13 @@ fn saving_over_a_name_replaces_that_bookmark() {
     app.workspace.set_ui_state_path(scratch_ui_state("replace"));
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     run_frame(&mut app, &ctx);
-    app.save_named_workspace("scalp");
+    app.workspace_save_adapter().save_named_workspace("scalp");
 
     app.active_tab_mut().set_layout(CanvasLayout::Time);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.save_named_workspace("  scalp  ");
+    app.workspace_save_adapter()
+        .save_named_workspace("  scalp  ");
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(file.saved.len(), 1, "one name, one bookmark");
@@ -769,7 +777,7 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
     app.surfaces
         .drawing_chrome
         .place_inspector_by_hand(egui::pos2(510.0, 240.0));
-    app.save_named_workspace("context");
+    app.workspace_save_adapter().save_named_workspace("context");
 
     // Drift away from it, then come back.
     app.active_tab_mut().set_layout(CanvasLayout::Single);
@@ -803,9 +811,9 @@ fn deleting_a_bookmark_leaves_the_window_alone() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.save_named_workspace("scalp");
+    app.workspace_save_adapter().save_named_workspace("scalp");
 
-    app.delete_named_workspace("scalp");
+    app.workspace_save_adapter().delete_named_workspace("scalp");
 
     assert!(
         ui_state::load(app.workspace.ui_state_path())
@@ -832,10 +840,11 @@ fn resetting_the_startup_layout_keeps_the_bookmarks() {
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    app.save_named_workspace("before the mess");
-    app.save_workspace("test");
+    app.workspace_save_adapter()
+        .save_named_workspace("before the mess");
+    app.workspace_save_adapter().save_workspace("test");
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert!(
@@ -855,10 +864,10 @@ fn resetting_with_no_bookmarks_removes_the_file() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("reset-removes"));
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     assert!(app.workspace.ui_state_path().exists());
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     assert!(!app.workspace.ui_state_path().exists());
 }
@@ -869,7 +878,7 @@ fn a_blank_name_saves_nothing_and_says_so() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace.set_ui_state_path(scratch_ui_state("blank"));
 
-    app.save_named_workspace("   ");
+    app.workspace_save_adapter().save_named_workspace("   ");
 
     assert!(app.workspace.session().bookmarks().is_empty());
     assert!(
@@ -894,7 +903,7 @@ fn closing_the_window_keeps_the_arrangement_when_autosave_is_on() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("exit-save"));
-    *app.workspace.session_mut().save_on_exit_mut() = true;
+    app.workspace.session_mut().set_save_on_exit(true);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     run_frame(&mut app, &ctx);
 
@@ -918,7 +927,7 @@ fn closing_the_window_writes_nothing_when_autosave_is_off() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("exit-no-save"));
-    *app.workspace.session_mut().save_on_exit_mut() = false;
+    app.workspace.session_mut().set_save_on_exit(false);
     run_frame(&mut app, &ctx);
 
     close_requested_frame(&mut app, &ctx);
@@ -937,8 +946,9 @@ fn switching_autosave_off_is_itself_saved() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("autosave"));
-    *app.workspace.session_mut().save_on_exit_mut() = false;
-    app.save_workspace("save_on_exit_toggled");
+    app.workspace.session_mut().set_save_on_exit(false);
+    app.workspace_save_adapter()
+        .save_workspace("save_on_exit_toggled");
 
     assert!(
         !ui_state::load(app.workspace.ui_state_path()).save_on_exit,
@@ -986,9 +996,10 @@ fn picking_a_replay_folder_does_not_switch_autosave_back_on() {
     let (mut app, _commands) = app_with_history(50);
     app.workspace
         .set_ui_state_path(scratch_ui_state("folder-autosave"));
-    *app.workspace.session_mut().save_on_exit_mut() = false;
+    app.workspace.session_mut().set_save_on_exit(false);
 
-    app.write_replay_folder(Some("D:/tape"));
+    app.workspace_save_adapter()
+        .write_replay_folder(Some("D:/tape"));
 
     let file = ui_state::load(app.workspace.ui_state_path());
     assert_eq!(file.replay_folder.as_deref(), Some("D:/tape"));

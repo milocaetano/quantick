@@ -178,7 +178,7 @@ impl QuantickApp {
             self.take_mark(None);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&SAVE_WORKSPACE_SHORTCUT)) {
-            self.save_workspace("shortcut");
+            self.workspace_save_adapter().save_workspace("shortcut");
         }
         // Trading hotkeys, swallowed only while no text field owns the
         // keyboard. Market entries use the ticket's quantity and offsets,
@@ -549,7 +549,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.save_workspace("menu");
+                            self.workspace_save_adapter().save_workspace("menu");
                             ui.close_menu();
                         }
                         // Enabled only when there is something on disk to go
@@ -571,7 +571,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.forget_workspace();
+                            self.workspace_save_adapter().forget_workspace();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -632,7 +632,7 @@ impl QuantickApp {
                             self.arrangement_adapter().open_named_workspace(&name);
                         }
                         if let Some(name) = delete {
-                            self.delete_named_workspace(&name);
+                            self.workspace_save_adapter().delete_named_workspace(&name);
                         }
                         ui.separator();
                         // Files, named apart from the two groups above again:
@@ -665,9 +665,9 @@ impl QuantickApp {
                         // Read off the field, not the filesystem: this body
                         // runs every frame the menu is open.
                         let mut reopen: Option<std::path::PathBuf> = None;
-                        ui.add_enabled_ui(!self.workspace.session().recent_on_disk().is_empty(), |ui| {
+                        ui.add_enabled_ui(!self.workspace.recent_on_disk().is_empty(), |ui| {
                             ui.menu_button("Open recent", |ui| {
-                                for path in self.workspace.session().recent_on_disk() {
+                                for path in self.workspace.recent_on_disk() {
                                     if ui
                                         .button(crate::workspace_bundle::recent_label(path))
                                         // The same warning the bookmark list
@@ -703,8 +703,9 @@ impl QuantickApp {
                             ui.close_menu();
                         }
                         ui.separator();
+                        let mut save_on_exit = self.workspace.session().save_on_exit();
                         if ui
-                            .checkbox(self.workspace.session_mut().save_on_exit_mut(), "Save on exit")
+                            .checkbox(&mut save_on_exit, "Save on exit")
                             .on_hover_text(
                                 "Keep the arrangement automatically when the window closes. Off, \
                                  only Save workspace changes what quantick opens on.",
@@ -715,7 +716,8 @@ impl QuantickApp {
                             // switching it has to reach the disk now — not at
                             // the next exit, which is exactly the exit it may
                             // have just switched off.
-                            self.save_workspace("save_on_exit_toggled");
+                            self.workspace.session_mut().set_save_on_exit(save_on_exit);
+                            self.workspace_save_adapter().save_workspace("save_on_exit_toggled");
                         }
                     });
                     self.chrome.workspace_menu_rect = Some(workspace_menu.response.rect);

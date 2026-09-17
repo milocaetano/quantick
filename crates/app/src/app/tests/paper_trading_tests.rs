@@ -1315,7 +1315,7 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     with_a_saved_workspace(&mut app, &ctx, "popup-no-autosave");
-    *app.workspace.session_mut().save_on_exit_mut() = false;
+    app.workspace.session_mut().set_save_on_exit(false);
     draw_horizontal_line(&mut app, &ctx, 300.0);
 
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
@@ -2017,7 +2017,7 @@ fn a_reset_that_failed_leaves_the_entry_live() {
     app.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace.session_mut().set_saved(true);
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     assert!(
         app.workspace.session().saved(),

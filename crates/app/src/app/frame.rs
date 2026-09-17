@@ -127,7 +127,7 @@ impl QuantickApp {
         self.apply_replay_restart();
         self.apply_maximize_hook(ctx);
         self.maybe_emit_summary(now, ctx);
-        self.maintain_workspace(ctx);
+        self.workspace_save_adapter().maintain_workspace(ctx);
 
         let bg = pane::background_color(&self.style);
         // Rail shortcuts first: Esc/1/2 must be read before any widget can
@@ -268,7 +268,7 @@ impl QuantickApp {
             },
         );
         if let Some(name) = surfaces.save_workspace_as {
-            self.save_named_workspace(&name);
+            self.workspace_save_adapter().save_named_workspace(&name);
         }
         if let Some(style) = surfaces.style {
             self.style = style;
@@ -366,13 +366,15 @@ impl QuantickApp {
         // the frame they pointed it, not at exit: "it forgot my folder again"
         // must not be one crash away.
         if let Some(pick) = self.replay_view.take_folder_change() {
-            self.write_replay_folder(pick.as_deref());
+            self.workspace_save_adapter()
+                .write_replay_folder(pick.as_deref());
         }
         // The same, for the tick that decides whether yesterday is on the
         // chart. Either row can have been the one clicked; the browser owns
         // the setting, so there is one place to pick the change up.
         if let Some(enabled) = self.replay_view.take_day_before_change() {
-            self.write_replay_day_before(enabled);
+            self.workspace_save_adapter()
+                .write_replay_day_before(enabled);
         }
         {
             // The focused pane's objects: the toolbox lists and manages what a
@@ -393,7 +395,7 @@ impl QuantickApp {
         // looking, and rebuilding it after a crash is not a thing anyone
         // should have to do twice.
         if self.toolrail.take_favorites_change() {
-            self.write_favorites();
+            self.workspace_save_adapter().write_favorites();
         }
         let dock_response = {
             let Self {

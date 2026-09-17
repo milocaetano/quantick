@@ -25,6 +25,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) toast: &'a mut crate::surfaces::ToastSurface,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct ArrangementRead<'a> {
     pub(super) tabs: &'a ArrangementHost,
     pub(super) config: &'a AppConfig,
@@ -372,7 +373,7 @@ impl ArrangementAdapter<'_> {
     }
     pub(super) fn refresh_recent_workspaces(&mut self) {
         let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
-        self.workspace.session_mut().set_recent_on_disk(existing);
+        self.workspace.set_recent_on_disk(existing);
     }
 }
 

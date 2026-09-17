@@ -797,7 +797,7 @@ impl QuantickApp {
         // exactly as the entry does — a hook that fakes its surface proves
         // nothing — so point `QUANTICK_UI_STATE` at a scratchpad first.
         if std::env::var("QUANTICK_WORKSPACE_SAVE").is_ok_and(|value| value == "1") {
-            self.save_workspace("autostart");
+            self.workspace_save_adapter().save_workspace("autostart");
         }
         // The three file entries, reachable with no click for the same reason
         // (`.claude/skills/ui-harness`). Each runs the menu entry's own code

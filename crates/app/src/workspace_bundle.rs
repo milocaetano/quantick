@@ -60,12 +60,6 @@ pub(crate) const BUNDLE_EXTENSION: &str = "qws.toml";
 /// The folder inside the documents shelf where exports land by default.
 pub(crate) const BUNDLE_DIR: &str = "workspaces";
 
-/// How many exported bundles the Open-recent menu remembers.
-///
-/// A menu, not a history: past this the list is longer than the screen and
-/// the entry a trader actually wants is harder to find than the file picker.
-pub(crate) const MAX_RECENT: usize = 10;
-
 /// The whole cockpit as one file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Bundle {
@@ -353,18 +347,6 @@ pub(crate) fn default_dir() -> Option<PathBuf> {
     crate::store_home::home().map(|home| home.join(BUNDLE_DIR))
 }
 
-/// Put `path` at the head of the recent list, keeping it a menu.
-///
-/// Visiting a file already in the list moves it to the top rather than
-/// duplicating it, which is what every recent-files menu does and what stops
-/// the one file a trader uses daily from pushing everything else out.
-pub(crate) fn remember_recent(recent: &mut Vec<String>, path: &Path) {
-    let entry = path.to_string_lossy().into_owned();
-    recent.retain(|existing| *existing != entry);
-    recent.insert(0, entry);
-    recent.truncate(MAX_RECENT);
-}
-
 /// The recent entries whose file is still there, newest first.
 ///
 /// Filtered when the menu is built rather than when an entry is clicked, by
@@ -623,26 +605,6 @@ mod tests {
             format!("workspace.{BUNDLE_EXTENSION}"),
             "a nameless export still lands somewhere openable"
         );
-    }
-
-    #[test]
-    fn revisiting_a_file_moves_it_up_instead_of_duplicating_it() {
-        let mut recent = Vec::new();
-        remember_recent(&mut recent, Path::new("D:/a.qws.toml"));
-        remember_recent(&mut recent, Path::new("D:/b.qws.toml"));
-        remember_recent(&mut recent, Path::new("D:/a.qws.toml"));
-        assert_eq!(recent, vec!["D:/a.qws.toml", "D:/b.qws.toml"]);
-    }
-
-    /// A menu, not a history.
-    #[test]
-    fn the_recent_list_stays_a_menu() {
-        let mut recent = Vec::new();
-        for index in 0..MAX_RECENT + 5 {
-            remember_recent(&mut recent, Path::new(&format!("D:/w{index}.qws.toml")));
-        }
-        assert_eq!(recent.len(), MAX_RECENT);
-        assert_eq!(recent[0], format!("D:/w{}.qws.toml", MAX_RECENT + 4));
     }
 
     /// Every name in the menu opens something — but a file that is merely

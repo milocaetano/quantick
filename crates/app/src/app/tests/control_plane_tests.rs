@@ -566,7 +566,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
 
-    let workspace = app.capture_workspace();
+    let workspace = app.workspace_state().capture_workspace();
 
     assert_eq!(workspace.tabs.len(), 1);
     let tab = &workspace.tabs[0];

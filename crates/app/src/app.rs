@@ -45,6 +45,7 @@ mod tabs;
 mod toolbar_wiring;
 mod workspace_restore;
 mod workspace_save;
+mod workspace_save_adapter;
 
 // The tab lifecycle took `saved_context_intervals` with it; `workspace_restore`
 // and `workspace_save` still reach it through `super::`.
@@ -304,6 +305,7 @@ impl QuantickApp {
             toast: &mut self.surfaces.toast,
         }
     }
+    #[cfg(test)]
     pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
         arrangement_adapter::ArrangementRead {
             tabs: &self.tabs,
@@ -315,6 +317,37 @@ impl QuantickApp {
             record_deals: self.chrome.record_deals,
             history: &self.history,
             drawing_chrome: &self.surfaces.drawing_chrome,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn workspace_state(&self) -> workspace_save_adapter::WorkspaceRead<'_> {
+        workspace_save_adapter::WorkspaceRead {
+            arrangement: self.arrangement_state(),
+            session: self.workspace.session(),
+            replay_view: &self.replay_view,
+        }
+    }
+    pub(crate) fn workspace_save_adapter(
+        &mut self,
+    ) -> workspace_save_adapter::WorkspaceSaveAdapter<'_> {
+        let (session, path) = self.workspace.commit_parts();
+        workspace_save_adapter::WorkspaceSaveAdapter {
+            arrangement: arrangement_adapter::ArrangementRead {
+                tabs: &self.tabs,
+                config: &self.config,
+                toolrail: &self.toolrail,
+                tz: &self.tz,
+                dock: &self.dock,
+                show_perf: self.health.show_perf,
+                record_deals: self.chrome.record_deals,
+                history: &self.history,
+                drawing_chrome: &self.surfaces.drawing_chrome,
+            },
+            session,
+            path,
+            replay_view: &self.replay_view,
+            toast: &mut self.surfaces.toast,
         }
     }
 
@@ -472,7 +505,6 @@ impl QuantickApp {
                 layout_picker_open: false,
                 layout_rename: None,
                 layout_delete_confirm: None,
-                inspector_position_dirty: false,
                 surface: None,
                 workspace_menu_rect: None,
                 history_menu_rect: None,
@@ -480,7 +512,6 @@ impl QuantickApp {
                 // The hook stands in for a click on the opening tab's chip, which
                 // is the first tab there is.
                 feed_popup_tab: feed_notice::popup_open_from_env().then_some(FIRST_TAB_ID),
-                window_size: None,
             },
             pane_ids,
             added_symbols: symbols_file::load(&symbols_path),

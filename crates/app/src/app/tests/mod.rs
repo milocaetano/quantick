@@ -59,6 +59,7 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod toolrail_tests;
+mod workspace_commit_baseline_tests;
 mod workspaces_tests;
 
 use super::*;
@@ -1075,7 +1076,7 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
 fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
     app.workspace.set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     app.surfaces.toast.clear();
     assert!(
         app.workspace.ui_state_path().exists(),

@@ -1,102 +1,33 @@
-//! The app's handle on the cockpit's stores: where each one lives this run,
-//! and whether what is on screen has reached it yet.
+//! Resolved cockpit paths and desktop storage ports.
 //!
-//! **This module writes no file format.** That is the line that keeps it from
-//! being a fourth description of everything quantick remembers, beside the
-//! three that already overlap. [`crate::ui_state`] owns the shape of
-//! `ui-state.toml`, [`crate::layouts`] owns `layouts.toml`,
-//! [`crate::workspace_bundle`] owns the bundle spanning both, and
-//! [`crate::store_home`] owns where each of them resolves to. Every write this
-//! module authorises is a call into one of those; it serialises nothing
-//! itself, and a `Serialize` derive appearing here would mean the split had
-//! been lost.
-//!
-//! What it adds is the layer none of them has: the state *between* the file
-//! and the frame. Those four are file modules — a format, a `load`, a `save`.
-//! None of them holds anything the app carries from one frame to the next, so
-//! before this module all of it sat as loose fields on `QuantickApp`: six
-//! paths with no common owner, a dirty flag, a clock, a blocked flag, and the
-//! Workspace menu's cached answers about disk.
-//!
-//! **The invariant this exists for.** `layouts_dirty`, `last_layout_change`
-//! and `layouts_save_blocked` were three independent fields carrying one rule
-//! between them. Any method on the trunk could set the first and forget to
-//! stamp the second — and a change with no timestamp is a change the debounce
-//! never releases, so the file simply stops being written and nothing says so.
-//! The save condition itself was re-derived at each of the two call sites that
-//! needed it. Here the three are private to [`LayoutStore`], the only way to
-//! record a change also stamps the clock, and the decision is one function.
-//!
-//! **The clock is a parameter.** [`LayoutStore::take_save`] is told what time
-//! it is rather than reading it, the way [`crate::window_scale::SurfaceEnv`]
-//! takes its `now` and `quantick-replay` is told how much time passed. That is
-//! what makes the debounce testable without a window: the tests at the foot of
-//! this file drive it across the boundary with no filesystem and no egui.
-//!
-//! **Paths arrive resolved, and are never resolved here.** Each store decides
-//! its own location — an explicit `QUANTICK_*` ask, then the durable home,
-//! then the launch directory ([`crate::store_home::resolve`]) — and hands the
-//! answer in. This module never reads an environment variable and never calls
-//! `resolve`, so no path becomes implicit by moving: a test pointing a store
-//! at a scratch file still gets its scratch file.
+//! LayoutSession, LayoutCommitPolicy and WorkspaceCommitSession own the
+//! documents, membership and persistence decisions below the app. This shell
+//! holds their handles alongside resolved paths, layer state and pending OS
+//! dialogs. It neither serializes documents nor resolves environment overrides.
+//! The recent-on-disk menu projection stays here because filesystem existence
+//! is a shell observation, refreshed only on adoption or a recent-file visit.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::layouts::LayoutBook;
-use crate::ui_state::NamedArrangement;
 use quantick_workspace::session::LayoutSession;
+use quantick_workspace::workspace_commit::WorkspaceCommitSession;
 
-/// How long after the last layout change the file is written.
-///
-/// A layout edit is rarely alone — dragging a level, retuning an indicator and
-/// renaming a tab arrive as a burst — so the write waits for the burst to
-/// settle rather than firing per keystroke. It is not a *deadline*: the exit
-/// path ([`LayoutStore::take_flush`]) ignores it entirely, so nothing is ever
-/// lost to a window that had not elapsed when the window closed.
-pub(crate) const LAYOUTS_SAVE_DEBOUNCE: Duration = Duration::from_millis(1_000);
-
-/// What the caller owes the layouts file, decided in one place.
-///
-/// Three answers rather than a boolean, because the blocked case is not
-/// "don't save" — it is "consume the change and say out loud that it went
-/// nowhere". A `should_persist` returning `false` while blocked would leave
-/// the change pending forever and silence the warning the trader needs to see,
-/// which is why the decision and the consumption are the same call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LayoutSave {
-    /// Nothing to write, or the debounce window has not elapsed. The pending
-    /// change, if there is one, is left pending.
-    Wait,
-    /// Write the book to the layouts path. The change is consumed.
-    Write,
-    /// There is a change, and this session may not write the file. The change
-    /// is consumed and the caller reports it; see [`LayoutStore::set_blocked`].
-    Blocked,
-}
+use quantick_workspace::layout_commit::LayoutCommitPolicy;
+pub(crate) use quantick_workspace::layout_commit::LayoutSave;
 
 /// The layout book, and the one rule that decides when it reaches disk.
 ///
-/// The three fields below are private and stay that way. `dirty` without
-/// `last_change` is a change the debounce can never release; the only
-/// constructor of that pair is [`Self::mark_changed`], so the pair cannot come
-/// apart.
+/// The pure commit policy owns the dirty/timestamp/blocked transition. This
+/// handle associates its effects with the already resolved layout path.
 pub(crate) struct LayoutStore {
     /// The workspace's layouts: the strip's tabs, their indicator sets and
     /// their per-market drawings. See [`crate::layouts`].
     session: LayoutSession,
     /// Where the layouts persist. Handed in, never resolved here.
     path: PathBuf,
-    /// Set by any layout edit — a switch, a rename, a drawing, a settled
-    /// indicator change; drained by the debounced save.
-    dirty: bool,
-    /// When the last layout change happened (the debounce clock).
-    last_change: Option<Instant>,
-    /// Whether the layouts file may be written this session. `true` only when
-    /// the file was there at launch, could not be read, and could not be set
-    /// aside — the trader's only copy, which this session's empty book must
-    /// never replace.
-    blocked: bool,
+    policy: LayoutCommitPolicy,
 }
 
 impl LayoutStore {
@@ -108,9 +39,7 @@ impl LayoutStore {
         Self {
             session: LayoutSession::new(book),
             path,
-            dirty: false,
-            last_change: None,
-            blocked,
+            policy: LayoutCommitPolicy::new(blocked),
         }
     }
 
@@ -134,7 +63,7 @@ impl LayoutStore {
     /// Note that the file could not be read at launch, so this session's book
     /// must not replace it.
     pub(crate) fn set_blocked(&mut self, blocked: bool) {
-        self.blocked = blocked;
+        self.policy.set_blocked(blocked);
     }
 
     /// Replace the book wholesale — a workspace bundle landing, or a reset.
@@ -147,81 +76,21 @@ impl LayoutStore {
         self.session.replace_book(book);
     }
 
-    /// State outright what the book owes the file, overriding anything marked
-    /// while it was being put in place.
-    ///
-    /// The screen is the file's after an import; nothing has changed since —
-    /// unless the book was made from an imported indicator set, which the file
-    /// does not hold yet. Either way this is the last word, which is why it
-    /// clears as readily as it sets.
-    ///
-    /// **Call it after the caller has finished seeding**, which is where the
-    /// two assignments it replaces stood. `seed_new_panes` marks no change
-    /// today, so the order is not observable and no test pins it — which is
-    /// precisely why it is written here. A later reading of "these are just
-    /// two flags" moves the call above the seeding; the day seeding does mark
-    /// a change, an import begins writing the file back over itself and
-    /// nothing fails to say so.
     pub(crate) fn settle(&mut self, changed: bool, now: Instant) {
-        self.dirty = changed;
-        self.last_change = changed.then_some(now);
+        self.policy.settle(changed, now);
     }
-
-    /// Record that the book changed, and when.
-    ///
-    /// The flag and the clock move together or not at all. That is the whole
-    /// point of this type.
     pub(crate) fn mark_changed(&mut self, now: Instant) {
-        self.dirty = true;
-        self.last_change = Some(now);
+        self.policy.mark_changed(now);
     }
-
-    /// Whether an edit is waiting for the debounce.
-    ///
-    /// Test-only. Nothing in the running app asks: the whole point of
-    /// [`Self::take_save`] is that the question and the answer to it are one
-    /// call, so a caller that could read the flag separately could also act on
-    /// a stale reading of it.
+    pub(crate) fn take_save(&mut self, now: Instant) -> LayoutSave {
+        self.policy.take_save(now)
+    }
+    pub(crate) fn take_flush(&mut self) -> LayoutSave {
+        self.policy.take_flush()
+    }
     #[cfg(test)]
     pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// The frame's question: is there a change, and has it settled?
-    ///
-    /// `Wait` leaves the change pending. `Write` and `Blocked` both consume
-    /// it, which is what the pre-existing `save_layouts_now` did — it cleared
-    /// both flags before it checked whether it was allowed to write.
-    pub(crate) fn take_save(&mut self, now: Instant) -> LayoutSave {
-        let settled = self
-            .last_change
-            .is_some_and(|changed| now.duration_since(changed) >= LAYOUTS_SAVE_DEBOUNCE);
-        if !settled {
-            return LayoutSave::Wait;
-        }
-        self.take()
-    }
-
-    /// The way out on exit, and the moment before a bundle export reads the
-    /// file: write now, whatever the debounce says.
-    pub(crate) fn take_flush(&mut self) -> LayoutSave {
-        self.take()
-    }
-
-    /// The half both questions share: consume a pending change and say where
-    /// it goes. Split out so `Blocked` can never disagree with `Write` about
-    /// what was consumed.
-    fn take(&mut self) -> LayoutSave {
-        if !self.dirty {
-            return LayoutSave::Wait;
-        }
-        self.dirty = false;
-        self.last_change = None;
-        if self.blocked {
-            LayoutSave::Blocked
-        } else {
-            LayoutSave::Write
-        }
+        self.policy.is_dirty()
     }
 }
 
@@ -251,128 +120,6 @@ pub(crate) struct StorePaths {
 
 use quantick_layers::SavedLayers;
 
-/// What the Workspace menu knows without asking the filesystem.
-///
-/// The menu body runs every frame it is open, so a `Path::exists` inside it is
-/// a syscall at 60 Hz for an answer that changes only when this app saves,
-/// forgets, exports or imports. These fields are that answer, refreshed at
-/// those moments instead.
-pub(crate) struct WorkspaceSession {
-    /// Whether closing the window writes the workspace. Read from the file at
-    /// startup and toggled from the Workspace menu.
-    save_on_exit: bool,
-    /// Whether the rail's pinned tools were staged by
-    /// `QUANTICK_TOOL_FAVORITES` rather than chosen by the trader.
-    ///
-    /// A validation run dresses the rail through that hook to reach a state a
-    /// screenshot needs; the stars in it are a costume. Since a star is
-    /// written to the workspace the moment it is clicked, a run that toggles
-    /// one would otherwise write the harness's list into the trader's real
-    /// file. Set once at startup, never cleared: a session that began wearing
-    /// a costume never takes it off.
-    favorites_are_staged: bool,
-    /// The arrangements the trader named and kept, in the order the file lists
-    /// them.
-    ///
-    /// Held across the session because every write of the workspace file
-    /// rewrites the whole file: capturing the live window and saving it would
-    /// drop the bookmarks on the floor otherwise.
-    bookmarks: Vec<NamedArrangement>,
-    /// Whether a workspace is on disk, so the menu can disable Reset without
-    /// asking the filesystem.
-    saved: bool,
-    /// Workspace files exported or imported recently, newest first, as the
-    /// file remembers them. Carried across the session for the same reason
-    /// `bookmarks` is.
-    recent: Vec<String>,
-    /// Which of them are actually on disk, resolved when the list changes
-    /// rather than when the menu is drawn.
-    recent_on_disk: Vec<PathBuf>,
-}
-
-impl WorkspaceSession {
-    /// Whether closing the window writes the workspace.
-    pub(crate) fn save_on_exit(&self) -> bool {
-        self.save_on_exit
-    }
-
-    /// The Workspace menu's own checkbox writes through this.
-    pub(crate) fn save_on_exit_mut(&mut self) -> &mut bool {
-        &mut self.save_on_exit
-    }
-
-    /// Whether the rail's pinned tools are a harness costume rather than the
-    /// trader's own choice.
-    pub(crate) fn favorites_are_staged(&self) -> bool {
-        self.favorites_are_staged
-    }
-
-    /// Note that a harness hook dressed the rail this run.
-    pub(crate) fn stage_favorites(&mut self) {
-        self.favorites_are_staged = true;
-    }
-
-    /// The arrangements the trader named and kept.
-    pub(crate) fn bookmarks(&self) -> &[NamedArrangement] {
-        &self.bookmarks
-    }
-
-    /// The same list, for the menu entries that add, replace and forget one.
-    pub(crate) fn bookmarks_mut(&mut self) -> &mut Vec<NamedArrangement> {
-        &mut self.bookmarks
-    }
-
-    /// Whether a workspace is on disk.
-    pub(crate) fn saved(&self) -> bool {
-        self.saved
-    }
-
-    /// A write landed (or did not): a workspace exists from here on if one
-    /// already did or this write made one.
-    pub(crate) fn note_write(&mut self, written: bool) {
-        self.saved |= written;
-    }
-
-    /// Set the answer outright — the load, which asks the filesystem once, and
-    /// the reset, which knows what it left behind.
-    pub(crate) fn set_saved(&mut self, saved: bool) {
-        self.saved = saved;
-    }
-
-    /// Workspace files exported or imported recently, newest first.
-    pub(crate) fn recent(&self) -> &[String] {
-        &self.recent
-    }
-
-    /// The same list, for `workspace_bundle::remember_recent` to push onto.
-    pub(crate) fn recent_mut(&mut self) -> &mut Vec<String> {
-        &mut self.recent
-    }
-
-    /// Which of the recent files are actually on disk.
-    pub(crate) fn recent_on_disk(&self) -> &[PathBuf] {
-        &self.recent_on_disk
-    }
-
-    /// Re-resolve which recent files exist. Called when the list changes, not
-    /// when the menu is drawn.
-    pub(crate) fn set_recent_on_disk(&mut self, existing: Vec<PathBuf>) {
-        self.recent_on_disk = existing;
-    }
-
-    /// Take the workspace-level keys the file just gave up.
-    pub(crate) fn adopt(
-        &mut self,
-        save_on_exit: bool,
-        bookmarks: Vec<NamedArrangement>,
-        recent: Vec<String>,
-    ) {
-        self.save_on_exit = save_on_exit;
-        self.bookmarks = bookmarks;
-        self.recent = recent;
-    }
-}
-
 /// The app's one handle on where the workspace lives and whether it is saved.
 ///
 /// One field on `QuantickApp` where there were twenty-one.
@@ -391,7 +138,8 @@ pub(crate) struct WorkspaceStore {
     paths: StorePaths,
     layouts: LayoutStore,
     layers: SavedLayers,
-    session: WorkspaceSession,
+    session: WorkspaceCommitSession,
+    recent_on_disk: Vec<PathBuf>,
     /// The native file dialog, while one is open, and what it is for. One at a
     /// time, and off the UI thread — the OS dialog never blocks a frame.
     picker: Option<(WorkspacePick, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
@@ -424,14 +172,8 @@ impl WorkspaceStore {
             paths,
             layouts,
             layers: SavedLayers::default(),
-            session: WorkspaceSession {
-                save_on_exit: true,
-                favorites_are_staged: false,
-                bookmarks: Vec::new(),
-                saved: false,
-                recent: Vec::new(),
-                recent_on_disk: Vec::new(),
-            },
+            session: WorkspaceCommitSession::default(),
+            recent_on_disk: Vec::new(),
             picker: None,
             trades_dir,
             trades_dir_picker: None,
@@ -485,13 +227,23 @@ impl WorkspaceStore {
     }
 
     /// What the Workspace menu knows without asking the filesystem.
-    pub(crate) fn session(&self) -> &WorkspaceSession {
+    pub(crate) fn session(&self) -> &WorkspaceCommitSession {
         &self.session
     }
 
     /// The same, for the menu actions that change it.
-    pub(crate) fn session_mut(&mut self) -> &mut WorkspaceSession {
+    pub(crate) fn session_mut(&mut self) -> &mut WorkspaceCommitSession {
         &mut self.session
+    }
+
+    pub(crate) fn recent_on_disk(&self) -> &[PathBuf] {
+        &self.recent_on_disk
+    }
+    pub(crate) fn set_recent_on_disk(&mut self, existing: Vec<PathBuf>) {
+        self.recent_on_disk = existing;
+    }
+    pub(crate) fn commit_parts(&mut self) -> (&mut WorkspaceCommitSession, &Path) {
+        (&mut self.session, &self.paths.ui_state)
     }
 
     /// Whether a workspace file dialog is already open. One at a time.
@@ -589,119 +341,6 @@ impl WorkspaceStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A store with a book, at a path no test ever writes to, blocked or not.
-    fn store(blocked: bool) -> LayoutStore {
-        LayoutStore::new(
-            LayoutBook::default(),
-            PathBuf::from("layouts.toml"),
-            blocked,
-        )
-    }
-
-    #[test]
-    fn a_change_inside_the_debounce_window_is_not_yet_asked_for() {
-        let mut layouts = store(false);
-        let changed = Instant::now();
-        layouts.mark_changed(changed);
-        assert_eq!(
-            layouts.take_save(changed + LAYOUTS_SAVE_DEBOUNCE - Duration::from_millis(1)),
-            LayoutSave::Wait,
-            "a change one millisecond short of the window must not reach the file"
-        );
-        assert!(
-            layouts.is_dirty(),
-            "a change the debounce held back is still pending, not consumed"
-        );
-    }
-
-    #[test]
-    fn a_change_that_has_settled_is_asked_for_once() {
-        let mut layouts = store(false);
-        let changed = Instant::now();
-        layouts.mark_changed(changed);
-        assert_eq!(
-            layouts.take_save(changed + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Write,
-            "the window's own edge releases the change"
-        );
-        assert_eq!(
-            layouts.take_save(changed + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Wait,
-            "a change that reached the file is not written a second time"
-        );
-    }
-
-    #[test]
-    fn a_blocked_store_never_asks_to_write() {
-        let mut layouts = store(true);
-        let changed = Instant::now();
-        layouts.mark_changed(changed);
-        assert_eq!(
-            layouts.take_save(changed + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Blocked,
-            "a session that could not read the file must not write over it"
-        );
-        layouts.mark_changed(changed);
-        assert_eq!(
-            layouts.take_flush(),
-            LayoutSave::Blocked,
-            "not even the exit flush, which ignores the debounce, may write it"
-        );
-    }
-
-    #[test]
-    fn the_exit_flush_ignores_the_debounce_but_not_the_absence_of_a_change() {
-        let mut layouts = store(false);
-        assert_eq!(
-            layouts.take_flush(),
-            LayoutSave::Wait,
-            "nothing changed, so exiting writes nothing"
-        );
-        layouts.mark_changed(Instant::now());
-        assert_eq!(
-            layouts.take_flush(),
-            LayoutSave::Write,
-            "a change still inside the window is written on the way out, not lost"
-        );
-    }
-
-    #[test]
-    fn marking_a_change_moves_the_flag_and_the_clock_together() {
-        let mut layouts = store(false);
-        assert!(!layouts.is_dirty());
-        let changed = Instant::now();
-        layouts.mark_changed(changed);
-        assert!(layouts.is_dirty());
-        // The clock is not readable from outside; that it was stamped is
-        // proven by the debounce releasing on time rather than never.
-        assert_eq!(
-            layouts.take_save(changed + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Write,
-            "a change recorded without its timestamp would never settle"
-        );
-    }
-
-    #[test]
-    fn settling_a_replaced_book_overrides_what_landing_it_marked() {
-        let mut layouts = store(false);
-        let now = Instant::now();
-        layouts.set_book(LayoutBook::default());
-        // Putting the book in place seeds panes, and seeding marks changes.
-        layouts.mark_changed(now);
-        layouts.settle(false, now);
-        assert_eq!(
-            layouts.take_save(now + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Wait,
-            "an import that changed nothing must not write the file back, whatever seeding its panes marked on the way"
-        );
-        layouts.settle(true, now);
-        assert_eq!(
-            layouts.take_save(now + LAYOUTS_SAVE_DEBOUNCE),
-            LayoutSave::Write,
-            "an import that migrated something owes the file a write"
-        );
-    }
 
     #[test]
     fn a_tab_switch_rebaselines_the_layers_rather_than_recording_a_switch() {

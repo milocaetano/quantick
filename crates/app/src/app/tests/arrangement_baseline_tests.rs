@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn arrangement_baseline_only_the_matching_boot_tab_is_adopted() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    let saved = app.capture_workspace();
+    let saved = app.workspace_state().capture_workspace();
     assert_eq!(app.tabs.id_at(0), FIRST_TAB_ID);
     app.arrangement_adapter().restore_workspace(saved);
     assert_eq!(app.tabs.id_at(0), FIRST_TAB_ID);
@@ -14,7 +14,7 @@ fn arrangement_baseline_only_the_matching_boot_tab_is_adopted() {
     app.arrangement_adapter().close_tab(0);
     let previous = app.tabs.id_at(0);
     assert_ne!(previous, FIRST_TAB_ID);
-    let saved = app.capture_workspace();
+    let saved = app.workspace_state().capture_workspace();
     app.arrangement_adapter().restore_workspace(saved);
     assert_eq!(app.tabs.len(), 1);
     assert_ne!(
@@ -55,14 +55,17 @@ fn arrangement_baseline_empty_restore_applies_autosave_but_silent_favorites_keep
     let (mut app, _evt, _cmd, _book) = test_app();
     app.toolrail.set_favorites(&["measure".to_owned()]);
     let before = app.tabs.id_at(0);
-    let mut saved = app.capture_workspace();
+    let mut saved = app.workspace_state().capture_workspace();
     saved.tabs.clear();
     saved.save_on_exit = false;
     saved.favorite_tools.clear();
     saved.active_tab = usize::MAX;
     app.arrangement_adapter().restore_workspace(saved);
     assert!(!app.workspace.session().save_on_exit());
-    assert_eq!(app.starred_tool_ids(), vec!["measure".to_owned()]);
+    assert_eq!(
+        app.workspace_state().starred_tool_ids(),
+        vec!["measure".to_owned()]
+    );
     assert_eq!(app.tabs.id_at(0), before);
     assert_eq!(app.tabs.active_index(), 0);
 }
@@ -70,7 +73,7 @@ fn arrangement_baseline_empty_restore_applies_autosave_but_silent_favorites_keep
 #[test]
 fn arrangement_baseline_duplicate_markets_keep_distinct_ids_and_clamp_saved_active() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    let mut saved = app.capture_workspace();
+    let mut saved = app.workspace_state().capture_workspace();
     saved.tabs.push(saved.tabs[0].clone());
     saved.active_tab = usize::MAX;
     app.arrangement_adapter().restore_workspace(saved);
@@ -87,7 +90,7 @@ fn arrangement_baseline_unknown_provider_keeps_the_last_runtime_and_applies_save
     app.arrangement_adapter()
         .open_tab("binance".to_owned(), "SURVIVOR".to_owned(), None);
     let survivor = app.tabs.id_at(1);
-    let mut saved = app.capture_workspace();
+    let mut saved = app.workspace_state().capture_workspace();
     saved.tabs.truncate(1);
     saved.tabs[0].feed = "missing-provider".to_owned();
     saved.tabs[0].symbol = "NOT-OPENED".to_owned();
@@ -99,7 +102,7 @@ fn arrangement_baseline_unknown_provider_keeps_the_last_runtime_and_applies_save
     assert_eq!(app.tabs.id_at(0), survivor);
     assert_eq!(app.tabs[0].symbol, "SURVIVOR");
     assert!(matches!(
-        app.capture_workspace().tabs[0].layout,
+        app.workspace_state().capture_workspace().tabs[0].layout,
         crate::config::DeclaredLayout::Flow
     ));
 }
@@ -108,7 +111,7 @@ fn arrangement_baseline_unknown_provider_keeps_the_last_runtime_and_applies_save
 fn arrangement_baseline_restore_journals_stale_position_and_drops_its_feed() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    let saved = app.capture_workspace();
+    let saved = app.workspace_state().capture_workspace();
     let ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     let old_ids: Vec<_> = app.tabs.iter_with_ids().map(|(tab_id, _)| tab_id).collect();
     let dir = crate::scratch::ScratchDir::new("arrangement-paper-restore");
