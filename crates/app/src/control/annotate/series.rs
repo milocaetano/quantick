@@ -19,7 +19,7 @@ impl Series for PaneSeries<'_> {
             owner: Owner {
                 tab: self.tab,
                 pane: self.pane.id,
-                layout: self.pane.layout.map(|id| id.0),
+                layout: self.pane.layout_id().map(|id| id.0),
             },
             revision: self.pane.pagination_revision(),
         }

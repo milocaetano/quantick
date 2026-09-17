@@ -1,6 +1,6 @@
 # quantick
 
-Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for order flow trading. One deterministic Rust engine feeds chart, backtest and bot.
+Real-time alternative bar charts (tick / volume / dollar / imbalance bars) for order flow. One deterministic Rust engine feeds chart, backtest and bot.
 
 Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gates: `.claude/hooks/README.md`.
 
@@ -23,11 +23,11 @@ CI runs those four plus what cargo cannot see — `sh .claude/hooks/guardrails_t
 
 ## Architecture
 
-Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the graph. The invariants:
+Crates under `crates/`; `AGENTS.md` *The map* owns the descriptions and the graph. Invariants:
 
 - **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`. Inside a crate too: `guards/src/cycle.rs` fails a new module cycle.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
-- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `chart-interaction`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `indicators`, `pine`, `replay`, `sim`, `paper`, `civil`, `layers` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` receive elapsed time rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is its `main.rs` stopwatch, which reaches stderr, never a report.
+- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `chart-interaction`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `indicators`, `pine`, `replay`, `sim`, `paper`, `civil`, `layers`, `workspace` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` receive elapsed time rather than reading a clock. `backtest` and `mcp` are headless too; `backtest`'s only wall-clock read is its `main.rs` stopwatch, which reaches stderr, never a report.
 - **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
 - **`guards` has no dependencies at all** — its `dependencies` tables stay empty.

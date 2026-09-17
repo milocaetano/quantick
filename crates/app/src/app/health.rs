@@ -108,7 +108,7 @@ impl QuantickApp {
             // Frames and the trade rate are the window's; every market figure
             // below is the *active* tab's, which is what is on screen.
             tabs = self.tabs.len(),
-            tab = self.active_tab().id,
+            tab = self.tabs.active_id(),
             fps = self.health.frames.fps().unwrap_or(0.0) as i64,
             frame_avg_ms = avg,
             frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),

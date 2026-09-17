@@ -193,7 +193,7 @@ impl Tab {
     /// run-up it was downloaded to carry. One request at a time, and a base
     /// already held is not re-fetched: changing a pane's interval is a
     /// different fold over the same bars.
-    pub(super) fn request_ohlcv_history(&mut self, config: &AppConfig) {
+    pub(super) fn request_ohlcv_history(&mut self, tab_id: u64, config: &AppConfig) {
         let progressive = self.progressive_history;
         // Not gated on the source. A recording answers this from the context
         // file downloaded beside it — the run-up it exists to carry — and the
@@ -226,7 +226,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_REQUESTED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     slice_ms = slice_ms.unwrap_or(0),
@@ -240,7 +240,7 @@ impl Tab {
             Err(mpsc::error::TrySendError::Full(_)) => tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_REQUEST_BACKPRESSURE",
-                tab = self.id,
+                tab = tab_id,
                 action = "retry_next_frame",
                 "candle-history request not queued; channel full"
             ),
@@ -248,7 +248,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_REQUEST_CHANNEL_CLOSED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 action = "no_history_until_feed_restart",
                 "candle-history request cannot be sent; the feed is gone"
@@ -260,7 +260,7 @@ impl Tab {
     ///
     /// Called every frame: the check is two bools and an `Option` when there
     /// is nothing to do.
-    pub fn poll_ohlcv_capability(&mut self, config: &AppConfig) {
+    pub fn poll_ohlcv_capability(&mut self, tab_id: u64, config: &AppConfig) {
         let capabilities = self.capabilities(config);
         let capable = capabilities.ohlcv_history;
         let rising = capable && !self.ohlcv_capable;
@@ -298,7 +298,7 @@ impl Tab {
         // request is out or answered, and asking here is what actually retries
         // a request the command channel refused. The feed ignores a duplicate
         // while one is in flight, and `ohlcv_pending` means we never send one.
-        self.request_ohlcv_history(config);
+        self.request_ohlcv_history(tab_id, config);
     }
 
     /// Take a candle-history reply, and put it in front of the time pane.
@@ -319,6 +319,7 @@ impl Tab {
     /// bar-anchored drawing by the same amount the prefix grew).
     pub(super) fn take_ohlcv_history(
         &mut self,
+        tab_id: u64,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: quantick_feed::OhlcvSlice,
@@ -337,7 +338,7 @@ impl Tab {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_SLICE_DISCARDED",
-                tab = self.id,
+                tab = tab_id,
                 bars = bars.len(),
                 last,
                 action = "await_fresh_request",
@@ -362,7 +363,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_REFUSED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 action = "await_the_running_fetch",
                 "the provider was already fetching; this request was not served"
@@ -383,7 +384,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_INCOMPLETE",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 interval_ms,
                 bars = bars.len(),
@@ -396,7 +397,7 @@ impl Tab {
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "OHLCV_RECEIVED",
-            tab = self.id,
+            tab = tab_id,
             symbol = %self.symbol,
             interval_ms,
             bars = bars.len(),
@@ -426,7 +427,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_OLDER_SETTLED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 was_oldest_ms = was_oldest,
                 now_oldest_ms = now_oldest.unwrap_or(0),
@@ -507,6 +508,7 @@ impl Tab {
     /// `partial` variant exists to reach.
     pub fn deliver_ohlcv_slice(
         &mut self,
+        tab_id: u64,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: quantick_feed::OhlcvSlice,
@@ -515,7 +517,7 @@ impl Tab {
             self.ohlcv_pending = true;
             self.loading.begin(LoadingTask::VenueHistory);
         }
-        self.take_ohlcv_history(interval_ms, bars, slice);
+        self.take_ohlcv_history(tab_id, interval_ms, bars, slice);
     }
 
     /// How many venue candles this tab holds, at the base interval. Zero on a
@@ -589,13 +591,17 @@ impl Tab {
     ///
     /// Reports whether a request actually went out, so a caller can tell "the
     /// venue is fetching" from "there was nothing to ask for".
-    pub fn request_older_ohlcv_history(&mut self, capabilities: FeedCapabilities) -> bool {
+    pub fn request_older_ohlcv_history(
+        &mut self,
+        tab_id: u64,
+        capabilities: FeedCapabilities,
+    ) -> bool {
         let oldest = self.oldest_venue_candle_ms();
         if !self.can_load_older_candles(capabilities) || oldest.is_none() {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_OLDER_DECLINED",
-                tab = self.id,
+                tab = tab_id,
                 pending = self.ohlcv_pending,
                 exhausted = self.ohlcv_older_exhausted,
                 held = oldest.is_some(),
@@ -628,7 +634,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_OLDER_REQUESTED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     before_ms,
@@ -645,7 +651,7 @@ impl Tab {
                 tracing::debug!(
                     target: "quantick::app",
                     event_code = "OHLCV_OLDER_BACKPRESSURE",
-                    tab = self.id,
+                    tab = tab_id,
                     action = "retry_on_next_click",
                     "older-candle request not queued; channel full"
                 );
@@ -656,7 +662,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_OLDER_CHANNEL_CLOSED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     action = "no_history_until_feed_restart",
                     "older-candle request cannot be sent; the feed is gone"
@@ -729,7 +735,7 @@ impl Tab {
     /// page this is the single request it always was, and with a longer reach
     /// it is the first of a run each reply continues
     /// ([`Self::settle_history_page`]).
-    pub fn request_older_history(&mut self, config: &AppConfig) {
+    pub fn request_older_history(&mut self, tab_id: u64, config: &AppConfig) {
         if self.campaign.is_some() {
             // A run already has its one permitted request out, and the reply
             // is what sends the next. Pressing again would raise a second wait
@@ -738,7 +744,7 @@ impl Tab {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "HISTORY_REACH_ALREADY_RUNNING",
-                tab = self.id,
+                tab = tab_id,
                 action = "ignore_press",
                 "a reach is already paging; this press changes nothing"
             );
@@ -837,7 +843,7 @@ impl Tab {
     /// Rate: **rare** — once per history reply. The scan inside
     /// [`Campaign::advance`] stops at the anchor, so its cost is the page that
     /// arrived rather than the whole retained tape.
-    pub(super) fn settle_history_page(&mut self, page_len: usize) {
+    pub(super) fn settle_history_page(&mut self, tab_id: u64, page_len: usize) {
         let Some(mut campaign) = self.campaign.take() else {
             if page_len == 0 {
                 self.raise_history_note(self.empty_page_verdict());
@@ -854,7 +860,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "HISTORY_REACH_SETTLED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 pages = campaign.pages_spent(),
                 anchor_ms = campaign.anchor_ms(),
@@ -881,7 +887,7 @@ impl Tab {
                         target: "quantick::app",
                         schema_version = 1_u8,
                         event_code = "HISTORY_REACH_STALLED",
-                        tab = self.id,
+                        tab = tab_id,
                         symbol = %self.symbol,
                         pages = campaign.pages_spent(),
                         action = "stop_and_wait_for_another_press",
@@ -895,7 +901,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "HISTORY_REACH_SETTLED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     pages = campaign.pages_spent(),
                     anchor_ms = campaign.anchor_ms(),

@@ -16,6 +16,7 @@ members = [
     "crates/paper",
     "crates/civil",
     "crates/layers",
+    "crates/workspace",
     "crates/trading",
     "crates/strategy",
     "crates/feed",

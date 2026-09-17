@@ -14,7 +14,6 @@ use crate::live_envelope::{
     BURST_TRADES_PER_S, DEPTH_UPDATES_PER_S, REFERENCE_TICKS_PER_BAR, RETAINED_BARS_PER_PANE,
     RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S,
 };
-use crate::tab::Tab;
 use crate::worker_progress::ProgressSnapshot;
 
 /// What the summary line reports about the envelope.
@@ -107,7 +106,7 @@ pub(in crate::app) fn rate_class(
 /// Read every pane's workers and tape, and classify the measured rates. Two
 /// locks per worker, at summary cadence only.
 pub(in crate::app) fn observe(
-    tabs: &[Tab],
+    tabs: &crate::app::arrangement_host::ArrangementHost,
     window_trades_per_s: f64,
     active_depth_per_s: f64,
 ) -> EnvelopeReading {
@@ -115,7 +114,7 @@ pub(in crate::app) fn observe(
         live_rate: rate_class(window_trades_per_s, active_depth_per_s),
         ..EnvelopeReading::default()
     };
-    for tab in tabs {
+    for (tab_id, tab) in tabs.iter_with_ids() {
         for (pane, _side) in tab.panes() {
             for (_kind, progress) in pane_workers(pane) {
                 reading.add(&progress);
@@ -124,7 +123,7 @@ pub(in crate::app) fn observe(
             if reading.retained_owner.is_none() || retained > reading.retained_trades {
                 reading.retained_trades = retained;
                 reading.retained_bars = pane.state.bars().len();
-                reading.retained_owner = Some((tab.id, pane.id));
+                reading.retained_owner = Some((tab_id, pane.id));
             }
         }
     }

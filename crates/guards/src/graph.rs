@@ -94,6 +94,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // paper account below `app` and by the chart above it.
     ("civil", &[]),
     ("layers", &[]),
+    ("workspace", &[]),
     ("strategy", &["engine", "sim"]),
     ("indicators", &["engine"]),
     ("pine", &["indicators"]),

@@ -827,17 +827,18 @@ fn the_notice_lands_on_the_pane_that_is_waiting() {
 fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     let (mut app, _notices, _channels) = test_app_with_notices();
     let ctx = egui::Context::default();
-    app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
-    for tab in &mut app.tabs {
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+    for tab in app.tabs.iter_mut() {
         tab.forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     }
-    app.active_tab = 0;
+    app.tabs.select(0);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(app.control_feed_popup_open(), "opened on the first chart");
 
-    app.active_tab = 1;
+    app.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
         app.control_feed_chip_rect().is_some(),
@@ -848,7 +849,7 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
         "but nobody pressed that corner"
     );
 
-    app.active_tab = 0;
+    app.tabs.select(0);
     run_frame(&mut app, &ctx);
     assert!(
         !app.control_feed_popup_open(),
@@ -1270,7 +1271,8 @@ fn a_batch_of_prints_publishes_one_forming_bar_per_pane() {
         .collect();
     evt_tx.try_send(FeedEvent::LiveBatch(batch)).unwrap();
 
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     for (side, before) in [PaneSide::Flow, PaneSide::Time(0)].into_iter().zip(before) {
         let sent = app
@@ -1571,7 +1573,7 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
     let scene = observer_scene(&app);
     let id = format!(
         "tab.{}.context_divider.{upper}.{lower}",
-        app.active_tab().id
+        app.tabs.active_id()
     );
     let divider = scene["controls"]
         .as_array()
@@ -1618,8 +1620,9 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
 #[test]
 fn the_watched_market_wins_the_slot() {
     let (mut app, _commands) = app_with_history(50);
-    app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
-    let watched = app.active_tab;
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    let watched = app.tabs.active_index();
     for (index, tab) in app.tabs.iter_mut().enumerate() {
         tab.paper.show_toast(format!("message from tab {index}"));
     }
@@ -1886,7 +1889,12 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(app.active_tab().layout, CanvasLayout::Single);
 
-    app.adopt_tab("mt".to_string(), "WINQ26".to_string(), stub_feed().0, None);
+    app.arrangement_adapter().adopt_tab(
+        "mt".to_string(),
+        "WINQ26".to_string(),
+        stub_feed().0,
+        None,
+    );
     assert_eq!(
         app.active_tab().flow_pane.state.spec(),
         &BarSpec::Tick(7),
@@ -1894,7 +1902,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
     );
     assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
 
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_string(),
         "ETHUSDT".to_string(),
         stub_feed().0,
@@ -2187,7 +2195,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     // A second market, split as well, so both tabs register a divider.
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "ETHUSDT".to_owned(),
         stub_feed().0,
@@ -2199,7 +2207,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     let untouched = app.tabs[1].split_fraction;
 
     // Back to the first tab, and press its divider.
-    app.active_tab = 0;
+    app.tabs.select(0);
     run_frame(&mut app, &ctx);
     let grab = app
         .active_tab()
@@ -2213,7 +2221,7 @@ fn a_divider_drag_does_not_follow_a_tab_switch() {
     );
 
     // Ctrl+Tab mid-gesture, with the button still down.
-    app.cycle_tab(1);
+    app.arrangement_adapter().cycle_tab(1);
     let moved = egui::pos2(grab.x + 120.0, grab.y);
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(moved)]);
     run_frame_with_events(&mut app, &ctx, vec![pointer_button(moved, false)]);
@@ -2315,16 +2323,28 @@ fn two_panes_show_two_layouts_side_by_side() {
     let (mut app, _commands) = split_app(&ctx, 200);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
-    let first = app.layouts().active_id();
-    assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
+    let first = app.layout_state().layouts().active_id();
+    assert_eq!(
+        app.layout_state()
+            .layouts()
+            .get(first)
+            .unwrap()
+            .indicators
+            .len(),
+        1
+    );
 
     // Focus the time pane and give it a layout of its own.
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    let second = app.create_layout(Some("levels")).expect("second");
-    assert_eq!(app.focused_pane_layout(), second);
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    assert_eq!(app.layout_state().focused_pane_layout(), second);
     assert_eq!(
-        app.pane_layout(app.active_tab().id, PaneSide::Flow),
+        app.layout_state()
+            .pane_layout(app.tabs.active_id(), PaneSide::Flow),
         first,
         "the flow pane kept its layout"
     );
@@ -2363,12 +2383,28 @@ fn two_panes_show_two_layouts_side_by_side() {
         1,
         "the flow pane gained nothing"
     );
-    assert_eq!(app.layouts().get(second).unwrap().indicators.len(), 1);
     assert_eq!(
-        app.layouts().get(second).unwrap().indicators[0].kind,
+        app.layout_state()
+            .layouts()
+            .get(second)
+            .unwrap()
+            .indicators
+            .len(),
+        1
+    );
+    assert_eq!(
+        app.layout_state().layouts().get(second).unwrap().indicators[0].kind,
         crate::indicators::state_file::SavedKind::native("native.cvd")
     );
-    assert_eq!(app.layouts().get(first).unwrap().indicators.len(), 1);
+    assert_eq!(
+        app.layout_state()
+            .layouts()
+            .get(first)
+            .unwrap()
+            .indicators
+            .len(),
+        1
+    );
     assert_eq!(
         app.indicators.slot_kinds.len(),
         2,
@@ -2376,17 +2412,21 @@ fn two_panes_show_two_layouts_side_by_side() {
     );
 
     // A pane that opens takes the focused pane's layout.
-    app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
-    let opened = app.active_tab().id;
-    assert_eq!(app.pane_layout(opened, PaneSide::Flow), second);
+    let opened = app.tabs.active_id();
+    assert_eq!(
+        app.layout_state().pane_layout(opened, PaneSide::Flow),
+        second
+    );
     assert_eq!(app.active_tab().flow_pane.layout_label, "levels");
 
     // Switching the time pane back brings layout 1's set to it alone.
-    app.cycle_tab(-1);
+    app.arrangement_adapter().cycle_tab(-1);
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    assert_eq!(app.switch_layout(first), Ok(true));
+    assert_eq!(app.layout_adapter().switch_layout(first), Ok(true));
     settle_indicators(&mut app);
     let labels: Vec<String> = app
         .active_tab()
@@ -2403,7 +2443,12 @@ fn two_panes_show_two_layouts_side_by_side() {
     );
     assert!(labels[0].contains("EMA"));
     assert_eq!(
-        app.layouts().get(second).unwrap().indicators.len(),
+        app.layout_state()
+            .layouts()
+            .get(second)
+            .unwrap()
+            .indicators
+            .len(),
         1,
         "layout 2 kept its own set while it was away"
     );
@@ -2411,14 +2456,16 @@ fn two_panes_show_two_layouts_side_by_side() {
     // count but shifts every later edit's layout index by one, so a
     // mirrored remove would take the wrong indicator on the other panes.
     assert_eq!(
-            app.indicators.slot_kinds
-                .iter()
-                .filter(|(owner, _)| owner.tab == app.active_tab().id
-                    && owner.side == PaneSide::Time(0))
-                .count(),
-            1,
-            "the time pane holds one registration after two switches, not two"
-        );
+        app.indicators
+            .slot_kinds
+            .iter()
+            .filter(
+                |(owner, _)| owner.tab == app.tabs.active_id() && owner.side == PaneSide::Time(0)
+            )
+            .count(),
+        1,
+        "the time pane holds one registration after two switches, not two"
+    );
 }
 
 /// The visual selector is now part of every visible pane. The chart body
@@ -2428,12 +2475,15 @@ fn two_panes_show_two_layouts_side_by_side() {
 fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let tab = app.active_tab().id;
-    let first = app.pane_layout(tab, PaneSide::Flow);
+    let tab = app.tabs.active_id();
+    let first = app.layout_state().pane_layout(tab, PaneSide::Flow);
 
     let time_point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, time_point);
-    let second = app.create_layout(Some("levels")).expect("second layout");
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second layout");
     run_frame(&mut app, &ctx);
 
     let flow_strip = app
@@ -2472,8 +2522,11 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
     click_chart(&mut app, &ctx, flow_point);
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
-    assert_eq!(app.pane_layout(tab, PaneSide::Flow), first);
-    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), second);
+    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), first);
+    assert_eq!(
+        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        second
+    );
     assert_eq!(
         app.active_tab().flow_pane.frame.layout_strip,
         Some(flow_strip)
@@ -2492,37 +2545,46 @@ fn every_visible_pane_keeps_its_own_layout_strip_when_focus_moves() {
 fn pane_local_strip_actions_target_the_footer_that_raised_them() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let tab = app.active_tab().id;
-    let first = app.layouts().active_id();
+    let tab = app.tabs.active_id();
+    let first = app.layout_state().layouts().active_id();
     app.active_tab_mut().focus = PaneSide::Flow;
-    let second = app.create_layout(Some("levels")).expect("second layout");
-    assert_eq!(app.pane_layout(tab, PaneSide::Flow), second);
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second layout");
+    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), second);
 
-    app.apply_strip_action_at(
+    app.layout_adapter().apply_strip_action_at(
         tab,
         PaneSide::Time(0),
         crate::layout_strip::StripAction::Switch(first),
     );
     assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), first);
     assert_eq!(
-        app.pane_layout(tab, PaneSide::Flow),
+        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        first
+    );
+    assert_eq!(
+        app.layout_state().pane_layout(tab, PaneSide::Flow),
         second,
         "the neighboring pane is untouched"
     );
 
-    app.apply_strip_action_at(
+    app.layout_adapter().apply_strip_action_at(
         tab,
         PaneSide::Time(0),
         crate::layout_strip::StripAction::Create,
     );
-    let third = app.layouts().active_id();
+    let third = app.layout_state().layouts().active_id();
     assert_ne!(third, first);
     assert_ne!(third, second);
-    assert_eq!(app.pane_layout(tab, PaneSide::Time(0)), third);
-    assert_eq!(app.pane_layout(tab, PaneSide::Flow), second);
+    assert_eq!(
+        app.layout_state().pane_layout(tab, PaneSide::Time(0)),
+        third
+    );
+    assert_eq!(app.layout_state().pane_layout(tab, PaneSide::Flow), second);
 
-    app.apply_strip_action_at(
+    app.layout_adapter().apply_strip_action_at(
         tab,
         PaneSide::Time(0),
         crate::layout_strip::StripAction::BeginRename(second),
@@ -2532,13 +2594,17 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
         (rename.tab, rename.pane, rename.layout),
         (tab, PaneSide::Time(0), second)
     );
-    app.apply_strip_action_at(
+    app.layout_adapter().apply_strip_action_at(
         tab,
         PaneSide::Time(0),
         crate::layout_strip::StripAction::CommitRename(second, "shared".to_owned()),
     );
     assert_eq!(
-        app.layouts().get(second).expect("shared layout").name,
+        app.layout_state()
+            .layouts()
+            .get(second)
+            .expect("shared layout")
+            .name,
         "shared"
     );
 }
@@ -2549,27 +2615,38 @@ fn pane_local_strip_actions_target_the_footer_that_raised_them() {
 fn per_pane_layouts_are_recorded_and_restored() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let first = app.layouts().active_id();
+    let first = app.layout_state().layouts().active_id();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    let second = app.create_layout(Some("levels")).expect("second");
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
     settle_indicators(&mut app);
-    app.flush_layouts();
+    app.layout_adapter().flush_layouts();
 
-    let (tabs, _chrome) = app.capture_arrangement();
+    let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
     assert_eq!(tabs[0].flow_layout, Some(first.0));
     assert_eq!(tabs[0].context_layouts, vec![second.0]);
 
-    let path = app.workspace.layouts_path().to_path_buf();
+    let path = app.workspace.layouts().path().to_path_buf();
     let (mut again, _commands2) = split_app(&ctx, 200);
     again.workspace.set_layouts_path(path.to_path_buf());
-    again.active_tab_mut().flow_pane.layout = Some(first);
-    again.active_tab_mut().pane_mut(PaneSide::Time(0)).layout = Some(second);
-    again.reload_layouts(&[]);
+    again
+        .active_tab_mut()
+        .flow_pane
+        .request_opening_layout(Some(first));
+    again
+        .active_tab_mut()
+        .pane_mut(PaneSide::Time(0))
+        .request_opening_layout(Some(second));
+    again.layout_adapter().reload_layouts(&[]);
     settle_indicators(&mut again);
     assert_eq!(
-        again.pane_layout(again.active_tab().id, PaneSide::Time(0)),
+        again
+            .layout_state()
+            .pane_layout(again.tabs.active_id(), PaneSide::Time(0)),
         second
     );
     assert_eq!(
@@ -2604,11 +2681,16 @@ fn layouts_come_back_after_a_restart() {
     app.maintain_indicator_state();
     place_level(&mut app, PaneSide::Time(0), 100.0);
     run_frame(&mut app, &ctx);
-    let second = app.create_layout(Some("levels")).expect("second");
-    app.rename_layout(second, "open").expect("renamed");
-    app.flush_layouts();
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    app.layout_adapter()
+        .rename_layout(second, "open")
+        .expect("renamed");
+    app.layout_adapter().flush_layouts();
 
-    let path = app.workspace.layouts_path().to_path_buf();
+    let path = app.workspace.layouts().path().to_path_buf();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&path) else {
         panic!("the book was written");
     };
@@ -2625,9 +2707,12 @@ fn layouts_come_back_after_a_restart() {
     // A second app on the same home — the same file — opens on the book.
     let (mut again, _commands2) = split_app(&ctx, 200);
     again.workspace.set_layouts_path(path.to_path_buf());
-    again.reload_layouts(&[]);
-    assert_eq!(again.layouts().active().name, "open");
-    again.switch_layout(book.layouts()[0].id).expect("layout 1");
+    again.layout_adapter().reload_layouts(&[]);
+    assert_eq!(again.layout_state().layouts().active().name, "open");
+    again
+        .layout_adapter()
+        .switch_layout(book.layouts()[0].id)
+        .expect("layout 1");
     settle_indicators(&mut again);
     assert_eq!(
         again
@@ -2653,7 +2738,7 @@ fn a_previewed_input_never_reaches_the_layout() {
     settle_indicators(&mut app);
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
     let target = TabSlot {
-        tab: app.active_tab().id,
+        tab: app.tabs.active_id(),
         side: PaneSide::Flow,
         slot,
     };
@@ -2668,12 +2753,14 @@ fn a_previewed_input_never_reaches_the_layout() {
     ];
     app.preview_indicator_settings_draft();
     assert!(
-        app.layouts().active().indicators[0].inputs.is_empty(),
+        app.layout_state().layouts().active().indicators[0]
+            .inputs
+            .is_empty(),
         "a preview is not a commit"
     );
     app.apply_indicator_settings_draft();
     assert_eq!(
-        app.layouts().active().indicators[0].inputs[0],
+        app.layout_state().layouts().active().indicators[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),
         "Apply is"
     );
@@ -2685,18 +2772,35 @@ fn a_previewed_input_never_reaches_the_layout() {
 fn deleting_a_layout_waits_for_the_confirmation() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let second = app.create_layout(Some("levels")).expect("second");
-    app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
-    assert_eq!(app.layouts().layouts().len(), 2, "nothing is deleted yet");
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+    assert_eq!(
+        app.layout_state().layouts().layouts().len(),
+        2,
+        "nothing is deleted yet"
+    );
     assert_eq!(app.chrome.layout_delete_confirm, Some(second));
     app.chrome.layout_delete_confirm = None;
-    assert_eq!(app.layouts().layouts().len(), 2, "cancelling keeps it");
+    assert_eq!(
+        app.layout_state().layouts().layouts().len(),
+        2,
+        "cancelling keeps it"
+    );
 
-    app.apply_strip_action(crate::layout_strip::StripAction::Delete(second));
-    app.confirm_layout_delete();
-    assert_eq!(app.layouts().layouts().len(), 1, "confirming deletes it");
+    app.layout_adapter()
+        .apply_strip_action(crate::layout_strip::StripAction::Delete(second));
+    app.layout_adapter().confirm_layout_delete();
+    assert_eq!(
+        app.layout_state().layouts().layouts().len(),
+        1,
+        "confirming deletes it"
+    );
     assert_ne!(
-        app.layouts().active_id(),
+        app.layout_state().layouts().active_id(),
         second,
         "and the neighbour is active"
     );
@@ -3168,7 +3272,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     app.workspace.set_symbols_path(path.clone());
     app.add_symbol("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "WINQ26".to_owned(),
         stub_feed().0,
@@ -3213,7 +3317,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     let _ = std::fs::remove_file(app.workspace.symbols_path());
     app.add_symbol("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "WINQ26".to_owned(),
         stub_feed().0,
@@ -3256,10 +3360,15 @@ fn the_plus_opens_a_picker_and_its_choice_becomes_the_active_tab() {
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
 
     assert_eq!(app.tabs.len(), 2);
-    assert_eq!(app.active_tab, 1, "the new tab is the one you land on");
+    assert_eq!(
+        app.tabs.active_index(),
+        1,
+        "the new tab is the one you land on"
+    );
     assert_eq!(app.active_tab().symbol, "ETHUSDT");
     assert_ne!(
-        app.tabs[0].id, app.tabs[1].id,
+        app.tabs.id_at(0),
+        app.tabs.id_at(1),
         "ids are handed out, never reused"
     );
     // Pane ids namespace egui state; two tabs sharing one would share a
@@ -3346,7 +3455,7 @@ fn a_background_tab_keeps_ingesting() {
     let ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     // Leave the new market in the background.
     app.apply_tab_action(TabAction::Activate(0));
-    assert_eq!(app.active_tab, 0);
+    assert_eq!(app.tabs.active_index(), 0);
 
     let before = app.tabs[1].flow_pane.state.trades().len();
     // Push into the background tab's own channel, then run the window's
@@ -3373,9 +3482,9 @@ fn a_background_tab_keeps_ingesting() {
 fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     let ctx = egui::Context::default();
     let (mut app, _cmd_rx) = app_with_history(50);
-    let first = app.active_tab().id;
+    let first = app.tabs.active_id();
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    let second = app.active_tab().id;
+    let second = app.tabs.active_id();
     // Register a slot on the tab about to close, so the bookkeeping has
     // something to lose with it.
     app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
@@ -3389,7 +3498,7 @@ fn closing_a_tab_activates_a_neighbour_and_drops_its_market() {
     app.apply_tab_action(TabAction::Close(1));
 
     assert_eq!(app.tabs.len(), 1);
-    assert_eq!(app.active_tab().id, first, "a neighbour takes over");
+    assert_eq!(app.tabs.active_id(), first, "a neighbour takes over");
     assert!(
         !app.indicators
             .slot_kinds
@@ -3413,15 +3522,11 @@ fn closing_a_tab_ends_its_worker_threads() {
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     // A flush proves the worker is alive and answering right now.
     app.active_tab_mut().flow_pane.indicator_worker.flush();
-    let doomed = app.tabs.pop().expect("the second tab");
-    let worker = doomed.flow_pane.indicator_worker;
-    drop(doomed.flow_pane.orderflow);
-    app.active_tab = 0;
-
-    // Dropping the handle disconnects the command channel; the run loop's
-    // `recv` then fails and the thread returns. A send after that is
-    // refused rather than queued into a thread nobody will ever join.
-    drop(worker);
+    app.arrangement_adapter().close_tab(1);
+    assert!(
+        _ends.events.is_closed(),
+        "closing drops the runtime receiver"
+    );
     // The window is still whole, and the surviving tab still draws.
     let texts = painted_text(&run_frame(&mut app, &ctx));
     assert!(
@@ -3513,17 +3618,18 @@ fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
     let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
     let _ends = open_second_tab(&mut app, &ctx, "TESTUSDT");
     assert_eq!(app.tabs.len(), 3);
-    assert_eq!(app.active_tab, 2);
+    assert_eq!(app.tabs.active_index(), 2);
 
-    app.cycle_tab(1);
+    app.arrangement_adapter().cycle_tab(1);
     assert_eq!(
-        app.active_tab, 0,
+        app.tabs.active_index(),
+        0,
         "forward from the last wraps to the first"
     );
-    app.cycle_tab(-1);
-    assert_eq!(app.active_tab, 2, "and back again");
-    app.cycle_tab(-1);
-    assert_eq!(app.active_tab, 1);
+    app.arrangement_adapter().cycle_tab(-1);
+    assert_eq!(app.tabs.active_index(), 2, "and back again");
+    app.arrangement_adapter().cycle_tab(-1);
+    assert_eq!(app.tabs.active_index(), 1);
 
     // Through the real key path, so the shortcut itself is covered.
     run_frame_with_modifiers(
@@ -3532,7 +3638,7 @@ fn the_cycle_shortcuts_walk_the_strip_and_wrap() {
         vec![key_press_with(egui::Key::Tab, egui::Modifiers::CTRL)],
         egui::Modifiers::CTRL,
     );
-    assert_eq!(app.active_tab, 2, "Ctrl+Tab moves forward one");
+    assert_eq!(app.tabs.active_index(), 2, "Ctrl+Tab moves forward one");
 }
 
 /// Ctrl+W closes, Ctrl+T opens the picker — and neither collides with a

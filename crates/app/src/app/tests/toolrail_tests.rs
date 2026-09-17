@@ -105,7 +105,7 @@ fn opening_a_bookmark_leaves_the_starred_tools_alone() {
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
 
-    app.open_named_workspace("scalp");
+    app.arrangement_adapter().open_named_workspace("scalp");
 
     assert_eq!(
         app.starred_tool_ids(),
@@ -200,8 +200,9 @@ fn a_restored_workspace_with_no_stars_leaves_the_rail_alone() {
     let (mut app, _evt, _cmd, _book) = test_app();
     app.toolrail.set_favorites(&["measure".to_owned()]);
 
-    app.restore_workspace(
-        ui_state::Workspace::new(true, None, 0, Vec::new(), None).restore(&app.config.clone()),
+    let config = app.config.clone();
+    app.arrangement_adapter().restore_workspace(
+        ui_state::Workspace::new(true, None, 0, Vec::new(), None).restore(&config),
     );
 
     assert_eq!(
@@ -228,7 +229,7 @@ fn the_next_session_opens_on_the_stars_the_last_one_left() {
     next.workspace
         .set_ui_state_path(app.workspace.ui_state_path().to_path_buf());
     let saved = ui_state::load(next.workspace.ui_state_path()).restore(&next.config.clone());
-    next.restore_workspace(saved);
+    next.arrangement_adapter().restore_workspace(saved);
 
     assert_eq!(
         next.starred_tool_ids(),

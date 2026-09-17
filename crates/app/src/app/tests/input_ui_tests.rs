@@ -35,7 +35,8 @@ fn the_corner_answers_a_hover_without_being_opened() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
@@ -328,7 +329,8 @@ fn a_parked_popup_comes_back_after_a_restart() {
     // before the app adopts it.
     let (mut next, _commands) = app_with_history(200);
     let config = next.config.clone();
-    next.restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
+    next.arrangement_adapter()
+        .restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
         next.surfaces.drawing_chrome.inspector_pos(),

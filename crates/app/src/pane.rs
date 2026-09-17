@@ -559,18 +559,11 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
-    /// Whether the app has put the active layout on this pane — its
-    /// indicators and its market's drawings. `false` from construction until
-    /// the first frame that sees the pane, so a pane opened by any path (a
-    /// new tab, a split, a restore) is seeded exactly once.
-    pub layout_seeded: bool,
-    /// Which of the workspace's layouts this pane shows — its indicator set
-    /// and the drawings it keeps. `None` until the app seeds the pane, when
-    /// it takes the focused pane's layout (or the book's default); a restored
-    /// workspace sets it before seeding. Per pane, because two charts side by
-    /// side are two readings of one market, and a CVD on one is not a CVD the
-    /// other asked for.
-    pub layout: Option<crate::layouts::LayoutId>,
+    /// Read-only handle to the layout session's authoritative membership.
+    pub(crate) layout_view: quantick_workspace::session::LayoutView,
+    /// A restored/opening request, consumed when the session seeds this pane.
+    /// The outer option distinguishes a requested default from no request.
+    pub(crate) opening_layout: Option<Option<crate::layouts::LayoutId>>,
     /// The layout's name, for the pane to show beside its own controls. A
     /// copy the app refreshes on a switch or a rename, so the header — drawn
     /// by the tab, which has no book — never looks it up per frame.
@@ -706,6 +699,18 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
+    /// Current membership, or the pending imported/opening choice before seeding.
+    pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
+        self.opening_layout
+            .unwrap_or_else(|| self.layout_view.layout())
+    }
+    pub(crate) fn layout_seeded(&self) -> bool {
+        self.layout_view.seeded()
+    }
+    pub(crate) fn request_opening_layout(&mut self, id: Option<crate::layouts::LayoutId>) {
+        self.opening_layout = Some(id);
+    }
+
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
     /// with the tape and every layer read off it.
     #[must_use]
@@ -735,8 +740,8 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
-            layout_seeded: false,
-            layout: None,
+            layout_view: quantick_workspace::session::LayoutView::default(),
+            opening_layout: None,
             layout_label: String::new(),
             drawings_key: None,
             drawings_saved_revision: 0,

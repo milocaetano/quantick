@@ -165,7 +165,7 @@ impl QuantickApp {
             };
             if !typing
                 && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
-                && let Err(error) = self.switch_layout_index(index)
+                && let Err(error) = self.layout_adapter().switch_layout_index(index)
             {
                 self.note_workspace(error.to_string());
             }
@@ -241,7 +241,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            tab_action = Some(TabAction::Close(self.active_tab));
+                            tab_action = Some(TabAction::Close(self.tabs.active_index()));
                             ui.close_menu();
                         }
                         ui.separator();
@@ -275,9 +275,8 @@ impl QuantickApp {
                             // The strip's tabs, from the book: switch the
                             // focused pane by name, and the three edits the
                             // strip's own menu holds.
-                            let active = self.focused_pane_layout();
-                            let names: Vec<(crate::layouts::LayoutId, String)> = self
-                                .layouts()
+                            let active = self.layout_state().focused_pane_layout();
+                            let names: Vec<(crate::layouts::LayoutId, String)> = self.layout_state().layouts()
                                 .layouts()
                                 .iter()
                                 .map(|layout| (layout.id, layout.name.clone()))
@@ -288,7 +287,7 @@ impl QuantickApp {
                                     button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
                                 }
                                 if ui.add(button.selected(*id == active)).clicked() {
-                                    self.apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
+                                    self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
                                     ui.close_menu();
                                 }
                             }
@@ -298,18 +297,18 @@ impl QuantickApp {
                                 .add_enabled(can_add, egui::Button::new("New layout"))
                                 .clicked()
                             {
-                                self.apply_strip_action(crate::layout_strip::StripAction::Create);
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Create);
                                 ui.close_menu();
                             }
                             if ui.button("Rename layout…").clicked() {
-                                self.apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
                                 ui.close_menu();
                             }
                             if ui
                                 .add_enabled(names.len() > 1, egui::Button::new("Delete layout"))
                                 .clicked()
                             {
-                                self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Delete(active));
                                 ui.close_menu();
                             }
                         });
@@ -380,8 +379,8 @@ impl QuantickApp {
                                         )))
                                         .on_disabled_hover_text("already the top chart");
                                     if up.clicked() {
-                                        let tab_id = self.active_tab().id;
-                                        self.move_context_pane_at(tab_id, slot, slot - 1);
+                                        let tab_id = self.tabs.active_id();
+                                        self.layout_adapter().move_context_pane_at(tab_id, slot, slot - 1);
                                         ui.close_menu();
                                     }
                                     let down = ui
@@ -391,8 +390,8 @@ impl QuantickApp {
                                         )
                                         .on_disabled_hover_text("already the bottom chart");
                                     if down.clicked() {
-                                        let tab_id = self.active_tab().id;
-                                        self.move_context_pane_at(tab_id, slot, slot + 1);
+                                        let tab_id = self.tabs.active_id();
+                                        self.layout_adapter().move_context_pane_at(tab_id, slot, slot + 1);
                                         ui.close_menu();
                                     }
                                 }
@@ -630,7 +629,7 @@ impl QuantickApp {
                             });
                         });
                         if let Some(name) = open {
-                            self.open_named_workspace(&name);
+                            self.arrangement_adapter().open_named_workspace(&name);
                         }
                         if let Some(name) = delete {
                             self.delete_named_workspace(&name);
@@ -774,6 +773,6 @@ impl QuantickApp {
                 needs_attention: tab.needs_attention(),
             })
             .collect();
-        tabstrip::draw(ui, &chips, self.active_tab)
+        tabstrip::draw(ui, &chips, self.tabs.active_index())
     }
 }

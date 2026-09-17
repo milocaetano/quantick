@@ -222,11 +222,6 @@ struct HistoryNote {
 }
 
 pub struct Tab {
-    /// Stable for as long as the tab is open, and never reused. The indicator
-    /// state file names one of these (see `QuantickApp::persisted_tab`), and
-    /// per-tab chrome persistence (§14, `ui-state.toml`) would key off it too.
-    pub id: u64,
-
     // Feed & asset selection, driven by the configuration. `feed_id`/`symbol`
     // are what the selectors show (the desired selection); `active` is what the
     // running feed thread is actually streaming. When they diverge, the feed is
@@ -582,7 +577,6 @@ impl Tab {
     /// they are built, rather than a tab reserving one it may never use.
     #[must_use]
     pub fn new(
-        id: u64,
         flow_pane_id: u64,
         feed_id: String,
         symbol: String,
@@ -595,7 +589,6 @@ impl Tab {
         // opens with that one load already in flight.
         loading.begin(LoadingTask::History);
         Self {
-            id,
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
             events: feed.events,

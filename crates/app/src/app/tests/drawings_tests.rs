@@ -553,7 +553,8 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     assert!(held > 0, "the timeline this test keeps has to exist");
@@ -578,7 +579,8 @@ fn a_resumed_session_keeps_the_timeline_and_marks_the_hole() {
             resumed.clone(),
         ]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     let tab = app.active_tab();
     assert_eq!(
@@ -609,7 +611,8 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     app.active_tab_mut().resume_floor_ms = Some(floor);
 
@@ -621,7 +624,8 @@ fn a_reconnect_that_worked_leaves_no_mark() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), resumed]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     assert!(
         app.active_tab().feed_gaps.is_empty(),
@@ -1015,13 +1019,16 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
         1,
@@ -1067,7 +1074,8 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(0)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
         1,
@@ -1087,7 +1095,8 @@ fn a_rebuilt_timeline_does_not_stack_old_marks_on_its_edge() {
     for id in [2, 4, 6] {
         evt_tx.try_send(FeedEvent::Live(trade(id))).unwrap();
     }
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let covered = settled(&mut app);
     switch_layer(&mut app, ChartLayer::TradePaint, false);
     let covered_off = settled(&mut app);
@@ -3040,7 +3049,8 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=201).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane;
@@ -3342,9 +3352,10 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
     run_frame(&mut app, &ctx);
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::Text("mine".to_owned())]);
     assert!(app.inline_text_editing().is_some());
-    let home = app.active_tab().id;
+    let home = app.tabs.active_id();
 
-    app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
     assert_eq!(
         app.inline_text_editing(),
@@ -3358,8 +3369,9 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
     run_frame(&mut app, &ctx);
     let mirrored = app
         .tabs
-        .iter()
-        .find(|tab| tab.id != home)
+        .iter_with_ids()
+        .find(|(id, _)| *id != home)
+        .map(|(_, tab)| tab)
         .expect("the new tab")
         .flow_pane
         .drawings
@@ -3370,11 +3382,7 @@ fn switching_tabs_closes_the_editor_and_leaves_the_note_on_its_own_tab() {
         Some("mine")
     );
 
-    let owner = app
-        .tabs
-        .iter()
-        .find(|tab| tab.id == home)
-        .expect("home tab");
+    let owner = app.tabs.by_id(home).expect("home tab");
     let drawing = &owner.flow_pane.drawings.items()[0];
     assert_eq!(
         drawing.tool.inline_text(drawing.payload.as_ref()),
@@ -4119,15 +4127,16 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
-    let home = app.active_tab().id;
+    let home = app.tabs.active_id();
     place_level(&mut app, PaneSide::Flow, 100.0);
     run_frame(&mut app, &ctx);
 
     // A second tab on the same market: one drawing key, two panes.
-    app.open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "TESTUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
-    let twin = app.active_tab().id;
+    let twin = app.tabs.active_id();
     assert_ne!(twin, home, "a second tab opened");
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
@@ -4140,15 +4149,15 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
     let held = app.active_tab().flow_pane.drawings.items()[0].id;
 
     // And draws a second level on the other tab.
-    app.cycle_tab(-1);
-    assert_eq!(app.active_tab().id, home);
+    app.arrangement_adapter().cycle_tab(-1);
+    assert_eq!(app.tabs.active_id(), home);
     place_level(&mut app, PaneSide::Flow, 200.0);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     // The twin took the new level and kept pointing at the same object.
-    app.cycle_tab(1);
-    assert_eq!(app.active_tab().id, twin);
+    app.arrangement_adapter().cycle_tab(1);
+    assert_eq!(app.tabs.active_id(), twin);
     assert_eq!(
         drawings_on(&app, PaneSide::Flow),
         vec![100.0, 200.0],
@@ -4184,8 +4193,8 @@ fn a_selection_on_a_twin_does_not_cost_the_other_chart_its_drawing() {
         2,
         "the twin still holds both levels after an edit of its own"
     );
-    app.cycle_tab(-1);
-    assert_eq!(app.active_tab().id, home);
+    app.arrangement_adapter().cycle_tab(-1);
+    assert_eq!(app.tabs.active_id(), home);
     let here = drawings_on(&app, PaneSide::Flow);
     assert!(
         here.contains(&200.0),
@@ -4206,10 +4215,10 @@ fn switching_one_panes_layout_swaps_only_its_drawings() {
     place_level(&mut app, PaneSide::Time(0), 100.0);
     place_level(&mut app, PaneSide::Flow, 50.0);
     run_frame(&mut app, &ctx);
-    let first = app.layouts().active_id();
+    let first = app.layout_state().layouts().active_id();
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    let second = app.create_layout(None).expect("second");
+    let second = app.layout_adapter().create_layout(None).expect("second");
     assert!(
         drawings_on(&app, PaneSide::Time(0)).is_empty(),
         "the time pane's level went with layout 1"
@@ -4219,9 +4228,16 @@ fn switching_one_panes_layout_swaps_only_its_drawings() {
         vec![50.0],
         "the flow pane, still on layout 1, kept its own"
     );
-    app.switch_layout(first).expect("back");
+    app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![100.0]);
-    assert_eq!(app.layouts().get(second).unwrap().drawing_count(), 0);
+    assert_eq!(
+        app.layout_state()
+            .layouts()
+            .get(second)
+            .unwrap()
+            .drawing_count(),
+        0
+    );
 }
 
 /// A drawing belongs to the layout, the market and the pane it was drawn
@@ -4239,8 +4255,11 @@ fn drawings_are_kept_per_layout_and_pane() {
     );
     run_frame(&mut app, &ctx);
 
-    let first = app.layouts().active_id();
-    let second = app.create_layout(None).expect("a second layout");
+    let first = app.layout_state().layouts().active_id();
+    let second = app
+        .layout_adapter()
+        .create_layout(None)
+        .expect("a second layout");
     assert!(
         drawings_on(&app, PaneSide::Time(0)).is_empty(),
         "layout 2 has no level on this market yet"
@@ -4248,13 +4267,13 @@ fn drawings_are_kept_per_layout_and_pane() {
     place_level(&mut app, PaneSide::Time(0), 200.0);
     run_frame(&mut app, &ctx);
 
-    app.switch_layout(first).expect("back");
+    app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(
         drawings_on(&app, PaneSide::Time(0)),
         vec![100.0],
         "layout 1's level is back, and layout 2's is not on it"
     );
-    app.switch_layout(second).expect("forth");
+    app.layout_adapter().switch_layout(second).expect("forth");
     assert_eq!(drawings_on(&app, PaneSide::Time(0)), vec![200.0]);
     let key = crate::layouts::DrawingKey {
         feed: "binance".to_owned(),
@@ -4262,7 +4281,8 @@ fn drawings_are_kept_per_layout_and_pane() {
         pane: 1,
     };
     assert_eq!(
-        app.layouts()
+        app.layout_state()
+            .layouts()
             .get(first)
             .expect("kept")
             .drawings(&key)
@@ -4323,10 +4343,10 @@ fn a_shared_drawing_comes_back_shared() {
             crate::drawings::DrawingScope::AllCharts;
     }
     run_frame(&mut app, &ctx);
-    let first = app.layouts().active_id();
-    let second = app.create_layout(None).expect("second");
-    app.switch_layout(second).ok();
-    app.switch_layout(first).expect("back");
+    let first = app.layout_state().layouts().active_id();
+    let second = app.layout_adapter().create_layout(None).expect("second");
+    app.layout_adapter().switch_layout(second).ok();
+    app.layout_adapter().switch_layout(first).expect("back");
     let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].scope, crate::drawings::DrawingScope::AllCharts);
@@ -4349,10 +4369,10 @@ fn a_drawing_keeps_its_id_across_a_layout_round_trip() {
     place_level(&mut app, PaneSide::Time(0), 100.0);
     let id = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].id;
     run_frame(&mut app, &ctx);
-    let first = app.layouts().active_id();
-    let second = app.create_layout(None).expect("second");
-    assert_eq!(app.layouts().active_id(), second);
-    app.switch_layout(first).expect("back");
+    let first = app.layout_state().layouts().active_id();
+    let second = app.layout_adapter().create_layout(None).expect("second");
+    assert_eq!(app.layout_state().layouts().active_id(), second);
+    app.layout_adapter().switch_layout(first).expect("back");
     let items = app.active_tab().pane(PaneSide::Time(0)).drawings.items();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id, id, "the level came back under its own id");
@@ -4376,9 +4396,9 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     run_frame(&mut app, &ctx);
     let top_id = app.active_tab().pane(PaneSide::Time(0)).id;
 
-    let tab_id = app.active_tab().id;
+    let tab_id = app.tabs.active_id();
     assert!(
-        app.move_context_pane_at(tab_id, 1, 2),
+        app.layout_adapter().move_context_pane_at(tab_id, 1, 2),
         "the top chart moved down"
     );
     assert_eq!(app.active_tab().pane(PaneSide::Time(1)).id, top_id);
@@ -4403,10 +4423,10 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     );
 
     // A switch away and back finds the level on the same chart.
-    let first = app.layouts().active_id();
-    let second = app.create_layout(None).expect("second");
-    assert_eq!(app.layouts().active_id(), second);
-    app.switch_layout(first).expect("back");
+    let first = app.layout_state().layouts().active_id();
+    let second = app.layout_adapter().create_layout(None).expect("second");
+    assert_eq!(app.layout_state().layouts().active_id(), second);
+    app.layout_adapter().switch_layout(first).expect("back");
     assert_eq!(drawings_on(&app, PaneSide::Time(1)), vec![100.0]);
     assert!(drawings_on(&app, PaneSide::Time(0)).is_empty());
 }
@@ -4479,7 +4499,7 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
     // An edit begun on the time pane: the baseline, then a real change to
     // the object (the store records an entry only if something moved).
     let before = app.active_tab().pane(PaneSide::Time(0)).drawings.items()[0].clone();
-    let tab_id = app.active_tab().id;
+    let tab_id = app.tabs.active_id();
     app.surfaces
         .drawing_chrome
         .open_edit_gesture(tab_id, PaneSide::Time(0), 0, before);
@@ -4871,7 +4891,7 @@ fn a_mark_during_replay_is_traced_and_replayed_at_the_same_logical_time() {
     };
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
     run_frame(&mut app, &ctx);
-    app.active_tab = 0;
+    app.tabs.select(0);
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(replayed_marks(&app), 1, "a tab switch does not re-inject");

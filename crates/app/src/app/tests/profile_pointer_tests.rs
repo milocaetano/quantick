@@ -23,7 +23,8 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 200);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()

@@ -1,10 +1,9 @@
 # AGENTS.md — quantick for AI agents
 
-Quantick is a real-time alternative-bar charting engine for order flow trading
-(tick / volume / dollar / imbalance bars), written in Rust. One deterministic
-engine feeds the chart, the backtest and the bot.
+Quantick is a Rust engine for live order-flow charts: tick, volume, dollar
+and imbalance bars. Chart, backtest and bot share one deterministic engine.
 
-An agent meets this repository in one of two ways, and they are different jobs:
+Agents work on the code or drive the application:
 
 | | You are… | Start here |
 | --- | --- | --- |
@@ -111,6 +110,7 @@ graph TD
     guards["guards<br/>repository guards<br/>no edges either way"]
   end
 
+  app --> workspace
   app --> pine
   app --> indicators
   app --> strategy
@@ -173,6 +173,7 @@ graph TD
 | --- | --- |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects preserve feature owners. |
+| `workspace` | Layout documents and pane membership transitions. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |

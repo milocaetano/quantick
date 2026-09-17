@@ -354,12 +354,12 @@ impl Tab {
 
     /// Drain every feed event available this frame into the engine, tracking the
     /// observed arrival latency and live-trade counts for the metrics.
-    pub fn drain_feed(&mut self) {
-        self.drain_feed_with_clock(metrics::wall_clock_ms);
+    pub fn drain_feed(&mut self, tab_id: u64) {
+        self.drain_feed_with_clock(tab_id, metrics::wall_clock_ms);
     }
 
     /// Clock-injected drain used to prove that one UI cycle is one observation.
-    pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
+    pub fn drain_feed_with_clock(&mut self, tab_id: u64, mut wall_clock_ms: impl FnMut() -> i64) {
         // The journal follows this tab's symbol; synced before the drain so a
         // new feed's first trades are never attributed to the old symbol.
         // Every tab drains every frame, so every journal tracks its own market
@@ -418,7 +418,7 @@ impl Tab {
                     // to ask for another, and what to tell the trader if it
                     // will not. After the prepend, so it judges the tape the
                     // trader can actually see.
-                    self.settle_history_page(trades.len());
+                    self.settle_history_page(tab_id, trades.len());
                 }
                 Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
                     // What is left of the fill, so the chart and an operator
@@ -481,7 +481,7 @@ impl Tab {
                     bars,
                     slice,
                 }) => {
-                    self.take_ohlcv_history(interval_ms, bars, slice);
+                    self.take_ohlcv_history(tab_id, interval_ms, bars, slice);
                 }
                 Err(_) => break,
             }

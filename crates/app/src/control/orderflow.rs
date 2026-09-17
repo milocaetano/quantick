@@ -358,9 +358,9 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// capture state moving between disabled, syncing and live.
 fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
     app.control_tabs()
-        .iter()
-        .map(|tab| OrderflowRevisionKey {
-            tab_id: tab.id,
+        .iter_with_ids()
+        .map(|(tab_id, tab)| OrderflowRevisionKey {
+            tab_id,
             panes: tab
                 .panes()
                 .map(|(pane, _side)| PaneOrderflowRevisionKey {
@@ -427,9 +427,9 @@ fn project_tape(app: &QuantickApp, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabTapeSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabTapeSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneTapeSnapshot {
@@ -468,9 +468,9 @@ fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSn
     FootprintSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabFootprintSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabFootprintSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneFootprintSnapshot {
@@ -506,9 +506,9 @@ fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapsh
     BubblesSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabBubblesSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabBubblesSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
@@ -534,9 +534,9 @@ fn project_heatmap(app: &QuantickApp, _context: CaptureContext) -> HeatmapSnapsh
     HeatmapSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabHeatmapSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabHeatmapSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneHeatmapSnapshot {
@@ -570,9 +570,9 @@ fn project_l2(app: &QuantickApp, _context: CaptureContext) -> L2Snapshot {
     L2Snapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabL2Snapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabL2Snapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneL2Snapshot {

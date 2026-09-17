@@ -75,6 +75,7 @@ use crate::{Finding, size};
 pub const HEADLESS_CRATES: &[&str] = &[
     "chart-interaction",
     "layers",
+    "workspace",
     "engine",
     "orderbook",
     "orderflow",

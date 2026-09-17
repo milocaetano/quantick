@@ -36,16 +36,23 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Serialize;
 
-use crate::config::{AppConfig, DeclaredLayout};
+use crate::config::AppConfig;
+#[cfg(test)]
+use crate::config::DeclaredLayout;
+pub use quantick_workspace::arrangement_document::{
+    SavedChrome, SavedDockTab, SavedFocus, SavedRailDock, SavedTab,
+};
 
 /// Environment override for the workspace file location.
 pub const UI_STATE_ENV: &str = "QUANTICK_UI_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
-/// Bumped on breaking format changes; unknown versions are ignored.
-const FORMAT_VERSION: u32 = 1;
+pub use quantick_workspace::workspace_document::{
+    FORMAT_VERSION, MAX_WORKSPACE_NAME, NamedArrangement, Workspace, clean_workspace_name,
+};
 
 /// The [`SavedTab::context_layouts`] entry for a pane whose layout the file
 /// does not state.
@@ -54,7 +61,7 @@ const FORMAT_VERSION: u32 = 1;
 /// ([`crate::layouts::LayoutBook::starter`]) and only ever grow, so a
 /// hand-edited file claiming `0` names no layout and the pane opens on the
 /// book's active one — where an absent entry sends it too.
-pub const LAYOUT_UNRECORDED: u64 = 0;
+pub use quantick_workspace::arrangement_document::LAYOUT_UNRECORDED;
 
 /// The keys in this file that describe *this installation* rather than the
 /// arrangement, and so never travel in a workspace bundle.
@@ -72,35 +79,25 @@ pub(crate) const LOCAL_KEYS: &[&str] = &[
     "save_on_exit",
 ];
 
-/// Which pane the chrome spoke for, in the file's vocabulary.
-///
-/// A twin of [`crate::pane::PaneSide`] rather than that enum itself, for the
-/// same reason [`DeclaredLayout`] is a twin of `CanvasLayout`: the file is a
-/// user-facing contract and must not drift when the canvas grows a side a file
-/// should not name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SavedFocus {
-    /// quantick's own chart.
-    Flow,
-    /// The timeframe chart beside it.
-    Time,
-}
-
 // Each twin converts both ways here, beside the vocabulary it belongs to,
 // rather than in the app that happens to read it. It is the pattern
 // `DeclaredLayout` → `CanvasLayout` already set (`tab.rs`), and it is what
 // keeps adding a variant a one-file edit: the compiler then names every arm
 // that has to grow, in the module that owns the names.
-impl SavedFocus {
+pub(crate) trait SavedFocusExt: Sized {
+    #[must_use]
+    fn from_side(side: crate::pane::PaneSide) -> (Self, usize);
+    #[must_use]
+    fn to_side(self, slot: usize) -> crate::pane::PaneSide;
+}
+impl SavedFocusExt for SavedFocus {
     /// The file's two words plus the slot, from the side the tab holds.
     ///
     /// Split into a word and a number rather than a third word per slot:
     /// `focus = "time"` is what every workspace written so far says, and a
     /// file that says it still opens on the top context chart — which is the
     /// only one those files could have meant.
-    #[must_use]
-    pub fn from_side(side: crate::pane::PaneSide) -> (Self, usize) {
+    fn from_side(side: crate::pane::PaneSide) -> (Self, usize) {
         match side {
             crate::pane::PaneSide::Flow => (Self::Flow, 0),
             crate::pane::PaneSide::Time(slot) => (Self::Time, slot),
@@ -108,30 +105,12 @@ impl SavedFocus {
     }
 
     /// The side a saved word and slot name. See [`Self::from_side`].
-    #[must_use]
-    pub fn to_side(self, slot: usize) -> crate::pane::PaneSide {
+    fn to_side(self, slot: usize) -> crate::pane::PaneSide {
         match self {
             Self::Flow => crate::pane::PaneSide::Flow,
             Self::Time => crate::pane::PaneSide::Time(slot),
         }
     }
-}
-
-/// Where the drawing rail was docked, in the file's vocabulary.
-///
-/// `Right` survives here as a *reading* vocabulary only: the rail no longer
-/// offers the right edge (see [`crate::toolrail::ToolboxDock`]), but a
-/// `ui-state.toml` written before that still says `right`, and refusing to
-/// parse it would throw away the whole file — every other remembered panel
-/// with it. It loads as `Left` and is written back as `left`, so the
-/// migration happens once and is visible in the file afterwards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SavedRailDock {
-    Left,
-    Right,
-    Top,
-    Bottom,
 }
 
 impl From<crate::toolrail::ToolboxDock> for SavedRailDock {
@@ -152,18 +131,6 @@ impl From<SavedRailDock> for crate::toolrail::ToolboxDock {
             SavedRailDock::Bottom => Self::Bottom,
         }
     }
-}
-
-/// Which dock tab was open, in the file's vocabulary. Absent means the dock
-/// was collapsed to its strip, which is a state in its own right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SavedDockTab {
-    L2,
-    Bubbles,
-    Session,
-    Trading,
-    Trades,
 }
 
 impl From<crate::dock::DockTab> for SavedDockTab {
@@ -190,470 +157,15 @@ impl From<SavedDockTab> for crate::dock::DockTab {
     }
 }
 
-/// One remembered market and how its canvas was arranged.
-///
-/// Bar specs are stored as the `kind:parameter` text `default_bars` already
-/// uses (`tick:50`, `time:1m`) rather than as a tagged struct: the file stays
-/// hand-editable in the vocabulary the config documents, and
-/// [`quantick_engine::bar_registry::BarRegistry::parse`] is the one gate both go through — so a hand-edited
-/// workspace can never open a chart no control could have produced.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SavedTab {
-    /// Feed id, as the config names it.
-    pub feed: String,
-    /// Symbol, as the feed offers it.
-    pub symbol: String,
-    /// Which charts the canvas showed.
-    pub layout: DeclaredLayout,
-    /// The context column's share of the canvas width.
-    #[serde(default)]
-    pub split_fraction: Option<f32>,
-    /// Whether the context column was collapsed to its rail.
-    ///
-    /// Additive with a default, per this module's own migration policy: a
-    /// workspace written before the rail existed is a workspace whose column
-    /// was open, not an unreadable one. The width it springs back to is
-    /// `split_fraction`, which such a file already carries.
-    #[serde(default)]
-    pub context_collapsed: bool,
-    /// The pane the chrome spoke for.
-    #[serde(default)]
-    pub focus: Option<SavedFocus>,
-    /// Which context chart `focus = "time"` names, top to bottom from `0`.
-    ///
-    /// Absent — every file written while the split had one context chart —
-    /// means the top one, which is the chart those files meant.
-    #[serde(default)]
-    pub focus_slot: usize,
-    /// The flow pane's bar rule.
-    pub flow_bars: String,
-    /// The time pane's interval, when the tab had one.
-    ///
-    /// The *top* context chart's, kept under its old name so every workspace
-    /// written so far still restores; `context_bars` carries the whole stack.
-    #[serde(default)]
-    pub time_bars: Option<String>,
-    /// Every context chart's bar rule, top to bottom, when the tab had a
-    /// stack. Empty in files written before the stack existed, which then
-    /// fall back to `time_bars` for the top chart and the default below it.
-    #[serde(default)]
-    pub context_bars: Vec<String>,
-    /// The layout the flow pane showed, by id in the layouts file. Absent in
-    /// files written before a pane had a layout of its own: such a pane
-    /// opens on the book's active layout, which is what every pane showed.
-    #[serde(default)]
-    pub flow_layout: Option<u64>,
-    /// Each context chart's layout, top to bottom, by id in the layouts file.
-    ///
-    /// [`LAYOUT_UNRECORDED`] where the file does not say — a pane the session
-    /// had not seeded yet when the workspace was written. A sentinel rather
-    /// than a `None` because TOML has no null *inside an array*: `toml` skips
-    /// a `None` struct field (which is why [`Self::flow_layout`] may be one),
-    /// but answers a `None` element with `UnsupportedNone`, and [`save`]
-    /// answers a failed serialize by writing nothing at all — so a single
-    /// unseeded pane would have cost the trader every tab in the file.
-    #[serde(default)]
-    pub context_layouts: Vec<u64>,
-    /// Whether the flow pane's on-chart indicator legend was folded to its
-    /// count puck.
-    ///
-    /// Per pane, like the bar rules above and for the same reason: the corner
-    /// pressure that makes a trader fold one chart's legend is not on the
-    /// other. Absent means expanded — a workspace written before the fold
-    /// existed opens exactly as it closed.
-    #[serde(default)]
-    pub flow_legend_collapsed: bool,
-    /// Whether the time pane's legend was folded. See
-    /// [`Self::flow_legend_collapsed`]; a tab that never showed the split
-    /// simply never had one to fold.
-    #[serde(default)]
-    pub time_legend_collapsed: bool,
-}
-
-/// The single-instance chrome around the tabs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SavedChrome {
-    /// Display timezone, in whole minutes east of UTC.
-    pub timezone_minutes: i32,
-    /// Whether the dock (strip included) was on screen.
-    pub dock_visible: bool,
-    /// The open dock tab; absent means collapsed to the strip.
-    #[serde(default)]
-    pub dock_tab: Option<SavedDockTab>,
-    /// Whether the drawing rail was on screen.
-    pub rail_visible: bool,
-    /// Which edge the rail was docked to.
-    pub rail_dock: SavedRailDock,
-    /// Whether the status bar showed fps/frame time.
-    pub perf_readings: bool,
-    /// Where starred tools used to live, kept only to read files that still
-    /// hold them there.
-    ///
-    /// Favorites were part of the arrangement once, which meant a bookmark
-    /// saved before the trader starred anything wiped the rail on open and a
-    /// dirty exit lost the stars outright. They are a standing choice, so they
-    /// moved up to [`Workspace::favorite_tools`]; [`load`] lifts what an older
-    /// file kept here and empties this, and an empty list writes no key — so a
-    /// file migrates once and never carries two answers.
-    #[serde(
-        default,
-        rename = "favorite_tools",
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    pub legacy_favorite_tools: Vec<String>,
-    /// Whether venue candle history was fetched in slices, newest first.
-    ///
-    /// Defaults to on rather than to `false`, which is what a missing field
-    /// would otherwise mean: a workspace written before this switch existed
-    /// describes a cockpit whose owner never chose the slower path, and
-    /// reading their silence as "off" would hand them the old wait back with
-    /// no way to know why.
-    #[serde(default = "yes")]
-    pub progressive_history: bool,
-    /// How far one press of *load older* reaches, as
-    /// [`quantick_feed::history_reach::HistoryReach::token`] writes it.
-    ///
-    /// A token rather than a variant name, so a release may reword the menu
-    /// label without orphaning every saved workspace. Absent — or a token a
-    /// later release wrote and this one does not know — restores the default
-    /// reach, which is the single page the button has always fetched: the one
-    /// answer that is never a surprise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub history_reach: Option<String>,
-    /// How far one press of the *by time* reach pulls, in minutes of traded
-    /// time.
-    ///
-    /// Saved beside the reach because the two are one choice: a workspace that
-    /// restored `by time` without its span put the menu and the press out of
-    /// step — the chip read what the trader picked while the span had silently
-    /// gone back to the config seed, and nothing on screen said so. Absent
-    /// means a file written before this existed, and restores the configured
-    /// default rather than a number nobody chose.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub history_reach_span_minutes: Option<u32>,
-    /// Whether a chart cut by trades carried the venue's candles in front of
-    /// its bars.
-    ///
-    /// Defaults to off, which is also what a file written before the switch
-    /// existed means: that cockpit's owner never asked for a prefix on a tick
-    /// chart, and reading their silence as "on" would put candles in front of
-    /// bars they never chose to see.
-    #[serde(default)]
-    pub venue_lead_in: bool,
-    /// Whether a MetaTrader tab records the venue's deal counter on its own.
-    /// Absent follows the feed config's `record_deals`; a file written before
-    /// the recorder existed therefore changes nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub record_deals: Option<bool>,
-    /// Where the trader parked the drawing-properties popup, in screen points,
-    /// or absent while it still places itself beside the object it configures.
-    ///
-    /// One position for every tool on the rail, because there is one window:
-    /// the popup is rebuilt for whatever is selected, so a trader who drags it
-    /// out of the way once has moved it for the next drawing too — which is
-    /// the whole reason to move it. A position per tool would put the window
-    /// somewhere new on every selection, which is the behaviour being fixed.
-    ///
-    /// Absent in files written before this field, and absent again after the
-    /// double-click that restores automatic placement; either way the app
-    /// places the popup itself, exactly as it did before this field existed.
-    ///
-    /// Screen points, and deliberately *not* repaired here: a position that no
-    /// longer fits — a smaller window, the rail on another edge — is clamped
-    /// into the chart when the popup draws, by the same code that repairs one
-    /// dragged half off screen. The file records what the trader did; the
-    /// screen decides what is still possible.
-    #[serde(default)]
-    pub inspector_position: Option<[f32; 2]>,
-}
-
-/// The workspace as a whole: what the app opens on.
-///
-/// [`Workspace::default`] is "nothing saved" — an empty tab list and no
-/// chrome, which is precisely the state a fresh install is in, so every
-/// consumer's "no file" path and its "empty file" path are the same code.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Workspace {
-    version: u32,
-    /// Whether closing the window writes this file. On by default: the trader
-    /// who never opens the Workspace menu should still reopen where they left
-    /// off. Persisted here rather than in a settings file of its own, because
-    /// it is a fact *about this file*.
-    #[serde(default = "yes")]
-    pub save_on_exit: bool,
-    /// The window's inner size in points, as it was last saved.
-    #[serde(default)]
-    pub window: Option<[f32; 2]>,
-    /// Which tab was on screen, as an index into `tabs`.
-    #[serde(default)]
-    pub active_tab: usize,
-    /// The open markets, left to right as the strip showed them.
-    #[serde(default)]
-    pub tabs: Vec<SavedTab>,
-    /// The chrome around them.
-    #[serde(default)]
-    pub chrome: Option<SavedChrome>,
-    /// Arrangements the trader named and kept, newest last.
-    ///
-    /// Bookmarks, not startup settings: naming one never changes what the app
-    /// opens on. The two are separate because the reason to name an
-    /// arrangement is usually to have somewhere to come back *to*, and a
-    /// "save this so I can return to it" that silently redefined the startup
-    /// screen would be the opposite of a safety net.
-    ///
-    /// Absent in files written before named workspaces existed, which is why
-    /// it defaults rather than bumping the format version — an older file is
-    /// a workspace with no bookmarks, not an unreadable one.
-    #[serde(default)]
-    pub saved: Vec<NamedArrangement>,
-    /// The folder Market Replay reads recordings from, as the trader last
-    /// pointed it.
-    ///
-    /// Top-level rather than inside [`SavedChrome`] for the same reason
-    /// `save_on_exit` is: it is a fact about this installation, not about an
-    /// arrangement of panes — opening a named bookmark must never silently
-    /// re-point where the trader's recordings live.
-    ///
-    /// `None` means "never chosen", which is what a file written before this
-    /// field existed says, and resolves to the default home rather than to
-    /// nothing.
-    #[serde(default)]
-    pub replay_folder: Option<String>,
-    /// Whether opening a recording joins the session day before it, and a
-    /// download fetches that day's tape as well.
-    ///
-    /// Top-level beside `replay_folder`, and written the moment the tick
-    /// changes, for the same reason: it is a standing choice about how the
-    /// trader rehearses, not a description of one arrangement of panes.
-    ///
-    /// Deliberately *not* in [`LOCAL_KEYS`], unlike the folder above. The
-    /// folder names a path on this machine and cannot travel; wanting
-    /// yesterday on the chart is a way of working, and travels with a shared
-    /// cockpit exactly as a starred tool does.
-    ///
-    /// `None` means "never chosen" — which is what every file written before
-    /// this field existed says — and resolves to joining the day before, the
-    /// answer a trader rehearsing an open gave when asked.
-    #[serde(default)]
-    pub replay_day_before: Option<bool>,
-    /// Starred drawing tools pinned to the rail, by tool id, in the order the
-    /// trader starred them.
-    ///
-    /// Top-level for the reason `replay_folder` is, and it is the same reason
-    /// twice: this is a standing choice about how the trader works, not a
-    /// description of one arrangement of panes. Kept inside [`SavedChrome`] it
-    /// was written only when the whole cockpit was — so a crash or a session
-    /// with autosave off lost it — and opening a bookmark saved before the
-    /// star existed replaced the rail's pinned section with that bookmark's
-    /// emptiness. Up here it is written the moment a star is clicked and
-    /// nothing that restores an arrangement touches it.
-    ///
-    /// Empty means "nothing starred", which is also what a file written before
-    /// the field existed says once [`load`] has lifted anything the old chrome
-    /// key held.
-    ///
-    /// Deliberately *not* in [`LOCAL_KEYS`], unlike the folder above: a
-    /// starred tool is part of the cockpit being shared, and it travelled in a
-    /// bundle back when it lived in the chrome. Where the trader's recordings
-    /// live is a fact about their machine; which tools they keep at hand is
-    /// not, and a colleague opening the bundle wants the rail that goes with
-    /// the screen.
-    #[serde(default)]
-    pub favorite_tools: Vec<String>,
-    /// Workspace files exported or imported recently, newest first.
-    ///
-    /// Paths, not arrangements: the file on disk is the truth, and a copy
-    /// kept here would go stale the moment the trader re-exported over it.
-    /// An entry whose file has since gone is dropped when the menu is built
-    /// rather than when it is clicked — the same rule
-    /// [`Workspace::restore`] applies to tabs: every name in a menu opens
-    /// something.
-    ///
-    /// Here rather than in [`SavedChrome`] because it is a fact about this
-    /// installation, not about an arrangement of panes — opening a bookmark
-    /// must not rewrite which files the trader visited.
-    #[serde(default)]
-    pub recent_workspaces: Vec<String>,
-}
-
-/// One named arrangement: everything a workspace records about the window,
-/// under a name the trader chose.
-///
-/// The same shape as the startup arrangement above, deliberately — one thing
-/// is being described either way, and `capture`/`apply` in the app run the
-/// same code for both. `save_on_exit` is not here: it governs the *file*, not
-/// any one arrangement in it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NamedArrangement {
-    /// What the trader called it. Unique within the file — saving over an
-    /// existing name replaces it, which is what "save as" means everywhere
-    /// else and spares the menu a list of five things called "scalp".
-    pub name: String,
-    /// The window's inner size in points.
-    #[serde(default)]
-    pub window: Option<[f32; 2]>,
-    /// Which tab was on screen.
-    #[serde(default)]
-    pub active_tab: usize,
-    /// The open markets, left to right.
-    #[serde(default)]
-    pub tabs: Vec<SavedTab>,
-    /// The chrome around them.
-    #[serde(default)]
-    pub chrome: Option<SavedChrome>,
-}
-
-/// Longest a workspace name may be.
-///
-/// The names sit in a menu, and a name wider than the menu is a name the
-/// trader cannot read back — which defeats the point of naming it. Generous
-/// enough for "scalp WIN manhã" and short enough to stay one line.
-pub const MAX_WORKSPACE_NAME: usize = 40;
-
-/// Clean up a name typed into the Save-as box: trimmed, collapsed whitespace,
-/// truncated at [`MAX_WORKSPACE_NAME`]. `None` when nothing is left.
-///
-/// Whitespace is collapsed rather than rejected so " scalp  win " and
-/// "scalp win" are the same bookmark; a trader who typed two spaces did not
-/// mean to create a second one.
-#[must_use]
-pub fn clean_workspace_name(raw: &str) -> Option<String> {
-    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() {
-        return None;
-    }
-    Some(collapsed.chars().take(MAX_WORKSPACE_NAME).collect())
-}
-
-/// serde's default for [`Workspace::save_on_exit`] — a file written before the
-/// field existed still means "yes", which is what the app has always done.
-const fn yes() -> bool {
-    true
-}
-
-impl Default for Workspace {
-    fn default() -> Self {
-        Self {
-            version: FORMAT_VERSION,
-            save_on_exit: true,
-            window: None,
-            active_tab: 0,
-            tabs: Vec::new(),
-            chrome: None,
-            saved: Vec::new(),
-            replay_folder: None,
-            replay_day_before: None,
-            favorite_tools: Vec::new(),
-            recent_workspaces: Vec::new(),
-        }
-    }
-}
-
-impl Workspace {
-    /// A workspace describing a window as it stands.
-    ///
-    /// The format version is this build's, always — it is a property of the
-    /// file, never something a caller chooses, which is why it is not a
-    /// parameter and the field stays private.
+/// Application configuration and persistence effects over the shared document.
+pub(crate) trait WorkspaceExt: Sized {
     #[must_use]
-    pub fn new(
-        save_on_exit: bool,
-        window: Option<[f32; 2]>,
-        active_tab: usize,
-        tabs: Vec<SavedTab>,
-        chrome: Option<SavedChrome>,
-    ) -> Self {
-        Self {
-            version: FORMAT_VERSION,
-            save_on_exit,
-            window,
-            active_tab,
-            tabs,
-            chrome,
-            saved: Vec::new(),
-            replay_folder: None,
-            replay_day_before: None,
-            favorite_tools: Vec::new(),
-            recent_workspaces: Vec::new(),
-        }
-    }
-
-    /// The same, carrying the recently visited workspace files through.
-    ///
-    /// A separate constructor for the reason [`Workspace::with_saved`] is:
-    /// the list comes off disk, not off the screen, so every capture site
-    /// would otherwise have to remember to thread it.
-    #[must_use]
-    pub fn with_recent(mut self, recent: Vec<String>) -> Self {
-        self.recent_workspaces = recent;
-        self
-    }
-
-    /// The same, carrying the replay folder through.
-    ///
-    /// Separate from [`Workspace::new`] for the reason [`Workspace::with_saved`]
-    /// is: the folder is a standing choice read off disk, not something the
-    /// live window describes, and every capture site would otherwise have to
-    /// remember to thread it.
-    #[must_use]
-    pub fn with_replay_folder(mut self, folder: Option<String>) -> Self {
-        self.replay_folder = folder;
-        self
-    }
-
-    /// The same, carrying the *day before* choice through.
-    ///
-    /// Threaded like the folder above and for the same reason: it is a
-    /// standing choice read off disk, not something the live window describes.
-    /// `None` is "never chosen" and stays that way — a capture must not
-    /// materialise today's default into the file, or tomorrow's default could
-    /// never reach a trader who simply never touched the tick.
-    #[must_use]
-    pub fn with_replay_day_before(mut self, enabled: Option<bool>) -> Self {
-        self.replay_day_before = enabled;
-        self
-    }
-
-    /// The same, carrying the starred tools through.
-    ///
-    /// Threaded like the folder above and for the same reason: a capture of
-    /// the live window describes panes, and the rail's pinned section is not
-    /// one of them — it outlives every arrangement the trader opens.
-    #[must_use]
-    pub fn with_favorites(mut self, favorites: Vec<String>) -> Self {
-        self.favorite_tools = favorites;
-        self
-    }
-
-    /// The same, carrying `saved` bookmarks through.
-    ///
-    /// A separate constructor rather than a sixth parameter on the one above:
-    /// every caller that captures the live window has no bookmarks to give
-    /// (they come off disk, not off the screen), and threading an empty vec
-    /// through all of them would only invite passing the wrong thing.
-    #[must_use]
-    pub fn with_saved(mut self, saved: Vec<NamedArrangement>) -> Self {
-        self.saved = saved;
-        self
-    }
-
-    /// The named arrangement called `name`, if the file has one.
-    ///
-    /// The app searches its own in-memory copy of the list, so this exists for
-    /// the tests that assert what actually reached the disk — which is the one
-    /// question a unit test on a persistence layer should be asking.
+    fn restore(self, config: &AppConfig) -> Self;
     #[cfg(test)]
     #[must_use]
-    pub fn named(&self, name: &str) -> Option<&NamedArrangement> {
-        self.saved.iter().find(|entry| entry.name == name)
-    }
-
-    /// Whether this workspace has a cockpit to restore at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
+    fn named(&self, name: &str) -> Option<&NamedArrangement>;
+}
+impl WorkspaceExt for Workspace {
     /// The saved workspace with every tab the live `config` can no longer open
     /// removed, and every out-of-range value brought back inside the domain
     /// its control enforces.
@@ -669,8 +181,7 @@ impl Workspace {
     /// `quantick-symbols.toml` and are folded into the catalogue before the
     /// app restores, so a dated B3 contract added by hand survives a restart
     /// like any shipped one.
-    #[must_use]
-    pub fn restore(mut self, config: &AppConfig) -> Self {
+    fn restore(mut self, config: &AppConfig) -> Self {
         self.active_tab = filter_tabs(&mut self.tabs, self.active_tab, config);
         // Bookmarks go through exactly the same gate. A named arrangement is
         // reopened months after it was saved, so it is *more* likely than the
@@ -699,61 +210,58 @@ impl Workspace {
         self
     }
 
-    /// Lift starred tools out of the old chrome key and leave nothing behind.
+    /// The named arrangement called `name`, if the file has one.
     ///
-    /// Read once, on load, so every reader of this file — the app at startup,
-    /// the read-swap-write that records a single standing choice — sees one
-    /// answer in one place. The startup chrome is the only source: it is the
-    /// list the rail was actually wearing, since restoring a bookmark used to
-    /// apply that bookmark's copy and then the app captured it back here. The
-    /// bookmarks' copies are dropped rather than merged — nothing reads them
-    /// any more, and a key that is written but never applied is a lie a later
-    /// reader would believe.
-    ///
-    /// A file that already carries the top-level list keeps it: the trader's
-    /// current stars win over whatever an arrangement remembers.
-    fn lift_legacy_favorites(&mut self) {
-        let lifted = if self.favorite_tools.is_empty() {
-            let chrome = self
-                .chrome
-                .as_mut()
-                .map(|chrome| std::mem::take(&mut chrome.legacy_favorite_tools));
-            self.favorite_tools = chrome.unwrap_or_default();
-            !self.favorite_tools.is_empty()
-        } else {
-            if let Some(chrome) = self.chrome.as_mut() {
-                chrome.legacy_favorite_tools.clear();
-            }
-            false
-        };
-        for entry in &mut self.saved {
-            if let Some(chrome) = entry.chrome.as_mut() {
-                chrome.legacy_favorite_tools.clear();
-            }
+    /// The app searches its own in-memory copy of the list, so this exists for
+    /// the tests that assert what actually reached the disk — which is the one
+    /// question a unit test on a persistence layer should be asking.
+    #[cfg(test)]
+    fn named(&self, name: &str) -> Option<&NamedArrangement> {
+        self.saved.iter().find(|entry| entry.name == name)
+    }
+}
+
+/// Lift starred tools out of the old chrome key and leave nothing behind.
+///
+/// Read once, on load, so every reader of this file — the app at startup,
+/// the read-swap-write that records a single standing choice — sees one
+/// answer in one place. The startup chrome is the only source: it is the
+/// list the rail was actually wearing, since restoring a bookmark used to
+/// apply that bookmark's copy and then the app captured it back here. The
+/// bookmarks' copies are dropped rather than merged — nothing reads them
+/// any more, and a key that is written but never applied is a lie a later
+/// reader would believe.
+///
+/// A file that already carries the top-level list keeps it: the trader's
+/// current stars win over whatever an arrangement remembers.
+fn lift_legacy_favorites(workspace: &mut Workspace) {
+    let lifted = if workspace.favorite_tools.is_empty() {
+        let chrome = workspace
+            .chrome
+            .as_mut()
+            .map(|chrome| std::mem::take(&mut chrome.legacy_favorite_tools));
+        workspace.favorite_tools = chrome.unwrap_or_default();
+        !workspace.favorite_tools.is_empty()
+    } else {
+        if let Some(chrome) = workspace.chrome.as_mut() {
+            chrome.legacy_favorite_tools.clear();
         }
-        if lifted {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "UI_STATE_FAVORITES_LIFTED",
-                tools = self.favorite_tools.len(),
-                action = "favorites_are_a_standing_choice",
-                "starred tools moved out of the saved arrangement"
-            );
+        false
+    };
+    for entry in &mut workspace.saved {
+        if let Some(chrome) = entry.chrome.as_mut() {
+            chrome.legacy_favorite_tools.clear();
         }
     }
-
-    /// The market a restored workspace opens its first tab on, if it has one.
-    ///
-    /// The startup market is decided before the app exists — the window's
-    /// first feed is spawned by `main` — so this is read there and the rest of
-    /// the workspace is applied by the app. One loader, two readers, both
-    /// read-only and both at startup.
-    #[must_use]
-    pub fn first_market(&self) -> Option<(&str, &str)> {
-        self.tabs
-            .first()
-            .map(|tab| (tab.feed.as_str(), tab.symbol.as_str()))
+    if lifted {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "UI_STATE_FAVORITES_LIFTED",
+            tools = workspace.favorite_tools.len(),
+            action = "favorites_are_a_standing_choice",
+            "starred tools moved out of the saved arrangement"
+        );
     }
 }
 
@@ -851,12 +359,12 @@ pub fn default_path() -> PathBuf {
 /// watching, and must say what was wrong instead.
 pub(crate) fn validate(text: &str) -> Result<(), String> {
     let workspace: Workspace = toml::from_str(text).map_err(|error| error.to_string())?;
-    if workspace.version == FORMAT_VERSION {
+    if workspace.format_version() == FORMAT_VERSION {
         Ok(())
     } else {
         Err(format!(
             "workspace format version {} (this build reads {FORMAT_VERSION})",
-            workspace.version
+            workspace.format_version()
         ))
     }
 }
@@ -886,11 +394,11 @@ fn read(path: &Path) -> Read {
         Err(error) => return Read::Unreadable(error.to_string()),
     };
     match toml::from_str::<Workspace>(&text) {
-        Ok(mut workspace) if workspace.version == FORMAT_VERSION => {
-            workspace.lift_legacy_favorites();
+        Ok(mut workspace) if workspace.format_version() == FORMAT_VERSION => {
+            lift_legacy_favorites(&mut workspace);
             Read::Workspace(Box::new(workspace))
         }
-        Ok(workspace) => Read::UnknownVersion(workspace.version),
+        Ok(workspace) => Read::UnknownVersion(workspace.format_version()),
         Err(error) => Read::Unreadable(error.to_string()),
     }
 }
@@ -978,8 +486,7 @@ pub fn load_for_edit(path: &Path) -> Option<Workspace> {
 /// says so on the status line either way, and a trader who is told "saved"
 /// when nothing was written would find out at the worst possible moment.
 pub fn save(path: &Path, workspace: &Workspace) -> bool {
-    let mut workspace = workspace.clone();
-    workspace.version = FORMAT_VERSION;
+    let workspace = workspace.clone().into_current_format();
     let text = match toml::to_string_pretty(&workspace) {
         Ok(text) => text,
         Err(error) => {
@@ -1049,12 +556,11 @@ mod tests {
     }
 
     fn sample() -> Workspace {
-        Workspace {
-            version: FORMAT_VERSION,
-            save_on_exit: true,
-            window: Some([1600.0, 900.0]),
-            active_tab: 1,
-            tabs: vec![
+        Workspace::new(
+            true,
+            Some([1600.0, 900.0]),
+            1,
+            vec![
                 SavedTab {
                     feed: "binance".to_owned(),
                     symbol: "BTCUSDT".to_owned(),
@@ -1088,7 +594,7 @@ mod tests {
                     time_legend_collapsed: false,
                 },
             ],
-            chrome: Some(SavedChrome {
+            Some(SavedChrome {
                 timezone_minutes: -180,
                 dock_visible: true,
                 dock_tab: Some(SavedDockTab::Trading),
@@ -1103,12 +609,45 @@ mod tests {
                 record_deals: None,
                 inspector_position: Some([412.5, 640.0]),
             }),
-            saved: Vec::new(),
-            replay_folder: Some("D:/tape".to_owned()),
-            replay_day_before: Some(false),
-            favorite_tools: vec!["parallel-channel".to_owned()],
-            recent_workspaces: vec!["D:/desk/scalp.qws.toml".to_owned()],
-        }
+        )
+        .with_replay_folder(Some("D:/tape".to_owned()))
+        .with_replay_day_before(Some(false))
+        .with_favorites(vec!["parallel-channel".to_owned()])
+        .with_recent(vec!["D:/desk/scalp.qws.toml".to_owned()])
+    }
+
+    #[test]
+    fn complete_workspace_document_keeps_literal_wire_shape() {
+        let mut workspace = Workspace::new(false, Some([1200.0, 800.0]), 2, Vec::new(), None)
+            .with_replay_folder(Some("D:/tape".to_owned()))
+            .with_replay_day_before(Some(false))
+            .with_favorites(vec!["parallel-channel".to_owned()])
+            .with_recent(vec!["D:/desk.qws.toml".to_owned()]);
+        workspace.saved.push(NamedArrangement {
+            name: "Desk".to_owned(),
+            window: Some([900.0, 600.0]),
+            active_tab: 1,
+            tabs: Vec::new(),
+            chrome: None,
+        });
+        let literal = concat!(
+            "version = 1\n",
+            "save_on_exit = false\n",
+            "window = [\n    1200.0,\n    800.0,\n]\n",
+            "active_tab = 2\n",
+            "tabs = []\n",
+            "replay_folder = \"D:/tape\"\n",
+            "replay_day_before = false\n",
+            "favorite_tools = [\"parallel-channel\"]\n",
+            "recent_workspaces = [\"D:/desk.qws.toml\"]\n",
+            "\n[[saved]]\n",
+            "name = \"Desk\"\n",
+            "window = [\n    900.0,\n    600.0,\n]\n",
+            "active_tab = 1\n",
+            "tabs = []\n",
+        );
+        assert_eq!(toml::to_string_pretty(&workspace).unwrap(), literal);
+        assert_eq!(toml::from_str::<Workspace>(literal).unwrap(), workspace);
     }
 
     #[test]
@@ -1828,7 +1367,11 @@ time_bars = "time:60000"
     fn a_workspace_with_no_context_keys_still_opens() {
         let workspace: Workspace =
             toml::from_str(V1_WORKSPACE).expect("a v1 workspace must still parse");
-        assert_eq!(workspace.version, FORMAT_VERSION, "the format is still 1");
+        assert_eq!(
+            workspace.format_version(),
+            FORMAT_VERSION,
+            "the format is still 1"
+        );
         assert_eq!(workspace.tabs.len(), 1);
 
         let tab = &workspace.tabs[0];
@@ -1894,24 +1437,23 @@ time_bars = "time:60000"
     }
 
     fn sample_workspace() -> Workspace {
-        Workspace {
-            tabs: vec![SavedTab {
-                feed: "binance".to_owned(),
-                symbol: "BTCUSDT".to_owned(),
-                layout: DeclaredLayout::TimeAndFlow,
-                split_fraction: Some(0.35),
-                context_collapsed: false,
-                focus: None,
-                focus_slot: 0,
-                context_bars: vec![],
-                flow_layout: None,
-                context_layouts: vec![],
-                flow_bars: "tick:50".to_owned(),
-                time_bars: None,
-                flow_legend_collapsed: false,
-                time_legend_collapsed: false,
-            }],
-            ..Workspace::default()
-        }
+        let mut workspace = Workspace::default();
+        workspace.tabs = vec![SavedTab {
+            feed: "binance".to_owned(),
+            symbol: "BTCUSDT".to_owned(),
+            layout: DeclaredLayout::TimeAndFlow,
+            split_fraction: Some(0.35),
+            context_collapsed: false,
+            focus: None,
+            focus_slot: 0,
+            context_bars: vec![],
+            flow_layout: None,
+            context_layouts: vec![],
+            flow_bars: "tick:50".to_owned(),
+            time_bars: None,
+            flow_legend_collapsed: false,
+            time_legend_collapsed: false,
+        }];
+        workspace
     }
 }

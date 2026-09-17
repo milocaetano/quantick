@@ -482,6 +482,7 @@ impl QuantickApp {
     /// long history in its caption had better wait rather than photograph a
     /// short one.
     fn deliver_synthetic_prefix(&mut self, candles: i64, slice: quantick_feed::OhlcvSlice) -> bool {
+        let tab_id = self.tabs.active_id();
         let tab = self.active_tab_mut();
         let Some(first) = tab.flow_pane.state.bars().first() else {
             return false;
@@ -506,7 +507,7 @@ impl QuantickApp {
                 }
             })
             .collect();
-        tab.deliver_ohlcv_slice(interval, bars, slice);
+        tab.deliver_ohlcv_slice(tab_id, interval, bars, slice);
         true
     }
 
@@ -686,7 +687,7 @@ impl QuantickApp {
                 if mode == StrategyDemoMode::AlarmSounds {
                     self.surfaces.strategy_popup.stage_sound_picker();
                 }
-                let tab = self.active_tab().id;
+                let tab = self.tabs.active_id();
                 self.surfaces
                     .strategy_popup
                     .open(tab, pane::PaneSide::Flow, drawing_id, form);

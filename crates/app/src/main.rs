@@ -6,6 +6,7 @@
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 
+use crate::ui_state::WorkspaceExt;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 

@@ -203,7 +203,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
     let focused_pane = tab.pane(focused_side);
     let pointer = visible_panes(tab).into_iter().find_map(|(pane, side)| {
         pane.control_pointer_hit()
-            .map(|hit| pointer_snapshot(app, tab, pane, side, hit))
+            .map(|hit| pointer_snapshot(app, app.control_tabs().active_id(), tab, pane, side, hit))
     });
     let pointer_availability = if pointer.is_some() {
         available()
@@ -211,7 +211,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
         unavailable("pointer_is_not_over_a_painted_chart")
     };
     CursorSnapshot {
-        active_tab_id: WireU64::new(tab.id),
+        active_tab_id: WireU64::new(app.control_tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: focused_side.into(),
         pointer,
@@ -222,6 +222,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
 
 fn pointer_snapshot(
     app: &QuantickApp,
+    tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
     side: PaneSide,
@@ -244,7 +245,7 @@ fn pointer_snapshot(
         .map(|drawing| drawing_hit_snapshot(pane, side, false, drawing))
         .or_else(|| shared_drawing_hit(tab, pane, side, pointer_position));
     PointerSnapshot {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         pane_id: WireU64::new(pane.id),
         pane_side: side.into(),
         pane_focused: tab.focused_side() == side,
@@ -290,7 +291,7 @@ pub(crate) fn selection_identity(app: &QuantickApp) -> SelectionIdentity {
     let focused_side = tab.focused_side();
     let drawing_pane = tab.pane(tab.drawing_side());
     SelectionIdentity {
-        active_tab_id: tab.id,
+        active_tab_id: app.control_tabs().active_id(),
         focused_pane_id: tab.pane(focused_side).id,
         focused_pane_side: focused_side,
         drawing: drawing_pane
@@ -320,7 +321,7 @@ pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
         })
         .map(|(index, drawing)| drawing_selection(drawing_pane, drawing_side, index, drawing));
     SelectionSnapshot {
-        active_tab_id: WireU64::new(tab.id),
+        active_tab_id: WireU64::new(app.control_tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: focused_side.into(),
         drawing,

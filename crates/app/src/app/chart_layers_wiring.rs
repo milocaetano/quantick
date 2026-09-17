@@ -78,20 +78,16 @@ impl QuantickApp {
     /// show whichever `tabs.iter()` reached last, which is tab order deciding
     /// in silence.
     pub(super) fn settle_paper_panels(&mut self, now: Instant) {
-        let Self {
-            tabs,
-            active_tab,
-            surfaces,
-            ..
-        } = self;
+        let Self { tabs, surfaces, .. } = self;
         let mut watched = None;
         let mut background = None;
+        let active_index = tabs.active_index();
         for (index, tab) in tabs.iter_mut().enumerate() {
             tab.paper.settle();
             let Some(message) = tab.paper.take_toast() else {
                 continue;
             };
-            if index == *active_tab {
+            if index == active_index {
                 watched = Some(message);
             } else if background.is_none() {
                 // The interpunct is the window's own separator — the status
@@ -142,15 +138,17 @@ impl QuantickApp {
     }
 
     pub(super) fn maintain_chart_layers(&mut self) {
-        let tab = &self.tabs[self.active_tab];
-        chart_layers::maintain(&mut self.workspace, tab.id, &tab.flow_pane, &self.style);
+        let tab_id = self.tabs.id_at(self.tabs.active_index());
+        let tab = &self.tabs[self.tabs.active_index()];
+        chart_layers::maintain(&mut self.workspace, tab_id, &tab.flow_pane, &self.style);
     }
 
     pub(super) fn restore_chart_layers(&mut self) {
+        let active_index = self.tabs.active_index();
         chart_layers::restore(
             &mut self.workspace,
             &mut self.tabs,
-            self.active_tab,
+            active_index,
             &mut self.style,
         );
     }

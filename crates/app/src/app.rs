@@ -18,6 +18,9 @@ use eframe::egui;
 
 use crate::canvas_layout::PaneIdAllocator;
 
+mod arrangement_adapter;
+pub(crate) mod arrangement_host;
+use arrangement_host::ArrangementHost;
 mod chart_layers_wiring;
 mod chrome;
 mod control_host;
@@ -196,13 +199,7 @@ pub struct QuantickApp {
     /// Retained trades are O(trades × panes × open tabs): every tab keeps its
     /// own history and a split tab keeps it twice. Nothing caps the count —
     /// the strip is as long as the user makes it.
-    tabs: Vec<Tab>,
-    /// Which of them is on screen. Every tab drains every frame; only this one
-    /// renders, and the chrome speaks for it.
-    active_tab: usize,
-    /// Handed out to new tabs and never reused, so a closed tab's ids can
-    /// never be mistaken for a living one's.
-    next_tab_id: u64,
+    tabs: ArrangementHost,
     /// The window chrome's transient state — see [`chrome::ChromeState`].
     chrome: chrome::ChromeState,
     /// The window's one source of pane ids. Pane ids namespace egui
@@ -288,6 +285,59 @@ struct TabSlot {
 }
 
 impl QuantickApp {
+    pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
+        arrangement_adapter::ArrangementAdapter {
+            tabs: &mut self.tabs,
+            config: &self.config,
+            style: &self.style,
+            pane_ids: &mut self.pane_ids,
+            workspace: &mut self.workspace,
+            indicators: &mut self.indicators,
+            harness: &self.harness,
+            toolrail: &mut self.toolrail,
+            tz: &mut self.tz,
+            dock: &mut self.dock,
+            show_perf: &mut self.health.show_perf,
+            record_deals: &mut self.chrome.record_deals,
+            history: &mut self.history,
+            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            toast: &mut self.surfaces.toast,
+        }
+    }
+    pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
+        arrangement_adapter::ArrangementRead {
+            tabs: &self.tabs,
+            config: &self.config,
+            toolrail: &self.toolrail,
+            tz: &self.tz,
+            dock: &self.dock,
+            show_perf: self.health.show_perf,
+            record_deals: self.chrome.record_deals,
+            history: &self.history,
+            drawing_chrome: &self.surfaces.drawing_chrome,
+        }
+    }
+
+    pub(crate) fn layout_state(&self) -> layout_wiring::LayoutRead<'_> {
+        layout_wiring::LayoutRead {
+            tabs: &self.tabs,
+            active: self.tabs.active_index(),
+            session: self.workspace.layouts().session(),
+        }
+    }
+    pub(crate) fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
+        layout_wiring::LayoutAdapter {
+            active: self.tabs.active_index(),
+            tabs: &mut self.tabs,
+            indicators: &mut self.indicators,
+            store: self.workspace.layouts_mut(),
+            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            toast: &mut self.surfaces.toast,
+            rename: &mut self.chrome.layout_rename,
+            delete_confirm: &mut self.chrome.layout_delete_confirm,
+        }
+    }
+
     /// Create the app on `config`, opening one tab on `feed_id`/`symbol`
     /// (already streaming through `feed`) and bar `spec`, with no saved
     /// workspace to restore.
@@ -347,10 +397,11 @@ impl QuantickApp {
             &state_path,
         );
         let mut pane_ids = PaneIdAllocator::new();
-        let loaded_layouts =
-            Self::load_layouts(&crate::layouts::default_path(), &state_file::default_path());
+        let loaded_layouts = layout_wiring::LayoutAdapter::load_layouts(
+            &crate::layouts::default_path(),
+            &state_file::default_path(),
+        );
         let mut tab = Tab::new(
-            FIRST_TAB_ID,
             pane_ids.alloc(),
             feed_id.into(),
             symbol.into(),
@@ -414,10 +465,8 @@ impl QuantickApp {
         let footprint_settings_path = crate::footprint_config::settings_path();
         let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
-            tabs: vec![tab],
-            active_tab: 0,
+            tabs: ArrangementHost::new(quantick_workspace::arrangement::TabId(FIRST_TAB_ID), tab),
             harness: Harness::from_env(),
-            next_tab_id: FIRST_TAB_ID + 1,
             chrome: chrome::ChromeState {
                 record_deals: None,
                 layout_picker_open: false,
@@ -527,20 +576,21 @@ impl QuantickApp {
         // chrome around them. After the config defaults (a saved cockpit is
         // the user's own answer to what a feed declares) and before the
         // autostart hooks, which are explicit requests for this one run.
-        app.restore_workspace(workspace);
+        app.arrangement_adapter().restore_workspace(workspace);
         // Every `QUANTICK_*` launch hook, applied to the built window in one
         // place with one name -- see `launch_hooks`, whose doc comment owns
         // the order they are read in.
         app.apply_launch_hooks();
         if let Some(notice) = crate::store_home::rescue_notice() {
-            app.tabs[0].paper.show_toast(notice);
+            app.tabs.runtime_mut(0).paper.show_toast(notice);
         }
         if let Some(summary) = consolidated
             && summary.imported() > 0
         {
             // A silent rescue would look like the app moved files on its
             // own; the toast says what happened and that copies were made.
-            app.tabs[0]
+            app.tabs
+                .runtime_mut(0)
                 .paper
                 .show_toast(crate::paper_home::import_toast(&summary));
         }
@@ -570,7 +620,7 @@ impl eframe::App for QuantickApp {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         // Whatever the debounce was still holding: a level drawn a moment
         // before closing is a level the trader expects back.
-        self.flush_layouts();
+        self.layout_adapter().flush_layouts();
         if let Some(access) = self.control.control_access.as_mut() {
             access.shutdown_for_exit();
         }

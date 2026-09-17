@@ -844,8 +844,35 @@ impl DrawingChromeSurface {
         self.inline.begin(tab, side, index, drawing)
     }
 
-    /// Close the editor, if one is open, and hand back what it owes the undo
-    /// history.
+    /// Commit the inline edit against its actual pane and synchronize its render suppression.
+    /// Both ordinary close and layout-swap shells use this same drawing operation.
+    pub(crate) fn commit_inline_text(
+        &mut self,
+        tabs: &mut crate::app::arrangement_host::ArrangementHost,
+    ) {
+        if let Some(edit) = self.end_inline_text_edit()
+            && let Some(tab) = tabs.by_id_mut(edit.tab)
+        {
+            tab.pane_mut(edit.side)
+                .drawings
+                .record_edit_of(edit.index, edit.before);
+        }
+        self.sync_content_editing(tabs);
+    }
+    pub(crate) fn sync_content_editing(
+        &self,
+        tabs: &mut crate::app::arrangement_host::ArrangementHost,
+    ) {
+        let editing = self.content_editing_target();
+        for (tab_id, tab) in tabs.iter_with_ids_mut() {
+            let target = editing
+                .filter(|(id, _, _)| *id == tab_id)
+                .map(|(_, side, index)| (side, index));
+            tab.set_content_editing(target);
+        }
+    }
+
+    /// Close the editor, if one is open, and return its undo record.
     pub fn end_inline_text_edit(&mut self) -> Option<DrawingEdit> {
         self.inline.end()
     }
@@ -904,7 +931,7 @@ impl DrawingChromeSurface {
         env: &DrawingEnv<'_>,
         tab: &crate::tab::Tab,
     ) -> DrawingChromeAsk {
-        self.quick_range.reconcile_panes(tab);
+        self.quick_range.reconcile_panes(env.tab, tab);
         self.quick_range.note_selection(
             env.pane_id,
             env.selected.as_ref().map(|selected| selected.drawing.id.0),

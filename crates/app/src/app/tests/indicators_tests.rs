@@ -1,4 +1,5 @@
 use super::*;
+use crate::indicators::state_file::SavedPlotStyleExt;
 
 fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
     let (mut app, _commands) = app_with_history(200);
@@ -211,13 +212,14 @@ fn opening_a_workspace_keeps_the_indicator_set_being_saved() {
     let file = crate::scratch::ScratchFile::new("app-persist", "workspace.qws.toml");
     app.export_workspace_to(&file);
     // A market the live tab is not on, so the import replaces the strip.
-    app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     app.import_workspace_from(&file);
 
     assert!(
         app.tabs
             .iter()
-            .all(|tab| tab.panes().all(|(pane, _)| pane.layout_seeded)),
+            .all(|tab| tab.panes().all(|(pane, _)| pane.layout_seeded())),
         "every pane of the imported strip carries the imported layout"
     );
     assert!(
@@ -273,9 +275,9 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
         ],
     );
 
-    app.reload_layouts(&[]);
+    app.layout_adapter().reload_layouts(&[]);
     assert_eq!(
-        app.layouts().active().name,
+        app.layout_state().layouts().active().name,
         "Layout 1",
         "the old set migrated into the first layout"
     );
@@ -309,7 +311,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     app.active_tab_mut().flow_pane.indicator_worker.flush();
     app.active_tab_mut().flow_pane.apply_indicator_events();
     app.maintain_indicator_state();
-    app.flush_layouts();
+    app.layout_adapter().flush_layouts();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
         panic!("the layouts file was written");
     };
@@ -353,28 +355,29 @@ fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
 fn both_panes_reopen_with_the_legend_the_trader_folded() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        vec![ui_state::SavedTab {
-            feed: "binance".to_owned(),
-            symbol: "TESTUSDT".to_owned(),
-            layout: crate::config::DeclaredLayout::TimeAndFlow,
-            split_fraction: Some(0.5),
-            context_collapsed: false,
-            focus: Some(ui_state::SavedFocus::Flow),
-            focus_slot: 0,
-            context_bars: vec![],
-            flow_layout: None,
-            context_layouts: vec![],
-            flow_bars: "tick:50".to_owned(),
-            time_bars: Some("time:1m".to_owned()),
-            flow_legend_collapsed: true,
-            time_legend_collapsed: true,
-        }],
-        None,
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.5),
+                context_collapsed: false,
+                focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "tick:50".to_owned(),
+                time_bars: Some("time:1m".to_owned()),
+                flow_legend_collapsed: true,
+                time_legend_collapsed: true,
+            }],
+            None,
+        ));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -392,7 +395,7 @@ fn both_panes_reopen_with_the_legend_the_trader_folded() {
 
     // The round trip closes here: what is captured next must be what was
     // restored, or the choice survives the open and dies on the save.
-    let (tabs, _chrome) = app.capture_arrangement();
+    let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
     assert!(tabs[0].flow_legend_collapsed);
     assert!(tabs[0].time_legend_collapsed);
 }
@@ -452,9 +455,9 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
 
     // Settled, the edited pane's set is the layout's.
     app.maintain_indicator_state();
-    assert_eq!(app.layouts().active().indicators.len(), 1);
+    assert_eq!(app.layout_state().layouts().active().indicators.len(), 1);
     assert_eq!(
-        app.layouts().active().indicators[0].kind,
+        app.layout_state().layouts().active().indicators[0].kind,
         crate::indicators::state_file::SavedKind::native("native.ema")
     );
 }
@@ -467,7 +470,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
 
-    let tab_id = app.active_tab().id;
+    let tab_id = app.tabs.active_id();
     let pane_id = app.active_tab().flow_pane.id;
     let cvd = app.active_tab().flow_pane.indicators.all()[0].slot;
     app.active_tab_mut()
@@ -480,8 +483,8 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
         assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
     }
-    assert!(app.layouts().active().indicators[0].mouse_vertical_line);
-    assert!(!app.layouts().active().indicators[1].mouse_vertical_line);
+    assert!(app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!app.layout_state().layouts().active().indicators[1].mouse_vertical_line);
 
     let result = app
         .control_action(
@@ -497,7 +500,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
         )
         .unwrap();
     assert_eq!(result["enabled"], false);
-    assert!(!app.layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!app.layout_state().layouts().active().indicators[0].mouse_vertical_line);
 }
 
 /// The four doors into the dialog have to be one door: whichever gesture a
@@ -668,7 +671,7 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
     assert_eq!(app.active_tab().focused_side(), PaneSide::Flow);
 
     let target = TabSlot {
-        tab: app.active_tab().id,
+        tab: app.tabs.active_id(),
         side: PaneSide::Time(0),
         slot,
     };
@@ -790,7 +793,7 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     );
 
     // The workspace remembers which of the two it was.
-    let (tabs, _chrome) = app.capture_arrangement();
+    let (tabs, _chrome) = app.arrangement_state().capture_arrangement();
     assert_eq!(tabs[0].focus, Some(ui_state::SavedFocus::Time));
     assert_eq!(tabs[0].focus_slot, 1, "the slot travels with the word");
 }
@@ -876,7 +879,7 @@ fn every_native_in_the_catalog_adds_and_registers_without_being_named_here() {
 
         app.maintain_indicator_state();
         assert_eq!(
-            app.layouts().active().indicators[0].kind,
+            app.layout_state().layouts().active().indicators[0].kind,
             crate::indicators::state_file::SavedKind::native(entry.id),
             "{} registered how it restores",
             entry.id
@@ -939,7 +942,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
             plot_styles: Vec::new(),
         }],
     );
-    app.reload_layouts(&[]);
+    app.layout_adapter().reload_layouts(&[]);
     settle_indicators(&mut app);
 
     assert_eq!(

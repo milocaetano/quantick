@@ -37,7 +37,9 @@ use crate::harness::DrawingsDemo;
 use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
+use crate::ui_state::WorkspaceExt;
 
+mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod chart_view_tests;
 mod control_plane_tests;
@@ -395,7 +397,8 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
     (app, cmd_rx)
 }
@@ -452,7 +455,6 @@ fn with_flow_pane<R>(
     let mut begin_text_edit = false;
     let QuantickApp {
         tabs,
-        active_tab,
         toolrail,
         drawing_presets,
         style,
@@ -462,9 +464,10 @@ fn with_flow_pane<R>(
         surfaces,
         ..
     } = app;
-    let tab = &mut tabs[*active_tab];
+    let tab_id = tabs.id_at(tabs.active_index());
+    let tab = tabs.runtime_mut(tabs.active_index());
     let mut chrome = pane::PaneChrome {
-        tab: tab.id,
+        tab: tab_id,
         side: pane::PaneSide::Flow,
         toolrail,
         presets: drawing_presets,
@@ -1381,7 +1384,7 @@ fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         symbol.to_owned(),
         FeedHandle {
@@ -2313,7 +2316,7 @@ fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
         .expect("the reviewed page limit fits in the wire integer");
     let (app, _commands) = app_with_history(max_page_items);
     let query = ChartWindowQuery {
-        tab_id: WireU64::new(app.active_tab().id),
+        tab_id: WireU64::new(app.tabs.active_id()),
         pane_id: WireU64::new(app.active_tab().flow_pane.id),
         range: ChartWindowRange::Slots {
             start_slot: WireU64::new(0),

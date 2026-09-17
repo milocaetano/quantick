@@ -32,6 +32,7 @@ use super::{DEMO_VISIBLE_SLOTS, QuantickApp};
 /// call sites draws the list, and building a row per object for the site that
 /// does not would be a per-frame allocation for a window nobody is looking at.
 fn drawing_env<'a>(
+    tab_id: u64,
     tab: &'a Tab,
     toolrail: &ToolRail,
     presets: &'a drawings::presets::PresetStore,
@@ -75,7 +76,7 @@ fn drawing_env<'a>(
         auto_range: pane.frame.auto_range,
         selected_bbox: read.selected_bbox,
         selected_band: read.selected_band,
-        tab: tab.id,
+        tab: tab_id,
         side,
         drawing_tool_armed: matches!(toolrail.tool(), Tool::Drawing(_)),
         toolbox_dock: toolrail.dock(),
@@ -155,7 +156,7 @@ impl QuantickApp {
         index: usize,
         before: drawings::Drawing,
     ) {
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+        if let Some(tab) = self.tabs.by_id_mut(tab_id) {
             tab.pane_mut(side).drawings.record_edit_of(index, before);
         }
     }
@@ -168,20 +169,16 @@ impl QuantickApp {
     /// then dropped every keystroke would be worse than none. The store command
     /// and the per-pane stand-down are the host's, so they happen here.
     pub fn begin_inline_text_edit(&mut self, index: usize) -> bool {
-        let Self {
-            tabs,
-            active_tab,
-            surfaces,
-            ..
-        } = self;
-        let tab = &tabs[*active_tab];
+        let Self { tabs, surfaces, .. } = self;
+        let tab_id = tabs.id_at(tabs.active_index());
+        let tab = &tabs[tabs.active_index()];
         let side = tab.drawing_side();
         let Some(drawing) = tab.pane(side).drawings.items().get(index) else {
             return false;
         };
         if !surfaces
             .drawing_chrome
-            .begin_inline_text_edit(tab.id, side, index, drawing)
+            .begin_inline_text_edit(tab_id, side, index, drawing)
         {
             return false;
         }
@@ -194,10 +191,9 @@ impl QuantickApp {
     /// edit it was — on the pane the note actually lives on, which is not
     /// necessarily the one in front when it closes.
     pub(super) fn end_inline_text_edit(&mut self) {
-        if let Some(edit) = self.surfaces.drawing_chrome.end_inline_text_edit() {
-            self.record_drawing_edit(edit.tab, edit.side, edit.index, edit.before);
-        }
-        self.sync_content_editing();
+        self.surfaces
+            .drawing_chrome
+            .commit_inline_text(&mut self.tabs);
     }
 
     /// Tell every pane whether one of its objects is having its content typed
@@ -207,13 +203,9 @@ impl QuantickApp {
     /// object's own painting, and a pane left holding a stale index would keep
     /// a note invisible for the rest of the session with no way back.
     pub(super) fn sync_content_editing(&mut self) {
-        let editing = self.surfaces.drawing_chrome.content_editing_target();
-        for tab in &mut self.tabs {
-            let target = editing
-                .filter(|(id, _, _)| *id == tab.id)
-                .map(|(_, side, index)| (side, index));
-            tab.set_content_editing(target);
-        }
+        self.surfaces
+            .drawing_chrome
+            .sync_content_editing(&mut self.tabs);
     }
 
     /// Which note is being typed on the chart right now — what a second
@@ -350,15 +342,20 @@ impl QuantickApp {
         let Self {
             surfaces,
             tabs,
-            active_tab,
             toolrail,
             drawing_presets,
             ..
         } = self;
-        let env = drawing_env(&tabs[*active_tab], toolrail, drawing_presets, read);
+        let env = drawing_env(
+            tabs.active_id(),
+            &tabs[tabs.active_index()],
+            toolrail,
+            drawing_presets,
+            read,
+        );
         surfaces
             .drawing_chrome
-            .draw_pass(ctx, &env, &tabs[*active_tab], floating)
+            .draw_pass(ctx, &env, &tabs[tabs.active_index()], floating)
     }
 
     /// The `QUANTICK_TEXT_NOTE` hook's other half: place a note in the middle

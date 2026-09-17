@@ -9,22 +9,18 @@
 //! stores, the pickers and the one acknowledgement lane — `note_workspace`
 //! — and because nothing outside the window calls any of them.
 
+use crate::ui_state::WorkspaceExt;
 use std::time::Instant;
 
 use eframe::egui;
 
 use crate::drawings;
-use crate::indicator_worker::{IndicatorCommand, SlotId};
 use crate::indicators::preset_file;
 use crate::symbols_file;
-use crate::tab::{CanvasLayout, LegendFold};
-use crate::timezone::TzOffset;
 use crate::ui_state;
 use crate::workspace_store::WorkspacePick;
 
-use quantick_feed::history_reach;
-
-use super::{QuantickApp, saved_context_intervals};
+use super::QuantickApp;
 
 impl QuantickApp {
     /// The window as it stands, in the form the workspace file records.
@@ -35,11 +31,11 @@ impl QuantickApp {
     /// be a dozen chances to forget. Saving is rare and event-driven, so
     /// reading them all at once costs nothing anyone can see.
     pub(super) fn capture_workspace(&self) -> ui_state::Workspace {
-        let (tabs, chrome) = self.capture_arrangement();
+        let (tabs, chrome) = self.arrangement_state().capture_arrangement();
         ui_state::Workspace::new(
             self.workspace.session().save_on_exit(),
             self.chrome.window_size,
-            self.active_tab,
+            self.tabs.active_index(),
             tabs,
             Some(chrome),
         )
@@ -72,123 +68,6 @@ impl QuantickApp {
             .iter()
             .map(|tool| tool.id().to_owned())
             .collect()
-    }
-
-    /// Put the chrome back — the mirror of the [`Self::capture_arrangement`]
-    /// half that produced it.
-    ///
-    /// One function because there are two callers and no way for the compiler
-    /// to notice when only one of them learns a new field: the startup
-    /// workspace and a named bookmark describe the same thing, and
-    /// [`ui_state::NamedArrangement`] says so in as many words. Restoring them
-    /// through two copies of the same eight lines is how a field comes to
-    /// persist but never come back from a bookmark — a bug with no compile
-    /// error behind it.
-    ///
-    /// The starred tools are the one thing it does not speak for: they live at
-    /// the file's own level rather than inside an arrangement
-    /// ([`ui_state::Workspace::favorite_tools`]), precisely so that opening a
-    /// bookmark cannot rearrange the rail the trader curated.
-    pub(super) fn restore_chrome(&mut self, chrome: &ui_state::SavedChrome) {
-        self.tz = TzOffset::new(chrome.timezone_minutes);
-        self.dock
-            .restore(chrome.dock_visible, chrome.dock_tab.map(Into::into));
-        self.toolrail.set_dock(chrome.rail_dock.into());
-        self.toolrail.set_visible(chrome.rail_visible);
-        self.health.show_perf = chrome.perf_readings;
-        self.chrome.record_deals = chrome.record_deals;
-        self.history.progressive_history = chrome.progressive_history;
-        // A token this release does not know keeps the reach it had — the
-        // default on startup, whatever the trader picked when a bookmark is
-        // opened mid-session. Never a silent fallback to something else: the
-        // reach decides how much a press fetches.
-        if let Some(reach) = chrome
-            .history_reach
-            .as_deref()
-            .and_then(history_reach::HistoryReach::from_token)
-        {
-            self.history.history_reach = reach;
-        }
-        // Through the setter, so a hand-edited workspace cannot restore a span
-        // the campaign could never reach.
-        if let Some(minutes) = chrome.history_reach_span_minutes {
-            self.set_history_reach_span_minutes(minutes);
-        }
-        self.history.venue_lead_in = chrome.venue_lead_in;
-        self.surfaces
-            .drawing_chrome
-            .restore_inspector_position(chrome.inspector_position);
-    }
-
-    /// The tabs and the chrome as they stand — the part a startup workspace
-    /// and a named one describe identically, so both capture through here.
-    pub(super) fn capture_arrangement(&self) -> (Vec<ui_state::SavedTab>, ui_state::SavedChrome) {
-        let tabs = self
-            .tabs
-            .iter()
-            .map(|tab| ui_state::SavedTab {
-                feed: tab.feed_id.clone(),
-                symbol: tab.symbol.clone(),
-                layout: tab.layout.into(),
-                split_fraction: Some(tab.split_fraction),
-                context_collapsed: tab.context_collapsed,
-                focus: Some(ui_state::SavedFocus::from_side(tab.focused_side()).0),
-                focus_slot: ui_state::SavedFocus::from_side(tab.focused_side()).1,
-                flow_bars: tab.flow_pane.state.spec().to_config_string(),
-                // Only a pane that exists has an interval worth recording; a
-                // tab that never showed the split restores on the default,
-                // which is what it had.
-                time_bars: tab
-                    .time_pane()
-                    .map(|pane| pane.state.spec().to_config_string()),
-                context_bars: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| pane.state.spec().to_config_string())
-                    .collect(),
-                flow_layout: tab.flow_pane.layout.map(|layout| layout.0),
-                context_layouts: tab
-                    .time_panes
-                    .iter()
-                    .map(|pane| {
-                        pane.layout
-                            .map_or(crate::ui_state::LAYOUT_UNRECORDED, |layout| layout.0)
-                    })
-                    .collect(),
-                flow_legend_collapsed: tab.flow_pane.legend_collapsed,
-                // A tab with no time pane has no second legend, and `false`
-                // is what it will restore into when one is opened: a pane
-                // that never existed cannot have been folded.
-                time_legend_collapsed: tab.time_pane().is_some_and(|pane| pane.legend_collapsed),
-            })
-            .collect();
-        let chrome = ui_state::SavedChrome {
-            timezone_minutes: self.tz.minutes(),
-            dock_visible: self.dock.visible(),
-            dock_tab: self.dock.tab().map(Into::into),
-            rail_visible: self.toolrail.visible(),
-            rail_dock: self.toolrail.dock().into(),
-            perf_readings: self.health.show_perf,
-            // Never written any more: the stars are a standing choice and live
-            // at the top of the file. An arrangement that carried a copy would
-            // be an arrangement that could overwrite them on open.
-            legacy_favorite_tools: Vec::new(),
-            record_deals: self.chrome.record_deals,
-            progressive_history: self.history.progressive_history,
-            // The default writes no key: a workspace that says nothing about
-            // the reach restores the press the button has always had, which is
-            // exactly what the default is.
-            // Written whenever it differs from what the config seeds, so a
-            // workspace only carries an opinion its owner actually formed.
-            history_reach_span_minutes: (self.history.history_reach_span_minutes
-                != self.config.history.reach_span_minutes)
-                .then_some(self.history.history_reach_span_minutes),
-            history_reach: (self.history.history_reach != history_reach::HistoryReach::default())
-                .then(|| self.history.history_reach.token().to_owned()),
-            venue_lead_in: self.history.venue_lead_in,
-            inspector_position: self.surfaces.drawing_chrome.remembered_inspector_position(),
-        };
-        (tabs, chrome)
     }
 
     /// Ask the operating system where to put a workspace file, off the UI
@@ -300,7 +179,7 @@ impl QuantickApp {
         // The layouts file is written debounced, off the frame path. An
         // export is the one moment worth paying it immediately, or the
         // bundle would carry the layouts as they stood a second ago.
-        self.flush_layouts();
+        self.layout_adapter().flush_layouts();
         self.maintain_chart_layers();
     }
 
@@ -367,7 +246,7 @@ impl QuantickApp {
     pub(super) fn import_workspace_from(&mut self, path: &std::path::Path) {
         // What the debounce still holds is written first, or a bundle with no
         // layouts section would reload a file a second behind the screen.
-        self.flush_layouts();
+        self.layout_adapter().flush_layouts();
         let outcome = crate::workspace_bundle::read(path).and_then(|bundle| {
             crate::workspace_bundle::apply(
                 &bundle,
@@ -442,12 +321,12 @@ impl QuantickApp {
         // to be looking at, or on its time pane.
         let workspace =
             ui_state::load(self.workspace.ui_state_path()).restore(&self.config.clone());
-        self.restore_workspace(workspace);
+        self.arrangement_adapter().restore_workspace(workspace);
         self.restore_chart_layers();
 
         // The layouts come last, once the tabs are the imported ones: every
         // pane is stripped and re-seeded from the imported file.
-        self.reload_layouts(imported);
+        self.layout_adapter().reload_layouts(imported);
     }
 
     /// Work out which remembered workspace files are still there.
@@ -459,43 +338,6 @@ impl QuantickApp {
     pub(super) fn refresh_recent_workspaces(&mut self) {
         let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
         self.workspace.session_mut().set_recent_on_disk(existing);
-    }
-
-    /// Take every indicator off every pane.
-    ///
-    /// Straight off each pane's own collection rather than by walking
-    /// `slot_kinds`: that list is bookkeeping for the state *file*, and an
-    /// indicator can be on a pane without being in it — the autostart hooks
-    /// add without registering, and `forget_last_indicator_state_change` pops
-    /// an entry while leaving the indicator on screen. Clearing the list
-    /// would have left those behind for the imported set to stack on top of.
-    pub(super) fn clear_indicators(&mut self) {
-        /// Empty one pane, view and worker alike.
-        fn strip(pane: &mut crate::pane::ChartPane) {
-            let slots: Vec<SlotId> = pane.indicators.all().iter().map(|view| view.slot).collect();
-            for slot in slots {
-                pane.indicators.remove(slot);
-                pane.indicator_worker.send(IndicatorCommand::Remove(slot));
-            }
-        }
-        for tab in &mut self.tabs {
-            // Every pane the tab holds, not the two it used to. `panes_mut`
-            // rather than `pane_mut(Time)`: the latter falls back to the flow
-            // pane when a tab was never split, which would strip it twice, and
-            // it stops at the *first* context chart — so the second stacked
-            // chart kept its indicators while `slot_kinds` was cleared out from
-            // under them, and the imported set stacked on top.
-            for pane in tab.panes_mut() {
-                strip(pane);
-            }
-        }
-        self.indicators.slot_kinds.clear();
-        self.indicators.operator_slots.clear();
-        self.indicators.script_files.clear();
-        self.indicators.pending_hidden.clear();
-        self.indicators.pending_styles.clear();
-        self.indicators.pending_mouse_vertical_lines.clear();
-        self.mark_indicator_state_dirty();
     }
 
     /// Show the trader where the cockpit is kept, and open it.
@@ -779,11 +621,11 @@ impl QuantickApp {
             self.note_workspace("A workspace needs a name".to_owned());
             return;
         };
-        let (tabs, chrome) = self.capture_arrangement();
+        let (tabs, chrome) = self.arrangement_state().capture_arrangement();
         let entry = ui_state::NamedArrangement {
             name: name.clone(),
             window: self.chrome.window_size,
-            active_tab: self.active_tab,
+            active_tab: self.tabs.active_index(),
             tabs,
             chrome: Some(chrome),
         };
@@ -821,98 +663,6 @@ impl QuantickApp {
         } else {
             format!("\"{name}\" could not be saved — see the log")
         });
-    }
-
-    /// Put the window back the way the bookmark called `name` recorded it.
-    ///
-    /// The saved markets are opened as new tabs and the tabs that were on
-    /// screen are closed afterwards, rather than the reverse: `close_tab`
-    /// refuses to close the last tab — a window with no market has nothing to
-    /// draw — so growing before shrinking is what lets the whole strip be
-    /// replaced. Closing goes through the same path a `Ctrl+W` takes, so a
-    /// simulated position ends in the labeled, journaled flatten the
-    /// paper-trading contract promises instead of vanishing with its tab.
-    ///
-    /// The startup workspace is left alone. Opening a bookmark is a thing you
-    /// do to *this session*; making it the opening screen is `Save workspace`,
-    /// one entry above.
-    pub(super) fn open_named_workspace(&mut self, name: &str) {
-        let Some(entry) = self
-            .workspace
-            .session()
-            .bookmarks()
-            .iter()
-            .find(|held| held.name == name)
-            .cloned()
-        else {
-            self.note_workspace(format!("No workspace called \"{name}\""));
-            return;
-        };
-        if entry.tabs.is_empty() {
-            // `restore` drops empty bookmarks at load, so this is only
-            // reachable from a file edited under a running app.
-            self.note_workspace(format!("\"{name}\" has no market left to open"));
-            return;
-        }
-        let replaced = self.tabs.len();
-        for saved in &entry.tabs {
-            self.open_tab(
-                saved.feed.clone(),
-                saved.symbol.clone(),
-                quantick_engine::bar_registry::BUILTIN_BARS
-                    .parse(&saved.flow_bars)
-                    .ok(),
-            );
-            let context_intervals =
-                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
-            let opened = self.tabs.len() - 1;
-            self.tabs[opened].restore_canvas(
-                CanvasLayout::from(saved.layout),
-                saved.split_fraction,
-                saved.context_collapsed,
-                saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
-                &context_intervals,
-                LegendFold {
-                    flow: saved.flow_legend_collapsed,
-                    time: saved.time_legend_collapsed,
-                },
-            );
-            self.tabs[opened].set_opening_layouts(saved.flow_layout, &saved.context_layouts);
-        }
-        for _ in 0..replaced {
-            self.close_tab(0);
-        }
-        // The pinned section is deliberately untouched: the stars live beside
-        // the chrome rather than inside it, and [`Self::restore_chrome`] does
-        // not speak for them. A bookmark rearranges the cockpit; the tools the
-        // trader keeps at hand are not part of the arrangement, and a bookmark
-        // named before they starred anything used to wipe the rail on open.
-        if let Some(chrome) = &entry.chrome {
-            self.restore_chrome(chrome);
-        }
-        self.active_tab = entry.active_tab.min(self.tabs.len().saturating_sub(1));
-        let config = self.config.clone();
-        self.active_tab_mut().refresh_chip_label(&config);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_NAMED_OPENED",
-            name = %name,
-            tabs = self.tabs.len(),
-            closed = replaced,
-            active = self.active_tab,
-            action = "replace_tab_strip",
-            "named workspace opened"
-        );
-        self.note_workspace(format!(
-            "Opened \"{name}\" — {} {}",
-            self.tabs.len(),
-            if self.tabs.len() == 1 {
-                "chart tab"
-            } else {
-                "chart tabs"
-            }
-        ));
     }
 
     /// Forget the bookmark called `name`. The window on screen is untouched —

@@ -161,9 +161,10 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         .is_some_and(|tab| tab.history_reach_running());
     WorkspaceSnapshot {
         active_tab_index: wire_usize(active_index),
-        active_tab_id: tabs
-            .get(active_index)
-            .map_or_else(|| WireU64::new(0), |tab| WireU64::new(tab.id)),
+        active_tab_id: tabs.get(active_index).map_or_else(
+            || WireU64::new(0),
+            |_| WireU64::new(tabs.id_at(active_index)),
+        ),
         timezone_offset_minutes: timezone.minutes(),
         timezone_label: timezone.label(),
         layouts: super::layout::layout_tabs(app),
@@ -193,7 +194,9 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
                             pane_id: WireU64::new(pane.id),
                             side: side.into(),
                             pane_index: wire_usize(side.index()),
-                            layout_id: WireU64::new(app.pane_layout(tab.id, side).0),
+                            layout_id: WireU64::new(
+                                app.layout_state().pane_layout(tabs.id_at(index), side).0,
+                            ),
                             visible: active && visible,
                             focused: active && focused == side,
                         }
@@ -201,7 +204,7 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
                     .collect();
                 WorkspaceTab {
                     index: wire_usize(index),
-                    tab_id: WireU64::new(tab.id),
+                    tab_id: WireU64::new(tabs.id_at(index)),
                     label: tab.chip_label().to_owned(),
                     feed_id: tab.feed_id.clone(),
                     symbol: tab.symbol.clone(),

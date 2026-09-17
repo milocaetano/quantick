@@ -145,7 +145,8 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     let live_before = app.active_tab().live_trades;
     let lag_before = app.active_tab().latest_trade_latency_ms;
@@ -159,7 +160,8 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), recovered.clone()]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     let tab = app.active_tab();
     assert_eq!(
@@ -186,7 +188,8 @@ fn a_simulated_buy_fills_from_the_next_live_print_only() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(app.active_tab().paper.ready(), "backfill seeds the mark");
     assert!(
         app.active_tab().paper.status_cell().is_none(),
@@ -199,7 +202,8 @@ fn a_simulated_buy_fills_from_the_next_live_print_only() {
         "a queued market order is visible state"
     );
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app
         .active_tab()
         .paper
@@ -230,10 +234,12 @@ fn the_toolbar_close_action_exits_the_open_position() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app.active_tab().paper.status_cell().expect("open");
     assert!(text.contains("LONG"), "the cell names the side: {text}");
     assert!(
@@ -243,7 +249,8 @@ fn the_toolbar_close_action_exits_the_open_position() {
 
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.position_summary().is_none(),
         "the close filled at the next print"
@@ -273,13 +280,16 @@ fn a_source_reset_flattens_the_simulated_position_and_journals_it() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
 
     evt_tx.try_send(FeedEvent::Reset).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.status_cell().is_some(),
         "the realized history keeps the cell alive"
@@ -305,7 +315,8 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
         .unwrap();
     let clock_calls = Cell::new(0_u32);
 
-    app.active_tab_mut().drain_feed_with_clock(|| {
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || {
         clock_calls.set(clock_calls.get() + 1);
         received_at_ms
     });
@@ -1140,7 +1151,8 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
             trade(18),
         ]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     // A resting buy limit in the middle of the backfilled price range,
     // so its line and tag are on screen.
     let price = Decimal::new(1005, 1);
@@ -1202,7 +1214,8 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
             trade(18),
         ]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let price = Decimal::new(1005, 1);
     app.active_tab_mut()
         .paper
@@ -1455,13 +1468,14 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
 
     // A workspace written on a much larger monitor.
     let parked = [2_400.0, 1_500.0];
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        Vec::new(),
-        Some(chrome_with_popup_at(Some(parked))),
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            Vec::new(),
+            Some(chrome_with_popup_at(Some(parked))),
+        ));
     app.surfaces.drawing_chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
@@ -1952,7 +1966,8 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     let (mut app, _commands) = app_with_history(50);
     assert!(app.surfaces.toast.message().is_none());
 
-    app.tabs[0]
+    app.tabs
+        .runtime_mut(0)
         .paper
         .show_toast("SIM: dropped at the fill - no bid".to_owned());
     app.settle_paper_panels(Instant::now());
@@ -1974,7 +1989,10 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
 #[test]
 fn a_paper_acknowledgement_is_handed_over_once() {
     let (mut app, _commands) = app_with_history(50);
-    app.tabs[0].paper.show_toast("SIM: flat".to_owned());
+    app.tabs
+        .runtime_mut(0)
+        .paper
+        .show_toast("SIM: flat".to_owned());
     app.settle_paper_panels(Instant::now());
     app.surfaces.toast.clear();
     app.settle_paper_panels(Instant::now());
@@ -2300,10 +2318,12 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
     ends.events
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.status_cell().is_some(),
         "this proof needs an open simulated position to lose"

@@ -92,6 +92,7 @@ impl Tab {
     /// the split one.
     pub fn draw_canvas(
         &mut self,
+        tab_id: u64,
         ui: &mut egui::Ui,
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
@@ -292,7 +293,7 @@ impl Tab {
                 focused,
             );
             let mut chrome = PaneChrome {
-                tab: self.id,
+                tab: tab_id,
                 side: PaneSide::Flow,
                 toolrail: chrome.toolrail,
                 presets: chrome.presets,
@@ -377,16 +378,16 @@ impl Tab {
         }
 
         if let Some(rail) = collapsed_rail {
-            self.draw_collapsed_rail(ui, rail, area.width());
+            self.draw_collapsed_rail(tab_id, ui, rail, area.width());
         }
         if time_area.is_some() {
-            self.draw_context_dividers(ui, &context_dividers);
+            self.draw_context_dividers(tab_id, ui, &context_dividers);
         }
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
         let drawn_width = divider.center().x - area.left();
-        self.draw_canvas_divider(ui, divider, drawn_width, area.width());
+        self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
@@ -586,7 +587,13 @@ impl Tab {
     /// chart beside it where it costs nothing but the pointer's first few
     /// pixels. A rail that photographed well but could not be hit would be a
     /// picture of an affordance rather than one.
-    fn draw_collapsed_rail(&mut self, ui: &egui::Ui, rail: egui::Rect, canvas_width: f32) {
+    fn draw_collapsed_rail(
+        &mut self,
+        tab_id: u64,
+        ui: &egui::Ui,
+        rail: egui::Rect,
+        canvas_width: f32,
+    ) {
         #[cfg(test)]
         {
             self.collapsed_rail = Some(rail);
@@ -613,7 +620,7 @@ impl Tab {
         let response = ui
             .interact(
                 hit,
-                egui::Id::new(("canvas_divider", self.id)),
+                egui::Id::new(("canvas_divider", tab_id)),
                 egui::Sense::drag(),
             )
             .on_hover_text("drag right to show the timeframe charts again");
@@ -645,6 +652,7 @@ impl Tab {
     /// divider does inside a pane.
     fn draw_canvas_divider(
         &mut self,
+        tab_id: u64,
         ui: &egui::Ui,
         divider: egui::Rect,
         drawn_width: f32,
@@ -662,7 +670,7 @@ impl Tab {
         // next tab's the moment Ctrl+Tab switches under a held button.
         let handle = ui.interact(
             divider.expand2(egui::vec2(CANVAS_DIVIDER_HANDLE_PX, 0.0)),
-            egui::Id::new(("canvas_divider", self.id)),
+            egui::Id::new(("canvas_divider", tab_id)),
             egui::Sense::drag(),
         );
         if handle.hovered() || handle.dragged() {
@@ -710,7 +718,7 @@ impl Tab {
     /// Each drag moves one boundary, so the chart above and the chart below
     /// exchange height while every other boundary stays put. Registered after
     /// the pane bodies so a resize wins over the chart pan beneath its handle.
-    fn draw_context_dividers(&mut self, ui: &egui::Ui, dividers: &[egui::Rect]) {
+    fn draw_context_dividers(&mut self, tab_id: u64, ui: &egui::Ui, dividers: &[egui::Rect]) {
         #[cfg(test)]
         self.context_dividers.extend(dividers.iter().copied());
 
@@ -721,7 +729,7 @@ impl Tab {
                 divider.expand2(egui::vec2(0.0, CANVAS_DIVIDER_HANDLE_PX)),
                 egui::Id::new((
                     "context_divider",
-                    self.id,
+                    tab_id,
                     self.time_panes[index].id,
                     self.time_panes[index + 1].id,
                 )),
@@ -734,6 +742,7 @@ impl Tab {
                 && let Some(pointer) = ui.ctx().pointer_interact_pos()
             {
                 let _ = self.resize_context_pair(
+                    tab_id,
                     super::context_resize::ResizeContextPair {
                         upper_pane_id: self.time_panes[index].id,
                         lower_pane_id: self.time_panes[index + 1].id,

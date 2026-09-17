@@ -31,7 +31,7 @@ impl ChartPane {
             side: chrome.side,
             pane: self.id,
             revision: self.pagination_revision(),
-            layout: self.layout.map(|id| id.0),
+            layout: self.layout_id().map(|id| id.0),
         };
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         let area = quantick_chart_interaction::quick_range::GestureArea {
@@ -128,7 +128,7 @@ impl ChartPane {
             side: chrome.side,
             pane: self.id,
             revision: self.pagination_revision(),
-            layout: self.layout.map(|id| id.0),
+            layout: self.layout_id().map(|id| id.0),
         };
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         #[cfg(feature = "quick-range-harness")]

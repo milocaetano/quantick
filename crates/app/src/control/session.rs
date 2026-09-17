@@ -316,9 +316,9 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// book — the same reasoning `health.rs` applies to its frame averages.
 fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
     app.control_tabs()
-        .iter()
-        .map(|tab| SessionRevisionKey {
-            tab_id: tab.id,
+        .iter_with_ids()
+        .map(|(tab_id, tab)| SessionRevisionKey {
+            tab_id,
             // The paper scope names the market its rows belong to, and a tab
             // can be pointed at another one without touching the ledger.
             symbol: tab.symbol.clone(),
@@ -408,9 +408,9 @@ fn replay_snapshot(app: &QuantickApp) -> ReplaySnapshot {
     ReplaySnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabReplaySnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabReplaySnapshot {
+                tab_id: WireU64::new(tab_id),
                 replaying: tab.replay.is_some(),
                 session: tab.replay.as_ref().map(replay_session_snapshot),
             })
@@ -467,11 +467,15 @@ fn replay_session_snapshot(link: &quantick_feed::replay::ReplayLink) -> ReplaySe
 
 fn paper_snapshot(app: &QuantickApp) -> PaperSnapshot {
     PaperSnapshot {
-        tabs: app.control_tabs().iter().map(tab_paper_snapshot).collect(),
+        tabs: app
+            .control_tabs()
+            .iter_with_ids()
+            .map(|(id, tab)| tab_paper_snapshot(id, tab))
+            .collect(),
     }
 }
 
-fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
+fn tab_paper_snapshot(tab_id: u64, tab: &Tab) -> TabPaperSnapshot {
     let orders = tab.paper.account().working_orders();
     let trades = tab.paper.account().session_trades();
     // The ledger is read from its end, so a truncated page keeps the newest
@@ -489,7 +493,7 @@ fn tab_paper_snapshot(tab: &Tab) -> TabPaperSnapshot {
         _ => None,
     };
     TabPaperSnapshot {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         symbol: tab.symbol.clone(),
         provenance: PAPER_PROVENANCE.to_owned(),
         flat: tab.paper.account().is_flat(),

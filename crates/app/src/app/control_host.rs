@@ -68,7 +68,7 @@ pub(crate) fn control_quick_range(
     app.surfaces
         .drawing_chrome
         .quick_range
-        .control(app.tabs[app.active_tab].id)
+        .control(app.tabs.id_at(app.tabs.active_index()))
 }
 
 /// All drawing actions in the temporary range's visible action bar.
@@ -78,7 +78,7 @@ pub(crate) fn control_quick_range_actions(
     app.surfaces
         .drawing_chrome
         .quick_range
-        .controls(app.tabs[app.active_tab].id)
+        .controls(app.tabs.id_at(app.tabs.active_index()))
 }
 
 impl QuantickApp {
@@ -87,17 +87,20 @@ impl QuantickApp {
     /// Split here, once, because almost every tab operation needs both and
     /// `self.tabs[i].f(&self.config)` is a borrow error at every call site.
     pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
-        (&mut self.tabs[self.active_tab], &self.config)
+        (
+            self.tabs.runtime_mut(self.tabs.active_index()),
+            &self.config,
+        )
     }
 
     /// The tab on screen.
     pub(super) fn active_tab(&self) -> &Tab {
-        &self.tabs[self.active_tab]
+        &self.tabs[self.tabs.active_index()]
     }
 
     /// See [`Self::active_tab`].
     pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.active_tab]
+        self.tabs.runtime_mut(self.tabs.active_index())
     }
 
     /// Read-only application roots available to the on-demand control
@@ -144,21 +147,25 @@ impl QuantickApp {
         // `trade.*` call must answer "this window has no chart open" rather
         // than panic the whole trading application, and it must resolve the
         // *same* tab its own read-back resolves.
-        self.tabs.get_mut(self.active_tab).map(|tab| &mut tab.paper)
+        self.tabs
+            .get_mut(self.tabs.active_index())
+            .map(|tab| &mut tab.paper)
     }
 
     /// The read side of [`Self::control_active_paper_mut`], resolved the same
     /// way so a call and its read-back can never name different tabs.
     pub(crate) fn control_active_paper(&self) -> Option<&crate::paper_trading::PaperTrading> {
-        self.tabs.get(self.active_tab).map(|tab| &tab.paper)
+        self.tabs
+            .get(self.tabs.active_index())
+            .map(|tab| &tab.paper)
     }
 
-    pub(crate) fn control_tabs(&self) -> &[Tab] {
+    pub(crate) fn control_tabs(&self) -> &crate::app::arrangement_host::ArrangementHost {
         &self.tabs
     }
 
     pub(crate) fn control_active_tab_index(&self) -> usize {
-        self.active_tab
+        self.tabs.active_index()
     }
 
     /// Open the assistant's popup. One at a time: a second message replaces
@@ -193,7 +200,7 @@ impl QuantickApp {
         tab_index: usize,
         side: crate::pane::PaneSide,
     ) -> &mut ChartPane {
-        self.tabs[tab_index].pane_mut(side)
+        self.tabs.runtime_mut(tab_index).pane_mut(side)
     }
 
     /// What a freshly placed object of `tool` opens with, through the same
@@ -224,7 +231,7 @@ impl QuantickApp {
         layer: crate::chart_layers::ChartLayer,
         visible: bool,
     ) {
-        self.tabs[tab].pane_mut(side).set_layer_visible(
+        self.tabs.runtime_mut(tab).pane_mut(side).set_layer_visible(
             layer,
             visible,
             &mut self.workspace.layers_mut().actions,
@@ -268,7 +275,7 @@ impl QuantickApp {
     /// Whether the recovery popup that chip opens is showing, on the chart
     /// the trader is looking at.
     pub(crate) fn control_feed_popup_open(&self) -> bool {
-        self.chrome.feed_popup_tab == Some(self.active_tab().id)
+        self.chrome.feed_popup_tab == Some(self.tabs.active_id())
     }
 
     /// The right-hand dock: whether it is shown, and which tab is open.
@@ -308,8 +315,7 @@ impl QuantickApp {
     /// anyway, so accepting a larger number would be promising a reach the
     /// budgets forbid.
     pub(crate) fn set_history_reach_span_minutes(&mut self, minutes: u32) {
-        let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
-        self.history.history_reach_span_minutes = minutes.clamp(1, ceiling);
+        self.history.set_span_minutes(minutes);
     }
 
     /// What that span is now, for an operator reading back what it set.
@@ -362,7 +368,9 @@ impl QuantickApp {
     /// every pane one can reach — an assistant may annotate any open tab, so
     /// counting the active pane alone would offer to take back a subset and
     /// call it all of them.
-    pub(super) fn authored_object_count(tabs: &[Tab]) -> usize {
+    pub(super) fn authored_object_count(
+        tabs: &crate::app::arrangement_host::ArrangementHost,
+    ) -> usize {
         tabs.iter()
             .map(|tab| {
                 tab.panes()
@@ -377,7 +385,7 @@ impl QuantickApp {
     /// the objects they were anchored to.
     pub(super) fn remove_every_authored_object(&mut self) -> usize {
         let mut removed = 0;
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             // Every pane the tab holds, not the two it used to. "Remove
             // objects placed for you" promises to take them *all* back, and a
             // sweep that skipped the second stacked chart would leave an

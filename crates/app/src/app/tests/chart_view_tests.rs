@@ -322,7 +322,8 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
     assert!(held > 0, "the chart has something to lose");
 
@@ -678,28 +679,29 @@ fn candle_appearance_change_is_render_only() {
 #[test]
 fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
     let (mut app, _commands) = app_with_history(50);
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        vec![ui_state::SavedTab {
-            feed: "binance".to_owned(),
-            symbol: "TESTUSDT".to_owned(),
-            layout: crate::config::DeclaredLayout::Flow,
-            split_fraction: None,
-            context_collapsed: false,
-            focus: None,
-            focus_slot: 0,
-            context_bars: vec![],
-            flow_layout: None,
-            context_layouts: vec![],
-            flow_bars: "tick:377".to_owned(),
-            time_bars: None,
-            flow_legend_collapsed: false,
-            time_legend_collapsed: false,
-        }],
-        None,
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::Flow,
+                split_fraction: None,
+                context_collapsed: false,
+                focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "tick:377".to_owned(),
+                time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+            }],
+            None,
+        ));
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
     assert_eq!(

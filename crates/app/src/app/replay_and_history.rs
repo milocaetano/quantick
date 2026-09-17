@@ -207,8 +207,9 @@ impl QuantickApp {
             // and answered empty, which is not what the hook is for.
             return;
         }
+        let tab_id = self.tabs.active_id();
         let (tab, config) = self.active_with_config();
-        tab.request_older_history(config);
+        tab.request_older_history(tab_id, config);
         self.harness.load_older_page_sent();
     }
 
@@ -280,6 +281,7 @@ impl QuantickApp {
         let Some(spans) = self.harness.load_older_candle_spans() else {
             return;
         };
+        let tab_id = self.tabs.active_id();
         let capabilities = self.active_tab().capabilities(&self.config);
         // Waiting costs budget, but a *slower* budget. A span really being
         // fetched is the feature working, and charging it at the same rate as
@@ -335,7 +337,7 @@ impl QuantickApp {
         // the hook armed for the life of the process with nothing ever logged.
         if self
             .active_tab_mut()
-            .request_older_ohlcv_history(capabilities)
+            .request_older_ohlcv_history(tab_id, capabilities)
         {
             self.harness.load_older_candles_span_sent();
         } else if self.harness.spend_load_older_candles_frame().gave_up {
@@ -382,7 +384,7 @@ impl QuantickApp {
         // Order of first request, duplicates dropped — `dedup` alone would
         // only collapse neighbours.
         let mut distinct: Vec<crate::audio::Cue> = Vec::new();
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             for cue in tab.pending_alarm_sounds.drain(..) {
                 if !distinct.contains(&cue) {
                     distinct.push(cue);

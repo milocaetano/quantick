@@ -25,7 +25,7 @@ fn exact_input(app: &QuantickApp, count: usize) -> Value {
         "chart_reference": {
             "pane_id": pane.id.to_string(),
             "series_revision": pane.pagination_revision().to_string(),
-            "layout_id": pane.layout.map(|id| id.0.to_string()),
+            "layout_id": pane.layout_id().map(|id| id.0.to_string()),
         }
     })
 }
@@ -174,6 +174,7 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                 pane.ingest_backfill(&prints);
             }
             run_frame(&mut app, &ctx);
+            let tab_id = app.tabs.active_id();
             let tab = app.active_tab();
             let pane = &tab.flow_pane;
             let future = pane.slots() as f32 - 0.4996;
@@ -182,9 +183,9 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                 action,
                 context: RangeContext {
                     owner: Owner {
-                        tab: tab.id,
+                        tab: tab_id,
                         pane: pane.id,
-                        layout: pane.layout.map(|id| id.0),
+                        layout: pane.layout_id().map(|id| id.0),
                     },
                     revision: pane.pagination_revision(),
                 },

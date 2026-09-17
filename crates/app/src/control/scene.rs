@@ -351,8 +351,8 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     // resolves to, and the cap below cuts from the end. A workspace large
     // enough to truncate must not be one where `interaction.cursor` answers
     // with a control ID this scope no longer contains.
-    let focused_pane_id = push_panes(&mut controls, active, focused_side);
-    push_context_dividers(&mut controls, active);
+    let focused_pane_id = push_panes(&mut controls, tabs.active_id(), active, focused_side);
+    push_context_dividers(&mut controls, tabs.active_id(), active);
     push_quick_range(&mut controls, app);
     push_layer_toggles(&mut controls, app, active);
     push_tool_rail(&mut controls, app);
@@ -369,7 +369,7 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     // stop. Cutting a finished list would still have built it: an implausible
     // number of open charts must cost a truncated answer, not an unbounded
     // allocation on the application thread.
-    let strip_complete = push_tab_strip(&mut controls, tabs, active.id);
+    let strip_complete = push_tab_strip(&mut controls, tabs, tabs.active_id());
 
     let coverage = if !strip_complete || controls.len() > CONTROL_SCENE_MAX_CONTROLS {
         controls.truncate(CONTROL_SCENE_MAX_CONTROLS);
@@ -386,7 +386,7 @@ pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
     };
 
     SceneSnapshot {
-        active_tab_id: WireU64::new(active.id),
+        active_tab_id: WireU64::new(tabs.active_id()),
         // From the walk, not from `Tab::pane`. The two disagree for the frame
         // between a tab asking for the time layout and its time pane being
         // built: `focused_side` falls back to the flow pane while the layout
@@ -451,7 +451,7 @@ fn push_quick_range(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp)
 }
 
 /// Stable pair IDs are shared with the pointer handle and the resize request.
-fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab) {
+fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab_id: u64, tab: &Tab) {
     let Some((_, bands)) = tab.context_stack_geometry() else {
         return;
     };
@@ -466,12 +466,12 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab) {
             .id;
         let bounds = rect_bounds(*divider);
         controls.push(SceneControlSnapshot {
-            control_id: format!("tab.{}.context_divider.{upper}.{lower}", tab.id),
+            control_id: format!("tab.{}.context_divider.{upper}.{lower}", tab_id),
             label: format!("Resize context panes {upper} and {lower}"),
             role: SceneRoleDto::Action,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,
-                id: tab_control_id(tab.id),
+                id: tab_control_id(tab_id),
             },
             selected: false,
             availability: available(),
@@ -490,13 +490,17 @@ fn push_context_dividers(controls: &mut Vec<SceneControlSnapshot>, tab: &Tab) {
 /// Answers whether every open chart fitted. The last walk, and the only one
 /// the trader can grow, so this is where the ceiling is enforced rather than
 /// applied to a list that has already been built.
-fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active_id: u64) -> bool {
-    for tab in tabs {
+fn push_tab_strip(
+    controls: &mut Vec<SceneControlSnapshot>,
+    tabs: &crate::app::arrangement_host::ArrangementHost,
+    active_id: u64,
+) -> bool {
+    for (tab_id, tab) in tabs.iter_with_ids() {
         if controls.len() >= CONTROL_SCENE_MAX_CONTROLS {
             return false;
         }
         controls.push(SceneControlSnapshot {
-            control_id: tab_control_id(tab.id),
+            control_id: tab_control_id(tab_id),
             // The string the chip paints, not one assembled here: an
             // assistant that named a tab something the trader cannot see
             // would be describing a different screen.
@@ -506,7 +510,7 @@ fn push_tab_strip(controls: &mut Vec<SceneControlSnapshot>, tabs: &[Tab], active
                 kind: SceneOwnerKindDto::TabStrip,
                 id: TAB_STRIP_OWNER_ID.to_owned(),
             },
-            selected: tab.id == active_id,
+            selected: tab_id == active_id,
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
@@ -673,6 +677,7 @@ fn push_feed_status(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp)
 /// rectangle it drew into as part of drawing it, so reporting it costs a read.
 fn push_panes(
     controls: &mut Vec<SceneControlSnapshot>,
+    tab_id: u64,
     tab: &Tab,
     focused: PaneSide,
 ) -> Option<u64> {
@@ -688,7 +693,7 @@ fn push_panes(
             role: SceneRoleDto::Canvas,
             owner: SceneOwnerSnapshot {
                 kind: SceneOwnerKindDto::Tab,
-                id: tab_control_id(tab.id),
+                id: tab_control_id(tab_id),
             },
             selected: side == focused,
             availability: available(),

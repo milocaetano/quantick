@@ -177,7 +177,7 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
     let (cmd_tx, _cmd_rx) = mpsc::channel(4);
-    restored.adopt_tab(
+    restored.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "OTHERUSDT".to_owned(),
         FeedHandle {
@@ -279,7 +279,7 @@ crosshair = false
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
     let (cmd_tx, _cmd_rx) = mpsc::channel(4);
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "OTHERUSDT".to_owned(),
         FeedHandle {
@@ -648,13 +648,16 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
         1,

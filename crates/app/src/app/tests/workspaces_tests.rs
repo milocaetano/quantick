@@ -56,11 +56,13 @@ fn a_cockpit_exported_from_the_app_comes_back_when_it_is_opened() {
 #[test]
 fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
     let (mut app, _evt, _cmd, _book) = test_app();
-    app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     assert_eq!(app.tabs.len(), 2, "the trader has two markets open");
 
     // A saved workspace naming one market, and not the one on screen.
-    app.restore_workspace(
+    let config = app.config.clone();
+    app.arrangement_adapter().restore_workspace(
         ui_state::Workspace::new(
             true,
             None,
@@ -83,7 +85,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
             }],
             None,
         )
-        .restore(&app.config.clone()),
+        .restore(&config),
     );
 
     assert_eq!(
@@ -93,7 +95,7 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
     );
     assert_eq!(app.tabs[0].symbol, "TESTUSDT");
     assert!(
-        app.active_tab < app.tabs.len(),
+        app.tabs.active_index() < app.tabs.len(),
         "and the active index points at a tab that exists"
     );
 }
@@ -509,42 +511,43 @@ fn grouping_restart_commits_only_after_command_is_queued() {
 fn a_restored_workspace_puts_the_window_back() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        vec![ui_state::SavedTab {
-            feed: "binance".to_owned(),
-            symbol: "TESTUSDT".to_owned(),
-            layout: crate::config::DeclaredLayout::TimeAndFlow,
-            split_fraction: Some(0.4),
-            context_collapsed: false,
-            focus: Some(ui_state::SavedFocus::Flow),
-            focus_slot: 0,
-            context_bars: vec![],
-            flow_layout: None,
-            context_layouts: vec![],
-            flow_bars: "dollar:250000".to_owned(),
-            time_bars: Some("time:5m".to_owned()),
-            flow_legend_collapsed: false,
-            time_legend_collapsed: false,
-        }],
-        Some(ui_state::SavedChrome {
-            timezone_minutes: 330,
-            dock_visible: false,
-            dock_tab: Some(ui_state::SavedDockTab::Trades),
-            rail_visible: false,
-            rail_dock: ui_state::SavedRailDock::Bottom,
-            perf_readings: false,
-            legacy_favorite_tools: Vec::new(),
-            progressive_history: false,
-            history_reach: None,
-            history_reach_span_minutes: None,
-            venue_lead_in: false,
-            record_deals: None,
-            inspector_position: Some([260.0, 480.0]),
-        }),
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::TimeAndFlow,
+                split_fraction: Some(0.4),
+                context_collapsed: false,
+                focus: Some(ui_state::SavedFocus::Flow),
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "dollar:250000".to_owned(),
+                time_bars: Some("time:5m".to_owned()),
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+            }],
+            Some(ui_state::SavedChrome {
+                timezone_minutes: 330,
+                dock_visible: false,
+                dock_tab: Some(ui_state::SavedDockTab::Trades),
+                rail_visible: false,
+                rail_dock: ui_state::SavedRailDock::Bottom,
+                perf_readings: false,
+                legacy_favorite_tools: Vec::new(),
+                progressive_history: false,
+                history_reach: None,
+                history_reach_span_minutes: None,
+                venue_lead_in: false,
+                record_deals: None,
+                inspector_position: Some([260.0, 480.0]),
+            }),
+        ));
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -604,9 +607,10 @@ fn a_restored_workspace_puts_the_window_back() {
 #[test]
 fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
     let (mut app, _commands) = app_with_history(50);
-    app.open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "OTHERUSDT".to_owned(), None);
     assert!(app.tabs.len() >= 2, "a second market is open");
-    let watched = app.active_tab;
+    let watched = app.tabs.active_index();
     let background = app
         .tabs
         .iter()
@@ -614,7 +618,8 @@ fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
         .expect("the two tabs are on different markets");
     let symbol = app.tabs[background].symbol.clone();
 
-    app.tabs[background]
+    app.tabs
+        .runtime_mut(background)
         .paper
         .show_toast("SIM: stop filled".to_owned());
     app.settle_paper_panels(Instant::now());
@@ -774,7 +779,7 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
         .place_inspector_by_hand(egui::pos2(120.0, 640.0));
     run_frame(&mut app, &ctx);
 
-    app.open_named_workspace("context");
+    app.arrangement_adapter().open_named_workspace("context");
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
@@ -1006,14 +1011,18 @@ fn picking_a_replay_folder_does_not_switch_autosave_back_on() {
 fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    let first = app.layouts().active_id();
+    let first = app.layout_state().layouts().active_id();
     assert_eq!(
-        app.pane_layout(app.active_tab().id, PaneSide::Time(0)),
+        app.layout_state()
+            .pane_layout(app.tabs.active_id(), PaneSide::Time(0)),
         first,
         "both panes open on the one layout there is"
     );
 
-    assert_eq!(app.rename_layout(first, "opening"), Ok(true));
+    assert_eq!(
+        app.layout_adapter().rename_layout(first, "opening"),
+        Ok(true)
+    );
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         assert_eq!(
             app.active_tab().pane(side).layout_label,
@@ -1025,8 +1034,15 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     // Put the context pane on a second layout, and rename that one.
     let point = pane_point(&app, PaneSide::Time(0));
     click_chart(&mut app, &ctx, point);
-    let second = app.create_layout(Some("levels")).expect("second");
-    assert_eq!(app.rename_layout(second, "levels revisited"), Ok(true));
+    let second = app
+        .layout_adapter()
+        .create_layout(Some("levels"))
+        .expect("second");
+    assert_eq!(
+        app.layout_adapter()
+            .rename_layout(second, "levels revisited"),
+        Ok(true)
+    );
     assert_eq!(
         app.active_tab().pane(PaneSide::Time(0)).layout_label,
         "levels revisited"
@@ -1039,6 +1055,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
 
     // The strip both panes read lists both layouts, under the new names.
     let names: Vec<&str> = app
+        .layout_state()
         .layouts()
         .layouts()
         .iter()

@@ -277,7 +277,7 @@ impl QuantickApp {
         }
         if keys.copy
             && copy_selected_drawing(
-                &self.tabs[self.active_tab],
+                &self.tabs[self.tabs.active_index()],
                 &mut self.surfaces.drawing_chrome,
             )
         {
@@ -285,7 +285,7 @@ impl QuantickApp {
         }
         if keys.paste {
             paste_copied_drawing(
-                &mut self.tabs[self.active_tab],
+                self.tabs.runtime_mut(self.tabs.active_index()),
                 &mut self.surfaces.drawing_chrome,
             );
         }

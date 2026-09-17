@@ -39,15 +39,14 @@ use super::{QuantickApp, TabSlot};
 /// and shaped to leave immediately: no dialog open — the ordinary case — is
 /// one `Option` test before the tab scan is reached.
 fn indicator_preview_area(
-    tabs: &[Tab],
+    tabs: &crate::app::arrangement_host::ArrangementHost,
     dialog: Option<&SettingsDialog>,
     target: TabSlot,
 ) -> Option<egui::Rect> {
     if !dialog.is_some_and(|dialog| dialog.previewed) {
         return None;
     }
-    tabs.iter()
-        .find(|tab| tab.id == target.tab)
+    tabs.by_id(target.tab)
         .map(|tab| tab.pane(target.side))
         .and_then(|pane| pane.frame.chart_area)
 }
@@ -74,7 +73,7 @@ impl QuantickApp {
         // not only the one on screen — a background tab keeps draining, so it
         // can settle a run while hidden, and bringing it forward minutes later
         // must not surface a sentence about a press that is long over.
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             tab.expire_history_note(now);
         }
         // After the expiry, never before it: the hook re-raises a note it
@@ -182,7 +181,7 @@ impl QuantickApp {
                 let form = crate::strategy_presets::StoredPreset::starting_point(
                     quantick_engine::Side::Buy,
                 );
-                let tab = self.active_tab().id;
+                let tab = self.tabs.active_id();
                 self.surfaces.strategy_popup.open(tab, side, drawing, form);
             }
         }
@@ -235,12 +234,11 @@ impl QuantickApp {
             style,
             footprint_config,
             tabs,
-            active_tab,
             config,
             added_symbols,
             ..
         } = self;
-        let focused_tab = &tabs[*active_tab];
+        let focused_tab = &tabs[tabs.active_index()];
         // Read once. `focused_pane` resolves the same side internally, and
         // the answer is not a field lookup — it reads the layout, because
         // focus on a collapsed pane is focus on nothing.
@@ -264,7 +262,7 @@ impl QuantickApp {
                 config,
                 added_symbols,
                 open_markets: &open_markets,
-                active_tab: focused_tab.id,
+                active_tab: tabs.active_id(),
                 counted_bar_sides: &counted_bar_sides,
                 alert_failure: alert_failure.as_deref(),
             },
@@ -326,7 +324,7 @@ impl QuantickApp {
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
-        self.draw_layout_delete_confirm(ctx);
+        self.layout_adapter().draw_layout_delete_confirm(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -335,11 +333,10 @@ impl QuantickApp {
             let Self {
                 replay_view,
                 tabs,
-                active_tab,
                 config,
                 ..
             } = self;
-            let tab = &tabs[*active_tab];
+            let tab = &tabs[tabs.active_index()];
             // The instruments the download tab offers with one click. A dated
             // contract rolls every couple of months, and typing `WINV26` from
             // memory is not a thing a trader should have to get right to see
@@ -385,13 +382,8 @@ impl QuantickApp {
             // a local rather than a `&mut` handed out of the surface.
             let mut manager_open = self.surfaces.drawing_chrome.manager_open();
             {
-                let Self {
-                    toolrail,
-                    tabs,
-                    active_tab,
-                    ..
-                } = self;
-                let tab = &mut tabs[*active_tab];
+                let Self { toolrail, tabs, .. } = self;
+                let tab = tabs.runtime_mut(tabs.active_index());
                 toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
             }
             self.surfaces.drawing_chrome.set_manager_open(manager_open);
@@ -407,7 +399,6 @@ impl QuantickApp {
             let Self {
                 dock,
                 tabs,
-                active_tab,
                 replay_view,
                 tz,
                 ..
@@ -420,7 +411,7 @@ impl QuantickApp {
                 replay,
                 paper,
                 ..
-            } = &mut tabs[*active_tab];
+            } = tabs.runtime_mut(tabs.active_index());
             let orderflow = flow_pane
                 .orderflow
                 .as_mut()
@@ -527,13 +518,13 @@ impl QuantickApp {
             pane_ids,
             ..
         } = self;
-        for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config, style, pane_ids);
+        for (tab_id, tab) in tabs.iter_with_ids_mut() {
+            tab.apply_pending_layout(tab_id, config, style, pane_ids);
         }
         // Right after panes appear and markets switch, so a pane built this
         // frame is seeded this frame and a tab that changed symbol swaps its
         // drawings before anything paints them.
-        self.maintain_layouts();
+        self.layout_adapter().maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
@@ -546,7 +537,7 @@ impl QuantickApp {
 
         let mut notice_action = feed_notice::NoticeAction::None;
         // Read before the canvas borrows `self`, and answered after it lets go.
-        let popup_tab = self.active_tab().id;
+        let popup_tab = self.tabs.active_id();
         let popup_open = self.chrome.feed_popup_tab == Some(popup_tab);
         let mut chip_clicked = false;
         let mut dismissed = false;
@@ -575,7 +566,6 @@ impl QuantickApp {
                 {
                     let Self {
                         tabs,
-                        active_tab,
                         toolrail,
                         drawing_presets,
                         style,
@@ -597,12 +587,18 @@ impl QuantickApp {
                         footprint: footprint_config,
                         layers: &mut workspace.layers_mut().actions,
                     };
-                    tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
+                    let tab_id = tabs.active_id();
+                    tabs.runtime_mut(tabs.active_index()).draw_canvas(
+                        tab_id,
+                        ui,
+                        area,
+                        &mut chrome,
+                    );
                 }
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
-                self.draw_layout_strips(ui);
+                self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
                 self.apply_layer_actions();
@@ -719,7 +715,7 @@ impl QuantickApp {
         // click and a tab switch can land on the same frame, and the old
         // tab's feed keeps running — its cancel must not sit stranded
         // until the tab is looked at again.
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();

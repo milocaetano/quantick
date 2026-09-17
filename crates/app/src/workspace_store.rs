@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 use crate::layouts::LayoutBook;
 use crate::ui_state::NamedArrangement;
+use quantick_workspace::session::LayoutSession;
 
 /// How long after the last layout change the file is written.
 ///
@@ -83,7 +84,7 @@ pub(crate) enum LayoutSave {
 pub(crate) struct LayoutStore {
     /// The workspace's layouts: the strip's tabs, their indicator sets and
     /// their per-market drawings. See [`crate::layouts`].
-    book: LayoutBook,
+    session: LayoutSession,
     /// Where the layouts persist. Handed in, never resolved here.
     path: PathBuf,
     /// Set by any layout edit — a switch, a rename, a drawing, a settled
@@ -105,7 +106,7 @@ impl LayoutStore {
     /// not set it aside" answer, which only the loader can give.
     pub(crate) fn new(book: LayoutBook, path: PathBuf, blocked: bool) -> Self {
         Self {
-            book,
+            session: LayoutSession::new(book),
             path,
             dirty: false,
             last_change: None,
@@ -115,17 +116,14 @@ impl LayoutStore {
 
     /// The book, for the strip, the menu and the control plane to read.
     pub(crate) fn book(&self) -> &LayoutBook {
-        &self.book
+        self.session.book()
     }
 
-    /// The book, for the edits that change it.
-    ///
-    /// Handing out `&mut` does not weaken the invariant: the invariant is
-    /// about the *flags*, and an edit that forgets [`Self::mark_changed`] is
-    /// the same forgotten save it always was — visible in one place rather
-    /// than derivable from three.
-    pub(crate) fn book_mut(&mut self) -> &mut LayoutBook {
-        &mut self.book
+    pub(crate) fn session(&self) -> &LayoutSession {
+        &self.session
+    }
+    pub(crate) fn session_mut(&mut self) -> &mut LayoutSession {
+        &mut self.session
     }
 
     /// Where the layouts persist.
@@ -146,7 +144,7 @@ impl LayoutStore {
     /// panes, which marks changes of its own), so the pending state is stated
     /// afterwards by [`Self::settle`] rather than guessed at here.
     pub(crate) fn set_book(&mut self, book: LayoutBook) {
-        self.book = book;
+        self.session.replace_book(book);
     }
 
     /// State outright what the book owes the file, overriding anything marked
@@ -463,11 +461,6 @@ impl WorkspaceStore {
     /// Where the workspace persists.
     pub(crate) fn ui_state_path(&self) -> &Path {
         &self.paths.ui_state
-    }
-
-    /// Where the layouts persist.
-    pub(crate) fn layouts_path(&self) -> &Path {
-        self.layouts.path()
     }
 
     /// The layout book and the rule that guards it.
