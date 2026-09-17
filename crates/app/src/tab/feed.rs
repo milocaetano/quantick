@@ -9,6 +9,7 @@
 //! and a live venue take the same path through it.
 
 use eframe::egui;
+use quantick_chart_interaction::live_trade_plan::{LiveTradePlan, LiveTradeStage};
 use tokio::sync::mpsc;
 
 use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
@@ -23,6 +24,69 @@ use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
+
+/// The actual effect owners for one print; no app, transport or layout access.
+struct LiveTradeOwners<'a> {
+    paper: &'a mut crate::paper_trading::PaperTrading,
+    flow: &'a mut crate::pane::ChartPane,
+    context: &'a mut [crate::pane::ChartPane],
+    pending_sounds: &'a mut Vec<crate::audio::Cue>,
+}
+
+impl LiveTradeOwners<'_> {
+    // Production supplies the validated plan. Private tests inject an invalid
+    // traversal here, through these same effect bodies, to expose real harm.
+    fn execute(
+        self,
+        trade: &quantick_engine::Trade,
+        stages: impl IntoIterator<Item = LiveTradeStage>,
+        mut clock: impl FnMut() -> i64,
+    ) {
+        for stage in stages {
+            match stage {
+                LiveTradeStage::PaperTrade => self.paper.on_trade(trade),
+                LiveTradeStage::PaneTrades => {
+                    for pane in std::iter::once(&mut *self.flow).chain(self.context.iter_mut()) {
+                        pane.ingest_live_trade(trade);
+                    }
+                }
+                LiveTradeStage::StrategyEvaluation => {
+                    // Preserve the per-print alarm gate: idle charts never read a clock.
+                    let alarm =
+                        std::iter::once(&*self.flow)
+                            .chain(self.context.iter())
+                            .any(|pane| {
+                                pane.strategies
+                                    .anchors
+                                    .instances
+                                    .iter()
+                                    .any(|instance| instance.alarm.is_some())
+                            });
+                    let now_ms = if alarm { clock() } else { 0 };
+                    super::strategies::evaluate(
+                        self.paper,
+                        self.flow,
+                        self.context,
+                        self.pending_sounds,
+                        now_ms,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Tab {
+    pub(crate) fn ingest_live_trade_test_order(
+        &mut self,
+        trade: &quantick_engine::Trade,
+        stages: impl IntoIterator<Item = LiveTradeStage>,
+        clock: impl FnMut() -> i64,
+    ) {
+        self.ingest_live_trade_with_stages(trade, trade.timestamp_ms, stages, clock);
+    }
+}
 
 impl Tab {
     /// Allocate a capture generation well above all reconnect generations from
@@ -612,6 +676,21 @@ impl Tab {
     /// The transport observation is the window's; what the trade does to the
     /// bars, the tape and the indicators is the pane's.
     pub fn ingest_live_trade_at(&mut self, trade: &quantick_engine::Trade, received_at_ms: i64) {
+        self.ingest_live_trade_with_stages(
+            trade,
+            received_at_ms,
+            LiveTradePlan::stages(),
+            metrics::wall_clock_ms,
+        );
+    }
+
+    fn ingest_live_trade_with_stages(
+        &mut self,
+        trade: &quantick_engine::Trade,
+        received_at_ms: i64,
+        stages: impl IntoIterator<Item = LiveTradeStage>,
+        clock: impl FnMut() -> i64,
+    ) {
         self.latest_trade_latency_ms =
             metrics::feed_lag_ms(received_at_ms, Some(trade.timestamp_ms));
         self.latest_trade_ms = Some(trade.timestamp_ms);
@@ -620,11 +699,13 @@ impl Tab {
         // paper trading works identically on a live feed and a replay — and on
         // a tab the user is not looking at, whose position keeps marking
         // against its own tape.
-        self.paper.on_trade(trade);
-        for pane in self.panes_mut() {
-            pane.ingest_live_trade(trade);
+        LiveTradeOwners {
+            paper: &mut self.paper,
+            flow: &mut self.flow_pane,
+            context: &mut self.time_panes,
+            pending_sounds: &mut self.pending_alarm_sounds,
         }
-        self.run_strategies();
+        .execute(trade, stages, clock);
     }
 
     /// Drain a bounded number of synchronized depth events. The separate
