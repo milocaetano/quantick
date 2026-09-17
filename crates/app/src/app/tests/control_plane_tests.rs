@@ -1,6 +1,53 @@
 use super::*;
 use quantick_feed::replay::test_support as replay_test_support;
 
+#[test]
+fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().set_context_collapsed(true);
+    run_frame(&mut app, &ctx);
+
+    let context_ids = app
+        .active_tab()
+        .time_panes
+        .iter()
+        .map(|pane| pane.id)
+        .collect::<Vec<_>>();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [
+        observer_scope("scene.controls"),
+        observer_scope("workspace.summary"),
+    ];
+    let capture = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let scene = &capture.scopes[&scopes[0]].value;
+    let workspace = &capture.scopes[&scopes[1]].value;
+
+    for pane_id in context_ids {
+        assert!(
+            !scene_control_ids(scene).contains(&format!("pane.{pane_id}.canvas")),
+            "a collapsed context canvas was reported as visible"
+        );
+    }
+    assert_eq!(workspace["tabs"][0]["context_collapsed"], true);
+    let visible = workspace["tabs"][0]["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|pane| pane["visible"] == true)
+        .count();
+    assert_eq!(visible, 1, "only the flow canvas remains visible");
+}
+
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live
 /// feed thread would.
@@ -2060,11 +2107,7 @@ fn gateway_exit_shutdown_removes_discovery() {
     let descriptor: quantick_control::descriptor::InstanceDescriptor =
         serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
 
-    app.control
-        .control_access
-        .as_mut()
-        .expect("control access is installed")
-        .shutdown_for_exit();
+    eframe::App::on_exit(&mut app, None);
     assert!(!descriptor_path.exists(), "exit removes discovery");
     assert!(
         app.control
@@ -5238,7 +5281,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 51);
+    assert_eq!(documents.len(), 53);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");

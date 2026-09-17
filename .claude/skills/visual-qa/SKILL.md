@@ -107,6 +107,12 @@ signatures, colour checks) — the technique is in `ui-harness`.
 
 ## 5. Report
 
+All screenshots, logs, captures and reconstructed bundles are temporary
+execution evidence. Store them outside the repository. Put only the verdict,
+surface/state, control ID, relevant coordinates or measurements and an
+optional GitHub/CI artifact link in the PR. Never add raw visual evidence
+under `.claude/evidence/` or `docs/workflow/evidence/`.
+
 One verdict per surface × state, most severe first:
 
 - **FAIL** — defect, with the screenshot path, what is wrong in one
@@ -121,6 +127,6 @@ One verdict per surface × state, most severe first:
   missing and what was validated by other means (headless frame, pixel
   test). Never report BLOCKED as PASS.
 
-Fix FAILs, then re-run only the failed cells of the matrix and attach the
-before/after pair. The pass is done when every cell is PASS or has an
+Fix FAILs, then re-run only the failed cells of the matrix and upload the
+before/after pair outside Git only when another reviewer needs it. The pass is done when every cell is PASS or has an
 explicitly accepted defect noted for the PR body.

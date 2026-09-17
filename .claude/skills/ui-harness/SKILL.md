@@ -26,8 +26,7 @@ surface you need** rather than reading it whole:
 grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-It was moved out of this file rather than shortened, and no row has ever been
-dropped. The table is 69KB — five sixths of this skill — and it is *data*,
+The 69KB table is *data*,
 looked up one row at a time by a run that drives one or two surfaces. Loading it whole to
 answer "what turns the heatmap on" was the single largest token cost in this
 repository's whole agentic flow, paid on every capture. A grep answers the same
@@ -52,6 +51,8 @@ in the order its doc comment fixes** — that module is the application point.
 **A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`.
 
 ## Launch and capture workflow
+
+Keep raw captures outside Git; put results and artifact links in the PR.
 
 1. **Own target dir, on a drive with room**: build with
    `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is

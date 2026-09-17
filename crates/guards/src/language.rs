@@ -56,9 +56,8 @@ const KEYWORDS: &[&str] = &[
 
 /// Directories scanned, relative to the workspace root. Product code, the
 /// scripts shipped with it, the prose that documents it, and the operating
-/// instructions agents read. `.claude/GOAL-archive-*.md` is deliberately out
-/// of scope: those are session records of work already done, not artifacts the
-/// next contributor has to read.
+/// instructions agents read. Ignored local mission state is deliberately out
+/// of scope because the next contributor does not consume it.
 const SCANNED_DIRS: &[&str] = &["crates", "docs", ".claude/skills", ".claude/hooks"];
 
 /// Extensions worth scanning inside those directories.

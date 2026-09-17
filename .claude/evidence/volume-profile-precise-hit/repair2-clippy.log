@@ -1,5 +1,0 @@
-Command: cargo clippy --workspace --all-targets
-   Compiling quantick-app v0.1.0 (C:\src\quantick-worktrees\fix-volume-profile-precise-hit\crates\app)
-    Finished `dev` profile [optimized + debuginfo] target(s) in 15.77s
-
-Exit: 0

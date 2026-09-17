@@ -60,11 +60,28 @@ impl DrawingKeys {
                     .iter()
                     .any(|event| matches!(event, egui::Event::Copy))
                     || (command && input.key_pressed(egui::Key::C)),
-                paste: input
-                    .events
-                    .iter()
-                    .any(|event| matches!(event, egui::Event::Paste(_)))
-                    || (command && input.key_pressed(egui::Key::V)),
+                // The chord is read on *release*, not on press, because
+                // `egui-winit` turns a paste shortcut into `Event::Paste`
+                // — and swallows the pressed `Key` — only while the OS
+                // clipboard returns non-empty text. With an image or an
+                // empty clipboard the frame carries neither signal, and the
+                // release is the one thing the platform pushes either way.
+                // A held modifier also tells the two apart: a platform
+                // `Event::Paste` under the chord is that same gesture's
+                // press frame, so honouring it too would paste twice.
+                // Shift+Insert is the same gesture with another key, and a
+                // bare `Event::Paste` still pastes for whoever sends one
+                // without the chord.
+                paste: if command {
+                    input.key_released(egui::Key::V)
+                } else if shift {
+                    input.key_released(egui::Key::Insert)
+                } else {
+                    input
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::Paste(_)))
+                },
                 nudge_bars: horizontal * step,
                 nudge_px: vertical * step,
             }

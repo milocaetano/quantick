@@ -1,6 +1,31 @@
 use super::*;
 use quantick_feed::history_reach;
 
+/// Hold one primary-button gesture across several frames, as a slow hand does.
+fn slow_primary_drag(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    start: egui::Pos2,
+    step: egui::Vec2,
+    steps: usize,
+) -> egui::Pos2 {
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            pointer_button(start, true),
+        ],
+    );
+    let mut pointer = start;
+    for _ in 0..steps {
+        pointer += step;
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(pointer)]);
+    }
+    run_frame_with_events(app, ctx, vec![pointer_button(pointer, false)]);
+    pointer
+}
+
 /// The whole point of collapsing: a strip is not a dead band. One click on
 /// it brings the curve back, and it must survive the frame after — the
 /// automatic rule is what collapsed the pane, so handing the pane back to
@@ -1975,6 +2000,142 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
         "the flow pane kept shrinking past its floor: {settled}px then {after}px"
     );
     assert!(after > 0.0, "the flow pane was squeezed away entirely");
+}
+
+#[test]
+fn a_slow_drag_from_the_collapsed_rail_opens_and_follows_the_pointer() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut().split_fraction = 0.072;
+    app.active_tab_mut().set_context_collapsed(true);
+    run_frame(&mut app, &ctx);
+    let rail = app
+        .active_tab()
+        .collapsed_rail_rect()
+        .expect("the collapsed column leaves a rail");
+
+    let pointer = slow_primary_drag(&mut app, &ctx, rail.center(), egui::vec2(25.0, 0.0), 12);
+    run_frame(&mut app, &ctx);
+
+    assert!(
+        !app.active_tab().context_collapsed,
+        "dragging opens the rail"
+    );
+    let divider_x = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the opened column has a divider")
+        .center()
+        .x;
+    assert!(
+        (divider_x - pointer.x).abs() < 3.0,
+        "the divider stopped at {divider_x}, away from the released pointer at {}",
+        pointer.x
+    );
+}
+
+#[test]
+fn a_slow_drag_widens_an_open_column_from_its_drawn_floor() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut().split_fraction = 0.072;
+    run_frame(&mut app, &ctx);
+    let divider = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the split has a divider");
+    let before = divider.center().x;
+
+    slow_primary_drag(&mut app, &ctx, divider.center(), egui::vec2(5.0, 0.0), 8);
+    run_frame(&mut app, &ctx);
+
+    assert!(
+        !app.active_tab().context_collapsed,
+        "a stale fraction must not snap an open column shut"
+    );
+    let after = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the divider remains available")
+        .center()
+        .x;
+    assert!(
+        after > before + 35.0,
+        "the slow drag moved {before} to only {after}"
+    );
+}
+
+#[test]
+fn clicks_on_the_context_rail_and_divider_never_toggle_collapse() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut().set_context_collapsed(true);
+    run_frame(&mut app, &ctx);
+    let rail = app
+        .active_tab()
+        .collapsed_rail_rect()
+        .expect("the collapsed column leaves a rail");
+    click_chart(&mut app, &ctx, rail.center());
+    assert!(
+        app.active_tab().context_collapsed,
+        "a rail click opened the column"
+    );
+
+    app.active_tab_mut().set_context_collapsed(false);
+    run_frame(&mut app, &ctx);
+    let divider = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the open column has a divider");
+    click_chart(&mut app, &ctx, divider.center());
+    assert!(
+        !app.active_tab().context_collapsed,
+        "a divider click closed the column"
+    );
+}
+
+#[test]
+fn a_slow_left_drag_past_the_threshold_magnetically_closes_the_column() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let divider = app
+        .active_tab()
+        .canvas_divider_rect()
+        .expect("the split has a divider");
+
+    slow_primary_drag(&mut app, &ctx, divider.center(), egui::vec2(-20.0, 0.0), 20);
+
+    assert!(
+        app.active_tab().context_collapsed,
+        "crossing the collapse threshold should snap the column shut"
+    );
+}
+
+#[test]
+fn ctrl_zero_reopens_a_stale_fraction_at_the_drawn_floor() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.active_tab_mut().split_fraction = 0.072;
+    app.active_tab_mut().set_context_collapsed(true);
+    run_frame(&mut app, &ctx);
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::Num0, egui::Modifiers::CTRL)],
+        egui::Modifiers::CTRL,
+    );
+    run_frame(&mut app, &ctx);
+
+    let tab = app.active_tab();
+    assert!(!tab.context_collapsed, "Ctrl+0 remains the reopen path");
+    assert!(
+        tab.split_fraction * tab.last_canvas_width()
+            >= crate::canvas_layout::MIN_PANE_WIDTH_PX - 1.0,
+        "reopen retained a {} px stale width below the {} px floor",
+        tab.split_fraction * tab.last_canvas_width(),
+        crate::canvas_layout::MIN_PANE_WIDTH_PX
+    );
 }
 
 /// Collapse has to be reachable by the hand that asks for it.

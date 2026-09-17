@@ -462,6 +462,16 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
+        id: "indicator.mouse_vertical_line.toggle",
+        title: "Mirror price hover into one non-price indicator pane",
+        reach: "right-click menu on an indicator pane",
+        keys: &[(
+            Source::Authored,
+            "the indicator pane's Mouse vertical line checkbox",
+        )],
+        mapping: capability!("indicator.mouse_vertical_line.set"),
+    },
+    UiBehaviour {
         id: "indicator.native.add",
         title: "Add a native indicator from the catalog",
         reach: "toolbar indicators menu",

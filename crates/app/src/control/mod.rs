@@ -16,6 +16,7 @@ mod evidence;
 mod feed;
 mod gateway;
 mod health;
+mod indicator_guide;
 mod interaction;
 pub(crate) mod inventory;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
@@ -48,6 +49,7 @@ pub(crate) use annotate::{
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
+pub(crate) use indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use scene::scene_snapshot;
 

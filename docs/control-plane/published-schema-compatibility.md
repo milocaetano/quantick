@@ -108,9 +108,8 @@ Before every commit, run `cargo fmt --all -- --check`,
 after each edit batch.
 
 The implementation base is `origin/campaign/architecture-a` at
-`c3a92d58bb8a41ec4d78d73e60312b5f765b4da5`. The committed
-[mission archive](../../.claude/GOAL-archive-published-schema-compatibility.md)
-retains the source requests and acceptance ledger. Raw UTF-8 commands, merged
+`c3a92d58bb8a41ec4d78d73e60312b5f765b4da5`. Issue #333 and its PR retain the
+source requests and acceptance results. Raw UTF-8 commands, merged
 output and exit codes live in
 `C:/Users/camil/AppData/Local/Temp/quantick-architecture-a/Q2-validation/` for
 coordinator handoff. The coordinator records the final immutable head, log

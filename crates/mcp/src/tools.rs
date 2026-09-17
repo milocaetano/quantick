@@ -29,6 +29,9 @@ pub const GET_CHART_WINDOW: &str = "quantick_get_chart_window";
 pub const GET_DIAGNOSTICS: &str = "quantick_get_diagnostics";
 pub const GET_SCENE: &str = "quantick_get_scene";
 pub const CAPTURE_EVIDENCE: &str = "quantick_capture_evidence";
+pub use crate::capture_chart::{
+    CAPTURE_CHART, EVIDENCE_CAPTURE_CAPABILITY, EVIDENCE_READ_CAPABILITY,
+};
 pub const READ_EVENTS: &str = "quantick_read_events";
 pub const WAIT_FOR_CHANGE: &str = "quantick_wait_for_change";
 pub const SEARCH_CAPABILITIES: &str = "quantick_search_capabilities";
@@ -50,12 +53,6 @@ pub const SNAPSHOT_CAPABILITY: &str = "snapshot.read";
 pub const CHART_WINDOW_CAPABILITY: &str = "chart.window.read";
 pub const DIAGNOSTICS_CAPABILITY: &str = "health.diagnostics.read";
 pub const SCENE_CAPABILITY: &str = "scene.read";
-pub const EVIDENCE_CAPTURE_CAPABILITY: &str = "evidence.capture";
-/// Reading a bundle back is deliberately long-tail: contract section 8 names
-/// `quantick_capture_evidence` and no companion, and a chunk read is not a
-/// path a client walks constantly. It is reached through `quantick_invoke`,
-/// which enforces the same permissions a named tool would.
-pub const EVIDENCE_READ_CAPABILITY: &str = "evidence.read";
 pub const EVENTS_READ_CAPABILITY: &str = "events.read";
 pub const EVENTS_WAIT_CAPABILITY: &str = "events.wait";
 pub const LABEL_CAPABILITY: &str = "annotate.label.create";
@@ -231,6 +228,7 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             output_schema: Some(capability_output_schema(parse_schema(EVIDENCE_MANIFEST_SCHEMA))),
             annotations: ToolAnnotations::observer_read("Capture evidence"),
         },
+        crate::capture_chart::tool(instance_only_schema()),
         Tool {
             name: READ_EVENTS.to_owned(),
             title: "Read the semantic event journal".to_owned(),
@@ -440,6 +438,15 @@ pub fn call(
             EVIDENCE_CAPTURE_CAPABILITY,
             Value::Object(arguments),
         ),
+        CAPTURE_CHART => {
+            if !arguments.is_empty() {
+                return Err(RpcError::new(
+                    INVALID_PARAMS,
+                    "capture_chart accepts only instance_id",
+                ));
+            }
+            Ok(crate::capture_chart::call(link, instance.as_ref()))
+        }
         READ_EVENTS => forward(
             link,
             instance.as_ref(),
@@ -1164,6 +1171,7 @@ mod tests {
                 GET_DIAGNOSTICS,
                 GET_SCENE,
                 CAPTURE_EVIDENCE,
+                CAPTURE_CHART,
                 READ_EVENTS,
                 WAIT_FOR_CHANGE,
                 SEARCH_CAPABILITIES,

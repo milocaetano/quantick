@@ -554,6 +554,86 @@ fn ctrl_d_duplicates_the_selection_offset_and_selected() {
 }
 
 #[test]
+fn the_paste_chord_pastes_a_drawing_when_the_platform_sends_no_paste_event() {
+    // What the trader hit: with an image (or nothing) on the Windows
+    // clipboard, `egui-winit` sends neither `Event::Paste` nor the pressed
+    // `Key::V` — only the release survives, so the release is the signal.
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    let original = app.active_tab().flow_pane.drawings.items()[0].clone();
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    // The press frame of Ctrl+V, exactly as the platform delivers it with a
+    // non-text clipboard: the key is swallowed and no paste event arrives.
+    run_frame_with_modifiers(&mut app, &ctx, Vec::new(), egui::Modifiers::COMMAND);
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        1,
+        "nothing to paste from yet"
+    );
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_release_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    let drawings = &app.active_tab().flow_pane.drawings;
+    assert_eq!(drawings.items().len(), 2, "the release pasted the copy");
+    assert_eq!(drawings.selected(), Some(1));
+    assert_eq!(drawings.items()[1].tool, original.tool);
+    assert_eq!(
+        drawings.items()[1].points[0].bar,
+        original.points[0].bar + DUPLICATE_OFFSET_BARS
+    );
+}
+
+#[test]
+fn the_paste_chord_pastes_once_when_the_platform_also_sends_a_paste_event() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_press_with(egui::Key::C, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    // A text clipboard: the press frame carries `Event::Paste` instead of
+    // the key, and the release frame follows. One gesture, one drawing.
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Paste("clipboard text".to_owned())],
+        egui::Modifiers::COMMAND,
+    );
+    run_frame_with_modifiers(
+        &mut app,
+        &ctx,
+        vec![key_release_with(egui::Key::V, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
+    );
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        2,
+        "two signals for one chord must paste exactly one drawing"
+    );
+}
+
+#[test]
 fn native_clipboard_events_paste_the_copied_drawing_not_the_current_selection() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
