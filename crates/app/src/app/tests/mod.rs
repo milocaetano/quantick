@@ -1637,6 +1637,7 @@ fn folded_profile_group(app: &QuantickApp) -> Decimal {
         .cache
         .as_ref()
         .expect("a placed range over a live tape folded")
+        .output()
         .profile
         .as_ref()
         .expect("the range covers bars that have tape")

@@ -2897,6 +2897,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "quantick-anchored-studies"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-app"
 version = "0.1.0"
 dependencies = [
@@ -2906,6 +2915,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.3.4",
  "png",
+ "quantick-anchored-studies",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",

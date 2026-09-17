@@ -155,7 +155,7 @@ pub(super) fn silhouette_cut(
             payload
                 .cache
                 .as_ref()
-                .and_then(|cache| cache.heat_first_slot)
+                .and(payload.heat_first_slot)
         })
         .flatten()
         .and_then(|slot| {
@@ -191,7 +191,7 @@ pub(super) fn hit_profile(
     let Some((profile, area)) = payload
         .cache
         .as_ref()
-        .and_then(|cache| cache.profile.as_ref())
+        .and_then(|cache| cache.output().profile)
     else {
         return false;
     };

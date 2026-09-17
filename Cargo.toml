@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/anchored-studies",
     "crates/chart-interaction",
     "crates/control",
     "crates/control-local",

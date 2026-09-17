@@ -138,6 +138,7 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
             .cache
             .as_ref()
             .unwrap()
+            .output()
             .profile
             .as_ref()
             .unwrap()

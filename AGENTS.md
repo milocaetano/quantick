@@ -1,10 +1,9 @@
 # AGENTS.md — quantick for AI agents
 
-Quantick is a real-time alternative-bar charting engine for order flow trading
-(tick / volume / dollar / imbalance bars), written in Rust. One deterministic
-engine feeds the chart, the backtest and the bot.
+Quantick builds real-time alternative bars (tick / volume / dollar / imbalance)
+in Rust. One deterministic engine feeds the chart, backtest and bot.
 
-An agent meets this repository in one of two ways, and they are different jobs:
+Choose the workflow for your task:
 
 | | You are… | Start here |
 | --- | --- | --- |
@@ -91,8 +90,7 @@ live effective surface.
   canvases report their rectangle in logical points — apply the display scale
   factor yourself before composing them with a screenshot.
 
-The tool-by-tool reference, including how evidence bundles are hashed and what
-they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.md).
+The tool reference, including evidence hashing and limitations, is in [`crates/mcp/README.md`](crates/mcp/README.md).
 
 ---
 
@@ -111,6 +109,7 @@ graph TD
     guards["guards<br/>repository guards<br/>no edges either way"]
   end
 
+  app --> anchoredstudies
   app --> pine
   app --> indicators
   app --> strategy
@@ -137,6 +136,8 @@ graph TD
   mcp --> controllocal
   mcp --> control
 
+  anchoredstudies["anchored-studies"] --> engine
+  anchoredstudies --> indicators
   pine["pine<br/>Quantick Pine frontend"] --> indicators
   strategy["strategy<br/>armed regions, alarms"] --> sim
   strategy --> engine
@@ -173,6 +174,7 @@ graph TD
 | --- | --- |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects preserve feature owners. |
+| `anchored-studies` | Resumable profile and anchored-average state; caller owns scheduling and paint. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |
@@ -196,7 +198,6 @@ graph TD
 
 ## The non-negotiable design rules
 
-Named here so an agent reading only this file does not violate one.
 [`CLAUDE.md`](CLAUDE.md) states them and is authoritative; where this summary
 and that file differ, that file wins.
 

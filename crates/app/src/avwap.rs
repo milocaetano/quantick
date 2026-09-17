@@ -10,19 +10,17 @@
 //! and no math at all.
 //!
 //! Rate, declared: a key miss replays from the anchor to the live edge —
-//! O(bars since anchor) with a handful of multiplications per bar. A bar
+//! O(bars since anchor) with a handful of multiplications per bar. The app
+//! increments the timeline key on ordinary live input as well as rebuilds. A bar
 //! close or a forming-bar change is therefore linear in the anchored span,
 //! never in the whole session, and a frame without tape movement replays
 //! nothing. Never on the per-trade path: ingestion does not know this module
 //! exists.
 
+use quantick_anchored_studies::{AnchoredAverage, AverageInputs, AverageRequest};
 use quantick_engine::Bar;
-use quantick_indicators::native::AnchoredVwap;
-use quantick_indicators::{Ctx, Indicator as _, IndicatorBar, PlotId};
 
-use crate::drawings::{
-    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPayload, Drawings,
-};
+use crate::drawings::{AvwapPayload, Drawings};
 use crate::state::ChartState;
 
 /// The registry id of the anchored-VWAP tool — the one string this module
@@ -44,6 +42,12 @@ pub struct RefreshInputs<'a> {
 /// from payload equality — so this pass can never register as a user edit in
 /// the undo history, however often it runs.
 pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
+    let core = AverageInputs {
+        closed: inputs.state.bars(),
+        partial: inputs.state.partial(),
+        prefix: inputs.prefix,
+        timeline_revision: inputs.state.timeline_revision(),
+    };
     for drawing in drawings.items_mut() {
         if drawing.tool.id() != TOOL_ID {
             continue;
@@ -54,196 +58,23 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) {
         let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<AvwapPayload>() else {
             continue;
         };
-        refresh_one(payload, anchor_bar, inputs);
+        AnchoredAverage::refresh(
+            &mut payload.cache,
+            AverageRequest {
+                anchor_bar,
+                source: payload.source,
+                bands: payload.bands,
+            },
+            &core,
+        );
     }
-}
-
-/// The bar behind an absolute slot: prefix first, then the trade-derived
-/// series, then the forming bar.
-fn bar_at<'a>(inputs: &'a RefreshInputs<'_>, slot: usize) -> Option<&'a Bar> {
-    if slot < inputs.prefix.len() {
-        return inputs.prefix.get(slot);
-    }
-    let state_slot = slot - inputs.prefix.len();
-    let closed = inputs.state.bars();
-    if state_slot < closed.len() {
-        return closed.get(state_slot);
-    }
-    (state_slot == closed.len())
-        .then(|| inputs.state.partial())
-        .flatten()
-}
-
-/// One committed plot row, read back as the cache's array shape.
-fn plot_row(kernel: &AnchoredVwap, row: usize) -> [f64; AVWAP_ROW_WIDTH] {
-    let plots = kernel.plots();
-    let mut values = [f64::NAN; AVWAP_ROW_WIDTH];
-    for (column, value) in values.iter_mut().enumerate() {
-        *value = plots.value(PlotId::new(column), row);
-    }
-    values
-}
-
-/// The forming bar's row, previewed against the committed accumulators —
-/// the kernel's own rollback contract, so a live tick costs one preview and
-/// never a replay.
-fn live_row(kernel: &mut AnchoredVwap, partial: &Bar) -> Option<[f64; AVWAP_ROW_WIDTH]> {
-    let mut ctx = Ctx {
-        bar_index: kernel.plots().len(),
-        cvd: &[],
-    };
-    let frame = kernel
-        .preview(&IndicatorBar::from(partial), &mut ctx)
-        .ok()?;
-    let mut values = [f64::NAN; AVWAP_ROW_WIDTH];
-    for (column, value) in values.iter_mut().enumerate() {
-        *value = frame.values.get(column).copied().unwrap_or(f64::NAN);
-    }
-    Some(values)
-}
-
-fn refresh_one(payload: &mut AvwapPayload, anchor_bar: f32, inputs: &RefreshInputs<'_>) {
-    let closed_len = inputs.state.bars().len();
-    let closed_total = inputs.prefix.len() + closed_len;
-    let partial = inputs.state.partial();
-    let slots = closed_total + usize::from(partial.is_some());
-    let Some(last_slot) = slots.checked_sub(1) else {
-        payload.cache = None;
-        return;
-    };
-
-    // The candle under the anchor, the frvp rounding rule: a slot's centre is
-    // its integer coordinate. An anchor past the newest bar seeds on the
-    // newest — the average must start on a bar that exists.
-    let anchor_slot = if anchor_bar.is_finite() {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let slot = anchor_bar.round().max(0.0) as usize;
-        slot.min(last_slot)
-    } else {
-        payload.cache = None;
-        return;
-    };
-
-    let key = AvwapCacheKey {
-        anchor_slot,
-        timeline_revision: inputs.state.timeline_revision(),
-        closed_len,
-        prefix_len: inputs.prefix.len(),
-        source: payload.source,
-        bands: payload.bands,
-    };
-    let partial_sig = partial.map(|bar| crate::drawings::AvwapPartialSig {
-        close_time: bar.close_time,
-        trades: bar.trade_count,
-    });
-
-    // Closed-state hit: at most the live row moves. A tick on the forming
-    // bar previews one row against the retained accumulators — O(1),
-    // whatever the anchored span.
-    if let Some(cache) = payload.cache.as_mut().filter(|cache| cache.key == key) {
-        if cache.partial != partial_sig {
-            if cache.partial.is_some() {
-                cache.rows.pop();
-            }
-            if let Some(bar) = partial
-                && let Some(row) = live_row(&mut cache.kernel, bar)
-            {
-                cache.rows.push(row);
-            }
-            cache.partial = partial_sig;
-        }
-        return;
-    }
-
-    // A bar close with everything else unchanged extends the retained
-    // kernel over the new closed bars — O(new bars), never the whole span.
-    if let Some(cache) = payload.cache.as_mut().filter(|cache| {
-        cache.key
-            == AvwapCacheKey {
-                closed_len: cache.key.closed_len,
-                ..key
-            }
-            && cache.key.closed_len < closed_len
-    }) {
-        if cache.partial.is_some() {
-            cache.rows.pop();
-        }
-        let done = anchor_slot + cache.kernel.plots().len();
-        for slot in done..closed_total {
-            let Some(bar) = bar_at(inputs, slot) else {
-                break;
-            };
-            let mut ctx = Ctx {
-                bar_index: cache.kernel.plots().len(),
-                cvd: &[],
-            };
-            if cache
-                .kernel
-                .on_close(&IndicatorBar::from(bar), &mut ctx)
-                .is_err()
-            {
-                break;
-            }
-            cache.rows.push(plot_row(&cache.kernel, cache.rows.len()));
-        }
-        if let Some(bar) = partial
-            && let Some(row) = live_row(&mut cache.kernel, bar)
-        {
-            cache.rows.push(row);
-        }
-        cache.partial = partial_sig;
-        cache.key = key;
-        return;
-    }
-
-    // Full replay from the anchor bar — an anchor drag, a config edit or a
-    // timeline rebuild. The anchor instant is that bar's own open, so every
-    // bar from it onward participates — the same `close_time >= anchor`
-    // rule the kernel's golden fixture pins.
-    let Some(anchor_ms) = bar_at(inputs, anchor_slot).map(|bar| bar.open_time) else {
-        payload.cache = None;
-        return;
-    };
-    let bands: [(bool, f64); AVWAP_BAND_PAIRS] =
-        payload.bands.map(|band: AvwapBand| (band.on, band.mult));
-    let mut kernel = AnchoredVwap::new(anchor_ms, payload.source, bands);
-    let mut rows = Vec::with_capacity(last_slot - anchor_slot + 1);
-    for slot in anchor_slot..closed_total.max(anchor_slot) {
-        if slot > last_slot {
-            break;
-        }
-        let Some(bar) = bar_at(inputs, slot) else {
-            break;
-        };
-        // No cross-bar series is read: every anchored source is price-scaled,
-        // so the host-maintained cvd can honestly stay empty here.
-        let mut ctx = Ctx {
-            bar_index: kernel.plots().len(),
-            cvd: &[],
-        };
-        if kernel.on_close(&IndicatorBar::from(bar), &mut ctx).is_err() {
-            break;
-        }
-        rows.push(plot_row(&kernel, rows.len()));
-    }
-    if let Some(bar) = partial
-        && let Some(row) = live_row(&mut kernel, bar)
-    {
-        rows.push(row);
-    }
-    payload.cache = Some(AvwapCache {
-        key,
-        partial: partial_sig,
-        first_slot: anchor_slot,
-        rows,
-        kernel,
-    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawings::{AvwapBand, ChartPoint, DRAWING_TOOLS};
+    use crate::drawings::{ChartPoint, DRAWING_TOOLS};
+    use quantick_anchored_studies::AvwapBand;
     use quantick_engine::Trade;
     use rust_decimal::Decimal;
 
@@ -290,12 +121,10 @@ mod tests {
     }
 
     #[test]
-    fn refresh_reproduces_the_kernel_over_the_pane_bars() {
-        let state = state_with_fixture();
-        assert_eq!(state.bars().len(), 4, "the tape cuts four closed bars");
+    fn actual_live_revision_invalidates_key_and_preserves_closed_rows() {
+        let mut state = state_with_fixture();
         let mut drawings = Drawings::default();
         assert!(drawings.place(avwap_tool(), ChartPoint::at(1.0, 100.0)));
-
         refresh(
             &mut drawings,
             &RefreshInputs {
@@ -303,22 +132,50 @@ mod tests {
                 prefix: &[],
             },
         );
-        let payload = drawings.items()[0]
+        let before = drawings.items()[0]
             .payload
             .as_any()
             .downcast_ref::<AvwapPayload>()
-            .expect("an avwap object holds an avwap payload");
-        let cache = payload.cache.as_ref().expect("refreshed");
-        assert_eq!(cache.first_slot, 1);
-        assert_eq!(cache.rows.len(), 3, "anchor bar to the newest closed bar");
-        // The golden fixture's hand-computed values (see the indicators
-        // crate's avwap_plots.csv): vwap 96 -> 112 -> 96, band1 = ±1σ.
-        assert_eq!(cache.rows[0][0], 96.0);
-        assert_eq!(cache.rows[1][0], 112.0);
-        assert_eq!(cache.rows[2][0], 96.0);
-        assert_eq!(cache.rows[1][1], 128.0, "+1σ with σ=16");
-        assert_eq!(cache.rows[1][2], 96.0, "-1σ with σ=16");
-        assert!(cache.rows[0][3].is_nan(), "band 2 is off by default");
+            .unwrap()
+            .cache
+            .as_ref()
+            .unwrap()
+            .output()
+            .key;
+        assert_eq!(before.timeline_revision, 12);
+        state.ingest_live(&trade(13, 5_000, 136, 32));
+        refresh(
+            &mut drawings,
+            &RefreshInputs {
+                state: &state,
+                prefix: &[],
+            },
+        );
+        let cache = drawings.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<AvwapPayload>()
+            .unwrap()
+            .cache
+            .as_ref()
+            .unwrap();
+        assert_eq!(cache.output().key.timeline_revision, 13);
+        assert_ne!(cache.output().key, before);
+        assert_eq!(cache.committed_rows(), 3);
+        assert_eq!(cache.output().rows.len(), 4);
+        assert_eq!(
+            cache
+                .output()
+                .rows
+                .iter()
+                .map(|row| row[0])
+                .collect::<Vec<_>>(),
+            [96.0, 112.0, 96.0, 116.0]
+        );
+        assert!(cache.output().rows.iter().all(|row| row[3].is_nan()));
+        println!(
+            "AVWAP live baseline: revision 12 -> 13; closed rows 3; values [96, 112, 96, 116]"
+        );
     }
 
     #[test]
@@ -339,6 +196,7 @@ mod tests {
             .cache
             .as_ref()
             .unwrap()
+            .output()
             .key;
         refresh(&mut drawings, &inputs);
         let payload = drawings.items_mut()[0]
@@ -346,7 +204,7 @@ mod tests {
             .as_any_mut()
             .downcast_mut::<AvwapPayload>()
             .unwrap();
-        assert_eq!(payload.cache.as_ref().unwrap().key, key_before);
+        assert_eq!(payload.cache.as_ref().unwrap().output().key, key_before);
 
         // Switching a band on changes the key and the rows.
         payload.bands[1] = AvwapBand {
@@ -360,9 +218,9 @@ mod tests {
             .downcast_ref::<AvwapPayload>()
             .unwrap();
         let cache = payload.cache.as_ref().unwrap();
-        assert_ne!(cache.key, key_before);
-        assert_eq!(cache.rows[1][3], 144.0, "+2σ with σ=16");
-        assert_eq!(cache.rows[1][4], 80.0, "-2σ with σ=16");
+        assert_ne!(cache.output().key, key_before);
+        assert_eq!(cache.output().rows[1][3], 144.0, "+2σ with σ=16");
+        assert_eq!(cache.output().rows[1][4], 80.0, "-2σ with σ=16");
     }
 
     #[test]
@@ -386,10 +244,14 @@ mod tests {
             .downcast_ref::<AvwapPayload>()
             .unwrap();
         let cache = payload.cache.as_ref().unwrap();
-        assert!(cache.partial.is_some());
-        assert_eq!(cache.rows.len(), 2, "the anchor bar and the live row");
+        assert!(cache.output().partial.is_some());
+        assert_eq!(
+            cache.output().rows.len(),
+            2,
+            "the anchor bar and the live row"
+        );
         // (80·16 + 200·2) / 18 = 1680 / 18 = 93.333…
-        assert_eq!(cache.rows[1][0], 1680.0 / 18.0);
+        assert_eq!(cache.output().rows[1][0], 1680.0 / 18.0);
     }
 
     #[test]
@@ -410,9 +272,9 @@ mod tests {
             .downcast_ref::<AvwapPayload>()
             .unwrap();
         let cache = payload.cache.as_ref().expect("clamped, not refused");
-        assert_eq!(cache.first_slot, 3);
-        assert_eq!(cache.rows.len(), 1);
-        assert_eq!(cache.rows[0][0], 80.0, "the newest bar's own hlc3");
+        assert_eq!(cache.output().first_slot, 3);
+        assert_eq!(cache.output().rows.len(), 1);
+        assert_eq!(cache.output().rows[0][0], 80.0, "the newest bar's own hlc3");
     }
 
     #[test]
@@ -467,9 +329,13 @@ mod tests {
             .downcast_ref::<AvwapPayload>()
             .unwrap();
         let cache = payload.cache.as_ref().unwrap();
-        assert_eq!(cache.first_slot, 0);
-        assert_eq!(cache.rows.len(), 5, "prefix candle + four closed bars");
+        assert_eq!(cache.output().first_slot, 0);
+        assert_eq!(
+            cache.output().rows.len(),
+            5,
+            "prefix candle + four closed bars"
+        );
         // hlc3 of the prefix candle: (110+90+100)/3 = 100, vol 10 -> vwap 100.
-        assert_eq!(cache.rows[0][0], 100.0);
+        assert_eq!(cache.output().rows[0][0], 100.0);
     }
 }
