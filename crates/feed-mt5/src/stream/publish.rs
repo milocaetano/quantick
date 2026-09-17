@@ -11,12 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use quantick_engine::Trade;
-use quantick_orderbook::{DepthEvent, DepthStatus};
 
-use crate::latency::LatencyTracker;
-use crate::map::TickMapper;
-
-use super::LAG_REPORT_MS;
 use super::events::Mt5Event;
 
 /// Publish one live trade, saying so when the consumer's queue is full.
@@ -72,63 +67,6 @@ pub(super) async fn send_live(
     }
 }
 
-/// Draw a latency sample, log the diagnosis when it crosses, and publish it.
-///
-/// `Err(())` means the consumer is gone, the same signal every other publish in
-/// this module returns.
-///
-/// This is the one place in the read path that reads a system clock. It is
-/// called at most once every
-/// [`SAMPLE_EVERY_PRINTS`](crate::latency::SAMPLE_EVERY_PRINTS) prints and once
-/// per heartbeat, so a tape printing a thousand times a second pays for
-/// roughly sixteen clock reads to be measurable — not a thousand.
-pub(super) async fn publish_latency(
-    latency: &mut LatencyTracker,
-    mapper: &TickMapper,
-    symbol: &str,
-    lag_reported: &mut bool,
-    tx: &mpsc::Sender<Mt5Event>,
-) -> Result<(), ()> {
-    let Some(sample) = latency.sample(wall_clock_ms(), mapper.server_utc_offset_ms()) else {
-        // No live print since the last sample: nothing happened to measure, and
-        // republishing the previous window would let a wedged socket show a
-        // healthy split forever.
-        return Ok(());
-    };
-    let late = sample.arrival_lag_ms >= LAG_REPORT_MS;
-    if late != *lag_reported {
-        *lag_reported = late;
-        // Named, not absorbed. A tape that falls behind used to be visible only
-        // as a number drifting up in the corner of the chart, with nothing
-        // anywhere saying which hop was spending the time.
-        if late {
-            warn!(
-                target: "quantick::feed",
-                schema_version = 1_u8,
-                event_code = "MT5_TAPE_LATE",
-                symbol = %symbol,
-                arrival_lag_ms = sample.arrival_lag_ms,
-                terminal_lag_ms = sample.terminal_lag_ms,
-                terminal_lag_peak_ms = sample.terminal_lag_peak_ms,
-                transport_lag_ms = sample.transport_lag_ms,
-                prints = sample.prints,
-                hop = sample.dominant().map(crate::latency::LatencyHop::label),
-                "the tape is running behind; the hop field says where the time went"
-            );
-        } else {
-            info!(
-                target: "quantick::feed",
-                schema_version = 1_u8,
-                event_code = "MT5_TAPE_CAUGHT_UP",
-                symbol = %symbol,
-                arrival_lag_ms = sample.arrival_lag_ms,
-                "the tape is current again"
-            );
-        }
-    }
-    tx.send(Mt5Event::Latency(sample)).await.map_err(|_| ())
-}
-
 /// UTC epoch milliseconds.
 ///
 /// The only wall-clock read in this crate, and it exists so a delay can be
@@ -139,20 +77,4 @@ pub(super) fn wall_clock_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
-}
-
-/// Publish one depth status. `Err(())` means the consumer is gone.
-pub(super) async fn send_depth_status(
-    tx: &mpsc::Sender<Mt5Event>,
-    symbol: &str,
-    generation: u64,
-    status: DepthStatus,
-) -> Result<(), ()> {
-    tx.send(Mt5Event::Depth(DepthEvent::Status {
-        symbol: symbol.to_string(),
-        generation,
-        status,
-    }))
-    .await
-    .map_err(|_| ())
 }

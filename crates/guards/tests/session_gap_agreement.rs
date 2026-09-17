@@ -79,14 +79,14 @@ fn python_constant(source: &str, name: &str) -> i64 {
     product_of_literals(expression, name, "bridge/mt5/quantick_bridge_core.py")
 }
 
-/// The value assigned to `pub const NAME` in a Rust source.
+/// A literal constant with no visibility, `pub`, or `pub(super)` in a Rust source.
 ///
 /// `crates/app` builds as a binary, so an integration test cannot `use` its
 /// constants — there is no library target to link. Reading the source is what
 /// is left, and it turns out to be the more honest half of the pair anyway:
 /// both sides are now checked the same way, and neither can satisfy this test
 /// by being the one that gets imported.
-fn rust_constant(source: &str, name: &str) -> i64 {
+fn rust_constant(source: &str, name: &str, file: &str) -> i64 {
     // The visibility and the integer type are both incidental: what is being
     // read is a number two sides have to agree on, and one of them is a
     // private `usize` in another crate.
@@ -95,24 +95,26 @@ fn rust_constant(source: &str, name: &str) -> i64 {
         .lines()
         .find(|line| {
             let line = line.trim_start();
-            line.starts_with(&needle) || line.starts_with(&format!("pub {needle}"))
+            line.starts_with(&needle)
+                || line.starts_with(&format!("pub {needle}"))
+                || line.starts_with(&format!("pub(super) {needle}"))
         })
         .unwrap_or_else(|| {
             panic!(
-                "`{name}` is not declared as a `pub const … : i64` in \
-                 crates/feed/src/history_reach.rs. If it was renamed or retyped, say so here \
-                 too — that is what this test is for."
+                "`{name}` has no supported `const {name}: ` declaration in {file} \
+                 (no visibility, `pub`, or `pub(super)`). If its owner or declaration \
+                 changed, update this source-shape guard too."
             )
         });
     let expression = line
         .split_once('=')
-        .expect("a const declaration has a value")
+        .unwrap_or_else(|| panic!("`{name}` in {file} has no assigned value"))
         .1
         .split(';')
         .next()
         .expect("a split always yields a first part")
         .trim();
-    product_of_literals(expression, name, "crates/feed/src/history_reach.rs")
+    product_of_literals(expression, name, file)
 }
 
 /// Evaluate `a * b * c`, which is all either side writes these as.
@@ -167,7 +169,11 @@ fn the_bridge_and_the_app_measure_a_session_the_same_way() {
     let mut broken = Vec::new();
     for agreement in &agreements {
         let python_value = python_constant(&source, agreement.python);
-        let rust_value = rust_constant(&rust_source, agreement.rust);
+        let rust_value = rust_constant(
+            &rust_source,
+            agreement.rust,
+            "crates/feed/src/history_reach.rs",
+        );
         if python_value != rust_value {
             broken.push(format!(
                 "  bridge {} = {} but chart {} = {}\n    {}",
@@ -239,11 +245,17 @@ fn the_slice_cap_matches_what_the_feed_will_accept() {
     let root = repo_root();
     let bridge = std::fs::read_to_string(root.join("bridge/mt5/quantick_bridge_core.py"))
         .expect("the MetaTrader bridge is part of this repository");
-    let stream = std::fs::read_to_string(root.join("crates/feed-mt5/src/stream/connection.rs"))
-        .expect("the feed's session loop is part of this repository");
+    let history = std::fs::read_to_string(root.join(HISTORY_OWNER))
+        .expect("the feed's connection history owner is part of this repository");
 
-    let bridge_cap = python_constant(&bridge, "MAX_SLICE_TICKS_THE_FEED_ACCEPTS");
-    let feed_cap = rust_constant(&stream, "MAX_TRADES_PER_PAGE");
+    assert_slice_cap_agreement(&bridge, &history);
+}
+
+const HISTORY_OWNER: &str = "crates/feed-mt5/src/stream/connection/history.rs";
+
+fn assert_slice_cap_agreement(bridge: &str, history: &str) {
+    let bridge_cap = python_constant(bridge, "MAX_SLICE_TICKS_THE_FEED_ACCEPTS");
+    let feed_cap = rust_constant(history, "MAX_TRADES_PER_PAGE", HISTORY_OWNER);
 
     assert_eq!(
         bridge_cap, feed_cap,
@@ -251,6 +263,71 @@ fn the_slice_cap_matches_what_the_feed_will_accept() {
          accepts {feed_cap} in one block and silently trims the rest. Change \
          both, or neither."
     );
+}
+
+#[test]
+fn literal_constant_visibility_and_products_remain_supported() {
+    for source in [
+        "const MAX_TRADES_PER_PAGE: usize = 250_000;",
+        "pub const MAX_TRADES_PER_PAGE: i64 = 250 * 1_000;",
+        "    pub(super) const MAX_TRADES_PER_PAGE: usize = 250_000;",
+    ] {
+        assert_eq!(
+            rust_constant(source, "MAX_TRADES_PER_PAGE", HISTORY_OWNER),
+            250000
+        );
+    }
+}
+
+#[test]
+fn literal_slice_cap_equality_accepts_equal_and_rejects_drift() {
+    let history = "pub(super) const MAX_TRADES_PER_PAGE: usize = 250_000;";
+    assert_slice_cap_agreement("MAX_SLICE_TICKS_THE_FEED_ACCEPTS = 250_000", history);
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_slice_cap_agreement("MAX_SLICE_TICKS_THE_FEED_ACCEPTS = 250_001", history);
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn missing_lookalike_and_unsupported_constants_fail_with_actual_owner() {
+    for source in [
+        "",
+        "pub(super) const MAX_TRADES_PER_PAGE_EXTRA: usize = 250_000;",
+        "pub(super) const MAX_TRADES_PER_PAGE: usize = OTHER_CAP;",
+        "pub(super) const MAX_TRADES_PER_PAGE: usize = 250_000 + 1;",
+    ] {
+        let error = std::panic::catch_unwind(|| {
+            rust_constant(source, "MAX_TRADES_PER_PAGE", HISTORY_OWNER)
+        })
+        .expect_err("missing and unsupported constants must fail closed");
+        let message = error
+            .downcast_ref::<String>()
+            .expect("formatted diagnostic");
+        assert!(message.contains(HISTORY_OWNER), "{message}");
+    }
+}
+
+#[test]
+fn anchored_private_declarations_ignore_comment_decoys() {
+    // This bounded line reader is not a lexer for multiline comments or strings.
+    for decoy in [
+        "// pub(super) const MAX_TRADES_PER_PAGE: usize = 1;",
+        "/// pub(super) const MAX_TRADES_PER_PAGE: usize = 2;",
+        "/* pub(super) const MAX_TRADES_PER_PAGE: usize = 3; */",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| rust_constant(decoy, "MAX_TRADES_PER_PAGE", HISTORY_OWNER))
+                .is_err()
+        );
+        let source = format!("{decoy}\npub(super) const MAX_TRADES_PER_PAGE: usize = 250_000;");
+        assert_eq!(
+            rust_constant(&source, "MAX_TRADES_PER_PAGE", HISTORY_OWNER),
+            250000
+        );
+    }
 }
 
 #[test]

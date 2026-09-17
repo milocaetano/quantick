@@ -1,50 +1,24 @@
-//! The two block state machines one session runs.
-//!
-//! A historical candle block ([`RatesBlock`]) and the depth capture state
-//! ([`DepthSession`]) are the only things in the message loop that outlive a
-//! single line, so they are named here rather than left as loose variables.
+//! Synchronous candle accumulation and acknowledged depth-generation transitions.
+#[cfg(test)]
+#[path = "blocks_owner_tests.rs"]
+mod owner_tests;
 
-use std::collections::BTreeMap;
-
-use tokio::sync::mpsc;
-use tracing::{info, warn};
-
+use crate::{
+    depth::{BookMapper, BookStats},
+    protocol,
+    rates::{RateMapper, RateStats},
+};
 use quantick_engine::Bar;
 use quantick_orderbook::{DepthEvent, DepthResyncReason, DepthStatus};
+use std::collections::BTreeMap;
 
-use crate::depth::BookMapper;
-use crate::protocol;
-use crate::rates::RateMapper;
-
-use super::events::Mt5Event;
-use super::ports::BookCaptureSwitch;
-use super::publish::send_depth_status;
-
-/// Most candles one block may deliver.
-///
-/// The bridge caps what it sends (`--rates-max-bars`) and logs the shortfall,
-/// but the bridge is the side this one cannot vouch for: a misconfigured or
-/// hostile one could stream candles until the feed runs out of memory. Ninety
-/// days of one-minute buckets is ~130 000, so this is comfortably above any
-/// legitimate block while still being a bound.
 pub(super) const MAX_BARS_PER_BLOCK: usize = 1_000_000;
-
-/// The historical candle block being received, between `rates_start` and
-/// `rates_end`.
-///
-/// Bars land in a [`BTreeMap`] keyed by `open_time` rather than a `Vec`: the
-/// terminal can repeat a bucket across chunk boundaries, and a map both settles
-/// that (last write wins — a repeat is a correction) and hands back one
-/// ascending series without a sort whose tie-breaking would be an unstated
-/// rule. Same block in, same series out, whatever order the chunks arrived in.
 pub(super) struct RatesBlock {
     interval_ms: i64,
     mapper: RateMapper,
     bars: BTreeMap<i64, Bar>,
-    /// Whether the cap has been hit, so it is reported once rather than per row.
     truncated: bool,
 }
-
 impl RatesBlock {
     pub(super) fn new(interval_ms: i64, server_utc_offset_s: i64) -> Self {
         Self {
@@ -54,61 +28,56 @@ impl RatesBlock {
             truncated: false,
         }
     }
-
-    /// Map and absorb one chunk. Unreadable rows are counted, not fatal: one
-    /// corrupt candle in ninety days is a gap, not a reason to lose the block.
-    pub(super) fn absorb(&mut self, chunk: &protocol::RateChunk) {
+    /// True exactly once when this block first reaches its cap.
+    pub(super) fn absorb(&mut self, chunk: &protocol::RateChunk) -> bool {
         for row in &chunk.bars {
             if self.bars.len() >= MAX_BARS_PER_BLOCK {
-                if !self.truncated {
-                    self.truncated = true;
-                    warn!(
-                        target: "quantick::feed",
-                        schema_version = 1_u8,
-                        event_code = "MT5_RATES_TRUNCATED",
-                        max_bars = MAX_BARS_PER_BLOCK as u64,
-                        action = "keep_oldest_stop_absorbing",
-                        "the candle block exceeded the cap; ignoring the rest of it"
-                    );
-                }
-                return;
+                let first = !self.truncated;
+                self.truncated = true;
+                return first;
             }
             if let Some(bar) = self.mapper.map(row) {
                 self.bars.insert(bar.open_time, bar);
             }
         }
+        false
     }
-
     pub(super) fn len(&self) -> usize {
         self.bars.len()
     }
-
-    /// Close the block: log what it cost, and hand back the ascending series.
-    pub(super) fn finish(self, symbol: &str) -> (i64, Vec<Bar>, bool) {
-        self.mapper.stats.log_summary(symbol, self.interval_ms);
-        // Clipping here is the same kind of shortfall the bridge reports with
-        // its own `partial`: bars that exist and were not delivered.
-        let clipped = self.truncated;
-        (self.interval_ms, self.bars.into_values().collect(), clipped)
+    pub(super) fn stats(&self) -> (RateStats, i64) {
+        (self.mapper.stats, self.interval_ms)
+    }
+    pub(super) fn finish(self) -> (i64, Vec<Bar>, bool) {
+        (
+            self.interval_ms,
+            self.bars.into_values().collect(),
+            self.truncated,
+        )
     }
 }
 
-/// Depth capture state for one bridge connection.
-///
-/// Split out because it is the only stateful thing in the message loop besides
-/// tick mapping, and it must stay correct across three independent events: the
-/// consumer toggling capture, the terminal losing images, and the session
-/// ending.
+enum DepthContinuation {
+    Idle,
+    Open {
+        image: protocol::Book,
+        base: u64,
+    },
+    Map(protocol::Book),
+    Synchronized {
+        generation: u64,
+        status: DepthStatus,
+    },
+}
+
 pub(super) struct DepthSession {
     symbol: String,
-    /// `None` when the bridge declared no Depth of Market support.
     mapper: Option<BookMapper>,
-    /// Whether the consumer has been told a generation is open.
     publishing: bool,
     last_seq: Option<u64>,
     missing_capability_reported: bool,
+    next: DepthContinuation,
 }
-
 impl DepthSession {
     pub(super) fn new(hello: &protocol::Hello, symbol: String) -> Self {
         Self {
@@ -125,161 +94,131 @@ impl DepthSession {
             publishing: false,
             last_seq: None,
             missing_capability_reported: false,
+            next: DepthContinuation::Idle,
         }
     }
-
-    pub(super) fn log_capability(&self) {
-        match &self.mapper {
-            Some(_) => info!(
-                target: "quantick::feed",
-                schema_version = 1_u8,
-                event_code = "MT5_BOOK_AVAILABLE",
-                symbol = %self.symbol,
-                "bridge declares Depth of Market support"
-            ),
-            None => info!(
-                target: "quantick::feed",
-                schema_version = 1_u8,
-                event_code = "MT5_BOOK_UNSUPPORTED_BY_BRIDGE",
-                symbol = %self.symbol,
-                action = "trades_only",
-                "bridge declares no Depth of Market; the heatmap will stay empty \
-                 (recompile bridge/mt5/QuantickBridge.mq5, or the terminal refused the DOM)"
-            ),
-        }
+    pub(super) fn declared(&self) -> bool {
+        self.mapper.is_some()
     }
-
-    pub(super) fn set_server_utc_offset_s(&mut self, offset_s: i64) {
+    pub(super) fn set_server_utc_offset_s(&mut self, offset: i64) {
         if let Some(mapper) = self.mapper.as_mut() {
-            mapper.set_server_utc_offset_s(offset_s);
+            mapper.set_server_utc_offset_s(offset);
         }
     }
-
-    /// Handle one image. `Err(())` means the consumer is gone.
-    pub(super) async fn observe(
+    fn status(&self, generation: u64, status: DepthStatus) -> DepthEvent {
+        DepthEvent::Status {
+            symbol: self.symbol.clone(),
+            generation,
+            status,
+        }
+    }
+    pub(super) fn observe(
         &mut self,
         image: protocol::Book,
-        capture: &BookCaptureSwitch,
-        generation_offset: &mut u64,
-        tx: &mpsc::Sender<Mt5Event>,
-    ) -> Result<(), ()> {
-        if self.mapper.is_none() {
-            // A bridge sending images it never declared is a version skew, not
-            // data to trust silently.
-            return Ok(());
-        }
-        let (enabled, base_generation) = capture.state();
-        let lost_images = self.images_lost(image.seq);
-        let mapper = self.mapper.as_mut().expect("checked above");
+        enabled: bool,
+        base: u64,
+        offset: &mut u64,
+    ) -> DepthStep {
+        let Some(mapper) = self.mapper.as_mut() else {
+            return DepthStep::Done;
+        };
+        let lost = self
+            .last_seq
+            .is_some_and(|last| image.seq != last.saturating_add(1));
         if !enabled {
             if self.publishing {
                 let generation = mapper.generation();
                 self.publishing = false;
                 self.last_seq = None;
-                mapper.restart(generation); // next capture starts from a snapshot
-                send_depth_status(tx, &self.symbol, generation, DepthStatus::Stopped).await?;
+                mapper.restart(generation);
+                self.next = DepthContinuation::Idle;
+                return DepthStep::Publish(self.status(generation, DepthStatus::Stopped));
             }
-            return Ok(());
+            return DepthStep::Done;
         }
-
-        // Open a generation when capture starts, when the consumer moves its
-        // base, or when images were lost and the diff would silently bridge a
-        // moment we never observed.
-        let wanted = base_generation.saturating_add(*generation_offset);
-        if !self.publishing || mapper.generation() != wanted || lost_images {
-            if lost_images {
-                send_depth_status(
-                    tx,
-                    &self.symbol,
-                    mapper.generation(),
+        if !self.publishing || mapper.generation() != base.saturating_add(*offset) || lost {
+            if lost {
+                let generation = mapper.generation();
+                self.next = DepthContinuation::Open { image, base };
+                return DepthStep::Publish(self.status(
+                    generation,
                     DepthStatus::Resyncing {
                         reason: DepthResyncReason::SourceRestarted {
                             cause: "book_images_lost",
                         },
                     },
-                )
-                .await?;
+                ));
             }
-            *generation_offset = generation_offset.saturating_add(1);
-            let generation = base_generation.saturating_add(*generation_offset);
-            mapper.restart(generation);
-            self.publishing = true;
-            send_depth_status(tx, &self.symbol, generation, DepthStatus::Connecting).await?;
+            return self.open(image, base, offset);
         }
+        self.map(image)
+    }
+    fn open(&mut self, image: protocol::Book, base: u64, offset: &mut u64) -> DepthStep {
+        *offset = offset.saturating_add(1);
+        let generation = base.saturating_add(*offset);
+        self.mapper
+            .as_mut()
+            .expect("declared depth")
+            .restart(generation);
+        self.publishing = true;
+        self.next = DepthContinuation::Map(image);
+        DepthStep::Publish(self.status(generation, DepthStatus::Connecting))
+    }
+    fn map(&mut self, image: protocol::Book) -> DepthStep {
         self.last_seq = Some(image.seq);
-
-        let Some(event) = mapper.map(&image) else {
-            return Ok(());
+        let mapper = self.mapper.as_mut().expect("declared depth");
+        let mapped = mapper.map_with_diagnostics(&image);
+        self.next = match &mapped.event {
+            Some(DepthEvent::Snapshot { .. }) => DepthContinuation::Synchronized {
+                generation: mapper.generation(),
+                status: mapper.synchronized_status(),
+            },
+            _ => DepthContinuation::Idle,
         };
-        let synchronized =
-            matches!(event, DepthEvent::Snapshot { .. }).then(|| mapper.synchronized_status());
-        let generation = mapper.generation();
-        if tx.send(Mt5Event::Depth(event)).await.is_err() {
-            return Err(());
-        }
-        if let Some(status) = synchronized {
-            send_depth_status(tx, &self.symbol, generation, status).await?;
-        }
-        Ok(())
+        DepthStep::Mapped(mapped)
     }
-
-    /// Whether images went missing (or the bridge restarted its counter)
-    /// between the last one and `seq`.
-    fn images_lost(&self, seq: u64) -> bool {
-        match self.last_seq {
-            Some(last) => seq != last.saturating_add(1),
-            None => false,
+    pub(super) fn acknowledged(&mut self, offset: &mut u64) -> DepthStep {
+        match std::mem::replace(&mut self.next, DepthContinuation::Idle) {
+            DepthContinuation::Idle => DepthStep::Done,
+            DepthContinuation::Open { image, base } => self.open(image, base, offset),
+            DepthContinuation::Map(image) => self.map(image),
+            DepthContinuation::Synchronized { generation, status } => {
+                DepthStep::Publish(self.status(generation, status))
+            }
         }
     }
-
-    /// Tell a waiting consumer, once, that this bridge cannot supply depth.
-    pub(super) async fn report_missing_capability(
-        &mut self,
-        capture: &BookCaptureSwitch,
-        tx: &mpsc::Sender<Mt5Event>,
-    ) -> Result<(), ()> {
-        let (enabled, base_generation) = capture.state();
+    pub(super) fn missing(&mut self, enabled: bool, base: u64) -> Option<DepthEvent> {
         if self.mapper.is_some() || self.missing_capability_reported || !enabled {
-            return Ok(());
+            return None;
         }
         self.missing_capability_reported = true;
-        warn!(
-            target: "quantick::feed",
-            schema_version = 1_u8,
-            event_code = "MT5_BOOK_UNSUPPORTED_BY_BRIDGE",
-            symbol = %self.symbol,
-            action = "report_disconnected",
-            "depth capture is on but this bridge sends no Depth of Market"
-        );
-        // Tagged with the consumer's own base generation: a status below the
-        // generation floor it is watching would be discarded as stale, and the
-        // chart would keep waiting for a book that is never coming.
-        send_depth_status(
-            tx,
-            &self.symbol,
-            base_generation,
+        Some(self.status(
+            base,
             DepthStatus::Disconnected {
                 error_class: "bridge_without_depth",
             },
-        )
-        .await
+        ))
     }
-
-    /// End the generation when the bridge session ends.
-    pub(super) async fn close(&mut self, tx: &mpsc::Sender<Mt5Event>) {
-        if let Some(mapper) = self.mapper.as_ref() {
-            mapper.stats.log_summary(&self.symbol);
-            if self.publishing {
-                let _ = send_depth_status(
-                    tx,
-                    &self.symbol,
+    pub(super) fn close(&self) -> (Option<BookStats>, Option<DepthEvent>) {
+        let Some(mapper) = &self.mapper else {
+            return (None, None);
+        };
+        (
+            Some(mapper.stats),
+            self.publishing.then(|| {
+                self.status(
                     mapper.generation(),
                     DepthStatus::Disconnected {
                         error_class: "bridge_lost",
                     },
                 )
-                .await;
-            }
-        }
+            }),
+        )
     }
+}
+
+pub(super) enum DepthStep {
+    Done,
+    Publish(DepthEvent),
+    Mapped(crate::depth::MappedBook),
 }

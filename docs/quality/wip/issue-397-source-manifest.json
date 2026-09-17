@@ -1,0 +1,126 @@
+{
+  "branch": "feat/mt5-connection-lifecycle",
+  "head": "c9138e6100921bf70f8126a4cf308c47bbe8b183",
+  "files": [
+    {
+      "path": "crates/feed-mt5/examples/connection_burst.rs",
+      "bytes": 3565,
+      "sha256": "BD505ECAB99E418697DCACEBCEB7F7359914D7ED1659ECA0D496B76B75BB24FA"
+    },
+    {
+      "path": "crates/feed-mt5/src/depth.rs",
+      "bytes": 22546,
+      "sha256": "390B87AE190640FE576E24B0869F60B7B3DEFACBC656A2F17433E0EA491D9D96"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream.rs",
+      "bytes": 20455,
+      "sha256": "B70CBEA79CCF8537CBF85E835E5E63831F71C4BF804B0AE656C001FAF1984CAA"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/blocks.rs",
+      "bytes": 7281,
+      "sha256": "F2CBF163EA28CE231169A2F79C4979721AD389F9E7787B68FB0D9F570D42C6BA"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/blocks_owner_tests.rs",
+      "bytes": 891,
+      "sha256": "85165BE3C3A83AEDECC6385F22DF9EED22D0645EEB6D46602492165CF1221076"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection.rs",
+      "bytes": 7028,
+      "sha256": "310A19283C2FCB866781A5EA6206DF22E79C9A1D1AEE4CC97641C220F2ACC568"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/diagnostic.rs",
+      "bytes": 12069,
+      "sha256": "D5B1D3F072063CA4CB6E4B814B7217CF8E1BB5CA710A48A8FB90BCE50D8E83BD"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/effect.rs",
+      "bytes": 1103,
+      "sha256": "6486AFDD9593B06B5150F4843CCB80946B1E0226A73D7BFD88ECA86EF0DBFF3E"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/hello.rs",
+      "bytes": 771,
+      "sha256": "EB2A146B2C04681E8174D4495242B42AEFF921A8B46C99BCB985AD0462F4E2E3"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/history.rs",
+      "bytes": 1720,
+      "sha256": "B48667DDCD87D05CDE1BAFCCF1F9459E0A82CCC13B868CAEE70B520EFED3D049"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/input_boundary_tests.rs",
+      "bytes": 15827,
+      "sha256": "3F2F578DE2E407BBF462B74F342C3EE79835F23B3F7104FCFE9603A47883F725"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/machine_bench.rs",
+      "bytes": 7152,
+      "sha256": "7E38982D3DBC0443FC02C120E158233A8976E3B6D1E394CF4AFEC0148CE38B8D"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/machine_tests.rs",
+      "bytes": 20596,
+      "sha256": "87F1C16E44C374F21DED79EFFA3DF994C16220411C25F057BBD1124FA1F805FA"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/more_machine_tests.rs",
+      "bytes": 13292,
+      "sha256": "84CE2FDECB9DD0757B0C270852CD8242602194D0AC296368FF5E3CBC1D890F20"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/payload_tests.rs",
+      "bytes": 9266,
+      "sha256": "792088BA8E71D0C02CDDB6EF2BA3036038EA5C574AEB5425B63903C8D6234A6A"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/session.rs",
+      "bytes": 20140,
+      "sha256": "A38A7E2FC5E027522B9710ED754DA92D8DEFC0F0BE340ABF979DD69412E91C21"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/transitions.rs",
+      "bytes": 12883,
+      "sha256": "3041E8A35BCFD763EEFDFD3F9905631381599DA928B763BED5A70272635C1A09"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection/wait_tests.rs",
+      "bytes": 7549,
+      "sha256": "72485C3AEEB20CF04A585C89F8039A1D2CB4C33EE90ECBB1D06786A95F53BFA1"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/connection_owner_tests.rs",
+      "bytes": 2897,
+      "sha256": "DD287FD81E66A639D356AD04D7397D90D5FD26CACDFAFD3EA2B05A14E232EA33"
+    },
+    {
+      "path": "crates/feed-mt5/src/stream/publish.rs",
+      "bytes": 2999,
+      "sha256": "9BA70EC5FED78C01E4D2734949296FD75B528CDF692EEBF7503658EEA98A01B0"
+    },
+    {
+      "path": "crates/feed-mt5/tests/connection_admission_boundary.rs",
+      "bytes": 3193,
+      "sha256": "B63AF275E259743B605F2EF64F05E71FACAD9B9E95CD71B3E9B9BCCC3AADAB93"
+    },
+    {
+      "path": "crates/feed-mt5/tests/connection_deadline_boundary.rs",
+      "bytes": 4266,
+      "sha256": "A2D5F1F3380108305FD7017404D4481AE42C60824A51F3C57028239BE6D98FC2"
+    },
+    {
+      "path": "crates/feed-mt5/tests/connection_lifecycle.rs",
+      "bytes": 15212,
+      "sha256": "1BD8EFBB7BD7D5504A949E76FF7EE721F31155BC6F4690E40FEE574EE57A41E1"
+    },
+    {
+      "path": "crates/guards/tests/session_gap_agreement.rs",
+      "bytes": 17048,
+      "sha256": "AC46238987F2B8A4E8EF221EE2F3C252DA85016448FFA5874FB41F74D9685325"
+    }
+  ]
+}

@@ -199,47 +199,46 @@ impl BookMapper {
         self.last_utc_ms = None;
     }
 
-    /// Map one DOM image. Returns the event to publish, if any.
+    /// Map one DOM image. The public compatibility path retains its diagnostics.
     pub fn map(&mut self, image: &Book) -> Option<DepthEvent> {
-        self.stats.images += 1;
+        let mapped = self.map_with_diagnostics(image);
+        for diagnostic in mapped.diagnostics.into_iter().flatten() {
+            diagnostic.log(&self.symbol);
+        }
+        mapped.event
+    }
 
+    /// The session's pure path shares the public mapper's single algorithm.
+    pub(crate) fn map_with_diagnostics(&mut self, image: &Book) -> MappedBook {
+        self.stats.images += 1;
         if read_levels(&image.bids, &mut self.bids, &mut self.stats).is_none()
             || read_levels(&image.asks, &mut self.asks, &mut self.stats).is_none()
         {
             self.stats.malformed += 1;
-            warn_once(
-                self.stats.malformed,
-                "MT5_BOOK_MALFORMED",
-                &self.symbol,
-                image.seq,
-                "book image had an unparseable or negative level; keeping the previous image",
-            );
-            return None;
+            return MappedBook {
+                event: None,
+                diagnostics: [
+                    (self.stats.malformed == 1)
+                        .then_some(BookDiagnostic::Malformed { seq: image.seq }),
+                    None,
+                ],
+            };
         }
-
-        let event_time_ms = self.timeline_ms(image.time_ms);
-
-        match self.differ.observe(&self.bids, &self.asks) {
+        let (event_time_ms, backwards) = self.timeline_ms(image.time_ms);
+        let mut diagnostics = [backwards.then_some(BookDiagnostic::Backwards), None];
+        let event = match self.differ.observe(&self.bids, &self.asks) {
             ImageOutcome::Snapshot(snapshot) => {
                 self.stats.snapshots += 1;
-                info!(
-                    target: "quantick::feed",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BOOK_SYNCHRONIZED",
-                    symbol = %self.symbol,
-                    generation = self.generation,
-                    seq = image.seq,
-                    bid_levels = snapshot.bids().len(),
-                    ask_levels = snapshot.asks().len(),
-                    coverage = ?snapshot.coverage(),
-                    "first DOM image accepted; book capture is live"
-                );
+                diagnostics[1] = Some(BookDiagnostic::Synchronized {
+                    generation: self.generation,
+                    seq: image.seq,
+                    bid_levels: snapshot.bids().len(),
+                    ask_levels: snapshot.asks().len(),
+                    coverage: snapshot.coverage(),
+                });
                 Some(DepthEvent::Snapshot {
                     symbol: self.symbol.clone(),
                     generation: self.generation,
-                    // The terminal timestamps the image itself, so observation
-                    // and effect are the same instant — there is no separate
-                    // local fetch to distinguish, unlike a REST snapshot.
                     observed_at_ms: event_time_ms,
                     effective_at_ms: event_time_ms,
                     price_step: self.price_step,
@@ -261,53 +260,104 @@ impl BookMapper {
             }
             ImageOutcome::Crossed { best_bid, best_ask } => {
                 self.stats.crossed += 1;
-                warn_once(
-                    self.stats.crossed,
-                    "MT5_BOOK_CROSSED",
-                    &self.symbol,
-                    image.seq,
-                    "DOM image was crossed (auction?); keeping the last uncrossed image",
-                );
-                tracing::debug!(
-                    target: "quantick::feed",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BOOK_CROSSED",
-                    symbol = %self.symbol,
-                    seq = image.seq,
-                    best_bid = %best_bid,
-                    best_ask = %best_ask,
-                    total_crossed = self.stats.crossed,
-                    "crossed DOM image rejected"
-                );
+                diagnostics[1] = Some(BookDiagnostic::Crossed {
+                    seq: image.seq,
+                    best_bid,
+                    best_ask,
+                    total: self.stats.crossed,
+                });
                 None
             }
-        }
+        };
+        MappedBook { event, diagnostics }
     }
 
-    /// Convert server time to UTC and keep the published timeline monotonic.
-    ///
-    /// A book timestamp that goes backwards would be refused downstream and
-    /// cost the whole generation. Holding it at the last value keeps the
-    /// capture alive; the counter and log say how often it happened, so a
-    /// terminal with a jumping clock is diagnosable rather than invisible.
-    fn timeline_ms(&mut self, server_time_ms: i64) -> i64 {
+    /// A backwards timestamp is clamped after valid levels, before image mapping.
+    fn timeline_ms(&mut self, server_time_ms: i64) -> (i64, bool) {
         let utc_ms = server_time_ms.saturating_sub(self.offset_ms);
-        let published = match self.last_utc_ms {
-            Some(last) if utc_ms < last => {
-                self.stats.clamped_timestamps += 1;
-                warn_once(
-                    self.stats.clamped_timestamps,
-                    "MT5_BOOK_TIME_BACKWARDS",
-                    &self.symbol,
-                    0,
-                    "DOM image timestamp went backwards; holding the previous instant",
-                );
-                last
-            }
-            _ => utc_ms,
+        let backwards = self.last_utc_ms.is_some_and(|last| utc_ms < last);
+        let published = if backwards {
+            self.stats.clamped_timestamps += 1;
+            self.last_utc_ms
+                .expect("backwards requires a previous timestamp")
+        } else {
+            utc_ms
         };
         self.last_utc_ms = Some(published);
-        published
+        (published, backwards && self.stats.clamped_timestamps == 1)
+    }
+}
+
+/// At most two ordered mapping diagnostics: clock first, then image result.
+pub(crate) struct MappedBook {
+    pub event: Option<DepthEvent>,
+    pub diagnostics: [Option<BookDiagnostic>; 2],
+}
+
+pub(crate) enum BookDiagnostic {
+    Malformed {
+        seq: u64,
+    },
+    Backwards,
+    Synchronized {
+        generation: u64,
+        seq: u64,
+        bid_levels: usize,
+        ask_levels: usize,
+        coverage: BookCoverage,
+    },
+    Crossed {
+        seq: u64,
+        best_bid: Decimal,
+        best_ask: Decimal,
+        total: u64,
+    },
+}
+impl BookDiagnostic {
+    pub(crate) fn log(self, symbol: &str) {
+        match self {
+            Self::Malformed { seq } => warn_once(
+                1,
+                "MT5_BOOK_MALFORMED",
+                symbol,
+                seq,
+                "book image had an unparseable or negative level; keeping the previous image",
+            ),
+            Self::Backwards => warn_once(
+                1,
+                "MT5_BOOK_TIME_BACKWARDS",
+                symbol,
+                0,
+                "DOM image timestamp went backwards; holding the previous instant",
+            ),
+            Self::Synchronized {
+                generation,
+                seq,
+                bid_levels,
+                ask_levels,
+                coverage,
+            } => info!(
+                target: "quantick::feed", schema_version=1_u8, event_code="MT5_BOOK_SYNCHRONIZED",
+                symbol, generation, seq, bid_levels, ask_levels, coverage=?coverage,
+                "first DOM image accepted; book capture is live"
+            ),
+            Self::Crossed {
+                seq,
+                best_bid,
+                best_ask,
+                total,
+            } => {
+                warn_once(
+                    total,
+                    "MT5_BOOK_CROSSED",
+                    symbol,
+                    seq,
+                    "DOM image was crossed (auction?); keeping the last uncrossed image",
+                );
+                tracing::debug!(target:"quantick::feed",schema_version=1_u8,event_code="MT5_BOOK_CROSSED",
+                    symbol,seq,best_bid=%best_bid,best_ask=%best_ask,total_crossed=total,"crossed DOM image rejected");
+            }
+        }
     }
 }
 

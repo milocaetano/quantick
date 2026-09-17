@@ -19,7 +19,8 @@
 //! This file is the listener and the refusal path. The rest of a session is
 //! owned one module at a time beside it: [`ports`] the two handles the
 //! consumer holds, [`events`] what the server says, [`connection`] the
-//! session loop, [`blocks`] the two state machines that outlive a line,
+//! socket loop with its admission/session/history owners, [`blocks`] the
+//! candle accumulation and depth capture owners,
 //! [`publish`] every send out, and [`reader`] the bounded line reader.
 
 use std::net::SocketAddr;
