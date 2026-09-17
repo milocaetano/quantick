@@ -139,12 +139,13 @@ fn apply_quick_range(
         return;
     };
     use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
-    let operation = request.operation;
-    let Some(input) = crate::control::quick_range_input(&operation, request.side) else {
+    use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
+    let operation = request.conversion.request();
+    let Some(input) = crate::control::quick_range_input(operation, request.side) else {
         app.surfaces
             .drawing_chrome
             .quick_range
-            .completed(operation.id, false);
+            .finish_conversion(request.conversion, PlacementOutcome::InputInvalid);
         tracing::warn!(
             target: "quantick::control",
             event_code = "QUICK_RANGE_INPUT_INVALID",
@@ -164,11 +165,16 @@ fn apply_quick_range(
         crate::control::ActionOrigin::Human,
         input,
     );
-    let explain = app
+    let outcome = if result.is_ok() {
+        PlacementOutcome::Placed
+    } else {
+        PlacementOutcome::ActionRefused
+    };
+    let readback = app
         .surfaces
         .drawing_chrome
         .quick_range
-        .completed(operation.id, result.is_ok());
+        .finish_conversion(request.conversion, outcome);
     if let Err(error) = result {
         tracing::warn!(
             target: "quantick::control",
@@ -177,7 +183,7 @@ fn apply_quick_range(
             error = %error.message,
             "the quick-range drawing could not be placed"
         );
-        if explain {
+        if readback.explain_refusal {
             app.surfaces.toast.note(
                 "The drawing could not be placed; the temporary range is still available.",
                 now,

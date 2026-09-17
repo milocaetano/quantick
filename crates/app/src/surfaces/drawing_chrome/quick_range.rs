@@ -5,15 +5,23 @@ use super::{DrawingChromeAsk, DrawingEnv};
 use crate::drawings::{self, ChartPoint, DrawingPayload, NewDrawing};
 use crate::pane::PaneSide;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use core::conversion_plan::{
+    ConversionInput, ConversionReadback, PendingConversion, PlacementOutcome,
+    QuickRangeConversionPlan, StartedConversion,
+};
 use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
-use quantick_chart_interaction::quick_range::{self as core, Command, Effect, Event, Phase};
+use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
 pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
 pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
+
+#[cfg(test)]
+#[path = "quick_range/tests/conversion.rs"]
+mod conversion_tests;
 
 /// The model owns operation identity; the adapter supplies registry/UI names.
 pub(crate) trait ActionUi {
@@ -87,9 +95,9 @@ impl Owner {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PlaceRequest {
-    pub operation: core::PlaceRequest,
+#[derive(Debug, PartialEq)]
+pub(crate) struct PendingRangePlacement {
+    pub conversion: PendingConversion,
     pub side: PaneSide,
 }
 
@@ -321,29 +329,24 @@ impl QuickRange {
         }))
     }
 
-    fn convert(&mut self, action: Action) -> Option<PlaceRequest> {
+    pub(crate) fn convert(&mut self, action: Action) -> Option<PendingRangePlacement> {
         let context = self.model.context()?;
-        let Some(Effect::Place(operation)) =
-            self.model.update(Command::Convert(action), context).effect
+        let side = self.side?;
+        let StartedConversion::Awaiting(conversion) =
+            QuickRangeConversionPlan::start(&mut self.model, ConversionInput { action, context })
         else {
             return None;
         };
-        Some(PlaceRequest {
-            operation,
-            side: self.side?,
-        })
+        Some(PendingRangePlacement { conversion, side })
     }
 
-    pub fn completed(&mut self, id: u64, succeeded: bool) -> bool {
-        let event = if succeeded {
-            Event::Completed(id)
-        } else {
-            Event::Refused(id)
-        };
-        self.model
-            .observe(event, self.model.context().unwrap_or_default())
-            .effect
-            == Some(Effect::ExplainRefusal)
+    pub fn finish_conversion(
+        &mut self,
+        conversion: PendingConversion,
+        outcome: PlacementOutcome,
+    ) -> ConversionReadback {
+        let context = self.model.context().unwrap_or_default();
+        conversion.finish(&mut self.model, context, outcome)
     }
 
     #[cfg(feature = "quick-range-harness")]

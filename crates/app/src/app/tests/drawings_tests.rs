@@ -201,6 +201,152 @@ fn quick_range_fibonacci_actions_use_the_dragged_move() {
 }
 
 #[test]
+fn independent_annotations_do_not_run_the_temporary_conversion_plan() {
+    for (capability, version, anchors) in [
+        (crate::control::PROFILE_CAPABILITY_ID, 1, 2),
+        (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1, 2),
+        (crate::control::FIB_PROJECTION_CAPABILITY_ID, 1, 3),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        run_frame_at(&mut app, &ctx, TEST_WINDOW);
+        let (_, start, end) = quick_range_ends(&app);
+        drag_quick_range(&mut app, &ctx, start, end);
+        assert!(crate::app::control_quick_range(&app).unwrap().enabled);
+        let mut points = vec![
+            serde_json::json!({"time_unix_ms": 2000, "price": "100"}),
+            serde_json::json!({"time_unix_ms": 3000, "price": "101"}),
+        ];
+        if capability != crate::control::PROFILE_CAPABILITY_ID {
+            points[0]["bar_position"] = serde_json::json!("2.5");
+            points[1]["bar_position"] = serde_json::json!("3.5");
+        }
+        if anchors == 3 {
+            points.push(points[1].clone());
+        }
+        app.control_action(
+            capability,
+            version,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({"anchors": points}),
+        )
+        .unwrap();
+        assert_eq!(app.active_tab().drawing_pane().drawings.items().len(), 1);
+        assert!(
+            crate::app::control_quick_range(&app).unwrap().enabled,
+            "an independent annotation does not complete the temporary range"
+        );
+        run_frame(&mut app, &ctx);
+        assert!(
+            crate::app::control_quick_range(&app).is_none(),
+            "the normal selection reconciliation releases it next frame"
+        );
+    }
+}
+
+#[test]
+fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
+    use crate::surfaces::drawing_chrome::{DrawingChromeAsk, QuickRangeAction, QuickRangeOwner};
+    use quantick_chart_interaction::quick_range::{GestureArea, GestureEligibility};
+    let (mut app, _commands) = app_with_history(200);
+    let pane = app.active_tab().drawing_pane();
+    let owner = QuickRangeOwner {
+        tab: app.active_tab().id,
+        side: PaneSide::Flow,
+        pane: pane.id,
+        revision: pane.pagination_revision(),
+        layout: pane.layout.map(|id| id.0),
+    };
+    let quick = &mut app.surfaces.drawing_chrome.quick_range;
+    quick.press(
+        owner,
+        egui::pos2(1.0, 1.0),
+        ChartPoint::at(1.5, f64::MAX),
+        GestureEligibility {
+            pointer_tool: true,
+            unoccluded: true,
+            area: GestureArea {
+                min: [0.0; 2],
+                max: [100.0; 2],
+            },
+        },
+    );
+    quick.drag(
+        owner,
+        egui::pos2(30.0, 30.0),
+        ChartPoint::at(2.5, 101.0),
+        4.0,
+        || {
+            let tool = crate::drawings::DrawingTool::by_id("measure").unwrap();
+            crate::drawings::NewDrawing {
+                style: tool.default_style(),
+                payload: tool.default_payload(),
+            }
+        },
+    );
+    quick.release(owner);
+    let placement = quick.convert(QuickRangeAction::Profile).unwrap();
+    assert!(
+        crate::control::quick_range_input(placement.conversion.request(), placement.side).is_none()
+    );
+    app.surfaces.toast.clear();
+    app.apply_drawing_chrome(
+        DrawingChromeAsk {
+            place_quick_range: Some(placement),
+            ..DrawingChromeAsk::default()
+        },
+        Instant::now(),
+    );
+    assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+    assert!(app.surfaces.toast.message().is_none());
+    let retry = app
+        .surfaces
+        .drawing_chrome
+        .quick_range
+        .convert(QuickRangeAction::Profile)
+        .expect("serialization refusal restores the same range to Ready");
+    app.surfaces.drawing_chrome.quick_range.finish_conversion(
+        retry.conversion,
+        quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::InputInvalid,
+    );
+}
+
+#[test]
+fn quick_range_action_refusal_finishes_the_token_and_explains_the_retry() {
+    use crate::surfaces::drawing_chrome::{DrawingChromeAsk, QuickRangeAction};
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, end) = quick_range_ends(&app);
+    drag_quick_range(&mut app, &ctx, start, end);
+    let placement = app
+        .surfaces
+        .drawing_chrome
+        .quick_range
+        .convert(QuickRangeAction::Profile)
+        .unwrap();
+    app.active_tab_mut().flow_pane.rebuild_bars();
+    app.surfaces.toast.clear();
+    app.apply_drawing_chrome(
+        DrawingChromeAsk {
+            place_quick_range: Some(placement),
+            ..DrawingChromeAsk::default()
+        },
+        Instant::now(),
+    );
+    assert!(app.active_tab().drawing_pane().drawings.items().is_empty());
+    assert_eq!(
+        app.surfaces.toast.message(),
+        Some("The drawing could not be placed; the temporary range is still available.")
+    );
+    run_frame(&mut app, &ctx);
+    assert!(
+        crate::app::control_quick_range(&app).is_none_or(|control| !control.enabled),
+        "next reconciliation still applies the changed series revision"
+    );
+}
+
+#[test]
 fn a_future_space_range_still_creates_a_volume_profile() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);

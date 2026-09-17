@@ -535,7 +535,7 @@ impl PresetHost for RecordingPresetHost<'_> {
 pub(crate) struct DrawingChromeAsk {
     /// Replace the temporary secondary-drag ruler with the chosen durable
     /// drawing through its registered annotation action.
-    pub place_quick_range: Option<quick_range::PlaceRequest>,
+    pub place_quick_range: Option<quick_range::PendingRangePlacement>,
     /// The temporary range stood down because the trader clicked the chart.
     pub dismiss_quick_range: bool,
     /// The inspector edited its copy of the selected drawing. Boxed: it is by
@@ -615,8 +615,15 @@ impl DrawingChromeAsk {
     /// [`super::SurfaceResponse::merge`] follows, for the same reason: two
     /// pieces cannot both be right about one row, and dropping the later ask
     /// deterministically beats letting draw order decide in silence.
+    /// Conversion is linear: its sole producer must never contribute twice.
     pub(super) fn merge(&mut self, other: Self) {
-        self.place_quick_range = self.place_quick_range.or(other.place_quick_range);
+        if let Some(placement) = other.place_quick_range {
+            assert!(
+                self.place_quick_range.is_none(),
+                "one quick-range conversion producer"
+            );
+            self.place_quick_range = Some(placement);
+        }
         self.dismiss_quick_range |= other.dismiss_quick_range;
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
