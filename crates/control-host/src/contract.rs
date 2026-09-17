@@ -194,6 +194,10 @@ impl<P> CapabilityContract<P> {
     pub fn snapshot_scopes(&self) -> &[SnapshotScopeDescriptor] {
         &self.snapshot_scopes
     }
+    /// Counts registered read bindings, excluding external actions.
+    ///
+    /// Deliberately published introspection support for public contract tests
+    /// and application registration regressions; this scans the binding map.
     pub fn read_count(&self) -> usize {
         self.bindings
             .values()
