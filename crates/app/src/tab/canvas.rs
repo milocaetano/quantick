@@ -114,6 +114,10 @@ impl Tab {
         // shows the market rather than nothing.
         let show_flow = self.layout.shows_flow() || !show_time;
         let split = show_time && show_flow;
+        if split && !self.context_collapsed && area.width() > 0.0 {
+            let floor = canvas_layout::MIN_PANE_WIDTH_PX / area.width();
+            self.split_fraction = clamp_pane_fraction(self.split_fraction.max(floor));
+        }
         // One visible pane is handed the whole canvas and the rest of this
         // reduces to nothing: no divider, no focus rule — though a lone time
         // pane keeps its header.
@@ -373,7 +377,7 @@ impl Tab {
         }
 
         if let Some(rail) = collapsed_rail {
-            self.draw_collapsed_rail(ui, rail);
+            self.draw_collapsed_rail(ui, rail, area.width());
         }
         if time_area.is_some() {
             self.draw_context_dividers(ui, &context_dividers);
@@ -381,7 +385,8 @@ impl Tab {
         let (Some(time_area), Some(divider)) = (time_area, divider) else {
             return;
         };
-        self.draw_canvas_divider(ui, divider, area.width());
+        let drawn_width = divider.center().x - area.left();
+        self.draw_canvas_divider(ui, divider, drawn_width, area.width());
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
@@ -581,7 +586,7 @@ impl Tab {
     /// chart beside it where it costs nothing but the pointer's first few
     /// pixels. A rail that photographed well but could not be hit would be a
     /// picture of an affordance rather than one.
-    fn draw_collapsed_rail(&mut self, ui: &egui::Ui, rail: egui::Rect) {
+    fn draw_collapsed_rail(&mut self, ui: &egui::Ui, rail: egui::Rect, canvas_width: f32) {
         #[cfg(test)]
         {
             self.collapsed_rail = Some(rail);
@@ -608,12 +613,12 @@ impl Tab {
         let response = ui
             .interact(
                 hit,
-                egui::Id::new(("collapsed_context_rail", self.id)),
-                egui::Sense::click(),
+                egui::Id::new(("canvas_divider", self.id)),
+                egui::Sense::drag(),
             )
-            .on_hover_text("show the timeframe charts again");
-        if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            .on_hover_text("drag right to show the timeframe charts again");
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
 
         // The grip: a short bar at the rail's middle, in the colour a reader
@@ -630,9 +635,7 @@ impl Tab {
         ui.painter()
             .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
 
-        if response.clicked() {
-            self.set_context_collapsed(false);
-        }
+        self.apply_canvas_drag(&response, rail.width() / 2.0, canvas_width);
     }
 
     /// The divider between the panes, as a resize handle.
@@ -640,7 +643,13 @@ impl Tab {
     /// Registered after both panes so it takes the drag that would otherwise
     /// pan the chart behind its grab area, exactly as the live lane's own
     /// divider does inside a pane.
-    fn draw_canvas_divider(&mut self, ui: &egui::Ui, divider: egui::Rect, canvas_width: f32) {
+    fn draw_canvas_divider(
+        &mut self,
+        ui: &egui::Ui,
+        divider: egui::Rect,
+        drawn_width: f32,
+        canvas_width: f32,
+    ) {
         #[cfg(test)]
         {
             self.canvas_divider = Some(divider);
@@ -659,23 +668,40 @@ impl Tab {
         if handle.hovered() || handle.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
-        if handle.dragged() && canvas_width > 0.0 {
-            // In pixels, because the gesture is in pixels and the floor is
-            // too. `split_fraction` carries the *asked-for* width rather than
-            // a floored one, so a hand that keeps pushing left keeps
-            // travelling: the splitter floors what it draws, and this is what
-            // makes "drag past the floor to dismiss it" a gesture a hand can
-            // finish rather than one that needs a single impossible frame.
-            let wanted_px = self.split_fraction * canvas_width + handle.drag_delta().x;
-            if wanted_px < canvas_layout::COLLAPSE_AT_PX {
-                // Dismissed, not squeezed. `split_fraction` is left where it
-                // was, so the rail springs back to the width the trader chose
-                // rather than to a default that would discard it.
+        self.apply_canvas_drag(&handle, drawn_width, canvas_width);
+    }
+
+    fn apply_canvas_drag(
+        &mut self,
+        response: &egui::Response,
+        drawn_width: f32,
+        canvas_width: f32,
+    ) {
+        if response.drag_started() {
+            self.canvas_drag = Some((drawn_width, self.context_collapsed));
+        }
+        if response.dragged() && response.drag_delta().x.abs() > f32::EPSILON && canvas_width > 0.0
+        {
+            let (wanted_px, opening) = {
+                let state = self
+                    .canvas_drag
+                    .get_or_insert((drawn_width, self.context_collapsed));
+                state.0 += response.drag_delta().x;
+                *state
+            };
+            if opening && wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0 {
+                return;
+            }
+            if !opening && wanted_px < canvas_layout::COLLAPSE_AT_PX {
                 self.set_context_collapsed(true);
             } else {
                 self.set_context_collapsed(false);
-                self.split_fraction = clamp_pane_fraction(wanted_px / canvas_width);
+                let width = wanted_px.max(canvas_layout::MIN_PANE_WIDTH_PX);
+                self.split_fraction = clamp_pane_fraction(width / canvas_width);
             }
+        }
+        if response.drag_stopped() {
+            self.canvas_drag = None;
         }
     }
 

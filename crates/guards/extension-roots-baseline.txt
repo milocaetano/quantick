@@ -9,6 +9,6 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-!budget 10697
+!budget 10693
 ChartState 571
-QuantickApp 10126
+QuantickApp 10122

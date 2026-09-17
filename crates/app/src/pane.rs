@@ -700,6 +700,9 @@ pub struct ChartPane {
     /// this pane's input pass, holding borrows the app's state cannot cross.
     /// The same shape [`SpecSelector::pending`] uses for the other direction.
     pending_settings: Option<SlotId>,
+    /// A guide switch chosen in an indicator pane's context menu, parked
+    /// until the app can update its layout and mirrored panes.
+    pending_indicator_guide: Option<(SlotId, bool)>,
 }
 
 impl ChartPane {
@@ -765,6 +768,7 @@ impl ChartPane {
             pending_reanchor: None,
             strip_expanded: None,
             pending_settings: None,
+            pending_indicator_guide: None,
         }
     }
 
@@ -889,6 +893,19 @@ impl ChartPane {
     /// so a request is acted on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {
         self.pending_settings.take()
+    }
+
+    pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {
+        self.pending_indicator_guide.take()
+    }
+
+    pub(crate) fn first_indicator_pane_center(&self) -> Option<egui::Pos2> {
+        self.frame.bands.get(1).map(|band| band.rect.center())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
+        self.pending_indicator_guide = Some((slot, enabled));
     }
 
     /// Stand in for the gesture that raises a settings request, so the app's

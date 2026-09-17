@@ -649,6 +649,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "enabled": false }),
             Readback::Stays,
         ),
+        (
+            "indicator.mouse_vertical_line.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
     ]
 }
 
@@ -702,10 +708,23 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    settle_indicators(&mut app);
     let directory = gateway_test_directory("retry-every-optional");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout,cockpit.recover");
+    grant_annotate_for_test(
+        &mut app,
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover",
+    );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let cockpit = options("cockpit", &["cockpit", "cockpit.layout", "cockpit.recover"]);
+    let cockpit = options(
+        "cockpit",
+        &[
+            "observe.user_text",
+            "cockpit",
+            "cockpit.layout",
+            "cockpit.recover",
+        ],
+    );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
         .iter()
         .filter(|row| row.policy == quantick_control::registry::IdempotencyPolicy::Optional)
@@ -739,6 +758,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
                 "fraction": "0.4"
             }),
+            "indicator.mouse_vertical_line.set" => {
+                let tab = app.active_tab();
+                let view = &tab.flow_pane.indicators.all()[0];
+                json!({
+                    "tab_id": tab.id.to_string(),
+                    "pane_id": tab.flow_pane.id.to_string(),
+                    "slot_id": view.slot.0.to_string(),
+                    "enabled": true,
+                })
+            }
             _ => payload,
         };
         let before = readback(&mut app, &ctx, &mut client, capability);

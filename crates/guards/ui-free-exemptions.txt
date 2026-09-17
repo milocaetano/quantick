@@ -9,3 +9,6 @@
 # the UI library, is itself a finding: delete the line.
 
 crates/app/src/scratch.rs test scratch directories; the scratch guard requires each crate's tests to mint them through that crate's own scratch module, so `app`'s must live in `app`, and it never touches the UI.
+crates/app/src/app/layout_wiring/indicators/guide.rs app-owned indicator pane, layout and workspace wiring cannot live in a headless crate.
+crates/app/src/control/indicator_guide.rs the registered action mutates app-owned panes and journals through the app control host.
+crates/app/src/control/analysis.rs snapshots live app panes and indicator views, which no headless crate owns.

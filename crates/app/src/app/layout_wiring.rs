@@ -52,6 +52,7 @@ use super::{QuantickApp, TabSlot};
 use crate::workspace_store::LayoutSave;
 
 mod indicators;
+pub(crate) use indicators::set_indicator_mouse_vertical_line;
 mod strip;
 
 /// The feed half of a drawing key while a tab plays a recording.
@@ -525,6 +526,11 @@ impl QuantickApp {
             }
         }
         for owner in &mut self.indicators.pending_hidden {
+            if owner.tab == tab_id {
+                owner.side = reside(owner.side);
+            }
+        }
+        for owner in &mut self.indicators.pending_mouse_vertical_lines {
             if owner.tab == tab_id {
                 owner.side = reside(owner.side);
             }

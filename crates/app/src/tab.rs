@@ -551,6 +551,8 @@ pub struct Tab {
     pub context_collapsed: bool,
     /// Retained context heights and the geometry of their last drawn stack.
     context_stack: context_resize::ContextStack,
+    /// Pixel width and opening direction of the divider drag in flight.
+    canvas_drag: Option<(f32, bool)>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -656,6 +658,7 @@ impl Tab {
             context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
                 .is_ok_and(|value| value == "1"),
             context_stack: context_resize::ContextStack::default(),
+            canvas_drag: None,
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
@@ -791,6 +794,12 @@ impl Tab {
     #[cfg(test)]
     pub(crate) fn canvas_divider_rect(&self) -> Option<egui::Rect> {
         self.canvas_divider
+    }
+
+    /// Where the collapsed context rail landed.
+    #[cfg(test)]
+    pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
+        self.collapsed_rail
     }
 
     /// Where the dividers between stacked context charts landed.

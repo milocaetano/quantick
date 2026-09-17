@@ -41,13 +41,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 35 |
+| Reachable by capability | 36 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 59 |
-| **Total** | **102** |
+| **Total** | **103** |
 
-81 of the 102 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 21 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 103 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 22 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -88,6 +88,7 @@ The three exclusion classes are closed:
 | `appearance.dialog.toggle` | Open the appearance dialog — candles, canvas, grid | toolbar brush button, Tools menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicators menu | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `indicator.mouse_vertical_line.toggle` | Mirror price hover into one non-price indicator pane | right-click menu on an indicator pane | `indicator.mouse_vertical_line.set` | — |
 | `indicator.native.add` | Add a native indicator from the catalog | toolbar indicators menu | — | `pending_capability` — `indicator.script.attach` attaches a Pine script; the native catalog has no capability, so an operator can add the indicators a trader writes and not the ones shipped. Tracked in issue 401 |
 | `indicator.native.remove` | Remove a native indicator | the legend row's close, and the indicators menu | — | `pending_capability` — `indicator.script.detach` names a script; a native has no identifier it accepts. Tracked in issue 401 |
 | `indicator.script.add` | Load a Pine script from the library | toolbar indicators menu | `indicator.script.attach` | — |
@@ -177,7 +178,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 21 |
+| `authored` | 22 |
 
 ## Appendix: rows no registry stands behind
 
@@ -195,6 +196,7 @@ declares nothing here is a guard failure.
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
 | `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |
+| `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |
 | `trade.instrument.money.set` | the Trading panel instrument section |

@@ -45,6 +45,7 @@ mod footprint_series;
 mod frvp;
 mod harness;
 mod hooks;
+mod indicator_guide;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
