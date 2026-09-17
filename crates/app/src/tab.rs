@@ -15,6 +15,8 @@
 /// painter that used to need this here now lives in [`canvas`].
 #[cfg(test)]
 use eframe::egui;
+#[cfg(test)]
+use quantick_feed::{FeedEvent, FeedHandle};
 use smallvec::SmallVec;
 use tokio::sync::{mpsc, watch};
 
@@ -35,8 +37,7 @@ use crate::state::BarConfiguration;
 use quantick_feed::history_reach::{self, Campaign, HistoryReach};
 use quantick_feed::stall::{self};
 use quantick_feed::{
-    FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency, FeedNotice,
-    ReplayLink,
+    FeedCommand, FeedConnectionState, FeedGap, FeedLatency, FeedNotice, ReplayLink,
 };
 use std::path::PathBuf;
 
@@ -235,7 +236,7 @@ pub struct Tab {
     pub symbol: String,
     pub active: (String, String),
 
-    pub events: mpsc::Receiver<FeedEvent>,
+    pub events: quantick_feed::ObservedReceiver,
     pub book_events: mpsc::Receiver<DepthEvent>,
     /// Connection trouble the feed wants the user to know about.
     pub notices: mpsc::Receiver<FeedNotice>,
@@ -296,6 +297,7 @@ pub struct Tab {
     pub feed_gaps: Vec<FeedGap>,
     /// Cumulative source-message integrity; gaps alone are a bounded view.
     pub feed_integrity: quantick_feed::FeedIntegrity,
+    pub feed_delivery: crate::feed_integrity_view::DeliveryView,
     /// State reported by the live trade transport, independent from how often
     /// that market prints and from the last observed arrival latency.
     pub feed_connection: FeedConnectionState,
@@ -587,9 +589,11 @@ impl Tab {
         feed_id: String,
         symbol: String,
         spec: impl Into<BarConfiguration>,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
         trades_dir: PathBuf,
     ) -> Self {
+        let feed = feed.into();
+        let delivery = crate::feed_integrity_view::DeliveryView::for_receiver(&feed.events);
         let mut loading = LoadingTracker::new();
         // The feed starts backfilling the moment it is spawned, so the tab
         // opens with that one load already in flight.
@@ -611,6 +615,7 @@ impl Tab {
             pending_demo_gap_ms: quantick_feed::demo_gap_ms(),
             feed_gaps: Vec::new(),
             feed_integrity: quantick_feed::FeedIntegrity::default(),
+            feed_delivery: delivery,
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
@@ -680,7 +685,7 @@ impl Tab {
     /// receivers drop. The old feed's trouble is not the new feed's, so the
     /// notice and the transport state start clean — switching away from a
     /// blocked source must not leave its instruction on screen.
-    fn attach(&mut self, handle: FeedHandle) {
+    fn attach(&mut self, handle: impl Into<quantick_feed::ObservedFeedHandle>) {
         self.attach_with(handle, false);
     }
 
@@ -693,14 +698,21 @@ impl Tab {
     /// candles describe the old market — but a socket that dropped and came
     /// back is still the same instrument, and refetching a week of history
     /// because a bridge hiccuped is the wait the trader was trying to escape.
-    fn attach_resuming(&mut self, handle: FeedHandle) {
+    fn attach_resuming(&mut self, handle: impl Into<quantick_feed::ObservedFeedHandle>) {
         self.attach_with(handle, true);
     }
 
     /// The shared body. `keep_timeline` decides only what is *forgotten*;
     /// everything tied to the handle itself is replaced either way, because an
     /// in-flight reply belongs to a channel that is about to be dropped.
-    fn attach_with(&mut self, handle: FeedHandle, keep_timeline: bool) {
+    fn attach_with(
+        &mut self,
+        handle: impl Into<quantick_feed::ObservedFeedHandle>,
+        keep_timeline: bool,
+    ) {
+        let handle = handle.into();
+        self.feed_delivery
+            .attach_receiver(&handle.events, keep_timeline);
         if !keep_timeline {
             // The old market's candles describe the old market.
             self.ohlcv_base = None;
@@ -822,7 +834,7 @@ impl Tab {
 
     /// Swap in a feed the test drives, through the same path a respawn takes.
     #[cfg(test)]
-    pub fn attach_for_test(&mut self, handle: FeedHandle) {
+    pub fn attach_for_test(&mut self, handle: impl Into<quantick_feed::ObservedFeedHandle>) {
         self.attach(handle);
     }
 

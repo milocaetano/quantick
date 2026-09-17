@@ -36,6 +36,7 @@ mod deal_recording_tab;
 mod deal_recording_ui;
 mod dock;
 mod drawings;
+mod feed_integrity_view;
 mod feed_notice;
 mod footprint_config;
 mod footprint_panel;
@@ -325,7 +326,7 @@ fn main() -> eframe::Result {
         .or_else(|| config.startup_spec_for(&feed_id))
         .unwrap_or_else(|| BarSpec::Tick(INITIAL_TICK_SIZE).into());
 
-    let feed = feed::spawn_live(
+    let feed = feed::spawn_live_observed(
         provider,
         &symbol,
         &config.metatrader,

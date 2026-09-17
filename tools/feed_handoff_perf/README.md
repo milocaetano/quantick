@@ -54,3 +54,25 @@ Hosted source amendment:
 https://github.com/milocaetano/quantick/issues/495#issuecomment-5708816320.
 Any invalid or failing attempt remains evidence; this tooling contains no retry
 loop and does not authorize another attempt.
+
+
+### S2 observed-port instrumentation amendment
+
+Decision: https://github.com/milocaetano/quantick/issues/495#issuecomment-5710534084.
+The immutable control remains f217fcf3db65dac0fc1cbb98956d9155000522ac. The
+candidate Binance producer remains its actual legacy host, but its timed drain
+now receives through the actual ObservedReceiver legacy arm. Hyperliquid uses
+the actual static ObservedOutput and observed receiver. Narrow test-only aliases
+normalize the different public event types into the common harness; they do not
+reimplement source classification. Malformed and stale received rows are counted
+separately from legacy skipped IDs and unknown outages. The common timer, usable
+trade checksum, prime exclusion, post-join no-extra-event assertion, channel
+capacity and literal input bytes remain shared by both exports.
+
+A single fixed 10-second settling interval runs after metadata and before the
+unchanged 3-second / 0.10-core admission gate. Its UTC and monotonic boundaries
+are retained in settling.json. It never polls admission, exempts a runner process,
+retries, discards a sample or alters any ratio/CV limit. The original protocol.md
+and fixture.json bytes remain frozen. Authoring this amendment is not permission
+to execute another hosted attempt; the coordinator must release a corrected
+exact-head candidate and a separate finite attempt.

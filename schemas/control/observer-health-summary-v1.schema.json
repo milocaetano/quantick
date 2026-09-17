@@ -9,15 +9,15 @@
       "properties": {
         "anomalies": {
           "$ref": "#/$defs/WireU64",
-          "description": "Diagnostic events, independent of the number of rejected source rows."
+          "description": "Source-ID anomalies and interruptions with unknown loss."
         },
         "missing_messages": {
           "$ref": "#/$defs/WireU64",
-          "description": "Known source messages absent from the usable tape: sequence gaps or\nindividually rejected rows. Never an estimate of lost executions."
+          "description": "Source IDs skipped on forward arrivals, not lost executions."
         },
         "non_monotonic": {
           "$ref": "#/$defs/WireU64",
-          "description": "Repeated/backwards ID or stale-row diagnostic categories, not row count."
+          "description": "Repeated or backwards source IDs."
         },
         "unknown_loss": {
           "$ref": "#/$defs/WireU64",

@@ -13,34 +13,15 @@ pub struct FeedContinuity {
     /// Market-time bounds when both sides are known and ordered. Equal
     /// timestamps can still bracket missing messages.
     pub gap: Option<FeedGap>,
-    /// Known source messages absent from the usable tape (Binance aggregates,
-    /// MT5 wire ticks, or individually rejected source rows). MT5 ticks can be
-    /// quotes, so this is not a count of lost trades.
+    /// Known missing source messages (Binance aggregates or MT5 wire ticks).
+    /// MT5 ticks can be quotes, so this is not a count of lost trades.
     /// `None` means an interruption with unknown loss.
     pub missing_messages: Option<u64>,
-    /// A repeated/backwards source ID or stale-row exclusion category,
-    /// separate from a missing interval. This flags a diagnostic, not a count
-    /// of rejected rows.
+    /// A repeated/backwards source ID, separate from a missing interval.
     pub non_monotonic: bool,
 }
 
 impl FeedContinuity {
-    pub(crate) fn malformed_rows(count: u64) -> Self {
-        Self {
-            gap: None,
-            missing_messages: Some(count),
-            non_monotonic: false,
-        }
-    }
-
-    pub(crate) fn stale_rows(count: u64) -> Self {
-        Self {
-            gap: None,
-            missing_messages: Some(count),
-            non_monotonic: true,
-        }
-    }
-
     pub(crate) fn mt5(anomaly: SeqAnomaly, from_ms: i64, to_ms: i64) -> Self {
         match anomaly {
             SeqAnomaly::Gap { missing, .. } => Self {
@@ -62,14 +43,12 @@ impl FeedContinuity {
 pub struct FeedIntegrity {
     /// Anomalies, including unknown interruptions and non-monotonic IDs.
     pub anomalies: u64,
-    /// Source messages absent from the usable tape: either source IDs skipped
-    /// on forward arrivals or individually rejected source rows. This is not
-    /// an estimate of lost executions. A later out-of-order arrival does not
-    /// erase the historical diagnostic.
+    /// Source IDs skipped on forward arrivals, not an estimate of lost trades.
+    /// A later out-of-order arrival does not erase the historical diagnostic.
     pub missing_messages: u64,
     /// Interruptions whose missing-message count cannot be established.
     pub unknown_loss: u64,
-    /// Repeated/backwards source IDs or a stale-row exclusion category.
+    /// Repeated or backwards source IDs.
     pub non_monotonic: u64,
 }
 

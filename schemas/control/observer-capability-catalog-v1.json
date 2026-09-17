@@ -12225,34 +12225,6 @@
             ],
             "type": "object"
           },
-          "FeedIntegritySnapshot": {
-            "description": "Counts source messages, never estimates how many executed trades were lost.",
-            "properties": {
-              "anomalies": {
-                "$ref": "#/$defs/WireU64",
-                "description": "Diagnostic events, independent of the number of rejected source rows."
-              },
-              "missing_messages": {
-                "$ref": "#/$defs/WireU64",
-                "description": "Known source messages absent from the usable tape: sequence gaps or\nindividually rejected rows. Never an estimate of lost executions."
-              },
-              "non_monotonic": {
-                "$ref": "#/$defs/WireU64",
-                "description": "Repeated/backwards ID or stale-row diagnostic categories, not row count."
-              },
-              "unknown_loss": {
-                "$ref": "#/$defs/WireU64",
-                "description": "Interruptions whose missing-message count is unknown, never known zero."
-              }
-            },
-            "required": [
-              "anomalies",
-              "missing_messages",
-              "unknown_loss",
-              "non_monotonic"
-            ],
-            "type": "object"
-          },
           "FeedNoticeSnapshot": {
             "properties": {
               "headline_present": {
@@ -12331,17 +12303,6 @@
                 "$ref": "#/$defs/WireU64",
                 "default": "0",
                 "description": "How many feed sessions this tab has taken over since it opened. It\nadvances by one on every respawn — a reconnect, a reload, a market\nswitch, a replay opened or closed — and never otherwise.\n\nThe readback for `feed.reconnect` and `feed.reload`: `connection_state`\nsays whether the feed is healthy, not whether a call respawned it,\nand a reload normally lands on a connected feed. A client that lost\nthe answer compares this with its reading from before the call.\n`#[serde(default)]` for the same reason as `history_reach_running`:\nan optional field is an additive change to the v1 payload."
-              },
-              "feed_integrity": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/FeedIntegritySnapshot"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Cumulative source diagnostics, including losses with no market-time\nbounds and exact malformed/stale exclusions. Optional for v1 readers."
               },
               "history_reach_note": {
                 "description": "What the last *load older* press had to say, while it is still on\nscreen — the exact sentence the trader reads in the loading lane.\n\n`null` is the ordinary state: no press yet, a press that landed what it\npromised, or one whose remark has had its time. Here because the\noutcome of a reach is the whole point of making one, and an operator\ndriving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`\nmust be able to learn it from the same words rather than by diffing\nbar counts.",
@@ -12533,6 +12494,131 @@
       "title": "Feed status"
     },
     {
+      "description": "Separates skipped source IDs and unknown outages from received-row exclusions; zero observations do not certify completeness.",
+      "id": "health.feed_delivery",
+      "module_id": "health",
+      "required_permissions": [
+        "observe",
+        "observe.health"
+      ],
+      "schema": {
+        "$defs": {
+          "FeedIntegritySnapshot": {
+            "description": "Counts source messages, never estimates how many executed trades were lost.",
+            "properties": {
+              "anomalies": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Source-ID anomalies and interruptions with unknown loss."
+              },
+              "missing_messages": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Source IDs skipped on forward arrivals, not lost executions."
+              },
+              "non_monotonic": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Repeated or backwards source IDs."
+              },
+              "unknown_loss": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Interruptions whose missing-message count is unknown, never known zero."
+              }
+            },
+            "required": [
+              "anomalies",
+              "missing_messages",
+              "unknown_loss",
+              "non_monotonic"
+            ],
+            "type": "object"
+          },
+          "ReceivedExclusionsSnapshot": {
+            "description": "Received rows excluded before they could enter the usable tape.",
+            "properties": {
+              "counts_are_lower_bounds": {
+                "description": "True if either count is saturated and therefore only a lower bound.",
+                "type": "boolean"
+              },
+              "malformed_rows": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Rows that could not be mapped into a valid trade."
+              },
+              "stale_rows": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Non-overlap rows behind the accepted market-time watermark."
+              }
+            },
+            "required": [
+              "malformed_rows",
+              "stale_rows",
+              "counts_are_lower_bounds"
+            ],
+            "type": "object"
+          },
+          "TabFeedDeliverySnapshot": {
+            "description": "A zero observation never certifies a complete source stream.",
+            "properties": {
+              "completeness_proven": {
+                "description": "Always false: these observations cannot prove completeness.",
+                "type": "boolean"
+              },
+              "received_exclusions": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReceivedExclusionsSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Absent when this attachment cannot report received-row exclusions."
+              },
+              "source_counts_are_lower_bounds": {
+                "description": "True when any source counter has reached its saturating bound.",
+                "type": "boolean"
+              },
+              "source_integrity": {
+                "$ref": "#/$defs/FeedIntegritySnapshot",
+                "description": "Original source-ID and unknown-interruption semantics."
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Stable market-tab identity."
+              }
+            },
+            "required": [
+              "tab_id",
+              "source_integrity",
+              "source_counts_are_lower_bounds",
+              "completeness_proven"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Independently versioned observations of received-row delivery.",
+        "properties": {
+          "tabs": {
+            "description": "One cumulative record per open market tab.",
+            "items": {
+              "$ref": "#/$defs/TabFeedDeliverySnapshot"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "FeedDeliverySnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Feed delivery observations"
+    },
+    {
       "description": "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
       "id": "health.summary",
       "module_id": "health",
@@ -12553,15 +12639,15 @@
             "properties": {
               "anomalies": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Diagnostic events, independent of the number of rejected source rows."
+                "description": "Source-ID anomalies and interruptions with unknown loss."
               },
               "missing_messages": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Known source messages absent from the usable tape: sequence gaps or\nindividually rejected rows. Never an estimate of lost executions."
+                "description": "Source IDs skipped on forward arrivals, not lost executions."
               },
               "non_monotonic": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Repeated/backwards ID or stale-row diagnostic categories, not row count."
+                "description": "Repeated or backwards source IDs."
               },
               "unknown_loss": {
                 "$ref": "#/$defs/WireU64",

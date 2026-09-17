@@ -1,6 +1,7 @@
 """Bounded Linux host admission; observation never terminates a process."""
 from pathlib import Path
 import os
+import datetime
 import platform
 import time
 
@@ -83,3 +84,12 @@ def system_identity():
     return {'platform': platform.platform(), 'cpuinfo': cpu,
             'logical_cpus': os.cpu_count(), 'power_frequency_policy': policies or 'unavailable on host',
             'runner_image': {key: os.environ.get(key) for key in ['ImageOS', 'ImageVersion', 'RUNNER_ARCH']}}
+
+
+def settle_once(sleep=time.sleep, monotonic=time.monotonic,
+                utc=lambda: datetime.datetime.now(datetime.timezone.utc).isoformat()):
+    """One fixed post-build barrier, never an admission retry or runner exemption."""
+    start_utc, start = utc(), monotonic()
+    sleep(10)
+    return {'seconds_requested':10, 'start_utc':start_utc, 'finish_utc':utc(),
+            'start_monotonic':start, 'finish_monotonic':monotonic()}

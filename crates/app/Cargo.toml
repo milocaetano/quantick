@@ -9,6 +9,7 @@ publish.workspace = true
 [features]
 default = []
 quick-range-harness = []
+feed-integrity-harness = ["quantick-feed/live-fixture"]
 
 [dependencies]
 quantick-chart-interaction = { path = "../chart-interaction" }

@@ -186,7 +186,8 @@ impl Tab {
 
         // Dropping the old handle stops the old feed thread. The new feed starts
         // with a fresh backfill in flight.
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle =
+            feed::spawn_live_observed(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
 
         // Rebuild every pane from scratch for the new stream, each keeping its
@@ -369,8 +370,17 @@ impl Tab {
         let mut live = false;
         let mut received_at_ms = None;
         loop {
-            match self.events.try_recv() {
-                Ok(FeedEvent::Backfilled(trades)) => {
+            let event = match self.events.try_recv() {
+                Ok(quantick_feed::ObservedFeedEvent::Feed(event)) => event,
+                Ok(quantick_feed::ObservedFeedEvent::Excluded(event)) => {
+                    self.feed_delivery
+                        .observe_exclusion(event, self.feed_integrity);
+                    continue;
+                }
+                Err(_) => break,
+            };
+            match event {
+                FeedEvent::Backfilled(trades) => {
                     self.loading.end(LoadingTask::History);
                     // A session that resumed onto a kept timeline opens by
                     // replaying its recent window, which the chart already
@@ -392,7 +402,7 @@ impl Tab {
                         pane.ingest_backfill(&trades);
                     }
                 }
-                Ok(FeedEvent::HistoryPrepended(trades)) => {
+                FeedEvent::HistoryPrepended(trades) => {
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
                     self.loading.end(LoadingTask::History);
@@ -420,7 +430,7 @@ impl Tab {
                     // trader can actually see.
                     self.settle_history_page(trades.len());
                 }
-                Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
+                FeedEvent::OpeningPrepended { trades, remaining } => {
                     // What is left of the fill, so the chart and an operator
                     // reading the control plane can both say how much of the
                     // session is still arriving instead of watching a number
@@ -446,7 +456,7 @@ impl Tab {
                     }
                     self.refold_history_prefix();
                 }
-                Ok(FeedEvent::Live(trade)) => {
+                FeedEvent::Live(trade) => {
                     if self.resume_floor_ms.is_some() {
                         live |= self.ingest_resumed(std::slice::from_ref(&trade));
                         continue;
@@ -455,7 +465,7 @@ impl Tab {
                     self.ingest_live_trade_at(&trade, received_at_ms);
                     live = true;
                 }
-                Ok(FeedEvent::LiveBatch(trades)) => {
+                FeedEvent::LiveBatch(trades) => {
                     if !trades.is_empty() {
                         if self.resume_floor_ms.is_some() {
                             live |= self.ingest_resumed(&trades);
@@ -468,22 +478,22 @@ impl Tab {
                         live = true;
                     }
                 }
-                Ok(FeedEvent::Continuity(event)) => {
+                FeedEvent::Continuity(event) => {
                     self.feed_integrity.observe(event);
+                    self.feed_delivery.refresh(self.feed_integrity);
                     if let Some(gap) = event.gap {
                         self.retain_gap(gap);
                     }
                 }
-                Ok(FeedEvent::DealCounter(sample)) => self.observe_deal_counter(sample),
-                Ok(FeedEvent::Reset) => self.reset_market_state(true),
-                Ok(FeedEvent::OhlcvHistory {
+                FeedEvent::DealCounter(sample) => self.observe_deal_counter(sample),
+                FeedEvent::Reset => self.reset_market_state(true),
+                FeedEvent::OhlcvHistory {
                     interval_ms,
                     bars,
                     slice,
-                }) => {
+                } => {
                     self.take_ohlcv_history(interval_ms, bars, slice);
                 }
-                Err(_) => break,
             }
         }
         // One forming-bar update per pane for the whole drain, however many
@@ -763,7 +773,7 @@ impl Tab {
         // record. (reset_market_state below flattens again: a no-op.)
         self.paper.on_timeline_reset();
         let source = feed::FeedSource::Replay(Box::new(request));
-        let handle = feed::spawn(source, &config.metatrader, shelf_dir());
+        let handle = feed::spawn_observed(source, &config.metatrader, shelf_dir());
         self.attach(handle);
 
         if let Some(link) = &self.replay {
@@ -808,7 +818,8 @@ impl Tab {
         // flips the journal back to live — or a practice trade counts in
         // the real track record.
         self.paper.on_timeline_reset();
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle =
+            feed::spawn_live_observed(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(false);
         self.restore_deal_readings();
@@ -855,7 +866,8 @@ impl Tab {
         // Taken before the handle is swapped: it is a fact about the chart, not
         // about the session, and it has to survive the attach.
         self.resume_floor_ms = self.latest_trade_ms;
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle =
+            feed::spawn_live_observed(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
@@ -897,7 +909,8 @@ impl Tab {
         );
         // A rebuild has no timeline to resume onto, so no floor and no seam.
         self.resume_floor_ms = None;
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle =
+            feed::spawn_live_observed(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(true);
         // The live market is back and it can stream depth again; start

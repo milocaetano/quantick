@@ -15,6 +15,15 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::FeedEvent;
 
+pub(crate) mod live;
+pub use live::spawn_local_fixture;
+
+const ACK: &str = r#"{"channel":"subscriptionResponse","data":{}}"#;
+const EMPTY: &str = r#"{"channel":"trades","data":[]}"#;
+const MIXED: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7},{"coin":"BTC","side":"X","px":"1","sz":"1","time":201,"tid":8}]}"#;
+const OVERLAP: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7}]}"#;
+const STALE: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"A","px":"1","sz":"1","time":199,"tid":9}]}"#;
+
 /// A literal successful, empty or failed initial REST boundary.
 #[derive(Clone, Copy)]
 pub enum BackfillFixture {
@@ -128,12 +137,20 @@ async fn accept_subscription(
 /// Capture three real Hyperliquid sessions: quiet, mixed recovery and overlap.
 /// The final session has no usable trade; its stale row and disconnect still
 /// have to reach the consumer. Panics on missing events or transport failures.
-pub async fn hyperliquid_events() -> Vec<FeedEvent> {
-    const ACK: &str = r#"{"channel":"subscriptionResponse","data":{}}"#;
-    const EMPTY: &str = r#"{"channel":"trades","data":[]}"#;
-    const MIXED: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7},{"coin":"BTC","side":"X","px":"1","sz":"1","time":201,"tid":8}]}"#;
-    const OVERLAP: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7}]}"#;
-    const STALE: &str = r#"{"channel":"trades","data":[{"coin":"BTC","side":"A","px":"1","sz":"1","time":199,"tid":9}]}"#;
+pub async fn hyperliquid_events() -> Vec<crate::ObservedFeedEvent> {
+    hyperliquid_capture(crate::hyperliquid::ObservedOutput, 7).await
+}
+
+/// The same literal source through the legacy compatibility output. Typed row
+/// exclusions are unavailable here; original continuity meanings remain.
+pub async fn hyperliquid_legacy_events() -> Vec<FeedEvent> {
+    hyperliquid_capture(crate::hyperliquid::LegacyOutput, 5).await
+}
+
+async fn hyperliquid_capture<E: Send + 'static, O: crate::hyperliquid::output::Output>(
+    output: impl FnOnce(mpsc::Sender<E>) -> O,
+    event_count: usize,
+) -> Vec<E> {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
@@ -149,13 +166,14 @@ pub async fn hyperliquid_events() -> Vec<FeedEvent> {
     let (book_tx, _book_rx) = mpsc::channel(8);
     let (notice_tx, _notice_rx) = mpsc::channel(16);
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
-    let host = tokio::spawn(crate::hyperliquid::feed_task(
+    let host = tokio::spawn(crate::hyperliquid::feed_task_with(
         "BTC".into(),
-        tx,
+        output(tx),
         book_tx,
         notice_tx,
         cmd_rx,
         crate::hyperliquid::HyperliquidSource {
+            local_fixture: false,
             url,
             backoff: quantick_feed_hyperliquid::Backoff::new(
                 Duration::from_millis(1),
@@ -164,7 +182,7 @@ pub async fn hyperliquid_events() -> Vec<FeedEvent> {
             ),
         },
     ));
-    let events = collect(&mut rx, 7).await;
+    let events = collect(&mut rx, event_count).await;
     drop(cmd_tx);
     tokio::time::timeout(Duration::from_secs(3), host)
         .await
@@ -178,7 +196,7 @@ pub async fn hyperliquid_events() -> Vec<FeedEvent> {
     events
 }
 
-async fn collect(rx: &mut mpsc::Receiver<FeedEvent>, count: usize) -> Vec<FeedEvent> {
+async fn collect<E>(rx: &mut mpsc::Receiver<E>, count: usize) -> Vec<E> {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut events = Vec::new();
         for _ in 0..count {
@@ -189,4 +207,50 @@ async fn collect(rx: &mut mpsc::Receiver<FeedEvent>, count: usize) -> Vec<FeedEv
     })
     .await
     .expect("expected host event missing")
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn received_rejected_rows_do_not_change_source_id_integrity() {
+    let events = hyperliquid_events().await;
+    let mut integrity = crate::FeedIntegrity::default();
+    for event in events {
+        if let crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(event)) = event {
+            integrity.observe(event);
+        }
+    }
+    assert_eq!(
+        (
+            integrity.anomalies,
+            integrity.missing_messages,
+            integrity.unknown_loss,
+            integrity.non_monotonic,
+        ),
+        (3, 0, 3, 0),
+        "only the three acknowledged outages are continuity facts; received rows are not skipped source IDs"
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn legacy_host_preserves_original_counter_meanings() {
+    let mut integrity = crate::FeedIntegrity::default();
+    let mut trades = 0;
+    for event in hyperliquid_legacy_events().await {
+        match event {
+            FeedEvent::Continuity(event) => integrity.observe(event),
+            FeedEvent::LiveBatch(batch) | FeedEvent::Backfilled(batch) => trades += batch.len(),
+            _ => panic!("unexpected fixture event"),
+        }
+    }
+    assert_eq!(trades, 1);
+    assert_eq!(
+        integrity,
+        crate::FeedIntegrity {
+            anomalies: 3,
+            missing_messages: 0,
+            unknown_loss: 3,
+            non_monotonic: 0
+        }
+    );
 }

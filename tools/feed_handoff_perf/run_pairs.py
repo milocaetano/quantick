@@ -36,6 +36,7 @@ def inventory(name):
     if receipt['blockers']:
         (out/'stopped-host.json').write_text(json.dumps({'stage':name,'reason':'host admission refused','blockers':receipt['blockers']},indent=2)+'\n',encoding='utf-8')
         raise SystemExit('Host admission refused; observations retained; no retry')
+(out/'settling.json').write_text(json.dumps(host.settle_once(),indent=2)+'\n',encoding='utf-8')
 inventory('process-before.json')
 records=[]
 for case in ['binance','dense','exclusion']:

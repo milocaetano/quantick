@@ -16,7 +16,7 @@ use crate::statusbar;
 use crate::style::CandlePreset;
 use crate::window_scale;
 
-use super::{QuantickApp, fmt_progress};
+use super::QuantickApp;
 
 /// What the window measures about itself between perf summaries.
 ///
@@ -318,56 +318,18 @@ impl QuantickApp {
     /// bar, whether the view follows live — is the *focused pane's* (§11), so
     /// the bar always describes the chart the user is working in.
     pub(super) fn status_model(&self) -> statusbar::StatusModel {
-        let pane = self.focused_pane();
-        let bars = pane.state.bars();
-        let (backfilled, live) = match pane.state.backfill_boundary() {
-            Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
-            None => (0, bars.len()),
-        };
-        let venue_bars = pane.history_prefix.len();
-        let note = self.active_tab().side_note(&self.config);
-        statusbar::StatusModel {
-            venue: if self.active_tab().replay.is_some() {
-                "recording".to_owned()
-            } else {
-                self.active_tab().feed_display_name(&self.config).to_owned()
+        statusbar::StatusModel::capture(
+            self.active_tab(),
+            self.focused_pane(),
+            &self.config,
+            statusbar::StatusPerformance {
+                fps: self.health.frames.fps(),
+                frame_avg_ms: self.health.frames.avg_ms(),
+                frame_cpu_ms: self.health.cpu_frames.avg_ms(),
+                show_perf: self.health.show_perf,
             },
-            symbol: self.active_tab().symbol.clone(),
-            replay: self
-                .active_tab()
-                .replay
-                .as_ref()
-                .map(|link| statusbar::ReplayFigures {
-                    speed: link.status.speed(),
-                    progress: link.status.progress(),
-                }),
-            connection: self.active_tab().feed_connection,
-            feed_arrival_ms: self.active_tab().trade_arrival_ms(),
-            feed_latency: self.active_tab().feed_latency(),
-            tape_age_ms: self.active_tab().tape_age_at(metrics::wall_clock_ms()),
-            spec_summary: pane.state.spec().summary(),
-            bar_progress: pane
-                .state
-                .progress()
-                .map(|(progress, unit)| fmt_progress(&progress, unit)),
-            deal_recording: self.active_tab().deal_status_cell(),
-            venue_bars,
-            backfilled_bars: backfilled,
-            live_bars: live,
-            side_note: note.clone().map(|(label, _)| label),
-            side_detail: note.and_then(|(_, detail)| detail),
-            // Provenance follows the active tab (§11), and so does the
-            // simulated P&L: the cell speaks for the market on screen, never
-            // for a background tab's position.
-            sim_pnl: self.active_tab().paper.status_cell(),
-            follows_live: pane.viewport.follows_live(),
-            price_auto: pane.price_view.is_auto(),
-            live_trades: self.active_tab().live_trades,
-            fps: self.health.frames.fps(),
-            frame_avg_ms: self.health.frames.avg_ms(),
-            frame_cpu_ms: self.health.cpu_frames.avg_ms(),
-            show_perf: self.health.show_perf,
-        }
+            metrics::wall_clock_ms(),
+        )
     }
 }
 

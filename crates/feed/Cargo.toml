@@ -9,6 +9,8 @@ publish.workspace = true
 [features]
 # Literal local transports for cross-crate app tests; absent from normal builds.
 test-support = ["dep:futures-util", "dep:tokio-tungstenite"]
+# Explicit native evidence harness; never enabled by normal builds.
+live-fixture = ["test-support"]
 
 [dependencies]
 quantick-engine = { path = "../engine" }

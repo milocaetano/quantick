@@ -7,6 +7,10 @@
 //! neutral [`DepthEvent`] channel Binance and MetaTrader use.
 
 use tokio::{sync::mpsc, task::JoinHandle};
+
+pub(crate) mod output;
+use output::Output;
+pub(crate) use output::{LegacyOutput, ObservedOutput};
 use tracing::{info, warn};
 
 use quantick_engine::Trade;
@@ -30,6 +34,8 @@ const TRADE_RECONNECT_SEED: u64 = 0x4859_5045_525F_5452;
 const DEPTH_RECONNECT_SEED: u64 = 0x4859_5045_525F_4C32;
 
 pub(crate) struct HyperliquidSource {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) local_fixture: bool,
     pub(crate) url: String,
     pub(crate) backoff: Backoff,
 }
@@ -41,22 +47,7 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-    let symbol = symbol.to_owned();
-    let source = HyperliquidSource {
-        url: HYPERLIQUID_WS_URL.to_owned(),
-        backoff: Backoff::for_feed(TRADE_RECONNECT_SEED),
-    };
-    std::thread::Builder::new()
-        .name("quantick-hyperliquid-feed".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(FEED_RUNTIME_WORKERS)
-                .enable_all()
-                .build()
-                .expect("build Hyperliquid feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx, source));
-        })
-        .expect("spawn Hyperliquid feed thread");
+    start(symbol, LegacyOutput(tx), book_tx, notice_tx, cmd_rx);
 
     FeedHandle {
         events: rx,
@@ -71,14 +62,64 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     }
 }
 
-pub(crate) async fn feed_task(
+/// Start the ordered observation port; legacy callers retain their old handle.
+#[must_use]
+pub fn spawn_observed(symbol: &str) -> crate::ObservedFeedHandle {
+    let (tx, rx) = mpsc::channel(FEED_EVENT_CHANNEL_CAPACITY);
+    let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
+    let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+    start(symbol, ObservedOutput(tx), book_tx, notice_tx, cmd_rx);
+    crate::ObservedFeedHandle {
+        events: rx.into(),
+        book_events: book_rx,
+        notices: notice_rx,
+        capabilities: super::fixed_capabilities(ProviderKind::Hyperliquid.capabilities()),
+        latency: super::unsplit_latency(),
+        commands: cmd_tx,
+        replay: None,
+    }
+}
+
+fn start<O: Output>(
+    symbol: &str,
+    tx: O,
+    book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
+    cmd_rx: mpsc::Receiver<FeedCommand>,
+) {
+    let symbol = symbol.to_owned();
+    let source = HyperliquidSource {
+        #[cfg(any(test, feature = "test-support"))]
+        local_fixture: false,
+        url: HYPERLIQUID_WS_URL.to_owned(),
+        backoff: Backoff::for_feed(TRADE_RECONNECT_SEED),
+    };
+    std::thread::Builder::new()
+        .name("quantick-hyperliquid-feed".into())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(FEED_RUNTIME_WORKERS)
+                .enable_all()
+                .build()
+                .expect("build Hyperliquid feed runtime");
+            runtime.block_on(feed_task_with(
+                symbol, tx, book_tx, notice_tx, cmd_rx, source,
+            ));
+        })
+        .expect("spawn Hyperliquid feed thread");
+}
+
+pub(crate) async fn feed_task_with<O: Output>(
     symbol: String,
-    tx: mpsc::Sender<FeedEvent>,
+    tx: O,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
     source: HyperliquidSource,
 ) {
+    #[cfg(any(test, feature = "test-support"))]
+    let local_fixture = source.local_fixture;
     let symbol = symbol.to_uppercase();
     let mapper = TradeMapper::new(&symbol);
     let (stream_tx, mut stream_rx) =
@@ -151,26 +192,19 @@ pub(crate) async fn feed_task(
                     Some(TradeStreamEvent::Batch(batch)) => {
                         let malformed = u64::try_from(batch.errors.len()).unwrap_or(u64::MAX);
                         let stale = u64::try_from(batch.stale).unwrap_or(u64::MAX);
-                        if malformed > 0
-                            && tx
-                                .send(FeedEvent::Continuity(
-                                    crate::FeedContinuity::malformed_rows(malformed),
-                                ))
-                                .await
-                                .is_err()
-                        {
-                            break;
+                        let mut consumer_closed = false;
+                        for (reason, count) in [
+                            (crate::ExclusionReason::MalformedRow, malformed),
+                            (crate::ExclusionReason::StaleTimestamp, stale),
+                        ] {
+                            if let Some(rows) = std::num::NonZeroU64::new(count)
+                                && tx.exclude(crate::FeedExclusion { reason, rows }).await.is_err()
+                            {
+                                consumer_closed = true;
+                                break;
+                            }
                         }
-                        if stale > 0
-                            && tx
-                                .send(FeedEvent::Continuity(
-                                    crate::FeedContinuity::stale_rows(stale),
-                                ))
-                                .await
-                                .is_err()
-                        {
-                            break;
-                        }
+                        if consumer_closed { break; }
                         let trades = batch.trades;
                         if trades.is_empty() && !recovery_pending {
                             continue;
@@ -210,6 +244,15 @@ pub(crate) async fn feed_task(
             }
             maybe_cmd = cmd_rx.recv() => {
                 match maybe_cmd {
+                    #[cfg(any(test, feature = "test-support"))]
+                    Some(FeedCommand::FetchOhlcv { .. }) if local_fixture => {
+                        warn!("local synthetic fixture has no candle history; request refused");
+                        if tx.send(FeedEvent::OhlcvHistory { interval_ms: ONE_MINUTE_MS, bars: Vec::new(), slice: crate::OhlcvSlice::Refused }).await.is_err() { break; }
+                    }
+                    #[cfg(any(test, feature = "test-support"))]
+                    Some(FeedCommand::SetBookCapture { .. } | FeedCommand::RestartBookCapture { .. }) if local_fixture => {
+                        warn!("local synthetic fixture has no depth transport; request refused");
+                    }
                     Some(FeedCommand::FetchOhlcv {
                         span_ms,
                         slice_ms,
@@ -598,13 +641,14 @@ mod tests {
         let (book_tx, _book_rx) = mpsc::channel(8);
         let (notice_tx, _notice_rx) = mpsc::channel(16);
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
-        let host = tokio::spawn(feed_task(
+        let host = tokio::spawn(feed_task_with(
             "BTC".into(),
-            tx,
+            ObservedOutput(tx),
             book_tx,
             notice_tx,
             cmd_rx,
             HyperliquidSource {
+                local_fixture: false,
                 url: format!("ws://{address}"),
                 backoff: Backoff::new(
                     std::time::Duration::from_millis(1),
@@ -625,45 +669,37 @@ mod tests {
         .unwrap();
         assert!(matches!(
             events[0],
-            FeedEvent::Continuity(crate::FeedContinuity {
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
                 gap: None,
                 missing_messages: None,
                 non_monotonic: false,
-            })
-        ));
-        assert!(matches!(&events[1], FeedEvent::Backfilled(trades) if trades.is_empty()));
-        assert!(matches!(
-            events[2],
-            FeedEvent::Continuity(crate::FeedContinuity {
-                gap: None,
-                missing_messages: Some(1),
-                non_monotonic: false,
-            })
+            }))
         ));
         assert!(
-            matches!(&events[3], FeedEvent::LiveBatch(trades) if trades.len() == 1 && trades[0].timestamp_ms == 200)
+            matches!(&events[1], crate::ObservedFeedEvent::Feed(FeedEvent::Backfilled(trades)) if trades.is_empty())
+        );
+        assert!(
+            matches!(events[2], crate::ObservedFeedEvent::Excluded(crate::FeedExclusion { reason: crate::ExclusionReason::MalformedRow, rows }) if rows.get() == 1)
+        );
+        assert!(
+            matches!(&events[3], crate::ObservedFeedEvent::Feed(FeedEvent::LiveBatch(trades)) if trades.len() == 1 && trades[0].timestamp_ms == 200)
         );
         assert!(matches!(
             events[4],
-            FeedEvent::Continuity(crate::FeedContinuity {
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
                 missing_messages: None,
                 ..
-            })
+            }))
         ));
-        assert!(matches!(
-            events[5],
-            FeedEvent::Continuity(crate::FeedContinuity {
-                gap: None,
-                missing_messages: Some(1),
-                non_monotonic: true,
-            })
-        ));
+        assert!(
+            matches!(events[5], crate::ObservedFeedEvent::Excluded(crate::FeedExclusion { reason: crate::ExclusionReason::StaleTimestamp, rows }) if rows.get() == 1)
+        );
         assert!(matches!(
             events[6],
-            FeedEvent::Continuity(crate::FeedContinuity {
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
                 missing_messages: None,
                 ..
-            })
+            }))
         ));
         assert!(
             rx.try_recv().is_err(),

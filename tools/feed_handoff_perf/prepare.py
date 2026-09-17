@@ -73,18 +73,46 @@ pub(crate) async fn f2_bench_host(rest: String, url: String, tx: mpsc::Sender<Fe
         assert old in text
         text=text.replace(old,'            &fixture_url,\n',1)
         arg='url'
+        event_type='FeedEvent'
+        function='feed_task'
+        output='tx'
     else:
-        arg='HyperliquidSource { url, backoff: Backoff::for_feed(TRADE_RECONNECT_SEED) }'
+        arg='HyperliquidSource { local_fixture: false, url, backoff: Backoff::for_feed(TRADE_RECONNECT_SEED) }'
+        event_type='crate::ObservedFeedEvent'
+        function='feed_task_with'
+        output='ObservedOutput(tx)'
     text+='''
 #[cfg(test)]
-pub(crate) async fn f2_bench_host(url: String, tx: mpsc::Sender<FeedEvent>, notice_tx: mpsc::Sender<FeedNotice>, cmd_rx: mpsc::Receiver<FeedCommand>) {
+pub(crate) async fn f2_bench_host(url: String, tx: mpsc::Sender<'''+event_type+'''>, notice_tx: mpsc::Sender<FeedNotice>, cmd_rx: mpsc::Receiver<FeedCommand>) {
     let (book_tx, _book_rx) = mpsc::channel(8192);
-    feed_task("BTC".into(), tx, book_tx, notice_tx, cmd_rx, '''+arg+''').await;
+    '''+function+'''("BTC".into(), '''+output+''', book_tx, notice_tx, cmd_rx, '''+arg+''').await;
 }
 '''
     hl.write_text(text,encoding='utf-8')
     lib=dest/'crates/feed/src/lib.rs'
-    lib.write_text(lib.read_text(encoding='utf-8')+'\n#[cfg(test)]\nmod f2_protocol;\n#[cfg(test)]\nfn f2_bench_candidate() -> bool { '+str(side=='candidate').lower()+' }\n',encoding='utf-8')
+    if side=='candidate':
+        receiver_adapter='''
+#[cfg(test)] type F2BenchEvent = ObservedFeedEvent;
+#[cfg(test)] type F2BenchReceiver = ObservedReceiver;
+#[cfg(test)] fn f2_bench_receiver<R: Into<ObservedReceiver>>(receiver:R) -> ObservedReceiver { receiver.into() }
+#[cfg(test)] fn f2_bench_observation(event:ObservedFeedEvent) -> f2_protocol::Observation {
+    match event {
+        ObservedFeedEvent::Feed(event) => f2_protocol::Observation::Feed(event),
+        ObservedFeedEvent::Excluded(event) => match event.reason {
+            ExclusionReason::MalformedRow => f2_protocol::Observation::Excluded { malformed:event.rows.get(), stale:0 },
+            ExclusionReason::StaleTimestamp => f2_protocol::Observation::Excluded { malformed:0, stale:event.rows.get() },
+        },
+    }
+}
+'''
+    else:
+        receiver_adapter='''
+#[cfg(test)] type F2BenchEvent = FeedEvent;
+#[cfg(test)] type F2BenchReceiver = mpsc::Receiver<FeedEvent>;
+#[cfg(test)] fn f2_bench_receiver(receiver:mpsc::Receiver<FeedEvent>) -> F2BenchReceiver { receiver }
+#[cfg(test)] fn f2_bench_observation(event:FeedEvent) -> f2_protocol::Observation { f2_protocol::Observation::Feed(event) }
+'''
+    lib.write_text(lib.read_text(encoding='utf-8')+'\n#[cfg(test)]\nmod f2_protocol;\n#[cfg(test)]\nfn f2_bench_candidate() -> bool { '+str(side=='candidate').lower()+' }\n'+receiver_adapter,encoding='utf-8')
     (dest/'crates/feed/src/f2_protocol.rs').write_bytes(common)
     (dest/'crates/feed/src/f2-fixture.json').write_bytes(fixture)
     patch=''.join(''.join(difflib.unified_diff(original.splitlines(True),(dest/name).read_text(encoding='utf-8').splitlines(True),fromfile=name,tofile=name)) for name,original in originals.items())

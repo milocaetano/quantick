@@ -146,7 +146,7 @@ impl QuantickApp {
         // and means one port for two listeners: the second loses the bind and
         // shows the feed's own MT5_BIND_FAILED notice, which is the honest
         // answer rather than a silently dead chart.
-        let handle = feed::spawn_live(
+        let handle = feed::spawn_live_observed(
             provider,
             &symbol,
             &self.config.metatrader,

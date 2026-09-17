@@ -22,6 +22,17 @@ ROOT = Path(__file__).resolve().parent
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_settling_is_one_fixed_interval_without_admission_polling(self):
+        sleeps=[]
+        clock=iter([41.0,51.0])
+        utc=iter(['start','finish'])
+        receipt=host.settle_once(sleep=sleeps.append, monotonic=lambda:next(clock), utc=lambda:next(utc))
+        self.assertEqual(sleeps,[10])
+        self.assertEqual(receipt,{'seconds_requested':10,'start_utc':'start','finish_utc':'finish','start_monotonic':41.0,'finish_monotonic':51.0})
+        self.assertEqual(host.OBSERVATION_SECONDS,3)
+        self.assertEqual(host.MATERIAL_CORES,0.10)
+
+
     def workflow_step(self, name):
         text = (ROOT.parents[1]/'.github/workflows/feed-handoff-performance.yml').read_text()
         step = text.split('      - name: '+name+'\n', 1)[1].split('      - ', 1)[0]
@@ -248,6 +259,7 @@ class ProtocolTests(unittest.TestCase):
                     shutil.copyfile(ROOT/name, root/name)
                 (root/'host.py').write_text(
                     'def system_identity(): return {}\n'
+                    'def settle_once(): return {"seconds_requested":10, "offline_stub":True}\n'
                     f'def observe(known): return {{"blockers": {repr(["fixture busy"] if blocked else [])}}}\n')
                 binary = Path(sys.executable)
                 record = {'profile': 'release', 'jobs': 1, 'rustc': 'fixture', 'cargo': 'fixture',
@@ -262,6 +274,7 @@ class ProtocolTests(unittest.TestCase):
                                         capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertTrue((out/'identity.json').exists())
+                self.assertEqual(json.loads((out/'settling.json').read_text())['seconds_requested'],10)
                 self.assertTrue((out/'process-before.json').exists())
                 if blocked:
                     self.assertTrue((out/'stopped-host.json').exists())
