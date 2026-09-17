@@ -247,7 +247,12 @@ impl ChartPane {
             {
                 continue;
             }
-            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            let points = self.drawing_projection().projected_drawing_points(
+                drawing,
+                history_right,
+                total,
+                scale,
+            );
             self.paint_strategy_badge(&clipped, instance, drawing, &points);
         }
 

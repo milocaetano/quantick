@@ -34,7 +34,7 @@ impl Series for PaneSeries<'_> {
         self.pane.slot_open_time(slot)
     }
     fn time_at_position(&self, bar: f32) -> Option<i64> {
-        self.pane.anchor_time(bar)
+        self.pane.series_read().anchor_time(bar)
     }
     fn draft_in_progress(&self) -> bool {
         self.pane.drawings.draft().is_some()

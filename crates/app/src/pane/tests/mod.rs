@@ -1952,7 +1952,13 @@ fn hit_testing_never_crosses_bands() {
     let scale = indicator.scale.expect("a drawable band");
     let on_the_level = egui::pos2(indicator.rect.center().x, scale.y(0.0));
     assert_eq!(
-        pane.drawing_at(on_the_level, indicator, indicator.rect.right(), 3),
+        pane.drawing_projection().drawing_at(
+            &pane.drawings,
+            on_the_level,
+            indicator,
+            indicator.rect.right(),
+            3
+        ),
         Some(0),
         "found on its own band"
     );
@@ -1960,7 +1966,13 @@ fn hit_testing_never_crosses_bands() {
     // spans the whole width, so only the band rule can rule it out.
     let in_price_band = egui::pos2(price.rect.center().x, price.rect.center().y);
     assert_eq!(
-        pane.drawing_at(in_price_band, price, price.rect.right(), 3),
+        pane.drawing_projection().drawing_at(
+            &pane.drawings,
+            in_price_band,
+            price,
+            price.rect.right(),
+            3
+        ),
         None,
         "a CVD level is not a price level"
     );

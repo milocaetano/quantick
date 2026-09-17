@@ -105,10 +105,12 @@ impl ChartPane {
         };
 
         let drawing_pick = self
-            .drawing_handle_at(position, band, history_right, total)
+            .drawing_projection()
+            .drawing_handle_at(&self.drawings, position, band, history_right, total)
             .map(|(index, handle)| (index, Some(handle)))
             .or_else(|| {
-                self.drawing_at(position, band, history_right, total)
+                self.drawing_projection()
+                    .drawing_at(&self.drawings, position, band, history_right, total)
                     .map(|index| (index, None))
             });
         let drawing = drawing_pick.and_then(|(index, handle_index)| {
@@ -143,7 +145,7 @@ impl ChartPane {
             axis_value,
             axis_unit,
             slot,
-            bar: slot.and_then(|slot| self.candle_at_slot(slot).cloned()),
+            bar: slot.and_then(|slot| self.series_read().candle_at_slot(slot).cloned()),
             flow_cell,
             drawing,
         })

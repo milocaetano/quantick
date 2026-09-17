@@ -59,7 +59,6 @@ pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod draw_frame;
-mod drawing_gestures;
 mod drawing_paint;
 mod drawing_projection;
 mod footprint;
@@ -700,14 +699,14 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
-    fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
+    pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
         drawing_projection::PaneSeriesRead {
             history_prefix: &self.history_prefix,
             state: &self.state,
             spec: &self.spec,
         }
     }
-    fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
+    pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
         drawing_projection::DrawingProjection {
             series: self.series_read(),
             viewport: &self.viewport,

@@ -19,7 +19,7 @@ mod placement_characterization {
             chart.center().y,
         );
         assert!(chart.contains(target));
-        let expected_time = pane.anchor_time(slot as f32).unwrap();
+        let expected_time = pane.series_read().anchor_time(slot as f32).unwrap();
         let undo_before = pane.drawings.undo_depth();
         run_frame_with_events(
             &mut app,

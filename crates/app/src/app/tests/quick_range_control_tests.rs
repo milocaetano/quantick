@@ -119,8 +119,8 @@ fn all_actions_resolve_fractional_market_and_first_future_slots_exactly() {
         let mut input = exact_input(&app, count);
         let pane = app.active_tab().drawing_pane();
         let future = pane.slots() as f32 - 0.25;
-        let market_time = pane.anchor_time(0.75).unwrap();
-        assert_eq!(pane.anchor_time(future), None);
+        let market_time = pane.series_read().anchor_time(0.75).unwrap();
+        assert_eq!(pane.series_read().anchor_time(future), None);
         input["anchors"][0]["bar_position"] = json!("0.75");
         input["anchors"][0]["time_unix_ms"] = json!(market_time);
         input["anchors"][count - 1]["bar_position"] = json!(future.to_string());
@@ -193,12 +193,12 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
                     Anchor {
                         bar: 0.5004,
                         price: 100.0,
-                        time_ms: pane.anchor_time(0.5004),
+                        time_ms: pane.series_read().anchor_time(0.5004),
                     },
                     Anchor {
                         bar: future,
                         price: 101.0,
-                        time_ms: pane.anchor_time(future),
+                        time_ms: pane.series_read().anchor_time(future),
                     },
                 ],
             };

@@ -422,14 +422,13 @@ impl QuantickApp {
         let drawing = pane.drawings.items().get(index)?;
         let band = pane.drawing_band(drawing)?;
         let scale = band.scale?;
-        let history_right = self
-            .drawing_pane()
-            .frame
-            .lane_divider_x
-            .unwrap_or(chart.right());
-        let points =
-            self.drawing_pane()
-                .projected_drawing_points(drawing, history_right, total, &scale);
+        let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+        let points = pane.drawing_projection().projected_drawing_points(
+            drawing,
+            history_right,
+            total,
+            &scale,
+        );
         let first = points.first()?;
         let mut bbox = egui::Rect::from_min_max(*first, *first);
         for point in &points {

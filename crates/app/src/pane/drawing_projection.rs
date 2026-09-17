@@ -16,7 +16,7 @@ use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
-pub(super) struct PaneSeriesRead<'a> {
+pub(crate) struct PaneSeriesRead<'a> {
     pub(super) history_prefix: &'a [quantick_engine::Bar],
     pub(super) state: &'a ChartState,
     pub(super) spec: &'a SpecSelector,
@@ -180,7 +180,7 @@ impl<'a> PaneSeriesRead<'a> {
     }
 }
 
-pub(super) struct DrawingProjection<'a> {
+pub(crate) struct DrawingProjection<'a> {
     pub(super) series: PaneSeriesRead<'a>,
     pub(super) viewport: &'a Viewport,
     pub(super) indicators: &'a IndicatorViews,

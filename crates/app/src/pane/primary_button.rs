@@ -105,7 +105,14 @@ impl ChartPane {
                         && bands::band_at(bands, position)
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
-                                self.drawing_handle_at(position, band, history_right, total)
+                                self.drawing_projection()
+                                    .drawing_handle_at(
+                                        &self.drawings,
+                                        position,
+                                        band,
+                                        history_right,
+                                        total,
+                                    )
                                     .is_some()
                             }))
             });
