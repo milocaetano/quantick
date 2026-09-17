@@ -79,6 +79,8 @@ jobs:
         # Exercises explicit Git revisions, Rust module layouts, direct-only
         # reference scope, deduplication, and delete/rename pre-images.
         run: python3 tools/read_cost/test_measure.py
+      - name: Edit-loop safety fixtures
+        run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Bridge tests
         # Same shape, for the bridge itself: a fake terminal, no MetaTrader.
         # It covers which ticks the live pump asks for, how "load older" walks
@@ -168,29 +170,36 @@ jobs:
   # trader runs quantick on Windows every day, and until this job every line of
   # evidence for that was a screenshot.
   #
-  # Deliberately narrow. `cargo build --workspace` proves the whole tree still
-  # compiles for `x86_64-pc-windows-msvc` — which is where a path separator, a
-  # `std::os::unix` import or a Windows-only linker error shows up — and the
-  # engine and guards tests prove determinism and the ratchets. The separate
-  # control-local step executes real Windows owner/ACL/junction fixtures plus
-  # loopback transport tests; Linux cannot execute these Windows branches.
-  # None needs a GPU, window or MetaTrader terminal. Linux still tests everything.
+  # Full verification parity, not merely a cross-platform compile. Retain the
+  # named control-local diagnostic for real Windows owner/ACL/junction cases.
+  # These tests need no GPU, window or MetaTrader terminal.
   windows:
     runs-on: windows-latest
+    env:
+      QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
     steps:
       - uses: actions/checkout@v4
+      - name: Edit-loop Windows safety fixtures
+        run: python -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Install the pinned toolchain
         # Same reasoning as the Linux job: `rust-toolchain.toml` names the
         # version, and `rustc --version` through the rustup shim is what
         # installs it.
         run: |
           rustc --version
+          rustup show
           cargo --version
+          cargo clippy --version
+          cargo fmt --version
       - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets
       - name: Build
         run: cargo build --workspace
       - name: Test
-        run: cargo test -p quantick-engine -p quantick-guards
+        run: cargo test --workspace
       - name: Test Windows descriptor authority and local transport
         # Keep test names and token-free fixture prerequisites in exact-head logs.
         run: cargo test -p quantick-control-local -- --nocapture
