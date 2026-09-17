@@ -31,7 +31,7 @@ use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use crate::toolrail::{Tool, ToolRail};
 use crate::viewport::Viewport;
 use quantick_layers::{ChartLayer, LayerActions};
 
@@ -46,8 +46,6 @@ use crate::drawings::{ChartPoint, DrawingBand};
 use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
-#[cfg(test)]
-use crate::toolrail::Tool;
 #[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 
@@ -69,6 +67,7 @@ mod frame;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod placement_gestures;
 mod pointer_gestures;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
@@ -973,7 +972,52 @@ impl ChartPane {
         // working while one is armed: an armed tool used to return early from
         // here, which left the trader unable to move the chart they were
         // annotating (audit S2).
-        let tool_armed = self.handle_drawing_placement(ui, &areas, &bands, chrome);
+        let placement_id = self.interaction_id("drawing_placement");
+        let hand = self.gestures.parked_hand;
+        let options = placement_gestures::PlacementOptions {
+            tool: chrome.toolrail.tool().drawing_tool(),
+            magnet: chrome.toolrail.magnet(),
+            constrain: if ui.input(|input| input.modifiers.shift) {
+                drawings::Constrain::Level
+            } else {
+                hand.map_or(drawings::Constrain::Free, |hand| hand.constrain)
+            },
+            parked_position: hand.map(|hand| hand.position),
+        };
+        let placement = self.gestures.update_placement(
+            &mut self.drawings,
+            &drawing_projection::DrawingProjection {
+                series: drawing_projection::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.viewport,
+                indicators: &self.indicators,
+            },
+            placement_gestures::PlacementFrame {
+                ui,
+                areas: &areas,
+                bands: &bands,
+                id: placement_id,
+                history_right: self.frame.lane_divider_x.unwrap_or(areas.chart.right()),
+            },
+            options,
+            placement_gestures::PlacementDefaults {
+                presets: chrome.presets,
+                repeat: chrome.toolrail.repeat(),
+            },
+        );
+        if let Some(position) = placement.hover_position {
+            self.hover_pos = position;
+        }
+        if placement.completion.arm_pointer {
+            chrome.toolrail.arm(Tool::Pointer);
+        }
+        if placement.completion.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        let tool_armed = placement.tool_armed;
         let auto = self.frame.auto_range;
         let height = self.frame.chart_height;
         let total = self.slots();

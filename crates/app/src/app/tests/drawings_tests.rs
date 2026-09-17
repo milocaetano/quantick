@@ -2,6 +2,201 @@ use super::*;
 use quantick_feed::history_reach;
 use quantick_feed::replay::test_support as replay_test_support;
 
+mod placement_characterization {
+    use super::*;
+
+    #[test]
+    fn the_real_menu_places_at_its_captured_anchor_and_commits_one_undo() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        let chart = pane.frame.chart_area.unwrap();
+        let slot = pane.slots() - 30;
+        let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+        let target = egui::pos2(
+            pane.viewport.x_center(slot, right, pane.slots()),
+            chart.center().y,
+        );
+        assert!(chart.contains(target));
+        let expected_time = pane.anchor_time(slot as f32).unwrap();
+        let undo_before = pane.drawings.undo_depth();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(target),
+                secondary_button(target, true),
+            ],
+        );
+        run_frame_with_events(&mut app, &ctx, vec![secondary_button(target, false)]);
+        let output = run_frame(&mut app, &ctx);
+        let action = painted_text_center(&output, "Anchor VWAP here")
+            .expect("actual context menu placement action");
+        assert_ne!(
+            action, target,
+            "the menu click is not the captured chart pointer"
+        );
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(action),
+                pointer_button(action, true),
+            ],
+        );
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(action, false)]);
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.drawings.items().len(), 1);
+        let drawing = &pane.drawings.items()[0];
+        assert_eq!(drawing.tool.id(), "anchored-vwap");
+        assert_eq!(drawing.points.len(), 1);
+        assert_eq!(slot_of(drawing.points[0].bar), slot);
+        assert_eq!(drawing.points[0].time_ms, Some(expected_time));
+        assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
+        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+        let closed = run_frame(&mut app, &ctx);
+        assert!(
+            !painted_text(&closed)
+                .iter()
+                .any(|text| text == "Anchor VWAP here")
+        );
+        assert!(app.active_tab_mut().flow_pane.drawings.undo());
+        assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    }
+
+    #[test]
+    fn freehand_keeps_stationary_and_subthreshold_pixels_out_of_the_draft() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let start = egui::pos2(
+            620.0,
+            app.active_tab()
+                .flow_pane
+                .frame
+                .chart_area
+                .unwrap()
+                .center()
+                .y,
+        );
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 1);
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.draft_len(),
+            1,
+            "stationary held pointer is not a second anchor"
+        );
+        for (offset, count) in [(3.0, 1), (4.0, 2), (7.0, 2), (8.0, 3)] {
+            run_frame_with_events(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(start + egui::vec2(offset, 0.0))],
+            );
+            assert_eq!(
+                app.active_tab().flow_pane.drawings.draft_len(),
+                count,
+                "decimation at offset {offset}"
+            );
+        }
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![pointer_button(start + egui::vec2(8.0, 0.0), false)],
+        );
+        let pane = &app.active_tab().flow_pane;
+        assert_eq!(pane.drawings.items().len(), 1);
+        assert_eq!(pane.drawings.items()[0].points.len(), 3);
+        assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
+        assert_eq!(pane.drawings.draft_len(), 0);
+        assert_eq!(app.toolrail.tool(), Tool::Pointer);
+    }
+
+    #[test]
+    fn the_held_freehand_path_accepts_anchor_512_and_refuses_513() {
+        let (mut app, _commands) = app_with_history(200);
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx);
+        let start = egui::pos2(
+            620.0,
+            app.active_tab()
+                .flow_pane
+                .frame
+                .chart_area
+                .unwrap()
+                .center()
+                .y,
+        );
+        arm_drawing_from_toolbox(&mut app, &ctx, "brush");
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(start),
+                pointer_button(start, true),
+            ],
+        );
+        // Prepare a real near-cap draft through the store's placement operation;
+        // the two boundary additions below still use actual held-pointer frames.
+        let store = &mut app.active_tab_mut().flow_pane.drawings;
+        let origin = store.draft().unwrap().points[0];
+        let brush = drawing_tool("brush");
+        for index in 1..511 {
+            assert!(!store.place(
+                brush,
+                drawings::ChartPoint {
+                    bar: origin.bar + index as f32 * 0.01,
+                    ..origin
+                }
+            ));
+        }
+        assert_eq!(store.draft_len(), 511);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start + egui::vec2(4.0, 0.0))],
+        );
+        assert_eq!(app.active_tab().flow_pane.drawings.draft_len(), 512);
+        let boundary = app
+            .active_tab()
+            .flow_pane
+            .drawings
+            .draft()
+            .unwrap()
+            .points
+            .last()
+            .copied()
+            .unwrap();
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(start + egui::vec2(8.0, 0.0))],
+        );
+        let store = &app.active_tab().flow_pane.drawings;
+        assert_eq!(store.draft_len(), 512);
+        assert_eq!(store.draft().unwrap().points.last(), Some(&boundary));
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![pointer_button(start + egui::vec2(8.0, 0.0), false)],
+        );
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[0].points.len(),
+            512
+        );
+    }
+}
+
 fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos: position,

@@ -2,7 +2,7 @@
 //! has not yet finished with.
 //!
 //! Pointer and shared-mark updates live on this owner in `pointer_gestures`.
-//! Placement still runs in `drawing_gestures`; the retained phase is here.
+//! Placement updates live here too, implemented in `placement_gestures`.
 //! These fields once sat among the pane's
 //! geometry and its menus. They belong together because they share one
 //! lifetime — a gesture — and because a gesture is the one thing on a pane
