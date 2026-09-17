@@ -139,21 +139,6 @@ fn point(anchor: core::Anchor) -> ChartPoint {
 
 impl QuickRange {
     /// Read-only application adapter. The model handles removal, layout and revision changes.
-    pub fn reconcile_panes(&mut self, tab_id: u64, tab: &crate::tab::Tab) {
-        self.reconcile_tab(tab_id);
-        let Some(owner) = self.owner() else { return };
-        let current = tab.sides().find_map(|side| {
-            let pane = tab.pane(side);
-            (pane.id == owner.pane).then_some(Owner {
-                tab: tab_id,
-                side,
-                pane: pane.id,
-                revision: pane.pagination_revision(),
-                layout: pane.layout_id().map(|id| id.0),
-            })
-        });
-        self.reconcile(current);
-    }
     pub fn reconcile(&mut self, owner: Option<Owner>) {
         match owner {
             Some(owner) => self.reconcile_owner(owner),
@@ -321,7 +306,7 @@ impl QuickRange {
         }))
     }
 
-    fn convert(&mut self, action: Action) -> Option<PlaceRequest> {
+    pub(crate) fn convert(&mut self, action: Action) -> Option<PlaceRequest> {
         let context = self.model.context()?;
         let Some(Effect::Place(operation)) =
             self.model.update(Command::Convert(action), context).effect

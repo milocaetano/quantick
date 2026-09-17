@@ -29,8 +29,8 @@ pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::control_quick_range_actions;
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
-mod drawing_chrome_wiring;
-mod drawing_input;
+pub(crate) mod drawing_controller;
+
 mod frame;
 mod health;
 mod indicator_manager;
@@ -55,16 +55,17 @@ use tabs::saved_context_intervals;
 // nothing in production outside the module that owns them, so the imports are
 // gated the way the block at the end of this list is.
 #[cfg(test)]
+use drawing_controller::DUPLICATE_OFFSET_BARS;
+#[cfg(test)]
 use menu_bar::{
     PAPER_BUY_SHORTCUT, PAPER_CANCEL_SHORTCUT, PAPER_FLATTEN_SHORTCUT, PAPER_REVERSE_SHORTCUT,
     PAPER_SELL_SHORTCUT,
 };
-#[cfg(test)]
-use replay_and_history::DUPLICATE_OFFSET_BARS;
 
 use crate::chart_layers;
 use crate::config::AppConfig;
 use crate::dock::Dock;
+#[cfg(test)]
 use crate::drawings;
 use crate::feed_notice;
 use crate::harness::{Harness, ScriptedMenu};
@@ -234,9 +235,8 @@ pub struct QuantickApp {
     /// the acknowledgement toast. One field for the whole set, one module
     /// per surface — see [`crate::surfaces::Surfaces`].
     surfaces: crate::surfaces::Surfaces,
-    // Custom drawing presets (named payload exports + default-for-new),
-    // persisted across restarts in a versioned file.
-    drawing_presets: drawings::presets::PresetStore,
+    /// Drawing commands, shared chrome/editor state and persistent defaults.
+    drawings: drawing_controller::DrawingController,
     /// The footprint layer's signal tunables — resolved at boot (env >
     /// `config/footprint.toml` preset > saved edits > defaults), edited live
     /// by the layer menu's controls.
@@ -304,13 +304,13 @@ impl QuantickApp {
             show_perf: &mut self.health.show_perf,
             record_deals: &mut self.chrome.record_deals,
             history: &mut self.history,
-            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,
             replay_view: &self.replay_view,
             layout_rename: &mut self.chrome.layout_rename,
             layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
             added_symbols: &mut self.added_symbols,
-            drawing_presets: &mut self.drawing_presets,
+            drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.footprint_config,
             footprint_settings: &mut self.surfaces.footprint_settings,
         }
@@ -330,7 +330,7 @@ impl QuantickApp {
             show_perf: &mut self.health.show_perf,
             record_deals: &mut self.chrome.record_deals,
             history: &mut self.history,
-            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,
         }
     }
@@ -345,7 +345,7 @@ impl QuantickApp {
             show_perf: self.health.show_perf,
             record_deals: self.chrome.record_deals,
             history: &self.history,
-            drawing_chrome: &self.surfaces.drawing_chrome,
+            drawing_chrome: &self.drawings.chrome,
         }
     }
 
@@ -371,7 +371,7 @@ impl QuantickApp {
                 show_perf: self.health.show_perf,
                 record_deals: self.chrome.record_deals,
                 history: &self.history,
-                drawing_chrome: &self.surfaces.drawing_chrome,
+                drawing_chrome: &self.drawings.chrome,
             },
             session,
             path,
@@ -393,7 +393,7 @@ impl QuantickApp {
             tabs: &mut self.tabs,
             indicators: &mut self.indicators,
             store: self.workspace.layouts_mut(),
-            drawing_chrome: &mut self.surfaces.drawing_chrome,
+            drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,
             rename: &mut self.chrome.layout_rename,
             delete_confirm: &mut self.chrome.layout_delete_confirm,
@@ -577,9 +577,7 @@ impl QuantickApp {
             dock: Dock::new(),
             toolrail: ToolRail::new(),
             surfaces: crate::surfaces::Surfaces::default(),
-            drawing_presets: drawings::presets::PresetStore::load_from(
-                drawings::presets::PresetStore::default_path(),
-            ),
+            drawings: drawing_controller::DrawingController::new(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             audio: replay_and_history::AlertState {
                 alerts: Box::new(crate::audio::Speaker::default()),

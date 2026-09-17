@@ -410,7 +410,7 @@ fn a_parked_popup_greets_the_avwap_and_the_profile_too() {
     drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-220.0, 150.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.drawing_chrome.inspector_moved(),
+        app.drawings.chrome.inspector_moved(),
         "the drag records the manual move"
     );
     let parked = ctx
@@ -2950,7 +2950,7 @@ fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
 
@@ -3014,7 +3014,7 @@ fn an_operator_cannot_remove_an_object_the_trader_drew() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id.0;
 
@@ -4687,7 +4687,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     app.config.metatrader.listen_addr = "192.168.7.31:9100".to_owned();
     run_frame(&mut app, &ctx);
     // The trader's own words on the chart.
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     {
         let tool = drawings::DRAWING_TOOLS

@@ -228,7 +228,15 @@ fn a_cut_with_the_retest_preset_rests_a_limit_and_cancels_at_the_target() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.on_break = "retest_limit".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF retest".to_owned(),
+        )
         .expect("the retest form compiles");
 
     let mut id = 0u64;
@@ -411,7 +419,7 @@ fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
     assert!(store.save_custom_preset("fib-retracement", "mine", exported, false));
     store.set_default_preset("fib-retracement", Some("mine".into()));
     let preset_path = store.path().to_path_buf();
-    app.drawing_presets = store;
+    app.drawings.presets = store;
 
     // Second fib starts from the default preset. Drawn clear of the
     // inspector the first fib opened (x >= 410): the panel is opaque to
@@ -628,12 +636,12 @@ fn a_restored_workspace_puts_the_window_back() {
         "and every tab phrases its request that way"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.inspector_pos(),
+        app.drawings.chrome.inspector_pos(),
         Some(egui::pos2(260.0, 480.0)),
         "the properties popup reopens where the trader parked it"
     );
     assert!(
-        app.surfaces.drawing_chrome.inspector_moved(),
+        app.drawings.chrome.inspector_moved(),
         "and counts as hand-placed, so automatic placement does not undo it"
     );
 }
@@ -808,16 +816,16 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
     app.tz = TzOffset::new(0);
     // The properties popup is part of an arrangement like the dock and the
     // rail are, so a bookmark carries where it was parked.
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .place_inspector_by_hand(egui::pos2(510.0, 240.0));
     app.workspace_save_adapter().save_named_workspace("context");
 
     // Drift away from it, then come back.
     app.active_tab_mut().set_layout(CanvasLayout::Single);
     app.tz = TzOffset::new(-180);
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .place_inspector_by_hand(egui::pos2(120.0, 640.0));
     run_frame(&mut app, &ctx);
 
@@ -829,7 +837,7 @@ fn opening_a_bookmark_replaces_what_is_on_screen() {
     assert_eq!(app.active_tab().layout, CanvasLayout::Time);
     assert_eq!(app.tz.minutes(), 0, "the chrome comes back with it");
     assert_eq!(
-        app.surfaces.drawing_chrome.inspector_pos(),
+        app.drawings.chrome.inspector_pos(),
         Some(egui::pos2(510.0, 240.0)),
         "including where the popup was parked when the bookmark was named"
     );

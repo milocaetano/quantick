@@ -134,7 +134,14 @@ impl QuantickApp {
         // claim the keyboard this frame.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
-        self.handle_drawing_keys(ctx, now);
+        let effects = self.drawings.handle_drawing_keys(
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut self.toolrail,
+            &mut *self.audio.alerts,
+            ctx,
+            now,
+        );
+        effects.apply_notice(&mut self.surfaces.toast);
         // Chrome panels claim their zones outside-in (§5): menu and toolbar
         // on top, the status line at the very bottom with the replay
         // transport directly above it, then the edge-docked drawing rail and
@@ -287,12 +294,16 @@ impl QuantickApp {
             self.report_alert_attempt(outcome);
         }
         if let Some(request) = surfaces.arm_strategy {
-            let outcome = self.arm_strategy_instance(
-                request.side,
-                request.drawing,
-                &request.form,
-                request.label,
-            );
+            let outcome = self
+                .tabs
+                .runtime_mut(self.tabs.active_index())
+                .arm_strategy_instance(
+                    &mut *self.audio.alerts,
+                    request.side,
+                    request.drawing,
+                    &request.form,
+                    request.label,
+                );
             self.surfaces.strategy_popup.settle_arm(outcome);
         }
         if let Some(request) = surfaces.market {
@@ -382,13 +393,13 @@ impl QuantickApp {
             let side = self.active_tab().focused_side();
             // The flag lives with the window it opens, so it travels through
             // a local rather than a `&mut` handed out of the surface.
-            let mut manager_open = self.surfaces.drawing_chrome.manager_open();
+            let mut manager_open = self.drawings.chrome.manager_open();
             {
                 let Self { toolrail, tabs, .. } = self;
                 let tab = tabs.runtime_mut(tabs.active_index());
                 toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
             }
-            self.surfaces.drawing_chrome.set_manager_open(manager_open);
+            self.drawings.chrome.set_manager_open(manager_open);
         }
         // A star clicked this frame is on disk this frame, like the replay
         // folder above: the pinned rail is what the trader reaches for without
@@ -506,7 +517,13 @@ impl QuantickApp {
         self.poll_workspace_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
-        self.draw_pinned_inspector(ctx, now);
+        if let Some(ask) = self.drawings.draw_pinned_inspector(
+            ctx,
+            &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+            &self.toolrail,
+        ) {
+            self.resolve_drawing_response(ask, now);
+        }
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         let (tab, config) = self.active_with_config();
@@ -556,7 +573,7 @@ impl QuantickApp {
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
-        self.sync_content_editing();
+        self.drawings.chrome.sync_content_editing(&mut self.tabs);
         // Raised by a placement that wants its note typed, and handed to the
         // chrome below: the flag belongs to the editor that owns the caret,
         // not to the canvas that asks for it.
@@ -569,18 +586,17 @@ impl QuantickApp {
                     let Self {
                         tabs,
                         toolrail,
-                        drawing_presets,
+                        drawings,
                         style,
                         tz,
                         workspace,
                         footprint_config,
-                        surfaces,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
                         toolrail,
-                        presets: drawing_presets,
-                        drawing_chrome: &mut surfaces.drawing_chrome,
+                        presets: &drawings.presets,
+                        drawing_chrome: &mut drawings.chrome,
                         begin_text_edit: &mut begin_text_edit,
                         style,
                         tz: *tz,
@@ -703,14 +719,19 @@ impl QuantickApp {
                 }
             });
         if begin_text_edit {
-            self.surfaces.drawing_chrome.request_text_edit();
+            self.drawings.chrome.request_text_edit();
         }
         // Floating drawing controls must be registered after the opaque
         // central canvas so they stay in front of the chart. That is why the
         // drawing chrome is the one surface `Surfaces::draw_all` does not
         // draw: it is anchored *to* the chart rather than floating over the
         // window, so it is commanded by name from here instead.
-        self.draw_drawing_chrome(ctx, now);
+        let ask = self.drawings.draw_drawing_chrome(
+            ctx,
+            &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+            &self.toolrail,
+        );
+        self.resolve_drawing_response(ask, now);
         // The menus above may have disarmed a bot over a resting retest
         // limit; its cancel goes to the simulator on this same frame, not
         // on the next print. Every tab, not just the active one: a menu
@@ -751,5 +772,47 @@ impl QuantickApp {
         .then_some(popup_tab);
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
+    }
+}
+
+impl QuantickApp {
+    /// The registered capability runs synchronously before the remaining drawing
+    /// response. Invalid input still leaves those ordinary commands to execute.
+    pub(super) fn resolve_drawing_response(
+        &mut self,
+        mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
+        now: Instant,
+    ) {
+        if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
+            let pending = action.pending;
+            let result = self.control_action(
+                action.capability,
+                action.version,
+                crate::control::ActionOrigin::Human,
+                action.input,
+            );
+            let explain = self
+                .drawings
+                .finish_registered_action(pending, result.is_ok());
+            if let Err(error) = result {
+                tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_PROFILE_REFUSED",code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
+                if explain {
+                    self.surfaces.toast.note(
+                        "The drawing could not be placed; the temporary range is still available.",
+                        now,
+                    );
+                }
+            }
+        }
+        let effects = self.drawings.apply_drawing_chrome(
+            ask,
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut *self.audio.alerts,
+            now,
+        );
+        if effects.inspector_moved {
+            self.workspace.session_mut().inspector_moved();
+        }
+        effects.apply_notice(&mut self.surfaces.toast);
     }
 }

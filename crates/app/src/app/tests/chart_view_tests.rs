@@ -399,15 +399,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
     let parked = egui::pos2(320.0, 240.0);
-    app.surfaces
-        .drawing_chrome
-        .context_bar_mut()
-        .set_manual(parked);
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.context_bar_mut().set_manual(parked);
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     let drawn = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is up where it was put")
         .min;
@@ -419,12 +416,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         None,
         "the press does what the trader aimed it at: the selection goes"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.context_bar().manual_position(),
+        app.drawings.chrome.context_bar().manual_position(),
         Some(parked),
         "and the position they chose is still theirs on the next object"
     );
@@ -435,12 +432,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     // against the parked point itself, so the test says "unchanged" and
     // not "happens to need no repair at this window size".
     app.drawing_pane_mut().drawings.select(Some(other));
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar_rect()
             .expect("the bar is back")
             .min,
@@ -464,8 +461,8 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let before = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is on screen");
 
@@ -476,13 +473,13 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     run_frame(&mut app, &ctx);
 
     let after = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar must survive its own drag");
     assert!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar()
             .manual_position()
             .is_some(),

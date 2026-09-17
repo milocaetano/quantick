@@ -7,27 +7,15 @@
 //! The scripted pointer helpers are here for the same reason — they are what
 //! lets a capture drive the transport without a mouse.
 //!
-//! Two are not appliers: `duplicate_selected_drawing` and its
-//! `carry_strategy_to_duplicate` half are reached from
-//! [`super::drawing_input`] on a gesture, and sit here because
-//! `DUPLICATE_OFFSET_BARS` and the alarm the copy can inherit came with this
-//! group. Moving them beside the rest of the drawing chrome is a follow-up,
-//! not this cut's business.
-
 use eframe::egui;
 
-use crate::drawings;
 use crate::harness::ContextMenuPane;
 use crate::loading::LoadingTask;
-use crate::pane;
 use crate::replay_view::ReplayAction;
 
 use quantick_feed::{FeedCommand, ReplayControl};
 
 use super::QuantickApp;
-
-/// Horizontal offset of a duplicated drawing, so the copy is visibly a copy.
-pub(super) const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 
 /// Where a signal alarm is played, and why the last one was not.
 ///
@@ -416,88 +404,6 @@ impl QuantickApp {
                     self.show_agent_toast(format!("no alarm sound was played: {reason}"));
                 }
             }
-        }
-    }
-
-    /// Arm one instance on a drawing: compile the form, warm the trigger on
-    /// the bars already closed (gates shut, so nothing fires from history),
-    /// attach it, and start the paper host listening. `Err` carries the
-    /// human-readable refusal for the dialog to show.
-    /// Duplicate the selected drawing with everything riding it.
-    ///
-    /// The one door, because a duplication is not only a copied mark: an
-    /// armed strategy rides the drawing today and whatever docks next will
-    /// ride it too. Two call sites — the hotkey and the context bar — each
-    /// spelling out "copy, then carry" is a third one that copies and
-    /// forgets, and a band that silently loses its bot is exactly the class
-    /// of silence this change exists to end.
-    ///
-    /// Rate: rare — one keystroke or one click.
-    pub(super) fn duplicate_selected_drawing(&mut self) {
-        let side = self.active_tab().drawing_side();
-        let Some(duplicated) = self
-            .drawing_pane_mut()
-            .drawings
-            .duplicate_selected(DUPLICATE_OFFSET_BARS)
-        else {
-            return;
-        };
-        self.carry_strategy_to_duplicate(side, duplicated);
-    }
-
-    /// Carry an armed strategy across a duplication.
-    ///
-    /// A copied region is a region the trader wants watched the same way —
-    /// duplicating the band and then re-typing the form is a step that only
-    /// exists because the copy forgot. The copy is armed through
-    /// [`Self::arm_strategy_instance`], the same door the dialog uses, from
-    /// the stored form the source kept: one construction path, so a copy
-    /// cannot quietly differ from what the dialog would have built.
-    ///
-    /// **Only a watching instance travels.** A source that is `Done`, or
-    /// disarmed for any reason, was stopped — by the trader's own hand, by
-    /// a rejected entry, by a spent one shot — and a copy that springs back
-    /// to life places orders the trader last said no to. The copy lands
-    /// offset to the *right*, the direction that makes a dead span live
-    /// again, so Ctrl+D would otherwise be the one gesture that silently
-    /// revives what was deliberately stopped.
-    ///
-    /// **State does not travel either.** The copy starts `Armed`, with a
-    /// fresh ruler warmed on this pane's own bars, a fresh alarm (no
-    /// inherited cooldown, no inherited preview mark) and no order id.
-    /// Cloning a `Fired` instance would hang a second badge on one order.
-    ///
-    /// A refusal is reported rather than swallowed: `duplicate_selected`
-    /// clones `hidden`, `off_series` and `foreign_market` verbatim — only
-    /// `locked` is reset — and arming refuses all three. A trader who
-    /// pressed hide-all and then Ctrl+D would otherwise unhide to two
-    /// identical bands wearing one badge and believe both were watching.
-    ///
-    /// Rate: rare — one keystroke.
-    fn carry_strategy_to_duplicate(
-        &mut self,
-        side: pane::PaneSide,
-        duplicated: drawings::Duplicated,
-    ) {
-        use quantick_strategy::ArmedState;
-        let Some((spec, label)) = self
-            .active_tab()
-            .pane(side)
-            .strategies
-            .anchors
-            .for_drawing(duplicated.source)
-            .filter(|instance| {
-                matches!(
-                    instance.armed.state(),
-                    ArmedState::Armed | ArmedState::Fired { .. } | ArmedState::InPosition
-                )
-            })
-            .map(|instance| (instance.spec.clone(), instance.preset.clone()))
-        else {
-            return;
-        };
-        if let Err(reason) = self.arm_strategy_instance(side, duplicated.copy, &spec, label) {
-            self.note_workspace(format!("the copy carries no strategy: {reason}"));
         }
     }
 

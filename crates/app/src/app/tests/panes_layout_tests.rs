@@ -981,27 +981,25 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
 
     // Parked far to the right of what either pane of a split will offer.
     let parked = egui::pos2(1200.0, 780.0);
-    app.surfaces
-        .drawing_chrome
-        .context_bar_mut()
-        .set_manual(parked);
+    app.drawings.chrome.context_bar_mut().set_manual(parked);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
     // Blank the mirror first: it is written only when the bar reaches
     // `show`, and every early return leaves the previous frame's value —
     // here the full-width rect, which would satisfy the assertion below
     // with the repair never having run.
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     let chart = app
+        .active_tab()
         .drawing_pane()
         .frame
         .chart_area
         .expect("the pane holding the selection drew");
     let bar = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is still up");
     assert!(
@@ -1009,7 +1007,7 @@ fn a_parked_context_bar_is_repaired_into_the_pane_it_reappears_on() {
         "the parked bar is repaired into {chart:?}, drawn at {bar:?}"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.context_bar().manual_position(),
+        app.drawings.chrome.context_bar().manual_position(),
         Some(parked),
         "and the point the hand chose survives the repair"
     );

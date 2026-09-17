@@ -701,11 +701,11 @@ impl DrawingChromeSurface {
         &mut self,
         ctx: &egui::Context,
         env: &DrawingEnv<'_>,
-        tab: &crate::tab::Tab,
+        current_owner: Option<QuickRangeOwner>,
         floating: bool,
     ) -> DrawingChromeAsk {
         if floating {
-            self.draw_floating(ctx, env, tab)
+            self.draw_floating(ctx, env, current_owner)
         } else {
             self.draw_pinned_panel(ctx, env)
         }
@@ -929,9 +929,12 @@ impl DrawingChromeSurface {
         &mut self,
         ctx: &egui::Context,
         env: &DrawingEnv<'_>,
-        tab: &crate::tab::Tab,
+        current_owner: Option<QuickRangeOwner>,
     ) -> DrawingChromeAsk {
-        self.quick_range.reconcile_panes(env.tab, tab);
+        self.quick_range.reconcile_tab(env.tab);
+        if self.quick_range.owner().is_some() {
+            self.quick_range.reconcile(current_owner);
+        }
         self.quick_range.note_selection(
             env.pane_id,
             env.selected.as_ref().map(|selected| selected.drawing.id.0),

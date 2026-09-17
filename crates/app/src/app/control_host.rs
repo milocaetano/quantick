@@ -65,8 +65,8 @@ pub(super) struct ControlState {
 pub(crate) fn control_quick_range(
     app: &QuantickApp,
 ) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .quick_range
         .control(app.tabs.id_at(app.tabs.active_index()))
 }
@@ -75,8 +75,8 @@ pub(crate) fn control_quick_range(
 pub(crate) fn control_quick_range_actions(
     app: &QuantickApp,
 ) -> Option<[crate::surfaces::drawing_chrome::QuickRangeControl; 3]> {
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .quick_range
         .controls(app.tabs.id_at(app.tabs.active_index()))
 }
@@ -206,7 +206,7 @@ impl QuantickApp {
     /// What a freshly placed object of `tool` opens with, through the same
     /// door the click path uses — saved defaults, named preset and all.
     pub(crate) fn control_new_drawing(&self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
-        drawings::new_drawing_from_defaults(&self.drawing_presets, tool)
+        drawings::new_drawing_from_defaults(&self.drawings.presets, tool)
     }
 
     pub(crate) fn control_config(&self) -> &AppConfig {
@@ -362,43 +362,6 @@ impl QuantickApp {
             access.invoke_local_action(self, capability_id, capability_version, input, origin);
         self.control.control_access = Some(access);
         outcome
-    }
-
-    /// How many objects an operator other than the trader placed, across
-    /// every pane one can reach — an assistant may annotate any open tab, so
-    /// counting the active pane alone would offer to take back a subset and
-    /// call it all of them.
-    pub(super) fn authored_object_count(
-        tabs: &crate::app::arrangement_host::ArrangementHost,
-    ) -> usize {
-        tabs.iter()
-            .map(|tab| {
-                tab.panes()
-                    .map(|(pane, _side)| pane.drawings.authored_count())
-                    .sum::<usize>()
-            })
-            .sum()
-    }
-
-    /// Take back every object an operator placed, wherever it is. One undo
-    /// entry per pane, and the resting orders of any armed strategy go with
-    /// the objects they were anchored to.
-    pub(super) fn remove_every_authored_object(&mut self) -> usize {
-        let mut removed = 0;
-        for tab in self.tabs.iter_mut() {
-            // Every pane the tab holds, not the two it used to. "Remove
-            // objects placed for you" promises to take them *all* back, and a
-            // sweep that skipped the second stacked chart would leave an
-            // assistant's marks behind while reporting the job done.
-            for pane in tab.panes_mut() {
-                let taken = pane.drawings.remove_authored();
-                if taken > 0 {
-                    pane.sweep_strategy_orphans();
-                    removed += taken;
-                }
-            }
-        }
-        removed
     }
 
     /// The annotate tier's launch hooks: one agent-authored label, one
@@ -565,11 +528,6 @@ impl QuantickApp {
     /// The inspector, the keyboard, the object manager and the toast all read
     /// through here, so an object selected on either of its two charts is
     /// edited and deleted from either of them.
-    pub(super) fn drawing_pane(&self) -> &ChartPane {
-        self.active_tab().drawing_pane()
-    }
-
-    /// See [`Self::drawing_pane`].
     pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
         self.active_tab_mut().drawing_pane_mut()
     }

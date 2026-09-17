@@ -7,9 +7,6 @@
 //! [`crate::paper`] and [`crate::paper_account`]; this is only the plumbing
 //! between those and the window that owns them.
 
-use crate::drawings;
-use crate::pane;
-
 use super::QuantickApp;
 
 impl QuantickApp {
@@ -158,109 +155,5 @@ impl QuantickApp {
         state.selected_order_strategy = selected;
         state.ruler_steps = steps;
         crate::paper_state::save(&path, &state);
-    }
-
-    pub(super) fn arm_strategy_instance(
-        &mut self,
-        side: pane::PaneSide,
-        drawing: drawings::DrawingId,
-        form: &crate::strategy_presets::StoredPreset,
-        preset_label: String,
-    ) -> Result<(), String> {
-        let Some(compiled) = form.to_kernel() else {
-            return Err(
-                "a field does not parse: quantity, factors and multipliers must be numbers, \
-                 and an instance that neither trades nor alarms cannot be armed"
-                    .to_owned(),
-            );
-        };
-        let crate::strategy_presets::CompiledPreset {
-            params,
-            force,
-            alarm,
-        } = compiled;
-        let tab = self.active_tab_mut();
-        let replaced_cleanup = {
-            let pane = tab.pane_mut(side);
-            // Re-validate everything the menu's gate promised: this is also
-            // the seam a future programmatic caller (the NL layer) comes
-            // through, and it must not be able to arm what the menu would
-            // refuse — the wrong shape, another band, a drawing with no
-            // footing here, or one nobody can see.
-            let Some(index) = pane.drawings.index_of(drawing) else {
-                return Err("the drawing is gone".to_owned());
-            };
-            let target = &pane.drawings.items()[index];
-            if target.tool.id() != drawings::RECTANGLE_TOOL_ID
-                || target.band != drawings::DrawingBand::Price
-                || target.points.len() != 2
-            {
-                return Err("only price-band rectangles carry strategies".to_owned());
-            }
-            if target.foreign_market || target.off_series {
-                return Err(
-                    "this drawing belongs to another market or lost its series — redraw the \
-                     region here first"
-                        .to_owned(),
-                );
-            }
-            if target.hidden || pane.drawings.all_hidden() {
-                return Err("unhide the drawing first — an armed region stays visible".to_owned());
-            }
-            // A region whose drawn span can no longer cover a future bar
-            // can never fire: the badge would show "armed" over a bot that
-            // is structurally done — the silent halt the named disarms
-            // exist to prevent. One predicate, shared with re-arm and the
-            // evaluation sweep (`Pane::strategy_region_can_fire`), refuses
-            // it with the fix in hand.
-            if !pane.strategy_region_can_fire(drawing) {
-                return Err(
-                    "the region ends before the next bar, so nothing can ever fire — \
-                     stretch it past the right edge, or turn on \"extend right\" in its \
-                     Region settings"
-                        .to_owned(),
-                );
-            }
-            let mut armed = quantick_strategy::ArmedStrategy::new(
-                params,
-                Box::new(quantick_strategy::ForceTrigger::new(force.clone())),
-            );
-            // Warm the ruler on the bars the chart is already showing —
-            // armed means armed now, not after another twenty bars of
-            // warmup the trader cannot see the reason for. The trigger
-            // declares its own depth (`warmup_bars`), and the pane keeps
-            // venue-prefix candles out: they measure another ruler
-            // entirely (a 1-minute body dwarfs a tick-bar body).
-            armed.warm(&pane.strategy_warmup_bars(armed.trigger().warmup_bars()));
-            pane.strategies
-                .anchors
-                .arm(crate::strategy_anchors::AnchoredInstance {
-                    drawing,
-                    preset: preset_label,
-                    spec: form.clone(),
-                    armed,
-                    alarm: alarm.map(|setup| quantick_strategy::SignalAlarm::new(setup.params)),
-                    cue: alarm.map(|setup| setup.cue).unwrap_or_default(),
-                    mark: crate::strategy_anchors::AlarmMark::Quiet,
-                })
-        };
-        for command in replaced_cleanup {
-            // Arming over an instance with a pending entry sweeps that
-            // entry — a resting order must never outlive its bot.
-            let _ = tab.paper.account_mut().apply_strategy_command(command);
-        }
-        tab.paper.account_mut().set_bot_listening(true);
-        // Only now, past every gate: the sink opens its device at arm time
-        // so the first signal does not pay for it on the tape's path, but a
-        // *refused* arm must open nothing. Ctrl+D over a band the copy
-        // cannot be armed on discards the `Err` by design — the absent
-        // badge is the message — and warming above the gates turned that
-        // silence into an audio stack enumerated once per keypress, against
-        // the sink's own promise that a chart which never arms an alarm
-        // never touches a device.
-        if let Some(setup) = alarm {
-            self.audio.alerts.warm_up(setup.cue);
-        }
-        Ok(())
     }
 }

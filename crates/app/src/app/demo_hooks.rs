@@ -617,21 +617,29 @@ impl QuantickApp {
         }
         match mode {
             StrategyDemoMode::Armed => {
-                let _ = self.arm_strategy_instance(
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo BF".to_owned(),
-                );
+                let _ = self
+                    .tabs
+                    .runtime_mut(self.tabs.active_index())
+                    .arm_strategy_instance(
+                        &mut *self.audio.alerts,
+                        pane::PaneSide::Flow,
+                        drawing_id,
+                        &form,
+                        "demo BF".to_owned(),
+                    );
             }
             StrategyDemoMode::AlarmBadge => {
                 form.alarm_only = true;
-                let _ = self.arm_strategy_instance(
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo alarm".to_owned(),
-                );
+                let _ = self
+                    .tabs
+                    .runtime_mut(self.tabs.active_index())
+                    .arm_strategy_instance(
+                        &mut *self.audio.alerts,
+                        pane::PaneSide::Flow,
+                        drawing_id,
+                        &form,
+                        "demo alarm".to_owned(),
+                    );
                 // Stand a provisional judgement on the badge. The mark is
                 // the surface under test, and the tape reaches it only when
                 // a force bar happens to be half-formed — so the scene
@@ -648,12 +656,16 @@ impl QuantickApp {
                 pane.drawings.select(None);
             }
             StrategyDemoMode::EndedBadge | StrategyDemoMode::PausedBadge => {
-                let _ = self.arm_strategy_instance(
-                    pane::PaneSide::Flow,
-                    drawing_id,
-                    &form,
-                    "demo BF".to_owned(),
-                );
+                let _ = self
+                    .tabs
+                    .runtime_mut(self.tabs.active_index())
+                    .arm_strategy_instance(
+                        &mut *self.audio.alerts,
+                        pane::PaneSide::Flow,
+                        drawing_id,
+                        &form,
+                        "demo BF".to_owned(),
+                    );
                 let pane = self.active_tab_mut().pane_mut(pane::PaneSide::Flow);
                 if mode == StrategyDemoMode::EndedBadge {
                     // End the span the way the trader does — by moving the
@@ -922,7 +934,7 @@ impl QuantickApp {
     /// looks merely uninteresting, and that is how three of these hooks came to
     /// disagree about it.
     fn carry_inspector_across_selection(&mut self) {
-        self.surfaces.drawing_chrome.carry_across_selection();
+        self.drawings.chrome.carry_across_selection();
     }
 
     /// The `bands` half of the demo hook: on every indicator pane, a level on

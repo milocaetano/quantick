@@ -459,12 +459,11 @@ fn with_flow_pane<R>(
     let QuantickApp {
         tabs,
         toolrail,
-        drawing_presets,
+        drawings,
         style,
         tz,
         workspace,
         footprint_config,
-        surfaces,
         ..
     } = app;
     let tab_id = tabs.id_at(tabs.active_index());
@@ -473,8 +472,8 @@ fn with_flow_pane<R>(
         tab: tab_id,
         side: pane::PaneSide::Flow,
         toolrail,
-        presets: drawing_presets,
-        drawing_chrome: &mut surfaces.drawing_chrome,
+        presets: &drawings.presets,
+        drawing_chrome: &mut drawings.chrome,
         begin_text_edit: &mut begin_text_edit,
         style,
         tz: *tz,
@@ -787,7 +786,7 @@ fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end
 /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
 /// test that proves this shortcut matches the real button.
 fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.set_inspector_open(true);
     // Two frames: the first opens the window, the second lets it settle
     // its size and automatic placement before anything reads its rect.
     run_frame(app, ctx);
@@ -1066,8 +1065,8 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
     // The write is queued during the release frame and flushed at the top
     // of the next one, where every other workspace write lives.
     run_frame(app, ctx);
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .inspector_pos()
         .expect("the drag records a position")
 }
@@ -1101,7 +1100,8 @@ fn place_drawing(
         click_chart(app, ctx, *anchor);
     }
     run_frame(app, ctx);
-    app.drawing_pane()
+    app.active_tab()
+        .drawing_pane()
         .drawings
         .items()
         .iter()
@@ -1121,15 +1121,15 @@ fn select_and_open_popup(app: &mut QuantickApp, ctx: &egui::Context, index: usiz
     // value that would make a position assertion pass on a popup that is
     // no longer floating. Ask the app what it drew before reading egui.
     assert!(
-        app.surfaces.drawing_chrome.inspector_open(),
+        app.drawings.chrome.inspector_open(),
         "the gear's door is open"
     );
     assert!(
-        !app.surfaces.drawing_chrome.inspector_pinned(),
+        !app.drawings.chrome.inspector_pinned(),
         "and the popup is floating, not docked"
     );
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         Some(index),
         "on the object this call selected"
     );

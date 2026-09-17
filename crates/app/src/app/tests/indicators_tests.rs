@@ -18,7 +18,7 @@ fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(matches!(
-        app.drawing_pane().drawings.items()[index].band,
+        app.active_tab().drawing_pane().drawings.items()[index].band,
         drawings::DrawingBand::Indicator(_)
     ));
     (app, ctx, index, anchor)
@@ -29,14 +29,15 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
     let (app, _ctx, _index, _) = selected_cvd_line();
     let band = pane_body(&app, 0);
     let price = app
+        .active_tab()
         .drawing_pane()
         .frame
         .chart_area
         .expect("price chart drawn");
     let header = crate::indicator_render::pane_header_rect(band, false);
     let bar = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("selected bar drawn");
     assert!(
@@ -57,12 +58,18 @@ fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_foote
 fn selected_indicator_bounds_use_the_drawn_band_scale() {
     let (app, _ctx, index, anchor) = selected_cvd_line();
     let chart = app
+        .active_tab()
         .drawing_pane()
         .frame
         .chart_area
         .expect("price chart drawn");
     let bbox = app
-        .drawing_bbox_on_screen(chart, index)
+        .drawings
+        .drawing_bbox_on_screen(
+            &crate::app::drawing_controller::DrawingReadAccess::new(&app.tabs),
+            chart,
+            index,
+        )
         .expect("selected indicator projects");
     assert!(
         (bbox.center().y - anchor.y).abs() < 1.0,
@@ -80,22 +87,22 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
             run_frame(&mut app, &ctx);
             let legend = ctx
                 .memory(|memory| {
-                    memory.area_rect(egui::Id::new(("indicator_legend", app.drawing_pane().id)))
+                    memory.area_rect(egui::Id::new((
+                        "indicator_legend",
+                        app.active_tab().drawing_pane().id,
+                    )))
                 })
                 .expect("real indicator legend drawn");
             if parked {
-                app.surfaces
-                    .drawing_chrome
-                    .context_bar_mut()
-                    .set_manual(legend.min);
+                app.drawings.chrome.context_bar_mut().set_manual(legend.min);
             } else {
-                app.surfaces.drawing_chrome.context_bar_mut().clear_manual();
+                app.drawings.chrome.context_bar_mut().clear_manual();
             }
-            app.surfaces.drawing_chrome.forget_context_bar_rect();
+            app.drawings.chrome.forget_context_bar_rect();
             run_frame(&mut app, &ctx);
             let bar = app
-                .surfaces
-                .drawing_chrome
+                .drawings
+                .chrome
                 .context_bar_rect()
                 .expect("selected CVD line raises its bar");
             assert!(
@@ -104,7 +111,7 @@ fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked()
             );
             if parked {
                 assert_eq!(
-                    app.surfaces.drawing_chrome.context_bar().manual_position(),
+                    app.drawings.chrome.context_bar().manual_position(),
                     Some(legend.min),
                     "placement repair preserves the trader's parked point"
                 );

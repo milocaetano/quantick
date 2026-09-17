@@ -268,7 +268,7 @@ impl QuantickApp {
         // whether the inspector is open, so a hook another hook depends on has
         // to be in place before any of them. They live with the fields they
         // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
-        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.surfaces.drawing_chrome);
+        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.drawings.chrome);
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
