@@ -8,7 +8,6 @@
 use rust_decimal::Decimal;
 
 use super::*;
-use crate::indicator_worker::IndicatorEvent;
 
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without
@@ -891,7 +890,9 @@ fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) 
         inputs: Vec::new(),
     };
     pane.indicators
-        .apply(IndicatorEvent::rebuilt(slot, descriptor, columns));
+        .apply(crate::indicator_worker::event_fixture::rebuilt(
+            slot, descriptor, columns,
+        ));
     slot
 }
 
@@ -985,7 +986,11 @@ fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
         inputs: Vec::new(),
     };
     pane.indicators
-        .apply(IndicatorEvent::rebuilt(slot, descriptor, vec![values]));
+        .apply(crate::indicator_worker::event_fixture::rebuilt(
+            slot,
+            descriptor,
+            vec![values],
+        ));
     pane.frame.chart_area = Some(TEST_PLOT);
     pane.frame.chart_top = TEST_PLOT.top();
     pane.frame.chart_height = TEST_PLOT.height();

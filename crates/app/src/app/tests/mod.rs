@@ -33,7 +33,6 @@
 // `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
 // later: the indicator manager took the last production reader of each out of
 // `app.rs`, and the tests that still name them are the only ones left.
-use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
 use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
@@ -119,10 +118,8 @@ fn add_pane_indicator(app: &mut QuantickApp, title: &str, values: Vec<f64>) -> S
 /// The same indicator, recomputed — an edited input, a hot reload, older
 /// trades re-cutting the series.
 fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, values: Vec<f64>) {
-    app.active_tab_mut()
-        .flow_pane
-        .indicators
-        .apply(IndicatorEvent::rebuilt(
+    app.active_tab_mut().flow_pane.indicators.apply(
+        crate::indicator_worker::event_fixture::rebuilt(
             slot,
             quantick_indicators::IndicatorDescriptor {
                 title: title.to_owned(),
@@ -141,7 +138,8 @@ fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, valu
                 fills: Vec::new(),
             },
             vec![values],
-        ));
+        ),
+    );
 }
 
 /// The `(lo, hi)` a pane is drawing with right now: its manual range if the
@@ -2189,7 +2187,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
         };
         let column = (0..bars).map(|bar| bar as f64).collect::<Vec<_>>();
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 vec![column],

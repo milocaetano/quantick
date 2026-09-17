@@ -2916,6 +2916,7 @@ dependencies = [
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
  "quantick-feed-mt5",
+ "quantick-indicator-session",
  "quantick-indicators",
  "quantick-layers",
  "quantick-orderbook",
@@ -3076,6 +3077,16 @@ dependencies = [
 [[package]]
 name = "quantick-guards"
 version = "0.1.0"
+
+[[package]]
+name = "quantick-indicator-session"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-pine",
+ "rust_decimal",
+]
 
 [[package]]
 name = "quantick-indicators"

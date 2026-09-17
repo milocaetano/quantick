@@ -627,7 +627,7 @@ mod tests {
                 let mut views = IndicatorViews::new();
                 for row in 0..rows {
                     let slot = views.allocate_slot("test.indicator");
-                    views.apply(IndicatorEvent::rebuilt(
+                    views.apply(crate::indicator_worker::event_fixture::rebuilt(
                         slot,
                         descriptor(&format!("EMA({row}, close)")),
                         vec![vec![101.5, 1_234.0]],
@@ -676,7 +676,7 @@ mod tests {
     fn a_folded_legend_still_states_a_broken_indicator() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("zigzag.pine"),
                 vec![vec![1.0]],
@@ -727,14 +727,14 @@ mod tests {
         let mut views = IndicatorViews::new();
         for name in ["EMA(9, close)", "ATR(14)"] {
             let slot = views.allocate_slot("test.indicator");
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor(name),
                 vec![vec![101.5, 1_234.0]],
             ));
         }
         let broken = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             broken,
             descriptor("zigzag.pine"),
             vec![vec![1.0]],
@@ -798,7 +798,7 @@ mod tests {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
 
         let healthy = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -832,7 +832,7 @@ mod tests {
         // Same indicator, now broken and previewing: it keeps its own row, so
         // the puck has nothing of its own to announce.
         let broken = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5]],
@@ -864,7 +864,7 @@ mod tests {
     fn the_chevron_asks_to_fold_and_to_unfold() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -929,7 +929,7 @@ mod tests {
     fn double_clicking_anywhere_on_a_row_opens_its_settings() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -982,7 +982,7 @@ mod tests {
     fn the_legend_names_the_indicator_and_its_last_value() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -999,7 +999,7 @@ mod tests {
     fn an_errored_indicator_states_its_error_on_the_chart() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("zigzag.pine"),
                 vec![vec![1.0]],

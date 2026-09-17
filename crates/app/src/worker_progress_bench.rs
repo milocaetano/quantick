@@ -267,7 +267,7 @@ fn measure_indicator(spec: Spec) {
     });
     worker.send(IndicatorCommand::Backfilled(Vec::new()));
     let (setup_tx, setup_rx) = channel();
-    worker.send(IndicatorCommand::Flush(setup_tx));
+    worker.send(crate::indicator_worker::WorkerCommand::Flush(setup_tx));
     setup_rx
         .recv_timeout(ACK_LIMIT)
         .expect("indicator setup was published");
@@ -295,7 +295,7 @@ fn measure_indicator(spec: Spec) {
                 samples.record(elapsed, kind);
             }
         }
-        worker.send(IndicatorCommand::Flush(ack_tx));
+        worker.send(crate::indicator_worker::WorkerCommand::Flush(ack_tx));
         ack_rx
             .recv_timeout(ACK_LIMIT)
             .expect("indicator burst was published");
