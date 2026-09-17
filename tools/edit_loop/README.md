@@ -60,7 +60,7 @@ ranking or a second score. The selected crates must exist in those counts.
 
 ## Fixed budgets and failure evidence
 
-`budgets.json` starts explicitly **uncalibrated**. The initial hosted run
+Before first calibration, `budgets.json` is explicitly **uncalibrated**. The initial hosted run
 collects all valid samples and then fails the budget gate; it is calibration
 evidence, never a passing scheduled check. Download its entire artifact and
 inspect it against the source commit available in Git:
@@ -69,13 +69,26 @@ inspect it against the source commit available in Git:
 python tools/edit_loop/measure.py propose C:/bench/run-001-evidence/report.json --repo .
 ```
 
-The proposal does not modify budgets. The reviewed provisional rule is
-`ceil(1.25 * max(all five baseline samples) + 5 seconds)` per selected crate:
-25% operational runner headroom plus five seconds, rounded upward. Confirm
-this rationale against the actual retained series, then commit the fixed
-proposal through review. Do not recalibrate from each checked run, discard
-slow samples, relax the rule to hide a failure, or substitute smaller crates.
-The same workflow must then pass against that committed baseline.
+The automatic proposal does not modify budgets. Its historical provisional
+rule remains `ceil(1.25 * max(all five baseline samples) + 5 seconds)` per
+selected crate. That executable proposal is unchanged, but its additive
+allowance was not approved for the first fixed calibration: five seconds
+would tolerate disproportionate regressions in subsecond package tests.
+
+The committed first Linux calibration intentionally uses tighter limits:
+`ceil(1.25 * max(all five baseline samples) * 1000) / 1000`, with no additive
+allowance. The independently reviewed ceilings are app 55.947 seconds,
+orderflow 1.022 seconds and pine 1.242 seconds. The 25% margin is an explicit
+operational policy, not a measured confidence interval or cross-run noise
+bound. Upward millisecond rounding keeps the margin proportional for small
+crates. Calibration source/time, host, jobs, protocol and profile identities
+remain in `budgets.json`; the original complete series and unapproved automatic
+proposal remain external review evidence.
+
+Do not replace these reviewed limits with automatic proposal output,
+recalibrate from each checked run, discard slow samples, relax a limit to
+hide a failure, or substitute smaller crates. The same workflow must pass
+in a separate ordinary run against the committed fixed baseline.
 
 ```powershell
 python tools/edit_loop/measure.py check C:/bench/run-002-evidence/report.json --repo .

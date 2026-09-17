@@ -1,5 +1,32 @@
 {
+  "calibration_sha": "e0b34c041de57b5a85937fe35c7df694261f1936",
+  "calibration_utc": "2026-09-17T04:50:55.698671+00:00",
+  "crates": [
+    {
+      "crate": "app",
+      "max_seconds": 55.947,
+      "package": "quantick-app",
+      "source": "crates/app/src/control/gateway/server.rs"
+    },
+    {
+      "crate": "orderflow",
+      "max_seconds": 1.022,
+      "package": "quantick-orderflow",
+      "source": "crates/orderflow/src/engine.rs"
+    },
+    {
+      "crate": "pine",
+      "max_seconds": 1.242,
+      "package": "quantick-pine",
+      "source": "crates/pine/src/parser.rs"
+    }
+  ],
+  "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
+  "jobs": 2,
+  "profile_hash": "437e37c38e10bedeeaa9c0c2ad4eb0529e843ab2f316240a8144bba476d05672",
+  "protocol_hash": "3ff0be486d89b90ae413e2a0c305194589260608957cb7f953572030f59f42ad",
+  "rationale": "Independently reviewed first calibration: 25% headroom over the maximum of all five retained touched samples, rounded upward to one millisecond; no additive allowance. This is an operational policy margin, not an estimated statistical noise bound.",
   "schema": 1,
-  "status": "uncalibrated",
-  "reason": "No invented budgets: retain the first hosted Windows five-sample series, independently review its fixed-budget proposal, and commit that calibration before this job can pass."
+  "status": "calibrated",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8"
 }
