@@ -62,6 +62,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("control-host", &["control"]),
     ("mcp", &["control", "control-local"]),
     ("engine", &[]),
+    // Shared streaming fold and retained lifecycle; no consumer effects below it.
+    ("series", &["engine"]),
     ("orderbook", &[]),
     // The order-flow engine reads bars from `engine` and depth events from
     // `orderbook`, and is told the time by its caller. It sits beside
@@ -100,6 +102,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         "backtest",
         &[
             "engine",
+            "series",
             "indicators",
             "paper",
             "pine",

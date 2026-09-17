@@ -144,7 +144,7 @@ pub fn preset(id: &str) -> Option<&'static LayoutPreset> {
 
 /// Most panes one tab's canvas may hold at once.
 ///
-/// A cap rather than a policy: every pane is a second `ChartState` cut from
+/// A cap rather than a policy: every pane is a second `RetainedSeries` cut from
 /// the one tape, so the per-trade cost is linear in this number. Four is what
 /// the shipped presets need with one spare; raising it is a deliberate act
 /// that should come with the measurement that justifies it.

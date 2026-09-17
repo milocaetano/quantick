@@ -187,7 +187,7 @@ mod tests {
             "the definition's own editor descriptor reached actual paint"
         );
         assert_eq!(selection.spec(), config, "drawing alone is not a command");
-        let mut chart = crate::state::ChartState::new(selection.spec());
+        let mut chart = crate::state::RetainedSeries::new(selection.spec());
         chart.ingest_backfill(
             &fixture::parse_trades(include_str!(
                 "../../../engine/tests/fixtures/tick_trades.csv"

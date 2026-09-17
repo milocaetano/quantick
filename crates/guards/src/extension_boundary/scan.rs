@@ -4,10 +4,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::lex::{Token, lex, normalized};
 
-pub(super) const ROOTS: [&str; 2] = ["QuantickApp", "ChartState"];
-pub(super) const TARGETS: [&str; 4] = [
+pub(super) const ROOTS: [&str; 4] = [
     "QuantickApp",
-    "ChartState",
+    "RetainedSeries",
+    "SeriesFold",
+    "FormingFootprint",
+];
+pub(super) const TARGETS: [&str; 6] = [
+    "QuantickApp",
+    "RetainedSeries",
+    "SeriesFold",
+    "FormingFootprint",
     "IndicatorSlots",
     "IndicatorHost",
 ];

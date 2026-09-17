@@ -7,7 +7,7 @@
 //!
 //! | Path | Unit | Thread | What runs |
 //! | --- | --- | --- | --- |
-//! | `trade.chart` | print | UI | `ChartState::ingest_live` (tick:50, footprint on) and one lane command per 5 prints |
+//! | `trade.chart` | print | UI | `RetainedSeries::ingest_live` (tick:50, footprint on) and one lane command per 5 prints |
 //! | `trade.book` | print | book worker | `BookEngine::record_trade` |
 //! | `depth.book` | depth update | book worker | `BookEngine::handle_depth_event_at` |
 //! | `frame.book` | frame | book worker | `BookEngine::project_at` over the newest 120 bars, heatmap and bubbles on |
@@ -44,7 +44,7 @@
 use super::*;
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, LaneTransport};
 use crate::live_envelope::{DEPTH_UPDATES_PER_S, RETAINED_TRADES_PER_PANE, SUSTAINED_TRADES_PER_S};
-use crate::state::ChartState;
+use crate::state::RetainedSeries;
 use crate::work_meter::{self, Tally};
 use quantick_engine::Trade;
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
@@ -523,7 +523,7 @@ struct Growth {
 /// One pane's ingest path: the chart state and the lane cursor, as the pane
 /// feeds them per frame.
 struct ChartRig {
-    state: ChartState,
+    state: RetainedSeries,
     lane: LaneTransport,
     next: u64,
     growth: Growth,
@@ -535,7 +535,7 @@ impl ChartRig {
     /// prints loaded as `load` says.
     fn new(session: usize, load: Load) -> Self {
         let mut rig = Self {
-            state: ChartState::new(BarSpec::Tick(50)),
+            state: RetainedSeries::new(BarSpec::Tick(50)),
             lane: LaneTransport::default(),
             next: 0,
             growth: Growth::default(),
@@ -587,7 +587,7 @@ impl ChartRig {
 
     /// `frames` measured frames; `inject` runs after each, outside the lap's
     /// clock but inside its heap count — where the checker plants a cost.
-    fn frames(&mut self, frames: usize, inject: &dyn Fn(&ChartState)) {
+    fn frames(&mut self, frames: usize, inject: &dyn Fn(&RetainedSeries)) {
         for _ in 0..frames {
             let mut acc = std::mem::take(&mut self.acc);
             acc.entries += acc.lap(|| self.send(PRINTS_PER_FRAME));
@@ -603,7 +603,7 @@ fn trade_chart(
     sessions: [usize; 2],
     load: Load,
     window: Window,
-    inject: &dyn Fn(&ChartState),
+    inject: &dyn Fn(&RetainedSeries),
 ) -> ([PerUnit; 2], [Growth; 2]) {
     let mut rigs = sessions.map(|session| ChartRig::new(session, load));
     alternate(&mut rigs, window.frames, |rig, frames| {
@@ -620,7 +620,7 @@ fn trade_chart(
 /// with them at the envelope's ratio, plus the chart that bars them.
 struct Book {
     engine: BookEngine,
-    chart: ChartState,
+    chart: RetainedSeries,
     next_print: u64,
     next_depth: u64,
     clock_ms: i64,
@@ -663,7 +663,7 @@ impl Book {
         );
         let mut book = Self {
             engine,
-            chart: ChartState::new(BarSpec::Tick(50)),
+            chart: RetainedSeries::new(BarSpec::Tick(50)),
             next_print: 0,
             next_depth: GENERATION + 1,
             clock_ms: EPOCH_MS,
@@ -919,7 +919,7 @@ fn measure(sessions: [usize; 2], window: Window) -> (Vec<Pair>, [Growth; 2]) {
         long_session: sessions[1],
     };
     let named = |budget: Budget, path: &'static str| Budget { path, ..budget };
-    let none = |_: &ChartState| {};
+    let none = |_: &RetainedSeries| {};
     let mut pairs = Vec::new();
     let (backfilled, _) = trade_chart(sessions, Load::Backfill, window, &none);
     pairs.push(pair(
@@ -1106,7 +1106,7 @@ fn long() {
 /// budget at the fast variant's lengths.
 #[test]
 fn the_check_fails_a_path_whose_work_grows_with_the_session() {
-    let clone_the_tape = |state: &ChartState| {
+    let clone_the_tape = |state: &RetainedSeries| {
         std::hint::black_box(state.trades().iter().cloned().collect::<Vec<Trade>>());
     };
     let ([short, long], _) =
@@ -1205,7 +1205,7 @@ impl Stretch {
 /// around the former doubling points 2^21 and 2^22 read on their own.
 /// Returns the two stretches and the whole run.
 fn stall_probe(footprint: bool) -> [Stretch; 3] {
-    let mut state = ChartState::new(BarSpec::Tick(50));
+    let mut state = RetainedSeries::new(BarSpec::Tick(50));
     state.set_footprint_enabled(footprint);
     let points = [1_usize << 21, 1 << 22];
     let mut near = [Stretch::default(); 2];
@@ -1260,11 +1260,11 @@ fn tape_memory_at_the_edge() {
          bytes held | bytes reserved (capacity x {trade} B + directory) | unused |\n\
          | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
     );
-    let mut live = ChartState::new(BarSpec::Tick(50));
+    let mut live = RetainedSeries::new(BarSpec::Tick(50));
     for index in 0..RETAINED_TRADES_PER_PANE as u64 {
         live.ingest_live(&print(index));
     }
-    let mut loaded = ChartState::new(BarSpec::Tick(50));
+    let mut loaded = RetainedSeries::new(BarSpec::Tick(50));
     loaded.ingest_backfill(
         &(0..RETAINED_TRADES_PER_PANE as u64)
             .map(print)

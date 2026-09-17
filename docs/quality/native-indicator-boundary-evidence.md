@@ -2,6 +2,45 @@
 
 Issue: https://github.com/milocaetano/quantick/issues/338 (campaign #330, Q6).
 
+## Subsequent series ownership amendment
+
+The historical Q6 evidence below remains unchanged. SER1 #517's
+[D7 decision](https://github.com/milocaetano/quantick/issues/517#issuecomment-5702819975)
+extends the same scanner to `crates/series/src` alongside `crates/app/src`.
+ChartState's actual replacement owners are RetainedSeries, SeriesFold and
+FormingFootprint, initially with exact caps 424, 83 and 59 (566 total), below the
+replaced cap of 571. QuantickApp stays at 10,210; its shape and the two indicator
+port shapes are unchanged. There is no transfer of growth permission, alias
+exception or new skipped source. Missing, duplicate, unreadable and unsupported
+extracted targets fail closed through whole-tree and file checks. The existing
+grammar/limitations below also apply to the added source directory and roots.
+The three `extracted_*` integration fixtures exercise these boundaries through
+the scanner and compiled CLI. This amendment requires independent review; this
+paragraph is not a review or score claim. Domain contracts are documented in
+[`crates/series/README.md`](../../crates/series/README.md).
+
+SER1-PERF-001's first reserved repair adds borrowed batch seeding, restoring
+the original single optional-input query in retained reset/rebuild/refold.
+[D8](https://github.com/milocaetano/quantick/issues/517#issuecomment-5703451382)
+authorizes exact caps 418, 94 and 59: 571 total, explicitly +5 from the
+intermediate 566, equal to the original ChartState allowance. QuantickApp
+remains 10,210; aggregate permission returns to 10,781. No shape, parser,
+fixture protection or exclusion changes. Six test-first lifecycle regressions
+cover absent/supported inputs and empty/nonempty batches with preserved order.
+This contract amendment still requires independent review and does not claim
+that performance acceptance or unrelated timing/tail concerns are resolved.
+
+[D9](https://github.com/milocaetano/quantick/issues/517#issuecomment-5703750812)
+records the subsequent measured inline refinement: exact caps 419, 94 and 57,
+totaling 570, one below D8 and the original 571. QuantickApp remains 10,210;
+the aggregate budget is 10,780. RetainedSeries's private inline hint adds one
+charged line; FormingFootprint's idiomatic let-Some-else reduces its net charge
+by two, preserving every fallback comment and operation. No comment deletion,
+shape, scanner, fixture or exclusion change buys this allocation. The prior
+573/571 guard failure remains evidence. Targeted compiler hints do not change
+the API or algorithm, and this amendment is not independent review or timing
+acceptance; the original performance and final delivery gates remain required.
+
 ## Revision and evidence status
 
 Origin: `0bd50f9b815a05e2ba8d0c9804324dbb415f6658`, the verified campaign base before any source edit.

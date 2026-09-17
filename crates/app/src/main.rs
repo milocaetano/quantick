@@ -41,7 +41,6 @@ mod footprint_config;
 mod footprint_panel;
 mod footprint_presets;
 mod footprint_render;
-mod footprint_series;
 mod frvp;
 mod harness;
 mod hooks;

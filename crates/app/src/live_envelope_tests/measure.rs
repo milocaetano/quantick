@@ -26,7 +26,7 @@ use super::burst::{FRAMES_PER_S, Rig, Tape, play};
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent};
 use crate::live_envelope::*;
 use crate::orderflow_worker::BookCommand;
-use crate::state::{BarSpec, ChartState};
+use crate::state::{BarSpec, RetainedSeries};
 use crate::worker_progress::WorkerProgress;
 use quantick_engine::{Bar, Side, Trade};
 use quantick_orderflow::HeatmapConfig;
@@ -104,7 +104,7 @@ fn sizes() {
 
 fn retained(footprint: bool) {
     let before = working_set();
-    let mut state = ChartState::new(BarSpec::Tick(50));
+    let mut state = RetainedSeries::new(BarSpec::Tick(50));
     state.set_footprint_enabled(footprint);
     let total = RETAINED_TRADES_PER_PANE as u64;
     let chunk = 100_000;

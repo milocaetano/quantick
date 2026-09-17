@@ -23,7 +23,7 @@ use quantick_engine::{
 use rust_decimal::Decimal;
 
 use crate::drawings::{Drawings, FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
-use crate::state::ChartState;
+use crate::state::RetainedSeries;
 
 /// The registry id of the fixed-range-profile tool — the one string this
 /// module and the pane share to recognise a profile object.
@@ -129,7 +129,7 @@ impl FoldJob {
 /// throttled snapshot (not the live one), so the forming bar re-merges at
 /// the snapshot cadence, never per paint.
 pub struct RefreshInputs<'a> {
-    pub state: &'a ChartState,
+    pub state: &'a RetainedSeries,
     /// How much folding one pass may do — [`fold_budget`], read once by the
     /// pane. Injected rather than read here so a test can state the budget it
     /// is asserting against, and so an operator exporting the env var cannot
@@ -539,8 +539,8 @@ mod tests {
     }
 
     /// Three closed tick-2 bars (six trades) plus a partial, footprints on.
-    fn state_with_tape() -> ChartState {
-        let mut state = ChartState::new(BarSpec::Tick(2));
+    fn state_with_tape() -> RetainedSeries {
+        let mut state = RetainedSeries::new(BarSpec::Tick(2));
         state.set_footprint_enabled(true);
         state.set_footprint_group(dec("1"));
         for (i, price) in ["100", "101", "100", "102", "101", "103", "104"]
@@ -575,7 +575,7 @@ mod tests {
             .expect("refresh installed a cache")
     }
 
-    fn inputs<'a>(state: &'a ChartState, blocked: bool) -> RefreshInputs<'a> {
+    fn inputs<'a>(state: &'a RetainedSeries, blocked: bool) -> RefreshInputs<'a> {
         RefreshInputs {
             state,
             budget: DEFAULT_FOLD_BUDGET,
@@ -610,7 +610,7 @@ mod tests {
         // With the whole fixture folding in a single pass, a restart and an
         // append reach the same numbers and the test would pass either way —
         // which is exactly what it did before the budget was tightened.
-        fn tight(state: &ChartState) -> RefreshInputs<'_> {
+        fn tight(state: &RetainedSeries) -> RefreshInputs<'_> {
             RefreshInputs {
                 budget: 1,
                 ..inputs(state, false)

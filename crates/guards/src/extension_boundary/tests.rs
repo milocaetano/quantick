@@ -2,10 +2,10 @@ use super::*;
 
 #[test]
 fn lexical_data_cannot_create_items_or_close_delimiters() {
-    let source = "impl QuantickApp {\n fn text(&self) { let x = r###\" } impl ChartState { \"###; /* { /* } */ } */ let _ = ('}', x); }\n}\n";
+    let source = "impl QuantickApp {\n fn text(&self) { let x = r###\" } impl RetainedSeries { \"###; /* { /* } */ } */ let _ = ('}', x); }\n}\n";
     let scanned = scan::scan(source).unwrap();
     assert_eq!(scanned.lines["QuantickApp"].len(), 3);
-    assert!(!scanned.lines.contains_key("ChartState"));
+    assert!(!scanned.lines.contains_key("RetainedSeries"));
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn existing_callbacks_are_not_root_aliases() {
     }
     for source in [
         "type Alias = crate::app::QuantickApp;",
-        "type Alias = &mut ChartState;",
+        "type Alias = &mut RetainedSeries;",
         "use crate::{app::QuantickApp as Other};",
     ] {
         assert!(scan::scan(source).is_err(), "{source}");
@@ -79,16 +79,20 @@ fn lexical_lifetimes_characters_and_nested_type_delimiters_are_supported() {
         "b'{'",
         "'\\n'",
     ] {
-        let source = format!("impl ChartState {{ fn value(&self) {{ let _ = {literal}; }} }}\n");
-        assert_eq!(scan::scan(&source).unwrap().lines["ChartState"].len(), 1);
+        let source =
+            format!("impl RetainedSeries {{ fn value(&self) {{ let _ = {literal}; }} }}\n");
+        assert_eq!(
+            scan::scan(&source).unwrap().lines["RetainedSeries"].len(),
+            1
+        );
     }
 }
 
 #[test]
 fn inline_modules_and_multiline_visibility_count_the_full_declaration() {
-    let source = "mod nested {\npub\nstruct ChartState { field: usize, }\nimpl crate::state::ChartState { fn f(&self) {} }\n}\n";
+    let source = "mod nested {\npub\nstruct RetainedSeries { field: usize, }\nimpl crate::state::RetainedSeries { fn f(&self) {} }\n}\n";
     let scanned = scan::scan(source).unwrap();
-    assert_eq!(scanned.lines["ChartState"].len(), 3);
+    assert_eq!(scanned.lines["RetainedSeries"].len(), 3);
     assert_eq!(scanned.shapes[0].1, "pub|struct |field : usize");
 }
 

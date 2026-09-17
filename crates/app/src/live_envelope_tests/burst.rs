@@ -1,6 +1,6 @@
 //! The envelope's rates, driven through the real workers.
 //!
-//! [`Rig`] is one chart pane reduced to its live path: a [`ChartState`], the
+//! [`Rig`] is one chart pane reduced to its live path: a [`RetainedSeries`], the
 //! lane cursor, the production [`IndicatorWorker`] hosting `native.cvd`, and
 //! the production [`BookWorker`] recording aggressions and depth — fed per
 //! frame exactly as `pane/series.rs` and `orderflow_view.rs` feed them, with
@@ -17,7 +17,7 @@ use crate::indicator_worker::{
 };
 use crate::live_envelope::*;
 use crate::orderflow_worker::{BookCommand, BookWorker};
-use crate::state::{BarSpec, ChartState};
+use crate::state::{BarSpec, RetainedSeries};
 use crate::worker_progress::{Counts, Phase, WorkerProgress, tests::Gate};
 use quantick_engine::{Side, Trade};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot, DepthEvent};
@@ -89,7 +89,7 @@ pub(super) struct Depths {
 }
 
 pub(super) struct Rig {
-    pub state: ChartState,
+    pub state: RetainedSeries,
     lane: LaneTransport,
     pub indicators: IndicatorWorker,
     pub book: BookWorker,
@@ -106,7 +106,7 @@ pub(super) struct Rig {
 impl Rig {
     pub(super) fn new(spec: BarSpec, indicators: WorkerProgress, book: WorkerProgress) -> Self {
         let rig = Self {
-            state: ChartState::new(spec),
+            state: RetainedSeries::new(spec),
             lane: LaneTransport::default(),
             indicators: IndicatorWorker::spawn_with_progress(indicators),
             book: BookWorker::spawn_with_progress(SYMBOL, book),

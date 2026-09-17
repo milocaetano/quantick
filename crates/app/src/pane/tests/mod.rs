@@ -10,6 +10,8 @@ use rust_decimal::Decimal;
 use super::*;
 use crate::indicator_worker::IndicatorEvent;
 
+mod seed_characterization_tests;
+
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without
 /// being the depth map or the bubbles, so each of them alone has to keep

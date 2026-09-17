@@ -125,6 +125,7 @@ graph TD
   app --> controllocal
   app --> controlhost
   app --> engine
+  app --> series
   app --> chartinteraction
   backtest --> strategy
   backtest --> pine
@@ -133,6 +134,7 @@ graph TD
   backtest --> sim
   backtest -.-> paper
   backtest --> engine
+  backtest --> series
   mcp --> controllocal
   mcp --> control
 
@@ -142,6 +144,7 @@ graph TD
   controllocal["control-local<br/>local transport"] --> control
   controlhost["control-host<br/>host machinery"] --> control
   indicators["indicators<br/>bars → plot series"] --> engine
+  series["series<br/>streaming fold, retained lifecycle"] --> engine
   replay["replay<br/>recorded sessions"] --> engine
   paper["paper<br/>paper account"] --> sim
   paper --> engine
@@ -170,13 +173,14 @@ graph TD
 | Crate | What it owns |
 | --- | --- |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
-| `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
+| `engine` | Deterministic trades-to-bars domain; no clock or workspace dependencies. |
+| `series` | Shared streaming fold and retained trade/deal evidence, provenance, revisions, rebuilds and aligned footprints. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
-| `orderflow` | The order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections. Headless; its caller passes it the clock. The chart draws it today, `backtest` may consume it next. |
+| `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; its caller supplies the clock. |
 | `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
 | `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
+| `feed` | The `FeedEvent`/`FeedCommand` port, source adapters, feed config, by-time history reach/campaign and session exporter. Owns runtimes, threads and the clock. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; the chart drives it; the backtest proves it in a test. |

@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
-use crate::state::{BarConfiguration, ChartState};
+use crate::state::{BarConfiguration, RetainedSeries};
 use crate::viewport::Viewport;
 
 use super::{ChartPane, prefix_differs};
@@ -430,7 +430,7 @@ impl ChartPane {
         if keep_readings {
             self.state.reset_series(self.current_spec());
         } else {
-            self.state = ChartState::new(self.current_spec());
+            self.state = RetainedSeries::new(self.current_spec());
         }
         self.lane.reset();
         self.publish_partial();
@@ -462,12 +462,7 @@ impl ChartPane {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
-        self.state.observe_deals_batch(deal_samples);
-        let split = backfill_count.min(trades.len());
-        self.state.ingest_backfill(trades.range(..split));
-        for trade in trades.since(split) {
-            self.state.ingest_live(trade);
-        }
+        self.state.seed_from(trades, backfill_count, deal_samples);
         // One rebuild rather than one command per trade: the worker is being
         // handed a whole history, not watching it arrive.
         self.publish_tape_price_step();

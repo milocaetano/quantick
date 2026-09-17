@@ -16,7 +16,7 @@ use crate::ratchet::Policy;
 
 pub const SHAPES_FILE: &str = "crates/guards/extension-shapes-baseline.txt";
 pub const BUDGET_FILE: &str = "crates/guards/extension-roots-baseline.txt";
-const SOURCE: &str = "crates/app/src";
+const SOURCES: [&str; 2] = ["crates/app/src", "crates/series/src"];
 const REMEDY: &str = "Keep focused operation code behind its existing port. Restore the protected \
     shape or explicitly review a contract amendment. Root caps are separate; do not transfer \
     growth between roots. Unsupported scope must be diagnosed, not exempted.";
@@ -45,7 +45,9 @@ pub struct Inventory {
 /// Measure the current source independently of baseline values.
 pub fn inventory(root: &Path) -> Result<Inventory, String> {
     let mut paths = Vec::new();
-    walk(root, SOURCE, &mut paths)?;
+    for source in SOURCES {
+        walk(root, source, &mut paths)?;
+    }
     paths.sort();
     let mut result = Inventory::default();
     let mut totals: BTreeMap<String, usize> =
@@ -83,7 +85,7 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
     }
     for name in scan::TARGETS {
         if !result.shapes.contains_key(name) {
-            return Err(format!("{SOURCE}: missing target {name}"));
+            return Err(format!("{}: missing target {name}", SOURCES.join(", ")));
         }
     }
     result.counts = totals.into_iter().collect();
@@ -159,7 +161,8 @@ fn baseline(root: &Path) -> Result<crate::ratchet::Baseline, String> {
         || baseline.budget.is_none()
     {
         return Err(format!(
-            "{BUDGET_FILE}: exactly two root entries and one budget are required"
+            "{BUDGET_FILE}: exactly {} root entries and one budget are required",
+            scan::ROOTS.len()
         ));
     }
     Ok(baseline)
@@ -207,7 +210,10 @@ pub fn check(root: &Path) -> Vec<Finding> {
 }
 
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
-    if relative.starts_with(&format!("{SOURCE}/")) || [SHAPES_FILE, BUDGET_FILE].contains(&relative)
+    if SOURCES
+        .iter()
+        .any(|source| relative.starts_with(&format!("{source}/")))
+        || [SHAPES_FILE, BUDGET_FILE].contains(&relative)
     {
         check(root)
     } else {

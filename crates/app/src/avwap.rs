@@ -23,7 +23,7 @@ use quantick_indicators::{Ctx, Indicator as _, IndicatorBar, PlotId};
 use crate::drawings::{
     AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPayload, Drawings,
 };
-use crate::state::ChartState;
+use crate::state::RetainedSeries;
 
 /// The registry id of the anchored-VWAP tool — the one string this module
 /// and the pane share to recognise its objects.
@@ -33,7 +33,7 @@ pub const TOOL_ID: &str = "anchored-vwap";
 /// candles; the kernel folds them like any other bar — a candle carries the
 /// volume and OHLC the average needs, no tape required.
 pub struct RefreshInputs<'a> {
-    pub state: &'a ChartState,
+    pub state: &'a RetainedSeries,
     /// Venue-history bars in front of the trade-derived series.
     pub prefix: &'a [Bar],
 }
@@ -267,8 +267,8 @@ mod tests {
     /// The golden fixture's binary-exact tape, cut as tick(3) bars: anchoring
     /// on bar 1 must reproduce the kernel's own numbers — the refresh is a
     /// bridge, never a second implementation.
-    fn state_with_fixture() -> ChartState {
-        let mut state = ChartState::new(crate::state::BarSpec::Tick(3));
+    fn state_with_fixture() -> RetainedSeries {
+        let mut state = RetainedSeries::new(crate::state::BarSpec::Tick(3));
         let trades = [
             trade(1, 1_000, 100, 1),
             trade(2, 1_100, 100, 1),
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn an_empty_pane_holds_no_cache() {
-        let state = ChartState::new(crate::state::BarSpec::Tick(3));
+        let state = RetainedSeries::new(crate::state::BarSpec::Tick(3));
         let mut drawings = Drawings::default();
         assert!(drawings.place(avwap_tool(), ChartPoint::at(0.0, 100.0)));
         refresh(

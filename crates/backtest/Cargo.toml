@@ -12,6 +12,7 @@ publish.workspace = true
 # cheaper than a dependency the workspace would then carry forever.
 [dependencies]
 quantick-engine = { path = "../engine" }
+quantick-series = { path = "../series" }
 quantick-indicators = { path = "../indicators" }
 quantick-pine = { path = "../pine" }
 quantick-replay = { path = "../replay" }

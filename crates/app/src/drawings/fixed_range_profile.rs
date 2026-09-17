@@ -136,12 +136,12 @@ pub struct FrvpCache {
 /// live edge bumps `partial_snapshot`.
 ///
 /// What is *absent* here is as deliberate as what is present. A print that
-/// only extends the forming bar moves `ChartState::timeline_revision` and
+/// only extends the forming bar moves `RetainedSeries::timeline_revision` and
 /// nothing else about the closed bars, and the count of closed bars moves on
 /// every close even for a range nowhere near the live edge. Keying on either
 /// restarted a long fold tens of times a second, so it never finished — the
 /// closed bars a range covers are named by its slots plus
-/// [`ChartState::series_revision`](crate::state::ChartState::series_revision),
+/// [`RetainedSeries::series_revision`](crate::state::RetainedSeries::series_revision),
 /// and nothing else moves them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrvpCacheKey {

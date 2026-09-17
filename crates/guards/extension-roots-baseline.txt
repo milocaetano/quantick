@@ -9,6 +9,17 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-!budget 10781
-ChartState 571
+# SER1 #517 D7 replaces ChartState with its actual composed owners across app
+# and series. Initial replacement caps total 566 <= the original 571; no transfer
+# to QuantickApp. Decision: issuecomment-5702819975; independent review required.
+# SER1-PERF-001 batch 1, D8 issuecomment-5703451382: batch seeding moves six
+# lines out of RetainedSeries and adds eleven to SeriesFold. Exact total 571
+# is +5 from the intermediate 566, equal to the original cap, with no headroom.
+# SER1 D9 issuecomment-5703750812 reallocates the measured inline refinement:
+# RetainedSeries +1, FormingFootprint -2 through an idiomatic let-Some-else.
+# Exact replacement total 570 is one below D8/original 571, with no headroom.
+!budget 10780
+FormingFootprint 57
 QuantickApp 10210
+RetainedSeries 419
+SeriesFold 94

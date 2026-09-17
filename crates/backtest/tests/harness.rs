@@ -30,6 +30,9 @@ const OPENING_AUCTION: &str = include_str!("../../replay/tests/fixtures/WINQ26-2
 #[path = "../../engine/tests/support/seventh_bar.rs"]
 mod seventh_bar;
 
+#[path = "harness/ordering_characterization.rs"]
+mod ordering_characterization;
+
 #[test]
 fn registered_extension_runs_the_real_session_without_a_legacy_variant() {
     use quantick_engine::bar_registry::{BUILTIN_BARS, BarRegistry};

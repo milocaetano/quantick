@@ -182,7 +182,8 @@ pub struct SessionRun {
 ///    actions meet the print **before** anything looks at it. An order placed
 ///    on the previous bar fills here, which is why a decision can never act
 ///    on the print that triggered it.
-/// 2. `builder.push(print)` — at most one bar closes per print.
+///    Event reactions and their immediate command echoes run before the fold.
+/// 2. `fold.push(print)` — at most one bar closes per print.
 /// 3. On a close: the host evaluates indicators, then the strategy is asked
 ///    for commands, then `sim.apply` queues them for the *next* print.
 ///
@@ -208,7 +209,7 @@ pub fn run_session(
          bars::parse_runnable refuses it before a run",
         spec.to_config_string()
     );
-    let mut builder = spec.build();
+    let mut fold = quantick_series::SeriesFold::new(spec);
     let mut host = IndicatorHost::new();
     let slots: Vec<InstanceId> = strategy
         .indicators()
@@ -233,9 +234,10 @@ pub fn run_session(
             }
             let _ = strategy.on_events(&events);
         }
-        let Some(bar) = builder.push(trade) else {
+        let Some(closed) = fold.push(trade) else {
             continue;
         };
+        let bar = closed.bar;
         host.push_closed_bar(&bar);
         let index = bars;
         bars += 1;

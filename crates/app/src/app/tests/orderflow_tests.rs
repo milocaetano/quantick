@@ -577,7 +577,7 @@ fn closed_depth_channel_is_reported_once_per_feed_handle() {
     );
 }
 
-/// (b) One tape, two panes: the same trades reach both `ChartState`s, and
+/// (b) One tape, two panes: the same trades reach both `RetainedSeries`s, and
 /// each cuts them by its own spec — which is the whole point of the split.
 #[test]
 fn one_tape_feeds_both_panes_and_each_cuts_it_its_own_way() {

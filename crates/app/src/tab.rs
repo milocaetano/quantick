@@ -441,7 +441,7 @@ pub struct Tab {
     ///
     /// While one exists it is fed every trade the flow pane is fed, on screen
     /// or not, which is what keeps them in step. The cost is the market's
-    /// trades retained once per pane: one tape, N `ChartState`s, and still
+    /// trades retained once per pane: one tape, N `RetainedSeries`s, and still
     /// only one bar-building path. `MAX_CONTEXT_PANES` is what bounds that
     /// cost.
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,

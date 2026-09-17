@@ -14,8 +14,8 @@ pub struct QuantickApp { window: usize, }
 impl QuantickApp {
     fn existing(&self) {}
 }
-pub struct ChartState { bars: usize, }
-impl ChartState {
+pub struct RetainedSeries { bars: usize, }
+impl RetainedSeries {
     fn existing(&self) {}
 }
 pub(super) struct IndicatorSlots<'a> {
@@ -34,16 +34,31 @@ pub(super) trait IndicatorHost {
 // Written independently of inventory(), including literal caps: one declaration
 // line and three implementation lines per root in SOURCE.
 const SHAPES: &str = "\
+SeriesFold\tpub|struct |builder : Builder
+FormingFootprint\tpub ( crate )|struct |pending : u64
 QuantickApp\tpub|struct |window : usize
-ChartState\tpub|struct |bars : usize
+RetainedSeries\tpub|struct |bars : usize
 IndicatorSlots\tpub ( super )|struct < 'a >|pub kinds : &'a mut Vec < Kind >|pub operators : &'a mut Set < Target >|pub files : &'a mut Vec < File >|pub hidden : &'a mut Vec < Target >|pub styles : &'a mut Vec < Style >
 IndicatorHost\tpub ( super )|trait |fn add ( & mut self , source : IndicatorSource ) -> SlotId ;|fn remove ( & mut self , slot : SlotId ) ;
+";
+
+const SERIES_SOURCE: &str = "\
+pub struct SeriesFold { builder: Builder, }
+impl SeriesFold {
+    fn existing(&self) {}
+}
+pub(crate) struct FormingFootprint { pending: u64, }
+impl FormingFootprint {
+    fn existing(&self) {}
+}
 ";
 
 fn fixture() -> ScratchDir {
     let root = ScratchDir::new("extension-boundary");
     fs::create_dir_all(root.join("crates/app/src")).unwrap();
     fs::create_dir_all(root.join("crates/guards")).unwrap();
+    fs::create_dir_all(root.join("crates/series/src")).unwrap();
+    fs::write(root.join("crates/series/src/lib.rs"), SERIES_SOURCE).unwrap();
     // The compiled CLI also checks instruction links. Supply a valid independent
     // documentation tree so boundary assertions cannot fail on missing inputs.
     for dir in [".github", ".claude/skills", ".agents", "docs"] {
@@ -78,7 +93,7 @@ fn fixture() -> ScratchDir {
     .unwrap();
     fs::write(
         root.join(boundary::BUDGET_FILE),
-        "!budget 8\nQuantickApp 4\nChartState 4\n",
+        "!budget 16\nQuantickApp 4\nRetainedSeries 4\nSeriesFold 4\nFormingFootprint 4\n",
     )
     .unwrap();
     root
@@ -235,7 +250,12 @@ fn moving_a_root_impl_preserves_union_and_new_sibling_deposits_fail() {
     let measured = boundary::inventory(&root).unwrap();
     assert_eq!(
         measured.counts,
-        [("ChartState".into(), 4), ("QuantickApp".into(), 4)]
+        [
+            ("FormingFootprint".into(), 4),
+            ("QuantickApp".into(), 4),
+            ("RetainedSeries".into(), 4),
+            ("SeriesFold".into(), 4),
+        ]
     );
     fs::write(
         root.join("crates/app/src/extra.rs"),
@@ -251,7 +271,7 @@ fn moving_a_root_impl_preserves_union_and_new_sibling_deposits_fail() {
 #[test]
 fn cross_root_shrink_cannot_buy_growth_and_tighten_only_lowers() {
     let root = fixture();
-    let source = SOURCE.replace("impl ChartState {\n    fn existing(&self) {}\n}\n", "")
+    let source = SOURCE.replace("impl RetainedSeries {\n    fn existing(&self) {}\n}\n", "")
         + "impl QuantickApp { fn deposit(&mut self) {} }\n";
     fs::write(root.join("crates/app/src/app.rs"), source).unwrap();
     assert!(findings(&root).contains("QuantickApp: 5"));
@@ -259,8 +279,8 @@ fn cross_root_shrink_cannot_buy_growth_and_tighten_only_lowers() {
     boundary::tighten(&root).unwrap();
     let baseline = fs::read_to_string(root.join(boundary::BUDGET_FILE)).unwrap();
     assert!(baseline.contains("QuantickApp 4"));
-    assert!(baseline.contains("ChartState 1"));
-    assert!(baseline.contains("!budget 5"));
+    assert!(baseline.contains("RetainedSeries 1"));
+    assert!(baseline.contains("!budget 13"));
     assert!(findings(&root).contains("QuantickApp: 5"));
 }
 
@@ -380,17 +400,17 @@ fn malformed_missing_and_unsupported_source_never_clear() {
             "use crate::{QuantickApp as Alias};",
             "root-renaming import alias",
         ),
-        ("type Alias = crate::ChartState;", "root type alias"),
+        ("type Alias = crate::RetainedSeries;", "root type alias"),
         (
             "macro_rules! grow { () => { impl QuantickApp {} }; }",
             "macro/include",
         ),
-        ("make! { impl ChartState {} }", "macro/include"),
+        ("make! { impl RetainedSeries {} }", "macro/include"),
         ("include!(\"external.rs\");", "macro/include"),
         ("#[path = \"../external.rs\"] mod hidden;", "external-path"),
         (
-            "pub struct ChartState { other: bool, }",
-            "duplicate target ChartState",
+            "pub struct RetainedSeries { other: bool, }",
+            "duplicate target RetainedSeries",
         ),
         ("fn broken() {", "unclosed delimiter"),
         (
@@ -403,13 +423,13 @@ fn malformed_missing_and_unsupported_source_never_clear() {
         assert_rejected(&format!("{SOURCE}{suffix}"), message);
     }
     assert_rejected(
-        &SOURCE.replace("pub struct ChartState { bars: usize, }", ""),
-        "missing target ChartState",
+        &SOURCE.replace("pub struct RetainedSeries { bars: usize, }", ""),
+        "missing target RetainedSeries",
     );
     assert_rejected(
         &SOURCE.replace(
-            "pub struct ChartState { bars: usize, }",
-            "pub struct ChartState(usize);",
+            "pub struct RetainedSeries { bars: usize, }",
+            "pub struct RetainedSeries(usize);",
         ),
         "named brace body",
     );
@@ -467,7 +487,7 @@ fn corrupt_or_unreadable_inputs_are_findings() {
 #[test]
 fn a_failed_scan_is_not_measured_as_zero() {
     let root = fixture();
-    assert_eq!(boundary::measured(&root), Ok(8));
+    assert_eq!(boundary::measured(&root), Ok(16));
 
     fs::write(root.join("crates/app/src/app.rs"), b"\xff").unwrap();
     let failure = boundary::measured(&root).expect_err("an unreadable source has no count");
@@ -509,4 +529,134 @@ fn a_failed_scan_is_not_measured_as_zero() {
         failure.missed[0].contains("unreadable source directory"),
         "{failure}"
     );
+}
+
+/// Move all three replacement owners to the real extracted-source domain.
+/// The independent shapes and literal caps above remain unchanged.
+fn extracted_fixture() -> ScratchDir {
+    let root = fixture();
+    let retained = "pub struct RetainedSeries { bars: usize, }\nimpl RetainedSeries {\n    fn existing(&self) {}\n}\n";
+    fs::write(
+        root.join("crates/app/src/app.rs"),
+        SOURCE.replace(retained, ""),
+    )
+    .unwrap();
+    fs::write(root.join("crates/series/src/retained.rs"), retained).unwrap();
+    root
+}
+
+#[test]
+fn extracted_root_growth_and_shape_changes_trigger_full_and_file_guards() {
+    for name in ["RetainedSeries", "SeriesFold", "FormingFootprint"] {
+        let root = extracted_fixture();
+        assert!(findings(&root).is_empty());
+        let path = "crates/series/src/new_owner.rs";
+        fs::write(
+            root.join(path),
+            format!("impl {name} {{ fn deposit(&self) {{}} }}\n"),
+        )
+        .unwrap();
+        let full = boundary::check(&root);
+        assert_eq!(full, boundary::check_file(&root, path));
+        let evidence = format!("{name}: 5");
+        assert!(findings(&root).contains(&evidence));
+        assert_cli_rejected(&root, path, &evidence);
+
+        fs::write(root.join(path), "").unwrap();
+        let declaration = if name == "RetainedSeries" {
+            "crates/series/src/retained.rs"
+        } else {
+            "crates/series/src/lib.rs"
+        };
+        let source = fs::read_to_string(root.join(declaration)).unwrap();
+        fs::write(
+            root.join(declaration),
+            source.replace(
+                &format!("struct {name} {{"),
+                &format!("struct {name} {{ hidden_history: Vec<Trade>,"),
+            ),
+        )
+        .unwrap();
+        let evidence = format!("{name} shape differs");
+        assert!(findings(&root).contains(&evidence));
+        assert_cli_rejected(&root, declaration, &evidence);
+    }
+}
+
+#[test]
+fn extracted_targets_fail_closed_for_missing_duplicate_and_unreadable_sources() {
+    for name in ["RetainedSeries", "SeriesFold", "FormingFootprint"] {
+        let root = extracted_fixture();
+        let path = if name == "RetainedSeries" {
+            "crates/series/src/retained.rs"
+        } else {
+            "crates/series/src/lib.rs"
+        };
+        let source = fs::read_to_string(root.join(path)).unwrap();
+        fs::write(
+            root.join(path),
+            source.replace(&format!("struct {name} {{"), "struct MissingOwner {"),
+        )
+        .unwrap();
+        let evidence = format!("missing target {name}");
+        assert!(findings(&root).contains(&evidence));
+        assert!(boundary::measured(&root).is_err());
+        assert_cli_rejected(&root, path, &evidence);
+
+        fs::write(root.join(path), &source).unwrap();
+        fs::write(
+            root.join("crates/series/src/duplicate.rs"),
+            format!("pub struct {name} {{ value: bool, }}\n"),
+        )
+        .unwrap();
+        let evidence = format!("duplicate target {name}");
+        assert!(findings(&root).contains(&evidence));
+        assert_cli_rejected(&root, path, &evidence);
+
+        fs::write(root.join("crates/series/src/duplicate.rs"), "").unwrap();
+        fs::write(root.join(path), b"\xff").unwrap();
+        assert!(boundary::measured(&root).is_err());
+        assert_cli_rejected(&root, path, "unreadable source");
+    }
+    let root = fixture();
+    fs::rename(
+        root.join("crates/series/src"),
+        root.join("crates/series/missing-src"),
+    )
+    .unwrap();
+    assert!(findings(&root).contains("crates/series/src: unreadable source directory"));
+    assert_cli_rejected(
+        &root,
+        "crates/series/src/lib.rs",
+        "unreadable source directory",
+    );
+}
+
+#[test]
+fn extracted_roots_keep_alias_macro_and_exclusion_protections() {
+    for name in ["RetainedSeries", "SeriesFold", "FormingFootprint"] {
+        for (suffix, evidence) in [
+            (
+                format!("use crate::{name} as Alias;"),
+                "root-renaming import alias",
+            ),
+            (format!("type Alias = {name};"), "root type alias"),
+            (format!("grow! {{ impl {name} {{}} }}"), "macro/include"),
+            (
+                format!("#[cfg(feature = \"hidden\")] impl {name} {{}}"),
+                "modified/attributed protected impl",
+            ),
+            (
+                "#[path = \"elsewhere.rs\"] mod hidden;".into(),
+                "external-path",
+            ),
+            ("mod tests;".into(), "out-of-line production module"),
+        ] {
+            let root = extracted_fixture();
+            let path = "crates/series/src/new_owner.rs";
+            fs::write(root.join(path), suffix).unwrap();
+            assert!(findings(&root).contains(evidence));
+            assert_cli_rejected(&root, path, evidence);
+        }
+    }
 }

@@ -30,7 +30,7 @@ use crate::paper_trading::PaperTrading;
 use crate::plot_area::{self, PlotAreas, plot_split};
 use crate::pointer_compass;
 use crate::price_view::PriceView;
-use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
+use crate::state::{BarConfiguration, BarSpec, RetainedSeries, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -529,7 +529,7 @@ pub struct ChartPane {
     /// gesture state egui keeps on our behalf, so two panes sharing an id
     /// would share a drag.
     pub id: u64,
-    pub state: ChartState,
+    pub state: RetainedSeries,
     /// Identity of the closed-bar prefix used by append-only control-plane
     /// pagination.
     ///
@@ -644,7 +644,7 @@ pub struct ChartPane {
     /// Venue candles standing in front of the trade-derived series, already
     /// folded to this pane's interval.
     ///
-    /// Deliberately outside `ChartState`: that rebuilds its bars from retained
+    /// Deliberately outside `RetainedSeries`: that rebuilds its bars from retained
     /// trades on every spec change, and a prefix living inside them would be
     /// eaten by the first chip click. Kept here, it is composed with the
     /// engine's bars at the points that read them — [`Self::slots`],
@@ -725,7 +725,7 @@ impl ChartPane {
         Self {
             id,
             spec: selector,
-            state: ChartState::new(spec),
+            state: RetainedSeries::new(spec),
             pagination_revision: 0,
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
