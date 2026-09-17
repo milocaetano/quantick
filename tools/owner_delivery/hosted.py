@@ -173,7 +173,8 @@ def runtime_identity():
 
 def source_prepare(repo, subject, label, env):
     archive = ROOT / (label + "-source.zip")
-    raw = subprocess.check_output(["git", "archive", "--format=zip", subject["commit"]], cwd=repo, env=env)
+    archive_env = dict(env, TZ="UTC")
+    raw = subprocess.check_output(["git", "archive", "--format=zip", subject["commit"]], cwd=repo, env=archive_env)
     archive.write_bytes(raw)
     owner.verify_zip_archive(archive, subject["archive_sha256"], subject["files"])
     source = ROOT / (label + "-source")
