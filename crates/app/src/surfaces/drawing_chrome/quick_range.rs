@@ -13,6 +13,11 @@ use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
 use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
 
+#[cfg(feature = "quick-range-harness")]
+mod launch;
+#[cfg(feature = "quick-range-harness")]
+pub(crate) use launch::QuickRangeLaunch;
+
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
 pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
@@ -131,6 +136,8 @@ pub(crate) struct QuickRange {
     action_rects: [Option<egui::Rect>; 3],
     #[cfg(feature = "quick-range-harness")]
     demo_requested: Option<(bool, bool)>,
+    #[cfg(feature = "quick-range-harness")]
+    pending_launch: Option<QuickRangeLaunch>,
 }
 
 fn anchor(point: ChartPoint) -> core::Anchor {
@@ -333,43 +340,6 @@ impl QuickRange {
         let context = self.model.context().unwrap_or_default();
         conversion.finish(&mut self.model, context, outcome)
     }
-
-    #[cfg(feature = "quick-range-harness")]
-    pub fn request_demo(&mut self, ready: bool, future: bool) {
-        self.demo_requested = Some((ready, future));
-    }
-
-    #[cfg(feature = "quick-range-harness")]
-    pub fn stage_demo(
-        &mut self,
-        owner: Owner,
-        opening: impl FnOnce(bool) -> Option<([ChartPoint; 2], NewDrawing)>,
-    ) {
-        let Some((ready, future)) = self.demo_requested else {
-            return;
-        };
-        let Some((anchors, look)) = opening(future) else {
-            return;
-        };
-        self.demo_requested = None;
-        self.press(
-            owner,
-            egui::pos2(0.0, 0.0),
-            anchors[0],
-            core::GestureEligibility {
-                pointer_tool: true,
-                unoccluded: true,
-                area: core::GestureArea {
-                    min: [0.0; 2],
-                    max: [20.0; 2],
-                },
-            },
-        );
-        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, || look);
-        if ready {
-            self.release(owner);
-        }
-    }
 }
 
 pub(super) fn draw(
@@ -446,41 +416,5 @@ pub(super) fn draw(
         place_quick_range: clicked.and_then(|action| quick.convert(action)),
         dismiss_quick_range: dismiss,
         ..DrawingChromeAsk::default()
-    }
-}
-
-#[cfg(all(test, feature = "quick-range-harness"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn demo_is_one_shot_and_enters_the_production_owner() {
-        let owner = Owner {
-            tab: 1,
-            pane: 2,
-            side: PaneSide::Flow,
-            revision: 3,
-            layout: Some(4),
-        };
-        let mut quick = QuickRange::default();
-        quick.request_demo(true, true);
-        quick.stage_demo(owner, |future| {
-            assert!(future);
-            let tool = drawings::DrawingTool::by_id("measure").unwrap();
-            Some((
-                [
-                    ChartPoint::at_time(1.5, 100.0, Some(1)),
-                    ChartPoint::at(10.5, 101.0),
-                ],
-                NewDrawing {
-                    style: tool.default_style(),
-                    payload: tool.default_payload(),
-                },
-            ))
-        });
-        assert!(quick.model.view().unwrap().actionable());
-        quick.dismiss();
-        quick.stage_demo(owner, |_| panic!("the demo was consumed"));
-        assert!(!quick.model.present());
     }
 }

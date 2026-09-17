@@ -988,6 +988,7 @@ impl ObserverContract {
     /// Derived from the registry, never a hand-kept list: a module that
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
     /// here or in whatever asked.
+    #[cfg(any(feature = "control-harness", test))]
     pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
         self.contract.readable_scopes(grant)
     }

@@ -25,19 +25,20 @@ use quantick_control::{
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
-use quantick_pine::Span;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::metrics;
 
 use super::{
     actions::{ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID, ActionRegistry},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
-    types::{PaneSideDto, known_error},
+    types::PaneSideDto,
 };
+
+pub(crate) use super::types::known_error;
 
 /// The module both script capabilities belong to — the same module the
 /// indicator scopes will register under, because a capability belongs to the
@@ -120,8 +121,14 @@ pub(crate) struct ScriptDiagnostic {
 
 /// Dock the script actions.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(attach_descriptor(), attach_script)?;
-    registry.register(detach_descriptor(), detach_script)?;
+    registry.register(
+        attach_descriptor(),
+        crate::app::indicator_control::attach_script,
+    )?;
+    registry.register(
+        detach_descriptor(),
+        crate::app::indicator_control::detach_script,
+    )?;
     Ok(())
 }
 
@@ -196,87 +203,19 @@ fn detach_descriptor() -> CapabilityDescriptor {
     )
 }
 
-fn attach_script(
-    app: &mut QuantickApp,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: AttachInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    // Compile before touching the chart: the diagnostics are the point of
-    // this capability, and a script that cannot run never becomes a slot the
-    // trader has to clean up.
-    let compiled = quantick_pine::compile(&input.source, &input.name)
-        .map_err(|errors| compile_error(&errors, &input.source))?;
-    let declared_inputs = compiled
-        .inputs
-        .iter()
-        .map(|spec| spec.name().to_owned())
-        .collect::<Vec<_>>();
-    // Attached *by an operator* when it was not the trader's own hand, which
-    // is what the detach then checks before it removes anything. A rerun asks
-    // the recorded run whose hand it was, exactly as an annotation does:
-    // replaying a script the trader attached by hand as automation's would
-    // hand this tier a detach on the trader's own indicator.
-    let attached_by = access
-        .recorded_author()
-        .map_or(actor.actor_kind, |recorded| recorded.actor_kind);
-    let by_operator = attached_by != quantick_control::wire::ActorKind::HumanUi;
-    let (tab_id, pane_side, slot) =
-        app.attach_script_indicator(input.name.clone(), input.source, by_operator);
-    let result = AttachResult {
-        slot_id: WireU64::new(slot.0),
-        tab_id: WireU64::new(tab_id),
-        pane_side,
-        name: input.name,
-        declared_inputs,
-    };
-    journal_script(access, actor, SCRIPT_ATTACHED_EVENT_KIND, &result)?;
-    serde_json::to_value(&result)
-        .map_err(|error| ControlError::invalid_request(format!("attach result: {error}")))
-}
-
-fn detach_script(
-    app: &mut QuantickApp,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    let input: DetachInput = serde_json::from_value(input.clone())
-        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let detached = app
-        .detach_script_indicator(input.slot_id.get())
-        .map_err(|()| {
-            known_error(
-                codes::PERMISSION_DENIED,
-                "that indicator is the trader's own; this tier detaches only what an operator attached",
-                false,
-            )
-        })?;
-    let result = DetachResult {
-        slot_id: input.slot_id,
-        detached,
-    };
-    if detached {
-        journal_script(access, actor, SCRIPT_DETACHED_EVENT_KIND, &result)?;
-    }
-    serde_json::to_value(&result)
-        .map_err(|error| ControlError::invalid_request(format!("detach result: {error}")))
-}
-
 /// Every compile problem, as data, on one refusal.
-fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlError {
+pub(crate) fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlError {
     let diagnostics = errors
         .iter()
         .map(|error| {
-            let (line, column) = line_and_column(source, error.span);
+            // Pine floors an interior byte offset to a character boundary.
+            let (line, column) = error.span.line_col(source);
             ScriptDiagnostic {
                 code: error.code.as_str().to_owned(),
                 start: u32::try_from(error.span.start).unwrap_or(u32::MAX),
                 end: u32::try_from(error.span.end).unwrap_or(u32::MAX),
-                line,
-                column,
+                line: u32::try_from(line).unwrap_or(u32::MAX),
+                column: u32::try_from(column).unwrap_or(u32::MAX),
                 message: error.message.clone(),
                 notes: error.notes.clone(),
             }
@@ -289,24 +228,7 @@ fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> ControlEr
     control_error
 }
 
-/// 1-based line and column of a span, counting characters rather than bytes in
-/// the column so a note over accented text points where it looks.
-///
-/// The arithmetic belongs to `quantick_pine`, not here: a span can land *inside*
-/// a multi-byte character — the lexer end-of-line span is `pos - 1`, and `pos`
-/// counts bytes — so the offset has to be floored to a character boundary before
-/// the source is sliced. [`Span::line_col`] already does that, and re-deriving it
-/// here once cost the application thread a panic on any script ending in an
-/// accented character without a trailing newline.
-fn line_and_column(source: &str, span: Span) -> (u32, u32) {
-    let (line, column) = span.line_col(source);
-    (
-        u32::try_from(line).unwrap_or(u32::MAX),
-        u32::try_from(column).unwrap_or(u32::MAX),
-    )
-}
-
-fn journal_script<T: Serialize>(
+pub(crate) fn journal_script<T: Serialize>(
     access: &mut ControlAccess,
     actor: &ActorContext,
     kind: &str,
@@ -344,6 +266,20 @@ mod tests {
         let source = "x = // ré";
         let offset = source.len() - 1;
         assert!(!source.is_char_boundary(offset), "the case under test");
-        assert_eq!(line_and_column(source, Span::at(offset)), (1, 9));
+        let error = quantick_pine::PineError::new(
+            quantick_pine::ErrorCode::PineSyntax,
+            quantick_pine::Span::at(offset),
+            "interior character span",
+        );
+        let reported = compile_error(&[error], source);
+        let details = reported.context.details.unwrap();
+        let diagnostic = &details["diagnostics"][0];
+        assert_eq!(
+            (
+                diagnostic["line"].as_u64().unwrap(),
+                diagnostic["column"].as_u64().unwrap()
+            ),
+            (1, 9),
+        );
     }
 }

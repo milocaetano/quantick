@@ -252,27 +252,19 @@ impl DrawingAccess<'_> {
             })
             .map(|instance| (instance.spec.clone(), instance.preset.clone()))
     }
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(super) fn text_note_point(&self) -> Option<drawings::ChartPoint> {
         let pane = self.pane();
         let slots = pane.slots();
-        if pane.frame.chart_area.is_none() || slots == 0 {
-            return None;
-        }
         let close = pane
             .closed_bar(slots.saturating_sub(1))
-            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close))
-            .unwrap_or(1.0);
-        let centre = pane
-            .frame
-            .auto_range
-            .filter(|(lo, hi)| hi > lo)
-            .map_or(close, |(lo, hi)| (lo + hi) / 2.0);
-        let visible = super::super::DEMO_VISIBLE_SLOTS.min(slots);
-        let slot = (slots - visible / 2).min(slots.saturating_sub(1));
-        Some(drawings::ChartPoint::at_time(
-            slot as f32 + 0.5,
-            centre,
-            pane.slot_open_time(slot),
-        ))
+            .and_then(|bar| rust_decimal::prelude::ToPrimitive::to_f64(&bar.close));
+        let plan = crate::surfaces::drawing_chrome::launch::NotePlacement::plan(
+            pane.frame.chart_area.is_some(),
+            slots,
+            close,
+            pane.frame.auto_range,
+        )?;
+        Some(plan.point(pane.slot_open_time(plan.slot)))
     }
 }

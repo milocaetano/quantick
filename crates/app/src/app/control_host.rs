@@ -25,37 +25,11 @@ use quantick_feed::history_reach;
 
 use super::{ControlFrameMetrics, QuantickApp};
 
-/// The local observer gateway, and the five launch hooks that feed it.
-///
-/// Owned by this module. The `pending_*` fields exist only to hand
-/// `control_access` its first frame's work: `launch_hooks` reads each env
-/// var into one and `frame`, `demo_hooks` or this module drains it. They
-/// are grouped with the gateway rather than with the harness because the
-/// gateway is the only thing any of them can act on.
+/// The ordinary local gateway and its opt-in launch scenarios.
 pub(super) struct ControlState {
-    /// Explicitly enabled local observer gateway. `None` only while this field
-    /// is temporarily moved out to dispatch a frame without borrowing the app
-    /// through itself.
     pub(super) control_access: Option<crate::control::ControlAccess>,
-
-    /// The `QUANTICK_CONTROL_ACCESS` hook: enable observer access on the
-    /// first frame, through the panel button's own `enable`.
-    pub(super) pending_control_access_enable: bool,
-
-    /// The `QUANTICK_CONTROL_ANNOTATE` hook: an agent-authored label on the
-    /// first frame, so every attribution surface can be photographed.
-    pub(super) pending_control_annotation: Option<String>,
-
-    /// The `QUANTICK_CONTROL_NOTIFY` hook: `<channel>:<message>`.
-    pub(super) pending_control_notification: Option<String>,
-
-    /// The `QUANTICK_CONTROL_EVIDENCE` hook: which scopes to capture, and
-    /// whether to rasterise the window with them.
-    pub(super) pending_control_evidence: Option<String>,
-
-    /// The `QUANTICK_CONTROL_MARK` hook: take a mark on the first frame,
-    /// through the hotkey's own action, with the note the hook carried.
-    pub(super) pending_control_mark: Option<String>,
+    #[cfg(any(feature = "control-harness", test))]
+    pub(super) scenarios: ControlScenarios,
 }
 
 /// The temporary range's visible action button, if the current frame has laid
@@ -80,6 +54,276 @@ pub(crate) fn control_quick_range_actions(
         .quick_range
         .controls(app.tabs.id_at(app.tabs.active_index()))
 }
+
+/// Control-only launch inputs, captured before owner construction.
+#[cfg(any(feature = "control-harness", test))]
+#[derive(Default)]
+pub(crate) struct ControlLaunch {
+    panel: bool,
+    scopes: Option<String>,
+    scenarios: ControlScenarios,
+}
+
+#[cfg(any(feature = "control-harness", test))]
+impl ControlLaunch {
+    pub(crate) fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
+        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
+        let scopes = value("QUANTICK_CONTROL_SCOPES");
+        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
+        let mark = value("QUANTICK_CONTROL_MARK")
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| if raw == "1" { String::new() } else { raw });
+        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
+        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
+        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
+        Self {
+            panel,
+            scopes,
+            scenarios: ControlScenarios {
+                pending_control_access_enable: access,
+                pending_control_annotation: annotation,
+                pending_control_notification: notification,
+                pending_control_evidence: evidence,
+                pending_control_mark: mark,
+                evidence_frames: 0,
+            },
+        }
+    }
+}
+
+#[cfg(any(feature = "control-harness", test))]
+impl ControlState {
+    pub(super) fn apply_launch(&mut self, launch: ControlLaunch) {
+        if launch.panel
+            && let Some(access) = self.control_access.as_mut()
+        {
+            access.open_panel();
+        }
+        if let Some(scopes) = launch.scopes
+            && let Some(access) = self.control_access.as_mut()
+            && let Err(error) = access.configure_scopes(&scopes)
+        {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_SCOPE_HOOK_REFUSED",
+                error = %error,
+                "QUANTICK_CONTROL_SCOPES named something this build does not register"
+            );
+        }
+        self.scenarios = launch.scenarios;
+    }
+}
+
+/// Only launch scenarios live here. The ordinary gateway remains in ControlState.
+#[cfg(any(feature = "control-harness", test))]
+#[derive(Default)]
+pub(super) struct ControlScenarios {
+    pending_control_access_enable: bool,
+    pending_control_annotation: Option<String>,
+    pending_control_notification: Option<String>,
+    pending_control_evidence: Option<String>,
+    pending_control_mark: Option<String>,
+    /// Lifetime-wide screenshot wait count, never reset by request rearming.
+    evidence_frames: u32,
+}
+
+#[cfg(any(feature = "control-harness", test))]
+pub(super) struct EvidenceCapture {
+    request: String,
+    scopes: std::collections::BTreeSet<String>,
+    pub(super) wants_screenshot: bool,
+    pub(super) screenshot_not_granted: bool,
+}
+
+#[cfg(any(feature = "control-harness", test))]
+pub(super) enum EvidenceStep {
+    Waiting,
+    Capture {
+        scopes: std::collections::BTreeSet<String>,
+        screenshot: bool,
+        image_timed_out: bool,
+    },
+}
+
+#[cfg(any(feature = "control-harness", test))]
+pub(super) enum NotificationStep {
+    Ready {
+        capability: &'static str,
+        input: serde_json::Value,
+    },
+    Refused {
+        channel: String,
+    },
+}
+
+/// The same bounded wait as the original Harness: wait attempts1..=120,
+/// then capture honest missing-image coverage on attempt121.
+#[cfg(any(feature = "control-harness", test))]
+pub(crate) const CONTROL_EVIDENCE_HOOK_FRAMES: u32 = 120;
+
+#[cfg(any(feature = "control-harness", test))]
+impl ControlScenarios {
+    pub(super) fn take_enable(&mut self) -> bool {
+        std::mem::take(&mut self.pending_control_access_enable)
+    }
+
+    pub(super) fn take_mark(&mut self) -> Option<String> {
+        self.pending_control_mark.take()
+    }
+
+    pub(super) fn has_annotation(&self) -> bool {
+        self.pending_control_annotation.is_some()
+    }
+
+    pub(super) fn has_evidence(&self) -> bool {
+        self.pending_control_evidence.is_some()
+    }
+
+    pub(super) fn annotation(
+        &mut self,
+        anchor: Option<serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        let anchor = anchor?;
+        let text = self.pending_control_annotation.take()?;
+        Some(serde_json::json!({ "anchors": [anchor], "text": text }))
+    }
+
+    pub(super) fn notification(&mut self) -> Option<NotificationStep> {
+        let request = self.pending_control_notification.take()?;
+        let (channel, message) = request
+            .split_once(':')
+            .unwrap_or(("toast", request.as_str()));
+        let capability = match channel.trim() {
+            "popup" => "notify.popup",
+            "sound" => "notify.sound",
+            "toast" => "notify.toast",
+            other => {
+                return Some(NotificationStep::Refused {
+                    channel: other.to_owned(),
+                });
+            }
+        };
+        Some(NotificationStep::Ready {
+            capability,
+            input: serde_json::json!({ "message": message, "title": "From your assistant" }),
+        })
+    }
+
+    // The caller obtains access before this takes the pending input.
+    pub(super) fn prepare_evidence(
+        &mut self,
+        access: &crate::control::ControlAccess,
+    ) -> Option<EvidenceCapture> {
+        let request = self.pending_control_evidence.take()?;
+        let mut wants_screenshot = false;
+        let mut scopes = std::collections::BTreeSet::new();
+        for token in request
+            .split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+        {
+            match token {
+                "screenshot" => wants_screenshot = true,
+                "all" | "1" => scopes.extend(
+                    access
+                        .readable_scopes()
+                        .into_iter()
+                        .map(|scope| scope.to_string()),
+                ),
+                scope => {
+                    scopes.insert(scope.to_owned());
+                }
+            }
+        }
+        if scopes.is_empty() {
+            scopes.extend(
+                access
+                    .readable_scopes()
+                    .into_iter()
+                    .map(|scope| scope.to_string()),
+            );
+        }
+        let screenshot_not_granted = wants_screenshot && !access.grants_screenshot();
+        wants_screenshot &= !screenshot_not_granted;
+        Some(EvidenceCapture {
+            request,
+            scopes,
+            wants_screenshot,
+            screenshot_not_granted,
+        })
+    }
+
+    pub(super) fn finish_evidence(
+        &mut self,
+        capture: EvidenceCapture,
+        has_screenshot: bool,
+    ) -> EvidenceStep {
+        let missing = capture.wants_screenshot && !has_screenshot;
+        if missing && self.evidence_frame_waited() {
+            self.pending_control_evidence = Some(capture.request);
+            return EvidenceStep::Waiting;
+        }
+        EvidenceStep::Capture {
+            scopes: capture.scopes,
+            screenshot: capture.wants_screenshot,
+            image_timed_out: missing,
+        }
+    }
+
+    pub(super) fn evidence_frame_waited(&mut self) -> bool {
+        self.evidence_frames = self.evidence_frames.saturating_add(1);
+        self.evidence_frames <= CONTROL_EVIDENCE_HOOK_FRAMES
+    }
+}
+
+#[cfg(test)]
+pub(super) struct PendingControl<'a> {
+    pub(super) enable: bool,
+    pub(super) mark: Option<&'a str>,
+    pub(super) annotation: Option<&'a str>,
+    pub(super) notification: Option<&'a str>,
+    pub(super) evidence: Option<&'a str>,
+}
+
+#[cfg(test)]
+impl ControlScenarios {
+    pub(super) fn pending(&self) -> PendingControl<'_> {
+        PendingControl {
+            enable: self.pending_control_access_enable,
+            mark: self.pending_control_mark.as_deref(),
+            annotation: self.pending_control_annotation.as_deref(),
+            notification: self.pending_control_notification.as_deref(),
+            evidence: self.pending_control_evidence.as_deref(),
+        }
+    }
+
+    pub(super) fn queue_annotation(&mut self, text: String) {
+        self.pending_control_annotation = Some(text);
+    }
+
+    pub(super) fn queue_notification(&mut self, request: String) {
+        self.pending_control_notification = Some(request);
+    }
+
+    pub(super) fn queue_mark(&mut self, note: String) {
+        self.pending_control_mark = Some(note);
+    }
+
+    pub(super) fn queue_evidence(&mut self, request: String) {
+        self.pending_control_evidence = Some(request);
+    }
+}
+
+crate::hooks::declare_hooks![
+    "QUANTICK_CONTROL_ACCESS",
+    "QUANTICK_CONTROL_ANNOTATE",
+    "QUANTICK_CONTROL_EVIDENCE",
+    "QUANTICK_CONTROL_MARK",
+    "QUANTICK_CONTROL_NOTIFY",
+    "QUANTICK_CONTROL_PANEL",
+    "QUANTICK_CONTROL_SCOPES"
+];
 
 impl QuantickApp {
     /// The active tab beside the config it reads.
@@ -364,68 +608,43 @@ impl QuantickApp {
         outcome
     }
 
-    /// The annotate tier's launch hooks: one agent-authored label, one
-    /// notification. Both go through the registered action with an agent
-    /// actor — the same path the gateway takes for a remote client — so what
-    /// a screenshot shows is what a real assistant would have produced.
+    /// Launch scenarios invoke the registered label and notification handlers
+    /// through trusted local actions with an agent actor. Unlike remote calls,
+    /// these local actions do not pass through configured remote-grant admission.
+    #[cfg(any(feature = "control-harness", test))]
     pub(super) fn apply_control_annotate_hooks(&mut self) {
-        if let Some(text) = self.control.pending_control_annotation.take() {
-            let anchor = {
-                let pane = self.active_tab().drawing_pane();
-                let slot = pane.slots().saturating_sub(1);
-                match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
-                    (Some(time), Some(bar)) => Some(serde_json::json!({
-                        "time_unix_ms": time,
-                        "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close)
-                            .unwrap_or(1.0)
-                            .to_string(),
-                    })),
-                    // No bars yet: put the hook back and take it next frame,
-                    // rather than annotating a chart that has nothing on it.
-                    _ => {
-                        self.control.pending_control_annotation = Some(text.clone());
-                        None
-                    }
-                }
+        if self.control.scenarios.has_annotation() {
+            let pane = self.active_tab().drawing_pane();
+            let slot = pane.slots().saturating_sub(1);
+            let anchor = match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
+                (Some(time), Some(bar)) => Some(serde_json::json!({
+                    "time_unix_ms": time,
+                    "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
+                })),
+                _ => None,
             };
-            if let Some(anchor) = anchor {
-                self.control.pending_control_annotation = None;
-                self.run_hook_action(
-                    "annotate.label.create",
-                    serde_json::json!({ "anchors": [anchor], "text": text }),
-                );
+            if let Some(input) = self.control.scenarios.annotation(anchor) {
+                self.run_hook_action("annotate.label.create", input);
             }
         }
-        if let Some(request) = self.control.pending_control_notification.take() {
-            let (channel, message) = request
-                .split_once(':')
-                .unwrap_or(("toast", request.as_str()));
-            let capability = match channel.trim() {
-                "popup" => Some("notify.popup"),
-                "sound" => Some("notify.sound"),
-                "toast" => Some("notify.toast"),
-                other => {
-                    tracing::warn!(
-                        target: "quantick::control",
-                        event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
-                        channel = other,
-                        "QUANTICK_CONTROL_NOTIFY names no notification channel"
-                    );
-                    None
-                }
-            };
-            if let Some(capability) = capability {
-                self.run_hook_action(
-                    capability,
-                    serde_json::json!({ "message": message, "title": "From your assistant" }),
-                );
+        match self.control.scenarios.notification() {
+            Some(NotificationStep::Ready { capability, input }) => {
+                self.run_hook_action(capability, input)
             }
+            Some(NotificationStep::Refused { channel }) => tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
+                channel = %channel,
+                "QUANTICK_CONTROL_NOTIFY names no notification channel"
+            ),
+            None => {}
         }
     }
 
     /// Invoke one registered action as an *agent* would, from inside this
     /// window. The hooks use it so a screenshot shows a real assistant's
     /// object, attribution and all, without a client on the socket.
+    #[cfg(any(feature = "control-harness", test))]
     pub(super) fn run_agent_action(
         &mut self,
         capability_id: &str,
@@ -457,6 +676,7 @@ impl QuantickApp {
 
     /// A launch hook's action, with its failure reported where a scripted run
     /// will see it: the hook is fire-and-forget, so nothing else would.
+    #[cfg(any(feature = "control-harness", test))]
     fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
         if let Err(error) = self.run_agent_action(capability_id, input) {
             tracing::warn!(
@@ -530,5 +750,146 @@ impl QuantickApp {
     /// edited and deleted from either of them.
     pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
         self.active_tab_mut().drawing_pane_mut()
+    }
+}
+
+#[cfg(test)]
+mod control_launch_tests {
+    use super::*;
+
+    fn launch(inputs: &[(&str, &str)]) -> ControlLaunch {
+        ControlLaunch::capture(|name| {
+            inputs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| std::ffi::OsString::from(value))
+        })
+    }
+
+    #[test]
+    fn captured_enable_and_mark_are_consumed_once() {
+        let mut launch = launch(&[
+            ("QUANTICK_CONTROL_ACCESS", "1"),
+            ("QUANTICK_CONTROL_MARK", " 1 "),
+        ]);
+        assert!(launch.scenarios.take_enable());
+        assert!(!launch.scenarios.take_enable());
+        assert_eq!(launch.scenarios.take_mark().as_deref(), Some(" 1 "));
+        assert_eq!(launch.scenarios.take_mark(), None);
+    }
+
+    #[test]
+    fn annotation_retains_raw_text_until_an_anchor_exists() {
+        let mut launch = launch(&[("QUANTICK_CONTROL_ANNOTATE", " keep this ")]);
+        assert!(launch.scenarios.annotation(None).is_none());
+        assert!(launch.scenarios.has_annotation());
+        let anchor = serde_json::json!({"time_unix_ms": 1800, "price": "100.8"});
+        assert_eq!(
+            launch.scenarios.annotation(Some(anchor.clone())),
+            Some(serde_json::json!({"anchors": [anchor], "text": " keep this "}))
+        );
+        assert!(!launch.scenarios.has_annotation());
+    }
+
+    #[test]
+    fn notification_preserves_message_and_types_unknown_channel() {
+        let mut launch = launch(&[("QUANTICK_CONTROL_NOTIFY", " popup :a:b ")]);
+        let Some(NotificationStep::Ready { capability, input }) = launch.scenarios.notification()
+        else {
+            panic!("registered popup must be ready");
+        };
+        assert_eq!(capability, "notify.popup");
+        assert_eq!(
+            input,
+            serde_json::json!({"message": "a:b ", "title": "From your assistant"})
+        );
+        assert!(launch.scenarios.notification().is_none());
+        launch
+            .scenarios
+            .queue_notification(" unknown :message".into());
+        let Some(NotificationStep::Refused { channel }) = launch.scenarios.notification() else {
+            panic!("unknown channel must be typed refusal");
+        };
+        assert_eq!(channel, "unknown");
+        assert!(launch.scenarios.notification().is_none());
+    }
+
+    #[test]
+    fn evidence_reexpands_current_grants_and_keeps_its_lifetime_wait_count() {
+        let mut access = crate::control::ControlAccess::new();
+        access
+            .configure_scopes("all-reads,observe.evidence,observe.screenshot")
+            .unwrap();
+        let mut launch = launch(&[("QUANTICK_CONTROL_EVIDENCE", "all,screenshot")]);
+        for _ in 0..CONTROL_EVIDENCE_HOOK_FRAMES {
+            let capture = launch.scenarios.prepare_evidence(&access).unwrap();
+            assert!(capture.wants_screenshot);
+            assert!(!capture.screenshot_not_granted);
+            assert!(matches!(
+                launch.scenarios.finish_evidence(capture, false),
+                EvidenceStep::Waiting
+            ));
+        }
+        access
+            .configure_scopes("observe.events,observe.evidence,observe.screenshot")
+            .unwrap();
+        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
+        let expected: std::collections::BTreeSet<_> = access
+            .readable_scopes()
+            .into_iter()
+            .map(|scope| scope.to_string())
+            .collect();
+        assert_eq!(capture.scopes, expected);
+        assert!(matches!(
+            launch.scenarios.finish_evidence(capture, false),
+            EvidenceStep::Capture {
+                screenshot: true,
+                image_timed_out: true,
+                ..
+            }
+        ));
+        assert!(!launch.scenarios.has_evidence());
+        launch.scenarios.queue_evidence("all,screenshot".into());
+        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
+        assert!(matches!(
+            launch.scenarios.finish_evidence(capture, false),
+            EvidenceStep::Capture {
+                image_timed_out: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn screenshot_permission_is_checked_before_waiting() {
+        let access = crate::control::ControlAccess::new();
+        let mut launch = launch(&[("QUANTICK_CONTROL_EVIDENCE", "all,screenshot")]);
+        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
+        assert!(capture.screenshot_not_granted);
+        assert!(!capture.wants_screenshot);
+        assert!(matches!(
+            launch.scenarios.finish_evidence(capture, false),
+            EvidenceStep::Capture {
+                screenshot: false,
+                image_timed_out: false,
+                ..
+            }
+        ));
+        assert_eq!(launch.scenarios.evidence_frames, 0);
+    }
+
+    #[test]
+    fn the_evidence_hook_waits_its_budget_and_then_stops() {
+        let mut scenarios = super::ControlScenarios::default();
+        for frame in 1..=super::CONTROL_EVIDENCE_HOOK_FRAMES {
+            assert!(
+                scenarios.evidence_frame_waited(),
+                "frame {frame} is within the budget"
+            );
+        }
+        assert!(
+            !scenarios.evidence_frame_waited(),
+            "the window never delivered a frame to rasterise"
+        );
     }
 }

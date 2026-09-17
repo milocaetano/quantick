@@ -143,6 +143,7 @@ const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
 /// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook.
+#[cfg(any(feature = "drawing-harness", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,
@@ -972,16 +973,22 @@ impl ChartPane {
         // here, which left the trader unable to move the chart they were
         // annotating (audit S2).
         let placement_id = self.interaction_id("drawing_placement");
-        let hand = self.gestures.parked_hand;
+        #[cfg(any(feature = "drawing-harness", test))]
+        let hand = self
+            .gestures
+            .parked_hand
+            .map(|hand| (hand.constrain, hand.position));
+        #[cfg(not(any(feature = "drawing-harness", test)))]
+        let hand: Option<(drawings::Constrain, egui::Pos2)> = None;
         let options = placement_gestures::PlacementOptions {
             tool: chrome.toolrail.tool().drawing_tool(),
             magnet: chrome.toolrail.magnet(),
             constrain: if ui.input(|input| input.modifiers.shift) {
                 drawings::Constrain::Level
             } else {
-                hand.map_or(drawings::Constrain::Free, |hand| hand.constrain)
+                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
             },
-            parked_position: hand.map(|hand| hand.position),
+            parked_position: hand.map(|hand| hand.1),
         };
         let placement = self.gestures.update_placement(
             &mut self.drawings,

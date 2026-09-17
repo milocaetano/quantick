@@ -9,6 +9,8 @@ publish.workspace = true
 [features]
 default = []
 quick-range-harness = []
+drawing-harness = []
+control-harness = []
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }

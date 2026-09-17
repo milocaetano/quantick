@@ -171,8 +171,11 @@ impl QuantickApp {
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
-            let collapsed = self.focused_legend_collapsed();
-            self.set_focused_legend_collapsed(!collapsed);
+            let collapsed = self.focused_pane().legend_collapsed;
+            super::indicator_manager::IndicatorState::set_legend_collapsed(
+                self.focused_pane_mut(),
+                !collapsed,
+            );
         }
         if ctx.input_mut(|i| i.consume_shortcut(&crate::control::MARK_SHORTCUT)) {
             self.take_mark(None);
@@ -416,7 +419,7 @@ impl QuantickApp {
                         // The legend belongs to a pane, so this entry names
                         // the focused one's state — the same pane the chevron
                         // on screen would fold.
-                        let collapsed = self.focused_legend_collapsed();
+                        let collapsed = self.focused_pane().legend_collapsed;
                         // Split open: say *which* chart, the way the layout
                         // entries above name the charts they show. The action
                         // follows the focus like every other chrome control,
@@ -452,7 +455,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.set_focused_legend_collapsed(!collapsed);
+                            super::indicator_manager::IndicatorState::set_legend_collapsed(self.focused_pane_mut(), !collapsed);
                             ui.close_menu();
                         }
                         ui.menu_button("Drawing toolbar", |ui| {

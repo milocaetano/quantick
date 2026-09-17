@@ -659,7 +659,11 @@ fn candle_appearance_change_is_render_only() {
 
     app.style.candles = CandlePreset::OutlineOnly.style();
     app.style_revision = app.style_revision.saturating_add(1);
-    app.emit_style_changed(Some(CandlePreset::OutlineOnly));
+    crate::app::health::emit_style_changed(
+        &app.style,
+        app.style_revision,
+        Some(CandlePreset::OutlineOnly),
+    );
 
     assert_eq!(app.active_tab().flow_pane.state.spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());

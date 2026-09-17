@@ -438,6 +438,7 @@ impl DrawingController {
         if ask.unlock_all {
             host.drawings_mut().set_all_locked(false);
         }
+        #[cfg(any(feature = "drawing-harness", test))]
         if ask.place_text_note && self.place_text_note(host) {
             self.chrome.note_text_note_placed();
         }

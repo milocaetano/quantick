@@ -14,7 +14,9 @@ use crate::drawings::{self, DrawingAuthor};
 use crate::pane::DRAWING_ANCHOR_RADIUS_PX;
 use crate::toolrail::{Tool, ToolRail};
 
-use super::{DrawingAccess, DrawingController, DrawingReadAccess};
+#[cfg(any(feature = "drawing-harness", test))]
+use super::DrawingAccess;
+use super::{DrawingController, DrawingReadAccess};
 
 /// The slice the drawing chrome reads, assembled from the pieces of the
 /// application it is allowed to see.
@@ -225,11 +227,9 @@ impl DrawingController {
         self.chrome.draw_pass(ctx, &env, current, floating)
     }
 
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn place_text_note(&mut self, host: &mut DrawingAccess<'_>) -> bool {
-        let Some(tool) = drawings::DRAWING_TOOLS
-            .into_iter()
-            .find(|tool| tool.holds_text())
-        else {
+        let Some(tool) = crate::surfaces::drawing_chrome::launch::NotePlacement::tool() else {
             return false;
         };
         let Some(point) = host.text_note_point() else {
@@ -247,6 +247,7 @@ impl DrawingController {
         }
         placed
     }
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn begin_inline_text_edit(
         &mut self,
         host: &mut DrawingAccess<'_>,

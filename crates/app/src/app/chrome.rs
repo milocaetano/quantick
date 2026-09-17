@@ -28,6 +28,8 @@ pub(super) struct LayoutRename {
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    /// Ordinary startup window command, consumed on the first frame.
+    pub(super) window_startup: crate::launch::WindowStartupState,
     /// Saved override for recording deal counters; `None` follows feed config.
     pub(super) record_deals: Option<bool>,
     /// Where the offline chip was drawn, or `None` when it was not.

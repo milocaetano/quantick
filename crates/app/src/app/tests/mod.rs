@@ -33,16 +33,18 @@
 // `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
 // later: the indicator manager took the last production reader of each out of
 // `app.rs`, and the tests that still name them are the only ones left.
-use crate::harness::DrawingsDemo;
 use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
+use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
 use crate::ui_state::WorkspaceExt;
 
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod chart_view_tests;
+mod control_launch_baselines;
 mod control_plane_tests;
+mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;
 mod indicator_operations_tests;
@@ -59,6 +61,7 @@ mod quick_range_control_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
+mod toolrail_launch_baselines;
 mod toolrail_tests;
 mod workspace_bundle_menu_baseline_tests;
 mod workspace_bundle_runtime_baseline_tests;
@@ -267,6 +270,29 @@ fn test_app() -> (
     mpsc::Receiver<FeedCommand>,
     mpsc::Sender<DepthEvent>,
 ) {
+    test_app_with_launch(AppLaunch::default())
+}
+
+fn test_app_with_launch(
+    launch: AppLaunch,
+) -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    mpsc::Sender<DepthEvent>,
+) {
+    test_app_with_workspace_and_launch(ui_state::Workspace::default(), launch)
+}
+
+fn test_app_with_workspace_and_launch(
+    workspace: ui_state::Workspace,
+    launch: AppLaunch,
+) -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    mpsc::Sender<DepthEvent>,
+) {
     // A cockpit of its own for this app: every store resolves under the
     // scratch home this bumps to, so two apps built on one thread never
     // restore each other's arrangement — the isolation the per-call
@@ -275,7 +301,7 @@ fn test_app() -> (
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    let app = QuantickApp::new(
+    let app = QuantickApp::new_with_workspace(
         test_config(),
         "binance",
         "TESTUSDT",
@@ -289,6 +315,8 @@ fn test_app() -> (
             commands: cmd_tx,
             replay: None,
         },
+        workspace,
+        launch,
     );
     (app, evt_tx, cmd_rx, book_tx)
 }
@@ -379,7 +407,14 @@ fn trade(agg_id: u64) -> quantick_engine::Trade {
 /// An app holding `count` backfilled trades, built into tick(1) bars — one
 /// bar per trade, the finest series a spec change can coarsen.
 fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
-    let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+    app_with_history_and_launch(count, AppLaunch::default())
+}
+
+fn app_with_history_and_launch(
+    count: u64,
+    launch: AppLaunch,
+) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+    let (mut app, evt_tx, cmd_rx, _book_tx) = test_app_with_launch(launch);
     // A bare canvas, the one every caller here was written against: the
     // strip stands beside the price axis and takes width from the candles,
     // so leaving it on moves every hard-coded pointer coordinate in the
@@ -704,7 +739,7 @@ fn pointer_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     }
 }
 
-fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
+pub(super) fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
     run_frame_with_events(
         app,
         ctx,
@@ -1240,7 +1275,10 @@ fn app_on(config: AppConfig, feed_id: &str, symbol: &str) -> QuantickApp {
 
 /// An app with `count` trades of history, split, and laid out by two real
 /// frames so both panes have reported their rects.
-fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+pub(super) fn split_app(
+    ctx: &egui::Context,
+    count: u64,
+) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, commands) = app_with_history(count);
     run_frame(&mut app, ctx);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
@@ -1251,7 +1289,7 @@ fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<Fe
 
 /// Let every pane's indicator worker finish what it was sent, then apply
 /// its events — the two steps the frame loop takes, made deterministic.
-fn settle_indicators(app: &mut QuantickApp) {
+pub(super) fn settle_indicators(app: &mut QuantickApp) {
     for pane in app.active_tab_mut().panes_mut() {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
@@ -1259,7 +1297,7 @@ fn settle_indicators(app: &mut QuantickApp) {
 }
 
 /// A point inside the pane on `side`, for a click that focuses it.
-fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
+pub(super) fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
         .frame
@@ -2608,3 +2646,42 @@ mod frame_tail_tests;
 mod worker_summary_bench_tests;
 
 mod source_drain_tests;
+fn attach_script_for_test(
+    app: &mut QuantickApp,
+    name: String,
+    text: String,
+    by_operator: bool,
+) -> (u64, crate::control::PaneSideDto, SlotId) {
+    let target = (app.tabs.active_id(), app.active_tab().focused_side());
+    let attached = app.indicators.attach_script(
+        app.tabs
+            .runtime_mut(app.tabs.active_index())
+            .pane_mut(target.1),
+        target,
+        name,
+        text,
+        by_operator,
+    );
+    let owner = attached.target;
+    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+        attached,
+    ));
+    (owner.tab, owner.side.into(), owner.slot)
+}
+fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
+    let target = (app.tabs.active_id(), app.active_tab().focused_side());
+    let (slot, added) = app.indicators.add_library(
+        app.tabs
+            .runtime_mut(app.tabs.active_index())
+            .pane_mut(target.1),
+        target,
+        index,
+    )?;
+    if let Some(attached) = added.attachment {
+        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+            attached,
+        ));
+    }
+    app.indicators.watch_attachment(added.watch);
+    Some(slot)
+}

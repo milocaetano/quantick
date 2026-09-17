@@ -18,7 +18,9 @@
 
 use eframe::egui;
 
-use super::{DrawingDrag, PaneIndex, ParkedHand, SharedDrag};
+#[cfg(any(feature = "drawing-harness", test))]
+use super::ParkedHand;
+use super::{DrawingDrag, PaneIndex, SharedDrag};
 use crate::drawings::ChartPoint;
 
 /// Drawing placement and movement state. Anchors are chart coordinates; only
@@ -52,6 +54,7 @@ pub struct PaneGestures {
     /// pointer and the real modifier are read and nowhere else, so everything
     /// downstream — the tool's shaping, the hint chip, the rubber band — runs
     /// the same code a hand runs.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub parked_hand: Option<ParkedHand>,
     /// The last screen position a freehand stroke actually recorded, so the
     /// capture decimates as it goes rather than storing every mouse event.

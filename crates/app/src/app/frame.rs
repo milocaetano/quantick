@@ -97,11 +97,11 @@ impl QuantickApp {
         // it looked, drawing one frame with an empty lane before the next
         // raise. A shutter timed on the linger catches exactly that frame.
         self.apply_history_note_hook();
-        if self.control.pending_control_access_enable {
-            self.control.pending_control_access_enable = false;
-            if let Some(access) = self.control.control_access.as_mut() {
-                access.enable(ctx);
-            }
+        #[cfg(any(feature = "control-harness", test))]
+        if self.control.scenarios.take_enable()
+            && let Some(access) = self.control.control_access.as_mut()
+        {
+            access.enable(ctx);
         }
         // Replay determinism: a session with a control trace beside it
         // re-injects its actions at their logical time, connected or not.
@@ -111,15 +111,18 @@ impl QuantickApp {
             access.service_replay_trace(self);
             self.control.control_access = Some(access);
         }
-        if let Some(note) = self.control.pending_control_mark.take() {
+        #[cfg(any(feature = "control-harness", test))]
+        if let Some(note) = self.control.scenarios.take_mark() {
             let note = (!note.is_empty()).then_some(note);
             self.take_mark(note);
         }
+        #[cfg(any(feature = "control-harness", test))]
         self.apply_control_annotate_hooks();
         // After the annotate hooks and before the gateway's own drain: a
         // bundle captured from a launch then describes the window an
         // assistant has already written on, which is the state a validation
         // run is actually asking about.
+        #[cfg(any(feature = "control-harness", test))]
         self.apply_control_evidence_hook(ctx);
         if self
             .control
@@ -132,16 +135,20 @@ impl QuantickApp {
             self.control.control_access = Some(access);
         }
         self.apply_scripted_view();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_demo();
         self.apply_load_older();
         self.apply_load_older_candles();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_draft();
         self.apply_venue_history_demo();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_frvp_demo();
+        #[cfg(any(feature = "drawing-harness", test))]
         self.apply_avwap_demo();
         self.apply_strategy_demo();
         self.apply_replay_restart();
-        self.apply_maximize_hook(ctx);
+        self.chrome.window_startup.apply(ctx);
         self.maybe_emit_summary(now, ctx);
         self.workspace_save_adapter().maintain_workspace(ctx);
 
@@ -169,12 +176,11 @@ impl QuantickApp {
         self.draw_toolbar(ctx);
         // Before the dialog is drawn, so a double click on a pane or a curve
         // opens it on the same frame the gesture happened rather than the next.
-        self.open_requested_indicator_settings();
-        self.draw_indicator_settings(ctx);
-        self.draw_indicator_legends(ctx);
+        self.service_indicator_requests();
+        self.draw_indicator_surfaces(ctx);
         // **After** the dialogs above, and that placement is load-bearing.
         // The preview watermark reads whether a settings dialog is previewing
-        // an unapplied draft, and `draw_indicator_settings` is what sets that
+        // an unapplied draft, and `IndicatorState::draw_settings` is what sets that
         // — so an environment built before it would put the banner on screen
         // a frame after the legend chip that says the same thing, and take it
         // off a frame later too. Two surfaces the trader reads as one is this
@@ -300,7 +306,11 @@ impl QuantickApp {
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
         if let Some(request) = surfaces.log_style_change {
-            self.emit_style_changed(request.applied_preset);
+            super::health::emit_style_changed(
+                &self.style,
+                self.style_revision,
+                request.applied_preset,
+            );
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
@@ -335,8 +345,18 @@ impl QuantickApp {
             // instance rides may just have been taken away.
             pane.sweep_strategy_orphans();
         }
-        self.poll_script_files();
-        self.maintain_indicator_state();
+        for (owner, name, text) in self.indicators.poll_script_files() {
+            IndicatorState::log_reload(owner, &name);
+            if let Some(tab) = self.tabs.by_id_mut(owner.tab) {
+                tab.pane_mut(owner.side).indicator_worker.send(
+                    crate::indicator_worker::IndicatorCommand::Reload {
+                        slot: owner.slot,
+                        source: crate::indicator_worker::IndicatorSource::Script { name, text },
+                    },
+                );
+            }
+        }
+        self.layout_adapter().apply_pending_indicator_state();
         self.maintain_chart_layers();
         // This tab's judgement about its own feed, taken once for the frame:
         // the status bar reads it here and the corner reads it below, and two

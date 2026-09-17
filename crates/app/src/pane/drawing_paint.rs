@@ -146,6 +146,7 @@ impl ChartPane {
     /// a screenshot proves the projection rather than a number someone made
     /// up. A pane with nothing computed at that slot contributes nothing.
     #[must_use]
+    #[cfg(any(feature = "drawing-harness", test))]
     pub fn indicator_band_samples(&self, slot: usize) -> Vec<(DrawingBand, f64)> {
         self.indicators
             .visible_panes()

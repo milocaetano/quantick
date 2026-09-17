@@ -23,7 +23,7 @@ pub(crate) mod arrangement_host;
 use arrangement_host::ArrangementHost;
 mod chart_layers_wiring;
 mod chrome;
-mod control_host;
+pub(crate) mod control_host;
 #[cfg(test)]
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::control_quick_range_actions;
@@ -34,8 +34,10 @@ pub(crate) mod drawing_controller;
 mod frame;
 mod frame_tail;
 mod health;
+pub(crate) mod indicator_control;
 mod indicator_manager;
 mod indicator_operations;
+mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
@@ -71,7 +73,6 @@ use crate::drawings;
 use crate::feed_notice;
 use crate::harness::{Harness, ScriptedMenu};
 use crate::indicator_worker::SlotId;
-use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
 use crate::indicators::state_file;
 use crate::pane::PaneSide;
@@ -127,10 +128,6 @@ use quantick_feed::{self as feed, FeedCommand, ReplayControl};
 /// Id of the tab the window opens with.
 const FIRST_TAB_ID: u64 = 0;
 
-/// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
-/// objects across. Close to what a default viewport shows, so every object
-/// lands on screen — a demo the camera cannot see proves nothing.
-const DEMO_VISIBLE_SLOTS: usize = 90;
 /// The natives `QUANTICK_INDICATORS_AUTOSTART` opens with: the overlay and
 /// the pane, so a scripted run photographs both shapes. Named by catalog id
 /// rather than "all of them", because the hook's contract is a fixed,
@@ -287,6 +284,21 @@ struct TabSlot {
     slot: SlotId,
 }
 
+/// Constructor-only inputs, consumed at the owners' existing launch phases.
+/// This value is never retained on the app or used as a frame context.
+#[derive(Default)]
+pub(crate) struct AppLaunch {
+    #[cfg(any(feature = "control-harness", test))]
+    pub control: control_host::ControlLaunch,
+    pub window: crate::launch::WindowStartupState,
+    #[cfg(any(feature = "drawing-harness", test))]
+    pub toolrail: crate::toolrail::ToolRailLaunch,
+    #[cfg(feature = "quick-range-harness")]
+    pub quick_range: crate::surfaces::drawing_chrome::QuickRangeLaunch,
+    #[cfg(any(feature = "drawing-harness", test))]
+    pub drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch,
+}
+
 impl QuantickApp {
     pub(crate) fn workspace_bundle_adapter(
         &mut self,
@@ -424,6 +436,7 @@ impl QuantickApp {
             spec,
             feed,
             ui_state::Workspace::default(),
+            AppLaunch::default(),
         )
     }
 
@@ -447,6 +460,7 @@ impl QuantickApp {
         spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
+        launch: AppLaunch,
     ) -> Self {
         let state_path = crate::paper_state::default_path();
         // Read before `config` is moved into the struct below: this seeds the
@@ -531,6 +545,7 @@ impl QuantickApp {
             tabs: ArrangementHost::new(quantick_workspace::arrangement::TabId(FIRST_TAB_ID), tab),
             harness: Harness::from_env(),
             chrome: chrome::ChromeState {
+                window_startup: launch.window,
                 record_deals: None,
                 layout_picker_open: false,
                 layout_rename: None,
@@ -548,29 +563,13 @@ impl QuantickApp {
             config,
             control: control_host::ControlState {
                 control_access: Some(crate::control::ControlAccess::new()),
-                pending_control_access_enable: false,
-                pending_control_annotation: None,
-                pending_control_notification: None,
-                pending_control_evidence: None,
-                pending_control_mark: None,
+                #[cfg(any(feature = "control-harness", test))]
+                scenarios: Default::default(),
             },
-            indicators: indicator_manager::IndicatorState {
-                script_library: ScriptLibrary::scan(),
-                indicator_settings: None,
-                indicator_settings_target: TabSlot {
-                    tab: FIRST_TAB_ID,
-                    side: PaneSide::Flow,
-                    slot: SlotId(0),
-                },
-                script_files: Vec::new(),
-                slot_kinds: Vec::new(),
-                pending_hidden: Vec::new(),
-                pending_styles: Vec::new(),
-                pending_mouse_vertical_lines: Vec::new(),
-                last_script_poll: Instant::now(),
-                operator_slots: std::collections::BTreeSet::new(),
-                indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
-            },
+            indicators: indicator_manager::IndicatorState::new(
+                FIRST_TAB_ID,
+                &indicator_presets_path,
+            ),
             replay_view: ReplayView::new(
                 workspace.replay_folder.as_deref(),
                 workspace.replay_day_before,
@@ -636,10 +635,22 @@ impl QuantickApp {
         // the user's own answer to what a feed declares) and before the
         // autostart hooks, which are explicit requests for this one run.
         app.arrangement_adapter().restore_workspace(workspace);
-        // Every `QUANTICK_*` launch hook, applied to the built window in one
-        // place with one name -- see `launch_hooks`, whose doc comment owns
-        // the order they are read in.
-        app.apply_launch_hooks();
+        // Install staged drawing inputs before applying the remaining legacy
+        // hooks and the captured rail inputs. `launch_hooks` owns their
+        // construction-phase order after workspace restoration.
+        #[cfg(feature = "quick-range-harness")]
+        app.drawings
+            .chrome
+            .quick_range
+            .queue_launch(launch.quick_range);
+        #[cfg(any(feature = "drawing-harness", test))]
+        app.drawings.chrome.queue_launch(launch.drawing_chrome);
+        app.apply_launch_hooks(
+            #[cfg(any(feature = "control-harness", test))]
+            launch.control,
+            #[cfg(any(feature = "drawing-harness", test))]
+            launch.toolrail,
+        );
         if let Some(notice) = crate::store_home::rescue_notice() {
             app.tabs.runtime_mut(0).paper.show_toast(notice);
         }

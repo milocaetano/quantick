@@ -2021,6 +2021,34 @@ fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
     );
 }
 
+#[test]
+fn a_real_pointer_takes_precedence_over_the_scenario_hand() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    arm_drawing_from_toolbox(&mut app, &ctx, "parallel-channel");
+    let release = egui::pos2(800.0, 340.0);
+    drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
+    app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
+        position: release,
+        constrain: drawings::Constrain::Free,
+    });
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
+    let parked = app.active_tab().flow_pane.gestures.hover.unwrap();
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(egui::pos2(880.0, 400.0))],
+    );
+    let real = app.active_tab().flow_pane.gestures.hover.unwrap();
+    assert_ne!(
+        real, parked,
+        "the real hand wins while it is on the drawing surface"
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
+    assert_eq!(app.active_tab().flow_pane.gestures.hover, Some(parked));
+}
+
 /// A tool of two anchors is finished by the release, exactly as it always
 /// was: the shaping port must not have turned every drag into a gesture
 /// that owes a click.
@@ -3209,14 +3237,20 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
     let (mut app, _commands) = app_with_history(500);
     app.workspace
         .set_ui_state_path(scratch_ui_state("demo-inspector"));
-    app.harness.arm_drawings_demo(DrawingsDemo::default());
+    app.drawings
+        .chrome
+        .demos_mut()
+        .arm_drawings_demo(DrawingsDemo::default());
     app.drawings.chrome.set_inspector_open(true);
 
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
 
-    assert!(!app.harness.drawings_demo_armed(), "the demo has run");
+    assert!(
+        !app.drawings.chrome.demos().gallery_requested(),
+        "the demo has run"
+    );
     assert!(
         app.active_tab()
             .drawing_pane()
@@ -3232,7 +3266,7 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
 }
 
 /// The same guarantee reached the way a capture run reaches it: through
-/// the environment variable, not by setting the field first.
+/// captured environment input through the real constructor, not a field set.
 ///
 /// The distinction is the whole test. `QUANTICK_DRAWING_INSPECTOR` used to
 /// be read in the constructor, and when it moved to the surface's own hook
@@ -3245,20 +3279,22 @@ fn the_drawings_demo_keeps_the_panel_the_hook_asked_for() {
 #[test]
 fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     let ctx = egui::Context::default();
-    // `set_var` is process-wide and the suite is threaded, and this one
-    // is a *real* hook name every `QuantickApp::new` in the suite reads —
-    // so unlike `store_home`'s unique-name trick, a lock is the only way
-    // a neighbour cannot see it.
-    static LAUNCH_HOOK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = LAUNCH_HOOK.lock().unwrap_or_else(|held| held.into_inner());
-    // SAFETY: single-threaded section held by the lock above, and the
-    // variable is removed again before it is released.
-    unsafe { std::env::set_var("QUANTICK_DRAWING_INSPECTOR", "1") };
-    let (mut app, _commands) = app_with_history(500);
-    unsafe { std::env::remove_var("QUANTICK_DRAWING_INSPECTOR") };
+    let input = crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| {
+        (name == "QUANTICK_DRAWING_INSPECTOR").then(|| "1".into())
+    });
+    let (mut app, _commands) = app_with_history_and_launch(
+        500,
+        AppLaunch {
+            drawing_chrome: input,
+            ..AppLaunch::default()
+        },
+    );
     app.workspace
         .set_ui_state_path(scratch_ui_state("hook-inspector"));
-    app.harness.arm_drawings_demo(DrawingsDemo::default());
+    app.drawings
+        .chrome
+        .demos_mut()
+        .arm_drawings_demo(DrawingsDemo::default());
 
     assert!(
         app.drawings.chrome.inspector_open(),
@@ -3267,7 +3303,10 @@ fn the_inspector_hook_survives_the_demo_that_runs_before_it() {
     for _ in 0..4 {
         run_frame(&mut app, &ctx);
     }
-    assert!(!app.harness.drawings_demo_armed(), "the demo has run");
+    assert!(
+        !app.drawings.chrome.demos().gallery_requested(),
+        "the demo has run"
+    );
     assert!(
         app.active_tab()
             .drawing_pane()
@@ -4526,7 +4565,8 @@ fn apply_keeps_the_settings_dialog_open_and_lands_the_draft() {
     {
         *len = 21;
     }
-    app.apply_indicator_settings_draft();
+    let change = app.indicators.apply_settings();
+    app.apply_indicator_settings_change(change);
     assert!(
         app.indicators.indicator_settings.is_some(),
         "Apply keeps the dialog open for the next nudge"
