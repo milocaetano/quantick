@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -21,6 +22,61 @@ ROOT = Path(__file__).resolve().parent
 
 
 class ProtocolTests(unittest.TestCase):
+    def workflow_step(self, name):
+        text = (ROOT.parents[1]/'.github/workflows/feed-handoff-performance.yml').read_text()
+        step = text.split('      - name: '+name+'\n', 1)[1].split('      - ', 1)[0]
+        script = step.split('        run: |\n', 1)[1]
+        return '\n'.join(line[10:] for line in script.splitlines())+'\n'
+
+    def bash(self, script, env):
+        binary = shutil.which('bash') if os.name != 'nt' else str(Path(os.environ['ProgramFiles'])/'Git/bin/bash.exe')
+        return subprocess.run([binary, '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', script],
+                              env=env, capture_output=True, text=True)
+
+    def test_actual_first_step_exports_receipt_and_subsequent_step_environment(self):
+        with tempfile.TemporaryDirectory(prefix='quantick f2 env ') as temporary:
+            directory = Path(temporary)
+            environment_file = directory/'github env'
+            # GitHub provides an empty per-step environment file. Its contents
+            # are environment records, not a shell script to source.
+            environment_file.touch()
+            env = {key: value for key, value in os.environ.items() if not key.startswith('F2_')}
+            env.update(RUNNER_TEMP=directory.as_posix(), GITHUB_ENV=environment_file.as_posix(),
+                       CANDIDATE='a'*40, RUN_ID='offline-fixture', RUN_ATTEMPT='1', F2_ATTEMPT_LEASE='offline')
+            python = shlex.quote(Path(sys.executable).as_posix())
+            script = 'python3() { '+python+' "$@"; };\n'+self.workflow_step(
+                'Record attempt identity before any fallible validation')
+            result = self.bash(script, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads((directory/'f2-receipts/attempt.json').read_text())
+            self.assertEqual(receipt['candidate'], 'a'*40)
+            self.assertEqual(receipt['run_id'], 'offline-fixture')
+            self.assertEqual(receipt['attempt'], '1')
+            self.assertEqual(receipt['lease'], 'offline')
+            expected = {name: directory.as_posix()+'/'+suffix for name, suffix in [
+                ('F2_EXPORTS', 'f2-exports'), ('F2_ATTEMPT', 'f2-attempt'), ('F2_RECEIPTS', 'f2-receipts')]}
+            lines = environment_file.read_text().splitlines()
+            self.assertEqual(len(lines), 3)
+            entries = dict(line.split('=', 1) for line in lines)
+            self.assertEqual(entries, expected)
+            subsequent = self.bash('printf \'%s\\n\' "$F2_EXPORTS" "$F2_ATTEMPT" "$F2_RECEIPTS"',
+                                   dict(env, **entries))
+            self.assertEqual(subsequent.returncode, 0, subsequent.stderr)
+            self.assertEqual(subsequent.stdout.splitlines(), list(expected.values()))
+
+    def test_actual_event_admission_and_rerun_refusal(self):
+        text = (ROOT.parents[1]/'.github/workflows/feed-handoff-performance.yml').read_text()
+        self.assertEqual(text.split('on:\n', 1)[1].split('\npermissions:', 1)[0].strip(),
+                         'pull_request:\n    types: [opened, reopened]')
+        script = self.workflow_step('Refuse a rerun before building or sampling')
+        with tempfile.TemporaryDirectory(prefix='quantick-f2-admission-') as temporary:
+            for attempt, expected_exit in [('1', 0), ('2', 1)]:
+                result = self.bash(script, dict(os.environ, F2_RECEIPTS=Path(temporary).as_posix(),
+                                               RUN_ATTEMPT=attempt))
+                self.assertEqual(result.returncode, expected_exit, result.stderr)
+                self.assertEqual((Path(temporary)/'rerun-admission.log').read_text(),
+                                 'run_attempt='+attempt+'\n')
+
     def test_actual_workflow_pipelines_propagate_upstream_failure(self):
         workflow = ROOT.parents[1]/'.github/workflows/feed-handoff-performance.yml'
         text = workflow.read_text()

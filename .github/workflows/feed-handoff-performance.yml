@@ -2,7 +2,7 @@ name: Feed handoff performance
 
 on:
   pull_request:
-    types: [opened]
+    types: [opened, reopened]
 
 permissions:
   contents: read
@@ -22,11 +22,8 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '1'
       PYTHONDONTWRITEBYTECODE: '1'
-      F2_EXPORTS: ${{ runner.temp }}/f2-exports
-      F2_ATTEMPT: ${{ runner.temp }}/f2-attempt
-      F2_RECEIPTS: ${{ runner.temp }}/f2-receipts
-      # Replaced by root's durable one-attempt release before publication.
-      F2_ATTEMPT_LEASE: https://github.com/milocaetano/quantick/issues/495#issuecomment-5709188631
+      # Root authorizes exactly one reopened event for the existing draft.
+      F2_ATTEMPT_LEASE: https://github.com/milocaetano/quantick/issues/495#issuecomment-5709707016
     steps:
       - name: Record attempt identity before any fallible validation
         env:
@@ -34,6 +31,10 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          export F2_EXPORTS="$RUNNER_TEMP/f2-exports"
+          export F2_ATTEMPT="$RUNNER_TEMP/f2-attempt"
+          export F2_RECEIPTS="$RUNNER_TEMP/f2-receipts"
+          printf '%s\n' "F2_EXPORTS=$F2_EXPORTS" "F2_ATTEMPT=$F2_ATTEMPT" "F2_RECEIPTS=$F2_RECEIPTS" >> "$GITHUB_ENV"
           mkdir -p "$F2_RECEIPTS"
           python3 - <<'PY'
           import datetime, json, os
