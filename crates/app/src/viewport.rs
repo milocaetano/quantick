@@ -351,11 +351,7 @@ impl Viewport {
     /// what a slot out there means (see `ChartPane::anchor_time`).
     #[must_use]
     pub fn slot_of(bar: f32) -> Option<usize> {
-        if !bar.is_finite() {
-            return None;
-        }
-        let slot = (bar - 0.5).ceil();
-        (slot >= 0.0).then_some(slot as usize)
+        quantick_chart_interaction::annotation::slot_at_position(bar)
     }
 
     /// The bar under `x` pixels, bounded by a series of `total` bars.

@@ -1173,6 +1173,7 @@ mod tests {
             stale: None,
             error: None,
             hidden: false,
+            mouse_vertical_line: false,
             scale: crate::price_view::PriceView::new(),
             sizing: crate::indicators::PaneSizing::Auto,
             last_auto: None,

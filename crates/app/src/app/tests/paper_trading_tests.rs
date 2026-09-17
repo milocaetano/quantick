@@ -338,7 +338,7 @@ fn a_source_that_fills_neither_half_gets_no_live_strip() {
     let (app, _commands) = app_without_depth();
     let pane = &app.active_tab().flow_pane;
     assert!(
-        pane.live_strip_visible,
+        pane.layers.requested(ChartLayer::LiveStrip),
         "the shipped config switched it on, which is what makes the gate matter"
     );
     assert_eq!(

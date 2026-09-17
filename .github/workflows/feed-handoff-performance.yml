@@ -1,0 +1,92 @@
+name: Feed handoff performance
+
+on:
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  paired:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'fix/feed-handoff-continuity' &&
+      github.base_ref == 'campaign/outside-eight'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      F2_EXPORTS: ${{ runner.temp }}/f2-exports
+      F2_ATTEMPT: ${{ runner.temp }}/f2-attempt
+      F2_RECEIPTS: ${{ runner.temp }}/f2-receipts
+      # Replaced by root's durable one-attempt release before publication.
+      F2_ATTEMPT_LEASE: https://github.com/milocaetano/quantick/issues/495#issuecomment-5709188631
+    steps:
+      - name: Record attempt identity before any fallible validation
+        env:
+          CANDIDATE: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          mkdir -p "$F2_RECEIPTS"
+          python3 - <<'PY'
+          import datetime, json, os
+          from pathlib import Path
+          receipt = {'candidate': os.environ['CANDIDATE'], 'run_id': os.environ['RUN_ID'],
+                     'attempt': os.environ['RUN_ATTEMPT'], 'lease': os.environ['F2_ATTEMPT_LEASE'],
+                     'source_authorization': 'https://github.com/milocaetano/quantick/issues/495#issuecomment-5708816320',
+                     'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+          Path(os.environ['F2_RECEIPTS'], 'attempt.json').write_text(json.dumps(receipt, indent=2)+'\n')
+          PY
+      - name: Refuse a rerun before building or sampling
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          echo "run_attempt=$RUN_ATTEMPT" | tee "$F2_RECEIPTS/rerun-admission.log"
+          test "$RUN_ATTEMPT" = 1
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Install pinned compiler and validate reusable tooling
+        run: |
+          rustc -Vv 2>&1 | tee "$F2_RECEIPTS/rustc.log"
+          cargo -V 2>&1 | tee "$F2_RECEIPTS/cargo.log"
+          python3 -m unittest discover -s tools/feed_handoff_perf -p 'test_*.py' 2>&1 | tee "$F2_RECEIPTS/offline-tests.log"
+      - name: Export immutable sources with separate instrumentation receipts
+        env:
+          CANDIDATE: ${{ github.event.pull_request.head.sha }}
+        run: python3 tools/feed_handoff_perf/prepare.py --repo . --output "$F2_EXPORTS" --candidate-commit "$CANDIDATE" 2>&1 | tee "$F2_RECEIPTS/prepare.log"
+      - name: Build both sides sequentially without executing tests
+        run: python3 tools/feed_handoff_perf/build.py --exports "$F2_EXPORTS" 2>&1 | tee "$F2_RECEIPTS/build.log"
+      - name: Admit host and execute the one fixed paired attempt
+        run: |
+          test "$F2_ATTEMPT_LEASE" != PENDING_ROOT_RELEASE
+          CONTROL=$(python3 -c 'import json,os; print(json.load(open(os.environ["F2_EXPORTS"]+"/build-identity.json"))["control"]["binary"])')
+          CANDIDATE=$(python3 -c 'import json,os; print(json.load(open(os.environ["F2_EXPORTS"]+"/build-identity.json"))["candidate"]["binary"])')
+          python3 tools/feed_handoff_perf/run_pairs.py \
+            --lease "$F2_ATTEMPT_LEASE" \
+            --control "$CONTROL" --candidate "$CANDIDATE" --output "$F2_ATTEMPT" \
+            --source-manifest "$F2_EXPORTS/source-manifest.json" \
+            --build-identity "$F2_EXPORTS/build-identity.json" 2>&1 | tee "$F2_RECEIPTS/paired-driver.log"
+      - name: Preserve successful, invalid and failed evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-handoff-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/f2-receipts/**
+            ${{ runner.temp }}/f2-attempt/**
+            ${{ runner.temp }}/f2-exports/*.json
+            ${{ runner.temp }}/f2-exports/*.jsonl
+            ${{ runner.temp }}/f2-exports/*.log
+            ${{ runner.temp }}/f2-exports/*.patch
+            ${{ runner.temp }}/f2-exports/*-original-source.zip

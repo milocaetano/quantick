@@ -13,9 +13,9 @@
 
 use eframe::egui;
 
-use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::drawings::{self, DrawingBand};
 use crate::theme;
+use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
     lane_window_label, same_lane_window,
@@ -65,7 +65,15 @@ impl ChartPane {
     /// each layer belongs to, so neither menu can offer a switch for the canvas
     /// beside it.
     fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| !layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| !layer.on_tape())
+        {
             let blocked = self.layer_checkbox(ui, layer, chrome);
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
@@ -109,7 +117,15 @@ impl ChartPane {
         // checkbox reads and writes the lane's own field through
         // `layer_visible` / `set_layer_visible`, which is also what puts these
         // three in the layer state file.
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.on_tape())
+        {
             let _ = self.layer_checkbox(ui, layer, chrome);
         }
 
@@ -200,22 +216,11 @@ impl ChartPane {
                 None => self.context_menu.drawing = None,
             }
         }
-        // The trade section rides on top, anchored at the price the
-        // right-click landed on. Gated on *this pane owning the menu*, not
-        // on the pointer: the menu body re-runs every frame, and a popup
-        // opened near a pane's edge extends past it, so a pointer-derived
-        // gate dropped the section the moment the hand travelled onto a row
-        // outside the originating pane — the menu reflowing under the
-        // cursor mid-reach. `PaneContextMenu::price` is per pane and stable for
-        // the menu's whole life, which is exactly the lifetime wanted.
-        if let Some(price) = self.context_menu.price {
-            chrome.paper.context_trade_actions(ui, price);
-            ui.separator();
-        }
         // Tools that place at the bar under the right-click (the anchored
         // VWAP's TradingView gesture) declare their entry on the registry;
         // the click was already resolved per tool, snap rules included, so
-        // the menu only offers what the capture could honestly anchor.
+        // the menu only offers what the capture could honestly anchor. This
+        // frequent chart action leads the general sections below it.
         if !self.context_menu.places.is_empty() {
             let places = std::mem::take(&mut self.context_menu.places);
             for &(tool, point) in &places {
@@ -232,25 +237,32 @@ impl ChartPane {
         }
         #[cfg(test)]
         self.layer_menu_rects.clear();
+        // The long candles inventory stays one submenu away on either pane.
+        // It sits near the top so the right-opening menu also fits in a narrow
+        // window instead of inheriting the trade section's vertical offset.
+        let chart_layers = ui.menu_button("chart layers", |ui| {
+            self.draw_chart_layer_entries(ui, chrome);
+        });
+        self.context_menu.chart_layers_rect = Some(chart_layers.response.rect);
+        chart_layers
+            .response
+            .on_hover_text(if self.context_menu.on_tape {
+                "what the candles beside the tape draw"
+            } else {
+                "what this chart draws"
+            });
+        ui.separator();
+        if let Some(price) = self.context_menu.price {
+            // Stable for the menu's whole life: re-reading the pointer while
+            // it moves over a row would reflow the price-specific actions.
+            chrome.paper.context_trade_actions(ui, price);
+            ui.separator();
+        }
         // The tape is a pane of its own and is configured as one: a right-click
-        // on it answers for it, and the candles' own layers stay one submenu
-        // away rather than disappearing. A click on the candles sees exactly
-        // the menu it always saw.
+        // on it answers for it, keeping the primary menu focused on actions.
         if self.context_menu.on_tape {
             self.draw_tape_menu_section(ui, chrome);
             ui.separator();
-            ui.menu_button("chart layers", |ui| {
-                self.draw_chart_layer_entries(ui, chrome);
-            })
-            .response
-            .on_hover_text("what the candles beside the tape draw");
-        } else {
-            ui.label(
-                egui::RichText::new("chart layers")
-                    .size(11.0)
-                    .color(theme::TEXT_MUTED),
-            );
-            self.draw_chart_layer_entries(ui, chrome);
         }
 
         // Borrowed straight from the view list — no per-frame copy of the

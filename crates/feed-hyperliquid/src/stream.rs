@@ -381,6 +381,187 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn ordered_quiet_cycles_survive_delayed_drain_and_consumer_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let mut socket = accept_subscription(&listener).await;
+                socket
+                    .send(Message::Text(
+                        r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
+                    ))
+                    .await
+                    .unwrap();
+                socket.close(None).await.unwrap();
+            }
+            done_tx.send(()).unwrap();
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let source = tokio::spawn(async move {
+            run_trade_events_with_reconnect(
+                &url,
+                "BTC",
+                &tx,
+                TradeMapper::new("BTC"),
+                Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
+            )
+            .await;
+        });
+        tokio::time::timeout(Duration::from_secs(3), done_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        // This delayed drain is the same observation schedule as the legacy
+        // baseline reproduction: two whole quiet cycles are already over.
+        for _ in 0..3 {
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(3), rx.recv())
+                    .await
+                    .unwrap(),
+                Some(TradeStreamEvent::Connected)
+            ));
+            assert!(matches!(
+                tokio::time::timeout(Duration::from_secs(3), rx.recv())
+                    .await
+                    .unwrap(),
+                Some(TradeStreamEvent::Disconnected)
+            ));
+        }
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(3), source)
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ordered_source_stops_when_consumer_closes_with_undrained_batches() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut socket = accept_subscription(&listener).await;
+            socket
+                .send(Message::Text(
+                    r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            socket
+                .send(Message::Text(r#"{"channel":"trades","data":[]}"#.into()))
+                .await
+                .unwrap();
+            sent_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let source = tokio::spawn(async move {
+            run_trade_events_with_reconnect(
+                &url,
+                "BTC",
+                &tx,
+                TradeMapper::new("BTC"),
+                Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
+            )
+            .await;
+        });
+        tokio::time::timeout(Duration::from_secs(3), sent_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        // The receiver deliberately does not drain either frame. Closure
+        // stops the real source regardless of its current scheduling point.
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(3), source)
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn ordered_batch_send_pending_on_full_channel_observes_consumer_close() {
+        use std::future::Future as _;
+        use std::task::Poll;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.send(TradeStreamEvent::Connected).await.unwrap();
+        let output = SessionOutput::Ordered(&tx);
+        let send = output.publish_batch(MappedBatch::default());
+        tokio::pin!(send);
+        // Poll the real send to Pending before closing the receiver. Unlike
+        // a socket-write barrier, this proves the backpressure branch ran.
+        std::future::poll_fn(|cx| {
+            assert!(matches!(send.as_mut().poll(cx), Poll::Pending));
+            Poll::Ready(())
+        })
+        .await;
+        drop(rx);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), send)
+                .await
+                .unwrap(),
+            Err(TradeSessionError::ConsumerClosed)
+        );
+    }
+
+    #[tokio::test]
+    async fn unacknowledged_failure_has_no_edge_and_all_rejected_batch_is_retained() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut socket = accept_subscription(&listener).await;
+            socket.send(Message::Text("not-json".into())).await.unwrap();
+            drop(socket);
+            let mut socket = accept_subscription(&listener).await;
+            socket
+                .send(Message::Text(
+                    r#"{"channel":"subscriptionResponse","data":{}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            socket.send(Message::Text(r#"{"channel":"trades","data":[{"coin":"BTC","side":"X","px":"1","sz":"1","time":100,"tid":1}]}"#.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let source = tokio::spawn(async move {
+            run_trade_events_with_reconnect(
+                &url,
+                "BTC",
+                &tx,
+                TradeMapper::new("BTC"),
+                Backoff::new(Duration::from_millis(1), Duration::from_millis(1), 7),
+            )
+            .await;
+        });
+        let events = tokio::time::timeout(Duration::from_secs(3), async {
+            [
+                rx.recv().await.unwrap(),
+                rx.recv().await.unwrap(),
+                rx.recv().await.unwrap(),
+            ]
+        })
+        .await
+        .unwrap();
+        assert!(matches!(events[0], TradeStreamEvent::Connected));
+        assert!(
+            matches!(&events[1], TradeStreamEvent::Batch(batch) if batch.trades.is_empty() && batch.errors.len() == 1 && batch.stale == 0 && batch.duplicates == 0)
+        );
+        assert!(matches!(events[2], TradeStreamEvent::Disconnected));
+        assert!(rx.try_recv().is_err());
+        drop(rx);
+        tokio::time::timeout(Duration::from_secs(3), source)
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+    }
     use tokio::sync::{Notify, watch};
 
     async fn wait_for_status(status: &mut watch::Receiver<bool>, expected: bool) {

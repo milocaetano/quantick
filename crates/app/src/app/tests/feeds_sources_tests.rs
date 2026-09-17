@@ -2,6 +2,74 @@ use super::*;
 use quantick_feed::history_reach;
 
 #[test]
+fn real_transport_host_events_reach_normal_app_integrity_and_observer_snapshots() {
+    use quantick_feed::test_support::{BackfillFixture, binance_events, hyperliquid_events};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let count = quantick_feed::MAX_REMEMBERED_GAPS + 1;
+    let live: Vec<_> = (0..count)
+        .map(|index| (14 + index as u64 * 4, 100))
+        .collect();
+    let binance = runtime.block_on(binance_events(BackfillFixture::Seed, &live, 1 + 2 * count));
+    let hyperliquid = runtime.block_on(hyperliquid_events());
+
+    for (host_events, trades, known, unknown, non_monotonic, gaps, anomalies) in [
+        (
+            binance,
+            count + 1,
+            count * 3,
+            0,
+            0,
+            quantick_feed::MAX_REMEMBERED_GAPS,
+            count,
+        ),
+        (hyperliquid, 1, 2, 3, 1, 0, 5),
+    ] {
+        let (mut app, _notices, (events, _book)) = test_app_with_notices();
+        for event in host_events {
+            // This is the unmodified value received from the actual host,
+            // not a diagnostic reconstructed from this test's expectations.
+            events.blocking_send(event).unwrap();
+            app.active_tab_mut().drain_feed();
+        }
+        let tab = app.active_tab();
+        assert_eq!(tab.flow_pane.state.trades().len(), trades);
+        assert_eq!(tab.feed_gaps.len(), gaps);
+        assert!(
+            tab.feed_gaps
+                .iter()
+                .all(|gap| gap.from_ms == 100 && gap.to_ms == 100)
+        );
+        assert_eq!(tab.feed_integrity.anomalies, anomalies as u64);
+        assert_eq!(tab.feed_integrity.missing_messages, known as u64);
+        assert_eq!(tab.feed_integrity.unknown_loss, unknown as u64);
+        assert_eq!(tab.feed_integrity.non_monotonic, non_monotonic as u64);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("health.summary"),
+            observer_scope("feed.status"),
+        ];
+        let snapshot = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let health = &snapshot.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
+        assert_eq!(health["anomalies"], anomalies.to_string());
+        assert_eq!(health["missing_messages"], known.to_string());
+        assert_eq!(health["unknown_loss"], unknown.to_string());
+        assert_eq!(health["non_monotonic"], non_monotonic.to_string());
+        assert_eq!(
+            snapshot.scopes[&scopes[1]].value["tabs"][0]["feed_integrity"],
+            *health
+        );
+    }
+}
+
+#[test]
 fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades() {
     let (mut app, _notices, (events, _book)) = test_app_with_notices();
     let mut registry = crate::control::standard_registry().unwrap();

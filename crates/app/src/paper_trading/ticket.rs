@@ -118,11 +118,10 @@ impl PaperTrading {
     // Chart layer
     // ------------------------------------------------------------------
 
-    /// The chart context menu's trade section, anchored at the clicked
-    /// price: market both ways, then the resting types that are valid on
-    /// that side of the market. The invalid ones stay visible but
-    /// disabled, wearing the sim core's own rejection text — the same
-    /// curriculum the toasts teach.
+    /// The chart context menu's resting-order section, anchored at the
+    /// clicked price. Invalid types stay visible but disabled, wearing the
+    /// sim core's own rejection text — the same curriculum the toasts teach.
+    /// Market entry remains in the trading ticket and its hotkeys.
     pub fn context_trade_actions(&mut self, ui: &mut egui::Ui, raw_price: f64) {
         ui.label(
             egui::RichText::new("trade")
@@ -140,17 +139,6 @@ impl PaperTrading {
         let quantity = self
             .quantity_preview()
             .map_or_else(|| "?".to_owned(), fmt_decimal);
-        for side in [Side::Buy, Side::Sell] {
-            if ui
-                .button(format!("{} {quantity} market", side_word_upper(side)))
-                .on_hover_text("fills at the next print, with the ticket's offsets")
-                .clicked()
-            {
-                self.market(side);
-                ui.close_menu();
-            }
-        }
-        ui.separator();
         let price = self.account.snap(raw_price);
         let entries = [
             (Side::Buy, EntryKind::Limit, price < mark),

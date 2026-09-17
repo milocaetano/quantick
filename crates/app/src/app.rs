@@ -21,7 +21,9 @@ use crate::canvas_layout::PaneIdAllocator;
 mod chart_layers_wiring;
 mod chrome;
 mod control_host;
+#[cfg(test)]
 pub(crate) use control_host::control_quick_range;
+pub(crate) use control_host::control_quick_range_actions;
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 mod drawing_chrome_wiring;
@@ -32,6 +34,7 @@ mod indicator_manager;
 mod indicator_operations;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
+pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod menu_bar;
 mod paper_wiring;
 mod replay_and_history;
@@ -66,6 +69,7 @@ use crate::indicators::preset_file;
 use crate::indicators::state_file;
 use crate::pane::PaneSide;
 use crate::replay_view::ReplayView;
+#[cfg(test)]
 use crate::state::BarSpec;
 use crate::style::ChartStyle;
 use crate::symbols_file::{self, AddedSymbols};
@@ -234,9 +238,6 @@ pub struct QuantickApp {
     // Custom drawing presets (named payload exports + default-for-new),
     // persisted across restarts in a versioned file.
     drawing_presets: drawings::presets::PresetStore,
-    /// Where a pane's layer menu leaves the grid switch and the "an indicator
-    /// was hidden" flag; drained right after the canvas is drawn.
-    layer_actions: chart_layers::LayerActions,
     /// The footprint layer's signal tunables — resolved at boot (env >
     /// `config/footprint.toml` preset > saved edits > defaults), edited live
     /// by the layer menu's controls.
@@ -300,7 +301,7 @@ impl QuantickApp {
         config: AppConfig,
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
-        spec: BarSpec,
+        spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
     ) -> Self {
         Self::new_with_workspace(
@@ -330,7 +331,7 @@ impl QuantickApp {
         config: AppConfig,
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
-        spec: BarSpec,
+        spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
     ) -> Self {
@@ -455,6 +456,7 @@ impl QuantickApp {
                 slot_kinds: Vec::new(),
                 pending_hidden: Vec::new(),
                 pending_styles: Vec::new(),
+                pending_mouse_vertical_lines: Vec::new(),
                 last_script_poll: Instant::now(),
                 operator_slots: std::collections::BTreeSet::new(),
                 indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
@@ -469,7 +471,6 @@ impl QuantickApp {
             drawing_presets: drawings::presets::PresetStore::load_from(
                 drawings::presets::PresetStore::default_path(),
             ),
-            layer_actions: chart_layers::LayerActions::default(),
             footprint_config: crate::footprint_config::load(&footprint_settings_path),
             audio: replay_and_history::AlertState {
                 alerts: Box::new(crate::audio::Speaker::default()),
@@ -583,15 +584,11 @@ impl eframe::App for QuantickApp {
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Second frame: the button comes up where it went down, and the menu
-        // that opened on the press stays open.
-        if let Some(position) = self.harness.take_context_menu_release() {
-            raw_input.events.push(egui::Event::PointerButton {
-                pos: position,
-                button: egui::PointerButton::Secondary,
-                pressed: false,
-                modifiers: egui::Modifiers::default(),
-            });
+        let chart_layers = self.active_tab().flow_pane.chart_layers_menu_center();
+        if self
+            .harness
+            .push_context_menu_followup(raw_input, chart_layers)
+        {
             return;
         }
         // The menu bar's own button, clicked. A menu is a popup egui owns, so

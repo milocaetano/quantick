@@ -8,16 +8,20 @@
       "description": "Counts source messages, never estimates how many executed trades were lost.",
       "properties": {
         "anomalies": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "Diagnostic events, independent of the number of rejected source rows."
         },
         "missing_messages": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "Known source messages absent from the usable tape: sequence gaps or\nindividually rejected rows. Never an estimate of lost executions."
         },
         "non_monotonic": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "Repeated/backwards ID or stale-row diagnostic categories, not row count."
         },
         "unknown_loss": {
-          "$ref": "#/$defs/WireU64"
+          "$ref": "#/$defs/WireU64",
+          "description": "Interruptions whose missing-message count is unknown, never known zero."
         }
       },
       "required": [

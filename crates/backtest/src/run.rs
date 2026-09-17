@@ -19,8 +19,9 @@ use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
 use rust_decimal::Decimal;
 
-use crate::bars::BarSpec;
 use crate::strategy::{Account, BarView, Signals, Strategy};
+use quantick_engine::bar_registry::BarConfiguration;
+use quantick_engine::bar_selection::BarInputAvailability;
 
 /// Everything the tape refused, counted rather than swallowed.
 ///
@@ -193,9 +194,16 @@ pub struct SessionRun {
 /// On a deal-count (`trades:N`) spec: a recorded session carries no deal
 /// counter to cut it on. [`crate::bars::parse_runnable`] refuses that spec
 /// with a typed error before any run, so reaching this is a caller's bug.
-pub fn run_session(session: &Session, spec: BarSpec, strategy: &mut dyn Strategy) -> SessionRun {
+pub fn run_session(
+    session: &Session,
+    spec: impl Into<BarConfiguration>,
+    strategy: &mut dyn Strategy,
+) -> SessionRun {
+    let spec = spec.into();
     assert!(
-        !spec.kind().needs_deal_counter(),
+        BarInputAvailability::PRINTS
+            .refusal(spec.requirements())
+            .is_none(),
         "{} needs the venue's deal counter, which a recorded session does not carry; \
          bars::parse_runnable refuses it before a run",
         spec.to_config_string()
@@ -311,7 +319,7 @@ pub struct RunOutcome {
     /// The strategy that produced it.
     pub strategy: String,
     /// The bar rule it ran on.
-    pub spec: BarSpec,
+    pub spec: BarConfiguration,
     /// Per-session results, in the order the sessions were run.
     pub sessions: Vec<SessionRun>,
     /// Metrics over every round trip of every session, concatenated in
@@ -328,7 +336,12 @@ impl RunOutcome {
     /// Fold finished sessions into a run. Sessions keep the order they were
     /// run in, which the library scan already fixed as (symbol, date, path).
     #[must_use]
-    pub fn from_sessions(strategy: &str, spec: BarSpec, sessions: Vec<SessionRun>) -> Self {
+    pub fn from_sessions(
+        strategy: &str,
+        spec: impl Into<BarConfiguration>,
+        sessions: Vec<SessionRun>,
+    ) -> Self {
+        let spec = spec.into();
         let mut all_trades = Vec::new();
         let mut anomalies = Anomalies::default();
         let mut distribution = Distribution {

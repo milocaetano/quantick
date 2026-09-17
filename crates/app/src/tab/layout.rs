@@ -4,7 +4,6 @@
 
 use super::{CanvasLayout, LegendFold, Tab};
 use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
-use crate::chart_layers::ChartLayer;
 use crate::config::AppConfig;
 use crate::loading::LoadingTask;
 use crate::pane::{ChartPane, PaneIndex, PaneSide, clamp_pane_fraction};
@@ -126,26 +125,9 @@ impl Tab {
         // an upside-down market does not turn back over by being given a
         // second view, and the boot's QUANTICK_INVERTED hook fires before
         // this pane exists at all.
-        // Copying the *switches* rather than a list of field names: an earlier
-        // version cloned `hidden_layers` alone, which left the footprint
-        // behind — a per-pane field of its own — so the split opened with the
-        // ladder on in the flow pane and off in the time pane, contradicting
-        // the paragraph above and darkening the toolbar's footprint lamp the
-        // moment the trader clicked into the left chart. `apply_layer_states`
-        // drops whatever this pane does not draw, which is the whole of what
-        // §11 asks for, and it covers `hidden_layers` in passing.
-        //
-        // Every layer but one. `Drawings` resolves to `DrawingStore`, whose
-        // setter records an undo entry — right for a click, wrong for a pane
-        // being born: seeded through it, a time pane holding zero objects
-        // opens with a non-empty history, and the trader's first Ctrl+Z there
-        // un-hides drawings rather than doing nothing. It is seeded through
-        // the store's own opening setter instead.
-        let mut states = self.flow_pane.layer_states(style);
-        states.remove(&ChartLayer::Drawings);
-        pane.apply_layer_states(&states);
-        pane.drawings
-            .open_all_hidden(self.flow_pane.drawings.all_hidden());
+        // Headless policy selects inheritable switches and marks their effects
+        // as opening state, so feature owners do not create user undo entries.
+        pane.inherit_layer_states(&self.flow_pane.layer_states(style));
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_panes.push(pane);
@@ -300,7 +282,7 @@ impl Tab {
         }
         let rebuilding = self
             .panes()
-            .any(|(pane, _side)| pane.spec.pending.is_some());
+            .any(|(pane, _side)| pane.spec.pending().is_some());
         self.loading.set_active(LoadingTask::BarRebuild, rebuilding);
     }
 
@@ -319,29 +301,17 @@ impl Tab {
     /// the focused pane and the time pane's own header governs the time pane
     /// (§11), so a change to one pane must not rebuild the chart beside it.
     fn apply_spec_change_at(&mut self, index: PaneIndex) {
-        let Some(desired) = self.pane_at(index).map(ChartPane::current_spec) else {
-            return;
-        };
         let Some(pane) = self.pane_at_mut(index) else {
             return;
         };
-        if desired == *pane.state.spec() {
-            // Selection and chart agree — nothing is pending any more (a feed
-            // switch or reset may have rebuilt the state under a pending spec).
-            pane.spec.pending = None;
-            return;
-        }
-        match pane.spec.pending.take() {
-            // The frame that changed the selector: arm the indicator, paint.
-            None => pane.spec.pending = Some(desired),
-            // Still moving: wait for the selector to settle for a frame.
-            Some(pending) if pending != desired => pane.spec.pending = Some(desired),
-            // Settled since last frame: do the rebuild.
-            Some(_) => self.recut_pane_with(
+        if let quantick_engine::bar_selection::SelectionEffect::Rebuild(desired) =
+            pane.spec.settle(*pane.state.spec())
+        {
+            self.recut_pane_with(
                 index,
                 quantick_strategy::DisarmReason::BarSpecChanged,
                 |pane| pane.set_spec(desired),
-            ),
+            );
         }
     }
 

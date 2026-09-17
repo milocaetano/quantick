@@ -106,7 +106,7 @@ pub(crate) struct FeedTabSnapshot {
     /// Cumulative source diagnostics, including losses with no market-time
     /// bounds and exact malformed/stale exclusions. Optional for v1 readers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feed_integrity: Option<super::health::FeedIntegritySnapshot>,
+    pub feed_integrity: Option<quantick_control::feed::FeedIntegritySnapshot>,
     /// The deal recorder, where the feed carries a deal counter; absent on
     /// a feed without one. The same view the REC control draws.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -302,9 +302,7 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
                             duration_ms: gap.duration_ms(),
                         })
                         .collect(),
-                    feed_integrity: super::health::FeedIntegritySnapshot::from_integrity(
-                        tab.feed_integrity,
-                    ),
+                    feed_integrity: super::health::integrity_snapshot(tab.feed_integrity),
                     deal_recording: tab
                         .deal_recording_view()
                         .as_ref()

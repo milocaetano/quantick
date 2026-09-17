@@ -16,7 +16,6 @@ use eframe::egui;
 use crate::drawings;
 use crate::indicator_worker::{IndicatorCommand, SlotId};
 use crate::indicators::preset_file;
-use crate::state::BarSpec;
 use crate::symbols_file;
 use crate::tab::{CanvasLayout, LegendFold};
 use crate::timezone::TzOffset;
@@ -495,6 +494,7 @@ impl QuantickApp {
         self.indicators.script_files.clear();
         self.indicators.pending_hidden.clear();
         self.indicators.pending_styles.clear();
+        self.indicators.pending_mouse_vertical_lines.clear();
         self.mark_indicator_state_dirty();
     }
 
@@ -859,7 +859,9 @@ impl QuantickApp {
             self.open_tab(
                 saved.feed.clone(),
                 saved.symbol.clone(),
-                BarSpec::parse(&saved.flow_bars).ok(),
+                quantick_engine::bar_registry::BUILTIN_BARS
+                    .parse(&saved.flow_bars)
+                    .ok(),
             );
             let context_intervals =
                 saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());

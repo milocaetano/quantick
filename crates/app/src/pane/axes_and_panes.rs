@@ -10,12 +10,12 @@
 
 use eframe::egui;
 
-use crate::chart_layers::ChartLayer;
 use crate::indicator_render;
 use crate::indicator_worker::SlotId;
 use crate::indicators::{MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::plot_area::{PlotAreas, split_time_strip};
 use crate::price_view::PriceView;
+use quantick_layers::ChartLayer;
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
 
@@ -111,7 +111,7 @@ fn pane_pan_gesture(
     view: &mut PriceView,
     auto: Option<(f64, f64)>,
     primary_free: bool,
-) -> PaneGesture {
+) -> (PaneGesture, egui::Response) {
     let response = ui.interact(body, id, egui::Sense::click_and_drag());
     if response.double_clicked() && primary_free {
         view.reset();
@@ -121,7 +121,7 @@ fn pane_pan_gesture(
         if response.hovered() {
             gesture.scroll_y = ui.input(|input| input.raw_scroll_delta.y);
         }
-        return gesture;
+        return (gesture, response);
     }
     if response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -148,7 +148,7 @@ fn pane_pan_gesture(
     if response.hovered() {
         gesture.scroll_y = ui.input(|input| input.raw_scroll_delta.y);
     }
-    gesture
+    (gesture, response)
 }
 
 /// What a drag or scroll over a pane body owes the *chart* — the pane's own
@@ -409,6 +409,7 @@ impl ChartPane {
         // Collected here and parked on the pane below: the loop holds a mutable
         // borrow of `self.indicators`, and the dialog belongs to the app.
         let mut settings_request: Option<SlotId> = None;
+        let mut guide_request: Option<(SlotId, bool)> = None;
         // Which pane, if any, was opened by a click on its own collapsed strip
         // on the last frame that had one — and what this frame decides to hand
         // to the next. See the disclosure block below.
@@ -433,7 +434,7 @@ impl ChartPane {
                 // the gutter so the two never fight over the same pixel: the
                 // gutter is a band beside the pane, and egui gives an overlap
                 // to the later claim.
-                let gesture = pane_pan_gesture(
+                let (gesture, response) = pane_pan_gesture(
                     ui,
                     egui::Id::new(("pane_pan", pane_id, view.slot)),
                     body.rect,
@@ -443,6 +444,11 @@ impl ChartPane {
                 );
                 pane_time_gesture.pan_x += gesture.pan_x;
                 pane_time_gesture.scroll_y += gesture.scroll_y;
+                if let Some(enabled) =
+                    crate::indicator_guide::menu(&response, view.mouse_vertical_line)
+                {
+                    guide_request = Some((view.slot, enabled));
+                }
             }
             // The disclosure, in both directions: a control that only opens is
             // half a control, so the square that brings a pane back is what
@@ -511,6 +517,9 @@ impl ChartPane {
         self.strip_expanded = opened_from_strip;
         if let Some(slot) = settings_request {
             self.pending_settings = Some(slot);
+        }
+        if let Some(request) = guide_request {
+            self.pending_indicator_guide = Some(request);
         }
         // Time, once, whichever pane the pointer was over: the panes share the
         // candles' x axis, so a sideways drag or a scroll there has to move the

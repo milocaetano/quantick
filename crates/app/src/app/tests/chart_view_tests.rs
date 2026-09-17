@@ -49,6 +49,29 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     );
 }
 
+/// The expanded chart-layer state is reachable from a fresh scripted run: the
+/// hook opens the chart menu and clicks the submenu's own painted button.
+#[test]
+fn the_context_menu_hook_expands_chart_layers_without_a_mouse() {
+    let (mut app, _commands) = app_with_history(40);
+    let ctx = egui::Context::default();
+    app.harness
+        .arm_context_menu(crate::harness::ContextMenuPane::Chart, true);
+    run_frame(&mut app, &ctx);
+
+    for _ in 0..5 {
+        let mut raw = egui::RawInput::default();
+        eframe::App::raw_input_hook(&mut app, &ctx, &mut raw);
+        run_frame_with_events(&mut app, &ctx, raw.events);
+    }
+
+    assert_eq!(
+        app.active_tab().flow_pane.layer_menu_rects.len(),
+        chart_menu_entries(),
+        "the scripted run expanded the real submenu and painted every chart-layer switch"
+    );
+}
+
 #[test]
 fn the_lane_axis_reads_its_window_in_a_human_unit() {
     use quantick_orderflow::format_window_ms;
@@ -684,7 +707,7 @@ fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
         &crate::state::BarSpec::Tick(377),
         "the selector moved with the rule"
     );
-    assert_eq!(pane.spec.kind, crate::state::BarKind::Tick);
+    assert_eq!(pane.spec.selected_id(), "tick");
 }
 
 /// The interval a reply carries is tagged rather than assumed. A base this

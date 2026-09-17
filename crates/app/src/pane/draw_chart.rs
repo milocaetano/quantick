@@ -15,15 +15,15 @@ use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::chart;
-use crate::chart_layers::ChartLayer;
 use crate::indicator_render::{self, PlotX};
 use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
 use crate::plot_area::split_time_strip;
 use crate::theme;
+use quantick_layers::ChartLayer;
 use quantick_orderflow::reserved_span_ms;
 
 use super::draw_frame::{AxisChips, DrawFrame};
-use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
+use super::render_registry::*;
 use super::{
     ChartPane, DrawPass, PaneChrome, PriceAxisClaims, background_color, grid_color, lane_rungs,
 };
@@ -40,7 +40,9 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
+        let renderers = self.layer_renderers;
         self.paper_hud_anchor = None;
+        self.frame.flow_legend = None;
         // Published before anything can return early, so an empty pane still
         // says where it is.
         self.frame.area = Some(area);
@@ -125,6 +127,10 @@ impl ChartPane {
         self.frame.time_strip =
             Some(split_time_strip(areas.time_strip, self.frame.lane_divider_x).0);
         let pane_rects = areas.indicator_panes.clone();
+        let indicator_guide_x = self
+            .hover_pos
+            .filter(|position| chart_rect.contains(*position))
+            .map(|position| position.x);
         if total == 0 {
             painter.text(
                 area.center(),
@@ -134,9 +140,14 @@ impl ChartPane {
                 theme::TEXT_MUTED,
             );
             if let Some(orderflow) = self.orderflow.as_ref() {
-                orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
+                self.layer_renderers
+                    .status(&mut super::render_registry::StatusPass {
+                        owner: orderflow,
+                        painter,
+                        rect: chart_rect,
+                    });
             }
-            self.draw_tape_switch(painter, chart_rect);
+            self.draw_canvas_contributions(painter, chart_rect, chrome.capabilities);
             return;
         }
 
@@ -334,16 +345,17 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
         {
-            orderflow.draw_background(
+            renderers.heatmap(&mut FlowPass {
+                owner: orderflow,
                 painter,
-                chart_rect,
-                &self.viewport,
+                rect: chart_rect,
+                viewport: &self.viewport,
                 total,
-                frame,
-                canvas_background,
-                lane_width_px,
-                self.price_view.is_inverted(),
-            );
+                projection: frame,
+                background: canvas_background,
+                lane_width: lane_width_px,
+                inverted: self.price_view.is_inverted(),
+            });
         }
 
         // Bring the range-profile drawings' folds up to date before anything
@@ -428,16 +440,28 @@ impl ChartPane {
         let clip = painter.with_clip_rect(history_rect);
         let viewport = &self.viewport;
         let mut carved = std::mem::take(&mut self.frame.bands);
-        self.paint_candles(
-            &frame,
-            &clip,
-            &mut carved,
-            orderflow_frame.as_ref(),
+        let mut candle_pass = CandlePass {
+            frame: &frame,
+            painter: &clip,
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+            clear_depth: orderflow_frame.is_some()
+                && self
+                    .orderflow
+                    .as_ref()
+                    .is_some_and(OrderflowView::depth_visible),
             half,
             candle_lane,
             content_half,
-            candles,
-        );
+            style: candles,
+        };
+        renderers.candle_clear(&mut candle_pass);
+        // Only price-band background drawings may precede candle/indicator scales.
+        self.carve_bands(&areas, &mut carved);
+        if let Some(price_band) = carved.first() {
+            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
+        }
+        renderers.candles(&mut candle_pass);
         // The footprint rides directly on the candles, before everything
         // drawn over them: it is a representation of the bars themselves,
         // not an annotation. Prefix (venue) candles carry no tape and draw
@@ -479,7 +503,10 @@ impl ChartPane {
                 // `self.footprint.lod` mutably. Same resolution rule.
                 config: self.footprint.config.as_ref().unwrap_or(chrome.footprint),
             };
-            crate::footprint_render::draw_layer(&frame, &mut self.footprint.lod);
+            renderers.footprint(&mut FootprintPass {
+                frame: &frame,
+                lod: &mut self.footprint.lod,
+            });
         }
         // Overlay indicator plots ride the candles' own clip, scale and
         // x-mapping — after candles, before aggression bubbles (the same
@@ -489,7 +516,12 @@ impl ChartPane {
             right,
             total,
         };
-        self.paint_overlays(&frame, &clip, &plot_x);
+        renderers.overlay(&mut OverlayPass {
+            frame: &frame,
+            painter: &clip,
+            plot_x: &plot_x,
+            indicators: &self.indicators,
+        });
         // Pane indicators stack in the band carved off above, sharing the
         // candles' x-mapping so bars and their flow read as one chart. Each
         // pane records the range it auto-fitted to, so the gesture over its
@@ -530,8 +562,6 @@ impl ChartPane {
             .zip(&pane_rects)
             .zip(&areas.pane_gutters)
         {
-            let auto = indicator_render::pane_auto_range(view, start, end);
-            view.last_auto = auto;
             let frame = indicator_render::PaneFrame {
                 rect: egui::Rect::from_min_max(
                     egui::pos2(history_rect.left(), pane.rect.top()),
@@ -551,33 +581,36 @@ impl ChartPane {
                 grid,
                 collapsed: pane.collapsed,
             };
-            indicator_render::draw_pane(
+            renderers.indicator_pane(&mut IndicatorPanePass {
                 painter,
-                &frame,
+                frame: &frame,
                 view,
-                &plot_x,
-                auto.map(|auto| view.scale.resolve(auto)),
+                plot_x: &plot_x,
                 start,
                 end,
-                // The slot of the forming bar counts the venue prefix too: a
-                // pane's partial marker has to land on the same slot the
-                // candles' does, and this pane's series starts at the prefix.
-                partial_visible.map(|_| closed_total),
-            );
+                partial_slot: partial_visible.map(|_| closed_total),
+            });
+            if view.mouse_vertical_line
+                && !pane.collapsed
+                && let Some(x) = indicator_guide_x
+            {
+                crate::indicator_guide::paint(painter, frame.rect, x);
+            }
         }
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
         {
-            orderflow.draw_aggressions(
+            renderers.aggressions(&mut FlowPass {
+                owner: orderflow,
                 painter,
-                chart_rect,
-                &self.viewport,
+                rect: chart_rect,
+                viewport: &self.viewport,
                 total,
-                frame,
-                canvas_background,
-                lane_width_px,
-                self.price_view.is_inverted(),
-            );
+                projection: frame,
+                background: canvas_background,
+                lane_width: lane_width_px,
+                inverted: self.price_view.is_inverted(),
+            });
         }
 
         // The canvas's key, in a pass of its own so the bubble switch cannot
@@ -601,16 +634,18 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(frame) = &orderflow_frame
         {
-            orderflow.draw_legend(
+            renderers.legend(&mut LegendPass {
+                owner: orderflow,
                 painter,
-                chart_rect,
-                &self.viewport,
+                rect: chart_rect,
+                viewport: &self.viewport,
                 total,
-                frame,
-                canvas_background,
-                lane_width_px,
+                projection: frame,
+                background: canvas_background,
+                lane_width: lane_width_px,
                 legend_inset,
-            );
+                bounds: &mut self.frame.flow_legend,
+            });
         }
 
         // The live strip: the book right now plus the forming bar's
@@ -621,13 +656,14 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut()
             && let Some(strip) = areas.live_strip
         {
-            orderflow.draw_live_strip(
+            renderers.strip(&mut StripPass {
+                owner: orderflow,
                 painter,
-                strip,
-                &scale,
-                canvas_background,
-                partial.map(|bar| bar.open_time),
-            );
+                rect: strip,
+                scale: &scale,
+                background: canvas_background,
+                partial_time: partial.map(|bar| bar.open_time),
+            });
         }
 
         // Drawings sit above market layers and remain anchored to chart space,
@@ -694,27 +730,19 @@ impl ChartPane {
             // the paper input; the others keep display-only tags. Every pane
             // still paints the lines themselves — an order is a fact about
             // the account, true on whichever chart you are looking at.
-            let paper_pointer = if chrome.paper_takes_input {
-                self.hover_pos.or_else(|| {
-                    chrome
-                        .paper
-                        .forced_hover_pointer(chart_rect, tag_right, &scale)
-                })
-            } else {
-                None
-            };
-            chrome.paper.draw_layer(
+            renderers.paper(&mut PaperPass {
+                paper: chrome.paper,
                 painter,
-                chart_rect,
+                rect: chart_rect,
                 tag_right,
                 axis_x,
-                &scale,
+                scale,
                 reserved_chip_y,
-                paper_pointer,
-            );
-            if chrome.paper_hud_here {
-                self.paper_hud_anchor = Some((chart_rect, scale));
-            }
+                pointer: self.hover_pos,
+                takes_input: chrome.paper_takes_input,
+                hud_here: chrome.paper_hud_here,
+                hud_anchor: &mut self.paper_hud_anchor,
+            });
         }
 
         self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);

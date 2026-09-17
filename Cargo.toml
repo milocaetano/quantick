@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/chart-interaction",
     "crates/control",
     "crates/control-local",
     "crates/control-host",
@@ -14,6 +15,7 @@ members = [
     "crates/sim",
     "crates/paper",
     "crates/civil",
+    "crates/layers",
     "crates/trading",
     "crates/strategy",
     "crates/feed",

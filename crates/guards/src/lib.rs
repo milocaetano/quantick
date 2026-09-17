@@ -10,8 +10,9 @@
 //! says ([`generated`]), instruction links resolve ([`instruction_links`]),
 //! a test's temporary directory is minted by its
 //! crate's scratch module rather than spelled by hand ([`scratch`]), the
-//! crate graph runs one way ([`graph`]), and everything below `app` stays
-//! headless ([`headless`]).
+//! crate graph runs one way ([`graph`]), everything below `app` stays
+//! headless ([`headless`]), and execution evidence stays out of Git
+//! ([`evidence`]).
 //!
 //! Each is a rule `CLAUDE.md` states and each fails invisibly — fmt, clippy,
 //! build and the whole suite stay green while it is broken. Counting them
@@ -49,6 +50,7 @@ pub mod blast_radius;
 pub mod context;
 pub mod cycle;
 pub mod encoding;
+pub mod evidence;
 pub mod extension_boundary;
 pub mod generated;
 pub mod graph;
@@ -239,6 +241,13 @@ pub const GUARDS: &[Guard] = &[
         name: "scratch",
         check: scratch::check,
         check_file: scratch::check_file,
+        ratchet: None,
+    },
+    Guard {
+        // No ratchet: the tree is clean from the commit that added it.
+        name: "evidence",
+        check: evidence::check,
+        check_file: evidence::check_file,
         ratchet: None,
     },
     Guard {

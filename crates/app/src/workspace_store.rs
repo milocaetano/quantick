@@ -251,42 +251,7 @@ pub(crate) struct StorePaths {
     pub(crate) ui_state: PathBuf,
 }
 
-/// What the chart-layer file already says, so a switch is written once.
-///
-/// The mask is compared with the live one every frame, so a switch is saved
-/// whoever flipped it — the menu, the toolbar, the dock or the appearance
-/// panel — rather than four pieces of chrome each remembering to save. The tab
-/// is here so a tab *switch*, which changes the mask with nobody touching a
-/// switch, is a re-baseline rather than an edit.
-pub(crate) struct SavedLayers {
-    mask: u32,
-    tab: u64,
-}
-
-impl SavedLayers {
-    /// The visibility already on disk, as a bitmask over the active tab's flow
-    /// pane.
-    pub(crate) fn mask(&self) -> u32 {
-        self.mask
-    }
-
-    /// Which tab [`Self::mask`] was taken from.
-    pub(crate) fn tab(&self) -> u64 {
-        self.tab
-    }
-
-    /// A different chart is answering: take its mask as the new baseline
-    /// without treating the difference as a switch the trader flipped.
-    pub(crate) fn rebaseline(&mut self, tab: u64, mask: u32) {
-        self.tab = tab;
-        self.mask = mask;
-    }
-
-    /// The mask reached the file; it is the baseline from here.
-    pub(crate) fn record(&mut self, mask: u32) {
-        self.mask = mask;
-    }
-}
+use quantick_layers::SavedLayers;
 
 /// What the Workspace menu knows without asking the filesystem.
 ///
@@ -460,7 +425,7 @@ impl WorkspaceStore {
         Self {
             paths,
             layouts,
-            layers: SavedLayers { mask: 0, tab: 0 },
+            layers: SavedLayers::default(),
             session: WorkspaceSession {
                 save_on_exit: true,
                 favorites_are_staged: false,
@@ -516,6 +481,7 @@ impl WorkspaceStore {
     }
 
     /// What the chart-layer file already says.
+    #[cfg(test)]
     pub(crate) fn layers(&self) -> &SavedLayers {
         &self.layers
     }
@@ -746,10 +712,7 @@ mod tests {
 
     #[test]
     fn a_tab_switch_rebaselines_the_layers_rather_than_recording_a_switch() {
-        let mut layers = SavedLayers {
-            mask: 0b101,
-            tab: 1,
-        };
+        let mut layers = SavedLayers::new(1, 0b101);
         layers.rebaseline(2, 0b010);
         assert_eq!(layers.tab(), 2);
         assert_eq!(

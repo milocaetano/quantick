@@ -1,4 +1,4 @@
-//! The status bar: one 28 px line answering "how healthy is it?"
+//! The status bar: wrapping 28 px rows answering "how healthy is it?"
 //! (`docs/ux/ui-design-model.md` §8).
 //!
 //! Three sections replace the perf overlay, the floating timezone pill and
@@ -6,7 +6,7 @@
 //! left (state dot, venue, symbol, lag), content in the middle (bar spec,
 //! counts, honesty labels), machinery on the right (trades, fps, and the
 //! timezone picker). A reading that breaches its threshold turns
-//! [`theme::WARN`]; the layout never moves.
+//! [`theme::WARN`]; narrow windows wrap cells without hiding their facts.
 //!
 //! The timezone picker is the bar's only control. It briefly had company —
 //! a `Reconnect`/`Reload` pair in the provenance section — because the notice
@@ -370,21 +370,21 @@ pub fn draw(
 ) -> StatusResponse {
     let mut response = StatusResponse::default();
     egui::TopBottomPanel::bottom("status_bar")
-        .exact_height(STATUS_BAR_HEIGHT)
+        .min_height(STATUS_BAR_HEIGHT)
         .frame(
             egui::Frame::none()
                 .fill(theme::CHROME)
                 .inner_margin(egui::Margin::symmetric(10.0, 4.0)),
         )
         .show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                // Wrap whole facts as cells, keeping their words together.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 ui.spacing_mut().item_spacing.x = CELL_SPACING_PX;
                 draw_provenance(ui, model, offline);
                 ui.separator();
                 response.open_trading_tab = draw_content(ui, model);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    draw_machinery(ui, model, tz)
-                });
+                draw_machinery(ui, model, tz);
             });
         });
     response
@@ -545,16 +545,23 @@ fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
     sim_clicked
 }
 
-/// Right section, laid out right-to-left: timezone picker at the far edge,
-/// then the perf readings.
+/// Machinery cells share the same wrapping flow as the provenance and content.
 fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
-    egui::ComboBox::from_id_salt("tz_combo")
-        .selected_text(tz.label())
-        .show_ui(ui, |ui| {
-            for offset in TzOffset::ALL {
-                ui.selectable_value(tz, offset, offset.label());
-            }
-        });
+    // Reserve the picker as one cell before it paints its internal button;
+    // the button's own late allocation cannot move that paint to a new row.
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.spacing().combo_width, ui.spacing().interact_size.y),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            egui::ComboBox::from_id_salt("tz_combo")
+                .selected_text(tz.label())
+                .show_ui(ui, |ui| {
+                    for offset in TzOffset::ALL {
+                        ui.selectable_value(tz, offset, offset.label());
+                    }
+                });
+        },
+    );
     ui.label(egui::RichText::new(icons::CLOCK).color(theme::TEXT_MUTED));
     if !model.show_perf {
         return;
@@ -859,15 +866,63 @@ mod tests {
                 frame_cpu_ms: Some(4.2),
                 show_perf: true,
             };
-            for _ in 0..2 {
-                let _ = ctx.run(egui::RawInput::default(), |ctx| {
-                    let response = draw(ctx, &model, &mut tz, None);
-                    assert_eq!(
-                        response,
-                        StatusResponse::default(),
-                        "an un-clicked frame asks nothing of the app"
+            for width in [650.0, 1000.0, 1500.0] {
+                for frame in 0..2 {
+                    let output = ctx.run(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 800.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ctx| {
+                            let response = draw(ctx, &model, &mut tz, None);
+                            assert_eq!(
+                                response,
+                                StatusResponse::default(),
+                                "an un-clicked frame asks nothing of the app"
+                            );
+                        },
                     );
-                });
+                    let labels: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| {
+                            if let egui::Shape::Text(text) = &shape.shape {
+                                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                                if frame > 0 {
+                                    assert!(
+                                        shape.clip_rect.contains_rect(rect),
+                                        "clipped {}: {rect:?} outside {:?}",
+                                        text.galley.text(),
+                                        shape.clip_rect
+                                    );
+                                }
+                                Some((text.galley.text(), rect))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    assert!(
+                        labels
+                            .iter()
+                            .any(|(label, _)| label.contains("SIM +12.5 pts"))
+                    );
+                    for (index, (label, rect)) in labels.iter().enumerate() {
+                        assert!(
+                            rect.left() >= 0.0 && rect.right() <= width,
+                            "clipped {label}: {rect:?}"
+                        );
+                        for (other, other_rect) in &labels[index + 1..] {
+                            assert!(
+                                !rect.intersects(*other_rect),
+                                "overlap {label} / {other}: {rect:?} / {other_rect:?}"
+                            );
+                        }
+                    }
+                }
             }
         }
         assert_eq!(

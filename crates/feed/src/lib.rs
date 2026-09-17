@@ -35,6 +35,8 @@ pub mod replay_download;
 #[cfg(test)]
 mod scratch;
 pub mod stall;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 use std::path::PathBuf;
 

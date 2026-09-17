@@ -110,6 +110,9 @@ pub(crate) struct IndicatorSnapshot {
     /// The eye toggle. A hidden indicator keeps evaluating, so its readings
     /// below are still current.
     pub hidden: bool,
+    /// Whether price-chart hover is mirrored into this non-price pane.
+    #[serde(default)]
+    pub mouse_vertical_line: bool,
     pub plots: Vec<PlotSnapshot>,
     /// Every declared input paired with the value currently bound to it —
     /// what the settings dialog would open with.
@@ -314,19 +317,18 @@ fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
                         .indicators
                         .all()
                         .iter()
-                        .map(|view| {
-                            (
-                                view.slot.0,
-                                view.kind.to_string(),
-                                view.hidden,
-                                view.error.is_some(),
-                                view.stale.is_some(),
-                                format!("{:?}", view.input_values),
-                                // A hot reload that kept the kind and the
-                                // bound values can still rename a plot or
-                                // declare a new one, and both cross the wire.
-                                format!("{:?}", view.descriptor),
-                            )
+                        .map(|view| IndicatorAnalysisRevisionKey {
+                            slot: view.slot.0,
+                            kind: view.kind.to_string(),
+                            hidden: view.hidden,
+                            mouse_vertical_line: view.mouse_vertical_line,
+                            failing: view.error.is_some(),
+                            stale: view.stale.is_some(),
+                            inputs: format!("{:?}", view.input_values),
+                            // A hot reload that kept the kind and the
+                            // bound values can still rename a plot or
+                            // declare a new one, and both cross the wire.
+                            declaration: format!("{:?}", view.descriptor),
                         })
                         .collect(),
                     drawings: pane
@@ -364,12 +366,12 @@ struct AnalysisRevisionKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PaneAnalysisRevisionKey {
     pane_id: u64,
-    /// `(slot, kind, hidden, failing, stale, bound inputs, declaration)`. The
-    /// inputs and the declaration are compared through their `Debug` rendering
+    /// One exact arrangement key per indicator. Inputs and declarations are
+    /// compared through their `Debug` rendering
     /// because both hold `f64`/`f32` fields and so are `PartialEq` but not
     /// `Eq`; the rendering is exact for every variant and neither value ever
     /// reaches the wire.
-    indicators: Vec<(u64, String, bool, bool, bool, String, String)>,
+    indicators: Vec<IndicatorAnalysisRevisionKey>,
     /// `(id, locked, hidden, named, authored, foreign market, off series)` —
     /// never the name itself.
     drawings: Vec<(u64, bool, bool, bool, bool, bool, bool)>,
@@ -377,6 +379,18 @@ struct PaneAnalysisRevisionKey {
     layer_hidden: bool,
     /// Which row the selection sits on, which the scope publishes too.
     selected_drawing: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IndicatorAnalysisRevisionKey {
+    slot: u64,
+    kind: String,
+    hidden: bool,
+    mouse_vertical_line: bool,
+    failing: bool,
+    stale: bool,
+    inputs: String,
+    declaration: String,
 }
 
 fn project_indicators(app: &QuantickApp, _context: CaptureContext) -> IndicatorsSnapshot {
@@ -431,6 +445,7 @@ fn indicator_snapshot(view: &IndicatorView) -> IndicatorSnapshot {
         short_title: view.descriptor.short_title.clone(),
         overlay: view.descriptor.overlay,
         hidden: view.hidden,
+        mouse_vertical_line: view.mouse_vertical_line,
         plots: view
             .descriptor
             .plots

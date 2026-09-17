@@ -1,5 +1,180 @@
 use super::*;
 
+fn selected_cvd_line() -> (QuantickApp, egui::Context, usize, egui::Pos2) {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    add_pane_indicator(
+        &mut app,
+        "CVD",
+        (0..200).map(|i| 3000.0 + f64::from(i) * 2.0).collect(),
+    );
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let anchor = pane_body(&app, 0).center();
+    let index = place_drawing(&mut app, &ctx, "horizontal-line", &[anchor]);
+    app.toolrail.arm(Tool::Pointer);
+    app.drawing_pane_mut().drawings.select(Some(index));
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(matches!(
+        app.drawing_pane().drawings.items()[index].band,
+        drawings::DrawingBand::Indicator(_)
+    ));
+    (app, ctx, index, anchor)
+}
+
+#[test]
+fn automatic_indicator_bar_stays_in_its_band_clear_of_the_header_and_price_footer() {
+    let (app, _ctx, _index, _) = selected_cvd_line();
+    let band = pane_body(&app, 0);
+    let price = app
+        .drawing_pane()
+        .frame
+        .chart_area
+        .expect("price chart drawn");
+    let header = crate::indicator_render::pane_header_rect(band, false);
+    let bar = app
+        .surfaces
+        .drawing_chrome
+        .context_bar_rect()
+        .expect("selected bar drawn");
+    assert!(
+        bar.top() >= price.bottom(),
+        "indicator controls must not cover the price footer: {bar:?}, {price:?}"
+    );
+    assert!(
+        band.contains_rect(bar),
+        "indicator controls belong to their own band: {bar:?}, {band:?}"
+    );
+    assert!(
+        !bar.intersects(header),
+        "indicator header must stay readable: {bar:?}, {header:?}"
+    );
+}
+
+#[test]
+fn selected_indicator_bounds_use_the_drawn_band_scale() {
+    let (app, _ctx, index, anchor) = selected_cvd_line();
+    let chart = app
+        .drawing_pane()
+        .frame
+        .chart_area
+        .expect("price chart drawn");
+    let bbox = app
+        .drawing_bbox_on_screen(chart, index)
+        .expect("selected indicator projects");
+    assert!(
+        (bbox.center().y - anchor.y).abs() < 1.0,
+        "selected bounds must follow the CVD line: {bbox:?}, {anchor:?}"
+    );
+}
+
+#[test]
+fn selected_indicator_bar_avoids_the_indicator_legend_when_automatic_or_parked() {
+    let (mut app, ctx, _index, _) = selected_cvd_line();
+    for collapsed in [false, true] {
+        app.active_tab_mut().flow_pane.legend_collapsed = collapsed;
+        for parked in [false, true] {
+            run_frame(&mut app, &ctx);
+            run_frame(&mut app, &ctx);
+            let legend = ctx
+                .memory(|memory| {
+                    memory.area_rect(egui::Id::new(("indicator_legend", app.drawing_pane().id)))
+                })
+                .expect("real indicator legend drawn");
+            if parked {
+                app.surfaces
+                    .drawing_chrome
+                    .context_bar_mut()
+                    .set_manual(legend.min);
+            } else {
+                app.surfaces.drawing_chrome.context_bar_mut().clear_manual();
+            }
+            app.surfaces.drawing_chrome.forget_context_bar_rect();
+            run_frame(&mut app, &ctx);
+            let bar = app
+                .surfaces
+                .drawing_chrome
+                .context_bar_rect()
+                .expect("selected CVD line raises its bar");
+            assert!(
+                !bar.intersects(legend),
+                "indicator legend must remain readable (collapsed={collapsed}, parked={parked}): {bar:?}, {legend:?}"
+            );
+            if parked {
+                assert_eq!(
+                    app.surfaces.drawing_chrome.context_bar().manual_position(),
+                    Some(legend.min),
+                    "placement repair preserves the trader's parked point"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn forgetting_a_tab_clears_all_slot_collections_without_touching_other_tabs() {
+    let (mut app, _commands) = app_with_history(1);
+    let owners = [7, 9].map(|tab| super::super::TabSlot {
+        tab,
+        side: PaneSide::Flow,
+        slot: SlotId(0),
+    });
+    let state = &mut app.indicators;
+    for owner in owners {
+        state.slot_kinds.push((
+            owner,
+            crate::indicators::state_file::SavedKind::native("cvd"),
+        ));
+        state.operator_slots.insert(owner);
+        state
+            .script_files
+            .push((owner, 0, std::time::SystemTime::UNIX_EPOCH));
+        state.pending_hidden.push(owner);
+        state.pending_mouse_vertical_lines.push(owner);
+        state
+            .pending_styles
+            .push((owner, crate::indicator_style::StyleOverride::default()));
+    }
+    state.forget_tab(7);
+    assert_eq!(
+        state
+            .slot_kinds
+            .iter()
+            .map(|(owner, _)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(
+        state.operator_slots.iter().copied().collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(
+        state
+            .script_files
+            .iter()
+            .map(|(owner, ..)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    assert_eq!(state.pending_hidden, [owners[1]]);
+    assert_eq!(state.pending_mouse_vertical_lines, [owners[1]]);
+    assert_eq!(
+        state
+            .pending_styles
+            .iter()
+            .map(|(owner, _)| *owner)
+            .collect::<Vec<_>>(),
+        [owners[1]]
+    );
+    state.forget_tab(7);
+    assert_eq!(
+        state.pending_hidden,
+        [owners[1]],
+        "repeated close notification is harmless"
+    );
+}
+
 /// An anchor dropped in an indicator pane belongs to that pane.
 #[test]
 fn a_click_in_an_indicator_pane_draws_on_that_band() {
@@ -75,12 +250,14 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
             SavedIndicator {
                 kind: SavedKind::native("native.ema"),
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: vec![SavedInput::Int(21), SavedInput::Source("close".to_owned())],
                 plot_styles: Vec::new(),
             },
             SavedIndicator {
                 kind: SavedKind::native("native.cvd"),
                 hidden: true,
+                mouse_vertical_line: false,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
             },
@@ -89,6 +266,7 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
                     name: "not-in-the-library.pine".to_owned(),
                 },
                 hidden: false,
+                mouse_vertical_line: false,
                 inputs: Vec::new(),
                 plot_styles: Vec::new(),
             },
@@ -159,7 +337,7 @@ fn an_unchanged_spec_never_arms_the_rebuild_indicator() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
     app.active_tab_mut().apply_spec_changes();
     assert!(!app.active_tab().loading.is_active(LoadingTask::BarRebuild));
-    assert!(app.active_tab().flow_pane.spec.pending.is_none());
+    assert!(app.active_tab().flow_pane.spec.pending().is_none());
 }
 
 /// Both folded legends come back folded — the time pane's included.
@@ -279,6 +457,47 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
         app.layouts().active().indicators[0].kind,
         crate::indicators::state_file::SavedKind::native("native.ema")
     );
+}
+
+#[test]
+fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.cvd"));
+    app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
+    settle_indicators(&mut app);
+
+    let tab_id = app.active_tab().id;
+    let pane_id = app.active_tab().flow_pane.id;
+    let cvd = app.active_tab().flow_pane.indicators.all()[0].slot;
+    app.active_tab_mut()
+        .flow_pane
+        .request_indicator_guide(cvd, true);
+    app.open_requested_indicator_settings();
+
+    for side in [PaneSide::Flow, PaneSide::Time(0)] {
+        let views = app.active_tab().pane(side).indicators.all();
+        assert!(views[0].mouse_vertical_line, "CVD follows on {side:?}");
+        assert!(!views[1].mouse_vertical_line, "EMA stays off on {side:?}");
+    }
+    assert!(app.layouts().active().indicators[0].mouse_vertical_line);
+    assert!(!app.layouts().active().indicators[1].mouse_vertical_line);
+
+    let result = app
+        .control_action(
+            crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
+            1,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "tab_id": tab_id.to_string(),
+                "pane_id": pane_id.to_string(),
+                "slot_id": cvd.0.to_string(),
+                "enabled": false,
+            }),
+        )
+        .unwrap();
+    assert_eq!(result["enabled"], false);
+    assert!(!app.layouts().active().indicators[0].mouse_vertical_line);
 }
 
 /// The four doors into the dialog have to be one door: whichever gesture a
@@ -513,7 +732,14 @@ fn the_second_context_pane_takes_focus_bars_and_indicators() {
     // The BARS group borrows the focused pane's selector fields.
     let top_spec = *app.active_tab().pane(PaneSide::Time(0)).state.spec();
     let pane = app.active_tab_mut().focused_pane_mut();
-    pane.spec.kind = crate::state::BarKind::Time;
+    pane.spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Time.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     pane.spec.retain(crate::state::BarSpec::Time(900_000));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
@@ -708,6 +934,7 @@ fn a_workspace_naming_a_native_this_build_lacks_restores_an_error_slot() {
         &[SavedIndicator {
             kind: SavedKind::native("native.from.the.future"),
             hidden: false,
+            mouse_vertical_line: false,
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         }],

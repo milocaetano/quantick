@@ -5,7 +5,7 @@
 //! checks what the schema cannot (a duplicated scope, a cursor beside a start,
 //! a timeout outside its bound) and names the scopes the request reaches; and
 //! the invocation that runs once the contract has said yes. The saying yes is
-//! not here. `ObserverContract::prepare` in the parent owns the order of the
+//! not here. `CapabilityContract::admit` in control-host owns the order of the
 //! checks -- envelope, registration, permission, schema, idempotency, tier --
 //! and calls a handler only after all of them; the permission ceilings and the
 //! effect policies stay in the parent's constructor. What this file may decide
@@ -25,6 +25,7 @@ use quantick_control::{
     schema::generated_schema,
     wire::ModuleRevision,
 };
+use quantick_control_host::contract::ScopeCatalogue;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -254,7 +255,7 @@ impl PreparedWorkerRead for EvidenceReadInvocation {
 }
 
 pub(super) fn prepare_describe(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let _: EmptyInput = decode_payload(payload)?;
@@ -265,7 +266,7 @@ pub(super) fn prepare_describe(
 }
 
 pub(super) fn prepare_snapshot(
-    contract: &ObserverContract,
+    scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: SnapshotReadInput = decode_payload(payload)?;
@@ -277,7 +278,7 @@ pub(super) fn prepare_snapshot(
                 "snapshot scope `{scope}` was requested more than once"
             )));
         }
-        let permissions = contract.scope_permissions.get(scope).ok_or_else(|| {
+        let permissions = scopes.permissions(scope).ok_or_else(|| {
             ControlError::invalid_request(format!("snapshot scope `{scope}` is not registered"))
         })?;
         required.extend(permissions.iter().cloned());
@@ -294,7 +295,7 @@ pub(super) fn prepare_snapshot(
 /// would, plus the evidence scope the capability already requires and, when an
 /// image is asked for, the screenshot scope. Aggregation is not a way in.
 pub(super) fn prepare_evidence_capture(
-    contract: &ObserverContract,
+    scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: EvidenceCaptureInput = decode_payload(payload)?;
@@ -306,7 +307,7 @@ pub(super) fn prepare_evidence_capture(
                 "snapshot scope `{scope}` was requested more than once"
             )));
         }
-        scope_permissions.push(contract.scope_permissions.get(scope).ok_or_else(|| {
+        scope_permissions.push(scopes.permissions(scope).ok_or_else(|| {
             ControlError::invalid_request(format!("snapshot scope `{scope}` is not registered"))
         })?);
     }
@@ -321,7 +322,7 @@ pub(super) fn prepare_evidence_capture(
 }
 
 pub(super) fn prepare_evidence_read(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: EvidenceReadInput = decode_payload(payload)?;
@@ -335,7 +336,7 @@ pub(super) fn prepare_evidence_read(
 }
 
 pub(super) fn prepare_chart_window(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: ChartWindowInput = decode_payload(payload)?;
@@ -351,7 +352,7 @@ pub(super) fn prepare_chart_window(
 }
 
 pub(super) fn prepare_events_read(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: EventsReadInput = decode_payload(payload)?;
@@ -373,7 +374,7 @@ pub(super) fn prepare_events_read(
 }
 
 pub(super) fn prepare_events_wait(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let input: EventsWaitInput = decode_payload(payload)?;
@@ -399,7 +400,7 @@ pub(super) fn prepare_events_wait(
 }
 
 pub(super) fn prepare_diagnostics(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let _: EmptyInput = decode_payload(payload)?;
@@ -414,7 +415,7 @@ pub(super) fn prepare_diagnostics(
 /// The scene is one scope, so the named tool takes no input beyond the
 /// instance it routes to — exactly like the diagnostics read above.
 pub(super) fn prepare_scene(
-    _contract: &ObserverContract,
+    _scopes: ScopeCatalogue<'_>,
     payload: &Value,
 ) -> Result<PreparedCapability, ControlError> {
     let _: EmptyInput = decode_payload(payload)?;

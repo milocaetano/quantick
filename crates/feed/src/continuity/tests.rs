@@ -218,6 +218,67 @@ fn trade(agg_id: u64, timestamp_ms: i64) -> Trade {
 }
 
 #[tokio::test]
+async fn real_rest_handoff_covers_contiguous_overlap_forward_and_unknown_startup() {
+    use crate::test_support::{BackfillFixture, binance_events};
+
+    for (live, expected) in [
+        ((11, 101), None),
+        ((10, 100), Some((Some(0), None, true))),
+        ((9, 99), Some((Some(0), None, true))),
+        (
+            (14, 120),
+            Some((
+                Some(3),
+                Some(FeedGap {
+                    from_ms: 100,
+                    to_ms: 120,
+                }),
+                false,
+            )),
+        ),
+        (
+            (14, 100),
+            Some((
+                Some(3),
+                Some(FeedGap {
+                    from_ms: 100,
+                    to_ms: 100,
+                }),
+                false,
+            )),
+        ),
+    ] {
+        let events = binance_events(
+            BackfillFixture::Seed,
+            &[live],
+            if expected.is_some() { 3 } else { 2 },
+        )
+        .await;
+        assert!(matches!(&events[0], FeedEvent::Backfilled(trades) if trades == &[trade(10, 100)]));
+        if let Some((missing_messages, gap, non_monotonic)) = expected {
+            assert!(
+                matches!(events[1], FeedEvent::Continuity(event) if event == FeedContinuity { gap, missing_messages, non_monotonic })
+            );
+        }
+        assert!(matches!(events.last(), Some(FeedEvent::Live(t)) if *t == trade(live.0, live.1)));
+    }
+    for backfill in [BackfillFixture::Empty, BackfillFixture::Failed] {
+        let events = binance_events(backfill, &[(10, 100), (11, 101)], 4).await;
+        assert!(matches!(&events[0], FeedEvent::Backfilled(trades) if trades.is_empty()));
+        assert!(matches!(
+            events[1],
+            FeedEvent::Continuity(FeedContinuity {
+                gap: None,
+                missing_messages: None,
+                non_monotonic: false
+            })
+        ));
+        assert!(matches!(&events[2], FeedEvent::Live(t) if *t == trade(10, 100)));
+        assert!(matches!(&events[3], FeedEvent::Live(t) if *t == trade(11, 101)));
+    }
+}
+
+#[tokio::test]
 async fn binance_reports_equal_timestamp_loss_before_the_unmodified_trade() {
     let (tx, mut rx) = mpsc::channel(8);
     let mut continuity = BinanceContinuity::default();

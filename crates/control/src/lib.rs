@@ -3,12 +3,14 @@
 //! This crate deliberately has no dependency on the application or trading
 //! domain crates. Hosts and adapters meet at these owned DTOs and registries.
 
+pub mod annotation;
 pub mod canonical;
 pub mod codec;
 pub mod cursor;
 pub mod descriptor;
 pub mod error;
 pub mod fake;
+pub mod feed;
 pub mod handshake;
 pub mod id;
 pub mod limits;

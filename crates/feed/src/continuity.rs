@@ -18,7 +18,9 @@ pub struct FeedContinuity {
     /// quotes, so this is not a count of lost trades.
     /// `None` means an interruption with unknown loss.
     pub missing_messages: Option<u64>,
-    /// A repeated/backwards source ID, separate from a missing interval.
+    /// A repeated/backwards source ID or stale-row exclusion category,
+    /// separate from a missing interval. This flags a diagnostic, not a count
+    /// of rejected rows.
     pub non_monotonic: bool,
 }
 

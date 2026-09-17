@@ -60,14 +60,14 @@ pub(crate) mod manager;
 mod quick_range;
 
 pub(crate) use quick_range::{
-    ACTION_CONTROL_ID as QUICK_RANGE_ACTION_CONTROL_ID, Control as QuickRangeControl,
+    Action as QuickRangeAction, ActionUi as QuickRangeActionUi, Control as QuickRangeControl,
     Owner as QuickRangeOwner,
 };
 
 use eframe::egui;
 
 use crate::bands::BandLabel;
-use crate::drawings::{ChartPoint, Drawing, DrawingStyle, NewDrawing, PresetHost};
+use crate::drawings::{Drawing, DrawingStyle, PresetHost};
 use crate::pane::PaneSide;
 use crate::toolrail::ToolboxDock;
 
@@ -240,10 +240,14 @@ pub(crate) struct ManagerRow {
 /// one subsystem's slice, and eleven more fields on the shared env would move
 /// the loose-field problem out one level instead of solving it.
 pub(crate) struct DrawingEnv<'a> {
+    pub pane_id: u64,
     /// The selected object on the pane the chrome speaks for, if any.
     pub selected: Option<SelectedDrawing<'a>>,
     /// That pane's chart rectangle, or `None` before it has been laid out.
     pub chart_area: Option<egui::Rect>,
+    /// Selected indicator band's body, excluding its header. Parked chrome
+    /// keeps its existing pane-relative placement instead.
+    pub automatic_bar_area: Option<egui::Rect>,
     /// The *focused* pane's rectangle, which is not always the one above: a
     /// shared mark can be selected from the chart it is mirrored on. The
     /// object manager opens beside the toolbox button that opened it, and that
@@ -252,6 +256,8 @@ pub(crate) struct DrawingEnv<'a> {
     /// Where the live lane begins. Every popup keeps clear of it: that strip
     /// is where the price the trader is reading is being formed.
     pub lane_divider_x: Option<f32>,
+    /// Measured footprint of the stacked flow and indicator legends.
+    pub legends: Option<egui::Rect>,
     /// The visible price range, which is what makes a coordinate drag move at
     /// the same speed on a two-dollar symbol and a hundred-thousand one.
     pub auto_range: Option<(f64, f64)>,
@@ -527,9 +533,9 @@ impl PresetHost for RecordingPresetHost<'_> {
 /// rather than an enum for exactly that reason.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct DrawingChromeAsk {
-    /// Replace the temporary secondary-drag ruler with a durable fixed-range
-    /// volume profile through the registered annotation action.
-    pub place_quick_range_profile: Option<quick_range::PlaceRequest>,
+    /// Replace the temporary secondary-drag ruler with the chosen durable
+    /// drawing through its registered annotation action.
+    pub place_quick_range: Option<quick_range::PlaceRequest>,
     /// The temporary range stood down because the trader clicked the chart.
     pub dismiss_quick_range: bool,
     /// The inspector edited its copy of the selected drawing. Boxed: it is by
@@ -610,9 +616,7 @@ impl DrawingChromeAsk {
     /// pieces cannot both be right about one row, and dropping the later ask
     /// deterministically beats letting draw order decide in silence.
     pub(super) fn merge(&mut self, other: Self) {
-        self.place_quick_range_profile = self
-            .place_quick_range_profile
-            .or(other.place_quick_range_profile);
+        self.place_quick_range = self.place_quick_range.or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
@@ -666,7 +670,7 @@ pub(crate) struct Shared {
 /// inline text editor, the inspector and the object manager.
 #[derive(Default)]
 pub(crate) struct DrawingChromeSurface {
-    quick_range: quick_range::QuickRange,
+    pub(crate) quick_range: quick_range::QuickRange,
     shared: Shared,
     inspector: inspector::Inspector,
     bar: context_bar::ContextBarState,
@@ -692,72 +696,20 @@ pub(crate) struct DrawingChromeSurface {
 }
 
 impl DrawingChromeSurface {
-    // ---- Temporary secondary-drag range --------------------------------
-
-    pub fn quick_range_press(
+    /// The view owner selects its rendering pass; the window supplies facts only.
+    pub fn draw_pass(
         &mut self,
-        owner: quick_range::Owner,
-        position: egui::Pos2,
-        anchor: ChartPoint,
-    ) {
-        self.quick_range.press(owner, position, anchor);
+        ctx: &egui::Context,
+        env: &DrawingEnv<'_>,
+        tab: &crate::tab::Tab,
+        floating: bool,
+    ) -> DrawingChromeAsk {
+        if floating {
+            self.draw_floating(ctx, env, tab)
+        } else {
+            self.draw_pinned_panel(ctx, env)
+        }
     }
-
-    pub fn request_quick_range_demo(&mut self, ready: bool) {
-        self.quick_range.request_demo(ready);
-    }
-
-    pub fn stage_quick_range_demo(
-        &mut self,
-        owner: quick_range::Owner,
-        opening: impl FnOnce() -> Option<([ChartPoint; 2], NewDrawing)>,
-    ) {
-        self.quick_range.stage_demo(owner, opening);
-    }
-
-    pub fn quick_range_drag(
-        &mut self,
-        owner: quick_range::Owner,
-        position: egui::Pos2,
-        anchor: ChartPoint,
-        threshold_px: f32,
-        opening: impl FnOnce() -> NewDrawing,
-    ) {
-        self.quick_range
-            .drag(owner, position, anchor, threshold_px, opening);
-    }
-
-    pub fn quick_range_release(&mut self, owner: quick_range::Owner) {
-        self.quick_range.release(owner);
-    }
-
-    pub fn dismiss_quick_range(&mut self) {
-        self.quick_range.dismiss();
-    }
-
-    pub fn take_quick_range(&mut self) -> bool {
-        self.quick_range.dismiss_if_present()
-    }
-
-    pub fn quick_range_paint(&self, owner: quick_range::Owner) -> Option<quick_range::Paint<'_>> {
-        self.quick_range.paint(owner)
-    }
-
-    pub fn remember_quick_range_geometry(
-        &mut self,
-        owner: quick_range::Owner,
-        chart: egui::Rect,
-        bounds: egui::Rect,
-        right_limit: f32,
-    ) {
-        self.quick_range
-            .remember_geometry(owner, chart, bounds, right_limit);
-    }
-
-    pub fn quick_range_control(&self, active_tab: u64) -> Option<quick_range::Control> {
-        self.quick_range.control(active_tab)
-    }
-
     // ---- What the host reads --------------------------------------------
 
     /// Whether anything here is on screen or about to be, so the host knows
@@ -946,7 +898,17 @@ impl DrawingChromeSurface {
     /// editor name `Foreground`, the windows are ordinary `Middle` areas
     /// created on the frame they open. Nothing here relies on being called
     /// last.
-    pub fn draw_floating(&mut self, ctx: &egui::Context, env: &DrawingEnv<'_>) -> DrawingChromeAsk {
+    pub fn draw_floating(
+        &mut self,
+        ctx: &egui::Context,
+        env: &DrawingEnv<'_>,
+        tab: &crate::tab::Tab,
+    ) -> DrawingChromeAsk {
+        self.quick_range.reconcile_panes(tab);
+        self.quick_range.note_selection(
+            env.pane_id,
+            env.selected.as_ref().map(|selected| selected.drawing.id.0),
+        );
         let mut ask = match self.quick_range.reconcile_tab(env.tab) {
             Some(true) => {
                 let mut quick = std::mem::take(&mut self.quick_range);
@@ -1169,10 +1131,12 @@ fn apply_actions(
 /// Here rather than in `app.rs` because the fields are here: a hook that
 /// stops matching its field stops compiling.
 pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
+    #[cfg(feature = "quick-range-harness")]
     if let Ok(value) = std::env::var("QUANTICK_QUICK_RANGE_DEMO") {
         match value.trim() {
-            "active" => chrome.request_quick_range_demo(false),
-            "1" | "ready" => chrome.request_quick_range_demo(true),
+            "active" => chrome.quick_range.request_demo(false, false),
+            "1" | "ready" => chrome.quick_range.request_demo(true, false),
+            "future" => chrome.quick_range.request_demo(true, true),
             other => tracing::warn!(value = other, "unknown quick-range demo state"),
         }
     }

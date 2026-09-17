@@ -286,6 +286,10 @@ surface reads.
 Establish which one is in front of you before prescribing: an extraction is
 mechanical and safe, a redesign is neither. Detail: `references/docking.md`.
 
+New execution artifacts or `GOAL-archive-*` in the diff are **Should fix**:
+remove them from Git and link external CI/GitHub evidence from the PR. Reusable
+fixtures, contracts and maintained documentation are exempt.
+
 ## Verify before reporting
 
 Reviews are judged on precision, not volume.

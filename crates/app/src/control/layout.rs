@@ -36,6 +36,7 @@ use super::{
     gateway::ControlAccess,
 };
 
+pub(super) mod stack;
 mod v2;
 #[cfg(test)]
 pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
@@ -244,6 +245,7 @@ pub(crate) struct LayoutResult {
 }
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    stack::register(registry)?;
     registry.register(
         descriptor(
             APPLY_PRESET_CAPABILITY_ID,
@@ -507,7 +509,7 @@ fn layout_permissions() -> BTreeSet<PermissionId> {
         .collect()
 }
 
-fn descriptor(
+pub(super) fn descriptor(
     id: &str,
     title: &str,
     description: &str,
@@ -563,7 +565,7 @@ fn descriptor(
 /// A tab id that no longer exists is refused rather than resolved to the
 /// active one: a caller that named a tab meant that tab, and quietly acting on
 /// a different market is the worst answer available.
-fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
+pub(super) fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
     let Some(id) = target.tab_id else {
         return Ok(app.control_active_tab_index());
     };
@@ -747,14 +749,16 @@ fn set_interval(
 ) -> Result<Value, ControlError> {
     let input: IntervalInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    if input.interval_ms < crate::state::MIN_TIME_INTERVAL_MS
-        || input.interval_ms > crate::state::MAX_TIME_INTERVAL_MS
-    {
-        return Err(ControlError::invalid_request(format!(
-            "an interval of {} ms is outside the range a chart accepts",
-            input.interval_ms
-        )));
-    }
+    let asked = quantick_engine::bar_registry::BUILTIN_BARS
+        .find("time")
+        .expect("registered time definition")
+        .configure(input.interval_ms.into(), None)
+        .map_err(|_| {
+            ControlError::invalid_request(format!(
+                "an interval of {} ms is outside the range a chart accepts",
+                input.interval_ms
+            ))
+        })?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     if pane == 0 {
@@ -771,9 +775,14 @@ fn set_interval(
             "this tab has no context chart at address {pane}"
         )));
     };
-    let asked = crate::state::BarSpec::Time(input.interval_ms);
     let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
-    chart.spec.set(asked);
+    chart
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(asked),
+            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+        )
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     result(app, index, changed)
 }
 
@@ -785,7 +794,8 @@ fn set_bar_spec(
 ) -> Result<Value, ControlError> {
     let input: BarSpecInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let spec = crate::state::BarSpec::parse(&input.spec)
+    let spec = quantick_engine::bar_registry::BUILTIN_BARS
+        .parse(&input.spec)
         .map_err(|error| ControlError::invalid_request(format!("invalid bar spec: {error}")))?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
@@ -797,6 +807,8 @@ fn set_bar_spec(
             "this tab has no pane at address {pane}"
         )));
     }
-    let changed = tab.set_pane_bar_spec(pane, spec);
+    let changed = tab
+        .set_pane_bar_spec(pane, spec)
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     result(app, index, changed)
 }

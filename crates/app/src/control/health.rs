@@ -1,6 +1,7 @@
 //! Frame, loading, indicator, and order-flow health projection.
 
 use quantick_control::{
+    feed::FeedIntegritySnapshot,
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
     wire::{CanonicalDecimal, WireU64},
@@ -61,26 +62,16 @@ pub(crate) struct TabHealthSnapshot {
     pub tape: Option<TapeHealthSnapshot>,
 }
 
-/// Counts source messages, never estimates how many executed trades were lost.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct FeedIntegritySnapshot {
-    pub anomalies: WireU64,
-    pub missing_messages: WireU64,
-    pub unknown_loss: WireU64,
-    pub non_monotonic: WireU64,
+pub(super) fn integrity_snapshot(
+    integrity: quantick_feed::FeedIntegrity,
+) -> Option<FeedIntegritySnapshot> {
+    (integrity.anomalies > 0).then(|| FeedIntegritySnapshot {
+        anomalies: WireU64::new(integrity.anomalies),
+        missing_messages: WireU64::new(integrity.missing_messages),
+        unknown_loss: WireU64::new(integrity.unknown_loss),
+        non_monotonic: WireU64::new(integrity.non_monotonic),
+    })
 }
-
-impl FeedIntegritySnapshot {
-    pub(super) fn from_integrity(integrity: quantick_feed::FeedIntegrity) -> Option<Self> {
-        (integrity.anomalies > 0).then(|| Self {
-            anomalies: WireU64::new(integrity.anomalies),
-            missing_messages: WireU64::new(integrity.missing_messages),
-            unknown_loss: WireU64::new(integrity.unknown_loss),
-            non_monotonic: WireU64::new(integrity.non_monotonic),
-        })
-    }
-}
-
 /// Where a tab's tape delay is being spent.
 ///
 /// The whole point of the breakdown is that "the chart is eighteen seconds
@@ -310,7 +301,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab.id),
-                    feed_integrity: FeedIntegritySnapshot::from_integrity(tab.feed_integrity),
+                    feed_integrity: integrity_snapshot(tab.feed_integrity),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
                         .filter_map(|task| {

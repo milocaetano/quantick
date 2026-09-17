@@ -394,11 +394,12 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 11);
         assert_eq!(names[0], tools::DESCRIBE);
         assert!(names.contains(&tools::WAIT_FOR_CHANGE.to_owned()));
         assert!(names.contains(&tools::GET_SCENE.to_owned()));
         assert!(names.contains(&tools::CAPTURE_EVIDENCE.to_owned()));
+        assert!(names.contains(&tools::CAPTURE_CHART.to_owned()));
         let missing = server
             .handle_line(&request(3, "resources/list", json!({})))
             .unwrap();

@@ -1,6 +1,53 @@
 use super::*;
 use quantick_feed::replay::test_support as replay_test_support;
 
+#[test]
+fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().set_context_collapsed(true);
+    run_frame(&mut app, &ctx);
+
+    let context_ids = app
+        .active_tab()
+        .time_panes
+        .iter()
+        .map(|pane| pane.id)
+        .collect::<Vec<_>>();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [
+        observer_scope("scene.controls"),
+        observer_scope("workspace.summary"),
+    ];
+    let capture = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let scene = &capture.scopes[&scopes[0]].value;
+    let workspace = &capture.scopes[&scopes[1]].value;
+
+    for pane_id in context_ids {
+        assert!(
+            !scene_control_ids(scene).contains(&format!("pane.{pane_id}.canvas")),
+            "a collapsed context canvas was reported as visible"
+        );
+    }
+    assert_eq!(workspace["tabs"][0]["context_collapsed"], true);
+    let visible = workspace["tabs"][0]["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|pane| pane["visible"] == true)
+        .count();
+    assert_eq!(visible, 1, "only the flow canvas remains visible");
+}
+
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live
 /// feed thread would.
@@ -162,6 +209,14 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
         .scripted_context_menu_pos(ContextMenuPane::Chart)
         .expect("and so can the candles");
     assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
+    assert!(
+        chart.x < 700.0 / 2.0,
+        "the right-opening layer submenu needs room beside its scripted popup: {chart:?}"
+    );
+    assert!(
+        chart.y < rect.center().y,
+        "the long menu needs room below its scripted popup: {chart:?}"
+    );
     assert!(rect.contains(tape) && rect.contains(chart));
 
     // No lane: the candles still answer, the tape has nothing to open.
@@ -1291,7 +1346,7 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 17, "every registered scope is projected");
+    assert_eq!(descriptors.len(), 18, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -2052,11 +2107,7 @@ fn gateway_exit_shutdown_removes_discovery() {
     let descriptor: quantick_control::descriptor::InstanceDescriptor =
         serde_json::from_slice(&std::fs::read(&descriptor_path).unwrap()).unwrap();
 
-    app.control
-        .control_access
-        .as_mut()
-        .expect("control access is installed")
-        .shutdown_for_exit();
+    eframe::App::on_exit(&mut app, None);
     assert!(!descriptor_path.exists(), "exit removes discovery");
     assert!(
         app.control
@@ -3215,8 +3266,10 @@ fn a_fixed_range_profile_is_reachable_as_an_annotation_capability() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    let anchor = newest_anchor(&app);
-    let earlier_anchor = anchor_at_slot(&app, 0);
+    let mut anchor = newest_anchor(&app);
+    let mut earlier_anchor = anchor_at_slot(&app, 0);
+    anchor["bar_position"] = serde_json::json!("7.5");
+    earlier_anchor["bar_position"] = serde_json::json!("0.5");
     let result = app
         .control_action(
             crate::control::PROFILE_CAPABILITY_ID,
@@ -3230,6 +3283,113 @@ fn a_fixed_range_profile_is_reachable_as_an_annotation_capability() {
     let drawings = app.active_tab().drawing_pane().drawings.items();
     assert_eq!(drawings.len(), 1);
     assert_eq!(drawings[0].tool.id(), crate::frvp::TOOL_ID);
+}
+
+#[test]
+fn the_profile_capability_reports_an_honest_future_anchor() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    let mut market = anchor_at_slot(&app, 6);
+    market["bar_position"] = serde_json::json!("6.5");
+    let result = app
+        .control_action(
+            crate::control::PROFILE_CAPABILITY_ID,
+            crate::control::PROFILE_CAPABILITY_VERSION,
+            crate::control::ActionOrigin::Human,
+            serde_json::json!({
+                "anchors": [
+                    market,
+                    { "bar_position": "12.5", "price": "104.25" }
+                ]
+            }),
+        )
+        .expect("version 2 accepts projected chart space");
+
+    assert_eq!(result["anchors"][1]["bar_position"], "12.5");
+    assert!(result["anchors"][1].get("time_unix_ms").is_none());
+    let drawing = &app.active_tab().drawing_pane().drawings.items()[0];
+    assert_eq!(drawing.points[1], drawings::ChartPoint::at(12.5, 104.25));
+}
+
+#[test]
+fn both_fibonacci_tools_dock_through_the_annotation_registry() {
+    for (capability_id, tool_id, anchor_count) in [
+        (
+            crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
+            "fib-retracement",
+            2,
+        ),
+        (
+            crate::control::FIB_PROJECTION_CAPABILITY_ID,
+            "fib-extension",
+            3,
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        let mut first = anchor_at_slot(&app, 0);
+        let mut last = newest_anchor(&app);
+        first["bar_position"] = serde_json::json!("0.5");
+        last["bar_position"] = serde_json::json!("7.5");
+        let mut anchors = vec![first, last.clone()];
+        if anchor_count == 3 {
+            anchors.push(last);
+        }
+
+        let result = app
+            .control_action(
+                capability_id,
+                crate::control::FIB_CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "anchors": anchors }),
+            )
+            .expect("the Fibonacci capability is registered");
+
+        assert_eq!(result["tool_id"], tool_id);
+        let drawings = app.active_tab().drawing_pane().drawings.items();
+        assert_eq!(drawings.len(), 1);
+        assert_eq!(drawings[0].tool.id(), tool_id);
+        assert_eq!(drawings[0].points.len(), anchor_count);
+    }
+}
+
+#[test]
+fn fibonacci_capabilities_reject_incomplete_anchor_sets_without_leaving_a_drawing() {
+    use quantick_control::error::codes;
+
+    for (capability_id, anchor_count) in [
+        (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1),
+        (crate::control::FIB_PROJECTION_CAPABILITY_ID, 2),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        let mut first = anchor_at_slot(&app, 0);
+        let mut last = newest_anchor(&app);
+        first["bar_position"] = serde_json::json!("0.5");
+        last["bar_position"] = serde_json::json!("7.5");
+        let anchors = [first, last]
+            .into_iter()
+            .take(anchor_count)
+            .collect::<Vec<_>>();
+
+        let error = app
+            .control_action(
+                capability_id,
+                crate::control::FIB_CAPABILITY_VERSION,
+                crate::control::ActionOrigin::Human,
+                serde_json::json!({ "anchors": anchors }),
+            )
+            .expect_err("an incomplete Fibonacci anchor set is invalid");
+
+        assert_eq!(error.code.as_str(), codes::INVALID_REQUEST);
+        assert!(
+            app.active_tab().drawing_pane().drawings.items().is_empty(),
+            "a refused Fibonacci request must not leave a drawing"
+        );
+    }
 }
 
 /// Criterion 3: a script that does not compile comes back as spans and
@@ -5121,7 +5281,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 48);
+    assert_eq!(documents.len(), 53);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");

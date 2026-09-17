@@ -450,9 +450,9 @@ impl AppConfig {
     /// mutated in a test, say) is reported and treated as undeclared rather
     /// than trusted half-way.
     #[must_use]
-    pub fn startup_spec_for(&self, id: &str) -> Option<crate::state::BarSpec> {
+    pub fn startup_spec_for(&self, id: &str) -> Option<crate::state::BarConfiguration> {
         let bars = self.feed(id)?.default_bars.as_deref()?;
-        match crate::state::BarSpec::parse(bars) {
+        match quantick_engine::bar_registry::BUILTIN_BARS.parse(bars) {
             Ok(spec) => Some(spec),
             Err(message) => {
                 tracing::warn!(
@@ -604,9 +604,11 @@ impl AppConfig {
             // and the only symptom of a typo here would be a silently
             // factory-default chart.
             if let Some(bars) = &feed.default_bars {
-                let spec = crate::state::BarSpec::parse(bars).map_err(|message| {
-                    format!("feed '{}' has an invalid default_bars: {message}", feed.id)
-                })?;
+                let spec = quantick_engine::bar_registry::BUILTIN_BARS
+                    .parse(bars)
+                    .map_err(|message| {
+                        format!("feed '{}' has an invalid default_bars: {message}", feed.id)
+                    })?;
                 // A deal bar needs the venue's deal counter, which only a
                 // provider that may carry one can declare. Refused here rather
                 // than opened on a chart that would never cut a bar.
@@ -1170,7 +1172,7 @@ mod tests {
         );
         assert_eq!(
             config.startup_spec_for(&config.default_feed),
-            Some(crate::state::BarSpec::Tick(50)),
+            Some(crate::state::BarSpec::Tick(50).into()),
             "and the flow chart reads the tape by tick, not by the clock"
         );
     }
@@ -1864,7 +1866,7 @@ mod tests {
         );
         assert_eq!(
             config.startup_spec_for("b"),
-            Some(crate::state::BarSpec::Time(300_000))
+            Some(crate::state::BarSpec::Time(300_000).into())
         );
         assert_eq!(config.startup_spec_for("nope"), None);
 
@@ -1940,7 +1942,7 @@ mod tests {
             if key.starts_with("default_bars") {
                 assert_eq!(
                     ok.startup_spec_for("f"),
-                    Some(crate::state::BarSpec::Trades(2000))
+                    Some(crate::state::BarSpec::Trades(2000).into())
                 );
             }
         }

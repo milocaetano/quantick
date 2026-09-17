@@ -29,9 +29,9 @@ const STARTUP_RECOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_
 const TRADE_RECONNECT_SEED: u64 = 0x4859_5045_525F_5452;
 const DEPTH_RECONNECT_SEED: u64 = 0x4859_5045_525F_4C32;
 
-struct HyperliquidSource {
-    url: String,
-    backoff: Backoff,
+pub(crate) struct HyperliquidSource {
+    pub(crate) url: String,
+    pub(crate) backoff: Backoff,
 }
 
 /// Start the selected Hyperliquid perpetual on a background runtime.
@@ -71,7 +71,7 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     }
 }
 
-async fn feed_task(
+pub(crate) async fn feed_task(
     symbol: String,
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,

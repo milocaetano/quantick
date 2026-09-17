@@ -17,7 +17,6 @@ use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::pane::PaneSide;
 use crate::paper_home::shelf_dir;
-use crate::state::BarSpec;
 use quantick_feed as feed;
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
@@ -322,7 +321,9 @@ impl Tab {
         // A declared time-bar spec names the interval the declared layout's
         // time pane opens on; the pane's own header takes over from there.
         if layout.shows_time()
-            && let Some(BarSpec::Time(ms)) = config.startup_spec_for(&self.feed_id)
+            && let Some(ms) = config
+                .startup_spec_for(&self.feed_id)
+                .and_then(|spec| spec.time_interval_ms())
         {
             self.time_pane_opening_interval_ms = ms;
         }

@@ -152,12 +152,12 @@ pub(crate) fn draw(
     views: &[IndicatorView],
     preview_slot: Option<SlotId>,
     collapsed: bool,
-) -> Vec<LegendAction> {
+) -> (Vec<LegendAction>, Option<egui::Rect>) {
     let mut actions = Vec::new();
     if views.is_empty() {
-        return actions;
+        return (actions, None);
     }
-    egui::Area::new(egui::Id::new(("indicator_legend", pane_id)))
+    let drawn = egui::Area::new(egui::Id::new(("indicator_legend", pane_id)))
         .fixed_pos(chart_rect.left_top() + egui::vec2(LEGEND_MARGIN_PX, LEGEND_MARGIN_PX))
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
@@ -210,9 +210,11 @@ pub(crate) fn draw(
                             );
                         }
                     }
-                });
+                })
+                .response
+                .rect
         });
-    actions
+    (actions, Some(drawn.inner))
 }
 
 /// The collapsed legend's one row: a disclosure that opens it, and the count
@@ -584,7 +586,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let actions = draw(ctx, 0, chart, views.all(), None, collapsed);
+                let (actions, _) = draw(ctx, 0, chart, views.all(), None, collapsed);
                 assert!(actions.is_empty(), "no clicks, no actions");
             });
             text.clear();
@@ -905,7 +907,7 @@ mod tests {
                     modifiers: egui::Modifiers::default(),
                 });
                 let _ = ctx.run(input, |ctx| {
-                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed));
+                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed).0);
                 });
             }
             assert!(
@@ -963,7 +965,7 @@ mod tests {
                 modifiers: egui::Modifiers::default(),
             });
             let _ = ctx.run(input, |ctx| {
-                actions.extend(draw(ctx, 0, chart, views.all(), None, false));
+                actions.extend(draw(ctx, 0, chart, views.all(), None, false).0);
             });
         }
         assert!(

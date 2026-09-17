@@ -8,16 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     pane::{ChartPane, PaneSide},
-    state::BarSpec,
+    state::BarConfiguration,
     tab::{CanvasLayout, Tab},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PaneSideDto {
-    Flow,
-    Time,
-}
+pub(crate) use quantick_control::annotation::PaneSideDto;
 
 impl From<PaneSide> for PaneSideDto {
     fn from(side: PaneSide) -> Self {
@@ -63,48 +58,82 @@ pub(crate) struct BarSpecDto {
     pub imbalance_unit: Option<String>,
 }
 
-impl From<&BarSpec> for BarSpecDto {
-    fn from(spec: &BarSpec) -> Self {
-        match spec {
-            BarSpec::Tick(count) => Self {
-                kind: "tick".to_owned(),
-                parameter: canonical_u64(*count),
-                parameter_unit: "trades".to_owned(),
-                imbalance_unit: None,
-            },
-            BarSpec::Volume(quantity) => Self {
-                kind: "volume".to_owned(),
-                parameter: canonical_decimal(*quantity),
-                parameter_unit: "base_asset_quantity".to_owned(),
-                imbalance_unit: None,
-            },
-            BarSpec::Dollar(notional) => Self {
-                kind: "dollar".to_owned(),
-                parameter: canonical_decimal(*notional),
-                parameter_unit: "quote_asset_notional".to_owned(),
-                imbalance_unit: None,
-            },
-            BarSpec::Time(interval_ms) => Self {
-                kind: "time".to_owned(),
-                parameter: canonical_i64(*interval_ms),
-                parameter_unit: "milliseconds".to_owned(),
-                imbalance_unit: None,
-            },
-            BarSpec::Imbalance(unit, target) => Self {
-                kind: "imbalance".to_owned(),
-                parameter: canonical_u64(*target),
-                parameter_unit: "target_trades".to_owned(),
-                imbalance_unit: Some(unit.as_str().to_owned()),
-            },
-            // "deals", not "trades": the tick kind's unit already says
-            // `trades` for prints, and a client reading both must not be
-            // told the two rules count the same thing.
-            BarSpec::Trades(count) => Self {
-                kind: "trades".to_owned(),
-                parameter: canonical_u64(*count),
-                parameter_unit: "deals".to_owned(),
-                imbalance_unit: None,
-            },
+impl From<&BarConfiguration> for BarSpecDto {
+    fn from(spec: &BarConfiguration) -> Self {
+        Self {
+            kind: spec.id().to_owned(),
+            parameter: canonical_decimal(spec.parameter()),
+            parameter_unit: spec.definition().parameter.unit.to_owned(),
+            imbalance_unit: spec.choice().map(str::to_owned),
+        }
+    }
+}
+
+#[cfg(test)]
+mod bar_wire_tests {
+    use super::*;
+    use crate::bar_extension_fixture as seventh_bar;
+    use quantick_engine::bar_registry::BUILTIN_BARS;
+
+    #[test]
+    fn a_registered_extension_projects_without_a_legacy_variant() {
+        use quantick_engine::bar_registry::BarRegistry;
+        let registry = BarRegistry::new(
+            BUILTIN_BARS
+                .definitions()
+                .iter()
+                .copied()
+                .chain([&seventh_bar::SEVENTH]),
+        )
+        .unwrap();
+        let config = registry.parse("probe:3").unwrap();
+        assert_eq!(
+            serde_json::to_value(BarSpecDto::from(&config)).unwrap(),
+            serde_json::json!({"kind":"probe", "parameter":"3", "parameter_unit":"trades"})
+        );
+    }
+
+    #[test]
+    fn registered_definitions_preserve_all_legacy_wire_shapes() {
+        for (text, expected) in [
+            (
+                "tick:18446744073709551615",
+                serde_json::json!({"kind":"tick","parameter":"18446744073709551615","parameter_unit":"trades"}),
+            ),
+            (
+                "volume:5.00",
+                serde_json::json!({"kind":"volume","parameter":"5","parameter_unit":"base_asset_quantity"}),
+            ),
+            (
+                "dollar:500000",
+                serde_json::json!({"kind":"dollar","parameter":"500000","parameter_unit":"quote_asset_notional"}),
+            ),
+            (
+                "time:1m",
+                serde_json::json!({"kind":"time","parameter":"60000","parameter_unit":"milliseconds"}),
+            ),
+            (
+                "imbalance:100",
+                serde_json::json!({"kind":"imbalance","parameter":"100","parameter_unit":"target_trades","imbalance_unit":"trades"}),
+            ),
+            (
+                "imbalance:volume:100",
+                serde_json::json!({"kind":"imbalance","parameter":"100","parameter_unit":"target_trades","imbalance_unit":"volume"}),
+            ),
+            (
+                "imbalance:dollar:100",
+                serde_json::json!({"kind":"imbalance","parameter":"100","parameter_unit":"target_trades","imbalance_unit":"dollar"}),
+            ),
+            (
+                "trades:2000",
+                serde_json::json!({"kind":"trades","parameter":"2000","parameter_unit":"deals"}),
+            ),
+        ] {
+            let config = BUILTIN_BARS.parse(text).unwrap();
+            assert_eq!(
+                serde_json::to_value(BarSpecDto::from(&config)).unwrap(),
+                expected
+            );
         }
     }
 }
@@ -144,7 +173,7 @@ pub(crate) fn unavailable(reason: &str) -> AvailabilitySnapshot {
 /// here.
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
     let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
-    if tab.layout.shows_time() {
+    if tab.layout.shows_time() && !tab.context_collapsed {
         let shown = tab.context_panes_shown();
         panes.extend(
             tab.time_panes
@@ -172,14 +201,6 @@ pub(crate) const SCREEN_DECIMAL_PLACES: u32 = 3;
 pub(crate) fn canonical_decimal(value: Decimal) -> CanonicalDecimal {
     CanonicalDecimal::new(value.normalize().to_string())
         .expect("rust_decimal normalization is canonical")
-}
-
-pub(crate) fn canonical_u64(value: u64) -> CanonicalDecimal {
-    CanonicalDecimal::new(value.to_string()).expect("u64 text is a canonical decimal")
-}
-
-pub(crate) fn canonical_i64(value: i64) -> CanonicalDecimal {
-    CanonicalDecimal::new(value.to_string()).expect("i64 text is a canonical decimal")
 }
 
 pub(crate) fn canonical_f64(value: f64, decimal_places: u32) -> Option<CanonicalDecimal> {

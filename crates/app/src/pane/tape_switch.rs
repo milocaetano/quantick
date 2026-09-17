@@ -8,8 +8,8 @@
 
 use eframe::egui;
 
-use crate::chart_layers::ChartLayer;
 use crate::theme;
+use quantick_layers::ChartLayer;
 
 use super::{ChartPane, PaneChrome};
 
@@ -93,7 +93,7 @@ impl ChartPane {
 
     /// The tape switch's click, in the input pass.
     ///
-    /// Drawn by [`Self::draw_tape_switch`] in the pass after this one, off the
+    /// Drawn by [`Self::draw_canvas_contributions`] in the pass after this one, off the
     /// same [`tape_switch_rect`]. Nothing is registered on a pane with no tape
     /// machinery (§11: a time pane has none), so no chip appears there to
     /// promise a band that canvas will never draw.
@@ -141,54 +141,53 @@ impl ChartPane {
             self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
         }
     }
+}
 
-    /// Paint the tape switch: a chip in the canvas's top-right corner, lit
-    /// while the tape is on the canvas and muted while it is not.
-    pub(super) fn draw_tape_switch(&self, painter: &egui::Painter, chart_rect: egui::Rect) {
-        let Some(tape) = self.orderflow.as_ref() else {
-            return;
-        };
-        let on = tape.lane_enabled();
-        let rect = tape_switch_rect(chart_rect);
-        let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
-        let rounding = egui::Rounding::same(TAPE_SWITCH_ROUNDING_PX);
-        painter.rect_filled(
+pub(super) fn paint_switch(
+    painter: &egui::Painter,
+    chart_rect: egui::Rect,
+    on: bool,
+    hovered: bool,
+) {
+    let rect = tape_switch_rect(chart_rect);
+    let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
+    let rounding = egui::Rounding::same(TAPE_SWITCH_ROUNDING_PX);
+    painter.rect_filled(
+        rect,
+        rounding,
+        egui::Color32::from_black_alpha(if hovered {
+            TAPE_SWITCH_HOVER_FILL_ALPHA
+        } else {
+            TAPE_SWITCH_FILL_ALPHA
+        }),
+    );
+    if hovered {
+        painter.rect_stroke(
             rect,
             rounding,
-            egui::Color32::from_black_alpha(if self.tape_switch_hovered {
-                TAPE_SWITCH_HOVER_FILL_ALPHA
-            } else {
-                TAPE_SWITCH_FILL_ALPHA
-            }),
-        );
-        if self.tape_switch_hovered {
-            painter.rect_stroke(
-                rect,
-                rounding,
-                egui::Stroke::new(
-                    TAPE_SWITCH_STROKE_PX,
-                    accent.gamma_multiply(TAPE_SWITCH_HOVER_STROKE_ALPHA),
-                ),
-            );
-        }
-        // A filled dot for on, a ring for off: the state survives a screenshot
-        // read in greyscale, which colour alone would not.
-        let dot = egui::pos2(rect.left() + TAPE_SWITCH_DOT_X_PX, rect.center().y);
-        if on {
-            painter.circle_filled(dot, TAPE_SWITCH_DOT_RADIUS_PX, accent);
-        } else {
-            painter.circle_stroke(
-                dot,
-                TAPE_SWITCH_DOT_RADIUS_PX,
-                egui::Stroke::new(TAPE_SWITCH_STROKE_PX, accent),
-            );
-        }
-        painter.text(
-            egui::pos2(rect.left() + TAPE_SWITCH_LABEL_X_PX, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            TAPE_SWITCH_LABEL,
-            egui::FontId::proportional(TAPE_SWITCH_FONT_PX),
-            accent,
+            egui::Stroke::new(
+                TAPE_SWITCH_STROKE_PX,
+                accent.gamma_multiply(TAPE_SWITCH_HOVER_STROKE_ALPHA),
+            ),
         );
     }
+    // A filled dot for on, a ring for off: the state survives a screenshot
+    // read in greyscale, which colour alone would not.
+    let dot = egui::pos2(rect.left() + TAPE_SWITCH_DOT_X_PX, rect.center().y);
+    if on {
+        painter.circle_filled(dot, TAPE_SWITCH_DOT_RADIUS_PX, accent);
+    } else {
+        painter.circle_stroke(
+            dot,
+            TAPE_SWITCH_DOT_RADIUS_PX,
+            egui::Stroke::new(TAPE_SWITCH_STROKE_PX, accent),
+        );
+    }
+    painter.text(
+        egui::pos2(rect.left() + TAPE_SWITCH_LABEL_X_PX, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        TAPE_SWITCH_LABEL,
+        egui::FontId::proportional(TAPE_SWITCH_FONT_PX),
+        accent,
+    );
 }
