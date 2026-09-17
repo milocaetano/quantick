@@ -25,7 +25,9 @@ python tools/edit_loop/measure.py run --repo . --sha FULL_COMMIT_SHA `
 ```
 
 Use a host leased for this experiment, not a trader's active build target.
-The workflow uses the same command on a GitHub-hosted Windows runner. Each
+The workflow uses the same command on a GitHub-hosted `ubuntu-24.04` runner
+with explicit desktop GUI build dependencies. Full ordered Windows verification
+remains in the separate CI workflow. Each
 selected crate gets a new compile target, one exact-command warm-up, one
 no-touch control, then **five** mtime-only touches followed by the full
 `cargo test -p PACKAGE`. Every sample must prove that package recompiled and
@@ -110,6 +112,13 @@ reviewed fixed budget contract belong in source control. The budget contract
 retains the minimal calibration identity, rationale and values needed to
 enforce it; it is not a renamed raw-evidence archive. This follows the
 [delivery contract](../../docs/workflow/delivery.md#keep-execution-evidence-out-of-git).
+
+The declared timing baseline is Linux; it establishes no Windows timing claim.
+Windows measurements can refuse surviving MSVC compiler telemetry descendants
+(such as `vctip.exe`) even after Cargo succeeds. Preserve that failed evidence;
+changing hosts does not fix or exempt the Windows survivor. No process-name
+exception, relaxed cleanup or Windows calibration reuse is permitted. A Linux
+series must satisfy the same complete protocol before independent budget review.
 
 ## Source safety and interruption
 
