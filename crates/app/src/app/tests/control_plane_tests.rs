@@ -79,9 +79,8 @@ plot(close)
     std::fs::remove_file(&path).expect("remove");
 
     let before = app.active_tab().flow_pane.indicators.all().len();
-    let slot = app
-        .add_script_indicator(index)
-        .expect("a click on a known entry claims a slot");
+    let slot =
+        add_library_for_test(&mut app, index).expect("a click on a known entry claims a slot");
     assert_eq!(
         app.active_tab().flow_pane.indicators.all().len(),
         before + 1,
@@ -3084,7 +3083,8 @@ fn an_operator_cannot_detach_the_traders_own_indicator() {
     let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
     // The trader's own, through the library's door.
-    let (_, _, mine) = app.attach_script_indicator(
+    let (_, _, mine) = attach_script_for_test(
+        &mut app,
         "the trader's".to_owned(),
         "//@version=5
 indicator(\"mine\")
@@ -3144,16 +3144,24 @@ plot(close)
     app.cycle_tab(-1);
 
     // The trader's own, on the first tab.
-    let (traders_tab, _, traders_slot) =
-        app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
+    let (traders_tab, _, traders_slot) = attach_script_for_test(
+        &mut app,
+        "the trader's".to_owned(),
+        SCRIPT.to_owned(),
+        false,
+    );
     // Settled, not waited out over a count of frames, as in #415.
     settle_indicators(&mut app);
 
     // The second chart, whose slot numbering starts over from zero.
     app.cycle_tab(1);
     run_frame(&mut app, &ctx);
-    let (operators_tab, _, operators_slot) =
-        app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
+    let (operators_tab, _, operators_slot) = attach_script_for_test(
+        &mut app,
+        "an assistant's".to_owned(),
+        SCRIPT.to_owned(),
+        true,
+    );
     settle_indicators(&mut app);
     assert_ne!(traders_tab, operators_tab, "two charts, not one");
     assert_eq!(

@@ -30,8 +30,10 @@ mod drawing_chrome_wiring;
 mod drawing_input;
 mod frame;
 mod health;
+pub(crate) mod indicator_control;
 mod indicator_manager;
 mod indicator_operations;
+mod indicator_wiring;
 pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
@@ -64,7 +66,6 @@ use crate::drawings;
 use crate::feed_notice;
 use crate::harness::{Harness, ScriptedMenu};
 use crate::indicator_worker::SlotId;
-use crate::indicators::library::ScriptLibrary;
 use crate::indicators::preset_file;
 use crate::indicators::state_file;
 use crate::pane::PaneSide;
@@ -455,23 +456,10 @@ impl QuantickApp {
                 #[cfg(any(feature = "control-harness", test))]
                 scenarios: Default::default(),
             },
-            indicators: indicator_manager::IndicatorState {
-                script_library: ScriptLibrary::scan(),
-                indicator_settings: None,
-                indicator_settings_target: TabSlot {
-                    tab: FIRST_TAB_ID,
-                    side: PaneSide::Flow,
-                    slot: SlotId(0),
-                },
-                script_files: Vec::new(),
-                slot_kinds: Vec::new(),
-                pending_hidden: Vec::new(),
-                pending_styles: Vec::new(),
-                pending_mouse_vertical_lines: Vec::new(),
-                last_script_poll: Instant::now(),
-                operator_slots: std::collections::BTreeSet::new(),
-                indicator_presets: preset_file::PresetStore::load(&indicator_presets_path),
-            },
+            indicators: indicator_manager::IndicatorState::new(
+                FIRST_TAB_ID,
+                &indicator_presets_path,
+            ),
             replay_view: ReplayView::new(
                 workspace.replay_folder.as_deref(),
                 workspace.replay_day_before,

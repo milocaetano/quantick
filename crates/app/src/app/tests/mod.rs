@@ -733,7 +733,7 @@ fn pointer_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     }
 }
 
-fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
+pub(super) fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
     run_frame_with_events(
         app,
         ctx,
@@ -1268,7 +1268,10 @@ fn app_on(config: AppConfig, feed_id: &str, symbol: &str) -> QuantickApp {
 
 /// An app with `count` trades of history, split, and laid out by two real
 /// frames so both panes have reported their rects.
-fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+pub(super) fn split_app(
+    ctx: &egui::Context,
+    count: u64,
+) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, commands) = app_with_history(count);
     run_frame(&mut app, ctx);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
@@ -1279,7 +1282,7 @@ fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<Fe
 
 /// Let every pane's indicator worker finish what it was sent, then apply
 /// its events — the two steps the frame loop takes, made deterministic.
-fn settle_indicators(app: &mut QuantickApp) {
+pub(super) fn settle_indicators(app: &mut QuantickApp) {
     for pane in app.active_tab_mut().panes_mut() {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
@@ -1287,7 +1290,7 @@ fn settle_indicators(app: &mut QuantickApp) {
 }
 
 /// A point inside the pane on `side`, for a click that focuses it.
-fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
+pub(super) fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
         .frame
@@ -2632,3 +2635,37 @@ fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
 mod worker_progress_tests;
 
 mod worker_summary_bench_tests;
+
+fn attach_script_for_test(
+    app: &mut QuantickApp,
+    name: String,
+    text: String,
+    by_operator: bool,
+) -> (u64, crate::control::PaneSideDto, SlotId) {
+    let target = (app.active_tab().id, app.active_tab().focused_side());
+    let attached = app.indicators.attach_script(
+        app.tabs[app.active_tab].pane_mut(target.1),
+        target,
+        name,
+        text,
+        by_operator,
+    );
+    let owner = attached.target;
+    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+        attached,
+    ));
+    (owner.tab, owner.side.into(), owner.slot)
+}
+fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
+    let target = (app.active_tab().id, app.active_tab().focused_side());
+    let (slot, added) =
+        app.indicators
+            .add_library(app.tabs[app.active_tab].pane_mut(target.1), target, index)?;
+    if let Some(attached) = added.attachment {
+        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+            attached,
+        ));
+    }
+    app.indicators.watch_attachment(added.watch);
+    Some(slot)
+}

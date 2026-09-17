@@ -2601,7 +2601,7 @@ fn layouts_come_back_after_a_restart() {
     let (mut app, _commands) = split_app(&ctx, 200);
     app.apply_toolbar_action(ToolbarAction::AddNative("native.ema"));
     settle_indicators(&mut app);
-    app.maintain_indicator_state();
+    app.apply_pending_indicator_state();
     place_level(&mut app, PaneSide::Time(0), 100.0);
     run_frame(&mut app, &ctx);
     let second = app.create_layout(Some("levels")).expect("second");
@@ -2657,7 +2657,11 @@ fn a_previewed_input_never_reaches_the_layout() {
         side: PaneSide::Flow,
         slot,
     };
-    app.open_indicator_settings_at(target);
+    app.apply_indicator_legend_action(
+        target.tab,
+        target.side,
+        crate::indicator_legend::LegendAction::OpenSettings(target.slot),
+    );
     app.indicators
         .indicator_settings
         .as_mut()
@@ -2666,12 +2670,14 @@ fn a_previewed_input_never_reaches_the_layout() {
         quantick_indicators::InputValue::Int(50),
         quantick_indicators::InputValue::Source(quantick_indicators::SourceId::Close),
     ];
-    app.preview_indicator_settings_draft();
+    let change = app.indicators.preview_settings();
+    app.apply_indicator_settings_change(change);
     assert!(
         app.layouts().active().indicators[0].inputs.is_empty(),
         "a preview is not a commit"
     );
-    app.apply_indicator_settings_draft();
+    let change = app.indicators.apply_settings();
+    app.apply_indicator_settings_change(change);
     assert_eq!(
         app.layouts().active().indicators[0].inputs[0],
         crate::indicators::state_file::SavedInput::Int(50),

@@ -303,12 +303,12 @@ fn the_indicator_set_restores_from_disk_and_saves_back() {
     );
 
     // A user edit, settled: the file must match the live set.
-    app.mark_indicator_state_dirty();
+    app.note_indicator_edit_at(app.active_tab().id, app.active_tab().focused_side());
     // Let the worker answer the adds, so the views the snapshot reads
     // exist — a settled edit reads what is on screen.
     app.active_tab_mut().flow_pane.indicator_worker.flush();
     app.active_tab_mut().flow_pane.apply_indicator_events();
-    app.maintain_indicator_state();
+    app.apply_pending_indicator_state();
     app.flush_layouts();
     let crate::layouts::Loaded::Book(book) = crate::layouts::load(&layouts_path) else {
         panic!("the layouts file was written");
@@ -451,7 +451,7 @@ fn an_indicator_added_on_one_pane_appears_on_every_pane() {
     );
 
     // Settled, the edited pane's set is the layout's.
-    app.maintain_indicator_state();
+    app.apply_pending_indicator_state();
     assert_eq!(app.layouts().active().indicators.len(), 1);
     assert_eq!(
         app.layouts().active().indicators[0].kind,
@@ -473,7 +473,7 @@ fn a_mouse_vertical_line_is_per_indicator_mirrored_and_saved() {
     app.active_tab_mut()
         .flow_pane
         .request_indicator_guide(cvd, true);
-    app.open_requested_indicator_settings();
+    app.service_indicator_requests();
 
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         let views = app.active_tab().pane(side).indicators.all();
@@ -516,7 +516,7 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     let slot = app.active_tab().flow_pane.indicators.all()[0].slot;
 
     app.active_tab_mut().flow_pane.request_settings(slot);
-    app.open_requested_indicator_settings();
+    app.service_indicator_requests();
     let dialog = app
         .indicators
         .indicator_settings
@@ -530,7 +530,7 @@ fn a_pane_gesture_opens_the_dialog_once_on_the_indicator_it_named() {
     );
 
     app.indicators.indicator_settings = None;
-    app.open_requested_indicator_settings();
+    app.service_indicator_requests();
     assert!(
         app.indicators.indicator_settings.is_none(),
         "the request was taken, not left to fire again next frame"
@@ -623,7 +623,7 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
 
     app.harness
         .arm_settings_autostart(0, crate::indicator_panel::SettingsTab::Style);
-    app.open_requested_indicator_settings();
+    app.service_indicator_requests();
 
     let dialog = app
         .indicators
@@ -672,7 +672,11 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
         side: PaneSide::Time(0),
         slot,
     };
-    app.toggle_indicator_hidden_at(target);
+    app.apply_indicator_legend_action(
+        target.tab,
+        target.side,
+        crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
+    );
     assert!(
         app.active_tab()
             .time_pane()
@@ -682,7 +686,11 @@ fn legend_actions_land_on_their_own_pane_not_the_focused_one() {
             .hidden,
         "the time pane's own slot was toggled, focus notwithstanding"
     );
-    app.open_indicator_settings_at(target);
+    app.apply_indicator_legend_action(
+        target.tab,
+        target.side,
+        crate::indicator_legend::LegendAction::OpenSettings(target.slot),
+    );
     assert!(app.indicators.indicator_settings.is_some());
     assert_eq!(
         app.indicators.indicator_settings_target.side,
@@ -874,7 +882,7 @@ fn every_native_in_the_catalog_adds_and_registers_without_being_named_here() {
              anchors to and what the control plane reports"
         );
 
-        app.maintain_indicator_state();
+        app.apply_pending_indicator_state();
         assert_eq!(
             app.layouts().active().indicators[0].kind,
             crate::indicators::state_file::SavedKind::native(entry.id),

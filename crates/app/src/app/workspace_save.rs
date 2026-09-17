@@ -495,7 +495,7 @@ impl QuantickApp {
         self.indicators.pending_hidden.clear();
         self.indicators.pending_styles.clear();
         self.indicators.pending_mouse_vertical_lines.clear();
-        self.mark_indicator_state_dirty();
+        self.note_indicator_edit_at(self.active_tab().id, self.active_tab().focused_side());
     }
 
     /// Show the trader where the cockpit is kept, and open it.

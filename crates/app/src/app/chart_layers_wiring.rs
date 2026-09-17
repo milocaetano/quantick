@@ -28,7 +28,7 @@ impl QuantickApp {
             self.style_revision = self.style_revision.saturating_add(1);
         }
         if actions.indicators_changed {
-            self.mark_indicator_state_dirty();
+            self.note_indicator_edit_at(self.active_tab().id, self.active_tab().focused_side());
         }
         if actions.footprint_changed {
             crate::footprint_config::save(
@@ -135,7 +135,7 @@ impl QuantickApp {
     ///
     /// Read off the active tab's flow pane: the file records the canvas
     /// quantick is built around, the same scope the indicator state file has
-    /// (see [`Self::maintain_indicator_state`]). A tab's second pane opens
+    /// (see [`Self::apply_pending_indicator_state`]). A tab's second pane opens
     /// matching it and is in-session from there.
     pub(super) fn layer_mask(&self) -> u32 {
         self.active_tab().flow_pane.layer_mask(&self.style)

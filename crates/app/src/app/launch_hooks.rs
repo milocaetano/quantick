@@ -308,10 +308,13 @@ impl QuantickApp {
         // The folded legend, reachable from a clean launch: without it the
         // collapsed state is un-photographable by an agent, and a surface no
         // harness can reach is a surface no visual QA covers. Goes through
-        // `set_focused_legend_collapsed`, the same call the chevron and the
+        // `IndicatorState::set_legend_collapsed`, the same call the chevron and the
         // menu entry make — never a field poked from the side.
         if std::env::var("QUANTICK_LEGEND_COLLAPSED").is_ok_and(|value| value == "1") {
-            self.set_focused_legend_collapsed(true);
+            super::indicator_manager::IndicatorState::set_legend_collapsed(
+                self.focused_pane_mut(),
+                true,
+            );
         }
     }
 
@@ -389,7 +392,7 @@ impl QuantickApp {
                                 name: name.to_owned(),
                             },
                         );
-                        self.forget_last_indicator_state_change();
+                        self.indicators.forget_last_indicator_state_change();
                     }
                     None => tracing::warn!(
                         target: "quantick::app",

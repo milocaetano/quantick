@@ -154,12 +154,11 @@ impl QuantickApp {
         self.draw_toolbar(ctx);
         // Before the dialog is drawn, so a double click on a pane or a curve
         // opens it on the same frame the gesture happened rather than the next.
-        self.open_requested_indicator_settings();
-        self.draw_indicator_settings(ctx);
-        self.draw_indicator_legends(ctx);
+        self.service_indicator_requests();
+        self.draw_indicator_surfaces(ctx);
         // **After** the dialogs above, and that placement is load-bearing.
         // The preview watermark reads whether a settings dialog is previewing
-        // an unapplied draft, and `draw_indicator_settings` is what sets that
+        // an unapplied draft, and `IndicatorState::draw_settings` is what sets that
         // — so an environment built before it would put the banner on screen
         // a frame after the legend chip that says the same thing, and take it
         // off a frame later too. Two surfaces the trader reads as one is this
@@ -286,7 +285,11 @@ impl QuantickApp {
         // After the assignment, never before: the log line reports the
         // appearance that is now in force, and the revision it landed on.
         if let Some(request) = surfaces.log_style_change {
-            self.emit_style_changed(request.applied_preset);
+            super::health::emit_style_changed(
+                &self.style,
+                self.style_revision,
+                request.applied_preset,
+            );
         }
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
@@ -317,8 +320,18 @@ impl QuantickApp {
             // instance rides may just have been taken away.
             pane.sweep_strategy_orphans();
         }
-        self.poll_script_files();
-        self.maintain_indicator_state();
+        for (owner, name, text) in self.indicators.poll_script_files() {
+            IndicatorState::log_reload(owner, &name);
+            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == owner.tab) {
+                tab.pane_mut(owner.side).indicator_worker.send(
+                    crate::indicator_worker::IndicatorCommand::Reload {
+                        slot: owner.slot,
+                        source: crate::indicator_worker::IndicatorSource::Script { name, text },
+                    },
+                );
+            }
+        }
+        self.apply_pending_indicator_state();
         self.maintain_chart_layers();
         // This tab's judgement about its own feed, taken once for the frame:
         // the status bar reads it here and the corner reads it below, and two
