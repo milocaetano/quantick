@@ -1,0 +1,96 @@
+{
+  "branch": "feat/settled-projection-stages",
+  "head": "a6e554386b037bb2ec49fe29ff6494e4fef0460a",
+  "files": [
+    {
+      "path": "crates/orderflow/src/projection.rs",
+      "bytes": 9532,
+      "sha256": "887A5703B6B94F6F698EA990292BF6DC87D0D41CEC38FA82AAF6612F7A060DD5"
+    },
+    {
+      "path": "crates/orderflow/src/projection/evidence.rs",
+      "bytes": 5305,
+      "sha256": "3B2616ABC920F36A8A80FE2385DE44C9472DEF247075B35F6C3E3222F4B3AEA3"
+    },
+    {
+      "path": "crates/orderflow/src/projection/gaps.rs",
+      "bytes": 3132,
+      "sha256": "C634968422916B24AAF981DAB2B3104D826BA8EC24EBC32BCACA318B6D89C87A"
+    },
+    {
+      "path": "crates/orderflow/src/projection/gaps/tests.rs",
+      "bytes": 4024,
+      "sha256": "CCBDF1EA2CBA9E7DD319CD5EE116029557AB245B1571A127B003292EAD7EAFC8"
+    },
+    {
+      "path": "crates/orderflow/src/projection/heat.rs",
+      "bytes": 8637,
+      "sha256": "BF7DCD37AEAA42C930F3E34DA7694C111932FDD4C266B5C6A2654C1B90D51B3C"
+    },
+    {
+      "path": "crates/orderflow/src/projection/heat/tests.rs",
+      "bytes": 8276,
+      "sha256": "50E8BD087418E004A0BA8140D80F57D4E61A6CCE0D4750E523ABFD8A82CC5E46"
+    },
+    {
+      "path": "crates/orderflow/src/projection/settled_flow.rs",
+      "bytes": 8565,
+      "sha256": "744CD1F6E60FAE1403BBA36DEBB30F4E7C19F4CA9B76A20BD16E2C90A983A85A"
+    },
+    {
+      "path": "crates/orderflow/src/projection/settled_flow/tests.rs",
+      "bytes": 8214,
+      "sha256": "5BCD9253589C6CFC5433C8F382BBF06AC8100B4959EC21C33062B02C73D602D6"
+    },
+    {
+      "path": "crates/orderflow/src/projection/tests/fixtures.rs",
+      "bytes": 3652,
+      "sha256": "CB70443E3CA727A8BBC647B0D577C4C308C9B5014CDECE536740EDDF1669F485"
+    },
+    {
+      "path": "crates/orderflow/src/projection/tests/mod.rs",
+      "bytes": 89822,
+      "sha256": "79FD4F727F13C73228AD60A0DB459E9E59B6812B90016B81012AE39C3F57D12C"
+    },
+    {
+      "path": "crates/orderflow/src/projection/window.rs",
+      "bytes": 5060,
+      "sha256": "D36C23748D5D0865BD6E421F2B20C59373DB9A944728084F588342533C662A56"
+    },
+    {
+      "path": "crates/orderflow/src/projection/window/tests.rs",
+      "bytes": 4823,
+      "sha256": "B478FB507A9530082034D6BF38EE4399822318EA7A911BDE4015840DD528F977"
+    },
+    {
+      "path": "crates/orderflow/tests/settled_allocations.rs",
+      "bytes": 5551,
+      "sha256": "0FBED719B8245105CF8ADBA7836BFC2102C29ABC2D8125E97A5578530CCF0EB4"
+    },
+    {
+      "path": "crates/orderflow/tests/settled_bench.rs",
+      "bytes": 1245,
+      "sha256": "19856AD0217BF3A6A40439DC9048189CF3FA330F1BEA9708AFCCF18D5446A12E"
+    },
+    {
+      "path": "crates/orderflow/tests/settled_parity.rs",
+      "bytes": 5492,
+      "sha256": "A703D6E83C133B3CD1BEC5E451F0CBF40EB5D9F22009173B732C855FCBF63FAB"
+    },
+    {
+      "path": "crates/orderflow/tests/settled_stages.rs",
+      "bytes": 7798,
+      "sha256": "A19EA118DF7F25C6BD1145B3B9D79E88B978321E61F6F54D6E105E3A0E999F91"
+    },
+    {
+      "path": "crates/orderflow/tests/support/fixtures.rs",
+      "bytes": 5873,
+      "sha256": "92FAE083AD790F67F09B66CA9DF208C28A47AB331D06BDE515F762CEDBDF7426"
+    },
+    {
+      "path": "crates/orderflow/tests/support/signature.rs",
+      "bytes": 3067,
+      "sha256": "7C0A7D9DDA82F3BBEF9167AAB1C42A57C81EE03D2A99C1A4E09F0FABA88C751C"
+    }
+  ]
+}
