@@ -20,7 +20,7 @@ use crate::canvas_layout::PaneIdAllocator;
 
 mod chart_layers_wiring;
 mod chrome;
-mod control_host;
+pub(crate) mod control_host;
 #[cfg(test)]
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::control_quick_range_actions;
@@ -287,6 +287,8 @@ struct TabSlot {
 /// This value is never retained on the app or used as a frame context.
 #[derive(Default)]
 pub(crate) struct AppLaunch {
+    #[cfg(any(feature = "control-harness", test))]
+    pub control: control_host::ControlLaunch,
     pub window: crate::launch::WindowStartupState,
     #[cfg(any(feature = "drawing-harness", test))]
     pub toolrail: crate::toolrail::ToolRailLaunch,
@@ -450,11 +452,8 @@ impl QuantickApp {
             config,
             control: control_host::ControlState {
                 control_access: Some(crate::control::ControlAccess::new()),
-                pending_control_access_enable: false,
-                pending_control_annotation: None,
-                pending_control_notification: None,
-                pending_control_evidence: None,
-                pending_control_mark: None,
+                #[cfg(any(feature = "control-harness", test))]
+                scenarios: Default::default(),
             },
             indicators: indicator_manager::IndicatorState {
                 script_library: ScriptLibrary::scan(),
@@ -553,6 +552,8 @@ impl QuantickApp {
             .drawing_chrome
             .queue_launch(launch.drawing_chrome);
         app.apply_launch_hooks(
+            #[cfg(any(feature = "control-harness", test))]
+            launch.control,
             #[cfg(any(feature = "drawing-harness", test))]
             launch.toolrail,
         );

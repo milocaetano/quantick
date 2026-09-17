@@ -42,10 +42,13 @@ impl QuantickApp {
     /// is assembled and the saved workspace restored.
     pub(super) fn apply_launch_hooks(
         &mut self,
+        #[cfg(any(feature = "control-harness", test))]
+        control_launch: super::control_host::ControlLaunch,
         #[cfg(any(feature = "drawing-harness", test))] rail_launch: crate::toolrail::ToolRailLaunch,
     ) {
         self.apply_book_and_strip_hooks();
-        self.apply_control_hooks();
+        #[cfg(any(feature = "control-harness", test))]
+        self.control.apply_launch(control_launch);
         #[cfg(any(feature = "drawing-harness", test))]
         if self.toolrail.apply_launch(rail_launch).favorites_staged {
             self.workspace.session_mut().stage_favorites();
@@ -74,62 +77,6 @@ impl QuantickApp {
                 &mut Default::default(),
             );
         }
-    }
-
-    /// The control plane: the panel, the grant, and the four staged acts an
-    /// operator other than the trader performs.
-    fn apply_control_hooks(&mut self) {
-        // Local agent access, reachable without a click: the panel through the
-        // Tools menu entry's own function, and the enable action through the
-        // panel button's own function on the first frame — one path for the
-        // human, the hook and any later operator. Enabling publishes a real
-        // descriptor in the private runtime directory, removed on a clean exit.
-        if std::env::var("QUANTICK_CONTROL_PANEL").is_ok_and(|value| value == "1")
-            && let Some(access) = self.control.control_access.as_mut()
-        {
-            access.open_panel();
-        }
-        // Which scopes the next connection is granted, by ID — the panel's
-        // own checkboxes without a hand on the mouse. `annotate` grants the
-        // whole annotate tier (the profile follows the scopes), and any
-        // comma-separated list of registered permission IDs is honoured, so a
-        // scripted run can reproduce exactly the grant a trader would tick.
-        if let Ok(scopes) = std::env::var("QUANTICK_CONTROL_SCOPES")
-            && let Some(access) = self.control.control_access.as_mut()
-            && let Err(error) = access.configure_scopes(&scopes)
-        {
-            {
-                tracing::warn!(
-                    target: "quantick::control",
-                    event_code = "CONTROL_SCOPE_HOOK_REFUSED",
-                    error = %error,
-                    "QUANTICK_CONTROL_SCOPES named something this build does not register"
-                );
-            }
-        }
-        self.control.pending_control_access_enable =
-            std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
-        // A mark from a launch: `1` marks with no note, anything else is the
-        // note. It goes through the same action the hotkey calls.
-        self.control.pending_control_mark = std::env::var("QUANTICK_CONTROL_MARK")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| if value == "1" { String::new() } else { value });
-        // An assistant's own object and an assistant's own interruption, from
-        // a launch: the surfaces that say *who* acted cannot be photographed
-        // without something an operator other than the trader put there.
-        // One evidence bundle from a launch, through the same read a client
-        // calls: the capture a validation run asserts against, and the
-        // screenshot notice a capture run photographs.
-        self.control.pending_control_evidence = std::env::var("QUANTICK_CONTROL_EVIDENCE")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        self.control.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        self.control.pending_control_notification = std::env::var("QUANTICK_CONTROL_NOTIFY")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
     }
 
     /// How far back a launch reaches, and how it gets there.
@@ -778,13 +725,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_BOOK_AUTOSTART",
     "QUANTICK_BUBBLES_AUTOSTART",
     "QUANTICK_BUBBLE_BUDGET",
-    "QUANTICK_CONTROL_ACCESS",
-    "QUANTICK_CONTROL_ANNOTATE",
-    "QUANTICK_CONTROL_EVIDENCE",
-    "QUANTICK_CONTROL_MARK",
-    "QUANTICK_CONTROL_NOTIFY",
-    "QUANTICK_CONTROL_PANEL",
-    "QUANTICK_CONTROL_SCOPES",
     "QUANTICK_DOCK_TAB",
     "QUANTICK_FOOTPRINT_STYLE",
     "QUANTICK_HISTORY_REACH",

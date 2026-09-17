@@ -109,15 +109,6 @@ pub(crate) const HISTORY_NOTE_HOOK_FRAMES: u32 = 900;
 /// with one that is not.
 pub(crate) const LOAD_OLDER_CANDLES_HOOK_FRAMES: u32 = 3_600;
 
-/// How long `QUANTICK_CONTROL_EVIDENCE=screenshot` waits for the window to
-/// hand over a rasterised frame.
-///
-/// A window that presents answers on the frame after the request; a headless
-/// or occluded one never does. About two seconds at 60 fps: long enough for a
-/// surface that is coming up, short enough that a capture run gets a bundle
-/// with an honest gap instead of waiting for one that will never arrive.
-pub(crate) const CONTROL_EVIDENCE_HOOK_FRAMES: u32 = 120;
-
 /// What `QUANTICK_STRATEGY_DEMO` stages: the armed instance itself, or the
 /// arming dialog a screenshot of the form needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,12 +410,6 @@ pub(crate) struct Harness {
     /// cannot page at all and the button never takes a press. Without this the
     /// whole surface is invisible to anything but a bad afternoon.
     history_note: Option<Budgeted<CampaignEnd>>,
-    /// Frames `QUANTICK_CONTROL_EVIDENCE=screenshot` has spent waiting for a
-    /// rasterised window.
-    ///
-    /// The counter is the harness's; the request it counts for belongs to the
-    /// control plane and stays on the trunk with the rest of that cluster.
-    evidence_frames: u32,
 }
 
 impl Harness {
@@ -516,7 +501,6 @@ impl Harness {
                     frames: LOAD_OLDER_CANDLES_HOOK_FRAMES,
                 }),
             history_note: read("QUANTICK_HISTORY_NOTE").and_then(parse_history_note),
-            evidence_frames: 0,
         }
     }
 
@@ -770,13 +754,6 @@ impl Harness {
     pub(crate) fn spend_history_note_frame(&mut self) -> HookFrame {
         spend(&mut self.history_note)
     }
-
-    /// Wait one frame for the window to hand over a rasterised frame; `false`
-    /// once it has waited [`CONTROL_EVIDENCE_HOOK_FRAMES`] of them.
-    pub(crate) fn evidence_frame_waited(&mut self) -> bool {
-        self.evidence_frames = self.evidence_frames.saturating_add(1);
-        self.evidence_frames <= CONTROL_EVIDENCE_HOOK_FRAMES
-    }
 }
 
 /// Arming, for tests: the hooks a test drives directly rather than through the
@@ -1008,21 +985,6 @@ mod tests {
             harness.spend_load_older_frame(),
             HookFrame::default(),
             "an unset hook never gave up, because it never waited"
-        );
-    }
-
-    #[test]
-    fn the_evidence_hook_waits_its_budget_and_then_stops() {
-        let mut harness = Harness::default();
-        for frame in 1..=CONTROL_EVIDENCE_HOOK_FRAMES {
-            assert!(
-                harness.evidence_frame_waited(),
-                "frame {frame} is within the budget"
-            );
-        }
-        assert!(
-            !harness.evidence_frame_waited(),
-            "the window never delivered a frame to rasterise"
         );
     }
 

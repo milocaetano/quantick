@@ -2914,8 +2914,12 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.control.pending_control_annotation = Some("this absorption".to_owned());
-    app.control.pending_control_notification = Some("popup:look at 108k".to_owned());
+    app.control
+        .scenarios
+        .queue_annotation("this absorption".to_owned());
+    app.control
+        .scenarios
+        .queue_notification("popup:look at 108k".to_owned());
     run_frame(&mut app, &ctx);
 
     let items = app.active_tab().drawing_pane().drawings.items();
@@ -4707,7 +4711,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     // And the trader's own words in the *journal*, through the hotkey's
     // own action — the page a bundle embeds carries these verbatim, so
     // this is the leak the drawing canary above cannot find.
-    app.control.pending_control_mark = Some(MARK_CANARY.to_owned());
+    app.control.scenarios.queue_mark(MARK_CANARY.to_owned());
     run_frame(&mut app, &ctx);
 
     let directory = gateway_test_directory("evidence-redaction");
@@ -4837,7 +4841,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
-    app.control.pending_control_evidence = Some("all".to_owned());
+    app.control.scenarios.queue_evidence("all".to_owned());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
@@ -4850,7 +4854,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
         "the hook captured one bundle without a client on the socket"
     );
     assert!(
-        app.control.pending_control_evidence.is_none(),
+        !app.control.scenarios.has_evidence(),
         "and it fires once, not on every frame"
     );
 

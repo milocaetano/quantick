@@ -60,11 +60,13 @@ impl ControlAccess {
     }
 
     /// Whether this window is holding a rasterised frame a read could use.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn has_screenshot(&self) -> bool {
         self.screenshot.is_some()
     }
 
     /// The registered snapshot scopes the configured grant already reaches.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn readable_scopes(&self) -> Vec<quantick_control::id::SnapshotScopeId> {
         self.contract.readable_scopes(&self.configured_scopes)
     }
@@ -75,6 +77,7 @@ impl ControlAccess {
     /// what raises the notice: a caller that will be refused the scope one
     /// step later must not first tell the trader their window was captured.
     /// The indicator only means something if it is never wrong.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn grants_screenshot(&self) -> bool {
         self.configured_scopes
             .iter()
@@ -89,6 +92,7 @@ impl ControlAccess {
     /// enabled while the frame service that normally harvests runs only when
     /// it is — so a hook that armed but could not harvest would wait out its
     /// whole budget for a frame sitting in the input queue.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn service_screenshot(
         &mut self,
         app: &mut QuantickApp,

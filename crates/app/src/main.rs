@@ -226,6 +226,8 @@ fn main() -> eframe::Result {
 
     #[cfg(feature = "drawing-harness")]
     let toolrail = toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "control-harness")]
+    let control = app::control_host::ControlLaunch::capture(|name| std::env::var_os(name));
     let startup = launch::StartupConfig::capture(|name| std::env::var_os(name));
     #[cfg(feature = "quick-range-harness")]
     let quick_range =
@@ -359,6 +361,10 @@ fn main() -> eframe::Result {
     };
 
     let launch = app::AppLaunch {
+        #[cfg(feature = "control-harness")]
+        control,
+        #[cfg(all(test, not(feature = "control-harness")))]
+        control: Default::default(),
         window: startup.into_window_state(),
         #[cfg(feature = "drawing-harness")]
         toolrail,

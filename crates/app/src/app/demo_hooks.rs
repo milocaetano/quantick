@@ -8,6 +8,7 @@
 //! capture configured by the app constructor. The frame keeps each existing
 //! phase in order, including the history phases between drawing scenarios.
 
+#[cfg(any(feature = "control-harness", test))]
 use eframe::egui;
 
 use crate::drawings;
@@ -35,10 +36,11 @@ impl QuantickApp {
     ///
     /// A capture that asked for an image waits for it: the window is asked to
     /// rasterise and the hook takes the next frame, giving up after
-    /// [`crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
+    /// [`super::control_host::CONTROL_EVIDENCE_HOOK_FRAMES`] rather than hanging a capture run on a
     /// surface that never presents.
+    #[cfg(any(feature = "control-harness", test))]
     pub(super) fn apply_control_evidence_hook(&mut self, ctx: &egui::Context) {
-        if self.control.pending_control_evidence.is_none() {
+        if !self.control.scenarios.has_evidence() {
             return;
         }
         // Access is taken *before* the request is, so a frame that finds it
@@ -46,82 +48,45 @@ impl QuantickApp {
         let Some(mut access) = self.control.control_access.take() else {
             return;
         };
-        let request = self
+        let capture = self
             .control
-            .pending_control_evidence
-            .take()
+            .scenarios
+            .prepare_evidence(&access)
             .expect("the hook was pending one line above");
-        let mut wants_screenshot = false;
-        // A set, not a list: `all,scene.controls` is a reasonable thing to
-        // type, and the capability refuses a scope named twice, so the tokens
-        // are folded rather than concatenated.
-        let mut scopes = std::collections::BTreeSet::new();
-        for token in request.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-            match token {
-                "screenshot" => wants_screenshot = true,
-                "all" | "1" => scopes.extend(
-                    access
-                        .readable_scopes()
-                        .into_iter()
-                        .map(|scope| scope.to_string()),
-                ),
-                scope => {
-                    scopes.insert(scope.to_owned());
-                }
-            }
-        }
-        if scopes.is_empty() {
-            scopes.extend(
-                access
-                    .readable_scopes()
-                    .into_iter()
-                    .map(|scope| scope.to_string()),
-            );
-        }
-        // The scope is checked before anything is armed, not after. Arming is
-        // what eventually raises the screenshot notice, and telling the trader
-        // their window was captured on the way to refusing the capture would
-        // make the one indicator `visual-qa` asserts on say something untrue.
-        if wants_screenshot && !access.grants_screenshot() {
+        if capture.screenshot_not_granted {
             tracing::warn!(
                 target: "quantick::control",
                 event_code = "CONTROL_EVIDENCE_HOOK_SCREENSHOT_NOT_GRANTED",
-                "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; \
-                 capturing without one"
-            );
-            wants_screenshot = false;
+                "QUANTICK_CONTROL_EVIDENCE asked for an image without observe.screenshot; capturing without one");
         }
-        if wants_screenshot {
-            // Harvests as well as arms: the frame service that normally takes
-            // the pixels runs only while the gateway is enabled, and this hook
-            // is meant to work without a client on the socket.
+        if capture.wants_screenshot {
             access.service_screenshot(self, ctx);
         }
-        if wants_screenshot && !access.has_screenshot() {
-            if self.harness.evidence_frame_waited() {
-                // Every waiting frame asks for the next one. Without this a
-                // quiescent window — a paused replay, no feed, exactly the
-                // headless validation run the hook exists for — would never
-                // repaint, the counter would never advance, and the hook would
-                // neither complete nor give up.
+        let (scopes, wants_screenshot) = match self
+            .control
+            .scenarios
+            .finish_evidence(capture, access.has_screenshot())
+        {
+            super::control_host::EvidenceStep::Waiting => {
                 ctx.request_repaint();
-                self.control.pending_control_evidence = Some(request);
                 self.control.control_access = Some(access);
                 return;
             }
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_EVIDENCE_HOOK_GAVE_UP_ON_IMAGE",
-                frames = crate::harness::CONTROL_EVIDENCE_HOOK_FRAMES,
-                "the window never delivered a frame to rasterise; capturing without one"
-            );
-            // The request stays true on purpose. Clearing it would send
-            // `screenshot: false`, and the bundle would then record
-            // `screenshot/not_requested` — a lie about a run that asked for a
-            // picture and waited two seconds for one. Left true, the capture
-            // finds no image and records `frame_not_delivered`, which is what
-            // actually happened.
-        }
+            super::control_host::EvidenceStep::Capture {
+                scopes,
+                screenshot,
+                image_timed_out,
+            } => {
+                if image_timed_out {
+                    tracing::warn!(
+                        target: "quantick::control",
+                        event_code = "CONTROL_EVIDENCE_HOOK_GAVE_UP_ON_IMAGE",
+                        frames = super::control_host::CONTROL_EVIDENCE_HOOK_FRAMES,
+                        "the window never delivered a frame to rasterise; capturing without one");
+                }
+                (scopes, screenshot)
+            }
+        };
         let outcome = access.invoke_local_read(
             self,
             "evidence.capture",

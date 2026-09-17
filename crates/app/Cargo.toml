@@ -10,6 +10,7 @@ publish.workspace = true
 default = []
 quick-range-harness = []
 drawing-harness = []
+control-harness = []
 
 [dependencies]
 quantick-chart-interaction = { path = "../chart-interaction" }

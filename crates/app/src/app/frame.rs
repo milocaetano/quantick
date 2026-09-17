@@ -82,11 +82,11 @@ impl QuantickApp {
         // it looked, drawing one frame with an empty lane before the next
         // raise. A shutter timed on the linger catches exactly that frame.
         self.apply_history_note_hook();
-        if self.control.pending_control_access_enable {
-            self.control.pending_control_access_enable = false;
-            if let Some(access) = self.control.control_access.as_mut() {
-                access.enable(ctx);
-            }
+        #[cfg(any(feature = "control-harness", test))]
+        if self.control.scenarios.take_enable()
+            && let Some(access) = self.control.control_access.as_mut()
+        {
+            access.enable(ctx);
         }
         // Replay determinism: a session with a control trace beside it
         // re-injects its actions at their logical time, connected or not.
@@ -96,15 +96,18 @@ impl QuantickApp {
             access.service_replay_trace(self);
             self.control.control_access = Some(access);
         }
-        if let Some(note) = self.control.pending_control_mark.take() {
+        #[cfg(any(feature = "control-harness", test))]
+        if let Some(note) = self.control.scenarios.take_mark() {
             let note = (!note.is_empty()).then_some(note);
             self.take_mark(note);
         }
+        #[cfg(any(feature = "control-harness", test))]
         self.apply_control_annotate_hooks();
         // After the annotate hooks and before the gateway's own drain: a
         // bundle captured from a launch then describes the window an
         // assistant has already written on, which is the state a validation
         // run is actually asking about.
+        #[cfg(any(feature = "control-harness", test))]
         self.apply_control_evidence_hook(ctx);
         if self
             .control
