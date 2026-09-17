@@ -1,8 +1,8 @@
 {
   "phase": "compile",
-  "decision": "https://github.com/milocaetano/quantick/issues/480#issuecomment-5722450227",
+  "decision": "https://github.com/milocaetano/quantick/issues/480#issuecomment-5722612794",
   "ref": "refs/heads/feat/quick-range-conversion-plan",
-  "before": "c8910adde2afebee17469cface87fb3b6c7cc2d7",
+  "before": "8b0bc3ba47ffdb8a4401d734c930dbfa52476b41",
   "products": {
     "B": {
       "commit": "80da32426e6e2f7a2a962ab8054d986897461b6d",
@@ -2492,7 +2492,7 @@
     }
   },
   "carrier_files": {
-    "tools/owner_delivery/hosted.py": "6f0837f395240870cc30182d6e5cd7bf90ac345bf338aad642122092efd29996",
+    "tools/owner_delivery/hosted.py": "e05fdb932baef861395bee5f1c35e19ec2076e9a7ea59ef52468c252c1de2fb8",
     "tools/owner_delivery/launcher.py": "2b09c6ddbb8b3fdd2e476ea52c6cc320cd8861895d8bb5fdc373ec15672fe6d9",
     "tools/owner_delivery/owner-action-measurement-suffix02.rs": "e34b57b032e8d88cb68b85606b7f479b97446db5f5cb93595a053dff9013340a",
     "tools/owner_delivery/owner-delivery-performance01-source-preflight.md": "caea86b1f6474fa00f82604aa83e6038c14ff0e4e64021afdac86f7136f6a52d",
@@ -2502,7 +2502,8 @@
     "tools/owner_delivery/README.md": "806f3328786e45ee08a97e6f976a463dbcff47170895391b8b6d55b5418ef5be",
     "tools/owner_delivery/supervisor-closure.json": "aaf31d21a776fb8d077dc8332aefecbac54f3f5d33c3ae0281eb0db91323723a",
     "tools/owner_delivery/test_hosted.py": "9a7e11b94a23a88efff40fd781876f472a88e39e90080245f07fe4c346999e13",
-    "tools/owner_delivery/test_hosted_compile_repair.py": "c6001a6c5e7f0513b2f387c71d447149e7256478abc98186182559eb2dd3d354",
+    "tools/owner_delivery/test_hosted_compile_repair.py": "de72f9cb7def0a9ca700cc1ed60bd462e7aec19b2608420b5fc8df30dcc9e34d",
+    "tools/owner_delivery/test_hosted_identity.py": "fe3a627fd5eead21e672a68c516bbe65a1dd0a3c441e0388baa4ea2b6be18acc",
     "tools/owner_delivery/test_hosted_phase2_repair.py": "41572400ff1492cdaf42cec5adf984069aae3fbf37da3214cb654a1b748bc16e",
     "tools/owner_delivery/transport.py": "0aac0e4a2e71830d0f88cd075b64a95ae47a0afa30d91f89cc92c17b6789a708",
     "tools/owner_delivery/supervisor_closure/tools/edit_loop/inputs.py": "bf7d89b919070c54d25649ab34ca22856ab0371fcbce2622d61197ea44819c5d",
@@ -2511,10 +2512,10 @@
     "tools/owner_delivery/supervisor_closure/tools/edit_loop/supervisor.py": "0c457e6302198093892793e0f1d7e29b0f0264988d8c0676fe2877042f0ee5d8",
     "tools/owner_delivery/supervisor_closure/tools/edit_loop/worker.py": "96333bbe13688b0f7b4150979b55a523b67e8dc46f62eff0b563ce30f40b8394",
     "tools/owner_delivery/supervisor_closure/tools/outside_score/measure.py": "bb6160b9217c9109bfac50c5c98c0256a3fed2e438a6ab0e43332385057b8653",
-    ".github/workflows/owner-windows-compile.yml": "4338b27734d630ece35cb404223493a43e3ced2fbc7278ada6bb85119f993f5b"
+    ".github/workflows/owner-windows-compile.yml": "e36baaaf5dddbc435f0a3483493b060fdc2c4b3fc1c2660ed27a97134128b58e"
   },
   "tools": {
-    "hosted.py": "6f0837f395240870cc30182d6e5cd7bf90ac345bf338aad642122092efd29996",
+    "hosted.py": "e05fdb932baef861395bee5f1c35e19ec2076e9a7ea59ef52468c252c1de2fb8",
     "launcher.py": "2b09c6ddbb8b3fdd2e476ea52c6cc320cd8861895d8bb5fdc373ec15672fe6d9",
     "owner-action-measurement-suffix02.rs": "e34b57b032e8d88cb68b85606b7f479b97446db5f5cb93595a053dff9013340a",
     "owner-delivery-performance01-source-preflight.md": "caea86b1f6474fa00f82604aa83e6038c14ff0e4e64021afdac86f7136f6a52d",
@@ -2524,7 +2525,8 @@
     "README.md": "806f3328786e45ee08a97e6f976a463dbcff47170895391b8b6d55b5418ef5be",
     "supervisor-closure.json": "aaf31d21a776fb8d077dc8332aefecbac54f3f5d33c3ae0281eb0db91323723a",
     "test_hosted.py": "9a7e11b94a23a88efff40fd781876f472a88e39e90080245f07fe4c346999e13",
-    "test_hosted_compile_repair.py": "c6001a6c5e7f0513b2f387c71d447149e7256478abc98186182559eb2dd3d354",
+    "test_hosted_compile_repair.py": "de72f9cb7def0a9ca700cc1ed60bd462e7aec19b2608420b5fc8df30dcc9e34d",
+    "test_hosted_identity.py": "fe3a627fd5eead21e672a68c516bbe65a1dd0a3c441e0388baa4ea2b6be18acc",
     "test_hosted_phase2_repair.py": "41572400ff1492cdaf42cec5adf984069aae3fbf37da3214cb654a1b748bc16e",
     "transport.py": "0aac0e4a2e71830d0f88cd075b64a95ae47a0afa30d91f89cc92c17b6789a708",
     "supervisor_closure/tools/edit_loop/inputs.py": "bf7d89b919070c54d25649ab34ca22856ab0371fcbce2622d61197ea44819c5d",

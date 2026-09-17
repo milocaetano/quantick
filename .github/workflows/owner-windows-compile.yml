@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   compile:
-    if: github.event.before == 'c8910adde2afebee17469cface87fb3b6c7cc2d7' && github.run_attempt == 1
+    if: github.event.before == '8b0bc3ba47ffdb8a4401d734c930dbfa52476b41' && github.run_attempt == 1
     runs-on: windows-2025
     timeout-minutes: 300
     defaults:

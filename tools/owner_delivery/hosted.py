@@ -1,5 +1,7 @@
 """External draft: two finite Windows phases. No action occurs on import."""
 import argparse
+from datetime import datetime
+import re
 import hashlib
 import json
 import os
@@ -121,6 +123,44 @@ def dispose_intermediates(target, kept, receipt_path, closures):
         record["state"] = "terminal"
     finally:
         owner.save(receipt_path, record)
+
+
+def observe_launcher_host():
+    """Compile-only evidence; query subprocess is bounded only by the job cap."""
+    import launcher
+    path = ROOT / "launcher-host-identity.json"
+    receipt = {"state": "started", "scope": "observation only; not collection admission", "observations": []}
+    owner.save(path, receipt)
+    try:
+        previous = None
+        for _ in range(2):
+            current, parent, rows = launcher.query_identity()
+            public = [{k: row.get(k) for k in ("pid", "parent", "name", "created", "image", "image_sha256")} for row in rows]
+            receipt["observations"].append({"utc_ns": time.time_ns(), "current": current, "parent": parent, "rows": public})
+            owner.save(path, receipt)
+            owner.require(current == os.getpid() and parent == os.getppid() and current != parent, "launcher process relationship mismatch")
+            owner.require(len(rows) == 2 and {r["pid"] for r in rows} == {current, parent}, "launcher identities ambiguous")
+            own = next(r for r in rows if r["pid"] == current)
+            ancestor = next(r for r in rows if r["pid"] == parent)
+            owner.require(own["parent"] == parent and ancestor["name"].lower() == "pwsh.exe", "not immediate pwsh parent")
+            owner.require(isinstance(own["image"], str) and Path(own["image"]).resolve() == Path(sys.executable).resolve(), "Python executable mismatch")
+            for row in rows:
+                owner.require(isinstance(row["image"], str) and Path(row["image"]).is_absolute(), "launcher executable path unavailable")
+                owner.require(isinstance(row["image_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", row["image_sha256"]), "launcher executable hash unavailable")
+            own_time = datetime.fromisoformat(own["created"])
+            parent_time = datetime.fromisoformat(ancestor["created"])
+            owner.require(own_time.tzinfo is not None and parent_time.tzinfo is not None and parent_time <= own_time, "launcher creation ordering invalid")
+            identity = sorted((r["pid"], r["parent"], r["name"], r["created"], str(Path(r["image"]).resolve()), r["image_sha256"]) for r in rows)
+            owner.require(previous is None or identity == previous, "launcher identity changed between observations")
+            previous = identity
+        receipt["state"] = "terminal"
+    except BaseException as error:
+        receipt.update(state="failed", error_type=type(error).__name__)
+        if isinstance(error, owner.InvalidEvidence):
+            receipt["reason"] = str(error)
+        raise
+    finally:
+        owner.save(path, receipt)
 
 
 def runtime_identity():
@@ -295,6 +335,7 @@ def main():
     ROOT.mkdir()
     (ROOT / "receipts").mkdir()
     (ROOT / "tools").mkdir()
+    observe_launcher_host()
     capacity("startup")
     for name, sha in binding["tools"].items():
         owner.require(owner.digest(HERE / name) == sha, "tool changed")
