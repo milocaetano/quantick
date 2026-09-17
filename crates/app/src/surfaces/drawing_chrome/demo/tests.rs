@@ -138,7 +138,7 @@ fn ready_gallery_consumes_even_when_recipient_places_nothing_and_retains_recut_t
     assert!(state.take_gallery(0).is_none() && state.gallery_requested());
     let request = state.take_gallery(200).unwrap();
     assert!(!state.gallery_requested());
-    let mut plan = request.plan(facts(), Vec::new());
+    let mut plan = request.plan(facts(), &crate::indicators::IndicatorViews::default());
     let mut projected = Vec::new();
     plan.project_times(|slot| {
         projected.push(slot);

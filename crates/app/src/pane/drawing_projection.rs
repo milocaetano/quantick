@@ -597,3 +597,50 @@ impl DrawingProjection<'_> {
         drawings.set_times(index, &times);
     }
 }
+
+impl DrawingProjection<'_> {
+    pub(crate) fn price_axis_levels(
+        &self,
+        drawings: &drawings::Drawings,
+        chart_rect: egui::Rect,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+        out: &mut Vec<super::PriceAxisLevel>,
+    ) {
+        out.clear();
+        for (index, drawing) in drawings.items().iter().enumerate() {
+            if !drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_)) {
+                continue;
+            }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            for y in drawing.tool.axis_levels(chart_rect, &points) {
+                out.push(super::PriceAxisLevel {
+                    id: drawing.id,
+                    y,
+                    price: scale.price_at(y),
+                    color: drawings::painted_color(drawing),
+                });
+            }
+        }
+    }
+}
+
+impl PaneSeriesRead<'_> {
+    pub(crate) fn pointer_bar(
+        &self,
+        viewport: &Viewport,
+        x: f32,
+        history_right: f32,
+        total: usize,
+    ) -> Option<crate::pointer_compass::PointerBar> {
+        if total == 0 || x > history_right {
+            return None;
+        }
+        let slot = viewport.slot_at_x(x, history_right, total)?;
+        Some(crate::pointer_compass::PointerBar {
+            slot,
+            open_time_unix_ms: self.slot_open_time(slot)?,
+        })
+    }
+}

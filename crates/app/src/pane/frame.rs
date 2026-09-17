@@ -107,3 +107,10 @@ impl Default for PaneFrame {
         }
     }
 }
+
+impl PaneFrame {
+    /// Immutable geometry from the last completed paint, never a fresh carve.
+    pub(crate) fn cached_bands(&self) -> &[crate::bands::Band] {
+        &self.bands
+    }
+}

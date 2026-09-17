@@ -20,155 +20,6 @@ use crate::theme;
 use super::{ChartPane, region_pause};
 
 impl ChartPane {
-    /// What the badge over `drawing` says, as a value.
-    ///
-    /// The instance's own half ([`crate::strategy_anchors::badge_text`])
-    /// plus the two things it cannot know, because they are facts about the
-    /// *drawing* rather than about the strategy: a region nobody can
-    /// honestly test ([`region_pause`]), and a drawn span that no longer
-    /// reaches the next bar. Both shut the order and the alarm together, so
-    /// both owe the trader a word — a badge reading a bare "armed" over a
-    /// bot that has been held for an hour is the chart lying about the one
-    /// thing this badge exists to say.
-    ///
-    /// Neither is a disarm. The trader moves the rectangle all session; a
-    /// band dragged back over the future starts firing again on the next
-    /// bar, with no button to press, and the alarm never went quiet.
-    ///
-    /// A `String` rather than paint, so the sentence a trader reads is the
-    /// sentence a test asserts and a reader that is not looking at the
-    /// screen can obtain. The painter below is one consumer of it.
-    #[must_use]
-    pub(crate) fn badge_text_for(
-        &self,
-        instance: &crate::strategy_anchors::AnchoredInstance,
-        drawing: &drawings::Drawing,
-    ) -> String {
-        let mut text = crate::strategy_anchors::badge_text(instance);
-        // The region's own state first, and *instead of* the kernel's
-        // reason rather than beside it. A paused or expired region makes
-        // `strategy_region` refuse, which the kernel records as "region not
-        // active on this bar" — true of the span, and a lie about a band
-        // that is merely hidden. Two vocabularies for one fact leave the
-        // trader deciding which clause to believe; the specific one wins,
-        // and it is the only one carrying a way out.
-        let armed = matches!(instance.armed.state(), quantick_strategy::ArmedState::Armed);
-        if let Some(pause) = region_pause(drawing, self.drawings.all_hidden()) {
-            text.push_str(" · ");
-            text.push_str(pause);
-            return text;
-        }
-        if armed && !self.strategy_region_can_fire(drawing.id) {
-            text.push_str(" · region ended — stretch it right");
-            return text;
-        }
-        // Otherwise the gate that actually decided, in the words that fit a
-        // corner — and never present-tense about a bar it is not about.
-        // This is the whole point of the badge and it was reaching only the
-        // right-click menu: the trader watches the chart, and "why did
-        // nothing happen" is answerable only where they are already looking.
-        let held = instance.armed.hold_reason();
-        // A gate that refused *this* bar is the whole answer, and it stands
-        // alone.
-        if let Some(held) = held.filter(|held| held.fresh) {
-            text.push_str(" · ");
-            text.push_str(held.reason);
-            return text;
-        }
-        // Otherwise the ruler is what decided this bar, and its reading is
-        // the only sentence here about the candle in front of the trader.
-        // `status_line` has always led with it and the right-click menu
-        // prints it; this badge did not, so a bar the ruler held showed an
-        // older bar's refusal and nothing about its own — the divergence
-        // `region_pause` above exists to end, found again the same way.
-        if armed {
-            text.push_str(" · ");
-            text.push_str(&instance.armed.trigger().status());
-        }
-        if let Some(held) = held {
-            text.push_str(" · last held: ");
-            text.push_str(held.reason);
-        }
-        text
-    }
-
-    /// The badge over the drawing with this id — the lookup half of
-    /// [`Self::badge_text_for`], which the painter reaches directly because
-    /// it already holds both.
-    ///
-    /// Test-only, and gated so it cannot drift into the shipped binary: the
-    /// sentence the trader reads is worth asserting, and the id is what a
-    /// test has in hand. The production path a reader that is not looking
-    /// at the screen would need is the control plane's scene, which does
-    /// not carry armed instances yet — filed rather than widened here.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn strategy_badge_text(&self, id: drawings::DrawingId) -> String {
-        let Some(instance) = self.strategies.anchors.for_drawing(id) else {
-            return String::new();
-        };
-        let Some(index) = self.drawings.index_of(id) else {
-            return String::new();
-        };
-        self.badge_text_for(instance, &self.drawings.items()[index])
-    }
-
-    /// The armed instance's badge, pinned to its drawing's top-left corner:
-    /// state at a glance, in the state's colour. Per frame this is one
-    /// bounding-box fold and one text draw per *armed* drawing — a handful
-    /// at most, and nothing at all on a chart with no instances.
-    pub(super) fn paint_strategy_badge(
-        &self,
-        painter: &egui::Painter,
-        instance: &crate::strategy_anchors::AnchoredInstance,
-        drawing: &drawings::Drawing,
-        points: &[egui::Pos2],
-    ) {
-        let Some(first) = points.first() else {
-            return;
-        };
-        let anchor = points.iter().fold(*first, |corner, point| {
-            egui::pos2(corner.x.min(point.x), corner.y.min(point.y))
-        });
-        use quantick_strategy::ArmedState;
-        let color = match instance.armed.state() {
-            ArmedState::Armed => theme::ACCENT,
-            ArmedState::Fired { .. } => theme::AMBER,
-            ArmedState::InPosition => theme::BUY,
-            ArmedState::Done => theme::TEXT_MUTED,
-            ArmedState::Disarmed { .. } => theme::TEXT_FAINT,
-        };
-        /// Badge label size — the small-annotation size the band chips use.
-        const BADGE_FONT_PX: f32 = 11.0;
-        /// Ground padding around the label, and the gap that lifts the
-        /// badge off the drawing's top-left corner.
-        const BADGE_PAD_X_PX: f32 = 3.0;
-        const BADGE_PAD_Y_PX: f32 = 2.0;
-        const BADGE_LIFT_PX: f32 = 4.0;
-        const BADGE_CORNER_PX: f32 = 3.0;
-        /// Ground opacity: readable over candles, still a whisper.
-        const BADGE_GROUND_ALPHA: f32 = 0.85;
-        let text = self.badge_text_for(instance, drawing);
-        let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
-        // A whisper of ground behind the label so it stays readable over
-        // candles; galley first, box after, text last.
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(BADGE_FONT_PX), color);
-        let rect = egui::Rect::from_min_size(
-            position - egui::vec2(BADGE_PAD_X_PX, galley.size().y + BADGE_PAD_Y_PX + 1.0),
-            galley.size() + egui::vec2(2.0 * BADGE_PAD_X_PX, 2.0 * BADGE_PAD_Y_PX),
-        );
-        painter.rect_filled(
-            rect,
-            BADGE_CORNER_PX,
-            theme::CANVAS.gamma_multiply(BADGE_GROUND_ALPHA),
-        );
-        painter.galley(
-            rect.min + egui::vec2(BADGE_PAD_X_PX, BADGE_PAD_Y_PX),
-            galley,
-            color,
-        );
-    }
-
     /// The strategy seat of the per-drawing menu: arm a bot on this region,
     /// or manage the one riding it. Price-band rectangles only — the one
     /// shape whose two anchors honestly bound a price region today.
@@ -231,7 +82,8 @@ impl ChartPane {
                     let drawing = &self.drawings.items()[index];
                     region_pause(drawing, self.drawings.all_hidden()).is_none()
                 };
-                let span_alive = self.strategy_region_can_fire(id);
+                let span_alive =
+                    region_can_fire(&self.drawings.items()[index], self.closed_slots());
                 let rearm = ui
                     .add_enabled(footed && span_alive, egui::Button::new("Re-arm"))
                     .on_hover_text("watch this region again with the same parameters")
@@ -302,33 +154,6 @@ impl ChartPane {
         instance.armed.warm(&bars);
     }
 
-    /// Whether the drawing's drawn span can still cover a future closed
-    /// bar — the liveness half of [`Self::strategy_region`]'s `active`
-    /// test, shared by arming, re-arming and the menu so the three cannot
-    /// drift. The next bar to close lands at slot `closed_slots()`, so an
-    /// unextended region needs its right anchor at or past that slot; an
-    /// extended one never expires right.
-    pub(crate) fn strategy_region_can_fire(&self, id: drawings::DrawingId) -> bool {
-        let Some(index) = self.drawings.index_of(id) else {
-            return false;
-        };
-        let drawing = &self.drawings.items()[index];
-        let extend_right = drawing
-            .payload
-            .as_any()
-            .downcast_ref::<drawings::RectanglePayload>()
-            .is_some_and(|payload| payload.extend_right);
-        if extend_right {
-            return true;
-        }
-        let [a, b] = drawing.points.as_slice() else {
-            return false;
-        };
-        #[allow(clippy::cast_precision_loss)]
-        let next_slot = self.closed_slots() as f32;
-        a.bar.max(b.bar) >= next_slot
-    }
-
     /// Sweep instances whose drawing no longer exists — for the deletion
     /// paths that cannot call [`Self::remove_strategy_for_drawing`] with an
     /// id in hand (delete-all, undo, redo), so no path leaves a resting bot
@@ -378,4 +203,147 @@ impl ChartPane {
         let cleanup = self.strategies.anchors.remove_for_drawing(drawing);
         self.strategies.cleanup.extend(cleanup);
     }
+}
+
+pub(crate) fn region_can_fire(drawing: &drawings::Drawing, closed_slots: usize) -> bool {
+    let extend_right = drawing
+        .payload
+        .as_any()
+        .downcast_ref::<drawings::RectanglePayload>()
+        .is_some_and(|payload| payload.extend_right);
+    if extend_right {
+        return true;
+    }
+    let [a, b] = drawing.points.as_slice() else {
+        return false;
+    };
+    #[allow(clippy::cast_precision_loss)]
+    let next_slot = closed_slots as f32;
+    a.bar.max(b.bar) >= next_slot
+}
+pub(super) fn badge_text_for(
+    instance: &crate::strategy_anchors::AnchoredInstance,
+    drawing: &drawings::Drawing,
+    all_hidden: bool,
+    closed_slots: usize,
+) -> String {
+    let mut text = crate::strategy_anchors::badge_text(instance);
+    // The region's own state first, and *instead of* the kernel's
+    // reason rather than beside it. A paused or expired region makes
+    // `strategy_region` refuse, which the kernel records as "region not
+    // active on this bar" — true of the span, and a lie about a band
+    // that is merely hidden. Two vocabularies for one fact leave the
+    // trader deciding which clause to believe; the specific one wins,
+    // and it is the only one carrying a way out.
+    let armed = matches!(instance.armed.state(), quantick_strategy::ArmedState::Armed);
+    if let Some(pause) = region_pause(drawing, all_hidden) {
+        text.push_str(" · ");
+        text.push_str(pause);
+        return text;
+    }
+    if armed && !region_can_fire(drawing, closed_slots) {
+        text.push_str(" · region ended — stretch it right");
+        return text;
+    }
+    // Otherwise the gate that actually decided, in the words that fit a
+    // corner — and never present-tense about a bar it is not about.
+    // This is the whole point of the badge and it was reaching only the
+    // right-click menu: the trader watches the chart, and "why did
+    // nothing happen" is answerable only where they are already looking.
+    let held = instance.armed.hold_reason();
+    // A gate that refused *this* bar is the whole answer, and it stands
+    // alone.
+    if let Some(held) = held.filter(|held| held.fresh) {
+        text.push_str(" · ");
+        text.push_str(held.reason);
+        return text;
+    }
+    // Otherwise the ruler is what decided this bar, and its reading is
+    // the only sentence here about the candle in front of the trader.
+    // `status_line` has always led with it and the right-click menu
+    // prints it; this badge did not, so a bar the ruler held showed an
+    // older bar's refusal and nothing about its own — the divergence
+    // `region_pause` above exists to end, found again the same way.
+    if armed {
+        text.push_str(" · ");
+        text.push_str(&instance.armed.trigger().status());
+    }
+    if let Some(held) = held {
+        text.push_str(" · last held: ");
+        text.push_str(held.reason);
+    }
+    text
+}
+pub(super) fn paint_strategy_badge(
+    painter: &egui::Painter,
+    instance: &crate::strategy_anchors::AnchoredInstance,
+    drawing: &drawings::Drawing,
+    points: &[egui::Pos2],
+    all_hidden: bool,
+    closed_slots: usize,
+) {
+    let Some(first) = points.first() else {
+        return;
+    };
+    let anchor = points.iter().fold(*first, |corner, point| {
+        egui::pos2(corner.x.min(point.x), corner.y.min(point.y))
+    });
+    use quantick_strategy::ArmedState;
+    let color = match instance.armed.state() {
+        ArmedState::Armed => theme::ACCENT,
+        ArmedState::Fired { .. } => theme::AMBER,
+        ArmedState::InPosition => theme::BUY,
+        ArmedState::Done => theme::TEXT_MUTED,
+        ArmedState::Disarmed { .. } => theme::TEXT_FAINT,
+    };
+    /// Badge label size — the small-annotation size the band chips use.
+    const BADGE_FONT_PX: f32 = 11.0;
+    /// Ground padding around the label, and the gap that lifts the
+    /// badge off the drawing's top-left corner.
+    const BADGE_PAD_X_PX: f32 = 3.0;
+    const BADGE_PAD_Y_PX: f32 = 2.0;
+    const BADGE_LIFT_PX: f32 = 4.0;
+    const BADGE_CORNER_PX: f32 = 3.0;
+    /// Ground opacity: readable over candles, still a whisper.
+    const BADGE_GROUND_ALPHA: f32 = 0.85;
+    let text = badge_text_for(instance, drawing, all_hidden, closed_slots);
+    let position = anchor + egui::vec2(BADGE_PAD_X_PX - 1.0, -BADGE_LIFT_PX);
+    // A whisper of ground behind the label so it stays readable over
+    // candles; galley first, box after, text last.
+    let galley = painter.layout_no_wrap(text, egui::FontId::proportional(BADGE_FONT_PX), color);
+    let rect = egui::Rect::from_min_size(
+        position - egui::vec2(BADGE_PAD_X_PX, galley.size().y + BADGE_PAD_Y_PX + 1.0),
+        galley.size() + egui::vec2(2.0 * BADGE_PAD_X_PX, 2.0 * BADGE_PAD_Y_PX),
+    );
+    painter.rect_filled(
+        rect,
+        BADGE_CORNER_PX,
+        theme::CANVAS.gamma_multiply(BADGE_GROUND_ALPHA),
+    );
+    painter.galley(
+        rect.min + egui::vec2(BADGE_PAD_X_PX, BADGE_PAD_Y_PX),
+        galley,
+        color,
+    );
+}
+
+#[cfg(test)]
+pub(crate) fn strategy_badge_text(
+    anchors: &crate::strategy_anchors::StrategyAnchors,
+    drawings: &drawings::Drawings,
+    id: drawings::DrawingId,
+    closed_slots: usize,
+) -> String {
+    let Some(instance) = anchors.for_drawing(id) else {
+        return String::new();
+    };
+    let Some(index) = drawings.index_of(id) else {
+        return String::new();
+    };
+    badge_text_for(
+        instance,
+        &drawings.items()[index],
+        drawings.all_hidden(),
+        closed_slots,
+    )
 }

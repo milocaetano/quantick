@@ -900,5 +900,15 @@ pub(super) fn off_line_by(
     cursor + normal * (side * floor_px - offset)
 }
 
+/// Shared honesty fade for marks whose location this series does not prove.
+pub(crate) const CLAMPED_OPACITY: f32 = 0.45;
+pub(crate) fn painted_color(drawing: &Drawing) -> egui::Color32 {
+    if drawing.off_series || drawing.foreign_market {
+        drawing.style.color.gamma_multiply(CLAMPED_OPACITY)
+    } else {
+        drawing.style.color
+    }
+}
+
 #[cfg(test)]
 mod tests;

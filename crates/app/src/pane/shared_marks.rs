@@ -173,7 +173,14 @@ impl ChartPane {
             };
             let points: SmallVec<[egui::Pos2; 4]> = anchors
                 .iter()
-                .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
+                .map(|anchor| {
+                    self.drawing_projection().drawing_screen_point(
+                        *anchor,
+                        history_right,
+                        total,
+                        &scale,
+                    )
+                })
                 .collect();
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
@@ -318,7 +325,10 @@ impl ChartPane {
             // rather than by pretending to sit on the edge bar.
             let style = if clamped {
                 DrawingStyle {
-                    color: drawing.style.color.gamma_multiply(Self::CLAMPED_OPACITY),
+                    color: drawing
+                        .style
+                        .color
+                        .gamma_multiply(crate::drawings::CLAMPED_OPACITY),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -345,7 +355,14 @@ impl ChartPane {
                 // tool has at most three anchors, so the heap is never touched.
                 let points: SmallVec<[egui::Pos2; 4]> = anchors
                     .iter()
-                    .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
+                    .map(|anchor| {
+                        self.drawing_projection().drawing_screen_point(
+                            *anchor,
+                            history_right,
+                            total,
+                            &scale,
+                        )
+                    })
                     .collect();
                 // A mark selected here shows it here. The trader can take and
                 // move it from this pane (`Self::interact_shared`), and a

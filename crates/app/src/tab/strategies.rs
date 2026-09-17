@@ -286,7 +286,7 @@ impl Tab {
             // exist to prevent. One predicate, shared with re-arm and the
             // evaluation sweep (`Pane::strategy_region_can_fire`), refuses
             // it with the fix in hand.
-            if !pane.strategy_region_can_fire(drawing) {
+            if !crate::pane::strategy_badges::region_can_fire(target, pane.closed_slots()) {
                 return Err(
                     "the region ends before the next bar, so nothing can ever fire — \
                      stretch it past the right edge, or turn on \"extend right\" in its \

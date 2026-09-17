@@ -447,10 +447,7 @@ impl QuantickApp {
             self.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         }
         let pane = &mut self.active_tab_mut().flow_pane;
-        let samples = request
-            .band_sample_slot(slots)
-            .map_or_else(Vec::new, |slot| pane.indicator_band_samples(slot));
-        let mut plan = request.plan(facts(pane), samples);
+        let mut plan = request.plan(facts(pane), &pane.indicators);
         plan.project_times(|slot| pane.slot_open_time(slot));
         let center = plan.apply_main(&mut pane.drawings);
         if let (Some(center), Some(chart)) = (center, pane.frame.chart_area) {

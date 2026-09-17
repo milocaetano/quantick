@@ -11,7 +11,14 @@ pub(crate) struct GalleryPlan {
     selected_tool: Option<String>,
 }
 impl DrawingsDemo {
-    pub fn plan(self, facts: SeriesFacts, samples: Vec<(DrawingBand, f64)>) -> GalleryPlan {
+    pub fn plan(
+        self,
+        facts: SeriesFacts,
+        indicators: &crate::indicators::IndicatorViews,
+    ) -> GalleryPlan {
+        let samples = self
+            .band_sample_slot(facts.slots)
+            .map_or_else(Vec::new, |slot| crate::bands::samples_at(indicators, slot));
         let (visible, first, center, band) = facts.window();
         let stride = (visible / DRAWING_TOOLS.len()).max(1);
         let span = (visible / 4).max(2);
@@ -60,7 +67,7 @@ impl DrawingsDemo {
             selected_tool: self.select_tool,
         }
     }
-    pub fn band_sample_slot(&self, slots: usize) -> Option<usize> {
+    fn band_sample_slot(&self, slots: usize) -> Option<usize> {
         self.bands.then(|| {
             let visible = 90.min(slots);
             (slots - visible + visible / 2).min(slots.saturating_sub(1))

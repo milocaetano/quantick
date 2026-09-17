@@ -147,7 +147,15 @@ impl ChartPane {
                         rect: chart_rect,
                     });
             }
-            self.draw_canvas_contributions(painter, chart_rect, chrome.capabilities);
+            self.layer_renderers
+                .canvas(&mut crate::pane::render_registry::CanvasPass {
+                    painter,
+                    rect: chart_rect,
+                    tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
+                    tape_hovered: self.tape_switch_hovered,
+                    state: &self.layers,
+                    facts: self.layer_facts(Some(chrome.capabilities)),
+                });
             return;
         }
 
@@ -420,7 +428,14 @@ impl ChartPane {
         // the axis draws itself and never spills onto the heap.
         let mut levels = std::mem::take(&mut self.price_axis_levels);
         if self.layer_visible(ChartLayer::Drawings, chrome.style) {
-            self.price_axis_levels(chart_rect, right, total, &scale, &mut levels);
+            self.drawing_projection().price_axis_levels(
+                &self.drawings,
+                chart_rect,
+                right,
+                total,
+                &scale,
+                &mut levels,
+            );
         } else {
             levels.clear();
         }
@@ -432,7 +447,15 @@ impl ChartPane {
             marks: price_claims,
             levels: &levels,
         };
-        self.draw_price_axis(painter, chart_rect, axis_x, &scale, &price_claims, chrome);
+        self.layer_renderers
+            .grid(&mut crate::pane::render_registry::GridPass {
+                painter,
+                chart_rect,
+                axis_x,
+                scale: &scale,
+                claims: &price_claims,
+                style: chrome.style,
+            });
 
         // Candles, clipped to their own pane: panning far enough into history
         // sends the newest bars off the right of it, and they scroll out of
@@ -457,9 +480,33 @@ impl ChartPane {
         };
         renderers.candle_clear(&mut candle_pass);
         // Only price-band background drawings may precede candle/indicator scales.
-        self.carve_bands(&areas, &mut carved);
+        crate::bands::BandGeometry {
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            lane_divider_x: self.frame.lane_divider_x,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
+        }
+        .carve(&areas, &mut carved);
         if let Some(price_band) = carved.first() {
-            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
+            crate::pane::render_registry::DrawingPass {
+                painter,
+                band: price_band,
+                band_index: 0,
+                drawings: &self.drawings,
+                viewport: &self.viewport,
+                history_right: right,
+                total,
+                pass: DrawPass::UnderCandles,
+                content_editing: self.gestures.content_editing,
+                hover: self.gestures.hover,
+            }
+            .paint(
+                self.layer_renderers,
+                &self.strategies.anchors,
+                &self.drawing_projection(),
+                self.closed_slots(),
+            );
         }
         renderers.candles(&mut candle_pass);
         // The footprint rides directly on the candles, before everything
@@ -677,9 +724,33 @@ impl ChartPane {
         // pane's own buffer: same geometry as the input pass computed, no
         // container allocated, and what the tab's shared projection reads
         // afterwards.
-        self.carve_bands(&areas, &mut carved);
+        crate::bands::BandGeometry {
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            lane_divider_x: self.frame.lane_divider_x,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
+        }
+        .carve(&areas, &mut carved);
         for (index, band) in carved.iter().enumerate() {
-            self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
+            crate::pane::render_registry::DrawingPass {
+                painter,
+                band,
+                band_index: index,
+                drawings: &self.drawings,
+                viewport: &self.viewport,
+                history_right: right,
+                total,
+                pass: DrawPass::OverCandles,
+                content_editing: self.gestures.content_editing,
+                hover: self.gestures.hover,
+            }
+            .paint(
+                self.layer_renderers,
+                &self.strategies.anchors,
+                &self.drawing_projection(),
+                self.closed_slots(),
+            );
         }
         self.draw_quick_range(painter, &carved, right, total, chrome);
         self.frame.bands = carved;
@@ -747,12 +818,13 @@ impl ChartPane {
 
         self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
         if let Some(orderflow) = self.orderflow.as_ref() {
-            self.draw_lane_time_axis(
+            crate::pane::render_registry::LaneTimeAxisPass {
                 painter,
-                split_time_strip(areas.time_strip, self.frame.lane_divider_x).1,
-                orderflow.live_lane_window_ms(closed),
-                orderflow.tape_age(),
-            );
+                lane_strip: split_time_strip(areas.time_strip, self.frame.lane_divider_x).1,
+                window_ms: orderflow.live_lane_window_ms(closed),
+                tape_age: orderflow.tape_age(),
+            }
+            .paint();
             // The automatic reference this frame, kept for the tape's menu:
             // the entry that says "follows the bars" has to be able to say
             // what that works out to, and the menu is drawn without the bars
