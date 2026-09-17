@@ -423,13 +423,54 @@ impl Tab {
     }
 
     /// Clock-injected drain used to prove that one UI cycle is one observation.
-    pub fn drain_feed_with_clock(&mut self, mut wall_clock_ms: impl FnMut() -> i64) {
-        // The journal follows this tab's symbol; synced before the drain so a
-        // new feed's first trades are never attributed to the old symbol.
-        // Every tab drains every frame, so every journal tracks its own market
-        // whether or not that tab is the one on screen.
-        let Self { paper, symbol, .. } = self;
-        paper.set_symbol(symbol);
+    pub fn drain_feed_with_clock(&mut self, wall_clock_ms: impl FnMut() -> i64) {
+        self.drain_feed_with_stages(
+            wall_clock_ms,
+            quantick_chart_interaction::source_drain_plan::SourceDrainPlan::stages(),
+        );
+    }
+
+    pub(crate) fn drain_feed_with_stages(
+        &mut self,
+        mut wall_clock_ms: impl FnMut() -> i64,
+        stages: impl IntoIterator<
+            Item = quantick_chart_interaction::source_drain_plan::SourceDrainStage,
+        >,
+    ) {
+        use quantick_chart_interaction::source_drain_plan::SourceDrainStage;
+        let mut live = false;
+        for stage in stages {
+            match stage {
+                SourceDrainStage::PrepareSymbol => {
+                    // Before ingress: the first new print belongs to this market.
+                    self.paper.set_symbol(&self.symbol);
+                }
+                SourceDrainStage::ReceiveAvailable => {
+                    live = self.receive_available(&mut wall_clock_ms);
+                }
+                SourceDrainStage::PublishLatestPartial => {
+                    // Additional final publication; event handlers retain their own sends.
+                    if live {
+                        for pane in self.panes_mut() {
+                            pane.publish_partial();
+                        }
+                    }
+                }
+                SourceDrainStage::LandGap => self.land_demo_gap(),
+                SourceDrainStage::SettleReanchors => {
+                    // Empty panes retain debt; populated panes use this drain's bars.
+                    for pane in self.panes_mut() {
+                        pane.settle_pending_reanchor();
+                    }
+                }
+                SourceDrainStage::TickDealRecording => self.tick_deal_recording(),
+            }
+        }
+    }
+
+    // This is still the explicit Tab ingress boundary, not a second interpreter.
+    // The bool requests one final partial publication, not worker completion.
+    fn receive_available(&mut self, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
         let mut live = false;
         let mut received_at_ms = None;
         loop {
@@ -550,24 +591,7 @@ impl Tab {
                 Err(_) => break,
             }
         }
-        // One forming-bar update per pane for the whole drain, however many
-        // prints arrived: only its latest value is ever read.
-        if live {
-            for pane in self.panes_mut() {
-                pane.publish_partial();
-            }
-        }
-        // After the bars exist, so the hooked gap has something to sit
-        // between. Costs one `Option` test per drain when the hook is unset,
-        // which is every run but a capture.
-        self.land_demo_gap();
-        // A reset left the marks waiting for bars to anchor to, and this is
-        // the drain that may have just delivered them. One flag test per pane
-        // when nothing is owed.
-        for pane in self.panes_mut() {
-            pane.settle_pending_reanchor();
-        }
-        self.tick_deal_recording();
+        live
     }
 
     /// Take the newest feed notice, if the feed sent any this frame.
