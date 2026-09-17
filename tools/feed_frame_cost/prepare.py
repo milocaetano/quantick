@@ -1,6 +1,6 @@
 """Prepare external exports from frozen original archives; no product/build execution."""
 from pathlib import Path
-import argparse, difflib, hashlib, json
+import argparse, difflib, hashlib
 from lifecycle import Stage, write
 from source import extract_archive
 from verify import ARCHIVES, TOOLS, archive_files, verify_exports
