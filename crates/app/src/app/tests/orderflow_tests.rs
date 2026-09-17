@@ -239,7 +239,12 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             }),
             "the reason is readable as a value, not only as a sentence",
         );
-        tab.flow_pane.strategy_badge_text(drawing)
+        crate::pane::strategy_badges::strategy_badge_text(
+            &tab.flow_pane.strategies.anchors,
+            &tab.flow_pane.drawings,
+            drawing,
+            tab.flow_pane.closed_slots(),
+        )
     };
     assert!(
         badge.contains("region ended — stretch it right"),

@@ -951,7 +951,7 @@ impl QuantickApp {
             (first + visible / 8).min(slots.saturating_sub(1)),
             (first + visible * 3 / 4).min(slots.saturating_sub(1)),
         );
-        for (band, value) in pane.indicator_band_samples(level_slot) {
+        for (band, value) in crate::bands::samples_at(&pane.indicators, level_slot) {
             for tool in drawings::DRAWING_TOOLS {
                 let anchors: &[(usize, f64)] = match tool.id() {
                     "horizontal-line" => &[(0, 0.0)],

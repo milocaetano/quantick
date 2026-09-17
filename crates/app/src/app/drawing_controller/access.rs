@@ -71,10 +71,10 @@ impl DrawingReadAccess<'_> {
         self.pane().frame.lane_divider_x.unwrap_or(chart.right())
     }
     pub(super) fn band(&self, drawing: &drawings::Drawing) -> Option<&crate::bands::Band> {
-        self.pane().drawing_band(drawing)
+        crate::bands::band_of(self.pane().frame.cached_bands(), drawing)
     }
     pub(super) fn band_label(&self, drawing: &drawings::Drawing) -> crate::bands::BandLabel {
-        self.focused().band_label(drawing)
+        crate::bands::label_for(&self.focused().indicators, drawing)
     }
     pub(super) fn projected_points(
         &self,
@@ -219,7 +219,8 @@ impl DrawingAccess<'_> {
         deleted
     }
     pub(super) fn selected_value_per_px(&self) -> Option<f64> {
-        self.pane().selected_value_per_px()
+        let pane = self.pane();
+        crate::bands::selected_value_per_px(&pane.drawings, pane.frame.cached_bands())
     }
     pub(super) fn retime_selected(&mut self) {
         self.pane_mut().retime_selected();

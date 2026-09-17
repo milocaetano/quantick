@@ -112,7 +112,7 @@ impl QuantickApp {
     pub(super) fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
         let fraction = self.harness.pointer()?;
         let flow = &self.active_tab().flow_pane;
-        let candles = flow.drawing_area(flow.frame.chart_rect?);
+        let candles = crate::bands::drawing_area(flow.frame.chart_rect?, flow.frame.lane_divider_x);
         Some(egui::pos2(
             candles.left() + fraction.x * candles.width(),
             candles.top() + fraction.y * candles.height(),

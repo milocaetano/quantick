@@ -49,7 +49,6 @@ use crate::plot_area::split_time_strip;
 #[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 
-mod axes_and_chrome;
 mod axes_and_panes;
 // `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns
 // `TimePaneAreas`, which nothing outside names yet, so a `pub use` of it is an
@@ -59,7 +58,6 @@ pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod draw_frame;
-mod drawing_paint;
 mod drawing_projection;
 mod footprint;
 mod frame;
@@ -85,7 +83,7 @@ mod quick_range;
 mod series;
 mod shared_marks;
 mod strategies;
-mod strategy_badges;
+pub(crate) mod strategy_badges;
 mod tape_switch;
 
 /// Every sub-struct of a pane is `Pane*`, without exception: prefixing only
@@ -422,20 +420,7 @@ impl PriceAxisClaims<'_> {
     }
 }
 
-/// What the pointer's compass will draw this frame, and where.
-///
-/// One decision, read twice: the axes consult it before labelling themselves
-/// so they can leave the coordinate alone, and the paint pass draws exactly
-/// what it says.
-struct PointerCompass {
-    readout: pointer_compass::PointerReadout,
-    /// The price half is drawn — its layer is on, the pointer is over the
-    /// price band, and the crosshair is not already writing one.
-    price: bool,
-    /// The time half is drawn — its layer is on and a bar is under the
-    /// pointer.
-    time: bool,
-}
+use crate::pointer_compass::PointerCompass;
 
 /// Window chrome borrowed by one pane for input and paint. Mutable because a
 /// tool or the tab-level simulator can change during the input pass.
@@ -965,7 +950,14 @@ impl ChartPane {
         self.frame.chart_area = Some(areas.chart);
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
-        let bands = self.bands(&areas);
+        let bands = crate::bands::BandGeometry {
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            lane_divider_x: self.frame.lane_divider_x,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
+        }
+        .bands(&areas);
         // A drawing tool consumes the *primary button*, not the chart. Pan,
         // wheel zoom, the pane dividers and the collapse chevrons all keep
         // working while one is armed: an armed tool used to return early from

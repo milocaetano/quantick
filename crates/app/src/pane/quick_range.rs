@@ -171,9 +171,14 @@ impl ChartPane {
                 let band = bands.first()?;
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
-                let points = quick
-                    .anchors
-                    .map(|anchor| self.drawing_screen_point(anchor, history_right, total, scale));
+                let points = quick.anchors.map(|anchor| {
+                    self.drawing_projection().drawing_screen_point(
+                        anchor,
+                        history_right,
+                        total,
+                        scale,
+                    )
+                });
                 let ctxt = DrawContext {
                     payload: quick.payload,
                     anchors: &quick.anchors,

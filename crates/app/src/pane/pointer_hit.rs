@@ -69,7 +69,12 @@ impl ChartPane {
             self.frame.chart_top + self.frame.chart_height,
         );
         let history_right = self.frame.lane_divider_x.unwrap_or(chart.right());
-        Some((self.drawing_area(chart), history_right, self.slots(), scale))
+        Some((
+            crate::bands::drawing_area(chart, self.frame.lane_divider_x),
+            history_right,
+            self.slots(),
+            scale,
+        ))
     }
 
     /// Resolve the pointer against the exact geometry the last frame painted.

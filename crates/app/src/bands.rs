@@ -314,3 +314,105 @@ impl BandLabel {
         }
     }
 }
+
+/// Inputs for the band's current carve; cached bands remain a separate read.
+pub(crate) struct BandGeometry<'a> {
+    pub auto_range: Option<(f64, f64)>,
+    pub price_view: &'a crate::price_view::PriceView,
+    pub lane_divider_x: Option<f32>,
+    pub indicators: &'a IndicatorViews,
+    pub price_label: &'a Arc<str>,
+}
+impl BandGeometry<'_> {
+    pub fn carve(&self, areas: &PlotAreas, out: &mut Bands) {
+        carve(
+            out,
+            &PriceBand {
+                rect: drawing_area(areas.chart, self.lane_divider_x),
+                range: self.auto_range.map(|auto| self.price_view.resolve(auto)),
+                top: areas.chart.top(),
+                bottom: areas.chart.bottom(),
+                inverted: self.price_view.is_inverted(),
+            },
+            self.indicators,
+            areas,
+            self.price_label,
+        );
+    }
+    pub fn bands(&self, areas: &PlotAreas) -> Bands {
+        let mut out = Bands::new();
+        self.carve(areas, &mut out);
+        out
+    }
+}
+pub(crate) fn drawing_area(chart: egui::Rect, lane_divider_x: Option<f32>) -> egui::Rect {
+    let right = lane_divider_x
+        .unwrap_or(chart.right())
+        .clamp(chart.left(), chart.right());
+    egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
+}
+pub(crate) fn label_for(
+    indicators: &IndicatorViews,
+    drawing: &crate::drawings::Drawing,
+) -> BandLabel {
+    match &drawing.band {
+        DrawingBand::Price => BandLabel::Price,
+        DrawingBand::AllBands => BandLabel::AllBands,
+        DrawingBand::Indicator(key) => indicators
+            .all()
+            .iter()
+            .filter(|view| !view.descriptor.overlay)
+            .find(|view| &indicators.pane_key(view) == key)
+            .map_or_else(
+                || BandLabel::Parked(std::sync::Arc::clone(&key.kind)),
+                |view| {
+                    // A band drawing can stop painting for four different
+                    // reasons, and only one of them is "the indicator is
+                    // gone". A mark that vanishes unexplained is what
+                    // teaches a trader to stop trusting the tool, so each
+                    // reason says its own name.
+                    match () {
+                        () if view.error.is_some() => BandLabel::Unpainted(
+                            view.label_shared(),
+                            "this indicator is in error, so its pane and everything drawn on                                  it are not being painted",
+                        ),
+                        () if view.hidden => BandLabel::Unpainted(
+                            view.label_shared(),
+                            "this indicator is hidden - show it again and the object comes                                  back with it",
+                        ),
+                        () if view.sizing == crate::indicators::PaneSizing::Collapsed => BandLabel::Unpainted(
+                            view.label_shared(),
+                            "this pane is collapsed - open it with the chevron and the object                                  is there",
+                        ),
+                        () => BandLabel::Indicator(view.label_shared()),
+                    }
+                },
+            ),
+    }
+}
+pub(crate) fn samples_at(indicators: &IndicatorViews, slot: usize) -> Vec<(DrawingBand, f64)> {
+    indicators
+        .visible_panes()
+        .filter_map(|view| {
+            let value = view
+                .columns
+                .iter()
+                .find_map(|column| column.get(slot).copied().filter(|v| v.is_finite()))?;
+            Some((DrawingBand::Indicator(indicators.pane_key(view)), value))
+        })
+        .collect()
+}
+pub(crate) fn selected_value_per_px(
+    drawings: &crate::drawings::Drawings,
+    bands: &[Band],
+) -> Option<f64> {
+    let drawing = drawings.items().get(drawings.selected()?)?;
+    let band = band_of(bands, drawing)?;
+    let scale = band.scale?;
+    let (lo, hi) = scale.range();
+    let per_px = (hi - lo) / f64::from(band.rect.height().max(1.0));
+    // Signed for the *screen* gesture: an upward step raises the value on
+    // an upright band and lowers it on an inverted one, so the arrows
+    // keep moving the object the way the key points.
+    Some(if scale.is_inverted() { -per_px } else { per_px })
+}
