@@ -1,9 +1,9 @@
-//! Provider-neutral feed integrity snapshot contracts.
+//! Host-side feed health projection payloads, scalar construction, and revisions.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::wire::WireU64;
+use quantick_control::wire::WireU64;
 
 /// Independently versioned observations of received-row delivery.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn integrity_contract_matches_the_legacy_health_definition() {
-        let mut generated = crate::schema::generated_schema::<FeedIntegritySnapshot>();
+        let mut generated = quantick_control::schema::generated_schema::<FeedIntegritySnapshot>();
         let object = generated.as_object_mut().unwrap();
         object.remove("$schema");
         object.remove("title");

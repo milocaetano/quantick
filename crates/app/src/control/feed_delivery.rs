@@ -2,9 +2,9 @@
 
 use super::registry::{ProjectionRegistry, ProjectionRegistryError};
 use crate::app::QuantickApp;
-use quantick_control::{
-    feed::{FeedDeliverySnapshot, ReceivedRowCounts, SourceCounts, TabFeedDeliverySnapshot},
-    id::{ModuleId, SnapshotScopeId},
+use quantick_control::id::{ModuleId, SnapshotScopeId};
+use quantick_control_host::feed::{
+    FeedDeliverySnapshot, ReceivedRowCounts, SourceCounts, TabFeedDeliverySnapshot,
 };
 
 pub(super) fn register(

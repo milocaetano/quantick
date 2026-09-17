@@ -10,7 +10,6 @@ pub mod cursor;
 pub mod descriptor;
 pub mod error;
 pub mod fake;
-pub mod feed;
 pub mod handshake;
 pub mod id;
 pub mod limits;

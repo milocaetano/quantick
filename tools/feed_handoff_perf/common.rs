@@ -32,7 +32,11 @@ pub(crate) enum Observation {
 
 impl Totals {
     fn observe(&mut self, event: crate::F2BenchEvent) {
-        let event = match crate::f2_bench_observation(event) {
+        self.observe_observation(crate::f2_bench_observation(event));
+    }
+
+    fn observe_observation(&mut self, observation: Observation) {
+        let event = match observation {
             Observation::Feed(event) => event,
             Observation::Excluded { malformed, stale } => {
                 self.excluded_events += 1;
@@ -216,4 +220,36 @@ async fn hyperliquid(fixture:&serde_json::Value,case:&str)->(u128,Totals) {
     assert_eq!(totals.non_monotonic,0); assert_eq!(totals.unknown,0);
     assert_eq!(totals.invalid_gaps,0);
     (elapsed,totals)
+}
+
+#[test]
+fn excluded_observations_preserve_source_counters_and_record_row_order() {
+    let mut totals = Totals {
+        anomalies: 7, missing: 11, unknown: 13, non_monotonic: 17,
+        trades: 19, checksum: 23, batch_messages: 29, invalid_gaps: 31,
+        ..Totals::default()
+    };
+    totals.observe_observation(Observation::Excluded { malformed: 3, stale: 0 });
+    assert_eq!((totals.excluded_events, totals.malformed_rows, totals.stale_rows,
+                totals.diagnostic_signature), (1, 3, 0, 1));
+    totals.observe_observation(Observation::Excluded { malformed: 0, stale: 2 });
+    assert_eq!((totals.excluded_events, totals.malformed_rows, totals.stale_rows,
+                totals.diagnostic_signature), (2, 3, 2, 6));
+    assert_eq!((totals.anomalies, totals.missing, totals.unknown, totals.non_monotonic),
+               (7, 11, 13, 17));
+    assert_eq!((totals.trades, totals.checksum, totals.batch_messages, totals.invalid_gaps),
+               (19, 23, 29, 31));
+}
+
+#[test]
+fn reversed_excluded_observations_have_distinct_signature_without_source_loss() {
+    let mut totals = Totals::default();
+    totals.observe_observation(Observation::Excluded { malformed: 0, stale: 2 });
+    totals.observe_observation(Observation::Excluded { malformed: 3, stale: 0 });
+    assert_eq!((totals.excluded_events, totals.malformed_rows, totals.stale_rows,
+                totals.diagnostic_signature), (2, 3, 2, 9));
+    assert_eq!((totals.anomalies, totals.missing, totals.unknown, totals.non_monotonic),
+               (0, 0, 0, 0));
+    assert_eq!((totals.trades, totals.checksum, totals.batch_messages, totals.invalid_gaps),
+               (0, 0, 0, 0));
 }

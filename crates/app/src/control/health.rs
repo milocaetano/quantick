@@ -1,11 +1,11 @@
 //! Frame, loading, indicator, and order-flow health projection.
 
 use quantick_control::{
-    feed::{FeedIntegritySnapshot, SourceCounts, TapeHealthSnapshot, TapeRevisionKey},
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
     wire::{CanonicalDecimal, WireU64},
 };
+use quantick_control_host::feed;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -53,20 +53,20 @@ pub(crate) struct TabHealthSnapshot {
     pub tab_id: WireU64,
     /// Cumulative source diagnostics, independent of latency and gap eviction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feed_integrity: Option<FeedIntegritySnapshot>,
+    pub feed_integrity: Option<feed::FeedIntegritySnapshot>,
     pub active_loading_tasks: Vec<LoadingTaskSnapshot>,
     pub panes: Vec<PaneHealthSnapshot>,
     /// How late this tab's tape is, and where the time is going. `None` while
     /// replaying — a recording's prints are as old as the day they were
     /// captured and the playback clock decides when they appear.
-    pub tape: Option<TapeHealthSnapshot>,
+    pub tape: Option<feed::TapeHealthSnapshot>,
 }
 
 pub(super) fn integrity_snapshot(
     integrity: quantick_feed::FeedIntegrity,
-) -> Option<FeedIntegritySnapshot> {
+) -> Option<feed::FeedIntegritySnapshot> {
     (integrity.anomalies > 0).then(|| {
-        SourceCounts {
+        feed::SourceCounts {
             anomalies: integrity.anomalies,
             missing_messages: integrity.missing_messages,
             unknown_loss: integrity.unknown_loss,
@@ -208,7 +208,7 @@ fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TabRevisionKey {
     tab: TabHealthSnapshot,
-    tape: Option<TapeRevisionKey>,
+    tape: Option<feed::TapeRevisionKey>,
 }
 
 fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
@@ -268,13 +268,13 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
 ///
 /// `None` when there is nothing measured to report at all: a tab that has not
 /// seen a live print, and any tab playing a recording.
-fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
+fn tape_health(tab: &Tab) -> Option<feed::TapeHealthSnapshot> {
     let arrival_latency_ms = tab.trade_arrival_ms();
     let split = tab.feed_latency();
     if arrival_latency_ms.is_none() && split.is_none() {
         return None;
     }
-    Some(TapeHealthSnapshot {
+    Some(feed::TapeHealthSnapshot {
         arrival_latency_ms,
         feed_arrival_latency_ms: split.map(|s| s.arrival_lag_ms),
         source_latency_ms: split.and_then(|s| s.source_lag_ms),
