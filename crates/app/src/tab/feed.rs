@@ -917,6 +917,14 @@ impl Tab {
     /// nothing happened is exactly the inferred-versus-observed lie the
     /// honesty rule forbids.
     pub fn reconnect_feed(&mut self, config: &AppConfig) -> bool {
+        self.reconnect_feed_with_spawn(config, &mut feed::spawn_live)
+    }
+
+    pub(crate) fn reconnect_feed_with_spawn(
+        &mut self,
+        config: &AppConfig,
+        spawn: &mut super::LiveFeedSpawn<'_>,
+    ) -> bool {
         if self.replay.is_some() {
             return false;
         }
@@ -936,7 +944,7 @@ impl Tab {
         // Taken before the handle is swapped: it is a fact about the chart, not
         // about the session, and it has to survive the attach.
         self.resume_floor_ms = self.latest_trade_ms;
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach_resuming(handle);
         // The book from the dropped socket is gone with it. Nothing is reset
         // here on purpose: the new session opens with a complete snapshot, and
@@ -961,6 +969,14 @@ impl Tab {
     /// [`Self::reconnect_feed`] for why the answer is reported rather than
     /// assumed.
     pub fn reload_feed(&mut self, config: &AppConfig) -> bool {
+        self.reload_feed_with_spawn(config, &mut feed::spawn_live)
+    }
+
+    pub(crate) fn reload_feed_with_spawn(
+        &mut self,
+        config: &AppConfig,
+        spawn: &mut super::LiveFeedSpawn<'_>,
+    ) -> bool {
         if self.replay.is_some() {
             return false;
         }
@@ -978,7 +994,7 @@ impl Tab {
         );
         // A rebuild has no timeline to resume onto, so no floor and no seam.
         self.resume_floor_ms = None;
-        let handle = feed::spawn_live(provider, &self.symbol, &config.metatrader, shelf_dir());
+        let handle = spawn(provider, &self.symbol, &config.metatrader, shelf_dir());
         self.attach(handle);
         self.reset_market_state(true);
         // The live market is back and it can stream depth again; start

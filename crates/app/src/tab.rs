@@ -221,6 +221,14 @@ struct HistoryNote {
     raised_at: std::time::Instant,
 }
 
+pub(crate) type LiveFeedSpawn<'a> = dyn FnMut(
+        quantick_feed::config::ProviderKind,
+        &str,
+        &quantick_feed::config::MetaTraderSettings,
+        Option<std::path::PathBuf>,
+    ) -> quantick_feed::FeedHandle
+    + 'a;
+
 pub struct Tab {
     /// Stable for as long as the tab is open, and never reused. The indicator
     /// state file names one of these (see `QuantickApp::persisted_tab`), and

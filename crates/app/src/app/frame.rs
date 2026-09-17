@@ -7,6 +7,7 @@
 //! layout — and it is in its own file because that sequence is the longest
 //! single thing the window does.
 
+use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -61,6 +62,21 @@ impl QuantickApp {
     /// what was painted — the only honest way to assert that a chart is on
     /// screen rather than a blank rectangle.
     pub(super) fn draw_frame(&mut self, ctx: &egui::Context, now: Instant) {
+        self.draw_frame_with_tail(
+            ctx,
+            now,
+            &mut quantick_feed::spawn_live,
+            FrameTailPlan::stages(),
+        );
+    }
+
+    pub(super) fn draw_frame_with_tail(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
         if let Some(last) = self.health.last_frame {
             self.health
                 .frames
@@ -723,34 +739,29 @@ impl QuantickApp {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();
-        // Settle before the report paints, so a close any path journaled this
-        // frame is re-read first and the window never shows the journal behind.
-        self.settle_paper_panels(now);
-        let tz = self.tz;
-        self.active_tab_mut().paper.draw_report_window(ctx, tz);
-        // Both controls go through the tab's own methods, which are also what
-        // the registered control-plane actions call: a click and a named call
-        // must be able to disagree about nothing.
-        match notice_action {
-            feed_notice::NoticeAction::None => {}
-            feed_notice::NoticeAction::Reconnect => {
-                let (tab, config) = self.active_with_config();
-                let _ = tab.reconnect_feed(config);
-            }
-            feed_notice::NoticeAction::Reload => {
-                let (tab, config) = self.active_with_config();
-                let _ = tab.reload_feed(config);
-            }
+        super::frame_tail::FrameTailOwners {
+            tabs: &mut self.tabs,
+            active_tab: self.active_tab,
+            config: &self.config,
+            toast: &mut self.surfaces.toast,
+            chip_rect: &mut self.chrome.feed_chip_rect,
+            popup_tab: &mut self.chrome.feed_popup_tab,
         }
-        self.chrome.feed_chip_rect = chip_rect;
-        self.chrome.feed_popup_tab = feed_notice::popup_still_open(
-            popup_open,
-            chip_clicked,
-            chip_rect.is_some(),
-            dismissed,
-            notice_action,
-        )
-        .then_some(popup_tab);
+        .execute(
+            super::frame_tail::FrameTailInput {
+                ctx,
+                now,
+                tz: self.tz,
+                notice_action,
+                popup_tab,
+                popup_open,
+                chip_clicked,
+                dismissed,
+                chip_rect,
+            },
+            spawn,
+            stages,
+        );
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
     }

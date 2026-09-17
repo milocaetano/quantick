@@ -29,6 +29,7 @@ mod demo_hooks;
 mod drawing_chrome_wiring;
 mod drawing_input;
 mod frame;
+mod frame_tail;
 mod health;
 mod indicator_manager;
 mod indicator_operations;

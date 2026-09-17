@@ -7,3 +7,5 @@ pub mod quick_range;
 
 #[cfg(test)]
 mod tests;
+
+pub mod frame_tail_plan;

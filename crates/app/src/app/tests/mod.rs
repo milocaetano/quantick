@@ -2597,4 +2597,5 @@ fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
 
 mod worker_progress_tests;
 
+mod frame_tail_tests;
 mod worker_summary_bench_tests;
