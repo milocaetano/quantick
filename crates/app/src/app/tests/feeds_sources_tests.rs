@@ -29,7 +29,8 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
             .unwrap();
     }
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
     assert_eq!(
         app.active_tab().feed_gaps.len(),
@@ -277,12 +278,19 @@ fn loader_survives_until_every_pending_load_is_answered() {
         "backfill in flight at start"
     );
 
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
 
     evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         2,
@@ -292,7 +300,8 @@ fn loader_survives_until_every_pending_load_is_answered() {
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         1,
@@ -302,7 +311,8 @@ fn loader_survives_until_every_pending_load_is_answered() {
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         0,
@@ -316,7 +326,10 @@ fn rejected_request_does_not_arm_the_loader() {
     // so no reply will ever come - the count must not grow.
     let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
     drop(cmd_rx);
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         1,
@@ -329,8 +342,14 @@ fn a_source_reset_restarts_the_history_wait() {
     // Loads queued before a reset will never be answered; the refill after
     // the reset is the one load left in flight.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
     app.active_tab_mut()
         .flow_pane
@@ -338,7 +357,8 @@ fn a_source_reset_restarts_the_history_wait() {
         .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
     evt_tx.try_send(FeedEvent::Reset).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items().len(),
@@ -361,7 +381,8 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
@@ -443,7 +464,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(5)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     app.active_tab_mut().resume_floor_ms = Some(floor);
 
@@ -452,7 +474,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::Backfilled(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().resume_floor_ms,
         None,
@@ -480,7 +503,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::HistoryPrepended(older))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().flow_pane.state.trades().len(),
         held + 2,
@@ -497,7 +521,8 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
     app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
         from_ms: 1,
@@ -570,7 +595,8 @@ fn backfill_does_not_claim_a_live_transport_latency() {
         .try_send(FeedEvent::Backfilled(vec![trade(1)]))
         .unwrap();
 
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     assert_eq!(app.active_tab().trade_arrival_ms(), None);
     assert_eq!(
@@ -2149,7 +2175,7 @@ fn the_same_market_can_be_open_twice() {
 
     assert_eq!(app.tabs.len(), 2);
     assert_eq!(app.tabs[0].symbol, app.tabs[1].symbol);
-    assert_ne!(app.tabs[0].id, app.tabs[1].id);
+    assert_ne!(app.tabs.id_at(0), app.tabs.id_at(1));
     assert_ne!(app.tabs[0].flow_pane.id, app.tabs[1].flow_pane.id);
     // Separate engines: what one holds says nothing about the other.
     assert!(!app.tabs[0].flow_pane.state.bars().is_empty());

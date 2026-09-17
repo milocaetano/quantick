@@ -232,8 +232,9 @@ impl QuantickApp {
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => {
+                let tab_id = self.tabs.active_id();
                 let (tab, config) = self.active_with_config();
-                tab.request_older_history(config);
+                tab.request_older_history(tab_id, config);
             }
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
@@ -242,9 +243,10 @@ impl QuantickApp {
                 // Read before the tab is borrowed mutably — and the capability
                 // block rather than the whole config, because that is all the
                 // request needs to know.
+                let tab_id = self.tabs.active_id();
                 let capabilities = self.active_tab().capabilities(&self.config);
                 self.active_tab_mut()
-                    .request_older_ohlcv_history(capabilities);
+                    .request_older_ohlcv_history(tab_id, capabilities);
             }
             ToolbarAction::SetHeatmap(shown) => {
                 self.active_tab_mut().flow_pane.set_layer_visible(

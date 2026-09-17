@@ -748,7 +748,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
             "layers.visibility.set" => json!({
-                "tab_id": app.active_tab().id.to_string(),
+                "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "layer_id": "grid", "visible": !app.style.canvas.grid_enabled,
             }),
@@ -759,10 +759,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "fraction": "0.4"
             }),
             "indicator.mouse_vertical_line.set" => {
+                let tab_id = app.tabs.active_id();
                 let tab = app.active_tab();
                 let view = &tab.flow_pane.indicators.all()[0];
                 json!({
-                    "tab_id": tab.id.to_string(),
+                    "tab_id": tab_id.to_string(),
                     "pane_id": tab.flow_pane.id.to_string(),
                     "slot_id": view.slot.0.to_string(),
                     "enabled": true,

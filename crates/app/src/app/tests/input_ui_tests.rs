@@ -35,7 +35,8 @@ fn the_corner_answers_a_hover_without_being_opened() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app.control_feed_chip_rect().expect("the corner is up");
@@ -328,15 +329,16 @@ fn a_parked_popup_comes_back_after_a_restart() {
     // before the app adopts it.
     let (mut next, _commands) = app_with_history(200);
     let config = next.config.clone();
-    next.restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
+    next.arrangement_adapter()
+        .restore_workspace(ui_state::load(app.workspace.ui_state_path()).restore(&config));
 
     assert_eq!(
-        next.surfaces.drawing_chrome.inspector_pos(),
+        next.drawings.chrome.inspector_pos(),
         Some(parked),
         "the popup opens where the last session left it"
     );
     assert!(
-        next.surfaces.drawing_chrome.inspector_moved(),
+        next.drawings.chrome.inspector_moved(),
         "and counts as hand-placed, so nothing places it again"
     );
     let _ = std::fs::remove_file(app.workspace.ui_state_path());
@@ -350,14 +352,14 @@ fn button_manager_and_keyboard_send_the_same_delete_command() {
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-    app.surfaces.drawing_chrome.set_manager_open(true);
+    app.drawings.chrome.set_manager_open(true);
     // Let the manager window settle its size before reading button rects.
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
 
     let delete = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .manager_action_rects()
         .iter()
         .find(|(index, action, _)| *index == 0 && *action == "Delete")
@@ -782,7 +784,13 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.handle_drawing_keys(ctx, Instant::now());
+            app.drawings.handle_drawing_keys(
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut app.toolrail,
+                &mut *app.audio.alerts,
+                ctx,
+                Instant::now(),
+            );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -794,7 +802,13 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.handle_drawing_keys(ctx, Instant::now());
+            app.drawings.handle_drawing_keys(
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut app.toolrail,
+                &mut *app.audio.alerts,
+                ctx,
+                Instant::now(),
+            );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -808,7 +822,13 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
             ..Default::default()
         },
         |ctx| {
-            app.handle_drawing_keys(ctx, Instant::now());
+            app.drawings.handle_drawing_keys(
+                &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                &mut app.toolrail,
+                &mut *app.audio.alerts,
+                ctx,
+                Instant::now(),
+            );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
             });
@@ -864,5 +884,126 @@ fn arrow_nudges_move_the_selection_and_shift_multiplies_by_ten() {
     assert!(
         app.active_tab().flow_pane.drawings.items()[0].points[0].price > start.price,
         "ArrowUp raises the price"
+    );
+}
+
+#[test]
+fn drawing_controller_characterization_delete_precedes_stale_manager_rows() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    app.resolve_drawing_response(
+        crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            delete_all: true,
+            manager_select: Some(0),
+            manager_toggle_hidden: Some(0),
+            manager_toggle_locked: Some(0),
+            ..Default::default()
+        },
+        Instant::now(),
+    );
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    assert_eq!(app.active_tab().flow_pane.drawings.selected(), None);
+    app.active_tab_mut().flow_pane.drawings.undo();
+    let drawings = &app.active_tab().flow_pane.drawings;
+    assert_eq!(drawings.items().len(), 1);
+    assert!(!drawings.items()[0].hidden);
+    assert!(!drawings.items()[0].locked);
+}
+
+#[test]
+fn drawing_controller_characterization_cancel_follows_locked_delete_request() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_selected_locked(true);
+    app.resolve_drawing_response(
+        crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            request_delete: true,
+            cancel_delete: true,
+            ..Default::default()
+        },
+        Instant::now(),
+    );
+    assert!(!app.drawings.chrome.delete_confirm());
+    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+    assert!(app.active_tab().flow_pane.drawings.items()[0].locked);
+}
+
+#[test]
+fn drawing_controller_preserves_undo_before_deferred_preference_notice() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    app.surfaces.toast.clear();
+    app.resolve_drawing_response(
+        crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            force_delete: true,
+            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool),
+            ..Default::default()
+        },
+        Instant::now(),
+    );
+    assert_eq!(app.surfaces.toast.message(), Some("Drawing deleted."));
+    assert!(app.surfaces.toast.offers_undo());
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+}
+
+#[test]
+fn drawing_controller_combined_destructive_notices_keep_last_undo() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    for y in [260.0, 320.0, 380.0] {
+        app.toolrail
+            .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+        click_chart(&mut app, &ctx, egui::pos2(700.0, y));
+    }
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    drawings.select(Some(1));
+    drawings.selected_mut().unwrap().author = Some(drawings::DrawingAuthor {
+        actor_kind: "agent".into(),
+        client_name: "fixture".into(),
+    });
+    drawings.select(Some(2));
+    drawings.set_selected_locked(true);
+    app.surfaces.toast.clear();
+    app.resolve_drawing_response(
+        crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            request_delete: true,
+            cancel_delete: true,
+            force_delete: true,
+            duplicate: true,
+            saved_default: Some(crate::surfaces::drawing_chrome::SavedDefault::OneTool),
+            sweep_authored: true,
+            delete_all: true,
+            manager_delete: Some(0),
+            show_all: true,
+            unlock_all: true,
+            ..Default::default()
+        },
+        Instant::now(),
+    );
+    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
+    assert_eq!(app.surfaces.toast.message(), Some("All drawings deleted."));
+    assert!(app.surfaces.toast.offers_undo());
+    app.active_tab_mut().flow_pane.drawings.undo();
+    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+    assert!(
+        app.active_tab().flow_pane.drawings.items()[0]
+            .author
+            .is_none()
     );
 }

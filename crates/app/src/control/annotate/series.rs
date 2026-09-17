@@ -19,7 +19,7 @@ impl Series for PaneSeries<'_> {
             owner: Owner {
                 tab: self.tab,
                 pane: self.pane.id,
-                layout: self.pane.layout.map(|id| id.0),
+                layout: self.pane.layout_id().map(|id| id.0),
             },
             revision: self.pane.pagination_revision(),
         }
@@ -34,7 +34,7 @@ impl Series for PaneSeries<'_> {
         self.pane.slot_open_time(slot)
     }
     fn time_at_position(&self, bar: f32) -> Option<i64> {
-        self.pane.anchor_time(bar)
+        self.pane.series_read().anchor_time(bar)
     }
     fn draft_in_progress(&self) -> bool {
         self.pane.drawings.draft().is_some()

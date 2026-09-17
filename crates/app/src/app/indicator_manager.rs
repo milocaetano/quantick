@@ -8,6 +8,7 @@
 //! [`crate::indicator_worker`] commands, and a change to what a slot is has
 //! to be made in one file rather than found in six places in `app.rs`.
 
+use crate::indicators::state_file::SavedInputExt;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -135,7 +136,7 @@ fn apply_indicator_guide_requests(app: &mut QuantickApp, tab_id: u64) {
         }
     }
 
-    let Some(tab) = app.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+    let Some(tab) = app.tabs.by_id_mut(tab_id) else {
         return;
     };
     let requests: SmallVec<[(PaneSide, SlotId, bool); MAX_CANVAS_PANES]> = tab
@@ -146,11 +147,7 @@ fn apply_indicator_guide_requests(app: &mut QuantickApp, tab_id: u64) {
         })
         .collect();
     for (side, slot, enabled) in requests {
-        let pane_id = app
-            .tabs
-            .iter()
-            .find(|tab| tab.id == tab_id)
-            .map(|tab| tab.pane(side).id);
+        let pane_id = app.tabs.by_id(tab_id).map(|tab| tab.pane(side).id);
         if let Some(pane_id) = pane_id {
             let _ = app.control_action(
                 crate::control::INDICATOR_GUIDE_CAPABILITY_ID,
@@ -179,18 +176,23 @@ impl QuantickApp {
         text: String,
         by_operator: bool,
     ) -> (u64, crate::control::PaneSideDto, SlotId) {
+        let tab_id = self.tabs.active_id();
         let tab = self.active_tab();
-        let target = (tab.id, tab.focused_side());
-        let pane = self.tabs[self.active_tab].pane_mut(target.1);
+        let target = (tab_id, tab.focused_side());
+        let pane = self
+            .tabs
+            .runtime_mut(self.tabs.active_index())
+            .pane_mut(target.1);
         let attached =
             self.indicators
                 .slots_mut()
                 .attach_script(pane, target, name, text, by_operator);
         let owner = attached.target;
         if let Some(kind) = attached.layout_entry {
-            self.mirror_add(owner, &kind);
+            self.layout_adapter().mirror_add(owner, &kind);
         }
-        self.note_indicator_edit_at(owner.tab, owner.side);
+        self.layout_adapter()
+            .note_indicator_edit_at(owner.tab, owner.side);
         (owner.tab, owner.side.into(), owner.slot)
     }
 
@@ -218,7 +220,7 @@ impl QuantickApp {
     /// against the pane that raised it — the legend's rule (MAJOR-4), applied
     /// to the same problem one layer down.
     pub(super) fn open_requested_indicator_settings(&mut self) {
-        let tab_id = self.active_tab().id;
+        let tab_id = self.tabs.active_id();
         // The harness hook waits for the view it names, exactly as the restored
         // hidden flags do: the indicator is born from the worker's first
         // Rebuilt, which is several frames after the window opens.
@@ -233,8 +235,7 @@ impl QuantickApp {
             let focused = self.active_tab().focused_side();
             let found = [focused, PaneSide::Flow].into_iter().find_map(|side| {
                 self.tabs
-                    .iter()
-                    .find(|candidate| candidate.id == tab_id)
+                    .by_id(tab_id)
                     .map(|candidate| candidate.pane(side))
                     .and_then(|pane| pane.indicators.all().get(index))
                     .map(|view| (side, view.slot))
@@ -251,7 +252,7 @@ impl QuantickApp {
                 }
             }
         }
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+        let Some(tab) = self.tabs.by_id_mut(tab_id) else {
             return;
         };
         let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = tab
@@ -278,7 +279,7 @@ impl QuantickApp {
     /// produced — and an operator that is not holding the mouse names this
     /// call rather than a click.
     fn set_legend_collapsed(&mut self, tab_id: u64, side: PaneSide, collapsed: bool) {
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+        let Some(tab) = self.tabs.by_id_mut(tab_id) else {
             return;
         };
         tab.pane_mut(side).legend_collapsed = collapsed;
@@ -296,7 +297,7 @@ impl QuantickApp {
     /// affect" has one answer: the focused one, the same pane every other
     /// chrome control acts on.
     pub(super) fn set_focused_legend_collapsed(&mut self, collapsed: bool) {
-        let tab_id = self.active_tab().id;
+        let tab_id = self.tabs.active_id();
         let side = self.active_tab().focused_side();
         self.set_legend_collapsed(tab_id, side, collapsed);
     }
@@ -305,41 +306,46 @@ impl QuantickApp {
     /// [`TabSlot`], never by focus: the legend acts on the pane it is drawn
     /// on, and the toolbar path builds its target from focus before calling.
     pub(super) fn toggle_indicator_hidden_at(&mut self, target: TabSlot) {
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
+        let Some(tab) = self.tabs.by_id_mut(target.tab) else {
             return;
         };
         tab.pane_mut(target.side)
             .indicators
             .toggle_hidden(target.slot);
-        self.mirror_hidden(target);
-        self.note_indicator_edit_at(target.tab, target.side);
+        self.layout_adapter().mirror_hidden(target);
+        self.layout_adapter()
+            .note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Remove a slot, wherever it lives. UI first (the entry vanishes this
     /// frame), worker second; events already in flight for the slot are
     /// dropped on apply.
     pub(super) fn remove_indicator_at(&mut self, target: TabSlot) {
-        if !self.tabs.iter().any(|tab| tab.id == target.tab) {
+        if !self
+            .tabs
+            .iter_with_ids()
+            .any(|(tab_id, _)| tab_id == target.tab)
+        {
             return;
         }
         // The mirrors first, while the slot's layout position can still be
         // read off the bookkeeping.
-        self.mirror_remove(target);
-        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) else {
+        self.layout_adapter().mirror_remove(target);
+        let Some(tab) = self.tabs.by_id_mut(target.tab) else {
             return;
         };
         self.indicators
             .slots_mut()
             .remove(Some(tab.pane_mut(target.side)), target);
-        self.note_indicator_edit_at(target.tab, target.side);
+        self.layout_adapter()
+            .note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Open the settings dialog for a slot, wherever it lives.
     pub(super) fn open_indicator_settings_at(&mut self, target: TabSlot) {
         let Some(view) = self
             .tabs
-            .iter()
-            .find(|tab| tab.id == target.tab)
+            .by_id(target.tab)
             .map(|tab| tab.pane(target.side))
             .and_then(|pane| {
                 pane.indicators
@@ -369,7 +375,7 @@ impl QuantickApp {
     /// legend must never act on the chart beside it (the audit's MAJOR-4
     /// trap, avoided by construction).
     pub(super) fn draw_indicator_legends(&mut self, ctx: &egui::Context) {
-        let tab_id = self.active_tab().id;
+        let tab_id = self.tabs.active_id();
         // Whether a context chart is on screen — from what the layout holds
         // and whether the column is collapsed, never from one variant. Matched
         // against `TimeAndFlow` alone, this drew no legend at all on the
@@ -462,7 +468,7 @@ impl QuantickApp {
         if self.harness.wants_indicator_settings_dialog()
             && self.indicators.indicator_settings.is_none()
         {
-            let tab_id = self.active_tab().id;
+            let tab_id = self.tabs.active_id();
             if let Some(slot) = self
                 .active_tab()
                 .flow_pane
@@ -510,8 +516,7 @@ impl QuantickApp {
             };
             // The tab the dialog was opened on may have been closed under it.
             let Some(view) = tabs
-                .iter_mut()
-                .find(|tab| tab.id == target.tab)
+                .by_id_mut(target.tab)
                 .map(|tab| tab.pane_mut(target.side))
                 .and_then(|pane| pane.indicators.view_mut(dialog.slot))
             else {
@@ -556,8 +561,9 @@ impl QuantickApp {
             // and also persisted without an Apply.
             SettingsOutcome::StyleChanged => {
                 let target = self.indicators.indicator_settings_target;
-                self.mirror_style(target);
-                self.note_indicator_edit_at(target.tab, target.side);
+                self.layout_adapter().mirror_style(target);
+                self.layout_adapter()
+                    .note_indicator_edit_at(target.tab, target.side);
             }
         }
     }
@@ -571,8 +577,7 @@ impl QuantickApp {
         let target = self.indicators.indicator_settings_target;
         let Some(specs) = self
             .tabs
-            .iter()
-            .find(|tab| tab.id == target.tab)
+            .by_id(target.tab)
             .map(|tab| tab.pane(target.side))
             .and_then(|pane| {
                 pane.indicators
@@ -707,7 +712,7 @@ impl QuantickApp {
         dialog.committed = dialog.draft.clone();
         dialog.previewed = false;
         let (slot, values) = (dialog.slot, dialog.draft.clone());
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+        if let Some(tab) = self.tabs.by_id_mut(target.tab) {
             tab.pane_mut(target.side)
                 .indicator_worker
                 .send(IndicatorCommand::SetInputs {
@@ -715,8 +720,9 @@ impl QuantickApp {
                     values: values.clone(),
                 });
         }
-        self.mirror_inputs(target, &values);
-        self.note_indicator_edit_at(target.tab, target.side);
+        self.layout_adapter().mirror_inputs(target, &values);
+        self.layout_adapter()
+            .note_indicator_edit_at(target.tab, target.side);
     }
 
     /// Show the draft on the chart without committing it: same worker path
@@ -730,7 +736,7 @@ impl QuantickApp {
         };
         dialog.previewed = true;
         let (slot, values) = (dialog.slot, dialog.draft.clone());
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+        if let Some(tab) = self.tabs.by_id_mut(target.tab) {
             tab.pane_mut(target.side)
                 .indicator_worker
                 .send(IndicatorCommand::SetInputs { slot, values });
@@ -748,7 +754,7 @@ impl QuantickApp {
             return;
         }
         let (slot, values) = (dialog.slot, dialog.committed.clone());
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == target.tab) {
+        if let Some(tab) = self.tabs.by_id_mut(target.tab) {
             tab.pane_mut(target.side)
                 .indicator_worker
                 .send(IndicatorCommand::SetInputs { slot, values });
@@ -904,7 +910,7 @@ impl QuantickApp {
             // To the worker that owns the slot: the same script loaded on two
             // panes is two slots, and a Reload sent to the wrong one addresses
             // whatever indicator happens to share its number there.
-            if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == owner.tab) {
+            if let Some(tab) = self.tabs.by_id_mut(owner.tab) {
                 tab.pane_mut(owner.side)
                     .indicator_worker
                     .send(IndicatorCommand::Reload {
@@ -923,15 +929,20 @@ impl QuantickApp {
     /// one this replaced turned every unrecognised kind into an EMA, so a
     /// mistyped id put an indicator on the chart that nobody had asked for.
     pub(super) fn add_native_indicator(&mut self, id: &str) -> SlotId {
+        let tab_id = self.tabs.active_id();
         let tab = self.active_tab();
-        let target = (tab.id, tab.focused_side());
-        let pane = self.tabs[self.active_tab].pane_mut(target.1);
+        let target = (tab_id, tab.focused_side());
+        let pane = self
+            .tabs
+            .runtime_mut(self.tabs.active_index())
+            .pane_mut(target.1);
         let attached = self.indicators.slots_mut().attach_native(pane, target, id);
         let owner = attached.target;
         if let Some(kind) = attached.layout_entry {
-            self.mirror_add(owner, &kind);
+            self.layout_adapter().mirror_add(owner, &kind);
         }
-        self.note_indicator_edit_at(owner.tab, owner.side);
+        self.layout_adapter()
+            .note_indicator_edit_at(owner.tab, owner.side);
         owner.slot
     }
 
@@ -939,10 +950,11 @@ impl QuantickApp {
     /// pane call [`Self::note_indicator_edit_at`] directly.
     pub(super) fn mark_indicator_state_dirty(&mut self) {
         let (tab, side) = {
+            let tab_id = self.tabs.active_id();
             let tab = self.active_tab();
-            (tab.id, tab.focused_side())
+            (tab_id, tab.focused_side())
         };
-        self.note_indicator_edit_at(tab, side);
+        self.layout_adapter().note_indicator_edit_at(tab, side);
     }
 
     /// Undo the dirty mark an add just set — for indicators an env var asked
@@ -957,6 +969,6 @@ impl QuantickApp {
     /// The layout itself is written by the edit that changed it — see
     /// `layout_wiring` — so nothing here reads a view back.
     pub(super) fn maintain_indicator_state(&mut self) {
-        self.apply_pending_indicator_state();
+        self.layout_adapter().apply_pending_indicator_state();
     }
 }

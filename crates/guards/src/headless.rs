@@ -76,6 +76,7 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "anchored-studies",
     "chart-interaction",
     "layers",
+    "workspace",
     "engine",
     "orderbook",
     "orderflow",

@@ -37,7 +37,9 @@ use crate::harness::DrawingsDemo;
 use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
+use crate::ui_state::WorkspaceExt;
 
+mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod chart_view_tests;
 mod control_plane_tests;
@@ -58,6 +60,9 @@ mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
 mod toolrail_tests;
+mod workspace_bundle_menu_baseline_tests;
+mod workspace_bundle_runtime_baseline_tests;
+mod workspace_commit_baseline_tests;
 mod workspaces_tests;
 
 use super::*;
@@ -396,7 +401,8 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
     (app, cmd_rx)
 }
@@ -453,23 +459,22 @@ fn with_flow_pane<R>(
     let mut begin_text_edit = false;
     let QuantickApp {
         tabs,
-        active_tab,
         toolrail,
-        drawing_presets,
+        drawings,
         style,
         tz,
         workspace,
         footprint_config,
-        surfaces,
         ..
     } = app;
-    let tab = &mut tabs[*active_tab];
+    let tab_id = tabs.id_at(tabs.active_index());
+    let tab = tabs.runtime_mut(tabs.active_index());
     let mut chrome = pane::PaneChrome {
-        tab: tab.id,
+        tab: tab_id,
         side: pane::PaneSide::Flow,
         toolrail,
-        presets: drawing_presets,
-        drawing_chrome: &mut surfaces.drawing_chrome,
+        presets: &drawings.presets,
+        drawing_chrome: &mut drawings.chrome,
         begin_text_edit: &mut begin_text_edit,
         style,
         tz: *tz,
@@ -782,7 +787,7 @@ fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end
 /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
 /// test that proves this shortcut matches the real button.
 fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.set_inspector_open(true);
     // Two frames: the first opens the window, the second lets it settle
     // its size and automatic placement before anything reads its rect.
     run_frame(app, ctx);
@@ -1061,8 +1066,8 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
     // The write is queued during the release frame and flushed at the top
     // of the next one, where every other workspace write lives.
     run_frame(app, ctx);
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .inspector_pos()
         .expect("the drag records a position")
 }
@@ -1073,7 +1078,7 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
 fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
     app.workspace.set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     app.surfaces.toast.clear();
     assert!(
         app.workspace.ui_state_path().exists(),
@@ -1096,7 +1101,8 @@ fn place_drawing(
         click_chart(app, ctx, *anchor);
     }
     run_frame(app, ctx);
-    app.drawing_pane()
+    app.active_tab()
+        .drawing_pane()
         .drawings
         .items()
         .iter()
@@ -1116,15 +1122,15 @@ fn select_and_open_popup(app: &mut QuantickApp, ctx: &egui::Context, index: usiz
     // value that would make a position assertion pass on a popup that is
     // no longer floating. Ask the app what it drew before reading egui.
     assert!(
-        app.surfaces.drawing_chrome.inspector_open(),
+        app.drawings.chrome.inspector_open(),
         "the gear's door is open"
     );
     assert!(
-        !app.surfaces.drawing_chrome.inspector_pinned(),
+        !app.drawings.chrome.inspector_pinned(),
         "and the popup is floating, not docked"
     );
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         Some(index),
         "on the object this call selected"
     );
@@ -1382,7 +1388,7 @@ fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         symbol.to_owned(),
         FeedHandle {
@@ -2315,7 +2321,7 @@ fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
         .expect("the reviewed page limit fits in the wire integer");
     let (app, _commands) = app_with_history(max_page_items);
     let query = ChartWindowQuery {
-        tab_id: WireU64::new(app.active_tab().id),
+        tab_id: WireU64::new(app.tabs.active_id()),
         pane_id: WireU64::new(app.active_tab().flow_pane.id),
         range: ChartWindowRange::Slots {
             start_slot: WireU64::new(0),

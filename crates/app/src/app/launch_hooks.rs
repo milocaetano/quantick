@@ -268,7 +268,7 @@ impl QuantickApp {
         // whether the inspector is open, so a hook another hook depends on has
         // to be in place before any of them. They live with the fields they
         // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
-        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.surfaces.drawing_chrome);
+        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.drawings.chrome);
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -381,7 +381,7 @@ impl QuantickApp {
             && let Ok(budget) = value.trim().parse::<usize>()
             && budget > 0
         {
-            for tab in &mut self.tabs {
+            for tab in self.tabs.iter_mut() {
                 tab.tape_mut().set_primitive_budget(budget);
             }
         }
@@ -397,7 +397,7 @@ impl QuantickApp {
             && let Ok(after_ms) = value.trim().parse::<i64>()
             && after_ms >= 0
         {
-            for tab in &mut self.tabs {
+            for tab in self.tabs.iter_mut() {
                 tab.tape_mut().set_starve_tape_after_ms(after_ms);
             }
         }
@@ -432,17 +432,21 @@ impl QuantickApp {
     fn apply_layout_hooks(&mut self) {
         // Put the active layout on the first tab's panes before any autostart
         // hook: the file is what the user actually had open.
-        self.seed_new_panes();
+        self.layout_adapter().seed_new_panes();
         // The layout strip's hooks (`ui-harness`): open on a named layout,
         // creating it when the file has none by that name, and open the
         // rename box on the active one.
         if let Ok(name) = std::env::var("QUANTICK_LAYOUT_TAB")
             && let Some(name) = crate::layouts::clean_name(&name)
         {
-            let wanted = self.layouts().by_name(&name).map(|layout| layout.id);
+            let wanted = self
+                .layout_state()
+                .layouts()
+                .by_name(&name)
+                .map(|layout| layout.id);
             let outcome = match wanted {
-                Some(id) => self.switch_layout(id).map(|_| id),
-                None => self.create_layout(Some(&name)),
+                Some(id) => self.layout_adapter().switch_layout(id).map(|_| id),
+                None => self.layout_adapter().create_layout(Some(&name)),
             };
             if let Err(error) = outcome {
                 tracing::warn!(
@@ -460,15 +464,16 @@ impl QuantickApp {
         // a capture of two charts on two layouts side by side. Names the book
         // lacks are created empty; an empty entry leaves that pane alone.
         if let Ok(names) = std::env::var("QUANTICK_PANE_LAYOUTS") {
-            self.apply_pane_layouts_hook(&names);
+            self.layout_adapter().apply_pane_layouts_hook(&names);
         }
         if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
-            let active = self.focused_pane_layout();
-            self.begin_layout_rename(active);
+            let active = self.layout_state().focused_pane_layout();
+            self.layout_adapter().begin_layout_rename(active);
         }
         if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
-            let active = self.focused_pane_layout();
-            self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+            let active = self.layout_state().focused_pane_layout();
+            self.layout_adapter()
+                .apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
         // Scripted validation runs can open with library scripts loaded:
         // a comma-separated list of script names, each through the same
@@ -491,10 +496,11 @@ impl QuantickApp {
                         // something, which the rules forbid. The natives hook
                         // above never registers a kind, so it is already inert.
                         let (tab, side) = {
+                            let tab_id = self.tabs.active_id();
                             let tab = self.active_tab();
-                            (tab.id, tab.focused_side())
+                            (tab_id, tab.focused_side())
                         };
-                        self.add_indicator_at(
+                        self.layout_adapter().add_indicator_at(
                             tab,
                             side,
                             &SavedKind::Script {
@@ -791,7 +797,7 @@ impl QuantickApp {
         // exactly as the entry does — a hook that fakes its surface proves
         // nothing — so point `QUANTICK_UI_STATE` at a scratchpad first.
         if std::env::var("QUANTICK_WORKSPACE_SAVE").is_ok_and(|value| value == "1") {
-            self.save_workspace("autostart");
+            self.workspace_save_adapter().save_workspace("autostart");
         }
         // The three file entries, reachable with no click for the same reason
         // (`.claude/skills/ui-harness`). Each runs the menu entry's own code
@@ -800,10 +806,12 @@ impl QuantickApp {
         // write and really replace the cockpit, so point `QUANTICK_UI_STATE`
         // and its sibling stores at scratchpad files first.
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_EXPORT") {
-            self.export_workspace_to(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .export_workspace_to(std::path::Path::new(&path));
         }
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_IMPORT") {
-            self.import_workspace_from(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .import_workspace_from(std::path::Path::new(&path));
         }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
@@ -826,7 +834,8 @@ impl QuantickApp {
         // second and the message is gone eight seconds later, so a capture
         // run photographs an empty lane and cannot tell that from a defect.
         if std::env::var("QUANTICK_TOAST").is_ok_and(|value| value == "paper") {
-            self.tabs[0]
+            self.tabs
+                .runtime_mut(0)
                 .paper
                 .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
         }

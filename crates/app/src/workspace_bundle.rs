@@ -41,16 +41,15 @@
 //! The paper sidecar shares the durable home but is deliberately not a
 //! section here: see [`crate::store_home::COCKPIT_STORES`].
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+pub(crate) use quantick_workspace::bundle::Bundle;
+use quantick_workspace::bundle::{
+    CaptureFailure, CaptureStep, CaptureText, CaptureTransaction, CurrentText, FORMAT_VERSION,
+    ImportFailure, ImportStep, ImportTransaction, InstalledStores,
+};
 
 use crate::store_home::CockpitStore;
-
-/// Bumped on breaking format changes; unknown versions are refused rather
-/// than half-read.
-const FORMAT_VERSION: u32 = 1;
 
 /// The extension a workspace bundle carries. Its own rather than a bare
 /// `.toml` so the file picker can offer "quantick workspace" and a trader can
@@ -59,34 +58,6 @@ pub(crate) const BUNDLE_EXTENSION: &str = "qws.toml";
 
 /// The folder inside the documents shelf where exports land by default.
 pub(crate) const BUNDLE_DIR: &str = "workspaces";
-
-/// How many exported bundles the Open-recent menu remembers.
-///
-/// A menu, not a history: past this the list is longer than the screen and
-/// the entry a trader actually wants is harder to find than the file picker.
-pub(crate) const MAX_RECENT: usize = 10;
-
-/// The whole cockpit as one file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Bundle {
-    version: u32,
-    /// What the trader called this arrangement. Carried inside the file as
-    /// well as in its name so a renamed file still says what it is.
-    #[serde(default)]
-    pub name: String,
-    /// Each store's file content, by [`CockpitStore::key`]. A store whose
-    /// file did not exist when the bundle was written simply has no section —
-    /// that is a cockpit which never set that thing, not a broken bundle.
-    #[serde(default)]
-    sections: BTreeMap<String, toml::Value>,
-}
-
-impl Bundle {
-    /// How many stores this bundle carries.
-    pub fn len(&self) -> usize {
-        self.sections.len()
-    }
-}
 
 /// Where a store's file is, so capture and apply can be pointed at scratch
 /// folders by a test instead of at the trader's real home.
@@ -112,190 +83,149 @@ pub(crate) fn capture(
     stores: &[CockpitStore],
     path_of: StorePath<'_>,
 ) -> Result<Bundle, String> {
-    let mut sections = BTreeMap::new();
-    for store in stores.iter().filter(|store| store.in_bundle) {
-        let path = path_of(store);
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(format!("could not read {}: {error}", path.display()));
+    let mut step = CaptureTransaction::begin(name, stores);
+    let mut current_path = PathBuf::new();
+    loop {
+        step = match step {
+            CaptureStep::Read(read) => {
+                current_path = path_of(&stores[read.store_index()]);
+                let text = match std::fs::read_to_string(&current_path) {
+                    Ok(text) => CaptureText::Text(text),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        CaptureText::Missing
+                    }
+                    Err(error) => CaptureText::Failed(error.to_string()),
+                };
+                read.complete(text)
+            }
+            CaptureStep::Finished(result) => {
+                return result.map_err(|error| match error {
+                    CaptureFailure::Read { message, .. } => {
+                        format!("could not read {}: {message}", current_path.display())
+                    }
+                    CaptureFailure::Parse { message, .. } => {
+                        format!("{} is not readable: {message}", current_path.display())
+                    }
+                });
             }
         };
-        let mut value: toml::Value = toml::from_str(&text)
-            .map_err(|error| format!("{} is not readable: {error}", path.display()))?;
-        strip_local_keys(&mut value, store);
-        sections.insert(store.key.to_owned(), value);
     }
-    Ok(Bundle {
-        version: FORMAT_VERSION,
-        name: name.to_owned(),
-        sections,
-    })
 }
 
-/// Check every section against its store's real type — the gate that makes
-/// importing all-or-nothing. Returns the stores that would be written.
-///
-/// A section this build does not know is reported and skipped rather than
-/// refused: the bundle's own version is the compatibility gate, and a store
-/// that has since been removed must not make an otherwise good cockpit
-/// unopenable.
-fn check<'a>(bundle: &Bundle, stores: &'a [CockpitStore]) -> Result<Vec<&'a CockpitStore>, String> {
-    if bundle.version != FORMAT_VERSION {
-        return Err(format!(
-            "workspace file version {} (this build reads {FORMAT_VERSION})",
-            bundle.version
-        ));
-    }
-    let known: Vec<&CockpitStore> = stores
-        .iter()
-        .filter(|store| store.in_bundle && bundle.sections.contains_key(store.key))
-        .collect();
-    for key in bundle.sections.keys() {
-        if !stores.iter().any(|store| store.key == *key) {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "WORKSPACE_SECTION_UNKNOWN",
-                section = %key,
-                action = "skip_section",
-                "a workspace file names a store this build does not have"
-            );
-        }
-    }
-    for store in &known {
-        let value = &bundle.sections[store.key];
-        let text = toml::to_string_pretty(value)
-            .map_err(|error| format!("section \"{}\" cannot be written: {error}", store.key))?;
-        (store.validate)(&text)
-            .map_err(|error| format!("section \"{}\" is not valid: {error}", store.key))?;
-    }
-    Ok(known)
-}
-
-/// Write every section of `bundle` over the live stores.
-///
-/// Two phases, so a failure cannot leave half a cockpit. Every section is
-/// checked and rendered, then written to a temp file beside its store — all
-/// of them, before any store is replaced. Only once every temp file is on
-/// disk does the second phase rename them into place. Anything that can fail
-/// for a reason this app can foresee (a bad section, a full disk, a
-/// permission) fails in phase one, where nothing has been replaced yet and
-/// the temp files are cleaned up.
-///
-/// A rename that fails in phase two is the residual risk: the operation is
-/// atomic per file, but there is no atomic rename of eight. That case is
-/// reported by name — what was replaced and what was not — rather than
-/// papered over, and re-importing finishes the job.
-pub(crate) fn apply<'a>(
+/// Execute the core's validated staging/install protocol against real store paths.
+/// Per-file installation remains atomic; a late rename can leave earlier stores installed.
+pub(crate) fn apply<'stores>(
     bundle: &Bundle,
-    stores: &'a [CockpitStore],
+    stores: &'stores [CockpitStore],
     path_of: StorePath<'_>,
-) -> Result<Vec<&'a str>, String> {
+) -> Result<InstalledStores<'stores>, String> {
     apply_with_rename(bundle, stores, path_of, |temp, live| {
         std::fs::rename(temp, live)
     })
 }
 
-/// Keep validation, staging and installation together so failure fixtures
-/// exercise the same import as the app. Only the final rename is injectable;
-/// the live closure is statically dispatched and uses the real filesystem.
-fn apply_with_rename<'a>(
+fn apply_with_rename<'stores>(
     bundle: &Bundle,
-    stores: &'a [CockpitStore],
+    stores: &'stores [CockpitStore],
     path_of: StorePath<'_>,
     mut rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
-) -> Result<Vec<&'a str>, String> {
-    let stores = check(bundle, stores)?;
-    let mut staged: Vec<(PathBuf, PathBuf, &CockpitStore)> = Vec::with_capacity(stores.len());
-    let cleanup = |staged: &[(PathBuf, PathBuf, &CockpitStore)]| {
-        for (temp, ..) in staged {
-            let _ = std::fs::remove_file(temp);
-        }
-    };
-    for store in &stores {
-        let live = path_of(store);
-        let merged = match merge_local_keys(&bundle.sections[store.key], &live, store) {
-            Ok(merged) => merged,
-            Err(error) => {
-                cleanup(&staged);
-                return Err(error);
+) -> Result<InstalledStores<'stores>, String> {
+    let mut step = ImportTransaction::begin(bundle, stores);
+    // Resolved once per Prepare, never eagerly before validation or earlier stages.
+    let mut paths: Vec<Option<PathBuf>> = vec![None; stores.len()];
+    loop {
+        step = match step {
+            ImportStep::Notice(notice) => {
+                tracing::info!(target: "quantick::app", schema_version = 1_u8,
+                    event_code = "WORKSPACE_SECTION_UNKNOWN", section = %notice.key(),
+                    action = "skip_section", "a workspace file names a store this build does not have");
+                notice.acknowledge()
+            }
+            ImportStep::Prepare(prepare) => {
+                let index = prepare.store_index();
+                let path = path_of(&stores[index]);
+                let current = if prepare.needs_current_text() {
+                    std::fs::read_to_string(&path)
+                        .map_or(CurrentText::Unavailable, CurrentText::Available)
+                } else {
+                    CurrentText::Unavailable
+                };
+                paths[index] = Some(path);
+                prepare.complete(current)
+            }
+            ImportStep::Stage(stage) => {
+                let path = paths[stage.store_index()]
+                    .as_ref()
+                    .expect("Prepare resolved path");
+                let result = std::fs::write(path.with_extension("importing"), stage.text())
+                    .map_err(|error| error.to_string());
+                stage.complete(result)
+            }
+            ImportStep::Install(install) => {
+                let path = paths[install.store_index()]
+                    .as_ref()
+                    .expect("stage retained path");
+                let result = rename(&path.with_extension("importing"), path)
+                    .map_err(|error| error.to_string());
+                install.complete(result)
+            }
+            ImportStep::Cleanup(cleanup) => {
+                let path = paths[cleanup.store_index()]
+                    .as_ref()
+                    .expect("attempt retained path");
+                let _ = std::fs::remove_file(path.with_extension("importing"));
+                cleanup.complete()
+            }
+            ImportStep::Finished(result) => {
+                return result.map_err(|error| import_error(error, stores, &paths));
             }
         };
-        let temp = live.with_extension("importing");
-        if let Err(error) = std::fs::write(&temp, &merged) {
-            cleanup(&staged);
-            return Err(format!(
-                "could not stage {}: {error}. Nothing was changed.",
-                live.display()
-            ));
-        }
-        staged.push((temp, live, store));
-    }
-    let total = staged.len();
-    let mut written = Vec::with_capacity(total);
-    for (temp, live, store) in staged {
-        if let Err(error) = rename(&temp, &live) {
-            let _ = std::fs::remove_file(&temp);
-            return Err(format!(
-                "replaced {} of {total} settings groups, then {} failed: {error}. Open the file \
-                 again to finish.",
-                written.len(),
-                live.display()
-            ));
-        }
-        written.push(store.key);
-    }
-    Ok(written)
-}
-
-/// Drop the keys that describe this installation, so they never reach a file
-/// somebody else will open.
-fn strip_local_keys(value: &mut toml::Value, store: &CockpitStore) {
-    let Some(table) = value.as_table_mut() else {
-        return;
-    };
-    for key in store.local_keys {
-        table.remove(*key);
     }
 }
 
-/// Render a section for `store`, putting this machine's own keys back.
-///
-/// The bundle carries no `local_keys` (they were stripped on capture), so the
-/// values living in the store right now are kept: opening a workspace must
-/// not cost the trader their bookmarks, their recent files or the folder
-/// their recordings are in. A store that cannot be read yet simply has none
-/// to keep, which is the fresh-install case.
-fn merge_local_keys(
-    section: &toml::Value,
-    live: &Path,
-    store: &CockpitStore,
-) -> Result<String, String> {
-    let render = |value: &toml::Value| {
-        toml::to_string_pretty(value)
-            .map_err(|error| format!("section \"{}\" cannot be written: {error}", store.key))
-    };
-    if store.local_keys.is_empty() {
-        return render(section);
-    }
-    let mut merged = section.clone();
-    let (Some(table), Ok(text)) = (merged.as_table_mut(), std::fs::read_to_string(live)) else {
-        return render(&merged);
-    };
-    let Ok(current) = toml::from_str::<toml::Value>(&text) else {
-        return render(&merged);
-    };
-    let Some(current) = current.as_table() else {
-        return render(&merged);
-    };
-    for key in store.local_keys {
-        if let Some(kept) = current.get(*key) {
-            table.insert((*key).to_string(), kept.clone());
+fn import_error(
+    error: ImportFailure,
+    stores: &[CockpitStore],
+    paths: &[Option<PathBuf>],
+) -> String {
+    match error {
+        ImportFailure::Version(found) => {
+            format!("workspace file version {found} (this build reads {FORMAT_VERSION})")
         }
+        ImportFailure::InvalidSection {
+            store_index,
+            message,
+        } => format!(
+            "section \"{}\" is not valid: {message}",
+            stores[store_index].key
+        ),
+        ImportFailure::RenderSection {
+            store_index,
+            message,
+        } => format!(
+            "section \"{}\" cannot be written: {message}",
+            stores[store_index].key
+        ),
+        ImportFailure::Stage {
+            store_index,
+            message,
+        } => format!(
+            "could not stage {}: {message}. Nothing was changed.",
+            paths[store_index].as_ref().expect("staging path").display()
+        ),
+        ImportFailure::Install {
+            store_index,
+            installed,
+            total,
+            message,
+        } => format!(
+            "replaced {installed} of {total} settings groups, then {} failed: {message}. Open the file again to finish.",
+            paths[store_index]
+                .as_ref()
+                .expect("installation path")
+                .display()
+        ),
     }
-    render(&merged)
 }
 
 /// Read a bundle from disk, refusing anything that is not one.
@@ -309,12 +239,7 @@ pub(crate) fn read(path: &Path) -> Result<Bundle, String> {
     // `apply`, which is the only thing that writes — running it here too
     // would validate and render every section twice for one import, and log
     // each unknown section twice as if two imports had happened.
-    if bundle.version != FORMAT_VERSION {
-        return Err(format!(
-            "workspace file version {} (this build reads {FORMAT_VERSION})",
-            bundle.version
-        ));
-    }
+    bundle.check_version()?;
     Ok(bundle)
 }
 
@@ -351,18 +276,6 @@ fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
 /// in which case the picker simply opens wherever it likes.
 pub(crate) fn default_dir() -> Option<PathBuf> {
     crate::store_home::home().map(|home| home.join(BUNDLE_DIR))
-}
-
-/// Put `path` at the head of the recent list, keeping it a menu.
-///
-/// Visiting a file already in the list moves it to the top rather than
-/// duplicating it, which is what every recent-files menu does and what stops
-/// the one file a trader uses daily from pushing everything else out.
-pub(crate) fn remember_recent(recent: &mut Vec<String>, path: &Path) {
-    let entry = path.to_string_lossy().into_owned();
-    recent.retain(|existing| *existing != entry);
-    recent.insert(0, entry);
-    recent.truncate(MAX_RECENT);
 }
 
 /// The recent entries whose file is still there, newest first.
@@ -416,6 +329,9 @@ pub(crate) fn file_name_for(name: &str) -> String {
     format!("{stem}.{BUNDLE_EXTENSION}")
 }
 
+#[cfg(test)]
+#[path = "workspace_bundle/tests/baseline.rs"]
+mod baseline_tests;
 #[cfg(test)]
 mod recovery_tests;
 
@@ -625,26 +541,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn revisiting_a_file_moves_it_up_instead_of_duplicating_it() {
-        let mut recent = Vec::new();
-        remember_recent(&mut recent, Path::new("D:/a.qws.toml"));
-        remember_recent(&mut recent, Path::new("D:/b.qws.toml"));
-        remember_recent(&mut recent, Path::new("D:/a.qws.toml"));
-        assert_eq!(recent, vec!["D:/a.qws.toml", "D:/b.qws.toml"]);
-    }
-
-    /// A menu, not a history.
-    #[test]
-    fn the_recent_list_stays_a_menu() {
-        let mut recent = Vec::new();
-        for index in 0..MAX_RECENT + 5 {
-            remember_recent(&mut recent, Path::new(&format!("D:/w{index}.qws.toml")));
-        }
-        assert_eq!(recent.len(), MAX_RECENT);
-        assert_eq!(recent[0], format!("D:/w{}.qws.toml", MAX_RECENT + 4));
-    }
-
     /// Every name in the menu opens something — but a file that is merely
     /// on an unplugged drive today is not forgotten forever.
     #[test]
@@ -796,7 +692,7 @@ mod tests {
         let reread = read(&file).expect("read");
         let written = apply(&reread, FAKE_REGISTRY, &paths_in(&live)).expect("apply");
 
-        assert_eq!(written, vec!["fake_store"]);
+        assert_eq!(written.keys(), vec!["fake_store"]);
         assert!(
             std::fs::read_to_string(live.join("fake-store.toml"))
                 .unwrap()

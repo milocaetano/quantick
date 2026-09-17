@@ -16,7 +16,15 @@ fn armed_app() -> (QuantickApp, mpsc::Sender<FeedEvent>, drawings::DrawingId) {
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     form.window = 3;
     form.min_range = "0".to_owned();
-    app.arm_strategy_instance(PaneSide::Flow, drawing, &form, "test BF".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            PaneSide::Flow,
+            drawing,
+            &form,
+            "test BF".to_owned(),
+        )
         .unwrap();
     (app, events, drawing)
 }
@@ -156,14 +164,20 @@ fn live_trade_batches_preserve_per_print_fills_panes_and_one_arrival_clock_per_d
             .blocking_send(FeedEvent::LiveBatch(chunk.to_vec()))
             .unwrap();
         let arrival = chunk.last().unwrap().timestamp_ms + 20;
-        singles.active_tab_mut().drain_feed_with_clock(|| {
-            single_clock_reads += 1;
-            arrival
-        });
-        batches.active_tab_mut().drain_feed_with_clock(|| {
-            batch_clock_reads += 1;
-            arrival
-        });
+        let single_id = singles.tabs.active_id();
+        singles
+            .active_tab_mut()
+            .drain_feed_with_clock(single_id, || {
+                single_clock_reads += 1;
+                arrival
+            });
+        let batch_id = batches.tabs.active_id();
+        batches
+            .active_tab_mut()
+            .drain_feed_with_clock(batch_id, || {
+                batch_clock_reads += 1;
+                arrival
+            });
         assert_eq!(position(&singles), position(&batches));
         assert_eq!(
             singles.active_tab().live_trades,
@@ -228,8 +242,9 @@ fn live_trade_resume_paths_seed_the_mark_without_filling_a_queued_order() {
             _ => FeedEvent::Live(trades[200].clone()),
         };
         events.blocking_send(event).unwrap();
+        let tab_id = app.tabs.active_id();
         app.active_tab_mut()
-            .drain_feed_with_clock(|| panic!("resumed history is not live arrival"));
+            .drain_feed_with_clock(tab_id, || panic!("resumed history is not live arrival"));
         assert!(
             position(&app).is_none(),
             "resume path {kind} filled against history"
@@ -286,7 +301,8 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     events
         .blocking_send(FeedEvent::Backfilled(trades[149..200].to_vec()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 4);
     assert!(
         app.active_tab()

@@ -315,7 +315,12 @@ impl ChartPane {
             {
                 continue;
             }
-            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            let points = self.drawing_projection().projected_drawing_points(
+                drawing,
+                history_right,
+                total,
+                scale,
+            );
             for y in drawing.tool.axis_levels(chart_rect, &points) {
                 out.push(PriceAxisLevel {
                     id: drawing.id,

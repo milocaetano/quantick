@@ -3,8 +3,6 @@
 Quantick builds real-time alternative bars (tick / volume / dollar / imbalance)
 in Rust. One deterministic engine feeds the chart, backtest and bot.
 
-Choose the workflow for your task:
-
 | | You are… | Start here |
 | --- | --- | --- |
 | **1. Change the code** | editing a Rust workspace | [The map](#the-map) → [Verification loop](#verification-loop-mandatory) → [`CLAUDE.md`](CLAUDE.md) |
@@ -36,9 +34,8 @@ connection under **Tools → Local agent access** and pick its scopes.
 Then call `quantick_describe` first: with no argument it lists the reachable
 instances; with an `instance_id` it reports the protocol, the effective
 profile and scopes, the registered modules, every capability with its
-availability, the snapshot scopes and the limits. Everything else is
-discoverable from that answer: the adapter hardcodes no vocabulary the running
-instance might not implement.
+availability, snapshot scopes and limits. The adapter discovers vocabulary
+from that response.
 
 ### Profiles
 
@@ -110,6 +107,7 @@ graph TD
   end
 
   app --> anchoredstudies
+  app --> workspace
   app --> pine
   app --> indicators
   app --> strategy
@@ -175,6 +173,7 @@ graph TD
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects preserve feature owners. |
 | `anchored-studies` | Resumable profile and anchored-average state; caller owns scheduling and paint. |
+| `workspace` | Layout documents and pane membership transitions. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |

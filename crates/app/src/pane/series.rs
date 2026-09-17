@@ -7,8 +7,6 @@
 //! that composition so the drawings, the indicators and the control plane read
 //! the same slot for the same instant. A pure move out of `pane.rs`.
 
-use smallvec::SmallVec;
-
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, ChartState};
@@ -25,18 +23,18 @@ impl ChartPane {
     /// How many bar slots the chart draws: the venue prefix, the closed bars
     /// the engine cut from trades, and the forming one after them.
     pub fn slots(&self) -> usize {
-        self.closed_slots() + usize::from(self.state.partial().is_some())
+        self.series_read().slots()
     }
 
     /// Slots holding a *closed* bar — everything before the forming one.
     pub fn closed_slots(&self) -> usize {
-        self.history_prefix.len() + self.state.bars().len()
+        self.series_read().closed_slots()
     }
 
     /// The slot the trade-derived series starts at: the seam between venue
     /// candles and bars this app built from prints.
     pub fn seam_slot(&self) -> usize {
-        self.history_prefix.len()
+        self.series_read().seam_slot()
     }
 
     /// The slot of a bar that covers only *part* of the interval it occupies,
@@ -67,9 +65,7 @@ impl ChartPane {
 
     /// The closed bar in `slot`, from whichever series owns it.
     pub fn closed_bar(&self, slot: usize) -> Option<&quantick_engine::Bar> {
-        self.history_prefix
-            .get(slot)
-            .or_else(|| self.state.bars().get(slot - self.history_prefix.len()))
+        self.series_read().closed_bar(slot)
     }
 
     /// When the bar in `slot` opened, across both series and the forming bar.
@@ -78,10 +74,7 @@ impl ChartPane {
     /// composed slot space — there is one rule for what a slot means and the
     /// prefix only moves where it starts.
     pub fn slot_open_time(&self, slot: usize) -> Option<i64> {
-        match self.history_prefix.get(slot) {
-            Some(bar) => Some(bar.open_time),
-            None => self.state.slot_open_time(slot - self.seam_slot()),
-        }
+        self.series_read().slot_open_time(slot)
     }
 
     /// The slot showing market time `ms`, across both series.
@@ -91,23 +84,7 @@ impl ChartPane {
     /// the engine's own answer shifted by the prefix, anything before it is a
     /// search of the prefix.
     pub fn slot_at_time(&self, ms: i64) -> Option<usize> {
-        let seam = self.seam_slot();
-        if seam == 0 {
-            return self.state.slot_at_time(ms);
-        }
-        if self
-            .state
-            .bars()
-            .first()
-            .or_else(|| self.state.partial())
-            .is_some_and(|bar| bar.open_time <= ms)
-        {
-            return self.state.slot_at_time(ms).map(|slot| slot + seam);
-        }
-        let after = self
-            .history_prefix
-            .partition_point(|bar| bar.open_time <= ms);
-        Some(after.saturating_sub(1))
+        self.series_read().slot_at_time(ms)
     }
 
     /// The slot whose bar *covers* market time `ms`, or `None` when this
@@ -327,23 +304,7 @@ impl ChartPane {
     /// Also not [`Self::covering_slot_at_time`], which refuses the future end
     /// as well: a drawing may point past the newest bar, a fill may not.
     pub(super) fn slot_of_time(&self, time: i64) -> Option<f32> {
-        // Past the newest bar first: on a time chart that space has an exact
-        // clock, and asking `slot_at_time` there would clamp a future anchor
-        // onto the right edge instead of letting it run on.
-        if let Some(future) = self.future_slot_at_time(time) {
-            return Some(future + 0.5);
-        }
-        // Before the first bar this pane holds. `slot_at_time` answers slot 0
-        // there, which is a clamp and not a location — taking it would put the
-        // anchor on a bar it has nothing to do with and say nothing about it.
-        // `None` is what the off-series fade and the refused drag both read.
-        if self.slot_open_time(0).is_some_and(|first| time < first) {
-            return None;
-        }
-        let slots = self.slots();
-        let slot = self.slot_at_time(time)?.min(slots.checked_sub(1)?);
-        #[allow(clippy::cast_precision_loss)]
-        Some(slot as f32 + 0.5)
+        self.series_read().slot_of_time(time)
     }
 
     /// Re-express this pane's drawings against the series it holds now,
@@ -387,20 +348,16 @@ impl ChartPane {
     /// where it was: market time is what the other panes read, so a move that
     /// does not update it has moved only half the object.
     pub fn retime_selected(&mut self) {
-        let Some(index) = self.drawings.selected() else {
-            return;
+        let projection = super::drawing_projection::DrawingProjection {
+            series: super::drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            viewport: &self.viewport,
+            indicators: &self.indicators,
         };
-        let Some(drawing) = self.drawings.items().get(index) else {
-            return;
-        };
-        // Collected first so the immutable borrow of the store ends before
-        // the write; every shipped tool has at most four anchors.
-        let times: SmallVec<[Option<i64>; 4]> = drawing
-            .points
-            .iter()
-            .map(|point| self.anchor_time(point.bar))
-            .collect();
-        self.drawings.set_times(index, &times);
+        projection.retime_selected(&mut self.drawings);
     }
 
     /// Throw away this pane's bars, keeping the spec its own selectors ask
@@ -531,14 +488,6 @@ impl ChartPane {
     /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
     /// answer here.
     pub(super) fn future_slot_at_time(&self, time: i64) -> Option<f32> {
-        let interval = self.spec.spec().time_interval_ms()?;
-        let last = self.slots().checked_sub(1)?;
-        let last_open = self.slot_open_time(last)?;
-        let ahead = time.checked_sub(last_open)?;
-        if ahead < interval {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        Some(last as f32 + ahead as f32 / interval as f32)
+        self.series_read().future_slot_at_time(time)
     }
 }

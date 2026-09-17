@@ -322,7 +322,8 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
     assert!(held > 0, "the chart has something to lose");
 
@@ -398,15 +399,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
     let parked = egui::pos2(320.0, 240.0);
-    app.surfaces
-        .drawing_chrome
-        .context_bar_mut()
-        .set_manual(parked);
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.context_bar_mut().set_manual(parked);
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     let drawn = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is up where it was put")
         .min;
@@ -418,12 +416,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         None,
         "the press does what the trader aimed it at: the selection goes"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.context_bar().manual_position(),
+        app.drawings.chrome.context_bar().manual_position(),
         Some(parked),
         "and the position they chose is still theirs on the next object"
     );
@@ -434,12 +432,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     // against the parked point itself, so the test says "unchanged" and
     // not "happens to need no repair at this window size".
     app.drawing_pane_mut().drawings.select(Some(other));
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar_rect()
             .expect("the bar is back")
             .min,
@@ -463,8 +461,8 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let before = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is on screen");
 
@@ -475,13 +473,13 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     run_frame(&mut app, &ctx);
 
     let after = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar must survive its own drag");
     assert!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar()
             .manual_position()
             .is_some(),
@@ -678,28 +676,29 @@ fn candle_appearance_change_is_render_only() {
 #[test]
 fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
     let (mut app, _commands) = app_with_history(50);
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        vec![ui_state::SavedTab {
-            feed: "binance".to_owned(),
-            symbol: "TESTUSDT".to_owned(),
-            layout: crate::config::DeclaredLayout::Flow,
-            split_fraction: None,
-            context_collapsed: false,
-            focus: None,
-            focus_slot: 0,
-            context_bars: vec![],
-            flow_layout: None,
-            context_layouts: vec![],
-            flow_bars: "tick:377".to_owned(),
-            time_bars: None,
-            flow_legend_collapsed: false,
-            time_legend_collapsed: false,
-        }],
-        None,
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::Flow,
+                split_fraction: None,
+                context_collapsed: false,
+                focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "tick:377".to_owned(),
+                time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+            }],
+            None,
+        ));
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
     assert_eq!(

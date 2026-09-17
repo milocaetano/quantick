@@ -374,23 +374,6 @@ pub(crate) struct Surfaces {
     pub toast: ToastSurface,
     /// The Save-as box, opened from the Workspace menu.
     pub workspace_name: WorkspaceNameSurface,
-    /// Everything that speaks for the selected drawing: the context bar, the
-    /// inline note editor, the inspector in both its hosts, and the object
-    /// manager. One member for four pieces of chrome, because they share five
-    /// pieces of state — see [`drawing_chrome`] for the table and the reason.
-    ///
-    /// The one member [`Self::draw_all`] does not draw, and the only one that
-    /// does not implement [`Surface`]. It is anchored to the *chart* rather
-    /// than floating over the window, so the host draws it at two specific
-    /// points in the frame — the docked inspector before the central canvas,
-    /// which pays its width, and the floating pieces after it, because every
-    /// one of them places against pane geometry the canvas writes as it draws.
-    /// A uniform `draw` here would have to be handed an environment this pass
-    /// cannot fill and a response this pass does not read; naming the two
-    /// entry points instead is the honest shape, and it is the same
-    /// command-a-member-by-name the host already does for the toast and the
-    /// arming dialog.
-    pub drawing_chrome: DrawingChromeSurface,
 }
 
 impl Surfaces {

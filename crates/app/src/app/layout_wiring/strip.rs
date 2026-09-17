@@ -2,15 +2,15 @@
 //! book after an import, renaming from the strip, drawing the strip and
 //! applying what a click on it asked for.
 
-use super::QuantickApp;
-use crate::app::chrome::{ChromeState, LayoutRename};
+use super::LayoutAdapter;
+use crate::app::chrome::LayoutRename;
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::layouts::{self, LayoutBook, LayoutError, LayoutId};
 use crate::pane::PaneSide;
 use smallvec::SmallVec;
 use std::time::Instant;
 
-impl QuantickApp {
+impl LayoutAdapter<'_> {
     // ------------------------------------------------------------------
     // Reload, rename, strip
     // ------------------------------------------------------------------
@@ -28,11 +28,12 @@ impl QuantickApp {
     /// the same migration a launch performs.
     pub(in crate::app) fn reload_layouts(&mut self, imported: &[&str]) {
         self.clear_indicators();
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             for pane in tab.panes_mut() {
                 pane.drawings.take_all();
                 pane.drawings_key = None;
-                pane.layout_seeded = false;
+                pane.request_opening_layout(pane.layout_id());
+                pane.layout_view = quantick_workspace::session::LayoutView::default();
             }
         }
         let legacy = crate::indicators::state_file::default_path();
@@ -50,26 +51,15 @@ impl QuantickApp {
             );
             (LayoutBook::starter(set), false)
         } else {
-            Self::load_layouts(self.workspace.layouts_path(), &legacy)
+            Self::load_layouts(self.store.path(), &legacy)
         };
-        self.workspace.layouts_mut().set_book(book);
-        self.workspace.layouts_mut().set_blocked(blocked);
-        self.chrome.layout_rename = None;
-        self.chrome.layout_delete_confirm = None;
-        // A pane whose named layout is not in the new book opens on the
-        // default, exactly as a pane with no name would.
-        for tab in &mut self.tabs {
-            for pane in tab.panes_mut() {
-                let book = self.workspace.layouts().book();
-                if pane.layout.is_some_and(|id| book.get(id).is_none()) {
-                    pane.layout = None;
-                }
-            }
-        }
+        self.store.set_book(book);
+        self.store.set_blocked(blocked);
+        *self.rename = None;
+        *self.delete_confirm = None;
         self.seed_new_panes();
         // Last, after the seeding, and `LayoutStore::settle` says why.
-        self.workspace
-            .layouts_mut()
+        self.store
             .settle(migrate_imported_indicators, Instant::now());
     }
 
@@ -86,13 +76,9 @@ impl QuantickApp {
         side: PaneSide,
         name: Option<&str>,
     ) -> Result<LayoutId, LayoutError> {
-        if !self.pane_is_real(tab, side) {
-            return Err(LayoutError::Unknown);
-        }
-        if let Some(refusal) = self.pane_swap_refusal(tab, side) {
-            return Err(refusal);
-        }
-        let id = self.workspace.layouts_mut().book_mut().create(name)?;
+        let pane = self.register_layout_pane(tab, side)?;
+        let facts = self.pane_facts(tab, side);
+        let id = self.store.session_mut().create_for(pane, name, facts)?;
         self.mark_layouts_dirty();
         self.switch_pane_layout(tab, side, id)?;
         Ok(id)
@@ -101,7 +87,7 @@ impl QuantickApp {
     /// Open one pane footer's rename box on `id`.
     fn begin_layout_rename_at(&mut self, tab: u64, pane: PaneSide, id: LayoutId) {
         if let Some(layout) = self.layouts().get(id) {
-            self.chrome.layout_rename = Some(LayoutRename {
+            *self.rename = Some(LayoutRename {
                 tab,
                 pane,
                 layout: id,
@@ -139,11 +125,11 @@ impl QuantickApp {
     /// and nothing else on the window is touched while it is up.
     pub(in crate::app) fn draw_layout_delete_confirm(&mut self, ctx: &eframe::egui::Context) {
         use eframe::egui;
-        let Some(id) = self.chrome.layout_delete_confirm else {
+        let Some(id) = *self.delete_confirm else {
             return;
         };
         let Some(layout) = self.layouts().get(id) else {
-            self.chrome.layout_delete_confirm = None;
+            *self.delete_confirm = None;
             return;
         };
         let name = layout.name.clone();
@@ -193,14 +179,14 @@ impl QuantickApp {
         }
         match decision {
             Some(true) => self.confirm_layout_delete(),
-            Some(false) => self.chrome.layout_delete_confirm = None,
+            Some(false) => *self.delete_confirm = None,
             None => {}
         }
     }
 
     /// The confirmed half of a delete: what the dialog's Delete button does.
     pub(crate) fn confirm_layout_delete(&mut self) {
-        let Some(id) = self.chrome.layout_delete_confirm.take() else {
+        let Some(id) = self.delete_confirm.take() else {
             return;
         };
         if let Err(error) = self.delete_layout(id) {
@@ -215,27 +201,28 @@ type PaneStripTarget = (u64, PaneSide, u64, eframe::egui::Rect, LayoutId);
 /// Compose the shared catalogue into each visible pane without making the
 /// root application implementation own the per-frame walk.
 fn pane_strip_actions(
-    app: &mut QuantickApp,
+    app: &mut LayoutAdapter<'_>,
     ui: &mut eframe::egui::Ui,
 ) -> Vec<AddressedStripAction> {
     let targets: SmallVec<[PaneStripTarget; MAX_CANVAS_PANES]> = {
+        let tab_id = app.tabs.active_id();
         let tab = app.active_tab();
         tab.panes()
             .filter_map(|(pane, side)| {
                 pane.frame
                     .layout_strip
-                    .map(|rect| (tab.id, side, pane.id, rect, app.pane_layout(tab.id, side)))
+                    .map(|rect| (tab_id, side, pane.id, rect, app.pane_layout(tab_id, side)))
             })
             .collect()
     };
     let can_add = app.layouts().layouts().len() < layouts::MAX_LAYOUTS;
     let can_delete = app.layouts().layouts().len() > 1;
-    let QuantickApp {
-        chrome: ChromeState { layout_rename, .. },
-        workspace,
+    let LayoutAdapter {
+        rename: layout_rename,
+        store,
         ..
     } = app;
-    let layouts = workspace.layouts().book().layouts();
+    let layouts = store.book().layouts();
     let mut addressed = Vec::new();
     for (tab, pane, pane_id, rect, active) in targets {
         let rename = layout_rename
@@ -261,7 +248,7 @@ fn pane_strip_actions(
 
 /// Dispatch one pane-local strip action after the drawing borrow ends.
 fn apply_addressed_strip_action(
-    app: &mut QuantickApp,
+    app: &mut LayoutAdapter<'_>,
     tab: u64,
     pane: PaneSide,
     action: crate::layout_strip::StripAction,
@@ -271,7 +258,7 @@ fn apply_addressed_strip_action(
         app.note_workspace(LayoutError::Unknown.to_string());
         return;
     }
-    if let Some(tab) = app.tabs.iter_mut().find(|candidate| candidate.id == tab) {
+    if let Some(tab) = app.tabs.by_id_mut(tab) {
         tab.focus = pane;
     }
     let outcome: Result<(), LayoutError> = match action {
@@ -282,19 +269,19 @@ fn apply_addressed_strip_action(
             Ok(())
         }
         StripAction::CommitRename(id, name) => {
-            app.chrome.layout_rename = None;
+            *app.rename = None;
             match layouts::clean_name(&name) {
                 Some(_) => app.rename_layout(id, &name).map(|_| ()),
                 None => Ok(()),
             }
         }
         StripAction::CancelRename => {
-            app.chrome.layout_rename = None;
+            *app.rename = None;
             Ok(())
         }
         StripAction::Delete(id) => {
             if app.layouts().get(id).is_some() {
-                app.chrome.layout_delete_confirm = Some(id);
+                *app.delete_confirm = Some(id);
             }
             Ok(())
         }

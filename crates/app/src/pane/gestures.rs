@@ -1,9 +1,9 @@
 //! A drawing gesture in flight — everything a press has resolved but a release
 //! has not yet finished with.
 //!
-//! The methods that read and write this already live next door in
-//! [`super::drawing_gestures`]; only the state stayed on
-//! [`super::ChartPane`], where fifteen fields of it sat among the pane's
+//! Pointer and shared-mark updates live on this owner in `pointer_gestures`.
+//! Placement updates live here too, implemented in `placement_gestures`.
+//! These fields once sat among the pane's
 //! geometry and its menus. They belong together because they share one
 //! lifetime — a gesture — and because a gesture is the one thing on a pane
 //! that spans frames without being a measurement: a press resolves what it

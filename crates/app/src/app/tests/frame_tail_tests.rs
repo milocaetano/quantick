@@ -116,13 +116,16 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
         drawing = pane.drawings.items().last().unwrap().id;
     }
     let form = crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
-    app.arm_strategy_instance(
-        pane::PaneSide::Flow,
-        drawing,
-        &form,
-        "tail reset".to_owned(),
-    )
-    .unwrap();
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "tail reset".to_owned(),
+        )
+        .unwrap();
     {
         let symbol = app.active_tab().symbol.clone();
         let paper = &mut app.active_tab_mut().paper;
@@ -142,7 +145,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     }
     app.active_tab_mut().notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
-    app.chrome.feed_popup_tab = Some(app.active_tab().id);
+    app.chrome.feed_popup_tab = Some(app.tabs.active_id());
     let mut output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     for _ in 0..2 {
         output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
@@ -374,18 +377,20 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
     use quantick_chart_interaction::frame_tail_plan::FrameTailPlan;
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(50);
-    let (mut other, _events, _commands2, _book) = test_app();
-    let (mut third, _events3, _commands3, _book3) = test_app();
-    app.tabs.push(other.tabs.remove(0));
-    app.tabs.push(third.tabs.remove(0));
-    app.tabs[1].symbol = "BACKGROUND".to_owned();
+    let (other, _events, _commands2, _book) = test_app();
+    let (third, _events3, _commands3, _book3) = test_app();
+    let opening = app.tabs.plan_open();
+    app.tabs.append(opening, other.tabs.into_single_runtime());
+    let opening = app.tabs.plan_open();
+    app.tabs.append(opening, third.tabs.into_single_runtime());
+    app.tabs.select(0);
+    app.tabs.runtime_mut(1).symbol = "BACKGROUND".to_owned();
     let run = |app: &mut QuantickApp| {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let mut chip = None;
             let mut popup = None;
             super::super::frame_tail::FrameTailOwners {
                 tabs: &mut app.tabs,
-                active_tab: 0,
                 config: &app.config,
                 toast: &mut app.surfaces.toast,
                 chip_rect: &mut chip,
@@ -423,8 +428,11 @@ fn frame_tail_none_settles_every_tab_and_preserves_toast_priority() {
             .iter_mut()
             .all(|tab| tab.paper.take_toast().is_none())
     );
-    app.tabs[1].paper.show_toast("first".to_owned());
-    app.tabs[2].paper.show_toast("second".to_owned());
+    app.tabs.runtime_mut(1).paper.show_toast("first".to_owned());
+    app.tabs
+        .runtime_mut(2)
+        .paper
+        .show_toast("second".to_owned());
     run(&mut app);
     assert_eq!(
         app.surfaces.toast.message(),

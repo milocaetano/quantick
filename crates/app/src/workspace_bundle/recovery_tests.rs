@@ -243,7 +243,7 @@ impl Fixture {
             })
             .expect("ordinary production import completes the same bundle");
             assert_eq!(
-                written,
+                written.keys(),
                 [
                     "ui_state",
                     "chart_layers",
@@ -327,7 +327,7 @@ fn installation_case(label: &str, fail_at: Option<usize>) {
         fixture.assert_staged("after partial failure", failed..CASES.len());
     } else {
         assert_eq!(
-            result.unwrap(),
+            result.unwrap().keys(),
             [
                 "ui_state",
                 "chart_layers",

@@ -16,10 +16,11 @@ fn anchor(app: &QuantickApp) -> (f32, Option<i64>, bool) {
 #[test]
 fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() {
     let (mut app, events, _commands, _book) = test_app();
+    let tab_id = app.tabs.active_id();
     events
         .try_send(FeedEvent::Backfilled(prints(100, 250)))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.slots(), 3);
     let tool = drawings::DRAWING_TOOLS
         .into_iter()
@@ -35,10 +36,10 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
     let before = anchor(&app);
     assert_eq!(before, (1.5, Some(trade(175).timestamp_ms), false));
     events.try_send(FeedEvent::Reset).unwrap();
-    app.active_tab_mut().drain_feed();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.slots(), 0);
     assert_eq!(anchor(&app), before);
-    app.active_tab_mut().drain_feed();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         anchor(&app),
         before,
@@ -48,13 +49,13 @@ fn source_drain_reset_retains_empty_anchor_debt_then_settles_populated_series() 
     events
         .try_send(FeedEvent::Backfilled(prints(50, 250)))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.slots(), 4);
     let settled = anchor(&app);
     assert_eq!(settled, (2.5, Some(trade(175).timestamp_ms), false));
     // A real user edit after settlement survives another empty drain: debt is gone.
     app.active_tab_mut().flow_pane.drawings.items_mut()[0].points[0].bar = 3.25;
-    app.active_tab_mut().drain_feed();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(anchor(&app), (3.25, Some(trade(175).timestamp_ms), false));
     eprintln!(
         "SOURCE_ANCHOR before={before:?} populated={settled:?} next_empty={:?}",
@@ -132,6 +133,7 @@ fn source_drain_intrinsic_and_final_publication_counts_are_literal() {
     ];
     for (label, queued, expected, expected_clock) in cases {
         let (mut app, events, _commands, _book) = test_app();
+        let tab_id = app.tabs.active_id();
         let ctx = egui::Context::default();
         app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
         run_frame(&mut app, &ctx);
@@ -146,7 +148,7 @@ fn source_drain_intrinsic_and_final_publication_counts_are_literal() {
             events.try_send(event).unwrap();
         }
         let mut clocks = 0;
-        app.active_tab_mut().drain_feed_with_clock(|| {
+        app.active_tab_mut().drain_feed_with_clock(tab_id, || {
             clocks += 1;
             100_000
         });
@@ -172,10 +174,11 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
     use quantick_chart_interaction::source_drain_plan::{SourceDrainPlan, SourceDrainStage::*};
     for early in [false, true] {
         let (mut app, events, _commands, _book) = test_app();
+        let tab_id = app.tabs.active_id();
         events
             .try_send(FeedEvent::Backfilled(prints(100, 250)))
             .unwrap();
-        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().drain_feed(tab_id);
         let tool = drawings::DRAWING_TOOLS
             .into_iter()
             .find(|tool| tool.id() == "rectangle")
@@ -188,14 +191,15 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
             &[Some(trade(175).timestamp_ms), Some(trade(225).timestamp_ms)],
         );
         events.try_send(FeedEvent::Reset).unwrap();
-        app.active_tab_mut().drain_feed();
-        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().drain_feed(tab_id);
+        app.active_tab_mut().drain_feed(tab_id);
         assert_eq!(anchor(&app), (1.5, Some(18500), false));
         events
             .try_send(FeedEvent::Backfilled(prints(50, 250)))
             .unwrap();
         if early {
             app.active_tab_mut().drain_feed_with_stages(
+                tab_id,
                 || panic!("backfill must not read the arrival clock"),
                 [
                     PrepareSymbol,
@@ -208,6 +212,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
             );
         } else {
             app.active_tab_mut().drain_feed_with_stages(
+                tab_id,
                 || panic!("backfill must not read the arrival clock"),
                 SourceDrainPlan::stages(),
             );
@@ -217,7 +222,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
             anchor(&app),
             (if early { 1.5 } else { 2.5 }, Some(18500), false)
         );
-        app.active_tab_mut().drain_feed();
+        app.active_tab_mut().drain_feed(tab_id);
         assert_eq!(
             anchor(&app),
             (2.5, Some(18500), false),
@@ -243,6 +248,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
     use quantick_chart_interaction::source_drain_plan::{SourceDrainPlan, SourceDrainStage::*};
     for early in [false, true] {
         let (mut app, events, _commands, _book) = test_app();
+        let tab_id = app.tabs.active_id();
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.add_indicator(crate::indicator_worker::IndicatorSource::Script {
             name: "Drain close".to_owned(),
@@ -258,6 +264,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
             .unwrap();
         if early {
             app.active_tab_mut().drain_feed_with_stages(
+                tab_id,
                 || 100_000,
                 [
                     PrepareSymbol,
@@ -269,8 +276,11 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
                 ],
             );
         } else {
-            app.active_tab_mut()
-                .drain_feed_with_stages(|| 100_000, SourceDrainPlan::stages());
+            app.active_tab_mut().drain_feed_with_stages(
+                tab_id,
+                || 100_000,
+                SourceDrainPlan::stages(),
+            );
         }
         let pane = &mut app.active_tab_mut().flow_pane;
         assert_eq!(pane.state.trades().len(), 2);

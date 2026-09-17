@@ -40,15 +40,14 @@ use super::{QuantickApp, TabSlot};
 /// and shaped to leave immediately: no dialog open — the ordinary case — is
 /// one `Option` test before the tab scan is reached.
 fn indicator_preview_area(
-    tabs: &[Tab],
+    tabs: &crate::app::arrangement_host::ArrangementHost,
     dialog: Option<&SettingsDialog>,
     target: TabSlot,
 ) -> Option<egui::Rect> {
     if !dialog.is_some_and(|dialog| dialog.previewed) {
         return None;
     }
-    tabs.iter()
-        .find(|tab| tab.id == target.tab)
+    tabs.by_id(target.tab)
         .map(|tab| tab.pane(target.side))
         .and_then(|pane| pane.frame.chart_area)
 }
@@ -90,7 +89,7 @@ impl QuantickApp {
         // not only the one on screen — a background tab keeps draining, so it
         // can settle a run while hidden, and bringing it forward minutes later
         // must not surface a sentence about a press that is long over.
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             tab.expire_history_note(now);
         }
         // After the expiry, never before it: the hook re-raises a note it
@@ -144,14 +143,21 @@ impl QuantickApp {
         self.apply_replay_restart();
         self.apply_maximize_hook(ctx);
         self.maybe_emit_summary(now, ctx);
-        self.maintain_workspace(ctx);
+        self.workspace_save_adapter().maintain_workspace(ctx);
 
         let bg = pane::background_color(&self.style);
         // Rail shortcuts first: Esc/1/2 must be read before any widget can
         // claim the keyboard this frame.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
-        self.handle_drawing_keys(ctx, now);
+        let effects = self.drawings.handle_drawing_keys(
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut self.toolrail,
+            &mut *self.audio.alerts,
+            ctx,
+            now,
+        );
+        effects.apply_notice(&mut self.surfaces.toast);
         // Chrome panels claim their zones outside-in (§5): menu and toolbar
         // on top, the status line at the very bottom with the replay
         // transport directly above it, then the edge-docked drawing rail and
@@ -198,7 +204,7 @@ impl QuantickApp {
                 let form = crate::strategy_presets::StoredPreset::starting_point(
                     quantick_engine::Side::Buy,
                 );
-                let tab = self.active_tab().id;
+                let tab = self.tabs.active_id();
                 self.surfaces.strategy_popup.open(tab, side, drawing, form);
             }
         }
@@ -251,12 +257,11 @@ impl QuantickApp {
             style,
             footprint_config,
             tabs,
-            active_tab,
             config,
             added_symbols,
             ..
         } = self;
-        let focused_tab = &tabs[*active_tab];
+        let focused_tab = &tabs[tabs.active_index()];
         // Read once. `focused_pane` resolves the same side internally, and
         // the answer is not a field lookup — it reads the layout, because
         // focus on a collapsed pane is focus on nothing.
@@ -280,13 +285,13 @@ impl QuantickApp {
                 config,
                 added_symbols,
                 open_markets: &open_markets,
-                active_tab: focused_tab.id,
+                active_tab: tabs.active_id(),
                 counted_bar_sides: &counted_bar_sides,
                 alert_failure: alert_failure.as_deref(),
             },
         );
         if let Some(name) = surfaces.save_workspace_as {
-            self.save_named_workspace(&name);
+            self.workspace_save_adapter().save_named_workspace(&name);
         }
         if let Some(style) = surfaces.style {
             self.style = style;
@@ -305,12 +310,16 @@ impl QuantickApp {
             self.report_alert_attempt(outcome);
         }
         if let Some(request) = surfaces.arm_strategy {
-            let outcome = self.arm_strategy_instance(
-                request.side,
-                request.drawing,
-                &request.form,
-                request.label,
-            );
+            let outcome = self
+                .tabs
+                .runtime_mut(self.tabs.active_index())
+                .arm_strategy_instance(
+                    &mut *self.audio.alerts,
+                    request.side,
+                    request.drawing,
+                    &request.form,
+                    request.label,
+                );
             self.surfaces.strategy_popup.settle_arm(outcome);
         }
         if let Some(request) = surfaces.market {
@@ -342,7 +351,7 @@ impl QuantickApp {
         if status_response.open_trading_tab {
             self.dock.open_tab(DockTab::Trading);
         }
-        self.draw_layout_delete_confirm(ctx);
+        self.layout_adapter().draw_layout_delete_confirm(ctx);
         // The browser window and, while the *active* tab plays a session, its
         // transport bar. A background tab's recording keeps advancing on its
         // own feed thread; what it does not get is the strip, which speaks for
@@ -351,11 +360,10 @@ impl QuantickApp {
             let Self {
                 replay_view,
                 tabs,
-                active_tab,
                 config,
                 ..
             } = self;
-            let tab = &tabs[*active_tab];
+            let tab = &tabs[tabs.active_index()];
             // The instruments the download tab offers with one click. A dated
             // contract rolls every couple of months, and typing `WINV26` from
             // memory is not a thing a trader should have to get right to see
@@ -385,13 +393,15 @@ impl QuantickApp {
         // the frame they pointed it, not at exit: "it forgot my folder again"
         // must not be one crash away.
         if let Some(pick) = self.replay_view.take_folder_change() {
-            self.write_replay_folder(pick.as_deref());
+            self.workspace_save_adapter()
+                .write_replay_folder(pick.as_deref());
         }
         // The same, for the tick that decides whether yesterday is on the
         // chart. Either row can have been the one clicked; the browser owns
         // the setting, so there is one place to pick the change up.
         if let Some(enabled) = self.replay_view.take_day_before_change() {
-            self.write_replay_day_before(enabled);
+            self.workspace_save_adapter()
+                .write_replay_day_before(enabled);
         }
         {
             // The focused pane's objects: the toolbox lists and manages what a
@@ -399,31 +409,25 @@ impl QuantickApp {
             let side = self.active_tab().focused_side();
             // The flag lives with the window it opens, so it travels through
             // a local rather than a `&mut` handed out of the surface.
-            let mut manager_open = self.surfaces.drawing_chrome.manager_open();
+            let mut manager_open = self.drawings.chrome.manager_open();
             {
-                let Self {
-                    toolrail,
-                    tabs,
-                    active_tab,
-                    ..
-                } = self;
-                let tab = &mut tabs[*active_tab];
+                let Self { toolrail, tabs, .. } = self;
+                let tab = tabs.runtime_mut(tabs.active_index());
                 toolrail.draw(ctx, &mut tab.pane_mut(side).drawings, &mut manager_open);
             }
-            self.surfaces.drawing_chrome.set_manager_open(manager_open);
+            self.drawings.chrome.set_manager_open(manager_open);
         }
         // A star clicked this frame is on disk this frame, like the replay
         // folder above: the pinned rail is what the trader reaches for without
         // looking, and rebuilding it after a crash is not a thing anyone
         // should have to do twice.
         if self.toolrail.take_favorites_change() {
-            self.write_favorites();
+            self.workspace_save_adapter().write_favorites();
         }
         let dock_response = {
             let Self {
                 dock,
                 tabs,
-                active_tab,
                 replay_view,
                 tz,
                 ..
@@ -436,7 +440,7 @@ impl QuantickApp {
                 replay,
                 paper,
                 ..
-            } = &mut tabs[*active_tab];
+            } = tabs.runtime_mut(tabs.active_index());
             let orderflow = flow_pane
                 .orderflow
                 .as_mut()
@@ -529,7 +533,13 @@ impl QuantickApp {
         self.poll_workspace_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
-        self.draw_pinned_inspector(ctx, now);
+        if let Some(ask) = self.drawings.draw_pinned_inspector(
+            ctx,
+            &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+            &self.toolrail,
+        ) {
+            self.resolve_drawing_response(ask, now);
+        }
         // Respawn the feed if the feed/symbol selection changed (resets the
         // chart), then apply any bar-type change (no-op if unchanged).
         let (tab, config) = self.active_with_config();
@@ -543,13 +553,13 @@ impl QuantickApp {
             pane_ids,
             ..
         } = self;
-        for tab in tabs.iter_mut() {
-            tab.apply_pending_layout(config, style, pane_ids);
+        for (tab_id, tab) in tabs.iter_with_ids_mut() {
+            tab.apply_pending_layout(tab_id, config, style, pane_ids);
         }
         // Right after panes appear and markets switch, so a pane built this
         // frame is seeded this frame and a tab that changed symbol swaps its
         // drawings before anything paints them.
-        self.maintain_layouts();
+        self.layout_adapter().maintain_layouts();
         self.active_tab_mut().apply_spec_changes();
         // Waits owned by other components, mirrored level-style each frame so
         // the overlay needs no push notifications from either.
@@ -562,7 +572,7 @@ impl QuantickApp {
 
         let mut notice_action = feed_notice::NoticeAction::None;
         // Read before the canvas borrows `self`, and answered after it lets go.
-        let popup_tab = self.active_tab().id;
+        let popup_tab = self.tabs.active_id();
         let popup_open = self.chrome.feed_popup_tab == Some(popup_tab);
         let mut chip_clicked = false;
         let mut dismissed = false;
@@ -579,7 +589,7 @@ impl QuantickApp {
         // Told before the canvas paints, not after: the object holding the
         // words the editor is showing must stand down on the *same* frame,
         // or the note flashes its placeholder under the field for one.
-        self.sync_content_editing();
+        self.drawings.chrome.sync_content_editing(&mut self.tabs);
         // Raised by a placement that wants its note typed, and handed to the
         // chrome below: the flag belongs to the editor that owns the caret,
         // not to the canvas that asks for it.
@@ -591,20 +601,18 @@ impl QuantickApp {
                 {
                     let Self {
                         tabs,
-                        active_tab,
                         toolrail,
-                        drawing_presets,
+                        drawings,
                         style,
                         tz,
                         workspace,
                         footprint_config,
-                        surfaces,
                         ..
                     } = self;
                     let mut chrome = CanvasChrome {
                         toolrail,
-                        presets: drawing_presets,
-                        drawing_chrome: &mut surfaces.drawing_chrome,
+                        presets: &drawings.presets,
+                        drawing_chrome: &mut drawings.chrome,
                         begin_text_edit: &mut begin_text_edit,
                         style,
                         tz: *tz,
@@ -613,12 +621,18 @@ impl QuantickApp {
                         footprint: footprint_config,
                         layers: &mut workspace.layers_mut().actions,
                     };
-                    tabs[*active_tab].draw_canvas(ui, area, &mut chrome);
+                    let tab_id = tabs.active_id();
+                    tabs.runtime_mut(tabs.active_index()).draw_canvas(
+                        tab_id,
+                        ui,
+                        area,
+                        &mut chrome,
+                    );
                 }
                 // Each visible pane published its own reserved footer during
                 // the canvas split. Draw the shared catalogue into every one
                 // now, while their exact same-frame rectangles are available.
-                self.draw_layout_strips(ui);
+                self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
                 self.apply_layer_actions();
@@ -721,27 +735,31 @@ impl QuantickApp {
                 }
             });
         if begin_text_edit {
-            self.surfaces.drawing_chrome.request_text_edit();
+            self.drawings.chrome.request_text_edit();
         }
         // Floating drawing controls must be registered after the opaque
         // central canvas so they stay in front of the chart. That is why the
         // drawing chrome is the one surface `Surfaces::draw_all` does not
         // draw: it is anchored *to* the chart rather than floating over the
         // window, so it is commanded by name from here instead.
-        self.draw_drawing_chrome(ctx, now);
+        let ask = self.drawings.draw_drawing_chrome(
+            ctx,
+            &super::drawing_controller::DrawingReadAccess::new(&self.tabs),
+            &self.toolrail,
+        );
+        self.resolve_drawing_response(ask, now);
         // The menus above may have disarmed a bot over a resting retest
         // limit; its cancel goes to the simulator on this same frame, not
         // on the next print. Every tab, not just the active one: a menu
         // click and a tab switch can land on the same frame, and the old
         // tab's feed keeps running — its cancel must not sit stranded
         // until the tab is looked at again.
-        for tab in &mut self.tabs {
+        for tab in self.tabs.iter_mut() {
             tab.apply_strategy_cleanup();
         }
         self.play_pending_alarms();
         super::frame_tail::FrameTailOwners {
             tabs: &mut self.tabs,
-            active_tab: self.active_tab,
             config: &self.config,
             toast: &mut self.surfaces.toast,
             chip_rect: &mut self.chrome.feed_chip_rect,
@@ -764,5 +782,51 @@ impl QuantickApp {
         );
         // Live feed: keep polling the channel ~60×/s without busy-spinning.
         ctx.request_repaint_after(Duration::from_millis(16));
+    }
+}
+
+impl QuantickApp {
+    /// The registered capability runs synchronously before the remaining drawing
+    /// response. Invalid input still leaves those ordinary commands to execute.
+    pub(super) fn resolve_drawing_response(
+        &mut self,
+        mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
+        now: Instant,
+    ) {
+        if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
+            let pending = action.pending;
+            let result = self.control_action(
+                action.capability,
+                action.version,
+                crate::control::ActionOrigin::Human,
+                action.input,
+            );
+            let explain = self
+                .drawings
+                .finish_registered_action(pending, if result.is_ok() {
+                    quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::Placed
+                } else {
+                    quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::ActionRefused
+                });
+            if let Err(error) = result {
+                tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_PROFILE_REFUSED",code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
+                if explain {
+                    self.surfaces.toast.note(
+                        "The drawing could not be placed; the temporary range is still available.",
+                        now,
+                    );
+                }
+            }
+        }
+        let effects = self.drawings.apply_drawing_chrome(
+            ask,
+            &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
+            &mut *self.audio.alerts,
+            now,
+        );
+        if effects.inspector_moved {
+            self.workspace.session_mut().inspector_moved();
+        }
+        effects.apply_notice(&mut self.surfaces.toast);
     }
 }

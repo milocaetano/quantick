@@ -81,9 +81,26 @@ allowance. The independently reviewed ceilings are app 55.947 seconds,
 orderflow 1.022 seconds and pine 1.242 seconds. The 25% margin is an explicit
 operational policy, not a measured confidence interval or cross-run noise
 bound. Upward millisecond rounding keeps the margin proportional for small
-crates. Calibration source/time, host, jobs, protocol and profile identities
-remain in `budgets.json`; the original complete series and unapproved automatic
-proposal remain external review evidence.
+crates. Calibration source/time, host, jobs, protocol and the active enforcement
+profile identity remain in `budgets.json`; the original complete series and
+unapproved automatic proposal remain external review evidence.
+
+The [reviewed LAYOUT identity amendment](https://github.com/milocaetano/quantick/issues/526#issuecomment-5710664745)
+adopts those same numerical limits for root-manifest SHA256
+`b653e5a5b0fe09e82305945bb016366939334898ea05ff09cd7bdf974ba13a0b`.
+The original calibration root was
+`437e37c38e10bedeeaa9c0c2ad4eb0529e843ab2f316240a8144bba476d05672`;
+calibration SHA `e0b34c041de57b5a85937fe35c7df694261f1936`, timestamp and
+[original decision](https://github.com/milocaetano/quantick/issues/477#issuecomment-5709203114)
+still identify where the numbers came from. The active `profile_hash` now
+identifies enforcement applicability, not the historical measured manifest.
+Only `crates/workspace` was added to the root members; all parsed profiles
+and other root-manifest values are equal. This does not assert an unchanged
+dependency graph or package-test cost: the new crate and app dependency can
+change both. No new calibration is claimed. A fresh ordinary exact-final-head
+series must pass every original ceiling for all five samples, with unchanged
+host, toolchain, jobs, protocol, ranking, representatives and restoration rules.
+Historical PASS, TOML equality or a faster median cannot substitute for it.
 
 Do not replace these reviewed limits with automatic proposal output,
 recalibrate from each checked run, discard slow samples, relax a limit to
@@ -97,7 +114,10 @@ python tools/edit_loop/measure.py check C:/bench/run-002-evidence/report.json --
 `check` reads budgets from the checkout's committed HEAD, not an arbitrary
 replacement JSON file. A host-class, pinned toolchain, jobs, root profile,
 top-three or representative-source change requires explicit reviewed
-recalibration. The fixed baseline also binds the runner/frozen-lexer protocol
+recalibration, except for the exact explicitly reviewed member-only identity
+amendment above. Any further root identity or selected-source drift requires
+a new scoped review; this exception permits no automatic hash refresh. The
+fixed baseline also binds the runner/frozen-lexer protocol
 hash, so an executable measurement change cannot silently reuse old limits.
 Missing, invalid, nonfinite, failed, timed-out, uncompiled,
 unrestored or over-budget data fails. Proposal/check also require measurement

@@ -91,7 +91,15 @@ impl ChartPane {
             // which object is being acted on.
             let clicked = bands::band_at(bands, position)
                 .filter(|band| band.drawable())
-                .and_then(|band| self.drawing_at(position, band, history_right, total));
+                .and_then(|band| {
+                    self.drawing_projection().drawing_at(
+                        &self.drawings,
+                        position,
+                        band,
+                        history_right,
+                        total,
+                    )
+                });
             self.context_menu.drawing = clicked.map(|index| {
                 self.drawings.select(Some(index));
                 let drawing = &self.drawings.items()[index];
@@ -104,7 +112,7 @@ impl ChartPane {
                 if tool.context_menu_label().is_none() {
                     continue;
                 }
-                if let Some(point) = self.drawing_point_at(
+                if let Some(point) = self.drawing_projection().drawing_point_at(
                     position,
                     history_right,
                     total,

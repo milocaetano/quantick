@@ -2935,6 +2935,7 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "quantick-workspace",
  "raw-window-handle",
  "rfd",
  "rodio",
@@ -3185,6 +3186,14 @@ version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-workspace"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.20",
 ]
 
 [[package]]

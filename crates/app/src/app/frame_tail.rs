@@ -1,18 +1,13 @@
 //! Execute the fixed end-of-frame plan against its actual feature owners.
 use crate::{
-    config::AppConfig,
-    feed_notice,
-    surfaces::ToastSurface,
-    tab::{LiveFeedSpawn, Tab},
-    timezone::TzOffset,
+    config::AppConfig, feed_notice, surfaces::ToastSurface, tab::LiveFeedSpawn, timezone::TzOffset,
 };
 use eframe::egui;
 use quantick_chart_interaction::frame_tail_plan::FrameTailStage;
 use std::time::Instant;
 
 pub(super) struct FrameTailOwners<'a> {
-    pub tabs: &'a mut [Tab],
-    pub active_tab: usize,
+    pub tabs: &'a mut super::arrangement_host::ArrangementHost,
     pub config: &'a AppConfig,
     pub toast: &'a mut ToastSurface,
     pub chip_rect: &'a mut Option<egui::Rect>,
@@ -39,7 +34,8 @@ impl FrameTailOwners<'_> {
         for stage in stages {
             match stage {
                 FrameTailStage::ApplyNoticeAction => {
-                    let tab = &mut self.tabs[self.active_tab];
+                    let active = self.tabs.active_index();
+                    let tab = self.tabs.runtime_mut(active);
                     match input.notice_action {
                         feed_notice::NoticeAction::None => {}
                         feed_notice::NoticeAction::Reconnect => {
@@ -51,11 +47,15 @@ impl FrameTailOwners<'_> {
                     }
                 }
                 FrameTailStage::SettlePaperPanels => {
-                    settle_paper_panels(self.tabs, self.active_tab, self.toast, input.now)
+                    settle_paper_panels(self.tabs, self.toast, input.now)
                 }
-                FrameTailStage::DrawPaperReport => self.tabs[self.active_tab]
-                    .paper
-                    .draw_report_window(input.ctx, input.tz),
+                FrameTailStage::DrawPaperReport => {
+                    let active = self.tabs.active_index();
+                    self.tabs
+                        .runtime_mut(active)
+                        .paper
+                        .draw_report_window(input.ctx, input.tz);
+                }
                 FrameTailStage::PublishFeedPopup => {
                     *self.chip_rect = input.chip_rect;
                     *self.popup_tab = feed_notice::popup_still_open(
@@ -74,11 +74,11 @@ impl FrameTailOwners<'_> {
 
 /// Settle every account; watched acknowledgement wins, else first background.
 pub(super) fn settle_paper_panels(
-    tabs: &mut [Tab],
-    active_tab: usize,
+    tabs: &mut super::arrangement_host::ArrangementHost,
     toast: &mut ToastSurface,
     now: Instant,
 ) {
+    let active_tab = tabs.active_index();
     let mut watched = None;
     let mut background = None;
     for (index, tab) in tabs.iter_mut().enumerate() {

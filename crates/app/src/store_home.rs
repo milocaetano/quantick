@@ -79,6 +79,21 @@ pub(crate) struct CockpitStore {
     pub local_keys: &'static [&'static str],
 }
 
+impl quantick_workspace::bundle::BundleStore for CockpitStore {
+    fn key(&self) -> &str {
+        self.key
+    }
+    fn included(&self) -> bool {
+        self.in_bundle
+    }
+    fn local_keys(&self) -> &[&str] {
+        self.local_keys
+    }
+    fn validate_text(&self, text: &str) -> Result<(), String> {
+        (self.validate)(text)
+    }
+}
+
 /// Every store that keeps something between launches, in the order a bundle
 /// writes them.
 ///

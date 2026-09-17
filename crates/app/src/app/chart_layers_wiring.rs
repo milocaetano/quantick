@@ -80,12 +80,7 @@ impl QuantickApp {
     /// in silence.
     #[cfg(test)]
     pub(super) fn settle_paper_panels(&mut self, now: Instant) {
-        super::frame_tail::settle_paper_panels(
-            &mut self.tabs,
-            self.active_tab,
-            &mut self.surfaces.toast,
-            now,
-        );
+        super::frame_tail::settle_paper_panels(&mut self.tabs, &mut self.surfaces.toast, now);
     }
 
     /// Apply what the footprint settings window settled on.
@@ -121,15 +116,17 @@ impl QuantickApp {
     }
 
     pub(super) fn maintain_chart_layers(&mut self) {
-        let tab = &self.tabs[self.active_tab];
-        chart_layers::maintain(&mut self.workspace, tab.id, &tab.flow_pane, &self.style);
+        let tab_id = self.tabs.id_at(self.tabs.active_index());
+        let tab = &self.tabs[self.tabs.active_index()];
+        chart_layers::maintain(&mut self.workspace, tab_id, &tab.flow_pane, &self.style);
     }
 
     pub(super) fn restore_chart_layers(&mut self) {
+        let active_index = self.tabs.active_index();
         chart_layers::restore(
             &mut self.workspace,
             &mut self.tabs,
-            self.active_tab,
+            active_index,
             &mut self.style,
         );
     }

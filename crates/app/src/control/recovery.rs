@@ -139,6 +139,7 @@ fn recover(
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
+    let tab_id = app.control_tabs().id_at(index);
     let (tab, config) = app
         .control_tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
@@ -154,7 +155,7 @@ fn recover(
         tab.reload_feed(config)
     };
     let result = RecoveryResult {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         symbol: tab.symbol.clone(),
         respawned,
         timeline_kept: keep_timeline || !respawned,
@@ -170,8 +171,7 @@ pub(crate) fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<us
         return Ok(app.control_active_tab_index());
     };
     app.control_tabs()
-        .iter()
-        .position(|tab| tab.id == id.get())
+        .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 

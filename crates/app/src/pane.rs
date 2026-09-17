@@ -31,7 +31,7 @@ use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use crate::toolrail::{Tool, ToolRail};
 use crate::viewport::Viewport;
 use quantick_layers::{ChartLayer, LayerActions};
 
@@ -47,8 +47,6 @@ use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
 #[cfg(test)]
-use crate::toolrail::Tool;
-#[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 
 mod axes_and_chrome;
@@ -61,13 +59,15 @@ pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod draw_frame;
-mod drawing_gestures;
 mod drawing_paint;
+mod drawing_projection;
 mod footprint;
 mod frame;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod placement_gestures;
+mod pointer_gestures;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
@@ -559,18 +559,11 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
-    /// Whether the app has put the active layout on this pane — its
-    /// indicators and its market's drawings. `false` from construction until
-    /// the first frame that sees the pane, so a pane opened by any path (a
-    /// new tab, a split, a restore) is seeded exactly once.
-    pub layout_seeded: bool,
-    /// Which of the workspace's layouts this pane shows — its indicator set
-    /// and the drawings it keeps. `None` until the app seeds the pane, when
-    /// it takes the focused pane's layout (or the book's default); a restored
-    /// workspace sets it before seeding. Per pane, because two charts side by
-    /// side are two readings of one market, and a CVD on one is not a CVD the
-    /// other asked for.
-    pub layout: Option<crate::layouts::LayoutId>,
+    /// Read-only handle to the layout session's authoritative membership.
+    pub(crate) layout_view: quantick_workspace::session::LayoutView,
+    /// A restored/opening request, consumed when the session seeds this pane.
+    /// The outer option distinguishes a requested default from no request.
+    pub(crate) opening_layout: Option<Option<crate::layouts::LayoutId>>,
     /// The layout's name, for the pane to show beside its own controls. A
     /// copy the app refreshes on a switch or a rename, so the header — drawn
     /// by the tab, which has no book — never looks it up per frame.
@@ -706,6 +699,33 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
+    pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
+        drawing_projection::PaneSeriesRead {
+            history_prefix: &self.history_prefix,
+            state: &self.state,
+            spec: &self.spec,
+        }
+    }
+    pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
+        drawing_projection::DrawingProjection {
+            series: self.series_read(),
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        }
+    }
+
+    /// Current membership, or the pending imported/opening choice before seeding.
+    pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
+        self.opening_layout
+            .unwrap_or_else(|| self.layout_view.layout())
+    }
+    pub(crate) fn layout_seeded(&self) -> bool {
+        self.layout_view.seeded()
+    }
+    pub(crate) fn request_opening_layout(&mut self, id: Option<crate::layouts::LayoutId>) {
+        self.opening_layout = Some(id);
+    }
+
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
     /// with the tape and every layer read off it.
     #[must_use]
@@ -735,8 +755,8 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
-            layout_seeded: false,
-            layout: None,
+            layout_view: quantick_workspace::session::LayoutView::default(),
+            opening_layout: None,
             layout_label: String::new(),
             drawings_key: None,
             drawings_saved_revision: 0,
@@ -951,7 +971,52 @@ impl ChartPane {
         // working while one is armed: an armed tool used to return early from
         // here, which left the trader unable to move the chart they were
         // annotating (audit S2).
-        let tool_armed = self.handle_drawing_placement(ui, &areas, &bands, chrome);
+        let placement_id = self.interaction_id("drawing_placement");
+        let hand = self.gestures.parked_hand;
+        let options = placement_gestures::PlacementOptions {
+            tool: chrome.toolrail.tool().drawing_tool(),
+            magnet: chrome.toolrail.magnet(),
+            constrain: if ui.input(|input| input.modifiers.shift) {
+                drawings::Constrain::Level
+            } else {
+                hand.map_or(drawings::Constrain::Free, |hand| hand.constrain)
+            },
+            parked_position: hand.map(|hand| hand.position),
+        };
+        let placement = self.gestures.update_placement(
+            &mut self.drawings,
+            &drawing_projection::DrawingProjection {
+                series: drawing_projection::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.viewport,
+                indicators: &self.indicators,
+            },
+            placement_gestures::PlacementFrame {
+                ui,
+                areas: &areas,
+                bands: &bands,
+                id: placement_id,
+                history_right: self.frame.lane_divider_x.unwrap_or(areas.chart.right()),
+            },
+            options,
+            placement_gestures::PlacementDefaults {
+                presets: chrome.presets,
+                repeat: chrome.toolrail.repeat(),
+            },
+        );
+        if let Some(position) = placement.hover_position {
+            self.hover_pos = position;
+        }
+        if placement.completion.arm_pointer {
+            chrome.toolrail.arm(Tool::Pointer);
+        }
+        if placement.completion.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        let tool_armed = placement.tool_armed;
         let auto = self.frame.auto_range;
         let height = self.frame.chart_height;
         let total = self.slots();
@@ -1021,16 +1086,40 @@ impl ChartPane {
         };
         let paper_gesture =
             self.handle_paper_input(ui, chrome, &areas, &bands, &pointer, tool_armed);
-        let drawing_drag_consumes_gesture = self.handle_pointer_tool(
-            ui,
-            chrome,
-            &chart,
-            &areas,
-            &bands,
-            &pointer,
-            pointer_delta,
-            paper_gesture,
+        let projection = drawing_projection::DrawingProjection {
+            series: drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        };
+        let outcome = self.gestures.handle_pointer_tool(
+            &mut self.drawings,
+            &projection,
+            pointer_gestures::PointerFrame {
+                ui,
+                chart: &chart,
+                areas: &areas,
+                bands: &bands,
+                cached_bands: &self.frame.bands,
+                pointer: &pointer,
+                pointer_delta,
+                paper_gesture,
+                tool: chrome.toolrail.tool(),
+                shared_pick: chrome.shared_pick,
+                shared: chrome.shared,
+            },
         );
+        if let Some(cursor) = outcome.cursor {
+            ui.ctx().set_cursor_icon(cursor);
+        }
+        if outcome.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        chrome.shared = outcome.shared;
+        let drawing_drag_consumes_gesture = outcome.consumed;
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
         // take it — and only it. Everything that is not the primary button

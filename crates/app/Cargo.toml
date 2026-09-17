@@ -12,6 +12,7 @@ quick-range-harness = []
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }
+quantick-workspace = { path = "../workspace" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
 quantick-layers = { path = "../layers" }

@@ -6,6 +6,7 @@
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 
+use crate::ui_state::WorkspaceExt;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
@@ -107,6 +108,7 @@ mod window_scale;
 mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
+mod workspace_picker;
 mod workspace_store;
 
 // The test binary counts heap work per thread (`work_meter`); production

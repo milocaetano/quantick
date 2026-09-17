@@ -31,7 +31,7 @@ impl ChartPane {
             side: chrome.side,
             pane: self.id,
             revision: self.pagination_revision(),
-            layout: self.layout.map(|id| id.0),
+            layout: self.layout_id().map(|id| id.0),
         };
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         let area = quantick_chart_interaction::quick_range::GestureArea {
@@ -55,7 +55,7 @@ impl ChartPane {
         if let Some(measure) = drawings::DrawingTool::by_id("measure") {
             if pressed
                 && let Some(position) = pointer
-                && let Some(anchor) = self.drawing_point_at(
+                && let Some(anchor) = self.drawing_projection().drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -92,7 +92,7 @@ impl ChartPane {
                 // after a layout change; `clamp` panics on an inverted range.
                 let [x, y] = area.clamp([position.x, position.y]);
                 let position = egui::pos2(x, y);
-                if let Some(anchor) = self.drawing_point_at(
+                if let Some(anchor) = self.drawing_projection().drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -128,7 +128,7 @@ impl ChartPane {
             side: chrome.side,
             pane: self.id,
             revision: self.pagination_revision(),
-            layout: self.layout.map(|id| id.0),
+            layout: self.layout_id().map(|id| id.0),
         };
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         #[cfg(feature = "quick-range-harness")]
@@ -150,7 +150,7 @@ impl ChartPane {
                             drawings::ChartPoint::at_time(
                                 slot as f32 + 0.5,
                                 scale.price_at(y),
-                                self.anchor_time(slot as f32 + 0.5),
+                                self.series_read().anchor_time(slot as f32 + 0.5),
                             )
                         };
                         (
