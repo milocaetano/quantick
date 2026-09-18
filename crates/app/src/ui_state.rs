@@ -46,8 +46,6 @@ pub use quantick_workspace::arrangement_document::{
     SavedChrome, SavedDockTab, SavedFocus, SavedRailDock, SavedTab,
 };
 
-/// Environment override for the workspace file location.
-pub const UI_STATE_ENV: &str = "QUANTICK_UI_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
 pub use quantick_workspace::workspace_document::{
@@ -347,7 +345,7 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(UI_STATE_FILE);
     }
-    crate::store_home::resolve(UI_STATE_ENV, UI_STATE_FILE)
+    crate::store_home::resolve(UI_STATE_FILE)
 }
 
 /// Parse a workspace file, reporting why it is not one.
@@ -544,8 +542,6 @@ pub fn forget(path: &Path) -> bool {
         }
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_UI_STATE"];
 
 #[cfg(test)]
 mod tests {

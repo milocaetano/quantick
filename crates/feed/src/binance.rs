@@ -406,10 +406,23 @@ async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, rea
     );
 }
 
-/// Initial REST depth level count, configurable through
-/// `QUANTICK_BOOK_DEPTH`.
+/// The initial REST depth the application's launch composition configured.
+static INITIAL_BOOK_DEPTH: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Set the initial REST depth level count, once, from the operator's
+/// `QUANTICK_BOOK_DEPTH`. The application's composition root reads the
+/// variable and hands the raw value in; this crate reads no environment.
+/// Unset, or never configured, means [`DEFAULT_BOOK_DEPTH`].
+pub fn configure_initial_book_depth(raw: Option<&str>) {
+    let _ = INITIAL_BOOK_DEPTH.set(parse_book_depth(raw));
+}
+
+/// Initial REST depth level count; see [`configure_initial_book_depth`].
 fn initial_book_depth() -> u16 {
-    parse_book_depth(std::env::var("QUANTICK_BOOK_DEPTH").ok().as_deref())
+    INITIAL_BOOK_DEPTH
+        .get()
+        .copied()
+        .unwrap_or(DEFAULT_BOOK_DEPTH)
 }
 
 fn parse_book_depth(raw: Option<&str>) -> u16 {
@@ -546,8 +559,6 @@ async fn load_older(
         }
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_BOOK_DEPTH"];
 
 #[cfg(test)]
 mod tests {

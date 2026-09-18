@@ -152,6 +152,7 @@ impl ChartPane {
 
     /// Where the chart-layer submenu button was painted, for the scripted
     /// pointer event that opens the real egui menu during capture.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
         self.context_menu
             .chart_layers_rect

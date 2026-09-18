@@ -64,7 +64,7 @@ fn project(_app: &QuantickApp, _context: CaptureContext) -> SystemSnapshot {
 }
 
 pub(crate) fn snapshot() -> SystemSnapshot {
-    let git_commit = option_env!("QUANTICK_GIT_COMMIT").map(str::to_owned);
+    let git_commit = crate::launch::GIT_COMMIT.map(str::to_owned);
     SystemSnapshot {
         application: "quantick".to_owned(),
         application_version: env!("CARGO_PKG_VERSION").to_owned(),

@@ -22,6 +22,7 @@ pub(crate) struct WorkspaceBundleAdapter<'a> {
     pub(super) config: &'a crate::config::AppConfig,
     pub(super) style: &'a mut crate::style::ChartStyle,
     pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) harness: &'a crate::harness::Harness,
     pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
     pub(super) tz: &'a mut crate::timezone::TzOffset,
@@ -132,6 +133,7 @@ impl WorkspaceBundleAdapter<'_> {
             pane_ids: self.pane_ids,
             workspace: self.workspace,
             indicators: self.indicators,
+            #[cfg(any(feature = "scenario-harness", test))]
             harness: self.harness,
             toolrail: self.toolrail,
             tz: self.tz,

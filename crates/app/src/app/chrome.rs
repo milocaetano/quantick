@@ -28,8 +28,15 @@ pub(super) struct LayoutRename {
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    /// Every scenario hook an agent drives this window by, captured once at
+    /// launch and named. See [`crate::harness`] for what belongs here and why
+    /// the trunk asks it rather than holding its flags. Exists only with the
+    /// scenario harness (or under test).
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) harness: crate::harness::Harness,
     /// Ordinary startup window command, consumed on the first frame.
-    pub(super) window_startup: crate::launch::WindowStartupState,
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) window_startup: crate::launch::window::WindowStartupState,
     /// Saved override for recording deal counters; `None` follows feed config.
     pub(super) record_deals: Option<bool>,
     /// Where the offline chip was drawn, or `None` when it was not.

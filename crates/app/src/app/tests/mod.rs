@@ -49,6 +49,7 @@ mod feeds_sources_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
+mod launch_phase_tests;
 mod layers_tests;
 mod live_trade_tests;
 mod orderflow_tests;

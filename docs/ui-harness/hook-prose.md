@@ -8,13 +8,22 @@ file fused with the `HOOKS` slices declared beside the reads in
 where the writing happens. After editing here, regenerate:
 
 ```sh
-cargo run -p quantick-app -- --dump-hook-registry \
+cargo run -p quantick-app --features harness -- --dump-hook-registry \
   > .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-`cargo test -p quantick-guards` checks source/declaration/prose parity.
-Disabled scenarios remain declared and documented; their feature requirements
-determine executable availability. Regenerate after changing either half.
+Only a `--features harness` build compiles every declaration, so any other
+build refuses the dump. `cargo test -p quantick-guards` checks
+source/declaration/prose parity. Regenerate after changing either half.
+
+**Which build reads a row.** Rows owned by `launch.rs` are operator
+configuration: the composition root reads them in every build. Every other
+row is a harness hook and exists only in a build with its family's feature —
+`app/control_host.rs` needs `control-harness`; `toolrail.rs` and
+`surfaces/drawing_chrome/` need `drawing-harness`; the quick-range demo needs
+`quick-range-harness`; everything else needs `scenario-harness`. `--features
+harness` enables all four. A default build logs any other variable under the prefix it
+finds set as `UNKNOWN_HOOK` and does nothing with it.
 
 It lives under `docs/` rather than beside the skill on purpose. The context
 ratchet weighs every `.md` under `.claude/skills/`, and a second copy of

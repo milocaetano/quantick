@@ -96,6 +96,7 @@ impl QuantickApp {
         // finds absent, and running it first would let a note expire *after*
         // it looked, drawing one frame with an empty lane before the next
         // raise. A shutter timed on the linger catches exactly that frame.
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_history_note_hook();
         #[cfg(any(feature = "control-harness", test))]
         if self.control.scenarios.take_enable()
@@ -123,7 +124,7 @@ impl QuantickApp {
         // assistant has already written on, which is the state a validation
         // run is actually asking about.
         #[cfg(any(feature = "control-harness", test))]
-        self.apply_control_evidence_hook(ctx);
+        super::demo_hooks::apply_control_evidence_hook(self, ctx);
         if self
             .control
             .control_access
@@ -134,20 +135,27 @@ impl QuantickApp {
             access.begin_frame(self, ctx);
             self.control.control_access = Some(access);
         }
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_scripted_view();
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_drawing_demo();
+        super::demo_hooks::apply_drawing_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_load_older();
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_load_older_candles();
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_drawing_draft();
-        self.apply_venue_history_demo();
+        super::demo_hooks::apply_drawing_draft(self);
+        #[cfg(any(feature = "scenario-harness", test))]
+        super::demo_hooks::apply_venue_history_demo(self);
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_frvp_demo();
+        super::demo_hooks::apply_frvp_demo(self);
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_avwap_demo();
-        self.apply_strategy_demo();
+        super::demo_hooks::apply_avwap_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
+        super::demo_hooks::apply_strategy_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_replay_restart();
+        #[cfg(any(feature = "scenario-harness", test))]
         self.chrome.window_startup.apply(ctx);
         self.maybe_emit_summary(now, ctx);
         self.workspace_save_adapter().maintain_workspace(ctx);

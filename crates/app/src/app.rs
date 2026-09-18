@@ -71,6 +71,7 @@ use crate::dock::Dock;
 #[cfg(test)]
 use crate::drawings;
 use crate::feed_notice;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{Harness, ScriptedMenu};
 use crate::indicator_worker::SlotId;
 use crate::indicators::preset_file;
@@ -89,6 +90,7 @@ use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspaceStore};
 use quantick_feed::FeedHandle;
 use quantick_feed::history_reach;
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_orderflow::LaneWindow;
 
 // Names the window's own code no longer reads: the nine modules above took the
@@ -103,6 +105,7 @@ use crate::chart_layers::ChartLayer;
 #[cfg(test)]
 use crate::dock::DockTab;
 #[cfg(test)]
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::ContextMenuPane;
 #[cfg(test)]
 use crate::loading::LoadingTask;
@@ -133,6 +136,7 @@ const FIRST_TAB_ID: u64 = 0;
 /// rather than "all of them", because the hook's contract is a fixed,
 /// deterministic pair — a native added later must not silently change what
 /// every existing capture shows.
+#[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 
 /// Format the forming bar's countdown, e.g. `37/50 ticks`.
@@ -154,6 +158,7 @@ fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
 /// else, so a typo leaves the tape at its default rather than photographing an
 /// invented window. The value is clamped by the setter, not here — one owner
 /// for the drawable range.
+#[cfg(any(feature = "scenario-harness", test))]
 fn parse_tape_window(value: &str) -> Option<LaneWindow> {
     let value = value.trim().to_ascii_lowercase();
     if value == "auto" {
@@ -264,12 +269,6 @@ pub struct QuantickApp {
     /// `layouts` or `workspace_bundle` — none of which holds session state —
     /// and for the invariant the layout trio could not carry apart.
     workspace: crate::workspace_store::WorkspaceStore,
-    /// Every environment hook an agent drives this window by, read once at
-    /// launch and named. See [`crate::harness`] for what belongs here and
-    /// why the trunk asks it rather than holding its flags: twenty-three of
-    /// them used to sit in this struct, beside the state the chart actually
-    /// trades on.
-    harness: Harness,
 }
 
 /// An indicator slot together with the tab and pane that own it.
@@ -288,12 +287,15 @@ struct TabSlot {
 /// This value is never retained on the app or used as a frame context.
 #[derive(Default)]
 pub(crate) struct AppLaunch {
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub scenario: crate::hooks::ScenarioInputs,
     #[cfg(any(feature = "control-harness", test))]
     pub control: control_host::ControlLaunch,
-    pub window: crate::launch::WindowStartupState,
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub window: crate::launch::window::WindowStartupState,
     #[cfg(any(feature = "drawing-harness", test))]
     pub toolrail: crate::toolrail::ToolRailLaunch,
-    #[cfg(feature = "quick-range-harness")]
+    #[cfg(any(feature = "quick-range-harness", test))]
     pub quick_range: crate::surfaces::drawing_chrome::QuickRangeLaunch,
     #[cfg(any(feature = "drawing-harness", test))]
     pub drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch,
@@ -310,7 +312,8 @@ impl QuantickApp {
             config: &self.config,
             style: &mut self.style,
             pane_ids: &mut self.pane_ids,
-            harness: &self.harness,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &self.chrome.harness,
             toolrail: &mut self.toolrail,
             tz: &mut self.tz,
             dock: &mut self.dock,
@@ -336,7 +339,8 @@ impl QuantickApp {
             pane_ids: &mut self.pane_ids,
             workspace: &mut self.workspace,
             indicators: &mut self.indicators,
-            harness: &self.harness,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &self.chrome.harness,
             toolrail: &mut self.toolrail,
             tz: &mut self.tz,
             dock: &mut self.dock,
@@ -460,6 +464,16 @@ impl QuantickApp {
         spec: impl Into<crate::state::BarConfiguration>,
         feed: FeedHandle,
         workspace: ui_state::Workspace,
+        #[cfg_attr(
+            not(any(
+                feature = "scenario-harness",
+                feature = "control-harness",
+                feature = "drawing-harness",
+                feature = "quick-range-harness",
+                test
+            )),
+            allow(unused_variables)
+        )]
         launch: AppLaunch,
     ) -> Self {
         let state_path = crate::paper_state::default_path();
@@ -543,8 +557,10 @@ impl QuantickApp {
         let indicator_presets_path = preset_file::default_path();
         let mut app = Self {
             tabs: ArrangementHost::new(quantick_workspace::arrangement::TabId(FIRST_TAB_ID), tab),
-            harness: Harness::from_env(),
             chrome: chrome::ChromeState {
+                #[cfg(any(feature = "scenario-harness", test))]
+                harness: Harness::capture(&launch.scenario),
+                #[cfg(any(feature = "scenario-harness", test))]
                 window_startup: launch.window,
                 record_deals: None,
                 layout_picker_open: false,
@@ -638,14 +654,17 @@ impl QuantickApp {
         // Install staged drawing inputs before applying the remaining legacy
         // hooks and the captured rail inputs. `launch_hooks` owns their
         // construction-phase order after workspace restoration.
-        #[cfg(feature = "quick-range-harness")]
+        #[cfg(any(feature = "quick-range-harness", test))]
         app.drawings
             .chrome
             .quick_range
             .queue_launch(launch.quick_range);
         #[cfg(any(feature = "drawing-harness", test))]
         app.drawings.chrome.queue_launch(launch.drawing_chrome);
-        app.apply_launch_hooks(
+        launch_hooks::apply_launch_phase(
+            &mut app,
+            #[cfg(any(feature = "scenario-harness", test))]
+            &launch.scenario,
             #[cfg(any(feature = "control-harness", test))]
             launch.control,
             #[cfg(any(feature = "drawing-harness", test))]
@@ -703,9 +722,11 @@ impl eframe::App for QuantickApp {
     /// state to fake one would be a second activation path that drifts from
     /// the first. So the hook supplies the click itself, on the pane it names,
     /// and every line after that is the code a trader's own click runs.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let chart_layers = self.active_tab().flow_pane.chart_layers_menu_center();
         if self
+            .chrome
             .harness
             .push_context_menu_followup(raw_input, chart_layers)
         {
@@ -716,7 +737,7 @@ impl eframe::App for QuantickApp {
         // it; the hook supplies the press, and every line after it is what a
         // trader's click runs. The rect is published by the draw, so the
         // first frame has none — wait for it rather than guess.
-        if let Some(position) = self.harness.take_menu_release() {
+        if let Some(position) = self.chrome.harness.take_menu_release() {
             raw_input.events.push(egui::Event::PointerButton {
                 pos: position,
                 button: egui::PointerButton::Primary,
@@ -725,14 +746,14 @@ impl eframe::App for QuantickApp {
             });
             return;
         }
-        if let Some(menu) = self.harness.menu()
+        if let Some(menu) = self.chrome.harness.menu()
             && let Some(position) = match menu {
                 ScriptedMenu::Workspace => self.chrome.workspace_menu_rect,
                 ScriptedMenu::History => self.chrome.history_menu_rect,
             }
             .map(|rect| rect.center())
         {
-            self.harness.menu_pressed(position);
+            self.chrome.harness.menu_pressed(position);
             raw_input.events.push(egui::Event::PointerMoved(position));
             raw_input.events.push(egui::Event::PointerButton {
                 pos: position,
@@ -750,7 +771,7 @@ impl eframe::App for QuantickApp {
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
         self.push_scripted_pointer(raw_input);
-        let Some(pane) = self.harness.context_menu() else {
+        let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };
         // The divider is published by the draw, so the first frame has none:
@@ -758,7 +779,7 @@ impl eframe::App for QuantickApp {
         let Some(position) = self.scripted_context_menu_pos(pane) else {
             return;
         };
-        self.harness.context_menu_pressed(position);
+        self.chrome.harness.context_menu_pressed(position);
         raw_input.events.push(egui::Event::PointerMoved(position));
         raw_input.events.push(egui::Event::PointerButton {
             pos: position,

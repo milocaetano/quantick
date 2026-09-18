@@ -62,8 +62,6 @@ use quantick_layers::{DocumentError, LayerDocument};
 /// Same discipline as `feeds.toml` and `bubbles.toml`.
 const EMBEDDED_DEFAULT: &str = include_str!("../config/chart-layers.toml");
 
-/// Environment override for the layer-visibility file location.
-pub(crate) const LAYERS_ENV: &str = "QUANTICK_CHART_LAYERS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
 
@@ -82,7 +80,7 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(LAYERS_FILE);
     }
-    crate::store_home::resolve(LAYERS_ENV, LAYERS_FILE)
+    crate::store_home::resolve(LAYERS_FILE)
 }
 
 /// Parse a layer-visibility file, reporting why it is not one. The gate a
@@ -204,8 +202,6 @@ pub(crate) fn save(path: &Path, states: &BTreeMap<ChartLayer, bool>) {
         );
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_CHART_LAYERS"];
 
 #[cfg(test)]
 mod tests {

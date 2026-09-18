@@ -417,6 +417,7 @@ impl OrderflowView {
     /// to exhaust the budget, which is a market condition rather than a
     /// setting. One path, never two — the projection reads this field whoever
     /// wrote it.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_primitive_budget(&mut self, budget: usize) {
         if budget == 0 || self.config.max_aggression_primitives == budget {
             return;
@@ -922,6 +923,7 @@ impl OrderflowView {
     /// The bars, the indicators and the simulator are untouched — they are fed
     /// upstream of here — which is exactly right: the candles keep their
     /// prints, the tape loses them, and that contrast is the thing under test.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_starve_tape_after_ms(&mut self, after_ms: i64) {
         self.starve_tape_after_ms = Some(after_ms.max(0));
     }

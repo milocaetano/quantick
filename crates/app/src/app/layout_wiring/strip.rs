@@ -64,6 +64,7 @@ impl LayoutAdapter<'_> {
     }
 
     /// Open the rename box on `id`, seeded with its current name.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn begin_layout_rename(&mut self, id: LayoutId) {
         let (tab, pane) = self.focused_target();
         self.begin_layout_rename_at(tab, pane, id);

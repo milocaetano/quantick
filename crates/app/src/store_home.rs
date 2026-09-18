@@ -41,9 +41,6 @@ pub(crate) struct CockpitStore {
     /// The section this store occupies in a workspace bundle, and the label
     /// a log line uses. Stable across renames of the file itself.
     pub key: &'static str,
-    /// Environment override for this store's location — an explicit ask,
-    /// honoured for one run and never consolidated under.
-    pub env: &'static str,
     /// The file's name, in the durable home and in the legacy launch
     /// directory alike. One name, so the rescue is a copy and not a mapping.
     pub file: &'static str,
@@ -109,7 +106,6 @@ impl quantick_workspace::bundle::BundleStore for CockpitStore {
 pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     CockpitStore {
         key: "ui_state",
-        env: crate::ui_state::UI_STATE_ENV,
         file: crate::ui_state::UI_STATE_FILE,
         validate: crate::ui_state::validate,
         path: crate::ui_state::default_path,
@@ -118,7 +114,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "indicators",
-        env: crate::indicators::state_file::STATE_ENV,
         file: crate::indicators::state_file::STATE_FILE,
         validate: crate::indicators::state_file::validate,
         path: crate::indicators::state_file::default_path,
@@ -127,7 +122,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "layouts",
-        env: crate::layouts::LAYOUTS_ENV,
         file: crate::layouts::LAYOUTS_FILE,
         validate: crate::layouts::validate,
         path: crate::layouts::default_path,
@@ -136,7 +130,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "indicator_presets",
-        env: crate::indicators::preset_file::PRESETS_ENV,
         file: crate::indicators::preset_file::PRESETS_FILE,
         validate: crate::indicators::preset_file::validate,
         path: crate::indicators::preset_file::default_path,
@@ -145,7 +138,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "chart_layers",
-        env: crate::chart_layers::LAYERS_ENV,
         file: crate::chart_layers::LAYERS_FILE,
         validate: crate::chart_layers::validate,
         path: crate::chart_layers::default_path,
@@ -154,7 +146,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "drawing_presets",
-        env: crate::drawings::presets::PRESETS_ENV,
         file: crate::drawings::presets::PRESETS_FILE,
         validate: crate::drawings::presets::validate,
         path: crate::drawings::presets::PresetStore::default_path,
@@ -163,7 +154,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "footprint_settings",
-        env: crate::footprint_config::SETTINGS_ENV,
         file: crate::footprint_config::SETTINGS_FILE,
         validate: crate::footprint_config::validate_settings,
         path: crate::footprint_config::settings_path,
@@ -172,7 +162,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "footprint_presets",
-        env: crate::footprint_presets::PRESETS_ENV,
         file: crate::footprint_presets::PRESETS_FILE,
         validate: crate::footprint_presets::validate,
         path: crate::footprint_presets::default_path,
@@ -181,7 +170,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "paper_state",
-        env: crate::paper_state::STATE_ENV,
         file: crate::paper_state::STATE_FILE,
         validate: crate::paper_state::validate,
         path: crate::paper_state::default_path,
@@ -190,7 +178,6 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
     },
     CockpitStore {
         key: "symbols",
-        env: crate::symbols_file::SYMBOLS_ENV,
         file: crate::symbols_file::SYMBOLS_FILE,
         validate: crate::symbols_file::validate,
         path: crate::symbols_file::default_path,
@@ -243,14 +230,78 @@ pub(crate) fn home() -> Option<PathBuf> {
 
 /// Where a store's file lives this run.
 ///
-/// The whole resolution order in one place: the store's own environment
-/// override, then the durable home, then the cwd-relative name the app used
-/// before this module existed.
-pub(crate) fn resolve(env: &str, file: &str) -> PathBuf {
-    if let Some(explicit) = std::env::var_os(env) {
+/// The whole resolution order in one place: the store's capture-isolation
+/// override (compiled only with the scenario harness), then the durable home,
+/// then the cwd-relative name the app used before this module existed.
+pub(crate) fn resolve(file: &str) -> PathBuf {
+    #[cfg(any(feature = "scenario-harness", test))]
+    if let Some(explicit) = capture_override(file, |env| std::env::var_os(env)) {
         return PathBuf::from(explicit);
     }
     resolve_in(home(), file)
+}
+
+/// Each store's scratch-path hook, by file: an explicit ask honoured for one
+/// run and never consolidated under, so a capture never reads or writes the
+/// trader's cockpit. Scenario harness only.
+#[cfg(any(feature = "scenario-harness", test))]
+const CAPTURE_OVERRIDES: &[(&str, &str)] = &[
+    (crate::chart_layers::LAYERS_FILE, "QUANTICK_CHART_LAYERS"),
+    (
+        crate::drawings::presets::PRESETS_FILE,
+        "QUANTICK_DRAWING_PRESETS",
+    ),
+    (
+        crate::footprint_config::SETTINGS_FILE,
+        "QUANTICK_FOOTPRINT_SETTINGS",
+    ),
+    (
+        crate::footprint_presets::PRESETS_FILE,
+        "QUANTICK_FOOTPRINT_PRESETS",
+    ),
+    (
+        crate::indicators::preset_file::PRESETS_FILE,
+        "QUANTICK_INDICATOR_PRESETS",
+    ),
+    (
+        crate::indicators::state_file::STATE_FILE,
+        "QUANTICK_INDICATORS_STATE",
+    ),
+    (crate::layouts::LAYOUTS_FILE, "QUANTICK_LAYOUTS"),
+    (crate::paper_state::STATE_FILE, "QUANTICK_PAPER_STATE"),
+    (
+        crate::strategy_presets::STRATEGIES_FILE,
+        "QUANTICK_STRATEGY_PRESETS",
+    ),
+    (crate::symbols_file::SYMBOLS_FILE, "QUANTICK_SYMBOLS"),
+    (crate::ui_state::UI_STATE_FILE, "QUANTICK_UI_STATE"),
+];
+
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks![
+    "QUANTICK_CHART_LAYERS",
+    "QUANTICK_DRAWING_PRESETS",
+    "QUANTICK_FOOTPRINT_SETTINGS",
+    "QUANTICK_FOOTPRINT_PRESETS",
+    "QUANTICK_INDICATOR_PRESETS",
+    "QUANTICK_INDICATORS_STATE",
+    "QUANTICK_LAYOUTS",
+    "QUANTICK_PAPER_STATE",
+    "QUANTICK_STRATEGY_PRESETS",
+    "QUANTICK_SYMBOLS",
+    "QUANTICK_UI_STATE"
+];
+
+/// The override `lookup` gives the store kept in `file`, if any.
+#[cfg(any(feature = "scenario-harness", test))]
+fn capture_override(
+    file: &str,
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    CAPTURE_OVERRIDES
+        .iter()
+        .find(|(store, _)| *store == file)
+        .and_then(|(_, env)| lookup(env))
 }
 
 /// [`resolve`] with its home injected, so the decision is testable without a
@@ -347,9 +398,12 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
         return None;
     }
     let home = home()?;
-    let summary = rescue_into(&home, Path::new("."), &|env| {
-        std::env::var_os(env).is_some()
-    })?;
+    let summary = rescue_into(
+        &home,
+        Path::new("."),
+        #[cfg(any(feature = "scenario-harness", test))]
+        &|file| capture_override(file, |env| std::env::var_os(env)).is_some(),
+    )?;
     let _ = RESCUE_NOTICE.set(rescue_toast(&summary, &home));
     Some(summary)
 }
@@ -361,7 +415,7 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
 fn rescue_into(
     home: &Path,
     legacy: &Path,
-    overridden: &dyn Fn(&str) -> bool,
+    #[cfg(any(feature = "scenario-harness", test))] overridden: &dyn Fn(&str) -> bool,
 ) -> Option<RescueSummary> {
     // Before the marker check, not after: a trader who deleted the folder
     // still has a marker-less home *and* one that no store could write to,
@@ -390,7 +444,8 @@ fn rescue_into(
         // A store pointed somewhere by its own environment variable is not
         // part of this installation's cockpit — a QA or autostart run must
         // not have its scratch file copied into the trader's home.
-        if overridden(store.env) {
+        #[cfg(any(feature = "scenario-harness", test))]
+        if overridden(store.file) {
             continue;
         }
         let source = legacy.join(store.file);
@@ -528,17 +583,14 @@ mod tests {
     /// Every QA hook and autostart run leans on this: an explicit ask wins,
     /// so validation never reads or writes the trader's real cockpit.
     ///
-    /// The one test here that touches the process environment, under a name
-    /// no other store or test reads, so a parallel neighbour cannot see it.
+    /// The lookup is injected, so no test touches the process environment.
     #[test]
     fn an_explicit_environment_ask_beats_the_home() {
-        let key = "QUANTICK_TEST_STORE_HOME_ENV";
-        // SAFETY: the name is unique to this test, so no concurrently
-        // running test reads it; it is removed again before returning.
-        unsafe { std::env::set_var(key, "D:/somewhere/else.toml") };
-        let resolved = resolve(key, "ui-state.toml");
-        unsafe { std::env::remove_var(key) };
-        assert_eq!(resolved, PathBuf::from("D:/somewhere/else.toml"));
+        let asked = capture_override("ui-state.toml", |env| {
+            (env == "QUANTICK_UI_STATE").then(|| "D:/somewhere/else.toml".into())
+        });
+        assert_eq!(asked, Some("D:/somewhere/else.toml".into()));
+        assert_eq!(capture_override("unknown.toml", |_| Some("x".into())), None);
     }
 
     #[test]
@@ -669,8 +721,10 @@ mod tests {
         let home = scratch("rescue-env-home");
         let legacy = scratch("rescue-env-legacy");
         std::fs::write(legacy.join("ui-state.toml"), "version = 1\ntabs = []\n").unwrap();
-        let summary = rescue_into(&home, &legacy, &|env| env == crate::ui_state::UI_STATE_ENV)
-            .expect("the rescue runs");
+        let summary = rescue_into(&home, &legacy, &|file| {
+            file == crate::ui_state::UI_STATE_FILE
+        })
+        .expect("the rescue runs");
         assert_eq!(summary.copied, 0, "the overridden store is skipped");
         assert!(!home.join("ui-state.toml").exists());
     }

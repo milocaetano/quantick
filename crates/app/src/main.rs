@@ -226,11 +226,19 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
+    // The composition root: every launch input is read here, once, before a
+    // thread, a window or an owner exists. Configuration is always read;
+    // each harness family's scenario inputs exist only in a build with its
+    // feature.
+    let startup = launch::LaunchConfig::capture(|name| std::env::var_os(name));
+    launch::install(startup.paths.clone());
+    feed::binance::configure_initial_book_depth(startup.book_depth.as_deref());
+    #[cfg(feature = "scenario-harness")]
+    let scenario = hooks::ScenarioInputs::capture(|name| std::env::var_os(name));
     #[cfg(feature = "drawing-harness")]
     let toolrail = toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name));
     #[cfg(feature = "control-harness")]
     let control = app::control_host::ControlLaunch::capture(|name| std::env::var_os(name));
-    let startup = launch::StartupConfig::capture(|name| std::env::var_os(name));
     #[cfg(feature = "quick-range-harness")]
     let quick_range =
         surfaces::drawing_chrome::QuickRangeLaunch::capture(|name| std::env::var_os(name));
@@ -246,7 +254,7 @@ fn main() -> eframe::Result {
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
-    let (mut config, source) = match config::load() {
+    let (mut config, source) = match config::load(startup.config_path.as_deref()) {
         Ok(loaded) => loaded,
         Err(e) => {
             tracing::error!(
@@ -258,7 +266,7 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
-    if let Err(e) = config::apply_startup_selection_from_env(&mut config) {
+    if let Err(e) = startup.apply_selection(&mut config) {
         tracing::error!(
             target: "quantick::app",
             event_code = "STARTUP_SELECTION_ERROR",
@@ -296,7 +304,7 @@ fn main() -> eframe::Result {
     }
 
     let workspace = ui_state::load(&ui_state::default_path()).restore(&config);
-    let env_chose_market = config::startup_selection_came_from_env();
+    let env_chose_market = startup.names_market();
     if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
         config.default_feed = feed.to_owned();
         config.default_symbol = symbol.to_owned();
@@ -343,37 +351,29 @@ fn main() -> eframe::Result {
         paper_home::shelf_dir(),
     );
 
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("bundled assets/icon.png is a valid PNG");
-
-    let options = eframe::NativeOptions {
-        // No `with_min_inner_size`: the window has no floor. Below roughly
-        // 900x560 the chrome stops collapsing and starts clipping — the
-        // drawing rail falls past its Minimal stage
-        // (docs/drawing-toolbar-ux.md §2.8) — but that is a layout that reads
-        // badly, not one that breaks, and a trader parking the chart in a
-        // sliver beside another window is a real thing to want. The one place
-        // a floor is still kept is what the app *reopens* at; see
-        // [`REOPEN_FLOOR_PX`].
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(startup.window_size(workspace.window))
-            .with_title("quantick")
-            .with_icon(icon),
-        ..Default::default()
-    };
+    let options = startup.native_options(workspace.window);
 
     let launch = app::AppLaunch {
+        #[cfg(feature = "scenario-harness")]
+        scenario,
+        #[cfg(all(test, not(feature = "scenario-harness")))]
+        scenario: Default::default(),
         #[cfg(feature = "control-harness")]
         control,
         #[cfg(all(test, not(feature = "control-harness")))]
         control: Default::default(),
-        window: startup.into_window_state(),
+        #[cfg(feature = "scenario-harness")]
+        window: startup.window.into_window_state(),
+        #[cfg(all(test, not(feature = "scenario-harness")))]
+        window: Default::default(),
         #[cfg(feature = "drawing-harness")]
         toolrail,
         #[cfg(all(test, not(feature = "drawing-harness")))]
         toolrail: Default::default(),
         #[cfg(feature = "quick-range-harness")]
         quick_range,
+        #[cfg(all(test, not(feature = "quick-range-harness")))]
+        quick_range: Default::default(),
         #[cfg(feature = "drawing-harness")]
         drawing_chrome,
         #[cfg(all(test, not(feature = "drawing-harness")))]

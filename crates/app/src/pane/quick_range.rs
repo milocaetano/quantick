@@ -13,7 +13,7 @@ use crate::toolrail::Tool;
 use super::{ChartPane, DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
 
 /// Enough history for the demo's two anchors to span a real, visible range.
-#[cfg(feature = "quick-range-harness")]
+#[cfg(any(feature = "quick-range-harness", test))]
 const DEMO_MIN_BARS: usize = 72;
 
 impl ChartPane {
@@ -131,7 +131,7 @@ impl ChartPane {
             layout: self.layout_id().map(|id| id.0),
         };
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
-        #[cfg(feature = "quick-range-harness")]
+        #[cfg(any(feature = "quick-range-harness", test))]
         if chrome.side == super::PaneSide::Flow {
             chrome
                 .drawing_chrome

@@ -43,8 +43,6 @@ use crate::drawings::{
 #[cfg(test)]
 use crate::indicators::state_file::SavedIndicator;
 
-/// Environment override for the layouts file location.
-pub(crate) const LAYOUTS_ENV: &str = "QUANTICK_LAYOUTS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const LAYOUTS_FILE: &str = "layouts.toml";
 use quantick_workspace::layout_document::parse;
@@ -179,7 +177,7 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(LAYOUTS_FILE);
     }
-    crate::store_home::resolve(LAYOUTS_ENV, LAYOUTS_FILE)
+    crate::store_home::resolve(LAYOUTS_FILE)
 }
 
 /// Parse a layouts file, reporting why it is not one. The gate a bundle
@@ -273,8 +271,6 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
         ),
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_LAYOUTS"];
 
 #[cfg(test)]
 mod tests {

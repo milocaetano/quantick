@@ -6,6 +6,13 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+# Capture and fault-injection hooks (`QUANTICK_FEED_STALL`, `QUANTICK_FEED_GAP`,
+# `QUANTICK_BACKFILL`, `QUANTICK_FAKE_LATENCY_SPLIT`). Off in a default build,
+# which then reads none of them; `quantick-app`'s `scenario-harness` turns it on.
+harness = []
+
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }

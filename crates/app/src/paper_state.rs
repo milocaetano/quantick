@@ -19,8 +19,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Environment override for the paper-state file location.
-pub(crate) const STATE_ENV: &str = "QUANTICK_PAPER_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const STATE_FILE: &str = "paper-state.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
@@ -132,7 +130,7 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return scratch_path();
     }
-    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+    crate::store_home::resolve(STATE_FILE)
 }
 
 /// Parse a paper-state file, reporting why it is not one.
@@ -246,8 +244,6 @@ pub(crate) fn clear_trades_dir(path: &Path) {
     state.trades_dir = None;
     save(path, &state);
 }
-
-crate::hooks::declare_hooks!["QUANTICK_PAPER_STATE"];
 
 #[cfg(test)]
 mod tests {

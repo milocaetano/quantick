@@ -7,13 +7,18 @@
 //! The scripted pointer helpers are here for the same reason — they are what
 //! lets a capture drive the transport without a mouse.
 //!
+#[cfg(any(feature = "scenario-harness", test))]
 use eframe::egui;
 
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::ContextMenuPane;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::loading::LoadingTask;
 use crate::replay_view::ReplayAction;
 
-use quantick_feed::{FeedCommand, ReplayControl};
+use quantick_feed::FeedCommand;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_feed::ReplayControl;
 
 use super::QuantickApp;
 
@@ -36,6 +41,7 @@ pub(super) struct AlertState {
     pub(super) alert_failure: Option<String>,
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 fn context_menu_pos(app: &QuantickApp, pane: ContextMenuPane) -> Option<egui::Pos2> {
     let flow = &app.active_tab().flow_pane;
     if pane == ContextMenuPane::Axis {
@@ -96,6 +102,7 @@ impl QuantickApp {
     /// Where a scripted right-click should land to reach `pane`'s menu.
     ///
     /// Uses geometry published by the draw; `None` until that geometry exists.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn scripted_context_menu_pos(&self, pane: ContextMenuPane) -> Option<egui::Pos2> {
         context_menu_pos(self, pane)
     }
@@ -109,8 +116,9 @@ impl QuantickApp {
     /// `None` until the pane has drawn once: there is no candle area to be a
     /// fraction of before then, and guessing one would park the pointer
     /// somewhere the author did not ask for.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn scripted_pointer_pos(&self) -> Option<egui::Pos2> {
-        let fraction = self.harness.pointer()?;
+        let fraction = self.chrome.harness.pointer()?;
         let flow = &self.active_tab().flow_pane;
         let candles = crate::bands::drawing_area(flow.frame.chart_rect?, flow.frame.lane_divider_x);
         Some(egui::pos2(
@@ -120,6 +128,7 @@ impl QuantickApp {
     }
 
     /// Deliver the parked pointer, every frame it is parked.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn push_scripted_pointer(&self, raw_input: &mut egui::RawInput) {
         if let Some(position) = self.scripted_pointer_pos() {
             raw_input.events.push(egui::Event::PointerMoved(position));
@@ -142,8 +151,9 @@ impl QuantickApp {
     /// photographed the default zoom rather than the one it asked for.
     ///
     /// A run with neither variable set does nothing here.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_scripted_view(&mut self) {
-        let (width, pan) = self.harness.scripted_view();
+        let (width, pan) = self.chrome.harness.scripted_view();
         if width.is_none() && pan.is_none() {
             return;
         }
@@ -171,13 +181,14 @@ impl QuantickApp {
     /// the feed serves one request at a time, so firing them together would
     /// have every page after the first refused and answered empty — a capture
     /// of the drop path rather than of the feature.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_load_older(&mut self) {
-        let Some(pages) = self.harness.load_older_pages() else {
+        let Some(pages) = self.chrome.harness.load_older_pages() else {
             return;
         };
         if self.active_tab().flow_pane.slots() == 0 {
             // Nothing charted yet. Wait, but not forever.
-            if self.harness.spend_load_older_frame().gave_up {
+            if self.chrome.harness.spend_load_older_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -198,7 +209,7 @@ impl QuantickApp {
         let tab_id = self.tabs.active_id();
         let (tab, config) = self.active_with_config();
         tab.request_older_history(tab_id, config);
-        self.harness.load_older_page_sent();
+        self.chrome.harness.load_older_page_sent();
     }
 
     /// The `QUANTICK_HISTORY_NOTE` hook: the sentence a settled reach leaves,
@@ -217,11 +228,12 @@ impl QuantickApp {
     /// When the budget runs out the note keeps its ordinary
     /// [`crate::tab::HISTORY_NOTE_LINGER`] from the last raise and then leaves
     /// on its own, so even a hooked run photographs a note that expires.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_history_note_hook(&mut self) {
-        let Some(end) = self.harness.history_note_ending() else {
+        let Some(end) = self.chrome.harness.history_note_ending() else {
             return;
         };
-        if self.harness.spend_history_note_frame().gave_up {
+        if self.chrome.harness.spend_history_note_frame().gave_up {
             tracing::info!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -265,8 +277,9 @@ impl QuantickApp {
     /// trader's own path; it waits, because there is nothing to reach back
     /// *from* until the opening request has landed; and it gives up rather
     /// than hanging a capture on a venue that never answers.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_load_older_candles(&mut self) {
-        let Some(spans) = self.harness.load_older_candle_spans() else {
+        let Some(spans) = self.chrome.harness.load_older_candle_spans() else {
             return;
         };
         let tab_id = self.tabs.active_id();
@@ -284,7 +297,7 @@ impl QuantickApp {
             .loading
             .is_active(LoadingTask::VenueHistory)
         {
-            if self.harness.spend_load_older_candles_frame().gave_up {
+            if self.chrome.harness.spend_load_older_candles_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -303,7 +316,7 @@ impl QuantickApp {
             // here. Both are worth waiting a bounded while for, and both end
             // the same way; the log names what the tab held so an operator can
             // tell them apart.
-            if self.harness.spend_load_older_candles_frame().gave_up {
+            if self.chrome.harness.spend_load_older_candles_frame().gave_up {
                 tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -327,8 +340,8 @@ impl QuantickApp {
             .active_tab_mut()
             .request_older_ohlcv_history(tab_id, capabilities)
         {
-            self.harness.load_older_candles_span_sent();
-        } else if self.harness.spend_load_older_candles_frame().gave_up {
+            self.chrome.harness.load_older_candles_span_sent();
+        } else if self.chrome.harness.spend_load_older_candles_frame().gave_up {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -420,8 +433,9 @@ impl QuantickApp {
     ///
     /// Consumed once, whether or not the trades ever arrived — an env var
     /// is a request for this run, not a standing rule.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_replay_restart(&mut self) {
-        let Some(after) = self.harness.replay_restart_after() else {
+        let Some(after) = self.chrome.harness.replay_restart_after() else {
             return;
         };
         let tab = self.active_tab();
@@ -433,7 +447,7 @@ impl QuantickApp {
         // un-seeked timeline while the harness believed otherwise; the next
         // frame simply tries again.
         if self.apply_replay_action(ReplayAction::Control(ReplayControl::Restart)) {
-            self.harness.replay_restart_taken();
+            self.chrome.harness.replay_restart_taken();
         }
     }
 }

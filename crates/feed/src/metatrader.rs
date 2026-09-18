@@ -52,9 +52,11 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
+#[cfg(any(test, feature = "harness"))]
+use quantick_feed_mt5::LatencyHop;
 use quantick_feed_mt5::{
-    BookCaptureSwitch, HistoryPager, LatencyHop, LatencySample, Mt5Error, Mt5Event, Mt5Status,
-    ServerConfig, SideMode, TapeKind, run_bridge_server,
+    BookCaptureSwitch, HistoryPager, LatencySample, Mt5Error, Mt5Event, Mt5Status, ServerConfig,
+    SideMode, TapeKind, run_bridge_server,
 };
 
 use crate::FeedLatency;
@@ -168,6 +170,15 @@ pub fn spawn(
 /// and call it a pass.
 #[must_use]
 pub fn forced_latency_split() -> Option<FeedLatency> {
+    // The hook compiles only with the `harness` feature (or under test).
+    #[cfg(not(any(test, feature = "harness")))]
+    return None;
+    #[cfg(any(test, feature = "harness"))]
+    forced_latency_split_hook()
+}
+
+#[cfg(any(test, feature = "harness"))]
+fn forced_latency_split_hook() -> Option<FeedLatency> {
     let raw = std::env::var("QUANTICK_FAKE_LATENCY_SPLIT").ok()?;
     let parsed = parse_forced_latency(raw.trim());
     if parsed.is_none() {
@@ -184,6 +195,7 @@ pub fn forced_latency_split() -> Option<FeedLatency> {
     parsed
 }
 
+#[cfg(any(test, feature = "harness"))]
 fn parse_forced_latency(raw: &str) -> Option<FeedLatency> {
     let mut parts = raw.split(',').map(str::trim);
     let arrival: i64 = parts.next()?.parse().ok()?;
@@ -1313,6 +1325,7 @@ fn log_status(symbol: &str, status: &Mt5Status) {
     }
 }
 
+#[cfg(any(test, feature = "harness"))]
 crate::hooks::declare_hooks!["QUANTICK_FAKE_LATENCY_SPLIT"];
 
 #[cfg(test)]

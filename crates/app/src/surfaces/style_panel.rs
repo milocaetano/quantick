@@ -99,6 +99,7 @@ impl Surface for StylePanelSurface {
         "style-panel"
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         if std::env::var("QUANTICK_STYLE_PANEL").is_ok_and(|value| value == "1") {
             self.open();
@@ -140,6 +141,7 @@ impl Surface for StylePanelSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_STYLE_PANEL"];
 
 #[cfg(test)]

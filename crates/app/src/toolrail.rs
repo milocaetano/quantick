@@ -1217,6 +1217,7 @@ fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(feature = "drawing-harness", test))]
 crate::hooks::declare_hooks![
     "QUANTICK_DRAWING_TOOL",
     "QUANTICK_DRAWING_MAGNET",

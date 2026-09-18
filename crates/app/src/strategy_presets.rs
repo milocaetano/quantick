@@ -28,8 +28,6 @@ use quantick_strategy::{
 
 use crate::audio::{AlertSound, Cue};
 
-/// Environment override for the bank's location.
-pub const STRATEGIES_ENV: &str = "QUANTICK_STRATEGY_PRESETS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const STRATEGIES_FILE: &str = "quantick-strategies.toml";
 /// Version this build writes and the only one it reads.
@@ -499,7 +497,7 @@ impl StrategyBank {
         if cfg!(test) {
             return crate::store_home::test_path(STRATEGIES_FILE);
         }
-        crate::store_home::resolve(STRATEGIES_ENV, STRATEGIES_FILE)
+        crate::store_home::resolve(STRATEGIES_FILE)
     }
 
     /// Load the bank; empty when the file is missing, unreadable or from an
@@ -617,8 +615,6 @@ impl StrategyBank {
         }
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_STRATEGY_PRESETS"];
 
 #[cfg(test)]
 mod tests {

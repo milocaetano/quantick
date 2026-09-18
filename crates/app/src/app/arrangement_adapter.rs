@@ -14,6 +14,7 @@ pub(crate) struct ArrangementAdapter<'a> {
     pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
     pub(super) workspace: &'a mut crate::workspace_store::WorkspaceStore,
     pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) harness: &'a crate::harness::Harness,
     pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
     pub(super) tz: &'a mut TzOffset,
@@ -225,11 +226,14 @@ impl ArrangementAdapter<'_> {
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
-        if self.harness.footprint() {
-            self.active_tab_mut().flow_pane.footprint.visible = true;
-        }
-        if let Some(px) = self.harness.candle_width() {
-            self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+        #[cfg(any(feature = "scenario-harness", test))]
+        {
+            if self.harness.footprint() {
+                self.active_tab_mut().flow_pane.footprint.visible = true;
+            }
+            if let Some(px) = self.harness.candle_width() {
+                self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+            }
         }
         // After the declared layout ran: that is what decides whether the
         // new tab has a time pane to orient at all.

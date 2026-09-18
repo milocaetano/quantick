@@ -6,7 +6,7 @@
 //! the project's configuration — so a look that works on the mini index is
 //! shared, reviewed and rolled back like code. See `config/README.md`.
 //!
-//! Resolution order mirrors [`crate::config`]: the [`PRESETS_ENV`] path, then
+//! Resolution order mirrors [`crate::config`]: the `QUANTICK_BUBBLES` path, then
 //! [`PRESETS_PATH`] relative to the working directory, then the built-in file
 //! embedded at compile time.
 //!
@@ -24,9 +24,6 @@ use quantick_orderflow::{
     BubbleStyle, HeatmapConfig, LiveLaneStyle,
     config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS, DEFAULT_BUBBLE_REGION_MS},
 };
-
-/// Environment variable naming an explicit presets file.
-pub const PRESETS_ENV: &str = "QUANTICK_BUBBLES";
 
 /// Tracked presets file, read and written relative to the working directory.
 ///
@@ -227,7 +224,7 @@ impl BubblePresetFile {
 /// Where a loaded presets file came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PresetSource {
-    /// An explicit path from [`PRESETS_ENV`].
+    /// An explicit path from `QUANTICK_BUBBLES`, read by the launch root.
     EnvPath(PathBuf),
     /// [`PRESETS_PATH`] relative to the working directory.
     WorkingDir(PathBuf),
@@ -316,7 +313,10 @@ fn report_retired_keys(text: &str, path: &Path) {
 /// Path the panel reads from and writes to.
 #[must_use]
 pub fn presets_path() -> PathBuf {
-    std::env::var_os(PRESETS_ENV).map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
+    crate::launch::operator_paths()
+        .bubbles
+        .clone()
+        .map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
 }
 
 /// Load presets, falling back to the embedded file.
@@ -326,11 +326,11 @@ pub fn presets_path() -> PathBuf {
 /// the returned presets are the embedded ones, and the source says so.
 #[must_use]
 pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
-    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) = match std::env::var_os(PRESETS_ENV)
-    {
-        Some(raw) => (PathBuf::from(raw), PresetSource::EnvPath),
-        None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
-    };
+    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) =
+        match crate::launch::operator_paths().bubbles.clone() {
+            Some(raw) => (PathBuf::from(raw), PresetSource::EnvPath),
+            None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
+        };
     if !Path::new(&path).is_file() {
         return (embedded(), PresetSource::Embedded, None);
     }
@@ -397,8 +397,6 @@ const PRESET_FILE_HEADER: &str = "\
 # `[r, g, b]` triples; leave them out to follow the chart theme.
 
 ";
-
-crate::hooks::declare_hooks!["QUANTICK_BUBBLES"];
 
 #[cfg(test)]
 mod tests {
