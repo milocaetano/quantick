@@ -42,13 +42,13 @@ the `declare_hooks!` line beside each read, fused with the prose in
 but not read, fails `cargo test -p quantick-guards`. Edit the prose, never the
 registry, then `cargo run -p quantick-app -- --dump-hook-registry` over it.
 
-**No one file owns the hooks.** `harness.rs` holds 24 of the 126; the rest are declared where they are read, across 37 files (50 in
-`app/launch_hooks.rs`, 8 in `paper_trading.rs`, 6 in
-`surfaces/drawing_chrome/mod.rs`). The registry's *Declared in* column is the
-answer. **Every launch hook is applied in `crates/app/src/app/launch_hooks.rs`,
+**No one file owns the hooks.** `harness.rs` holds 16 of the 131; the rest are
+declared where they are read, across 42 files. The registry's *Declared in*
+column is the answer. **Every launch hook is applied in `crates/app/src/app/launch_hooks.rs`,
 in the order its doc comment fixes** — that module is the application point.
 
-**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`.
+**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`; one
+compiled out of this build, as `HOOK_DISABLED` naming its feature.
 
 ## Launch and capture workflow
 
@@ -58,10 +58,12 @@ Keep raw captures outside Git; put results and artifact links in the PR.
    `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is
    never locked and rust-analyzer never poisons fingerprints. It was `F:` until
    that drive stopped existing — check `Get-PSDrive -PSProvider FileSystem`
-   before trusting this line, and pick the drive with free space: `C:` runs
-   into single-digit gigabytes with a few worktrees on it, and a build that
-   dies of ENOSPC looks like a compile error until you read the message.
-2. **Fresh exe, proven fresh**: `cargo build -p quantick-app` immediately
+   before trusting this line, and pick the drive with free space: `C:` fills
+   with a few worktrees on it, and a build that dies of ENOSPC looks like a
+   compile error until you read the message.
+2. **Fresh exe, proven fresh**: `cargo build -p quantick-app --features
+   control-harness,drawing-harness,quick-range-harness` (the default binary
+   ignores those families' hooks) immediately
    before capturing, then compare the exe `LastWriteTime` against your last
    edit. `cargo test` green does **not** imply the exe was rebuilt.
 3. **Launch via PowerShell `Start-Process`** with hooks set and

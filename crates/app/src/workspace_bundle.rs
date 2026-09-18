@@ -157,16 +157,14 @@ fn apply_with_rename<'stores>(
                 let path = paths[stage.store_index()]
                     .as_ref()
                     .expect("Prepare resolved path");
-                let result = std::fs::write(path.with_extension("importing"), stage.text())
-                    .map_err(|error| error.to_string());
+                let result = std::fs::write(path.with_extension("importing"), stage.text());
                 stage.complete(result)
             }
             ImportStep::Install(install) => {
                 let path = paths[install.store_index()]
                     .as_ref()
                     .expect("stage retained path");
-                let result = rename(&path.with_extension("importing"), path)
-                    .map_err(|error| error.to_string());
+                let result = rename(&path.with_extension("importing"), path);
                 install.complete(result)
             }
             ImportStep::Cleanup(cleanup) => {
@@ -183,43 +181,37 @@ fn apply_with_rename<'stores>(
     }
 }
 
+/// The sentence for a bundle this build cannot read, on open and on apply.
+fn version_refused(found: u32) -> String {
+    format!("workspace file version {found} (this build reads {FORMAT_VERSION})")
+}
+
 fn import_error(
     error: ImportFailure,
     stores: &[CockpitStore],
     paths: &[Option<PathBuf>],
 ) -> String {
     match error {
-        ImportFailure::Version(found) => {
-            format!("workspace file version {found} (this build reads {FORMAT_VERSION})")
-        }
-        ImportFailure::InvalidSection {
-            store_index,
-            message,
-        } => format!(
-            "section \"{}\" is not valid: {message}",
+        ImportFailure::Version(found) => version_refused(found),
+        ImportFailure::InvalidSection { store_index, error } => format!(
+            "section \"{}\" is not valid: {error}",
             stores[store_index].key
         ),
-        ImportFailure::RenderSection {
-            store_index,
-            message,
-        } => format!(
-            "section \"{}\" cannot be written: {message}",
+        ImportFailure::RenderSection { store_index, error } => format!(
+            "section \"{}\" cannot be written: {error}",
             stores[store_index].key
         ),
-        ImportFailure::Stage {
-            store_index,
-            message,
-        } => format!(
-            "could not stage {}: {message}. Nothing was changed.",
+        ImportFailure::Stage { store_index, error } => format!(
+            "could not stage {}: {error}. Nothing was changed.",
             paths[store_index].as_ref().expect("staging path").display()
         ),
         ImportFailure::Install {
             store_index,
             installed,
             total,
-            message,
+            error,
         } => format!(
-            "replaced {installed} of {total} settings groups, then {} failed: {message}. Open the file again to finish.",
+            "replaced {installed} of {total} settings groups, then {} failed: {error}. Open the file again to finish.",
             paths[store_index]
                 .as_ref()
                 .expect("installation path")
@@ -239,7 +231,9 @@ pub(crate) fn read(path: &Path) -> Result<Bundle, String> {
     // `apply`, which is the only thing that writes — running it here too
     // would validate and render every section twice for one import, and log
     // each unknown section twice as if two imports had happened.
-    bundle.check_version()?;
+    if bundle.version != FORMAT_VERSION {
+        return Err(version_refused(bundle.version));
+    }
     Ok(bundle)
 }
 

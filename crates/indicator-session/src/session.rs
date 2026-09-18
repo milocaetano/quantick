@@ -42,12 +42,23 @@ impl IndicatorSession {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Instances the host is evaluating: at most one per loaded slot. A
+    /// diagnostic, like [`Self::lane_diagnostics`], so a consumer can check
+    /// that replacing or removing slots leaks no instance.
+    pub fn live_instances(&self) -> usize {
+        self.host.indicator_count()
+    }
     pub(crate) fn add(
         &mut self,
         slot: SlotId,
         source: IndicatorSource,
         effects: &mut impl SessionEffects,
     ) {
+        // An Add on a live slot replaces it: the instance it held is removed
+        // from the host, never left evaluating where Remove cannot reach it.
+        if let Some(previous) = self.slots.remove(&slot).and_then(|mirror| mirror.host_id) {
+            self.host.remove(previous);
+        }
         let host = &mut self.host;
         let slots = &mut self.slots;
         match source.build(effects) {

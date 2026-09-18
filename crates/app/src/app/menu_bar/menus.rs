@@ -418,7 +418,7 @@ impl WorkspaceMenu<'_> {
             ui.separator();
             self.bundle.show_file_actions(ui);
             ui.separator();
-            let mut save_on_exit = self.bundle.workspace.session().save_on_exit();
+            let mut save_on_exit = self.bundle.arrangement.workspace.session().save_on_exit();
             if ui
                 .checkbox(&mut save_on_exit, "Save on exit")
                 .on_hover_text(
@@ -458,7 +458,7 @@ impl WorkspaceMenu<'_> {
         // have to answer by clicking it.
         if ui
             .add_enabled(
-                self.bundle.workspace.session().saved(),
+                self.bundle.arrangement.workspace.session().saved(),
                 egui::Button::new("Reset startup layout"),
             )
             .on_hover_text(
@@ -497,7 +497,7 @@ impl WorkspaceMenu<'_> {
             commands.push(MenuCommand::NameWorkspace);
             ui.close_menu();
         }
-        let bookmarks = self.bundle.workspace.session().bookmarks();
+        let bookmarks = self.bundle.arrangement.workspace.session().bookmarks();
         ui.add_enabled_ui(!bookmarks.is_empty(), |ui| {
             ui.menu_button("Open", |ui| {
                 for entry in bookmarks {

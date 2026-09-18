@@ -21,12 +21,12 @@ impl BundleStore for Store {
     fn local_keys(&self) -> &[&str] {
         if self.local { &["machine"] } else { &[] }
     }
-    fn validate_text(&self, text: &str) -> Result<(), String> {
+    fn validate_text(&self, text: &str) -> Result<(), SectionError> {
         self.trace
             .borrow_mut()
             .push(format!("validate {}", self.key));
         if text.contains("reject") {
-            Err("literal rejection".into())
+            Err(SectionError::Malformed("literal rejection".into()))
         } else {
             Ok(())
         }
@@ -87,19 +87,19 @@ impl Storage {
     fn record(&self, text: String) {
         self.trace.borrow_mut().push(text);
     }
-    fn stage(&mut self, index: usize, key: &str, text: &str) -> Result<(), String> {
+    fn stage(&mut self, index: usize, key: &str, text: &str) -> std::io::Result<()> {
         self.record(format!("stage {key}"));
         if self.fail_stage == Some(index) {
             self.temps.insert(key.into(), "partial failed write".into());
-            return Err("stage failure".into());
+            return Err(std::io::Error::other("stage failure"));
         }
         self.temps.insert(key.into(), text.into());
         Ok(())
     }
-    fn install(&mut self, index: usize, key: &str) -> Result<(), String> {
+    fn install(&mut self, index: usize, key: &str) -> std::io::Result<()> {
         self.record(format!("install {key}"));
         if self.fail_install == Some(index) {
-            return Err("rename failure".into());
+            return Err(std::io::Error::other("rename failure"));
         }
         let text = self
             .temps
@@ -247,7 +247,7 @@ fn notices_precede_first_invalid_store_but_unsupported_version_is_silent() {
                 result,
                 ImportFailure::InvalidSection {
                     store_index: 1,
-                    message: "literal rejection".into()
+                    error: SectionError::Malformed("literal rejection".into())
                 }
             );
             assert_eq!(
@@ -279,7 +279,10 @@ fn failed_stage_cleans_only_previous_temps_and_leaves_no_installed_store() {
         import_local(&mut storage, &stores).unwrap_err(),
         ImportFailure::Stage {
             store_index: 2,
-            message: "stage failure".into()
+            error: SectionError::Io {
+                kind: std::io::ErrorKind::Other,
+                message: "stage failure".into()
+            }
         }
     );
     assert_eq!(
@@ -324,7 +327,10 @@ fn second_and_fourth_rename_failure_keep_predecessors_and_later_temps_until_reim
                 store_index: failed,
                 installed: failed,
                 total: 4,
-                message: "rename failure".into(),
+                error: SectionError::Io {
+                    kind: std::io::ErrorKind::Other,
+                    message: "rename failure".into(),
+                },
             }
         );
         for (index, key) in ["first", "second", "third", "fourth"]

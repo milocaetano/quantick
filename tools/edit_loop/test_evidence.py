@@ -19,6 +19,17 @@ import sampling
 from test_measure import Fixture
 
 
+def clock_tick(_seconds):
+    """Stand in for the real separation sleep: wait only until the wall clock moves.
+
+    Skipping the sleep outright let two touches share one tick of a coarse clock
+    (about 15.6 ms on Windows) and trip "touch timestamp did not advance".
+    """
+    start = time.time_ns()
+    while time.time_ns() == start:
+        time.sleep(0.001)
+
+
 class EvidenceTests(Fixture):
     def complete(self):
         self.measurement_inputs()
@@ -54,7 +65,7 @@ class EvidenceTests(Fixture):
             for row in ranking[:3]:
                 report["crates"].append(measure.series(
                     row, self.repo, sha, self.root / (row["crate"] + "-target"),
-                    self.output / row["crate"], process=fake, sleep=lambda _: None, observe=lambda: []))
+                    self.output / row["crate"], process=fake, sleep=clock_tick, observe=lambda: []))
         self.assertEqual(len(calls), 3 * (2 + inputs.SAMPLES))
         evidence.publish(self.output, report)
         return report
@@ -165,7 +176,7 @@ class ProcessTests(Fixture):
         with patch("inputs.command_environment", return_value=({}, [])):
             with self.assertRaisesRegex(ValueError, "termination is unproven"):
                 measure.series(row, self.repo, sha, self.root / "target", self.output / "a",
-                               process=fake, sleep=lambda _: None, observe=lambda: next(observations))
+                               process=fake, sleep=clock_tick, observe=lambda: next(observations))
         self.assertGreater(path.stat().st_mtime_ns, before)
         self.assertEqual(evidence.read_json(self.output / "a/recovery.json")["state"], "restore_refused")
 
@@ -186,7 +197,7 @@ class ProcessTests(Fixture):
         with patch("inputs.command_environment", return_value=({}, [])):
             with self.assertRaisesRegex(ValueError, "Cargo failed"):
                 measure.series(row, self.repo, sha, self.root / "target", self.output / "a",
-                               process=fake, sleep=lambda _: None, observe=lambda: [])
+                               process=fake, sleep=clock_tick, observe=lambda: [])
         retained = evidence.read_json(self.output / "a/series.json")
         self.assertIn("warmup", retained)
         self.assertIn("control", retained)
@@ -344,7 +355,7 @@ class RunnerTests(Fixture):
             return result | {"stdout_text": stdout, "stderr_text": stderr}
 
         def fake_series(*args):
-            return actual_series(*args, process=fake_process, sleep=lambda _: None, observe=lambda: [])
+            return actual_series(*args, process=fake_process, sleep=clock_tick, observe=lambda: [])
 
         # Production ROOT is canonical (__file__.resolve()). Windows TEMP can
         # use an 8.3 ancestor spelling; the injected root must obey that contract.

@@ -192,18 +192,6 @@ impl ArrangementHost {
             .commit(plan, &Entries(&self.runtimes))
             .expect("append landed exactly once");
     }
-    pub(super) fn close(
-        &mut self,
-        index: usize,
-        indicators: &mut super::indicator_manager::IndicatorState,
-        layouts: &mut quantick_workspace::session::LayoutSession,
-    ) {
-        let Ok(plan) = self.plan_close(index) else {
-            return;
-        };
-        self.close_planned(plan, indicators, layouts)
-            .expect("fresh closing plan");
-    }
     pub(super) fn plan_close(
         &self,
         index: usize,
@@ -211,30 +199,30 @@ impl ArrangementHost {
         self.lifecycle
             .plan(Command::Close(index), &Entries(&self.runtimes))
     }
+    /// Remove the planned tab and hand it back closed; sibling owners forget it.
     pub(super) fn close_planned(
         &mut self,
         plan: Transition,
-        indicators: &mut super::indicator_manager::IndicatorState,
-        layouts: &mut quantick_workspace::session::LayoutSession,
-    ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
+    ) -> Result<ClosedTab, quantick_workspace::arrangement::ArrangementError> {
         self.lifecycle
             .validate_transition(&plan, &Entries(&self.runtimes))?;
         let Effect::Remove { index, id } = plan.effect() else {
             return Err(quantick_workspace::arrangement::ArrangementError::InvalidTopology);
         };
-        let mut closed = self.runtimes.remove(index).runtime;
-        closed.close();
-        tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = id.0, feed = %closed.feed_id, symbol = %closed.symbol, tabs = self.runtimes.len(), action = "drop_feed_and_workers", "closing a market tab");
-        indicators.forget_tab(id.0);
-        for (pane, _) in closed.panes() {
-            layouts.remove_pane(pane.id);
-        }
+        let mut runtime = self.runtimes.remove(index).runtime;
+        runtime.close();
+        tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = id.0, feed = %runtime.feed_id, symbol = %runtime.symbol, tabs = self.runtimes.len(), action = "drop_feed_and_workers", "closing a market tab");
         self.lifecycle
             .commit(plan, &Entries(&self.runtimes))
             .expect("removal landed exactly once");
-        drop(closed);
-        Ok(())
+        Ok(ClosedTab { id: id.0, runtime })
     }
+}
+
+/// A tab the host has removed and closed; dropping it releases its workers.
+pub(super) struct ClosedTab {
+    pub(super) id: u64,
+    pub(super) runtime: Tab,
 }
 impl Index<usize> for ArrangementHost {
     type Output = Tab;

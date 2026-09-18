@@ -28,7 +28,7 @@ fn frame(
         |ctx| {
             if late {
                 use quantick_chart_interaction::frame_tail_plan::FrameTailStage::*;
-                app.draw_frame_with_tail(
+                app.draw_frame_test_order(
                     ctx,
                     Instant::now(),
                     spawn,
@@ -40,7 +40,7 @@ fn frame(
                     ],
                 );
             } else {
-                app.draw_frame_with_tail(
+                app.draw_frame_test_order(
                     ctx,
                     Instant::now(),
                     spawn,

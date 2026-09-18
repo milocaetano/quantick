@@ -261,6 +261,20 @@ fn test_config() -> AppConfig {
     }
 }
 
+/// A launch-hook lookup over a fixed table instead of the process
+/// environment, so a hook exported in the developer's shell cannot flip a
+/// fixture's assertions and every case runs in one `cargo test`.
+fn fixed_env(
+    table: &'static [(&'static str, &'static str)],
+) -> impl FnMut(&str) -> Option<std::ffi::OsString> {
+    move |name| {
+        table
+            .iter()
+            .find(|(hook, _)| *hook == name)
+            .map(|(_, value)| (*value).into())
+    }
+}
+
 /// An app wired to in-memory channels, plus the test's ends of them: send
 /// feed events in, observe feed commands out. No egui, no network.
 fn test_app() -> (

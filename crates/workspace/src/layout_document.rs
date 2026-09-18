@@ -440,26 +440,54 @@ pub fn clean_name(name: &str) -> Option<String> {
     Some(collapsed.chars().take(MAX_LAYOUT_NAME).collect())
 }
 
-pub fn parse(text: &str) -> Result<LayoutBook, String> {
-    let book: LayoutBook = toml::from_str(text).map_err(|error| error.to_string())?;
+/// Why a layouts file was refused; its `Display` is the sentence a reader sees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    /// Not TOML of the layouts shape.
+    Malformed(String),
+    /// A format version this build does not read.
+    Version(u32),
+    /// No layout at all.
+    Empty,
+    /// The active id names no layout in the file.
+    MissingActive,
+    /// A layout id at or past the file's id counter.
+    IdPastCounter,
+}
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(message) => f.write_str(message),
+            Self::Version(found) => write!(
+                f,
+                "layouts format version {found} (this build reads {FORMAT_VERSION})"
+            ),
+            Self::Empty => f.write_str("a layouts file holds at least one layout"),
+            Self::MissingActive => f.write_str("the active layout is not in the file"),
+            Self::IdPastCounter => f.write_str("a layout id is past the file's id counter"),
+        }
+    }
+}
+impl std::error::Error for ParseError {}
+
+pub fn parse(text: &str) -> Result<LayoutBook, ParseError> {
+    let book: LayoutBook =
+        toml::from_str(text).map_err(|error| ParseError::Malformed(error.to_string()))?;
     if book.version != FORMAT_VERSION {
-        return Err(format!(
-            "layouts format version {} (this build reads {FORMAT_VERSION})",
-            book.version
-        ));
+        return Err(ParseError::Version(book.version));
     }
     if book.layouts.is_empty() {
-        return Err("a layouts file holds at least one layout".to_owned());
+        return Err(ParseError::Empty);
     }
     if book.get(book.active).is_none() {
-        return Err("the active layout is not in the file".to_owned());
+        return Err(ParseError::MissingActive);
     }
     if book
         .layouts
         .iter()
         .any(|layout| layout.id.0 >= book.next_id)
     {
-        return Err("a layout id is past the file's id counter".to_owned());
+        return Err(ParseError::IdPastCounter);
     }
     Ok(book)
 }

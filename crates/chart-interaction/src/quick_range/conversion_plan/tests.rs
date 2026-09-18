@@ -172,7 +172,7 @@ fn idle_and_dragging_models_emit_no_effect() {
 
 // These are deliberately unchecked private orders. They dispatch the exact
 // production stage bodies, with an effect counter standing in for the caller.
-fn mutated(steps: &[Step]) -> (ConversionReadback, Option<RangeView>, usize) {
+fn mutated(steps: &[Step<Stage>]) -> (ConversionReadback, Option<RangeView>, usize) {
     let mut model = QuickRangeModel::default();
     ready(&mut model, input().context);
     let (readback, effects) = match Execution::new(input()).start(&mut model, steps) {

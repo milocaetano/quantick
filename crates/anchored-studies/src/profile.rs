@@ -188,7 +188,7 @@ impl FrvpCacheKey {
     /// moving, several times a second. Telling that case apart is what lets
     /// the closed fold stand while only the live edge is re-derived.
     #[must_use]
-    pub fn same_fold(&self, other: &Self) -> bool {
+    pub(crate) fn same_fold(&self, other: &Self) -> bool {
         Self {
             partial_snapshot: other.partial_snapshot,
             ..*self
@@ -209,7 +209,7 @@ impl FrvpCacheKey {
     /// appended. Telling that apart turns a per-close re-fold of the whole
     /// range into a per-close push of one ladder.
     #[must_use]
-    pub fn grown_right(&self, other: &Self) -> bool {
+    pub(crate) fn grown_right(&self, other: &Self) -> bool {
         other.end_slot > self.end_slot
             && Self {
                 end_slot: other.end_slot,

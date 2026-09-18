@@ -140,3 +140,29 @@ fn a_panicking_error_recipient_precedes_insertion_of_the_failed_slot() {
         "the interrupted Add did not insert a slot that Reload could heal"
     );
 }
+
+#[test]
+fn adding_a_live_slot_again_replaces_its_instance_instead_of_orphaning_it() {
+    let mut session = IndicatorSession::new();
+    let mut recorder = Recorder::default();
+    run(
+        &mut session,
+        vec![add(1, "native.cvd"), add(1, "native.cvd")],
+        &mut recorder,
+    );
+    assert_eq!(
+        session.live_instances(),
+        1,
+        "the second Add replaced the first"
+    );
+    run(
+        &mut session,
+        vec![Command::Remove(SlotId(1))],
+        &mut recorder,
+    );
+    assert_eq!(
+        session.live_instances(),
+        0,
+        "Remove reaches the only instance the slot ever had"
+    );
+}
