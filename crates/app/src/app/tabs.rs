@@ -157,42 +157,21 @@ impl QuantickApp {
         // recorder built for the market it belongs to.
         super::deal_recording_wiring::ensure(self);
         let config = &self.config;
-        let progressive_history = self.history.progressive_history;
-        let history_reach = self.history.history_reach;
-        let history_reach_span_minutes = self.history.history_reach_span_minutes;
-        let venue_lead_in = self.history.venue_lead_in;
+        let policy = crate::tab::HistoryPolicy {
+            progressive: self.history.progressive_history,
+            reach: self.history.history_reach,
+            reach_span_minutes: self.history.history_reach_span_minutes,
+            venue_lead_in: self.history.venue_lead_in,
+        };
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.live_trades;
-            tab.drain_feed(tab_id);
-            for pane in tab.panes_mut() {
-                pane.apply_indicator_events();
-            }
-            tab.drain_book_feed();
-            tab.drain_notices();
-            // Heartbeat for the recorder. The lifecycle calls elsewhere already
-            // start it at every point that knows the market changed; this one
-            // makes "always recording" true by construction, so a start command
-            // lost to a momentarily full channel heals on the next frame
-            // instead of leaving the session silently unrecorded. Free while it
-            // is running: one bool read and an early return.
-            tab.ensure_book_capture(config);
-            // MetaTrader narrows its capabilities when the bridge says hello,
-            // after the pane may already have asked and been told there was
-            // nothing held. Watching the edge is what asks again once the
-            // answer can be a real one.
-            // The switch lives on the window, the request is phrased by the
-            // tab: mirrored here so every tab asks the way the trader last
-            // said, including one opened after the choice was made.
-            tab.progressive_history = progressive_history;
-            tab.history_reach = history_reach;
-            tab.history_reach_span_minutes = history_reach_span_minutes;
-            // Through the setter, not the field: flipping the lead-in refolds
-            // the prefix, and a tab that only had the field written would keep
-            // drawing the answer to the previous choice until the next candle
-            // landed. Idempotent, so the steady state costs one comparison.
-            tab.set_venue_lead_in(venue_lead_in);
-            tab.poll_ohlcv_capability(tab_id, config);
+            tab.drain_frame(
+                tab_id,
+                config,
+                policy,
+                quantick_chart_interaction::tab_drain_plan::TabDrainPlan::stages(),
+            );
             trades += tab.live_trades - before;
         }
         // What the window ingested, across every market it is holding.

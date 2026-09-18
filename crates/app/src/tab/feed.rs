@@ -10,6 +10,7 @@
 
 use eframe::egui;
 use quantick_chart_interaction::live_trade_plan::{LiveTradePlan, LiveTradeStage};
+use quantick_chart_interaction::tab_drain_plan::TabDrainStage;
 use tokio::sync::mpsc;
 
 use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
@@ -24,6 +25,15 @@ use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
+
+/// The window's history choices every tab mirrors on each frame's drain.
+#[derive(Clone, Copy, Debug)]
+pub struct HistoryPolicy {
+    pub progressive: bool,
+    pub reach: quantick_feed::history_reach::HistoryReach,
+    pub reach_span_minutes: u32,
+    pub venue_lead_in: bool,
+}
 
 /// The actual effect owners for one print; no app, transport or layout access.
 struct LiveTradeOwners<'a> {
@@ -414,6 +424,54 @@ impl Tab {
         } else {
             PaneSide::Time(0)
         };
+    }
+
+    /// One frame of this tab's intake, in the registered order of
+    /// [`TabDrainPlan`](quantick_chart_interaction::tab_drain_plan::TabDrainPlan).
+    ///
+    /// Production passes the validated plan; tests replay a swapped order
+    /// through these same stage bodies to show what the declaration prevents.
+    pub fn drain_frame(
+        &mut self,
+        tab_id: u64,
+        config: &AppConfig,
+        policy: HistoryPolicy,
+        stages: impl IntoIterator<Item = TabDrainStage>,
+    ) {
+        for stage in stages {
+            match stage {
+                TabDrainStage::ReceiveSource => self.drain_feed(tab_id),
+                TabDrainStage::ApplyIndicatorResults => {
+                    for pane in self.panes_mut() {
+                        pane.apply_indicator_events();
+                    }
+                }
+                TabDrainStage::ReceiveBook => self.drain_book_feed(),
+                TabDrainStage::ReceiveNotices => self.drain_notices(),
+                // "Always recording" true by construction: a start command
+                // lost to a momentarily full channel heals on the next frame
+                // instead of leaving the session silently unrecorded. Free
+                // while it is running: one bool read and an early return.
+                TabDrainStage::BookCaptureHeartbeat => self.ensure_book_capture(config),
+                TabDrainStage::MirrorHistoryPolicy => {
+                    // The switch lives on the window, the request is phrased
+                    // by the tab: every tab asks the way the trader last said,
+                    // including one opened after the choice was made.
+                    self.progressive_history = policy.progressive;
+                    self.history_reach = policy.reach;
+                    self.history_reach_span_minutes = policy.reach_span_minutes;
+                    // Through the setter, not the field: flipping the lead-in
+                    // refolds the prefix. Idempotent, so the steady state
+                    // costs one comparison.
+                    self.set_venue_lead_in(policy.venue_lead_in);
+                }
+                // MetaTrader narrows its capabilities when the bridge says
+                // hello, after the pane may already have asked and been told
+                // there was nothing held. Watching the edge asks again once
+                // the answer can be a real one.
+                TabDrainStage::PollCandleHistory => self.poll_ohlcv_capability(tab_id, config),
+            }
+        }
     }
 
     /// Drain every feed event available this frame into the engine, tracking the
