@@ -44,7 +44,7 @@ impl RecordedEvents {
     }
 }
 
-pub(super) fn local_read(app: &mut QuantickApp, name: &str, input: Value) -> Value {
+fn local_read(app: &mut QuantickApp, name: &str, input: Value) -> Value {
     let mut access = app.control.control_access.take().unwrap();
     let result = access.invoke_local_read(app, name, input);
     app.control.control_access = Some(access);
