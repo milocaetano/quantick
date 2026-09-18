@@ -27,10 +27,10 @@
 //! spelling alongside the real `QUANTICK_DRAWINGS_MANAGER`. Declaration
 //! parity detects that mismatch; it does not establish runtime availability.
 //!
-//! [`log_unknown_hooks`] warns once at startup about names this build does not
-//! register, except the documented [`NOT_HOOKS`] entries — including a harness
-//! hook set against a build without its feature, which would otherwise do
-//! nothing silently. The warning does not refuse startup.
+//! At startup the composition root (`crate::launch::persistence_refusal`)
+//! logs every name this build does not register, except the documented
+//! [`NOT_HOOKS`] entries — a harness hook set against a build without its
+//! feature included — and runs that session writing no store (decision DS7).
 
 use std::collections::BTreeSet;
 
@@ -49,7 +49,7 @@ pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
 
 /// `QUANTICK_*` variables that are deliberately **not** launch hooks.
 ///
-/// One definition, two readers. [`log_unknown_hooks`] skips them, so a build
+/// One definition, two readers. [`unknown_hooks`] skips them, so a build
 /// that sets `QUANTICK_GIT_COMMIT` is not warned about its own build metadata;
 /// and `crates/guards/src/generated.rs` parses this same table out of this
 /// file, so the guard cannot demand a harness row for something the
@@ -258,6 +258,15 @@ impl ScenarioInputs {
     }
 }
 
+/// The names a default build registers: the composition root's configuration.
+#[cfg(test)]
+pub(crate) fn configuration_names() -> BTreeSet<&'static str> {
+    CONFIGURATION
+        .iter()
+        .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+        .collect()
+}
+
 /// Every declared hook, with the file that owns it, in name order.
 pub(crate) fn all() -> Vec<(&'static str, &'static HookSpec)> {
     let mut out: Vec<(&'static str, &'static HookSpec)> = owners()
@@ -295,22 +304,6 @@ pub(crate) fn unknown_hooks<'a>(
     out.sort();
     out.dedup();
     out
-}
-
-/// Warn once at startup about undeclared, non-exempt `QUANTICK_*` names.
-pub(crate) fn log_unknown_hooks() {
-    let declared = declared_names();
-    let environment: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
-    for name in unknown_hooks(environment.iter().map(String::as_str), &declared) {
-        tracing::warn!(
-            target: "quantick::app",
-            event_code = "UNKNOWN_HOOK",
-            hook = %name,
-            "this build registers no launch hook by this name; it will do nothing. \
-             Check the spelling against .claude/skills/ui-harness/references/hook-registry.md; \
-             harness hooks need a `--features harness` build"
-        );
-    }
 }
 
 /// The authored half, relative to the workspace root.

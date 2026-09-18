@@ -324,7 +324,6 @@ impl QuantickApp {
             Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
-        let venue_bars = pane.history_prefix.len();
         let note = self.active_tab().side_note(&self.config);
         statusbar::StatusModel {
             venue: if self.active_tab().replay.is_some() {
@@ -351,7 +350,7 @@ impl QuantickApp {
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
             deal_recording: self.active_tab().deal_status_cell(),
-            venue_bars,
+            venue_bars: pane.history_prefix.len(),
             backfilled_bars: backfilled,
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
@@ -367,6 +366,7 @@ impl QuantickApp {
             frame_avg_ms: self.health.frames.avg_ms(),
             frame_cpu_ms: self.health.cpu_frames.avg_ms(),
             show_perf: self.health.show_perf,
+            saves_off: crate::store_home::writes_refused(),
         }
     }
 }

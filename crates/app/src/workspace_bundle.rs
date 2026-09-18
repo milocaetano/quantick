@@ -261,6 +261,7 @@ pub(crate) fn write(path: &Path, bundle: &Bundle) -> Result<(), String> {
 /// next read reports unreadable — the whole cockpit gone rather than a
 /// stale one.
 fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+    crate::store_home::guard_write(path).map_err(std::io::Error::other)?;
     let temp = path.with_extension("tmp");
     match std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path)) {
         Ok(()) => Ok(()),

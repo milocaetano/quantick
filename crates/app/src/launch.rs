@@ -169,6 +169,40 @@ impl LaunchConfig {
     }
 }
 
+/// Why this session must write no store: `Some` when the environment's
+/// variable names (`environment`) include a `QUANTICK_*` not `registered`, all
+/// of them logged in one line. `main` asks before any store is read or
+/// written and, on `Some`, refuses every store write for the session.
+///
+/// A capture run points each store at scratch through a harness hook; against
+/// a build without that hook, the run would otherwise save over the trader's
+/// real cockpit (decision DS7). Refusing the session's writes, rather than
+/// guessing which variable meant what, is the one answer that cannot write
+/// half of it. Only the prefix is spelled here: no hook name is.
+pub(crate) fn persistence_refusal<'a>(
+    environment: impl Iterator<Item = &'a str>,
+    registered: &std::collections::BTreeSet<&'static str>,
+) -> Option<String> {
+    let unknown = crate::hooks::unknown_hooks(environment, registered);
+    if unknown.is_empty() {
+        return None;
+    }
+    let names = unknown.join(", ");
+    tracing::warn!(
+        target: "quantick::app",
+        event_code = "UNKNOWN_HOOK",
+        hooks = %names,
+        action = "store_writes_refused",
+        "this build reads none of these; nothing is saved this session. \
+         Check the spelling against .claude/skills/ui-harness/references/hook-registry.md; \
+         harness hooks need a `--features harness` build"
+    );
+    Some(format!(
+        "saving is off: {names} set, which this build does not read \
+         (capture hooks need a --features harness build)"
+    ))
+}
+
 static OPERATOR_PATHS: std::sync::OnceLock<OperatorPaths> = std::sync::OnceLock::new();
 
 /// Hand the stores their folders. Called once by `main`, before any store is

@@ -176,6 +176,9 @@ fn shipped_default() -> BTreeMap<ChartLayer, bool> {
 
 /// Write the current visibility of every layer this file owns.
 pub(crate) fn save(path: &Path, states: &BTreeMap<ChartLayer, bool>) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     let Ok(text) = LayerDocument::encode(states) else {
         tracing::warn!(
             target: "quantick::app",

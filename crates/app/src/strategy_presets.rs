@@ -593,6 +593,9 @@ impl StrategyBank {
     }
 
     fn write_back(&self) {
+        if crate::store_home::guard_write(&self.path).is_err() {
+            return;
+        }
         let file = StoreFile {
             version: STORE_FORMAT_VERSION,
             presets: self.presets.clone(),

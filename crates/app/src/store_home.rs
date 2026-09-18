@@ -31,6 +31,58 @@
 
 use std::path::{Path, PathBuf};
 
+/// Why this session writes no store (DS7; see `launch::persistence_refusal`).
+/// Every store write asks [`guard_write`] first, so the session writes
+/// nothing rather than some files; the status line says so while it runs.
+static WRITES_REFUSED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+thread_local! {
+    /// The same refusal for one test thread only.
+    static TEST_WRITES_REFUSED: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Refuse every store write for the rest of this session, saying `reason`.
+pub(crate) fn refuse_writes(reason: String) {
+    let _ = WRITES_REFUSED.set(reason);
+}
+
+/// [`refuse_writes`] for the calling test thread only.
+#[cfg(test)]
+pub(crate) fn refuse_writes_on_this_thread(reason: Option<String>) {
+    TEST_WRITES_REFUSED.with(|refused| *refused.borrow_mut() = reason);
+}
+
+/// Why store writes are refused this session, if they are.
+pub(crate) fn writes_refused() -> Option<String> {
+    #[cfg(test)]
+    if let Some(reason) = TEST_WRITES_REFUSED.with(|refused| refused.borrow().clone()) {
+        return Some(reason);
+    }
+    WRITES_REFUSED.get().cloned()
+}
+
+/// Ask before writing `path`: `Err` with the reason, logged, when this
+/// session writes no store.
+pub(crate) fn guard_write(path: &Path) -> Result<(), String> {
+    match writes_refused() {
+        None => Ok(()),
+        Some(reason) => {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "STORE_WRITE_REFUSED",
+                path = %path.display(),
+                reason = %reason,
+                action = "nothing_written",
+                "this session writes no store"
+            );
+            Err(reason)
+        }
+    }
+}
+
 /// One store that remembers part of the cockpit.
 ///
 /// The registry below is the port: a ninth store is one entry here plus the
@@ -398,6 +450,8 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
         return None;
     }
     let home = home()?;
+    // A session that writes no store copies nothing into the home either.
+    guard_write(&home).ok()?;
     let summary = rescue_into(
         &home,
         Path::new("."),

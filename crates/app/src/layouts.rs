@@ -208,7 +208,10 @@ pub(crate) enum Loaded {
 pub(crate) fn load(path: &Path) -> Loaded {
     let refused = |reason: String| {
         let aside = path.with_extension("toml.broken");
-        let set_aside = std::fs::rename(path, &aside).is_ok();
+        // A session that writes no store moves no file either; `false` then
+        // keeps the caller from saving over the trader's only copy.
+        let set_aside =
+            crate::store_home::guard_write(path).is_ok() && std::fs::rename(path, &aside).is_ok();
         tracing::warn!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -244,6 +247,9 @@ pub(crate) fn load(path: &Path) -> Loaded {
 /// Write the book. Temp sibling + rename, like every other store: a crash
 /// mid-write leaves the previous file, never half of the new one.
 pub(crate) fn save(path: &Path, book: &LayoutBook) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     match toml::to_string_pretty(book) {
         Ok(text) => {
             let temp = path.with_extension("toml.tmp");

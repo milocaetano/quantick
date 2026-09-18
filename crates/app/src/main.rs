@@ -249,8 +249,17 @@ fn main() -> eframe::Result {
 
     // Immediately after the subscriber exists, so a mistyped hook is the first
     // thing the run says rather than something inferred later from a surface
-    // that never opened.
-    hooks::log_unknown_hooks();
+    // that never opened — and before any store is read or written, because a
+    // hook this build does not read turns the session's saving off (DS7).
+    let environment: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .collect();
+    if let Some(reason) = launch::persistence_refusal(
+        environment.iter().map(String::as_str),
+        &hooks::declared_names(),
+    ) {
+        store_home::refuse_writes(reason);
+    }
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.

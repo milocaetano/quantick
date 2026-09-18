@@ -539,6 +539,9 @@ pub fn load(settings: &Path) -> FootprintConfig {
 /// Persist the in-app edits. Temp sibling + rename, the store discipline
 /// every state file here follows.
 pub fn save(settings: &Path, config: &FootprintConfig) {
+    if crate::store_home::guard_write(settings).is_err() {
+        return;
+    }
     let file = SettingsFile {
         version: SETTINGS_VERSION,
         config: to_file(config),

@@ -164,6 +164,9 @@ impl PresetStore {
     }
 
     fn persist(&self) {
+        if crate::store_home::guard_write(&self.path).is_err() {
+            return;
+        }
         let file = StoreFile {
             version: STORE_FORMAT_VERSION,
             tools: self.tools.clone(),

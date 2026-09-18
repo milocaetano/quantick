@@ -48,8 +48,8 @@ a default build reads only the operator configuration `crates/app/src/launch.rs`
 captures. The *Declared in* column names each owner; launch-phase hooks apply
 in `app/launch_hooks.rs`, in the order its doc comment fixes.
 
-**A `QUANTICK_*` the build does not register is logged at startup** as
-`UNKNOWN_HOOK` — a hook set against a default build lands there.
+**An unregistered `QUANTICK_*`** logs `UNKNOWN_HOOK` and turns saving off
+for the session (`SAVES OFF` in the status line).
 
 ## Launch and capture workflow
 

@@ -22,8 +22,11 @@ row is a harness hook and exists only in a build with its family's feature —
 `app/control_host.rs` needs `control-harness`; `toolrail.rs` and
 `surfaces/drawing_chrome/` need `drawing-harness`; the quick-range demo needs
 `quick-range-harness`; everything else needs `scenario-harness`. `--features
-harness` enables all four. A default build logs any other variable under the prefix it
-finds set as `UNKNOWN_HOOK` and does nothing with it.
+harness` enables all four. A build that finds any other variable under the
+prefix set logs it as `UNKNOWN_HOOK`, acts on none of it, and saves nothing
+that session: every store write refuses and the status line reads
+`SAVES OFF` (decision DS7), so a capture run against the wrong build cannot
+write the trader's cockpit.
 
 It lives under `docs/` rather than beside the skill on purpose. The context
 ratchet weighs every `.md` under `.claude/skills/`, and a second copy of

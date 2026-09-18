@@ -133,6 +133,9 @@ impl PresetStore {
 
     /// Write the store. See the [module docs](self) for the discipline.
     pub fn save(&self, path: &Path) {
+        if crate::store_home::guard_write(path).is_err() {
+            return;
+        }
         let file = PresetsFile {
             version: FORMAT_VERSION,
             presets: self

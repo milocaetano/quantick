@@ -109,6 +109,10 @@ pub(crate) fn startup_home(
         // touch, or even scan, the real home.
         return (PathBuf::from(env), None);
     }
+    if crate::store_home::writes_refused().is_some() {
+        // A session that writes no store consolidates nothing either.
+        return (chosen(configured, stored, documents_dir()), None);
+    }
     resolve_startup_home(
         configured,
         stored,

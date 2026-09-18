@@ -365,6 +365,7 @@ pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
 /// written.
 pub fn save(file: &BubblePresetFile) -> Result<PathBuf, String> {
     let path = presets_path();
+    crate::store_home::guard_write(&path)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

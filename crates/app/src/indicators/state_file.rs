@@ -162,6 +162,9 @@ pub(crate) fn load(path: &std::path::Path) -> Vec<SavedIndicator> {
 /// migrate, and never writes it again. Tests write it to prove the migration.
 #[cfg(test)]
 pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     let file = StateFile {
         version: FORMAT_VERSION,
         indicators: indicators.to_vec(),

@@ -207,6 +207,9 @@ pub(crate) fn load(path: &Path) -> PaperState {
 /// Write the whole state back. Callers read-modify-write, so one changed
 /// choice never erases another.
 pub(crate) fn save(path: &Path, state: &PaperState) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     let file = PaperStateFile {
         version: FORMAT_VERSION,
         state: state.clone(),

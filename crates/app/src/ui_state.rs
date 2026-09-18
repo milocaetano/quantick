@@ -484,6 +484,9 @@ pub fn load_for_edit(path: &Path) -> Option<Workspace> {
 /// says so on the status line either way, and a trader who is told "saved"
 /// when nothing was written would find out at the worst possible moment.
 pub fn save(path: &Path, workspace: &Workspace) -> bool {
+    if crate::store_home::guard_write(path).is_err() {
+        return false;
+    }
     let workspace = workspace.clone().into_current_format();
     let text = match toml::to_string_pretty(&workspace) {
         Ok(text) => text,

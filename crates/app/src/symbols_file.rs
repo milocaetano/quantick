@@ -187,6 +187,7 @@ pub fn load(path: &std::path::Path) -> AddedSymbols {
 /// like it stuck but did not is the kind of quiet loss the user only finds
 /// out about at the next launch.
 pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> {
+    crate::store_home::guard_write(path)?;
     let file = AddedSymbols {
         version: FORMAT_VERSION,
         feeds: added.feeds.clone(),
