@@ -3,7 +3,17 @@ use super::*;
 #[test]
 fn canonical_source_traversal_preserves_each_actual_prerequisite() {
     assert!(valid(&STAGES));
-    assert_eq!(SourceDrainPlan::stages().collect::<Vec<_>>(), STAGES);
+    assert_eq!(
+        SourceDrainPlan::stages().collect::<Vec<_>>(),
+        [
+            SourceDrainStage::PrepareSymbol,
+            SourceDrainStage::ReceiveAvailable,
+            SourceDrainStage::PublishLatestPartial,
+            SourceDrainStage::LandGap,
+            SourceDrainStage::SettleReanchors,
+            SourceDrainStage::TickDealRecording,
+        ]
+    );
 }
 
 #[test]

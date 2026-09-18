@@ -59,9 +59,9 @@ Keep raw captures outside Git; put results and artifact links in the PR.
    `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is
    never locked and rust-analyzer never poisons fingerprints. It was `F:` until
    that drive stopped existing — check `Get-PSDrive -PSProvider FileSystem`
-   before trusting this line, and pick the drive with free space: `C:` runs
-   into single-digit gigabytes with a few worktrees on it, and a build that
-   dies of ENOSPC looks like a compile error until you read the message.
+   before trusting this line, and pick the drive with free space: `C:` fills
+   with a few worktrees on it, and a build that dies of ENOSPC looks like a
+   compile error until you read the message.
 2. **Fresh exe, proven fresh**: `cargo build -p quantick-app --features harness` immediately
    before capturing, then compare the exe `LastWriteTime` against your last
    edit. `cargo test` green does **not** imply the exe was rebuilt.

@@ -16,22 +16,8 @@ pub(super) fn report_picker_lost(toast: &mut crate::surfaces::ToastSurface) {
 }
 
 pub(crate) struct WorkspaceBundleAdapter<'a> {
-    pub(super) tabs: &'a mut super::arrangement_host::ArrangementHost,
-    pub(super) workspace: &'a mut crate::workspace_store::WorkspaceStore,
-    pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
-    pub(super) config: &'a crate::config::AppConfig,
-    pub(super) style: &'a mut crate::style::ChartStyle,
-    pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
-    #[cfg(any(feature = "scenario-harness", test))]
-    pub(super) harness: &'a crate::harness::Harness,
-    pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
-    pub(super) tz: &'a mut crate::timezone::TzOffset,
-    pub(super) dock: &'a mut crate::dock::Dock,
-    pub(super) show_perf: &'a mut bool,
-    pub(super) record_deals: &'a mut Option<bool>,
-    pub(super) history: &'a mut super::tabs::HistorySettings,
-    pub(super) drawing_chrome: &'a mut crate::surfaces::DrawingChromeSurface,
-    pub(super) toast: &'a mut crate::surfaces::ToastSurface,
+    /// The tab strip and chrome ports an import restores, borrowed once.
+    pub(super) arrangement: super::arrangement_adapter::ArrangementAdapter<'a>,
     pub(super) replay_view: &'a crate::replay_view::ReplayView,
     pub(super) layout_rename: &'a mut Option<super::chrome::LayoutRename>,
     pub(super) layout_delete_confirm: &'a mut Option<crate::layouts::LayoutId>,
@@ -47,36 +33,41 @@ impl WorkspaceBundleAdapter<'_> {
         // those live inside quantick, these are documents the
         // trader owns, can copy, back up and carry to another
         // machine. That is the difference the wording carries.
-        let tab = &self.tabs[self.tabs.active_index()];
-        self.workspace
-            .picker_mut()
-            .show_open_actions(ui, &tab.symbol, tab.flow_pane.state.spec());
+        let tab = &self.arrangement.tabs[self.arrangement.tabs.active_index()];
+        self.arrangement.workspace.picker_mut().show_open_actions(
+            ui,
+            &tab.symbol,
+            tab.flow_pane.state.spec(),
+        );
         // Read off the field, not the filesystem: this body
         // runs every frame the menu is open.
         let mut reopen: Option<std::path::PathBuf> = None;
-        ui.add_enabled_ui(!self.workspace.recent_on_disk().is_empty(), |ui| {
-            ui.menu_button("Open recent", |ui| {
-                for path in self.workspace.recent_on_disk() {
-                    if ui
-                        .button(crate::workspace_bundle::recent_label(path))
-                        // The same warning the bookmark list
-                        // carries: this replaces the cockpit,
-                        // and a trader mid-tape has to read
-                        // that before the click, not after.
-                        .on_hover_text(format!(
-                            "Replaces the cockpit on screen\n{}",
-                            path.display()
-                        ))
-                        .clicked()
-                    {
-                        reopen = Some(path.clone());
-                        ui.close_menu();
+        ui.add_enabled_ui(
+            !self.arrangement.workspace.recent_on_disk().is_empty(),
+            |ui| {
+                ui.menu_button("Open recent", |ui| {
+                    for path in self.arrangement.workspace.recent_on_disk() {
+                        if ui
+                            .button(crate::workspace_bundle::recent_label(path))
+                            // The same warning the bookmark list
+                            // carries: this replaces the cockpit,
+                            // and a trader mid-tape has to read
+                            // that before the click, not after.
+                            .on_hover_text(format!(
+                                "Replaces the cockpit on screen\n{}",
+                                path.display()
+                            ))
+                            .clicked()
+                        {
+                            reopen = Some(path.clone());
+                            ui.close_menu();
+                        }
                     }
-                }
-            })
-            .response
-            .on_disabled_hover_text("No workspace files opened yet");
-        });
+                })
+                .response
+                .on_disabled_hover_text("No workspace files opened yet");
+            },
+        );
         if let Some(path) = reopen {
             self.import_workspace_from(&path);
         }
@@ -94,72 +85,43 @@ impl WorkspaceBundleAdapter<'_> {
     }
 
     fn save_adapter(&mut self) -> super::workspace_save_adapter::WorkspaceSaveAdapter<'_> {
-        let (session, path) = self.workspace.commit_parts();
-        super::workspace_save_adapter::WorkspaceSaveAdapter {
-            arrangement: super::arrangement_adapter::ArrangementRead {
-                tabs: self.tabs,
-                config: self.config,
-                toolrail: self.toolrail,
-                tz: self.tz,
-                dock: self.dock,
-                show_perf: *self.show_perf,
-                record_deals: *self.record_deals,
-                history: self.history,
-                drawing_chrome: self.drawing_chrome,
-            },
-            session,
-            path,
-            replay_view: self.replay_view,
-            toast: self.toast,
-        }
+        let replay_view = self.replay_view;
+        self.arrangement.reborrow().into_save(replay_view)
     }
     fn layout_adapter(&mut self) -> super::layout_wiring::LayoutAdapter<'_> {
         super::layout_wiring::LayoutAdapter {
-            active: self.tabs.active_index(),
-            tabs: self.tabs,
-            indicators: self.indicators,
-            store: self.workspace.layouts_mut(),
-            drawing_chrome: self.drawing_chrome,
-            toast: self.toast,
+            active: self.arrangement.tabs.active_index(),
+            tabs: self.arrangement.tabs,
+            indicators: self.arrangement.indicators,
+            store: self.arrangement.workspace.layouts_mut(),
+            drawing_chrome: self.arrangement.drawing_chrome,
+            toast: self.arrangement.toast,
             rename: self.layout_rename,
             delete_confirm: self.layout_delete_confirm,
         }
     }
-    fn arrangement_adapter(&mut self) -> super::arrangement_adapter::ArrangementAdapter<'_> {
-        super::arrangement_adapter::ArrangementAdapter {
-            tabs: self.tabs,
-            config: self.config,
-            style: self.style,
-            pane_ids: self.pane_ids,
-            workspace: self.workspace,
-            indicators: self.indicators,
-            #[cfg(any(feature = "scenario-harness", test))]
-            harness: self.harness,
-            toolrail: self.toolrail,
-            tz: self.tz,
-            dock: self.dock,
-            show_perf: self.show_perf,
-            record_deals: self.record_deals,
-            history: self.history,
-            drawing_chrome: self.drawing_chrome,
-            toast: self.toast,
-        }
-    }
     fn maintain_chart_layers(&mut self) {
-        let active = self.tabs.active_index();
+        let active = self.arrangement.tabs.active_index();
         crate::chart_layers::maintain(
-            self.workspace,
-            self.tabs.id_at(active),
-            &self.tabs[active].flow_pane,
-            self.style,
+            self.arrangement.workspace,
+            self.arrangement.tabs.id_at(active),
+            &self.arrangement.tabs[active].flow_pane,
+            self.arrangement.style,
         );
     }
     fn restore_chart_layers(&mut self) {
-        let active = self.tabs.active_index();
-        crate::chart_layers::restore(self.workspace, self.tabs, active, self.style);
+        let active = self.arrangement.tabs.active_index();
+        crate::chart_layers::restore(
+            self.arrangement.workspace,
+            self.arrangement.tabs,
+            active,
+            self.arrangement.style,
+        );
     }
     fn note_workspace(&mut self, message: String) {
-        self.toast.note(message, std::time::Instant::now());
+        self.arrangement
+            .toast
+            .note(message, std::time::Instant::now());
     }
     pub(super) fn dispatch(
         &mut self,
@@ -199,7 +161,8 @@ impl WorkspaceBundleAdapter<'_> {
         .and_then(|bundle| crate::workspace_bundle::write(path, &bundle).map(|()| bundle.len()));
         match outcome {
             Ok(stores) => {
-                self.workspace
+                self.arrangement
+                    .workspace
                     .session_mut()
                     .visit(path.to_string_lossy().into_owned());
                 self.refresh_recent_workspaces();
@@ -255,7 +218,8 @@ impl WorkspaceBundleAdapter<'_> {
             Ok(written) => {
                 let stores = written.len();
                 self.reload_cockpit_stores(&written);
-                self.workspace
+                self.arrangement
+                    .workspace
                     .session_mut()
                     .visit(path.to_string_lossy().into_owned());
                 self.refresh_recent_workspaces();
@@ -299,15 +263,15 @@ impl WorkspaceBundleAdapter<'_> {
     /// that restores one at startup — a second, import-only restore path is
     /// how the two would drift.
     fn reload_cockpit_stores(&mut self, imported: &[&str]) {
-        *self.added_symbols = symbols_file::load(self.workspace.symbols_path());
+        *self.added_symbols = symbols_file::load(self.arrangement.workspace.symbols_path());
         *self.drawing_presets = drawings::presets::PresetStore::load_from(
             drawings::presets::PresetStore::default_path(),
         );
         *self.footprint_config =
-            crate::footprint_config::load(self.workspace.footprint_settings_path());
+            crate::footprint_config::load(self.arrangement.workspace.footprint_settings_path());
         self.footprint_settings.reload_presets();
-        self.indicators.indicator_presets =
-            preset_file::PresetStore::load(self.workspace.indicator_presets_path());
+        self.arrangement.indicators.indicator_presets =
+            preset_file::PresetStore::load(self.arrangement.workspace.indicator_presets_path());
 
         // The tab strip first, and *before* the indicators: the restore adds
         // each indicator to whatever pane is focused right now, so the tabs
@@ -315,9 +279,9 @@ impl WorkspaceBundleAdapter<'_> {
         // describes — before a single indicator is added. Getting this order
         // wrong puts a trader's imported indicators on the tab they happened
         // to be looking at, or on its time pane.
-        let workspace =
-            ui_state::load(self.workspace.ui_state_path()).restore(&(*self.config).clone());
-        self.arrangement_adapter().restore_workspace(workspace);
+        let workspace = ui_state::load(self.arrangement.workspace.ui_state_path())
+            .restore(&(*self.arrangement.config).clone());
+        self.arrangement.restore_workspace(workspace);
         self.restore_chart_layers();
 
         // The layouts come last, once the tabs are the imported ones: every
@@ -332,8 +296,9 @@ impl WorkspaceBundleAdapter<'_> {
     /// a drive that is merely unplugged today comes back when it is plugged
     /// in, and only the menu is filtered.
     pub(super) fn refresh_recent_workspaces(&mut self) {
-        let existing = crate::workspace_bundle::existing_recent(self.workspace.session().recent());
-        self.workspace.set_recent_on_disk(existing);
+        let existing =
+            crate::workspace_bundle::existing_recent(self.arrangement.workspace.session().recent());
+        self.arrangement.workspace.set_recent_on_disk(existing);
     }
 
     /// Show the trader where the cockpit is kept, and open it.
@@ -355,5 +320,30 @@ impl WorkspaceBundleAdapter<'_> {
         // other. Best effort — the path is on the status line either way, so
         // a system with no file manager still answers the question.
         crate::paper_trading::reveal_folder(&home);
+    }
+}
+
+impl super::arrangement_adapter::ArrangementAdapter<'_> {
+    /// The same ports for a shorter borrow, so an owner that holds the
+    /// adapter can hand one out without listing its fields again.
+    pub(super) fn reborrow(&mut self) -> super::arrangement_adapter::ArrangementAdapter<'_> {
+        super::arrangement_adapter::ArrangementAdapter {
+            tabs: self.tabs,
+            config: self.config,
+            style: self.style,
+            pane_ids: self.pane_ids,
+            workspace: self.workspace,
+            indicators: self.indicators,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: self.harness,
+            toolrail: self.toolrail,
+            tz: self.tz,
+            dock: self.dock,
+            show_perf: self.show_perf,
+            record_deals: self.record_deals,
+            history: self.history,
+            drawing_chrome: self.drawing_chrome,
+            toast: self.toast,
+        }
     }
 }

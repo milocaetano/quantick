@@ -52,6 +52,22 @@ fn indicator_preview_area(
         .and_then(|pane| pane.frame.chart_area)
 }
 
+#[cfg(test)]
+impl QuantickApp {
+    /// A frame whose tail runs `stages` in the given order: the mutant-order
+    /// proof's door, closed to production callers so the plan's `const`
+    /// validation cannot be bypassed.
+    pub(super) fn draw_frame_test_order(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.draw_frame_with_tail(ctx, now, spawn, stages);
+    }
+}
+
 impl QuantickApp {
     /// One frame of the application: drain, lay out the chrome, draw the
     /// chart.
@@ -69,7 +85,7 @@ impl QuantickApp {
         );
     }
 
-    pub(super) fn draw_frame_with_tail(
+    fn draw_frame_with_tail(
         &mut self,
         ctx: &egui::Context,
         now: Instant,

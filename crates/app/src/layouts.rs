@@ -183,7 +183,7 @@ pub(crate) fn default_path() -> PathBuf {
 /// Parse a layouts file, reporting why it is not one. The gate a bundle
 /// section goes through — see [`crate::workspace_bundle`].
 pub(crate) fn validate(text: &str) -> Result<(), String> {
-    parse(text).map(|_| ())
+    parse(text).map(|_| ()).map_err(|error| error.to_string())
 }
 
 /// What [`load`] found on disk.
@@ -240,7 +240,7 @@ pub(crate) fn load(path: &Path) -> Loaded {
     };
     match parse(&text) {
         Ok(book) => Loaded::Book(book),
-        Err(reason) => refused(reason),
+        Err(reason) => refused(reason.to_string()),
     }
 }
 

@@ -285,25 +285,14 @@ pub(crate) fn declared_names() -> BTreeSet<&'static str> {
         .collect()
 }
 
-/// The `QUANTICK_*` variables set in this environment that no slice declares.
-///
-/// Takes the environment as an iterator rather than reading it, so the test
-/// can exercise the real comparison without touching process state — setting
-/// an environment variable is `unsafe` in this edition and racy under a
-/// threaded test runner.
+/// The `QUANTICK_*` variables set in this environment that no slice declares
+/// and [`NOT_HOOKS`] does not excuse; the comparison is
+/// [`quantick_feed::hooks::undeclared`], with the environment injected.
 pub(crate) fn unknown_hooks<'a>(
     environment: impl Iterator<Item = &'a str>,
     declared: &BTreeSet<&'static str>,
 ) -> Vec<String> {
-    let mut out: Vec<String> = environment
-        .filter(|name| name.starts_with("QUANTICK_"))
-        .filter(|name| !declared.contains(name))
-        .filter(|name| !NOT_HOOKS.iter().any(|(known, _)| known == name))
-        .map(str::to_owned)
-        .collect();
-    out.sort();
-    out.dedup();
-    out
+    quantick_feed::hooks::undeclared(environment, declared, NOT_HOOKS)
 }
 
 /// The authored half, relative to the workspace root.

@@ -69,3 +69,24 @@ macro_rules! declare_hooks {
 }
 
 pub use declare_hooks;
+
+/// The `QUANTICK_*` names in `environment` that nothing declares and no
+/// `exempt` row excuses, sorted and unique. The environment is an iterator
+/// rather than a read, so a test exercises the real comparison without
+/// touching process state (setting a variable is `unsafe` in this edition
+/// and racy under a threaded test runner).
+pub fn undeclared<'a>(
+    environment: impl Iterator<Item = &'a str>,
+    declared: &std::collections::BTreeSet<&'static str>,
+    exempt: &[(&str, &str)],
+) -> Vec<String> {
+    let mut out: Vec<String> = environment
+        .filter(|name| name.starts_with("QUANTICK_"))
+        .filter(|name| !declared.contains(name))
+        .filter(|name| !exempt.iter().any(|(known, _)| known == name))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}

@@ -80,7 +80,7 @@ path. It writes no configuration file, embeds no token and launches nothing.
 From the task checkout, build both executables. In PowerShell:
 
 ```powershell
-cargo build -p quantick-app -p quantick-mcp
+cargo build -p quantick-app -p quantick-mcp --features quantick-app/harness
 & .\target\debug\quantick-mcp.exe setup --client codex --profile observer
 ```
 
@@ -96,7 +96,9 @@ Local agent access**, choose observer and enable only the required permissions:
 `observe.evidence`, and `observe.screenshot`. The `observe` floor is automatic,
 not a selectable checkbox or a token accepted by the scope hook.
 Capture does not require paper, user-text, annotate,
-cockpit or trade grants. For an isolated harness launch, the equivalent is:
+cockpit or trade grants. For an isolated harness launch (an app built with
+`--features harness`; the default binary logs these names as `UNKNOWN_HOOK`
+and runs with saving off), the equivalent is:
 
 ```powershell
 $env:QUANTICK_CONTROL_ACCESS = "1"

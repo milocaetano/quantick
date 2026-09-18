@@ -625,14 +625,14 @@ impl DrawingChromeAsk {
     /// pieces cannot both be right about one row, and dropping the later ask
     /// deterministically beats letting draw order decide in silence.
     /// Conversion is linear: its sole producer must never contribute twice.
+    /// A debug build says so loudly; a release frame keeps the first like
+    /// every other valued ask rather than aborting on the UI thread.
     pub(super) fn merge(&mut self, other: Self) {
-        if let Some(placement) = other.place_quick_range {
-            assert!(
-                self.place_quick_range.is_none(),
-                "one quick-range conversion producer"
-            );
-            self.place_quick_range = Some(placement);
-        }
+        debug_assert!(
+            self.place_quick_range.is_none() || other.place_quick_range.is_none(),
+            "one quick-range conversion producer"
+        );
+        self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self

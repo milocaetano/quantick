@@ -301,27 +301,37 @@ pub(crate) struct AppLaunch {
     pub drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch,
 }
 
+/// The arrangement ports over `$app`'s own fields, borrowed one by one so a
+/// caller can lend a sibling field (the replay view) beside them.
+macro_rules! arrangement_adapter {
+    ($app:expr) => {
+        arrangement_adapter::ArrangementAdapter {
+            tabs: &mut $app.tabs,
+            config: &$app.config,
+            style: &mut $app.style,
+            pane_ids: &mut $app.pane_ids,
+            workspace: &mut $app.workspace,
+            indicators: &mut $app.indicators,
+            #[cfg(any(feature = "scenario-harness", test))]
+            harness: &$app.chrome.harness,
+            toolrail: &mut $app.toolrail,
+            tz: &mut $app.tz,
+            dock: &mut $app.dock,
+            show_perf: &mut $app.health.show_perf,
+            record_deals: &mut $app.chrome.record_deals,
+            history: &mut $app.history,
+            drawing_chrome: &mut $app.drawings.chrome,
+            toast: &mut $app.surfaces.toast,
+        }
+    };
+}
+
 impl QuantickApp {
     pub(crate) fn workspace_bundle_adapter(
         &mut self,
     ) -> workspace_bundle_adapter::WorkspaceBundleAdapter<'_> {
         workspace_bundle_adapter::WorkspaceBundleAdapter {
-            tabs: &mut self.tabs,
-            workspace: &mut self.workspace,
-            indicators: &mut self.indicators,
-            config: &self.config,
-            style: &mut self.style,
-            pane_ids: &mut self.pane_ids,
-            #[cfg(any(feature = "scenario-harness", test))]
-            harness: &self.chrome.harness,
-            toolrail: &mut self.toolrail,
-            tz: &mut self.tz,
-            dock: &mut self.dock,
-            show_perf: &mut self.health.show_perf,
-            record_deals: &mut self.chrome.record_deals,
-            history: &mut self.history,
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
+            arrangement: arrangement_adapter!(self),
             replay_view: &self.replay_view,
             layout_rename: &mut self.chrome.layout_rename,
             layout_delete_confirm: &mut self.chrome.layout_delete_confirm,
@@ -332,24 +342,7 @@ impl QuantickApp {
         }
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {
-        arrangement_adapter::ArrangementAdapter {
-            tabs: &mut self.tabs,
-            config: &self.config,
-            style: &self.style,
-            pane_ids: &mut self.pane_ids,
-            workspace: &mut self.workspace,
-            indicators: &mut self.indicators,
-            #[cfg(any(feature = "scenario-harness", test))]
-            harness: &self.chrome.harness,
-            toolrail: &mut self.toolrail,
-            tz: &mut self.tz,
-            dock: &mut self.dock,
-            show_perf: &mut self.health.show_perf,
-            record_deals: &mut self.chrome.record_deals,
-            history: &mut self.history,
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-        }
+        arrangement_adapter!(self)
     }
     #[cfg(test)]
     pub(crate) fn arrangement_state(&self) -> arrangement_adapter::ArrangementRead<'_> {
@@ -377,24 +370,7 @@ impl QuantickApp {
     pub(crate) fn workspace_save_adapter(
         &mut self,
     ) -> workspace_save_adapter::WorkspaceSaveAdapter<'_> {
-        let (session, path) = self.workspace.commit_parts();
-        workspace_save_adapter::WorkspaceSaveAdapter {
-            arrangement: arrangement_adapter::ArrangementRead {
-                tabs: &self.tabs,
-                config: &self.config,
-                toolrail: &self.toolrail,
-                tz: &self.tz,
-                dock: &self.dock,
-                show_perf: self.health.show_perf,
-                record_deals: self.chrome.record_deals,
-                history: &self.history,
-                drawing_chrome: &self.drawings.chrome,
-            },
-            session,
-            path,
-            replay_view: &self.replay_view,
-            toast: &mut self.surfaces.toast,
-        }
+        arrangement_adapter!(self).into_save(&self.replay_view)
     }
 
     pub(crate) fn layout_state(&self) -> layout_wiring::LayoutRead<'_> {

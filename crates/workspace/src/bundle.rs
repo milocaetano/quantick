@@ -25,14 +25,34 @@ impl Bundle {
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty()
     }
-    pub fn check_version(&self) -> Result<(), String> {
-        if self.version == FORMAT_VERSION {
-            Ok(())
-        } else {
-            Err(format!(
-                "workspace file version {} (this build reads {FORMAT_VERSION})",
-                self.version
-            ))
+}
+
+/// Why one section was refused or could not be written, kept typed so a
+/// headless importer branches on the kind rather than on message text.
+/// The bundle's own version is [`ImportFailure::Version`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionError {
+    /// The text is not a document the store accepts.
+    Malformed(String),
+    /// The host could not stage or install the section's file.
+    Io {
+        kind: std::io::ErrorKind,
+        message: String,
+    },
+}
+impl std::fmt::Display for SectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(message) | Self::Io { message, .. } => f.write_str(message),
+        }
+    }
+}
+impl std::error::Error for SectionError {}
+impl From<std::io::Error> for SectionError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io {
+            kind: error.kind(),
+            message: error.to_string(),
         }
     }
 }
@@ -42,7 +62,7 @@ pub trait BundleStore {
     fn key(&self) -> &str;
     fn included(&self) -> bool;
     fn local_keys(&self) -> &[&str];
-    fn validate_text(&self, text: &str) -> Result<(), String>;
+    fn validate_text(&self, text: &str) -> Result<(), SectionError>;
 }
 
 fn strip_local_keys(value: &mut toml::Value, keys: &[&str]) {
