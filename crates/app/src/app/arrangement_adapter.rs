@@ -247,11 +247,22 @@ impl ArrangementAdapter<'_> {
     /// the indicator worker and book worker handles, whose run loops end when
     /// their command channels disconnect. No joins, no shutdown protocol.
     pub(super) fn close_tab(&mut self, index: usize) {
-        self.tabs.close(
-            index,
-            self.indicators,
-            self.workspace.layouts_mut().session_mut(),
-        );
+        if let Ok(plan) = self.tabs.plan_close(index) {
+            self.close_planned(plan).expect("fresh closing plan");
+        }
+    }
+    /// Land a closing plan; owners beside the host forget the tab before it drops.
+    pub(super) fn close_planned(
+        &mut self,
+        plan: quantick_workspace::arrangement::Transition,
+    ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
+        let closed = self.tabs.close_planned(plan)?;
+        self.indicators.forget_tab(closed.id);
+        let layouts = self.workspace.layouts_mut().session_mut();
+        for (pane, _) in closed.runtime.panes() {
+            layouts.remove_pane(pane.id);
+        }
+        Ok(())
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {
