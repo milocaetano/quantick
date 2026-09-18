@@ -42,17 +42,16 @@ pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod menu_bar;
-mod paper_wiring;
+pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tabs;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
-mod workspace_save;
 mod workspace_save_adapter;
 
 // The tab lifecycle took `saved_context_intervals` with it; `workspace_restore`
-// and `workspace_save` still reach it through `super::`.
+// still reaches it through `super::`.
 use tabs::saved_context_intervals;
 // Named by the paper-trading and drawing tests through `use super::*`, and by
 // nothing in production outside the module that owns them, so the imports are
@@ -393,6 +392,30 @@ impl QuantickApp {
         }
     }
 
+    pub(crate) fn paper_settings(&mut self) -> paper_wiring::PaperSettingsAdapter<'_> {
+        paper_wiring::PaperSettingsAdapter {
+            tabs: &mut self.tabs,
+            workspace: &mut self.workspace,
+        }
+    }
+    pub(crate) fn symbol_catalog(&mut self) -> tabs::SymbolCatalog<'_> {
+        tabs::SymbolCatalog {
+            config: &mut self.config,
+            added: &mut self.added_symbols,
+            path: self.workspace.symbols_path(),
+        }
+    }
+    pub(crate) fn layer_wiring(&mut self) -> chart_layers_wiring::LayerWiring<'_> {
+        chart_layers_wiring::LayerWiring {
+            tabs: &mut self.tabs,
+            workspace: &mut self.workspace,
+            style: &mut self.style,
+            style_revision: &mut self.style_revision,
+            footprint_config: &mut self.footprint_config,
+            footprint_settings: &mut self.surfaces.footprint_settings,
+        }
+    }
+
     pub(crate) fn layout_state(&self) -> layout_wiring::LayoutRead<'_> {
         layout_wiring::LayoutRead {
             tabs: &self.tabs,
@@ -621,15 +644,15 @@ impl QuantickApp {
         app.active_tab_mut().apply_feed_declared_layout(&config);
         // The code's own baseline, and nothing more: what a launch actually
         // opens with is `config/chart-layers.toml`, applied by
-        // `restore_chart_layers` immediately below and shipping the map on.
+        // `LayerWiring::restore` immediately below and shipping the map on.
         // This line is what remains if that config is ever unreadable — a
         // layer nobody requested costing no projection. Capture is already
         // running either way, so it is a display choice and nothing else.
         app.active_tab_mut().tape_mut().set_depth_visible(false);
         // What the user last had on the canvas, applied over those defaults and
         // under the autostart hooks below: an env var is an explicit request
-        // for this run and must still win (see `restore_chart_layers`).
-        app.restore_chart_layers();
+        // for this run and must still win (see `LayerWiring::restore`).
+        app.layer_wiring().restore();
         // And the workspace itself — the tab strip, each tab's canvas, and the
         // chrome around them. After the config defaults (a saved cockpit is
         // the user's own answer to what a feed declares) and before the
@@ -749,13 +772,14 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        self.push_scripted_pointer(raw_input);
+        self.harness
+            .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
         let Some(pane) = self.harness.context_menu() else {
             return;
         };
         // The divider is published by the draw, so the first frame has none:
         // wait for it rather than guess where the tape is.
-        let Some(position) = self.scripted_context_menu_pos(pane) else {
+        let Some(position) = pane.scripted_position(&self.active_tab().flow_pane) else {
             return;
         };
         self.harness.context_menu_pressed(position);

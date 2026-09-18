@@ -671,7 +671,7 @@ fn a_background_tabs_acknowledgement_travels_and_names_its_market() {
         .runtime_mut(background)
         .paper
         .show_toast("SIM: stop filled".to_owned());
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
 
     let toast = app
         .surfaces

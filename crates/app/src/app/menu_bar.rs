@@ -167,7 +167,9 @@ impl QuantickApp {
                 && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
                 && let Err(error) = self.layout_adapter().switch_layout_index(index)
             {
-                self.note_workspace(error.to_string());
+                self.surfaces
+                    .toast
+                    .note(error.to_string(), std::time::Instant::now());
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {

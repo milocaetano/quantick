@@ -534,7 +534,7 @@ fn switch_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
     with_flow_pane(app, |pane, chrome| {
         pane.set_layer_visible(layer, visible, chrome.layers);
     });
-    app.apply_layer_actions();
+    app.layer_wiring().apply_actions();
 }
 
 /// Whether the active tab's flow pane is painting `layer`.

@@ -189,7 +189,7 @@ fn the_heatmap_lamp_reads_the_switch_not_the_capture() {
 fn the_scripted_click_lands_on_the_pane_it_names() {
     let (mut app, _events, _commands, _book) = test_app();
     assert_eq!(
-        app.scripted_context_menu_pos(ContextMenuPane::Tape),
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
         None,
         "nothing has drawn yet, so there is no geometry to click"
     );
@@ -200,12 +200,12 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
         pane.frame.chart_rect = Some(rect);
         pane.frame.lane_divider_x = Some(700.0);
     }
-    let tape = app
-        .scripted_context_menu_pos(ContextMenuPane::Tape)
+    let tape = ContextMenuPane::Tape
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("a drawn tape can be clicked");
     assert!(tape.x > 700.0 && tape.x < 1000.0, "{tape:?}");
-    let chart = app
-        .scripted_context_menu_pos(ContextMenuPane::Chart)
+    let chart = ContextMenuPane::Chart
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("and so can the candles");
     assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
     assert!(
@@ -220,9 +220,13 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
 
     // No lane: the candles still answer, the tape has nothing to open.
     app.active_tab_mut().flow_pane.frame.lane_divider_x = None;
-    assert_eq!(app.scripted_context_menu_pos(ContextMenuPane::Tape), None);
+    assert_eq!(
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
+        None
+    );
     assert!(
-        app.scripted_context_menu_pos(ContextMenuPane::Chart)
+        ContextMenuPane::Chart
+            .scripted_position(&app.active_tab().flow_pane)
             .is_some()
     );
 }
@@ -242,7 +246,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
 
     // No round trip yet: the hook waits rather than seeking an empty
     // ledger, which would photograph nothing it exists to show.
-    app.apply_replay_restart();
+    app.harness.apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.harness.replay_restart_after(),
         Some(1),
@@ -265,7 +269,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(app.active_tab().paper.session_trades().len(), 1);
 
-    app.apply_replay_restart();
+    app.harness.apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.harness.replay_restart_after(),
         None,
@@ -281,7 +285,7 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
 
     // A second frame asks for nothing: an env var is a request for this
     // run, not a standing rule.
-    app.apply_replay_restart();
+    app.harness.apply_replay_restart(&mut app.tabs, &app.config);
     assert!(cmd_rx.try_recv().is_err(), "the seek repeated itself");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -296,7 +300,7 @@ fn the_scripted_replay_restart_waits_for_a_recording() {
     // subject; only what the hook adds after it is.
     while cmd_rx.try_recv().is_ok() {}
     app.harness.arm_replay_restart(1);
-    app.apply_replay_restart();
+    app.harness.apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.harness.replay_restart_after(),
         Some(1),

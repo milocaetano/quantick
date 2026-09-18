@@ -688,7 +688,8 @@ fn select_strategy(
     paper
         .account_mut()
         .set_order_strategies(strategies, input.name.as_deref());
-    app.control_persist_order_strategies();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::OrderStrategies);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
@@ -812,7 +813,8 @@ fn set_risk(
         }
         paper.account_mut().set_capital(declared);
     }
-    app.control_persist_risk_settings();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
@@ -883,7 +885,8 @@ fn set_instrument_money(
         }
     }
     paper.account_mut().set_instrument_money(book);
-    app.control_persist_risk_settings();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)

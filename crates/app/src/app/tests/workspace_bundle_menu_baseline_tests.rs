@@ -133,7 +133,7 @@ fn bundle_menu_baseline_duplicate_opens_preserve_original_channel_and_intent() {
     sender
         .send(Some(output.to_path_buf()))
         .expect("original receiver is still live");
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert!(!app.workspace.picker_open());
     assert!(
         output.is_file(),

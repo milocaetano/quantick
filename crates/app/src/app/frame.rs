@@ -96,7 +96,7 @@ impl QuantickApp {
         // finds absent, and running it first would let a note expire *after*
         // it looked, drawing one frame with an empty lane before the next
         // raise. A shutter timed on the linger catches exactly that frame.
-        self.apply_history_note_hook();
+        self.harness.apply_history_note_hook(&mut self.tabs);
         #[cfg(any(feature = "control-harness", test))]
         if self.control.scenarios.take_enable()
             && let Some(access) = self.control.control_access.as_mut()
@@ -134,11 +134,12 @@ impl QuantickApp {
             access.begin_frame(self, ctx);
             self.control.control_access = Some(access);
         }
-        self.apply_scripted_view();
+        self.harness.apply_scripted_view(&mut self.tabs);
         #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_demo();
-        self.apply_load_older();
-        self.apply_load_older_candles();
+        self.harness.apply_load_older(&mut self.tabs, &self.config);
+        self.harness
+            .apply_load_older_candles(&mut self.tabs, &self.config);
         #[cfg(any(feature = "drawing-harness", test))]
         self.apply_drawing_draft();
         self.apply_venue_history_demo();
@@ -147,7 +148,8 @@ impl QuantickApp {
         #[cfg(any(feature = "drawing-harness", test))]
         self.apply_avwap_demo();
         self.apply_strategy_demo();
-        self.apply_replay_restart();
+        self.harness
+            .apply_replay_restart(&mut self.tabs, &self.config);
         self.chrome.window_startup.apply(ctx);
         self.maybe_emit_summary(now, ctx);
         self.workspace_save_adapter().maintain_workspace(ctx);
@@ -316,8 +318,9 @@ impl QuantickApp {
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
         if let Some(cue) = surfaces.test_alert {
-            let outcome = self.audio.alerts.play(&[cue]);
-            self.report_alert_attempt(outcome);
+            if let Some(note) = self.audio.play(&[cue]) {
+                self.show_agent_toast(note);
+            }
         }
         if let Some(request) = surfaces.arm_strategy {
             let outcome = self
@@ -336,7 +339,7 @@ impl QuantickApp {
             self.apply_market_request(request);
         }
         if let Some(change) = surfaces.footprint {
-            self.apply_footprint_change(change);
+            self.layer_wiring().apply_footprint_change(change);
         }
         if surfaces.undo_drawing {
             let pane = self.drawing_pane_mut();
@@ -357,7 +360,7 @@ impl QuantickApp {
             }
         }
         self.layout_adapter().apply_pending_indicator_state();
-        self.maintain_chart_layers();
+        self.layer_wiring().maintain();
         // This tab's judgement about its own feed, taken once for the frame:
         // the status bar reads it here and the corner reads it below, and two
         // readings a millisecond apart could disagree about whether a budget
@@ -407,7 +410,8 @@ impl QuantickApp {
             replay_view.draw(ctx, tab.replay.as_ref(), &market)
         };
         if let Some(action) = replay_action {
-            self.apply_replay_action(action);
+            let (tab, config) = self.active_with_config();
+            super::replay_and_history::apply_replay_action(tab, config, action);
         }
         // A folder the trader just pointed the browser at is written down on
         // the frame they pointed it, not at exit: "it forgot my folder again"
@@ -482,7 +486,8 @@ impl QuantickApp {
         // trader who opens it and then looks at the ledger has not asked for
         // it to close.
         if self.active_tab_mut().paper.draw_strategy_editor(ctx) {
-            self.persist_order_strategies();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
         if dock_response.restart_book_capture {
             self.active_tab_mut().restart_book_capture();
@@ -490,7 +495,8 @@ impl QuantickApp {
         if let Some(action) = dock_response.replay_action {
             // A click that lost its slot has the trader's next click behind
             // it; only the one-shot hook below cares about the answer.
-            let _ = self.apply_replay_action(action);
+            let (tab, config) = self.active_with_config();
+            let _ = super::replay_and_history::apply_replay_action(tab, config, action);
         }
         // The ledger's jump-to-trade: center the flow pane on the round
         // trip's midpoint, the object manager's own "select and centre".
@@ -538,19 +544,22 @@ impl QuantickApp {
             }
         }
         if dock_response.pick_trades_dir {
-            self.open_trades_dir_picker();
+            self.paper_settings().open_trades_dir_picker();
         }
         if dock_response.order_strategies_changed {
-            self.persist_order_strategies();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
         if dock_response.cmd_trading_changed {
-            self.persist_cmd_trading();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
         }
         if dock_response.risk_settings_changed {
-            self.persist_risk_settings();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
         }
-        self.poll_trades_dir_picker();
-        self.poll_workspace_picker();
+        self.paper_settings().poll_trades_dir_picker();
+        self.workspace_bundle_adapter().poll_picker();
         // The pinned inspector is chrome: declared before the central canvas
         // so the chart pays its width, exactly like the dock.
         if let Some(ask) = self.drawings.draw_pinned_inspector(
@@ -655,7 +664,7 @@ impl QuantickApp {
                 self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
-                self.apply_layer_actions();
+                self.layer_wiring().apply_actions();
                 let tab = self.active_tab();
                 // Each wait on the surface it is about. The panes published
                 // their rects on the draw just above, so these are this
@@ -777,7 +786,9 @@ impl QuantickApp {
         for tab in self.tabs.iter_mut() {
             tab.apply_strategy_cleanup();
         }
-        self.play_pending_alarms();
+        if let Some(note) = self.audio.play_pending(&mut self.tabs) {
+            self.show_agent_toast(note);
+        }
         super::frame_tail::FrameTailOwners {
             tabs: &mut self.tabs,
             config: &self.config,

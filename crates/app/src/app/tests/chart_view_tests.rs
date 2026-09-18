@@ -14,7 +14,8 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     let ctx = egui::Context::default();
     app.harness.arm_pointer(egui::vec2(0.5, 0.5));
     assert_eq!(
-        app.scripted_pointer_pos(),
+        app.harness
+            .scripted_pointer_pos(&app.active_tab().flow_pane),
         None,
         "no draw yet, so no candle area to be a fraction of"
     );
@@ -24,7 +25,10 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
         pane.frame.chart_rect.expect("the canvas laid out"),
         pane.frame.lane_divider_x,
     );
-    let position = app.scripted_pointer_pos().expect("one frame published it");
+    let position = app
+        .harness
+        .scripted_pointer_pos(&app.active_tab().flow_pane)
+        .expect("one frame published it");
     assert!(candles.contains(position), "{position:?} vs {candles:?}");
     assert!((position.x - candles.center().x).abs() < 0.5);
     assert!((position.y - candles.center().y).abs() < 0.5);

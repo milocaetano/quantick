@@ -200,7 +200,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // Whatever startup queued is not what this test is about.
     while cmd_rx.try_recv().is_ok() {}
     app.harness.arm_load_older(2, 3);
-    app.apply_load_older();
+    app.harness.apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "nothing is charted yet, so nothing may be asked for"
@@ -214,7 +214,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // Give up rather than hang a capture run on a bridge that never came:
     // the budget counts down one frame at a time and then the hook is done.
     for _ in 0..3 {
-        app.apply_load_older();
+        app.harness.apply_load_older(&mut app.tabs, &app.config);
     }
     assert_eq!(
         app.harness.load_older_remaining(),
@@ -232,7 +232,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     while cmd_rx.try_recv().is_ok() {}
     app.active_tab_mut().loading.end(LoadingTask::History);
     app.harness.arm_load_older(2, 10);
-    app.apply_load_older();
+    app.harness.apply_load_older(&mut app.tabs, &app.config);
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
         "the first page is asked for"
@@ -246,7 +246,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // One at a time: the feed serves one request per session, so firing
     // the second before the first is answered would have it refused and
     // answered empty.
-    app.apply_load_older();
+    app.harness.apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "a page is still in flight; the hook waits for it"
@@ -254,7 +254,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     assert_eq!(app.harness.load_older_remaining(), Some((1, 10)));
 
     app.active_tab_mut().loading.end(LoadingTask::History);
-    app.apply_load_older();
+    app.harness.apply_load_older(&mut app.tabs, &app.config);
     assert!(matches!(
         cmd_rx.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
@@ -2134,7 +2134,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         "and nothing was persisted — the next launch is unharmed"
     );
     // The same symbol on the feed that *does* own it is still fine.
-    assert!(app.add_symbol("tickmill", "WINQ26").is_ok());
+    assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
 }
 

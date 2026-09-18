@@ -1,25 +1,55 @@
-//! The paper simulator's wiring into the window: where its trades are saved,
-//! what it persists when the trader changes a setting, and how a tab or a
-//! duplicated drawing inherits a strategy.
+//! The paper simulator's settings owner: where its trades are saved and what
+//! is persisted when the trader changes a ticket setting.
 //!
-//! A child of `app` rather than a sibling so it can reach the app's own
-//! fields. Nothing here decides anything about a simulated trade -- that is
-//! [`crate::paper`] and [`crate::paper_account`]; this is only the plumbing
-//! between those and the window that owns them.
+//! Nothing here decides anything about a simulated trade -- that is
+//! [`crate::paper`] and [`crate::paper_account`]. This owner holds the one
+//! rule the window used to spell out four times: a ticket setting is
+//! app-wide, so every tab is told and the sidecar (`paper-state.toml`) is
+//! written, in that order. The window builds a [`PaperSettingsAdapter`] over
+//! the two ports it needs and hands it a message; the adapter never sees the
+//! rest of the app.
 
-use super::QuantickApp;
+use std::path::PathBuf;
 
-impl QuantickApp {
+use super::arrangement_host::ArrangementHost;
+use crate::paper_trading::PaperTrading;
+use crate::workspace_store::WorkspaceStore;
+
+/// One change the ticket, the dock or a capability made to a setting that
+/// every tab shares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaperSettingsChange {
+    /// The cmd-trading modifiers and entry kind.
+    CmdTrading,
+    /// The risk per trade, the declared capital and the instrument money.
+    RiskSettings,
+    /// The named exit strategies, the ticket's selection and the wheel's
+    /// per-instrument step.
+    OrderStrategies,
+}
+
+/// The paper settings' two ports: every tab's simulator, and the store that
+/// knows where trades go and whether a folder dialog is open.
+pub(crate) struct PaperSettingsAdapter<'a> {
+    pub(super) tabs: &'a mut ArrangementHost,
+    pub(super) workspace: &'a mut WorkspaceStore,
+}
+
+impl PaperSettingsAdapter<'_> {
+    fn active(&self) -> &PaperTrading {
+        &self.tabs[self.tabs.active_index()].paper
+    }
+
     /// Ask the operating system for a trades folder, off the UI thread —
     /// the panel's "choose where trades are saved". One dialog at a time.
-    pub(super) fn open_trades_dir_picker(&mut self) {
+    pub(crate) fn open_trades_dir_picker(&mut self) {
         if self.workspace.trades_dir_picker_open() {
             return;
         }
         let (sender, receiver) = std::sync::mpsc::channel();
         // Start where trades actually go right now — under an env override
         // that is the override's folder, not the stored base.
-        let start = self.active_tab().paper.account().trades_dir().to_path_buf();
+        let start = self.active().account().trades_dir().to_path_buf();
         std::thread::Builder::new()
             .name("quantick-trades-dir-picker".into())
             .spawn(move || {
@@ -36,7 +66,7 @@ impl QuantickApp {
     /// Land the picked folder: every tab journals there from now on, and
     /// the choice is remembered across restarts (`paper-state.toml`) —
     /// files already written stay where they are.
-    pub(super) fn poll_trades_dir_picker(&mut self) {
+    pub(crate) fn poll_trades_dir_picker(&mut self) {
         let Some(receiver) = self.workspace.trades_dir_picker() else {
             return;
         };
@@ -44,7 +74,12 @@ impl QuantickApp {
             return;
         };
         self.workspace.close_trades_dir_picker();
-        let Some(dir) = choice else { return };
+        if let Some(dir) = choice {
+            self.set_trades_dir(dir);
+        }
+    }
+
+    fn set_trades_dir(&mut self, dir: PathBuf) {
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
         state.trades_dir = Some(dir.display().to_string());
@@ -57,10 +92,20 @@ impl QuantickApp {
         }
     }
 
-    /// Persist the active tab's cmd-trading settings and fan them out —
-    /// one gesture, one meaning, every tab (the trades-dir rule).
-    pub(super) fn persist_cmd_trading(&mut self) {
-        let settings = self.active_tab().paper.account().cmd_trading();
+    /// Persist the active tab's copy of one shared setting and fan it out —
+    /// one gesture, one meaning, every tab (the trades-dir rule). The same
+    /// call whether a click or a capability changed it, so a named call
+    /// leaves the durable trace a click does.
+    pub(crate) fn persist(&mut self, change: PaperSettingsChange) {
+        match change {
+            PaperSettingsChange::CmdTrading => self.persist_cmd_trading(),
+            PaperSettingsChange::RiskSettings => self.persist_risk_settings(),
+            PaperSettingsChange::OrderStrategies => self.persist_order_strategies(),
+        }
+    }
+
+    fn persist_cmd_trading(&mut self) {
+        let settings = self.active().account().cmd_trading();
         for tab in self.tabs.iter_mut() {
             tab.paper.set_cmd_trading(settings);
         }
@@ -73,27 +118,17 @@ impl QuantickApp {
         crate::paper_state::save(&path, &state);
     }
 
-    /// Save and fan out the strategies after a capability changed them, so a
-    /// named call leaves the same durable trace a click does.
-    pub(crate) fn control_persist_order_strategies(&mut self) {
-        self.persist_order_strategies();
-    }
-
-    /// Save and fan out the risk per trade after a capability changed it.
-    pub(crate) fn control_persist_risk_settings(&mut self) {
-        self.persist_risk_settings();
-    }
-
     /// Persist the risk per trade, the declared capital and the instrument
     /// money, and fan all three out.
     ///
     /// App-wide, like the ticket's other settings: a ceiling a trader sets
     /// in one tab is one they mean everywhere, and what a point of WIN is
     /// worth does not change because a second tab is looking at it.
-    pub(crate) fn persist_risk_settings(&mut self) {
-        let risk = self.active_tab().paper.account().risk_settings().clone();
-        let capital = self.active_tab().paper.account().capital().clone();
-        let book = self.active_tab().paper.account().instrument_money().clone();
+    fn persist_risk_settings(&mut self) {
+        let account = self.active().account();
+        let risk = account.risk_settings().clone();
+        let capital = account.capital().clone();
+        let book = account.instrument_money().clone();
         for tab in self.tabs.iter_mut() {
             tab.paper.account_mut().set_risk_settings(risk.clone());
             tab.paper.account_mut().set_capital(capital.clone());
@@ -113,26 +148,19 @@ impl QuantickApp {
     /// Persist the named exit strategies and the ticket's selection, and fan
     /// them out - app-wide like cmd trading, because a ladder a trader built
     /// in one tab is a ladder they mean everywhere.
-    pub(super) fn persist_order_strategies(&mut self) {
+    fn persist_order_strategies(&mut self) {
         // The wheel's per-instrument step rides with the strategies: both
         // are ticket settings the trader configures once, and both are
         // app-wide rather than per tab.
         let steps: std::collections::BTreeMap<String, String> = self
-            .active_tab()
-            .paper
+            .active()
             .ruler_steps()
             .iter()
             .map(|(symbol, step)| (symbol.clone(), step.normalize().to_string()))
             .collect();
-        let strategies = self
-            .active_tab()
-            .paper
-            .account()
-            .order_strategies()
-            .to_vec();
+        let strategies = self.active().account().order_strategies().to_vec();
         let selected = self
-            .active_tab()
-            .paper
+            .active()
             .account()
             .selected_order_strategy()
             .map(|strategy| strategy.name.clone());

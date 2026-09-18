@@ -159,6 +159,16 @@ impl WorkspaceBundleAdapter<'_> {
     fn note_workspace(&mut self, message: String) {
         self.toast.note(message, std::time::Instant::now());
     }
+    /// Route the file dialog's answer: a chosen path runs the intent the
+    /// dialog was opened for, a lost dialog is reported once.
+    pub(crate) fn poll_picker(&mut self) {
+        use crate::workspace_picker::PickerOutcome;
+        match self.workspace.picker_mut().poll() {
+            PickerOutcome::Idle | PickerOutcome::Cancelled => {}
+            PickerOutcome::Lost => report_picker_lost(self.toast),
+            PickerOutcome::Chosen { intent, path } => self.dispatch(intent, &path),
+        }
+    }
     pub(super) fn dispatch(
         &mut self,
         intent: crate::workspace_picker::WorkspacePick,

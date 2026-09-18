@@ -480,7 +480,7 @@ impl QuantickApp {
             visible,
             &mut self.workspace.layers_mut().actions,
         );
-        self.apply_layer_actions();
+        self.layer_wiring().apply_actions();
     }
 
     /// The drawing tool rail: which tool is armed, and whether it is on

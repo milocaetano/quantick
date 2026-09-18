@@ -707,7 +707,7 @@ impl QuantickApp {
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
         // launch from now on. Same rule the indicator state follows.
-        let staged_layers = self.layer_mask();
+        let staged_layers = self.active_tab().flow_pane.layer_mask(&self.style);
         self.workspace.layers_mut().record(staged_layers);
         // The cockpit rescue ran in `main`, before any store was read. A
         // silent one would look like the app relocated the trader's settings
