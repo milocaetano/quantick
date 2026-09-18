@@ -306,3 +306,67 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
         }
     }
 }
+
+/// #480 A3 on a dense drain, counted rather than timed: walking the
+/// validated source-drain plan allocates nothing, and a drain driven by the
+/// plan does exactly the heap work of the same six stages listed by hand, so
+/// the stage adapter adds no work over the drain it replaced.
+#[test]
+fn the_source_drain_plan_adds_no_heap_work_to_a_dense_drain() {
+    use quantick_chart_interaction::source_drain_plan::{
+        SourceDrainPlan, SourceDrainStage, SourceDrainStage::*,
+    };
+    const BY_HAND: [SourceDrainStage; 6] = [
+        PrepareSymbol,
+        ReceiveAvailable,
+        PublishLatestPartial,
+        LandGap,
+        SettleReanchors,
+        TickDealRecording,
+    ];
+    let before = crate::work_meter::tally();
+    for _ in 0..1_000 {
+        for stage in SourceDrainPlan::stages() {
+            std::hint::black_box(stage);
+        }
+    }
+    let walk = crate::work_meter::tally().since(before);
+    assert_eq!((walk.allocs, walk.reallocs), (0, 0), "{walk:?}");
+
+    let drain_work = |planned: bool| {
+        let (mut app, events, _commands, _book) = test_app();
+        let tab_id = app.tabs.active_id();
+        events
+            .try_send(FeedEvent::Backfilled(prints(1, 8_001)))
+            .unwrap();
+        app.active_tab_mut().drain_feed(tab_id);
+        events
+            .try_send(FeedEvent::LiveBatch(prints(8_001, 8_513)))
+            .unwrap();
+        let slots = app.active_tab().flow_pane.slots();
+        let before = crate::work_meter::tally();
+        if planned {
+            app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+        } else {
+            app.active_tab_mut()
+                .drain_feed_test_order(tab_id, || 0, BY_HAND);
+        }
+        let work = crate::work_meter::tally().since(before);
+        assert!(slots > 80, "a dense series before the live batch");
+        assert!(
+            app.active_tab().flow_pane.slots() > slots,
+            "the live batch landed in the drain being counted"
+        );
+        work
+    };
+    // One discarded run, so a lazily initialised global is not charged to
+    // whichever variant happens to run first.
+    drain_work(true);
+    let planned = drain_work(true);
+    let by_hand = drain_work(false);
+    assert_eq!(
+        (planned.allocs, planned.alloc_bytes, planned.reallocs),
+        (by_hand.allocs, by_hand.alloc_bytes, by_hand.reallocs),
+        "planned {planned:?} against by-hand {by_hand:?}"
+    );
+}
