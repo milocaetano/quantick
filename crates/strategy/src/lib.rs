@@ -58,6 +58,7 @@
 //! come to disagree about the same bar.
 
 mod alarm;
+pub mod anchors;
 mod armed;
 mod force;
 pub mod presets;

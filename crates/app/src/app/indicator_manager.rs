@@ -88,7 +88,7 @@ impl IndicatorState {
     /// Initialize the feature at its existing startup phase: scan, clock, presets.
     pub(super) fn new(first_tab: u64, presets_path: &std::path::Path) -> Self {
         Self {
-            script_library: ScriptLibrary::scan(),
+            script_library: crate::indicators::library::scan(),
             indicator_settings: None,
             indicator_settings_target: TabSlot {
                 tab: first_tab,

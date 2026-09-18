@@ -14,10 +14,14 @@ test-support = ["dep:serde_json"]
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true, optional = true }
+# The envelope watch warns through the same log the window reads.
+tracing = { workspace = true }
 
 [dev-dependencies]
 # The crate's own schedule tests print their observations as JSON too.
 serde_json = { workspace = true }
+# The watch's tests read its warnings back as JSON rows.
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

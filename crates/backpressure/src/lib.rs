@@ -10,4 +10,5 @@
 //! workers without a window would too.
 
 pub mod backlog;
+pub mod envelope;
 pub mod progress;

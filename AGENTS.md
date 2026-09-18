@@ -176,9 +176,9 @@ graph TD
 
 | Crate | What it owns |
 | --- | --- |
-| `backpressure` | Bounded admission between an owner and its worker — park, fold, count, never drop — and the progress counts; told the time. |
+| `backpressure` | Bounded owner-to-worker admission — park, fold, count, never drop — progress counts, live envelope; told the time. |
 | `chart` | Headless chart model: `ChartState` over the engine, price geometry, viewport, candle style, live strip. |
-| `stores` | The cockpit's documents: feed catalogue, symbols, footprint, bubble and indicator presets, window arrangement; the window resolves each path. |
+| `stores` | Cockpit documents: feed catalogue, symbols, footprint, bubble and indicator presets, scripts, arrangement, home, bundle; the window locates each. |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects keep feature owners. |
 | `anchored-studies` | Resumable profile and anchored-average state; the caller schedules and paints. |
@@ -195,7 +195,7 @@ graph TD
 | `sim` | Deterministic paper trading: one `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `paper` | The paper account: orders, risk sizing, the journal, its home and sidecar, report numbers over a `sim` venue. |
 | `civil` | Civil dates and the display offset: one date law for journal, report and chart axis. |
-| `strategy` | The strategy kernel: armed regions, brackets, the armed-instance state machine, its `SignalAlarm`, alarm sounds, the preset bank. |
+| `strategy` | Strategy kernel: armed regions, brackets, armed-instance state machine, its `SignalAlarm`, alarm sounds, preset bank, drawing anchors. |
 | `control` | Transport-neutral contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, `fake` host/client ports. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client; one ownership check serves publisher and client. |
 | `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
