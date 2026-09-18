@@ -693,7 +693,13 @@ impl QuantickApp {
                     ui.separator();
                     // The tab strip shares the menu row: zone 1 already had
                     // the horizontal room, so tabs cost no chrome budget.
-                    tab_action = self.draw_tab_strip(ui);
+                    // Only a chip the trader clicked replaces the File
+                    // menu's choice: the strip answers "nothing" on every
+                    // other frame, and that answer used to erase New Tab…
+                    // and Close Tab before they could run.
+                    if let Some(action) = self.draw_tab_strip(ui) {
+                        tab_action = Some(action);
+                    }
                 });
             });
         if let Some(action) = tab_action {
