@@ -2658,6 +2658,8 @@ mod frame_tail_tests;
 mod worker_summary_bench_tests;
 
 mod source_drain_tests;
+mod stage_order_tests;
+
 fn attach_script_for_test(
     app: &mut QuantickApp,
     name: String,

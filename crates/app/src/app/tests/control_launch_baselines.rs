@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tracing_subscriber::prelude::*;
 
 #[derive(Clone, Default)]
-struct RecordedEvents(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
+pub(super) struct RecordedEvents(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
 
 #[derive(Default)]
 struct Fields(BTreeMap<String, String>);
@@ -226,7 +226,7 @@ fn events(app: &QuantickApp) -> Vec<Value> {
         .collect()
 }
 
-fn hook_bundle(app: &mut QuantickApp, recorded: &RecordedEvents) -> Value {
+pub(super) fn hook_bundle(app: &mut QuantickApp, recorded: &RecordedEvents) -> Value {
     let captures = recorded.named("CONTROL_EVIDENCE_CAPTURED");
     let id = &captures.last().expect("the actual hook logged a capture")["evidence_id"];
     let mut bytes = Vec::new();
