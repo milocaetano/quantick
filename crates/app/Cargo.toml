@@ -26,6 +26,8 @@ quantick-control = { path = "../control" }
 quantick-control-local = { path = "../control-local" }
 # The headless host machinery: projection registry, admission, idempotency, journal.
 quantick-control-host = { path = "../control-host" }
+# What the control plane says: every projection and action shape.
+quantick-control-schema = { path = "../control-schema" }
 # The operability contract: the behaviour table, the matrix, the drift comparison.
 quantick-operability = { path = "../operability" }
 quantick-engine = { path = "../engine" }

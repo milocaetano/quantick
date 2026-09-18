@@ -11,33 +11,24 @@
 //! Rate class: a human or an agent asking for attention. Never per trade,
 //! never per frame.
 
-use std::{
-    collections::BTreeSet,
-    time::{Duration, Instant},
-};
+pub(crate) use quantick_control_schema::notify::*;
+
+use std::time::{Duration, Instant};
 
 use quantick_control::{
     error::{ControlError, codes},
-    id::{
-        CapabilityId, ConfirmationClassId, CostClassId, EffectId, EventKind, ModuleId,
-        PermissionId, RiskFlagId,
-    },
+    id::{EventKind, ModuleId},
     limits::{CONTROL_NOTIFICATION_BURST, CONTROL_NOTIFICATION_RATE_PER_MINUTE},
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
+    registry::RegistryError,
     wire::ActorContext,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use serde_json::{Value, json};
 
 use crate::{app::QuantickApp, metrics};
 
 use super::{
-    actions::{ANNOTATE_PERMISSION_ID, ActionRegistry},
+    actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
     types::known_error,
@@ -51,77 +42,8 @@ use super::{
 /// nothing here is reversible.
 /// Declared by every notification: it takes attention that was somewhere else.
 pub(crate) use quantick_control_host::authority::{
-    CAPABILITY_VERSION, NO_CONFIRMATION_ID, NOTIFY_EFFECT_ID, NOTIFY_MODULE_ID,
-    NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID, UI_BOUNDED_COST_ID, USER_INTERRUPT_RISK_FLAG,
+    NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID,
 };
-/// Declared by the one that also makes noise.
-pub(crate) const AUDIBLE_OUTPUT_RISK_FLAG: &str = "audible_output";
-
-pub(crate) const POPUP_CAPABILITY_ID: &str = "notify.popup";
-pub(crate) const TOAST_CAPABILITY_ID: &str = "notify.toast";
-pub(crate) const SOUND_CAPABILITY_ID: &str = "notify.sound";
-
-pub(crate) const NOTIFICATION_EVENT_KIND: &str = "notify.raised";
-
-/// The longest notification text. A popup is a sentence the trader reads
-/// mid-session, not a report; the report goes in a snapshot.
-pub(crate) const NOTIFICATION_TEXT_MAX_BYTES: usize = 240;
-/// The longest popup title.
-pub(crate) const NOTIFICATION_TITLE_MAX_BYTES: usize = 80;
-
-/// What a notification says. The actor is not part of it: the interface
-/// stamps who asked, so a client cannot sign a popup as the platform.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct NotifyInput {
-    #[schemars(length(min = 1, max = NOTIFICATION_TEXT_MAX_BYTES))]
-    pub message: String,
-    /// A popup's heading. Ignored by the toast and the sound.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(min = 1, max = NOTIFICATION_TITLE_MAX_BYTES))]
-    pub title: Option<String>,
-}
-
-/// What a notification returns: that it was raised, and what the trader will
-/// see attributed to whom.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct NotifyResult {
-    pub channel: String,
-    pub raised: bool,
-    /// What the interface shows, including the attribution it added.
-    pub displayed_text: String,
-    /// Present when the channel cannot reach the trader in this build; the
-    /// call still says so rather than pretending it was heard.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<String>,
-}
-
-/// The trader-visible surface a notification arrives on.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NotifyChannel {
-    Popup,
-    Toast,
-    Sound,
-}
-
-impl NotifyChannel {
-    fn id(self) -> &'static str {
-        match self {
-            Self::Popup => "popup",
-            Self::Toast => "toast",
-            Self::Sound => "sound",
-        }
-    }
-}
-
-/// A popup waiting to be read, owned by the application and drawn by it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AgentPopup {
-    pub title: String,
-    pub message: String,
-    /// Who asked for it, shown in the window's own chrome.
-    pub author: String,
-}
 
 /// Per-client notification budget: stricter than the ordinary request limit
 /// because the cost of exceeding it is a trader who cannot work, not a queue
@@ -208,61 +130,6 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         sound_alert,
     )?;
     Ok(())
-}
-
-fn notify_descriptor(
-    id: &str,
-    title: &str,
-    description: &str,
-    scope: &str,
-    audible: bool,
-) -> CapabilityDescriptor {
-    let mut risk_flags = BTreeSet::from([
-        RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid")
-    ]);
-    if audible {
-        risk_flags
-            .insert(RiskFlagId::new(AUDIBLE_OUTPUT_RISK_FLAG).expect("static risk flag is valid"));
-    }
-    CapabilityDescriptor {
-        id: CapabilityId::new(id).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: title.to_owned(),
-        description: description.to_owned(),
-        module: ModuleId::new(NOTIFY_MODULE_ID).expect("static module ID is valid"),
-        input_schema: generated_schema::<NotifyInput>(),
-        output_schema: generated_schema::<NotifyResult>(),
-        examples: Vec::new(),
-        effect: EffectId::new(NOTIFY_EFFECT_ID).expect("static effect ID is valid"),
-        risk_flags,
-        read_only: false,
-        idempotency: IdempotencyPolicy::Forbidden,
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "A notification changes no state a later call depends on; a stale caller interrupts once and is attributed."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        // Transient and irreversible: it has already been seen or heard.
-        persistence: EffectPersistence::Transient,
-        reversible: false,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: [ANNOTATE_PERMISSION_ID, scope]
-            .into_iter()
-            .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
-            .collect(),
-        preconditions: Vec::new(),
-        confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
 }
 
 fn raise_popup(

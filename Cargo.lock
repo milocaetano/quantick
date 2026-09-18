@@ -2922,6 +2922,7 @@ dependencies = [
  "quantick-control",
  "quantick-control-host",
  "quantick-control-local",
+ "quantick-control-schema",
  "quantick-engine",
  "quantick-feed",
  "quantick-feed-binance",
@@ -3027,6 +3028,27 @@ dependencies = [
  "quantick-control",
  "serde_json",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "quantick-control-schema"
+version = "0.1.0"
+dependencies = [
+ "quantick-control",
+ "quantick-control-host",
+ "quantick-engine",
+ "quantick-feed",
+ "quantick-indicators",
+ "quantick-layers",
+ "quantick-orderbook",
+ "quantick-orderflow",
+ "quantick-pine",
+ "quantick-sim",
+ "quantick-stores",
+ "rust_decimal",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

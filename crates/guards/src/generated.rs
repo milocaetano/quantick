@@ -57,9 +57,11 @@ pub const INVENTORY_PATH: &str = "docs/control-plane/capability-inventory.md";
 
 /// Where the capability identifiers are declared.
 const CONTROL_DIR: &str = "crates/app/src/control";
-/// The host half of the control plane declares capabilities too; it is
-/// scanned like the application, and moving one there creates no exemption.
+/// The host and schema halves of the control plane declare capabilities too;
+/// they are scanned like the application, and moving one there creates no
+/// exemption.
 const CONTROL_HOST_DIR: &str = "crates/control-host/src";
+const CONTROL_SCHEMA_DIR: &str = "crates/control-schema/src";
 /// The extracted contract remains scanned; moving ownership creates no exemption.
 const ANNOTATION_CONTRACT: &str = "crates/control/src/annotation.rs";
 
@@ -315,6 +317,7 @@ pub fn check_file(path: &Path, _contents: &str) -> Vec<Finding> {
         || relative.ends_with(RETRY_MATRIX_PATH)
         || relative.contains(CONTROL_DIR)
         || relative.contains(CONTROL_HOST_DIR)
+        || relative.contains(CONTROL_SCHEMA_DIR)
         || relative.ends_with(ANNOTATION_CONTRACT)
         || relative.ends_with(PROSE_PATH)
         || relative.ends_with(REGISTRY_PATH)
@@ -350,8 +353,8 @@ fn check_inventory(root: &Path, findings: &mut Vec<Finding>) {
             findings.push(Finding::new(
                 format!(
                     "{INVENTORY_PATH}:{line}: `{id}` is documented but no \
-                     `*_CAPABILITY_ID` constant under {CONTROL_DIR}, {CONTROL_HOST_DIR} or \
-                     {ANNOTATION_CONTRACT} declares it"
+                     `*_CAPABILITY_ID` constant under {CONTROL_DIR}, {CONTROL_HOST_DIR}, \
+                     {CONTROL_SCHEMA_DIR} or {ANNOTATION_CONTRACT} declares it"
                 ),
                 REMEDY_REGENERATE,
             ));
@@ -711,6 +714,7 @@ fn declared_capabilities(root: &Path) -> BTreeMap<String, String> {
     let mut files = Vec::new();
     collect_rust_files(&root.join(CONTROL_DIR), &mut files);
     collect_rust_files(&root.join(CONTROL_HOST_DIR), &mut files);
+    collect_rust_files(&root.join(CONTROL_SCHEMA_DIR), &mut files);
     files.push(root.join(ANNOTATION_CONTRACT));
     files.sort();
     for file in files {
@@ -855,10 +859,12 @@ mod tests {
     }
 
     #[test]
-    fn extracted_annotation_contract_and_application_capabilities_are_both_scanned() {
+    fn every_tree_that_declares_capabilities_is_scanned() {
         let declared = declared_capabilities(&workspace_root());
         assert!(declared["annotate.fixed_range_profile.create"].starts_with(ANNOTATION_CONTRACT));
-        assert!(declared["feed.reconnect"].starts_with(CONTROL_DIR));
+        assert!(declared["attention.mark.create"].starts_with(CONTROL_DIR));
+        assert!(declared["feed.reconnect"].starts_with(CONTROL_SCHEMA_DIR));
+        assert!(declared["events.read"].starts_with(CONTROL_HOST_DIR));
         assert!(!declared.contains_key("annotate.created"));
     }
 

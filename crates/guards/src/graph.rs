@@ -73,6 +73,24 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("control", &[]),
     ("control-local", &["control"]),
     ("control-host", &["control", "engine"]),
+    // The wire shapes of every projection and action, over the vocabularies
+    // they describe. The window binds the handlers; this crate binds none.
+    (
+        "control-schema",
+        &[
+            "control",
+            "control-host",
+            "engine",
+            "feed",
+            "indicators",
+            "layers",
+            "orderbook",
+            "orderflow",
+            "pine",
+            "sim",
+            "stores",
+        ],
+    ),
     ("mcp", &["control", "control-local"]),
     // The operability contract is a table and a comparison over it; the
     // interface walks its own registries and hands them in.

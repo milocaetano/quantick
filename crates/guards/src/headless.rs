@@ -85,6 +85,7 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "control",
     "control-local",
     "control-host",
+    "control-schema",
     "operability",
     "indicators",
     "indicator-session",
