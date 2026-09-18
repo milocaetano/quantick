@@ -1,10 +1,7 @@
 # AGENTS.md — quantick for AI agents
 
-Quantick is a real-time alternative-bar charting engine for order flow trading
-(tick / volume / dollar / imbalance bars), written in Rust. One deterministic
-engine feeds the chart, the backtest and the bot.
-
-An agent meets this repository in one of two ways, and they are different jobs:
+Quantick builds real-time alternative bars (tick / volume / dollar / imbalance)
+in Rust. One deterministic engine feeds the chart, backtest and bot.
 
 | | You are… | Start here |
 | --- | --- | --- |
@@ -37,9 +34,8 @@ connection under **Tools → Local agent access** and pick its scopes.
 Then call `quantick_describe` first: with no argument it lists the reachable
 instances; with an `instance_id` it reports the protocol, the effective
 profile and scopes, the registered modules, every capability with its
-availability, the snapshot scopes and the limits. Everything else is
-discoverable from that answer: the adapter hardcodes no vocabulary the running
-instance might not implement.
+availability, snapshot scopes and limits. The adapter discovers vocabulary
+from that response.
 
 ### Profiles
 
@@ -91,16 +87,13 @@ live effective surface.
   canvases report their rectangle in logical points — apply the display scale
   factor yourself before composing them with a screenshot.
 
-The tool-by-tool reference, including how evidence bundles are hashed and what
-they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.md).
+The tool reference, including evidence hashing and limitations, is in [`crates/mcp/README.md`](crates/mcp/README.md).
 
 ---
 
 ## The map
 
-A Cargo workspace under `crates/`. The dependency direction is one-way,
-enforced by `crates/guards/src/graph.rs`; never add a reverse edge.
-An arrow reads *depends on*.
+`crates/` workspace; arrows mean *depends on*. [Graph guard](crates/guards/src/graph.rs) forbids reverse edges.
 
 ```mermaid
 graph TD
@@ -111,6 +104,10 @@ graph TD
     guards["guards<br/>repository guards<br/>no edges either way"]
   end
 
+  app --> anchoredstudies
+  app --> workspace
+  app --> session["indicator-session"]
+  session --> pine & indicators & engine
   app --> pine
   app --> indicators
   app --> strategy
@@ -137,6 +134,8 @@ graph TD
   mcp --> controllocal
   mcp --> control
 
+  anchoredstudies["anchored-studies"] --> engine
+  anchoredstudies --> indicators
   pine["pine<br/>Quantick Pine frontend"] --> indicators
   strategy["strategy<br/>armed regions, alarms"] --> sim
   strategy --> engine
@@ -173,11 +172,14 @@ graph TD
 | --- | --- |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects preserve feature owners. |
+| `anchored-studies` | Resumable profile and anchored-average state; caller owns scheduling and paint. |
+| `workspace` | Layout documents and pane membership transitions. |
 | `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
 | `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline and settled/live heatmap projections. Headless; receives time from its caller. Consumed by the chart, reusable by backtest. |
-| `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
-| `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
+| `indicator-session` | Headless source binding, batches and deltas. |
+| `indicators` | Headless host, `Indicator` commit/preview rollback, incremental `ta.*`, draw objects. |
+| `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes and interpreter; no external dependencies. |
 | `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
 | `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, by-time history reach/campaign and session export. Owns runtimes, threads and clock below `app`. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
@@ -192,11 +194,10 @@ graph TD
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
 | `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies, so asking them costs a second. |
-| `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
+| `app` | Desktop chart (egui), engine consumer and session transport. |
 
 ## The non-negotiable design rules
 
-Named here so an agent reading only this file does not violate one.
 [`CLAUDE.md`](CLAUDE.md) states them and is authoritative; where this summary
 and that file differ, that file wins.
 

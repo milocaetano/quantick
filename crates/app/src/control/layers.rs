@@ -99,14 +99,14 @@ fn read_layer(
 pub(crate) fn snapshot(app: &QuantickApp) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
-    for tab in app.control_tabs() {
+    for (tab_id, tab) in app.control_tabs().iter_with_ids() {
         for (pane, _) in tab.panes() {
             if panes.len() == MAX_SNAPSHOT_PANES {
                 omitted += 1;
                 continue;
             }
             panes.push(PaneLayersSnapshot {
-                tab_id: WireU64::new(tab.id),
+                tab_id: WireU64::new(tab_id),
                 pane_id: WireU64::new(pane.id),
                 layers: pane
                     .layers

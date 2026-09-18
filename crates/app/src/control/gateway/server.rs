@@ -70,7 +70,7 @@ use super::{
 
 mod answer;
 #[cfg(test)]
-pub(super) use answer::AnswerWritten;
+pub(super) use answer::{AnswerBeforeWrite, AnswerWritten};
 use answer::{InFlightId, answer_and_release, send_response};
 
 /// Microseconds spent since `started`, saturating.
@@ -311,6 +311,8 @@ struct ConnectionSlots {
     closed: AtomicBool,
     #[cfg(test)]
     answer_written: Option<AnswerWritten>,
+    #[cfg(test)]
+    answer_before_write: Option<AnswerBeforeWrite>,
 }
 
 impl ConnectionSlots {
@@ -322,6 +324,8 @@ impl ConnectionSlots {
             closed: AtomicBool::new(false),
             #[cfg(test)]
             answer_written: options.answer_written.clone(),
+            #[cfg(test)]
+            answer_before_write: options.answer_before_write.clone(),
         })
     }
 

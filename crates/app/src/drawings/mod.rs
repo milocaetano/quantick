@@ -508,14 +508,11 @@ pub use rectangle::RectanglePayload;
 
 // The profile drawing's payload types, re-exported for `crate::frvp` — the
 // refresh pass that folds engine ladders into the cache the paint reads.
-pub use fixed_range_profile::{FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
+pub use fixed_range_profile::FrvpPayload;
 
 // The anchored VWAP's payload types, re-exported for `crate::avwap` — the
 // refresh pass that replays the indicators-crate kernel into the cache.
-pub use anchored_vwap::{
-    AVWAP_BAND_PAIRS, AVWAP_ROW_WIDTH, AvwapBand, AvwapCache, AvwapCacheKey, AvwapPartialSig,
-    AvwapPayload,
-};
+pub use anchored_vwap::AvwapPayload;
 
 /// One anchor of a drawing.
 ///
@@ -901,6 +898,16 @@ pub(super) fn off_line_by(
     }
     let side = if offset < 0.0 { -1.0 } else { 1.0 };
     cursor + normal * (side * floor_px - offset)
+}
+
+/// Shared honesty fade for marks whose location this series does not prove.
+pub(crate) const CLAMPED_OPACITY: f32 = 0.45;
+pub(crate) fn painted_color(drawing: &Drawing) -> egui::Color32 {
+    if drawing.off_series || drawing.foreign_market {
+        drawing.style.color.gamma_multiply(CLAMPED_OPACITY)
+    } else {
+        drawing.style.color
+    }
 }
 
 #[cfg(test)]

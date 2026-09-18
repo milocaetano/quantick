@@ -1,11 +1,9 @@
-//! Where every `QUANTICK_*` launch hook is applied.
+//! Legacy launch appliers and the phase boundary for captured owner inputs.
 //!
-//! One place, so the ui-harness has an address: this module is the
-//! application point for every launch hook `.claude/skills/ui-harness`
-//! documents. A hook is *read* here and applied to the built window, after
-//! the constructor has assembled it and before the first frame. Five of the
-//! drawing chrome's own live with the fields they set and are called from
-//! [`apply_tape_hooks`]; the rest are here in full.
+//! Ordinary startup inputs are captured by the executable. Drawing scenarios
+//! are captured there too and consumed by their owner in `apply_tape_hooks`.
+//! The remaining legacy hooks below still read and apply their own inputs
+//! after workspace restoration and before the first frame.
 //!
 //! **The order is the contract.** These are not independent switches applied
 //! in any convenient sequence -- several are read at one point precisely
@@ -31,23 +29,30 @@
 //! the window's definition and nothing else.
 
 use crate::dock::DockTab;
-use crate::drawings;
 use crate::indicator_worker::IndicatorSource;
 use crate::indicators::state_file::SavedKind;
 use crate::tab::CanvasLayout;
-use crate::toolrail::{Tool, ToolboxDock};
 use quantick_feed::history_reach;
 
 use super::{AUTOSTART_NATIVES, QuantickApp, parse_tape_window};
 
 impl QuantickApp {
-    /// Apply every launch hook to the built window, in the order the module's
-    /// doc comment fixes. Called from `new_with_workspace` once the window is
-    /// assembled and the saved workspace restored.
-    pub(super) fn apply_launch_hooks(&mut self) {
+    /// Apply remaining legacy hooks and captured rail inputs in the order
+    /// fixed by this module. Called from `new_with_workspace` once the window
+    /// is assembled and the saved workspace restored.
+    pub(super) fn apply_launch_hooks(
+        &mut self,
+        #[cfg(any(feature = "control-harness", test))]
+        control_launch: super::control_host::ControlLaunch,
+        #[cfg(any(feature = "drawing-harness", test))] rail_launch: crate::toolrail::ToolRailLaunch,
+    ) {
         self.apply_book_and_strip_hooks();
-        self.apply_control_hooks();
-        self.apply_rail_hooks();
+        #[cfg(any(feature = "control-harness", test))]
+        self.control.apply_launch(control_launch);
+        #[cfg(any(feature = "drawing-harness", test))]
+        if self.toolrail.apply_launch(rail_launch).favorites_staged {
+            self.workspace.session_mut().stage_favorites();
+        }
         self.apply_history_hooks();
         self.apply_tape_hooks();
         self.apply_indicator_hooks();
@@ -71,124 +76,6 @@ impl QuantickApp {
                 true,
                 &mut Default::default(),
             );
-        }
-    }
-
-    /// The control plane: the panel, the grant, and the four staged acts an
-    /// operator other than the trader performs.
-    fn apply_control_hooks(&mut self) {
-        // Local agent access, reachable without a click: the panel through the
-        // Tools menu entry's own function, and the enable action through the
-        // panel button's own function on the first frame — one path for the
-        // human, the hook and any later operator. Enabling publishes a real
-        // descriptor in the private runtime directory, removed on a clean exit.
-        if std::env::var("QUANTICK_CONTROL_PANEL").is_ok_and(|value| value == "1")
-            && let Some(access) = self.control.control_access.as_mut()
-        {
-            access.open_panel();
-        }
-        // Which scopes the next connection is granted, by ID — the panel's
-        // own checkboxes without a hand on the mouse. `annotate` grants the
-        // whole annotate tier (the profile follows the scopes), and any
-        // comma-separated list of registered permission IDs is honoured, so a
-        // scripted run can reproduce exactly the grant a trader would tick.
-        if let Ok(scopes) = std::env::var("QUANTICK_CONTROL_SCOPES")
-            && let Some(access) = self.control.control_access.as_mut()
-            && let Err(error) = access.configure_scopes(&scopes)
-        {
-            {
-                tracing::warn!(
-                    target: "quantick::control",
-                    event_code = "CONTROL_SCOPE_HOOK_REFUSED",
-                    error = %error,
-                    "QUANTICK_CONTROL_SCOPES named something this build does not register"
-                );
-            }
-        }
-        self.control.pending_control_access_enable =
-            std::env::var("QUANTICK_CONTROL_ACCESS").is_ok_and(|value| value == "1");
-        // A mark from a launch: `1` marks with no note, anything else is the
-        // note. It goes through the same action the hotkey calls.
-        self.control.pending_control_mark = std::env::var("QUANTICK_CONTROL_MARK")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| if value == "1" { String::new() } else { value });
-        // An assistant's own object and an assistant's own interruption, from
-        // a launch: the surfaces that say *who* acted cannot be photographed
-        // without something an operator other than the trader put there.
-        // One evidence bundle from a launch, through the same read a client
-        // calls: the capture a validation run asserts against, and the
-        // screenshot notice a capture run photographs.
-        self.control.pending_control_evidence = std::env::var("QUANTICK_CONTROL_EVIDENCE")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        self.control.pending_control_annotation = std::env::var("QUANTICK_CONTROL_ANNOTATE")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        self.control.pending_control_notification = std::env::var("QUANTICK_CONTROL_NOTIFY")
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-    }
-
-    /// The drawing toolbar: the armed tool, the magnet, the favourites, and
-    /// where the toolbox sits.
-    fn apply_rail_hooks(&mut self) {
-        // Drawing-toolbar hooks, so a validation run reaches every new
-        // surface without a click (`.claude/skills/ui-harness`).
-        if let Ok(id) = std::env::var("QUANTICK_DRAWING_TOOL")
-            && let Some(tool) = drawings::DRAWING_TOOLS
-                .into_iter()
-                .find(|tool| tool.id() == id.trim())
-        {
-            self.toolrail.arm(Tool::Drawing(tool));
-        }
-        if std::env::var("QUANTICK_DRAWING_MAGNET").is_ok_and(|value| value == "1") {
-            self.toolrail.set_magnet(true);
-        }
-        // Pinned favorites by tool id, comma-separated — the same restore
-        // path the workspace file takes, so the hook cannot drift from it.
-        if let Ok(ids) = std::env::var("QUANTICK_TOOL_FAVORITES") {
-            let ids: Vec<String> = ids
-                .split(',')
-                .map(|id| id.trim().to_owned())
-                .filter(|id| !id.is_empty())
-                .collect();
-            self.toolrail.set_favorites(&ids);
-            // A staged rail, so a star toggled during the run stays in the run.
-            self.workspace.session_mut().stage_favorites();
-        }
-        // Dock the rail against a named edge, so a validation run can shoot
-        // the horizontal band without editing the workspace file.
-        if let Ok(edge) = std::env::var("QUANTICK_TOOLBOX_DOCK") {
-            let dock = match edge.trim() {
-                "left" => Some(ToolboxDock::Left),
-                "top" => Some(ToolboxDock::Top),
-                "bottom" => Some(ToolboxDock::Bottom),
-                _ => None,
-            };
-            if let Some(dock) = dock {
-                self.toolrail.set_dock(dock);
-            }
-        }
-        // Park the scrolling tool band mid-travel. Only the middle of the
-        // run shows both chevrons live at once, and a screenshot cannot
-        // click an arrow to get there.
-        // Nonsense is refused rather than guessed, like the dock above: a
-        // typo that silently parked the band at zero would photograph the
-        // wrong state and call it the right one.
-        if let Ok(offset) = std::env::var("QUANTICK_TOOLBAR_SCROLL") {
-            let parked = match offset.trim() {
-                "end" => Some(f32::INFINITY),
-                other => other.parse::<f32>().ok().filter(|at| at.is_finite()),
-            };
-            if let Some(parked) = parked {
-                self.toolrail.set_band_offset(parked);
-            }
-        }
-        // Open a family flyout on the first frame — the star column lives
-        // there, and a screenshot cannot click a caret.
-        if let Ok(family_id) = std::env::var("QUANTICK_TOOLBOX_FLYOUT") {
-            self.toolrail.request_flyout(family_id.trim().to_owned());
         }
     }
 
@@ -263,12 +150,13 @@ impl QuantickApp {
     /// The tape and everything drawn on it: the drawing chrome's own five, the
     /// aggression layer, the lanes, the window, the footprint and the budgets.
     fn apply_tape_hooks(&mut self) {
-        // The drawing chrome's five hooks, read here rather than on the first
+        // Captured drawing scenarios apply here rather than on the first
         // drawn frame: the demo appliers run earlier in that frame and ask
         // whether the inspector is open, so a hook another hook depends on has
         // to be in place before any of them. They live with the fields they
         // set — see `surfaces::drawing_chrome::apply_launch_hooks`.
-        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.surfaces.drawing_chrome);
+        #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
+        crate::surfaces::drawing_chrome::apply_launch_hooks(&mut self.drawings.chrome);
 
         // Same convenience for the aggression layer (bubbles + the live
         // column's footprint). Same code path as the toolbar toggle.
@@ -381,7 +269,7 @@ impl QuantickApp {
             && let Ok(budget) = value.trim().parse::<usize>()
             && budget > 0
         {
-            for tab in &mut self.tabs {
+            for tab in self.tabs.iter_mut() {
                 tab.tape_mut().set_primitive_budget(budget);
             }
         }
@@ -397,7 +285,7 @@ impl QuantickApp {
             && let Ok(after_ms) = value.trim().parse::<i64>()
             && after_ms >= 0
         {
-            for tab in &mut self.tabs {
+            for tab in self.tabs.iter_mut() {
                 tab.tape_mut().set_starve_tape_after_ms(after_ms);
             }
         }
@@ -420,10 +308,13 @@ impl QuantickApp {
         // The folded legend, reachable from a clean launch: without it the
         // collapsed state is un-photographable by an agent, and a surface no
         // harness can reach is a surface no visual QA covers. Goes through
-        // `set_focused_legend_collapsed`, the same call the chevron and the
+        // `IndicatorState::set_legend_collapsed`, the same call the chevron and the
         // menu entry make — never a field poked from the side.
         if std::env::var("QUANTICK_LEGEND_COLLAPSED").is_ok_and(|value| value == "1") {
-            self.set_focused_legend_collapsed(true);
+            super::indicator_manager::IndicatorState::set_legend_collapsed(
+                self.focused_pane_mut(),
+                true,
+            );
         }
     }
 
@@ -432,17 +323,21 @@ impl QuantickApp {
     fn apply_layout_hooks(&mut self) {
         // Put the active layout on the first tab's panes before any autostart
         // hook: the file is what the user actually had open.
-        self.seed_new_panes();
+        self.layout_adapter().seed_new_panes();
         // The layout strip's hooks (`ui-harness`): open on a named layout,
         // creating it when the file has none by that name, and open the
         // rename box on the active one.
         if let Ok(name) = std::env::var("QUANTICK_LAYOUT_TAB")
             && let Some(name) = crate::layouts::clean_name(&name)
         {
-            let wanted = self.layouts().by_name(&name).map(|layout| layout.id);
+            let wanted = self
+                .layout_state()
+                .layouts()
+                .by_name(&name)
+                .map(|layout| layout.id);
             let outcome = match wanted {
-                Some(id) => self.switch_layout(id).map(|_| id),
-                None => self.create_layout(Some(&name)),
+                Some(id) => self.layout_adapter().switch_layout(id).map(|_| id),
+                None => self.layout_adapter().create_layout(Some(&name)),
             };
             if let Err(error) = outcome {
                 tracing::warn!(
@@ -460,15 +355,16 @@ impl QuantickApp {
         // a capture of two charts on two layouts side by side. Names the book
         // lacks are created empty; an empty entry leaves that pane alone.
         if let Ok(names) = std::env::var("QUANTICK_PANE_LAYOUTS") {
-            self.apply_pane_layouts_hook(&names);
+            self.layout_adapter().apply_pane_layouts_hook(&names);
         }
         if std::env::var("QUANTICK_LAYOUT_RENAME").is_ok_and(|value| value == "1") {
-            let active = self.focused_pane_layout();
-            self.begin_layout_rename(active);
+            let active = self.layout_state().focused_pane_layout();
+            self.layout_adapter().begin_layout_rename(active);
         }
         if std::env::var("QUANTICK_LAYOUT_DELETE").is_ok_and(|value| value == "1") {
-            let active = self.focused_pane_layout();
-            self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+            let active = self.layout_state().focused_pane_layout();
+            self.layout_adapter()
+                .apply_strip_action(crate::layout_strip::StripAction::Delete(active));
         }
         // Scripted validation runs can open with library scripts loaded:
         // a comma-separated list of script names, each through the same
@@ -491,17 +387,18 @@ impl QuantickApp {
                         // something, which the rules forbid. The natives hook
                         // above never registers a kind, so it is already inert.
                         let (tab, side) = {
+                            let tab_id = self.tabs.active_id();
                             let tab = self.active_tab();
-                            (tab.id, tab.focused_side())
+                            (tab_id, tab.focused_side())
                         };
-                        self.add_indicator_at(
+                        self.layout_adapter().add_indicator_at(
                             tab,
                             side,
                             &SavedKind::Script {
                                 name: name.to_owned(),
                             },
                         );
-                        self.forget_last_indicator_state_change();
+                        self.indicators.forget_last_indicator_state_change();
                     }
                     None => tracing::warn!(
                         target: "quantick::app",
@@ -791,7 +688,7 @@ impl QuantickApp {
         // exactly as the entry does — a hook that fakes its surface proves
         // nothing — so point `QUANTICK_UI_STATE` at a scratchpad first.
         if std::env::var("QUANTICK_WORKSPACE_SAVE").is_ok_and(|value| value == "1") {
-            self.save_workspace("autostart");
+            self.workspace_save_adapter().save_workspace("autostart");
         }
         // The three file entries, reachable with no click for the same reason
         // (`.claude/skills/ui-harness`). Each runs the menu entry's own code
@@ -800,10 +697,12 @@ impl QuantickApp {
         // write and really replace the cockpit, so point `QUANTICK_UI_STATE`
         // and its sibling stores at scratchpad files first.
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_EXPORT") {
-            self.export_workspace_to(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .export_workspace_to(std::path::Path::new(&path));
         }
         if let Ok(path) = std::env::var("QUANTICK_WORKSPACE_IMPORT") {
-            self.import_workspace_from(std::path::Path::new(&path));
+            self.workspace_bundle_adapter()
+                .import_workspace_from(std::path::Path::new(&path));
         }
         // An env var is not a user edit: what the autostart hooks switched on
         // must not be written back as though the user had asked for it every
@@ -826,7 +725,8 @@ impl QuantickApp {
         // second and the message is gone eight seconds later, so a capture
         // run photographs an empty lane and cannot tell that from a defect.
         if std::env::var("QUANTICK_TOAST").is_ok_and(|value| value == "paper") {
-            self.tabs[0]
+            self.tabs
+                .runtime_mut(0)
                 .paper
                 .show_toast("SIM: stop filled at 169 790 — flat.".to_owned());
         }
@@ -837,16 +737,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_BOOK_AUTOSTART",
     "QUANTICK_BUBBLES_AUTOSTART",
     "QUANTICK_BUBBLE_BUDGET",
-    "QUANTICK_CONTROL_ACCESS",
-    "QUANTICK_CONTROL_ANNOTATE",
-    "QUANTICK_CONTROL_EVIDENCE",
-    "QUANTICK_CONTROL_MARK",
-    "QUANTICK_CONTROL_NOTIFY",
-    "QUANTICK_CONTROL_PANEL",
-    "QUANTICK_CONTROL_SCOPES",
     "QUANTICK_DOCK_TAB",
-    "QUANTICK_DRAWING_MAGNET",
-    "QUANTICK_DRAWING_TOOL",
     "QUANTICK_FOOTPRINT_STYLE",
     "QUANTICK_HISTORY_REACH",
     "QUANTICK_HISTORY_REACH_SPAN_MINUTES",
@@ -876,10 +767,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_TAPE_LAYERS",
     "QUANTICK_TAPE_STARVE_AFTER_MS",
     "QUANTICK_TAPE_WINDOW",
-    "QUANTICK_TOOLBAR_SCROLL",
-    "QUANTICK_TOOLBOX_DOCK",
-    "QUANTICK_TOOLBOX_FLYOUT",
-    "QUANTICK_TOOL_FAVORITES",
     "QUANTICK_VENUE_LEAD_IN",
     "QUANTICK_WORKSPACE_EXPORT",
     "QUANTICK_WORKSPACE_IMPORT",

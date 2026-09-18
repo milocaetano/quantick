@@ -306,9 +306,9 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// revision that never moves while the answer underneath it changed.
 fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
     app.control_tabs()
-        .iter()
-        .map(|tab| AnalysisRevisionKey {
-            tab_id: tab.id,
+        .iter_with_ids()
+        .map(|(tab_id, tab)| AnalysisRevisionKey {
+            tab_id,
             panes: tab
                 .panes()
                 .map(|(pane, _side)| PaneAnalysisRevisionKey {
@@ -405,9 +405,9 @@ fn indicators_snapshot(app: &QuantickApp) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabIndicatorsSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabIndicatorsSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| pane_indicators(pane, side))
@@ -540,9 +540,9 @@ fn drawings_snapshot(app: &QuantickApp) -> DrawingsSnapshot {
     DrawingsSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| TabDrawingsSnapshot {
-                tab_id: WireU64::new(tab.id),
+            .iter_with_ids()
+            .map(|(tab_id, tab)| TabDrawingsSnapshot {
+                tab_id: WireU64::new(tab_id),
                 panes: tab
                     .panes()
                     .map(|(pane, side)| pane_drawings(pane, side))

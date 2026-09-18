@@ -1,7 +1,7 @@
 //! Real gateway + real chart rendering; no adapter-specific layer vocabulary.
 use super::*;
 fn layer_input(app: &QuantickApp, id: &str, visible: bool) -> Value {
-    json!({ "tab_id": app.active_tab().id.to_string(), "pane_id": app.active_tab().flow_pane.id.to_string(), "layer_id": id, "visible": visible })
+    json!({ "tab_id": app.tabs.active_id().to_string(), "pane_id": app.active_tab().flow_pane.id.to_string(), "layer_id": id, "visible": visible })
 }
 fn snapshot(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
     let (response, _) = unkeyed_call(
@@ -81,14 +81,15 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
     let (mut app, _commands) = app_with_history(4);
     // More panes than the snapshot budget, using disconnected in-memory feeds.
     for id in 2..=66 {
-        let (mut other, _, _, _) = test_app();
-        let mut tab = other.tabs.pop().unwrap();
-        tab.id = id;
+        let (other, _, _, _) = test_app();
+        let mut tab = other.tabs.into_single_runtime();
+
         tab.flow_pane.id = id + 1000;
-        app.tabs.push(tab);
+        let opening = app.tabs.plan_open();
+        app.tabs.append(opening, tab);
     }
     let target = app.tabs.last().unwrap();
-    let tab_id = target.id.to_string();
+    let tab_id = app.tabs.id_at(app.tabs.len() - 1).to_string();
     let pane_id = target.flow_pane.id.to_string();
     let visible = !target
         .flow_pane

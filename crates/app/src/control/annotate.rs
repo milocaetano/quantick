@@ -462,7 +462,7 @@ fn remove_annotation(
         })
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")));
     };
-    let tab_id = app.control_tabs()[tab_index].id;
+    let tab_id = app.control_tabs().id_at(tab_index);
     let result = RemoveResult {
         annotation_id: input.annotation_id,
         tab_id: WireU64::new(tab_id),
@@ -520,13 +520,11 @@ fn resolve_target(
     let active = app.control_active_tab_index().min(tabs.len() - 1);
     let tab_index = match target.and_then(|target| target.tab_id) {
         None => active,
-        Some(tab_id) => tabs
-            .iter()
-            .position(|tab| tab.id == tab_id.get())
-            .ok_or_else(|| {
-                ControlError::invalid_request(format!("no open tab has id {}", tab_id.get()))
-            })?,
+        Some(tab_id) => tabs.position(tab_id.get()).ok_or_else(|| {
+            ControlError::invalid_request(format!("no open tab has id {}", tab_id.get()))
+        })?,
     };
+    let tab_id = tabs.id_at(tab_index);
     let tab = &tabs[tab_index];
     let side = match target.and_then(|target| target.pane_side) {
         None => tab.drawing_side(),
@@ -544,7 +542,7 @@ fn resolve_target(
             crate::pane::PaneSide::Time(slot)
         }
     };
-    Ok((tab.id, side))
+    Ok((tab_id, side))
 }
 
 fn control_pane_mut(
@@ -554,8 +552,7 @@ fn control_pane_mut(
 ) -> Result<&mut ChartPane, ControlError> {
     let index = app
         .control_tabs()
-        .iter()
-        .position(|tab| tab.id == tab_id)
+        .position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
     Ok(app.control_pane_mut(index, side))
 }

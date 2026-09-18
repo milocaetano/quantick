@@ -108,7 +108,7 @@ impl QuantickApp {
             // Frames and the trade rate are the window's; every market figure
             // below is the *active* tab's, which is what is on screen.
             tabs = self.tabs.len(),
-            tab = self.active_tab().id,
+            tab = self.tabs.active_id(),
             fps = self.health.frames.fps().unwrap_or(0.0) as i64,
             frame_avg_ms = avg,
             frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),
@@ -373,3 +373,32 @@ impl QuantickApp {
 
 mod envelope;
 mod worker_diagnostics;
+
+pub(super) fn emit_style_changed(
+    style: &crate::style::ChartStyle,
+    revision: u64,
+    applied_preset: Option<CandlePreset>,
+) {
+    let candles = &style.candles;
+    let preset = applied_preset
+        .or_else(|| CandlePreset::detect(candles))
+        .map_or("custom", CandlePreset::log_value);
+    tracing::info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "CANDLE_STYLE_CHANGED",
+        revision = revision,
+        preset,
+        body_mode = ?candles.body_mode,
+        fill_opacity = candles.fill_opacity,
+        outline_opacity = candles.outline_opacity,
+        outline_width_px = candles.outline_width,
+        body_width_fraction = candles.body_width_frac,
+        wick_mode = ?candles.wick_color_mode,
+        wick_width_px = candles.wick_width,
+        chart_background_enabled = style.canvas.background_enabled,
+        chart_grid_enabled = style.canvas.grid_enabled,
+        action = "redraw_only",
+        "candle appearance changed"
+    );
+}

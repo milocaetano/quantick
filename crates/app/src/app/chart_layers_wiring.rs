@@ -7,6 +7,7 @@
 //! window's side of the wire, and one name for both would make the import
 //! at the top of `app.rs` ambiguous to a reader.
 
+#[cfg(test)]
 use std::time::Instant;
 
 use crate::chart_layers;
@@ -28,7 +29,9 @@ impl QuantickApp {
             self.style_revision = self.style_revision.saturating_add(1);
         }
         if actions.indicators_changed {
-            self.mark_indicator_state_dirty();
+            let target = (self.tabs.active_id(), self.active_tab().focused_side());
+            self.layout_adapter()
+                .note_indicator_edit_at(target.0, target.1);
         }
         if actions.footprint_changed {
             crate::footprint_config::save(
@@ -77,36 +80,9 @@ impl QuantickApp {
     /// them in turn would look like it showed them all and would in fact
     /// show whichever `tabs.iter()` reached last, which is tab order deciding
     /// in silence.
+    #[cfg(test)]
     pub(super) fn settle_paper_panels(&mut self, now: Instant) {
-        let Self {
-            tabs,
-            active_tab,
-            surfaces,
-            ..
-        } = self;
-        let mut watched = None;
-        let mut background = None;
-        for (index, tab) in tabs.iter_mut().enumerate() {
-            tab.paper.settle();
-            let Some(message) = tab.paper.take_toast() else {
-                continue;
-            };
-            if index == *active_tab {
-                watched = Some(message);
-            } else if background.is_none() {
-                // The interpunct is the window's own separator — the status
-                // bar, the tape's axis caption and the layout strip all use
-                // it, and the messages themselves already carry a colon
-                // (`SIM: …`). A second one would read as two labels.
-                background = Some(format!("{} · {message}", tab.symbol));
-            }
-        }
-        if let Some(message) = background {
-            surfaces.toast.note(message, now);
-        }
-        if let Some(message) = watched {
-            surfaces.toast.note(message, now);
-        }
+        super::frame_tail::settle_paper_panels(&mut self.tabs, &mut self.surfaces.toast, now);
     }
 
     /// Apply what the footprint settings window settled on.
@@ -135,22 +111,24 @@ impl QuantickApp {
     ///
     /// Read off the active tab's flow pane: the file records the canvas
     /// quantick is built around, the same scope the indicator state file has
-    /// (see [`Self::maintain_indicator_state`]). A tab's second pane opens
+    /// (see [`Self::apply_pending_indicator_state`]). A tab's second pane opens
     /// matching it and is in-session from there.
     pub(super) fn layer_mask(&self) -> u32 {
         self.active_tab().flow_pane.layer_mask(&self.style)
     }
 
     pub(super) fn maintain_chart_layers(&mut self) {
-        let tab = &self.tabs[self.active_tab];
-        chart_layers::maintain(&mut self.workspace, tab.id, &tab.flow_pane, &self.style);
+        let tab_id = self.tabs.id_at(self.tabs.active_index());
+        let tab = &self.tabs[self.tabs.active_index()];
+        chart_layers::maintain(&mut self.workspace, tab_id, &tab.flow_pane, &self.style);
     }
 
     pub(super) fn restore_chart_layers(&mut self) {
+        let active_index = self.tabs.active_index();
         chart_layers::restore(
             &mut self.workspace,
             &mut self.tabs,
-            self.active_tab,
+            active_index,
             &mut self.style,
         );
     }

@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::symbols_file::AddedSymbols;
 use quantick_feed::history_reach;
@@ -51,48 +51,7 @@ pub const DEFAULT_SYMBOL_ENV: &str = "QUANTICK_DEFAULT_SYMBOL";
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
 
-/// The canvas layout a feed declares its tabs open on (`default_layout` in
-/// the TOML), named for what each layout shows.
-///
-/// A config-side twin of `crate::tab::CanvasLayout` rather than that enum
-/// itself, so the TOML vocabulary — part of the user-facing config contract —
-/// cannot drift when the canvas grows a layout a config should not name.
-/// Serialized as well as deserialized: the saved workspace
-/// ([`crate::ui_state`]) writes a canvas layout back out, and it must speak
-/// the vocabulary the config reads — one name for one layout, in one place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-pub enum DeclaredLayout {
-    /// The flow pane alone — the factory default.
-    #[serde(rename = "flow")]
-    Flow,
-    /// A full-window timeframe chart.
-    #[serde(rename = "time")]
-    Time,
-    /// Timeframe left, flow right, on the draggable divider.
-    #[serde(rename = "time+flow")]
-    TimeAndFlow,
-    /// Two timeframe charts stacked left, flow right.
-    #[serde(rename = "time+time+flow")]
-    TimeTimeAndFlow,
-}
-
-impl DeclaredLayout {
-    /// Parse the same names the serde renames above accept, for callers
-    /// outside serde (the `QUANTICK_LAYOUT` env hook). One vocabulary, one
-    /// place: a name added here must be added to the renames, and the
-    /// `layout_names_agree_between_serde_and_parse` test holds the two
-    /// together.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        match text.trim() {
-            "flow" => Some(DeclaredLayout::Flow),
-            "time" => Some(DeclaredLayout::Time),
-            "time+flow" => Some(DeclaredLayout::TimeAndFlow),
-            "time+time+flow" => Some(DeclaredLayout::TimeTimeAndFlow),
-            _ => None,
-        }
-    }
-}
+pub use quantick_workspace::arrangement_document::DeclaredLayout;
 
 /// One selectable feed: a named backend and the symbols it offers.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

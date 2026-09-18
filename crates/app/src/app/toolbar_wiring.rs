@@ -232,8 +232,9 @@ impl QuantickApp {
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => {
+                let tab_id = self.tabs.active_id();
                 let (tab, config) = self.active_with_config();
-                tab.request_older_history(config);
+                tab.request_older_history(tab_id, config);
             }
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
@@ -242,9 +243,10 @@ impl QuantickApp {
                 // Read before the tab is borrowed mutably — and the capability
                 // block rather than the whole config, because that is all the
                 // request needs to know.
+                let tab_id = self.tabs.active_id();
                 let capabilities = self.active_tab().capabilities(&self.config);
                 self.active_tab_mut()
-                    .request_older_ohlcv_history(capabilities);
+                    .request_older_ohlcv_history(tab_id, capabilities);
             }
             ToolbarAction::SetHeatmap(shown) => {
                 self.active_tab_mut().flow_pane.set_layer_visible(
@@ -294,24 +296,62 @@ impl QuantickApp {
             // which the workspace restore and the harness hooks also travel —
             // there it would erase the fold on every launch.
             ToolbarAction::AddNative(id) => {
-                self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(id);
+                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                    self.focused_pane_mut(),
+                    false,
+                );
+                let target = (self.tabs.active_id(), self.active_tab().focused_side());
+                let attached = self.indicators.attach_native(
+                    self.tabs
+                        .runtime_mut(self.tabs.active_index())
+                        .pane_mut(target.1),
+                    target,
+                    id,
+                );
+                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Attached(
+                    attached,
+                ));
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.toggle_indicator_hidden_at(target);
+                self.apply_indicator_legend_action(
+                    target.tab,
+                    target.side,
+                    crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
+                );
             }
             ToolbarAction::RemoveIndicator(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.remove_indicator_at(target);
+                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Remove(target));
             }
             ToolbarAction::AddScriptIndicator(index) => {
-                self.set_focused_legend_collapsed(false);
-                self.add_script_indicator(index);
+                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                    self.focused_pane_mut(),
+                    false,
+                );
+                let target = (self.tabs.active_id(), self.active_tab().focused_side());
+                if let Some((_, added)) = self.indicators.add_library(
+                    self.tabs
+                        .runtime_mut(self.tabs.active_index())
+                        .pane_mut(target.1),
+                    target,
+                    index,
+                ) {
+                    if let Some(attached) = added.attachment {
+                        self.apply_indicator_edit(
+                            super::indicator_manager::IndicatorEdit::Attached(attached),
+                        );
+                    }
+                    self.indicators.watch_attachment(added.watch);
+                }
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.open_indicator_settings_at(target);
+                self.apply_indicator_legend_action(
+                    target.tab,
+                    target.side,
+                    crate::indicator_legend::LegendAction::OpenSettings(target.slot),
+                );
             }
             // The toolbar acts on the market it is showing: the active tab's
             // simulator, whose tape the buttons' price came from.

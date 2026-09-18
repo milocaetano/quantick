@@ -27,12 +27,14 @@ use quantick_control::{
 
 use crate::{app::QuantickApp, metrics};
 
+#[cfg(any(feature = "control-harness", test))]
+use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
-        DeferredActionResult, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, ObserverContract,
-        PreparedDispatch, PreparedRequest, UiReadContext, UiReadExecution,
+        DeferredActionResult, OBSERVER_PROFILE_ID, ObserverContract, PreparedDispatch,
+        PreparedRequest, UiReadContext, UiReadExecution,
     },
     evidence,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
@@ -73,6 +75,7 @@ const WAITER_POLL_MS: u64 = 250;
 /// window. Self-declared like every client name, and honest.
 /// What the annotate launch hooks call themselves. A name, never a
 /// disguise: the object they place says an assistant put it there.
+#[cfg(any(feature = "control-harness", test))]
 const HOOK_ACTOR_CLIENT_NAME: &str = "launch hook (agent)";
 const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
 /// Take a mark of what is under the pointer (`attention.mark.create`).
@@ -195,6 +198,8 @@ struct GatewayOptions {
     /// Test build only: see [`server::AnswerWritten`].
     #[cfg(test)]
     answer_written: Option<server::AnswerWritten>,
+    #[cfg(test)]
+    answer_before_write: Option<server::AnswerBeforeWrite>,
 }
 
 impl Default for GatewayOptions {
@@ -209,6 +214,8 @@ impl Default for GatewayOptions {
             descriptor_directory: None,
             #[cfg(test)]
             answer_written: None,
+            #[cfg(test)]
+            answer_before_write: None,
         }
     }
 }
@@ -480,6 +487,8 @@ pub(crate) struct ControlAccess {
     show_panel: bool,
     notice: Option<String>,
     last_drain: DrainObservation,
+    #[cfg(test)]
+    observed_completion: Option<retry_seams::ObservedCompletion>,
     /// The semantic event journal. Written only on the application thread;
     /// read through the UI queue; signalled to parked waiters without a lock.
     journal: EventJournal,
@@ -555,6 +564,8 @@ impl ControlAccess {
             show_panel: false,
             notice: None,
             last_drain: DrainObservation::default(),
+            #[cfg(test)]
+            observed_completion: None,
             journal,
             journal_ticks,
             actions,
@@ -748,6 +759,8 @@ impl ControlAccess {
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
+            #[cfg(test)]
+            self.observe_completion_for_test(&request.prepared.envelope.request_id);
         });
         self.last_drain = drain;
         // A rasterised frame is worth exactly one frame. Whatever is still
@@ -788,6 +801,7 @@ impl ControlAccess {
     /// the tier's floor and opens nothing on its own. An unknown ID is refused
     /// loudly rather than silently dropped: a typo that quietly grants less is
     /// a debugging afternoon.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn configure_scopes(&mut self, scopes: &str) -> Result<(), String> {
         if !matches!(self.state, AccessState::Disabled) {
             return Err("scopes change only while access is off".to_owned());

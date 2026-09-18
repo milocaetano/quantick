@@ -253,6 +253,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
                 PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
             };
             panes.push(pane_snapshot(
+                app.control_tabs().id_at(tab_index),
                 tab,
                 pane,
                 side,
@@ -266,6 +267,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
 }
 
 fn pane_snapshot(
+    tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
     side: PaneSide,
@@ -275,7 +277,7 @@ fn pane_snapshot(
 ) -> ChartPaneSnapshot {
     let seam = pane.seam_slot();
     ChartPaneSnapshot {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         pane_id: WireU64::new(pane.id),
         side: side.into(),
         pane_index: wire_usize(side.index()),
@@ -484,8 +486,7 @@ pub(crate) fn chart_window_prevalidated(
     }
     let tab = app
         .control_tabs()
-        .iter()
-        .find(|tab| tab.id == query.tab_id.get())
+        .by_id(query.tab_id.get())
         .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
     let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
         return Err(ControlError::invalid_request(

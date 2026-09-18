@@ -197,7 +197,7 @@ pub(crate) struct LayoutTabResult {
 pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
     // "Active" on the wire is what the strip lights: the focused pane's
     // layout. Every pane's own is in `workspace.summary`.
-    layout_tabs_marking(app, app.focused_pane_layout())
+    layout_tabs_marking(app, app.layout_state().focused_pane_layout())
 }
 
 /// The same reading with `active` on a layout the caller names.
@@ -209,7 +209,8 @@ fn layout_tabs_marking(
     app: &QuantickApp,
     active: crate::layouts::LayoutId,
 ) -> Vec<LayoutTabSnapshot> {
-    app.layouts()
+    app.layout_state()
+        .layouts()
         .layouts()
         .iter()
         .map(|layout| LayoutTabSnapshot {
@@ -377,11 +378,12 @@ fn tab_result(
     changed: bool,
     subject: Option<crate::layouts::LayoutId>,
 ) -> Result<Value, ControlError> {
-    let subject = subject.unwrap_or_else(|| app.focused_pane_layout());
+    let subject = subject.unwrap_or_else(|| app.layout_state().focused_pane_layout());
     let active = app
+        .layout_state()
         .layouts()
         .get(subject)
-        .unwrap_or_else(|| app.layouts().active());
+        .unwrap_or_else(|| app.layout_state().layouts().active());
     let payload = LayoutTabResult {
         active_layout_id: WireU64::new(active.id.0),
         active_layout_name: active.name.clone(),
@@ -403,7 +405,8 @@ fn resolve_layout_tab(
         .layout_id
         .map(|id| crate::layouts::LayoutId(id.get()))
         .map(|id| {
-            app.layouts()
+            app.layout_state()
+                .layouts()
                 .get(id)
                 .map(|layout| layout.id)
                 .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
@@ -413,7 +416,8 @@ fn resolve_layout_tab(
         .name
         .as_deref()
         .map(|name| {
-            app.layouts()
+            app.layout_state()
+                .layouts()
                 .by_name(name)
                 .map(|layout| layout.id)
                 .ok_or_else(|| {
@@ -428,7 +432,7 @@ fn resolve_layout_tab(
         (Some(id), _) | (None, Some(id)) => Ok(id),
         // Omitted: the layout the focused pane shows — the one the strip
         // lights, never the book's own default.
-        (None, None) => Ok(app.focused_pane_layout()),
+        (None, None) => Ok(app.layout_state().focused_pane_layout()),
     }
 }
 
@@ -466,8 +470,9 @@ fn tab_switch(
         }
         None => tab.focused_side(),
     };
-    let tab_id = tab.id;
+    let tab_id = app.control_tabs().id_at(index);
     let changed = app
+        .layout_adapter()
         .switch_pane_layout(tab_id, side, id)
         .map_err(layout_error)?;
     tab_result(app, changed, Some(id))
@@ -482,6 +487,7 @@ fn tab_create(
     let input: CreateLayoutTabInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let id = app
+        .layout_adapter()
         .create_layout(input.name.as_deref())
         .map_err(layout_error)?;
     tab_result(app, true, Some(id))
@@ -497,6 +503,7 @@ fn tab_rename(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let id = resolve_layout_tab(app, &input.target)?;
     let changed = app
+        .layout_adapter()
         .rename_layout(id, &input.new_name)
         .map_err(layout_error)?;
     tab_result(app, changed, None)
@@ -570,8 +577,7 @@ pub(super) fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, C
         return Ok(app.control_active_tab_index());
     };
     app.control_tabs()
-        .iter()
-        .position(|tab| tab.id == id.get())
+        .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 
@@ -581,7 +587,7 @@ fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, Contr
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(app.control_tabs().id_at(index)),
         preset_id: tab.layout.preset().id.to_owned(),
         pane_count: WireU64::new(tab.pane_count() as u64),
         focused_pane: WireU64::new(focused),
@@ -633,13 +639,12 @@ fn move_pane(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    let tab_id = app
-        .control_tab_at(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?
-        .id;
+    app.control_tab_at(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab_id = app.control_tabs().id_at(index);
     // The one reposition path — the same call the View menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
-    let changed = app.move_context_pane_at(tab_id, from, to);
+    let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
     result(app, index, changed)
 }
 

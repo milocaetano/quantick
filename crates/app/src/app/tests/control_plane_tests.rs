@@ -79,9 +79,8 @@ plot(close)
     std::fs::remove_file(&path).expect("remove");
 
     let before = app.active_tab().flow_pane.indicators.all().len();
-    let slot = app
-        .add_script_indicator(index)
-        .expect("a click on a known entry claims a slot");
+    let slot =
+        add_library_for_test(&mut app, index).expect("a click on a known entry claims a slot");
     assert_eq!(
         app.active_tab().flow_pane.indicators.all().len(),
         before + 1,
@@ -254,13 +253,16 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(app.active_tab().paper.session_trades().len(), 1);
 
     app.apply_replay_restart();
@@ -407,7 +409,7 @@ fn a_parked_popup_greets_the_avwap_and_the_profile_too() {
     drag_chart(&mut app, &ctx, grip, grip + egui::vec2(-220.0, 150.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.drawing_chrome.inspector_moved(),
+        app.drawings.chrome.inspector_moved(),
         "the drag records the manual move"
     );
     let parked = ctx
@@ -563,7 +565,7 @@ fn the_saved_workspace_describes_the_window_that_saved_it() {
     app.toolrail.set_dock(ToolboxDock::Bottom);
     app.health.show_perf = false;
 
-    let workspace = app.capture_workspace();
+    let workspace = app.workspace_state().capture_workspace();
 
     assert_eq!(workspace.tabs.len(), 1);
     let tab = &workspace.tabs[0];
@@ -1502,7 +1504,7 @@ fn observer_journals_indicator_and_drawing_changes_without_the_trader_text() {
             inputs: Vec::new(),
         };
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 Vec::new(),
@@ -1735,7 +1737,7 @@ fn observer_projects_each_pane_indicator_with_its_inputs_and_latest_reading() {
             }],
         };
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 vec![vec![1.5, 2.25, 3.125]],
@@ -2914,8 +2916,12 @@ fn an_assistants_object_and_interruption_arrive_from_a_launch() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.control.pending_control_annotation = Some("this absorption".to_owned());
-    app.control.pending_control_notification = Some("popup:look at 108k".to_owned());
+    app.control
+        .scenarios
+        .queue_annotation("this absorption".to_owned());
+    app.control
+        .scenarios
+        .queue_notification("popup:look at 108k".to_owned());
     run_frame(&mut app, &ctx);
 
     let items = app.active_tab().drawing_pane().drawings.items();
@@ -2947,7 +2953,7 @@ fn the_trader_takes_back_every_object_an_assistant_placed_in_one_action() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id;
 
@@ -3011,7 +3017,7 @@ fn an_operator_cannot_remove_an_object_the_trader_drew() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     let mine = app.active_tab().drawing_pane().drawings.items()[0].id.0;
 
@@ -3080,7 +3086,8 @@ fn an_operator_cannot_detach_the_traders_own_indicator() {
     let (mut app, _commands) = app_with_history(4);
     run_frame(&mut app, &ctx);
     // The trader's own, through the library's door.
-    let (_, _, mine) = app.attach_script_indicator(
+    let (_, _, mine) = attach_script_for_test(
+        &mut app,
         "the trader's".to_owned(),
         "//@version=5
 indicator(\"mine\")
@@ -3133,23 +3140,33 @@ plot(close)
     // A second chart on a layout of its own, so the trader's script —
     // a layout edit, mirrored onto every pane of its layout — does not
     // take that chart's slot 0 before the operator gets there.
-    app.open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "ETHUSDT".to_owned(), None);
     run_frame(&mut app, &ctx);
-    app.create_layout(Some("agent"))
+    app.layout_adapter()
+        .create_layout(Some("agent"))
         .expect("a layout for the second chart");
-    app.cycle_tab(-1);
+    app.arrangement_adapter().cycle_tab(-1);
 
     // The trader's own, on the first tab.
-    let (traders_tab, _, traders_slot) =
-        app.attach_script_indicator("the trader's".to_owned(), SCRIPT.to_owned(), false);
+    let (traders_tab, _, traders_slot) = attach_script_for_test(
+        &mut app,
+        "the trader's".to_owned(),
+        SCRIPT.to_owned(),
+        false,
+    );
     // Settled, not waited out over a count of frames, as in #415.
     settle_indicators(&mut app);
 
     // The second chart, whose slot numbering starts over from zero.
-    app.cycle_tab(1);
+    app.arrangement_adapter().cycle_tab(1);
     run_frame(&mut app, &ctx);
-    let (operators_tab, _, operators_slot) =
-        app.attach_script_indicator("an assistant's".to_owned(), SCRIPT.to_owned(), true);
+    let (operators_tab, _, operators_slot) = attach_script_for_test(
+        &mut app,
+        "an assistant's".to_owned(),
+        SCRIPT.to_owned(),
+        true,
+    );
     settle_indicators(&mut app);
     assert_ne!(traders_tab, operators_tab, "two charts, not one");
     assert_eq!(
@@ -3177,8 +3194,7 @@ plot(close)
 
     let traders_index = app
         .control_tabs()
-        .iter()
-        .position(|tab| tab.id == traders_tab)
+        .position(traders_tab)
         .expect("the trader's chart is still open");
     assert_eq!(
         app.control_tabs()[traders_index]
@@ -3192,7 +3208,7 @@ plot(close)
 
     // With its own claim spent, the same number now names only the
     // trader's slot, and the tier refuses it rather than reaching across.
-    app.active_tab = traders_index;
+    app.tabs.select(traders_index);
     run_frame(&mut app, &ctx);
     let refused = app
         .control_action(
@@ -3782,8 +3798,8 @@ fn two_tabs_on_the_same_recording_share_one_trace_walk() {
     let (mut app, _commands) = app_with_history(12);
     app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording_at(&dir)));
     let _second = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    app.tabs[1].replay = Some(replay_test_support::detached_link(recording_at(&dir)));
-    app.active_tab = 0;
+    app.tabs.runtime_mut(1).replay = Some(replay_test_support::detached_link(recording_at(&dir)));
+    app.tabs.select(0);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
@@ -4252,7 +4268,7 @@ fn observer_chart_pagination_allows_append_but_rejects_prefix_changes() {
     use quantick_control::{error::codes, wire::WireU64};
 
     let (mut app, _commands) = app_with_history(8);
-    let tab_id = app.active_tab().id;
+    let tab_id = app.tabs.active_id();
     let pane_id = app.active_tab().flow_pane.id;
     let query = ChartWindowQuery {
         tab_id: WireU64::new(tab_id),
@@ -4683,7 +4699,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     app.config.metatrader.listen_addr = "192.168.7.31:9100".to_owned();
     run_frame(&mut app, &ctx);
     // The trader's own words on the chart.
-    app.surfaces.drawing_chrome.set_pending_text_note(true);
+    app.drawings.chrome.set_pending_text_note(true);
     run_frame(&mut app, &ctx);
     {
         let tool = drawings::DRAWING_TOOLS
@@ -4707,7 +4723,7 @@ fn no_token_user_path_user_text_or_redacted_config_key_reaches_an_evidence_bundl
     // And the trader's own words in the *journal*, through the hotkey's
     // own action — the page a bundle embeds carries these verbatim, so
     // this is the leak the drawing canary above cannot find.
-    app.control.pending_control_mark = Some(MARK_CANARY.to_owned());
+    app.control.scenarios.queue_mark(MARK_CANARY.to_owned());
     run_frame(&mut app, &ctx);
 
     let directory = gateway_test_directory("evidence-redaction");
@@ -4837,7 +4853,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     grant_annotate_for_test(&mut app, "all-reads,observe.evidence");
-    app.control.pending_control_evidence = Some("all".to_owned());
+    app.control.scenarios.queue_evidence("all".to_owned());
     run_frame(&mut app, &ctx);
 
     assert_eq!(
@@ -4850,7 +4866,7 @@ fn the_evidence_launch_hook_captures_through_the_same_read_a_client_calls() {
         "the hook captured one bundle without a client on the socket"
     );
     assert!(
-        app.control.pending_control_evidence.is_none(),
+        !app.control.scenarios.has_evidence(),
         "and it fires once, not on every frame"
     );
 
@@ -5420,7 +5436,8 @@ fn control_idle_dense_replay_benchmark() {
     events
         .try_send(FeedEvent::Backfilled((1..=8_000).map(trade).collect()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     let mut next_trade = 8_001;
     for _ in 0..WARMUP_FRAMES {
@@ -5517,7 +5534,8 @@ fn feed_status_carries_the_deal_recorder_and_the_capability_moves_it() {
             session_deals: 2_301_455,
         }))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let seen = recorder(&app);
     assert_eq!(seen["state"], "off");
     assert_eq!(seen["session_deals"], "2301455");
@@ -5667,7 +5685,8 @@ fn incremental_lane_dense_frame_benchmark() {
         events
             .try_send(FeedEvent::Backfilled((1..=8_000).map(btc_print).collect()))
             .unwrap();
-        app.active_tab_mut().drain_feed();
+        let tab_id = app.tabs.active_id();
+        app.active_tab_mut().drain_feed(tab_id);
         let mut next = 8_001;
         let mut samples = Vec::with_capacity(FRAMES as usize);
         let mut measured_traffic = 0;
@@ -5787,7 +5806,7 @@ fn the_same_layout_key_answers_twice_and_acts_once() {
             .unwrap()
             .select(None)
             .unwrap();
-    let before = app.layouts().layouts().len();
+    let before = app.layout_state().layouts().layouts().len();
 
     let first = remote_call_with_key(
         &mut app,
@@ -5798,7 +5817,7 @@ fn the_same_layout_key_answers_twice_and_acts_once() {
         serde_json::json!({}),
         "layout-key-1",
     );
-    let after_first = app.layouts().layouts().len();
+    let after_first = app.layout_state().layouts().layouts().len();
     let second = remote_call_with_key(
         &mut app,
         &ctx,
@@ -5811,7 +5830,7 @@ fn the_same_layout_key_answers_twice_and_acts_once() {
 
     assert_eq!(after_first, before + 1, "the first call created one layout");
     assert_eq!(
-        app.layouts().layouts().len(),
+        app.layout_state().layouts().layouts().len(),
         after_first,
         "the retry created no second layout"
     );
@@ -5855,7 +5874,7 @@ fn the_same_layout_key_with_different_input_is_refused_as_a_conflict() {
         serde_json::json!({}),
         "layout-key-1",
     );
-    let after_first = app.layouts().layouts().len();
+    let after_first = app.layout_state().layouts().layouts().len();
     let conflicting = remote_call_with_key(
         &mut app,
         &ctx,
@@ -5875,7 +5894,7 @@ fn the_same_layout_key_with_different_input_is_refused_as_a_conflict() {
         "sending the same conflict again cannot help"
     );
     assert_eq!(
-        app.layouts().layouts().len(),
+        app.layout_state().layouts().layouts().len(),
         after_first,
         "a refused conflict acts on nothing"
     );
@@ -5907,7 +5926,7 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
             .unwrap()
             .select(None)
             .unwrap();
-    let before = app.layouts().layouts().len();
+    let before = app.layout_state().layouts().layouts().len();
     let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
 
     let first = client
@@ -5955,7 +5974,7 @@ fn a_retry_that_races_its_own_first_call_is_refused_rather_than_acted_on() {
         quantick_control::wire::ResponseOutcome::Success { .. }
     ));
     assert_eq!(
-        app.layouts().layouts().len(),
+        app.layout_state().layouts().layouts().len(),
         before + 1,
         "the race created one layout, not two"
     );
@@ -5999,7 +6018,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
             .unwrap()
             .select(None)
             .unwrap();
-    let before = app.layouts().layouts().len();
+    let before = app.layout_state().layouts().layouts().len();
     let key = || IdempotencyKey::new("layout-key-1".to_owned()).unwrap();
 
     // Sent and then left alone: no frame runs, so the deadline passes while the
@@ -6030,7 +6049,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     // `started` is ever set.
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.layouts().layouts().len(),
+        app.layout_state().layouts().layouts().len(),
         before,
         "a call refused on its deadline created nothing"
     );
@@ -6095,7 +6114,7 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
         answered.outcome
     );
     assert_eq!(
-        app.layouts().layouts().len(),
+        app.layout_state().layouts().layouts().len(),
         before + 1,
         "exactly one layout, made by the retry"
     );

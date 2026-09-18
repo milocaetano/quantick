@@ -703,12 +703,15 @@ mod tests {
     fn deltas_reconstruct_the_columns() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             slot,
             descriptor(true, 2),
             vec![vec![1.0], vec![10.0]],
         ));
-        views.apply(IndicatorEvent::appended(slot, vec![2.0, 20.0]));
+        views.apply(crate::indicator_worker::event_fixture::appended(
+            slot,
+            vec![2.0, 20.0],
+        ));
         let view = &views.all()[0];
         assert_eq!(view.rows, 2);
         assert_eq!(view.columns[0], vec![1.0, 2.0]);
@@ -719,7 +722,7 @@ mod tests {
     fn appended_row_invalidates_the_preview() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             slot,
             descriptor(true, 1),
             vec![vec![]],
@@ -729,7 +732,10 @@ mod tests {
             frame: Some(PreviewFrame::new(vec![5.0])),
         });
         assert!(views.all()[0].preview.is_some());
-        views.apply(IndicatorEvent::appended(slot, vec![1.0]));
+        views.apply(crate::indicator_worker::event_fixture::appended(
+            slot,
+            vec![1.0],
+        ));
         assert!(
             views.all()[0].preview.is_none(),
             "a frame describing the closed bar must not draw one slot further right"
@@ -911,7 +917,7 @@ mod tests {
     fn an_ordinary_chart_never_looks_up_paint() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("native.ema");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             slot,
             descriptor(true, 1),
             vec![vec![1.0, 2.0]],
@@ -927,13 +933,16 @@ mod tests {
     fn events_for_removed_slots_are_dropped() {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             slot,
             descriptor(true, 1),
             vec![vec![]],
         ));
         views.remove(slot);
-        views.apply(IndicatorEvent::appended(slot, vec![1.0]));
+        views.apply(crate::indicator_worker::event_fixture::appended(
+            slot,
+            vec![1.0],
+        ));
         assert!(views.all().is_empty(), "the remove always wins the race");
     }
 
@@ -945,7 +954,7 @@ mod tests {
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
         views.remove(slot);
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             slot,
             descriptor(true, 1),
             vec![vec![]],
@@ -966,7 +975,7 @@ mod tests {
             (false, false, true),  // errored pane
         ] {
             let slot = views.allocate_slot("test.indicator");
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor(overlay, 1),
                 vec![vec![]],
@@ -995,7 +1004,7 @@ mod tests {
     fn a_removed_pane_takes_its_scale_with_it() {
         let mut views = IndicatorViews::new();
         let first = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             first,
             descriptor(false, 1),
             vec![vec![1.0]],
@@ -1007,7 +1016,7 @@ mod tests {
 
         views.remove(first);
         let second = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             second,
             descriptor(false, 1),
             vec![vec![1.0]],

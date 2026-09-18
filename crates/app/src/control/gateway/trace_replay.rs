@@ -161,29 +161,29 @@ impl ControlAccess {
                     })
                 });
             }
-            for tab in tabs {
+            for (tab_id, tab) in tabs.iter_with_ids() {
                 let Some(link) = tab.replay.as_ref() else {
                     continue;
                 };
                 let position = ReplayPosition::of(&link.status);
                 let path = &link.session.path;
                 match self.trace_reinjection.get_mut(path) {
-                    Some(state) if state.owner_tab_id == tab.id => {
+                    Some(state) if state.owner_tab_id == tab_id => {
                         state.collect_due(position, &mut due);
                     }
                     // One walk per recording: the tab that loaded it drives.
                     // Another tab on the same file adopts the walk only once
                     // the owner let go of the session.
                     Some(state) => {
-                        let owner_still_plays_it = tabs.iter().any(|other| {
-                            other.id == state.owner_tab_id
+                        let owner_still_plays_it = tabs.iter_with_ids().any(|(other_id, other)| {
+                            other_id == state.owner_tab_id
                                 && other
                                     .replay
                                     .as_ref()
                                     .is_some_and(|link| link.session.path == *path)
                         });
                         if !owner_still_plays_it {
-                            state.owner_tab_id = tab.id;
+                            state.owner_tab_id = tab_id;
                             state.collect_due(position, &mut due);
                         }
                     }
@@ -196,7 +196,7 @@ impl ControlAccess {
                             .next_trace_sequence
                             .max(loaded.max_sequence.saturating_add(1));
                         let mut state = TraceReinjection {
-                            owner_tab_id: tab.id,
+                            owner_tab_id: tab_id,
                             entries: loaded.completed,
                             next_index: 0,
                             last_elapsed_ms: i64::MIN,

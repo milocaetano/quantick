@@ -165,20 +165,23 @@ impl QuantickApp {
             };
             if !typing
                 && ctx.input_mut(|i| i.consume_shortcut(&shortcut))
-                && let Err(error) = self.switch_layout_index(index)
+                && let Err(error) = self.layout_adapter().switch_layout_index(index)
             {
                 self.note_workspace(error.to_string());
             }
         }
         if ctx.input_mut(|i| i.consume_shortcut(&LEGEND_SHORTCUT)) {
-            let collapsed = self.focused_legend_collapsed();
-            self.set_focused_legend_collapsed(!collapsed);
+            let collapsed = self.focused_pane().legend_collapsed;
+            super::indicator_manager::IndicatorState::set_legend_collapsed(
+                self.focused_pane_mut(),
+                !collapsed,
+            );
         }
         if ctx.input_mut(|i| i.consume_shortcut(&crate::control::MARK_SHORTCUT)) {
             self.take_mark(None);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&SAVE_WORKSPACE_SHORTCUT)) {
-            self.save_workspace("shortcut");
+            self.workspace_save_adapter().save_workspace("shortcut");
         }
         // Trading hotkeys, swallowed only while no text field owns the
         // keyboard. Market entries use the ticket's quantity and offsets,
@@ -241,7 +244,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            tab_action = Some(TabAction::Close(self.active_tab));
+                            tab_action = Some(TabAction::Close(self.tabs.active_index()));
                             ui.close_menu();
                         }
                         ui.separator();
@@ -275,9 +278,8 @@ impl QuantickApp {
                             // The strip's tabs, from the book: switch the
                             // focused pane by name, and the three edits the
                             // strip's own menu holds.
-                            let active = self.focused_pane_layout();
-                            let names: Vec<(crate::layouts::LayoutId, String)> = self
-                                .layouts()
+                            let active = self.layout_state().focused_pane_layout();
+                            let names: Vec<(crate::layouts::LayoutId, String)> = self.layout_state().layouts()
                                 .layouts()
                                 .iter()
                                 .map(|layout| (layout.id, layout.name.clone()))
@@ -288,7 +290,7 @@ impl QuantickApp {
                                     button = button.shortcut_text(ui.ctx().format_shortcut(&shortcut));
                                 }
                                 if ui.add(button.selected(*id == active)).clicked() {
-                                    self.apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
+                                    self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Switch(*id));
                                     ui.close_menu();
                                 }
                             }
@@ -298,18 +300,18 @@ impl QuantickApp {
                                 .add_enabled(can_add, egui::Button::new("New layout"))
                                 .clicked()
                             {
-                                self.apply_strip_action(crate::layout_strip::StripAction::Create);
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Create);
                                 ui.close_menu();
                             }
                             if ui.button("Rename layout…").clicked() {
-                                self.apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::BeginRename(active));
                                 ui.close_menu();
                             }
                             if ui
                                 .add_enabled(names.len() > 1, egui::Button::new("Delete layout"))
                                 .clicked()
                             {
-                                self.apply_strip_action(crate::layout_strip::StripAction::Delete(active));
+                                self.layout_adapter().apply_strip_action(crate::layout_strip::StripAction::Delete(active));
                                 ui.close_menu();
                             }
                         });
@@ -380,8 +382,8 @@ impl QuantickApp {
                                         )))
                                         .on_disabled_hover_text("already the top chart");
                                     if up.clicked() {
-                                        let tab_id = self.active_tab().id;
-                                        self.move_context_pane_at(tab_id, slot, slot - 1);
+                                        let tab_id = self.tabs.active_id();
+                                        self.layout_adapter().move_context_pane_at(tab_id, slot, slot - 1);
                                         ui.close_menu();
                                     }
                                     let down = ui
@@ -391,8 +393,8 @@ impl QuantickApp {
                                         )
                                         .on_disabled_hover_text("already the bottom chart");
                                     if down.clicked() {
-                                        let tab_id = self.active_tab().id;
-                                        self.move_context_pane_at(tab_id, slot, slot + 1);
+                                        let tab_id = self.tabs.active_id();
+                                        self.layout_adapter().move_context_pane_at(tab_id, slot, slot + 1);
                                         ui.close_menu();
                                     }
                                 }
@@ -417,7 +419,7 @@ impl QuantickApp {
                         // The legend belongs to a pane, so this entry names
                         // the focused one's state — the same pane the chevron
                         // on screen would fold.
-                        let collapsed = self.focused_legend_collapsed();
+                        let collapsed = self.focused_pane().legend_collapsed;
                         // Split open: say *which* chart, the way the layout
                         // entries above name the charts they show. The action
                         // follows the focus like every other chrome control,
@@ -453,7 +455,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.set_focused_legend_collapsed(!collapsed);
+                            super::indicator_manager::IndicatorState::set_legend_collapsed(self.focused_pane_mut(), !collapsed);
                             ui.close_menu();
                         }
                         ui.menu_button("Drawing toolbar", |ui| {
@@ -550,7 +552,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.save_workspace("menu");
+                            self.workspace_save_adapter().save_workspace("menu");
                             ui.close_menu();
                         }
                         // Enabled only when there is something on disk to go
@@ -572,7 +574,7 @@ impl QuantickApp {
                             )
                             .clicked()
                         {
-                            self.forget_workspace();
+                            self.workspace_save_adapter().forget_workspace();
                             ui.close_menu();
                         }
                         ui.separator();
@@ -630,82 +632,17 @@ impl QuantickApp {
                             });
                         });
                         if let Some(name) = open {
-                            self.open_named_workspace(&name);
+                            self.arrangement_adapter().open_named_workspace(&name);
                         }
                         if let Some(name) = delete {
-                            self.delete_named_workspace(&name);
+                            self.workspace_save_adapter().delete_named_workspace(&name);
                         }
                         ui.separator();
-                        // Files, named apart from the two groups above again:
-                        // those live inside quantick, these are documents the
-                        // trader owns, can copy, back up and carry to another
-                        // machine. That is the difference the wording carries.
-                        if ui
-                            .button("Export to file…")
-                            .on_hover_text(
-                                "Save the whole cockpit — tabs, indicators, layers, drawing \
-                                 colours, footprint and added symbols — as one file in your \
-                                 documents",
-                            )
-                            .clicked()
-                        {
-                            self.open_workspace_export_picker();
-                            ui.close_menu();
-                        }
-                        if ui
-                            .button("Open from file…")
-                            .on_hover_text(
-                                "Open a workspace file. It replaces the cockpit on screen; a \
-                                 file that cannot be read changes nothing.",
-                            )
-                            .clicked()
-                        {
-                            self.open_workspace_import_picker();
-                            ui.close_menu();
-                        }
-                        // Read off the field, not the filesystem: this body
-                        // runs every frame the menu is open.
-                        let mut reopen: Option<std::path::PathBuf> = None;
-                        ui.add_enabled_ui(!self.workspace.session().recent_on_disk().is_empty(), |ui| {
-                            ui.menu_button("Open recent", |ui| {
-                                for path in self.workspace.session().recent_on_disk() {
-                                    if ui
-                                        .button(crate::workspace_bundle::recent_label(path))
-                                        // The same warning the bookmark list
-                                        // carries: this replaces the cockpit,
-                                        // and a trader mid-tape has to read
-                                        // that before the click, not after.
-                                        .on_hover_text(format!(
-                                            "Replaces the cockpit on screen\n{}",
-                                            path.display()
-                                        ))
-                                        .clicked()
-                                    {
-                                        reopen = Some(path.clone());
-                                        ui.close_menu();
-                                    }
-                                }
-                            })
-                            .response
-                            .on_disabled_hover_text("No workspace files opened yet");
-                        });
-                        if let Some(path) = reopen {
-                            self.import_workspace_from(&path);
-                        }
-                        if ui
-                            .button("Show where it's saved")
-                            .on_hover_text(
-                                "Open the folder quantick keeps your cockpit in, so you can see \
-                                 it and back it up",
-                            )
-                            .clicked()
-                        {
-                            self.reveal_cockpit_home();
-                            ui.close_menu();
-                        }
+                        self.workspace_bundle_adapter().show_file_actions(ui);
                         ui.separator();
+                        let mut save_on_exit = self.workspace.session().save_on_exit();
                         if ui
-                            .checkbox(self.workspace.session_mut().save_on_exit_mut(), "Save on exit")
+                            .checkbox(&mut save_on_exit, "Save on exit")
                             .on_hover_text(
                                 "Keep the arrangement automatically when the window closes. Off, \
                                  only Save workspace changes what quantick opens on.",
@@ -716,7 +653,8 @@ impl QuantickApp {
                             // switching it has to reach the disk now — not at
                             // the next exit, which is exactly the exit it may
                             // have just switched off.
-                            self.save_workspace("save_on_exit_toggled");
+                            self.workspace.session_mut().set_save_on_exit(save_on_exit);
+                            self.workspace_save_adapter().save_workspace("save_on_exit_toggled");
                         }
                     });
                     self.chrome.workspace_menu_rect = Some(workspace_menu.response.rect);
@@ -774,6 +712,6 @@ impl QuantickApp {
                 needs_attention: tab.needs_attention(),
             })
             .collect();
-        tabstrip::draw(ui, &chips, self.active_tab)
+        tabstrip::draw(ui, &chips, self.tabs.active_index())
     }
 }

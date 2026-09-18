@@ -443,8 +443,12 @@ fn a_timeline_reset_journals_the_forced_close_and_ends_the_file() {
     assert!(account.is_flat(), "the position flattened");
     assert_eq!(account.session_trades().len(), 1, "at the last mark");
     assert!(
+        account.take_journal_changed(),
+        "a reset close invalidates the disk report just like another Closed event"
+    );
+    assert!(
         !account.take_journal_changed(),
-        "a reset's forced close is not one the venue reported, so the flag stays down, as before the move"
+        "the reset hint is consumed once"
     );
     assert!(
         account.journal_path().is_none(),
@@ -559,5 +563,84 @@ fn the_account_trades_on_the_venue_it_is_handed() {
         account.mark_price(),
         Some(Decimal::from(250)),
         "the mark came from the handed simulator, not a fresh one"
+    );
+}
+
+#[test]
+fn reset_without_a_closed_event_does_not_create_or_erase_a_journal_hint() {
+    let dir = ScratchDir::new("reset-no-close-hint");
+    let mut account = account(&dir, "RESET");
+    account.seed(&print(0, 100));
+    let empty = account.reset_timeline();
+    assert!(!empty.had_position && !empty.had_orders && empty.all_saved);
+    assert!(!account.take_journal_changed());
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    let orders = account.reset_timeline();
+    assert!(!orders.had_position && orders.had_orders && orders.all_saved);
+    assert!(!account.take_journal_changed());
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    let events = account.dispatch(Command::ClosePosition);
+    account.handle_events(events);
+    account.on_trade(&print(2, 105));
+    let no_close = account.reset_timeline();
+    assert!(!no_close.had_position && no_close.all_saved);
+    assert!(
+        account.take_journal_changed(),
+        "the earlier close remains pending"
+    );
+    assert!(!account.take_journal_changed());
+}
+
+#[test]
+fn a_failed_reset_journal_invalidates_but_never_claims_a_saved_row() {
+    let dir = ScratchDir::new("reset-failed-journal");
+    let mut account = account(&dir, "RESET");
+    // A file where the per-symbol directory must go fails before any append.
+    std::fs::write(dir.path().join("RESET"), b"not a directory").unwrap();
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    account.on_trade(&print(2, 105));
+    let reset = account.reset_timeline();
+    assert!(reset.had_position && !reset.all_saved);
+    assert!(account.is_flat());
+    assert_eq!(account.session_trades().len(), 1, "the venue really closed");
+    assert!(
+        crate::report::load_history(dir.path(), Some("RESET"), &[])
+            .rows
+            .is_empty()
+    );
+    assert!(
+        account.take_journal_changed(),
+        "attempted close invalidates uncertain disk state"
+    );
+    assert!(!account.take_journal_changed());
+    assert!(account.peek_toast().unwrap().contains("could not save"));
+    assert!(account.journal_path().is_none());
+}
+
+#[test]
+fn an_unnamed_reset_close_invalidates_without_inventing_persistence_or_io_warning() {
+    let dir = ScratchDir::new("reset-unnamed");
+    let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
+    account.seed(&print(0, 100));
+    ticket_market(&mut account, Side::Buy, &plain_form());
+    account.on_trade(&print(1, 100));
+    account.take_toast();
+    let reset = account.reset_timeline();
+    assert!(reset.had_position && !reset.all_saved);
+    assert!(account.take_journal_changed());
+    assert!(!account.take_journal_changed());
+    assert!(
+        account.peek_toast().is_none(),
+        "missing symbol is not an IO warning"
+    );
+    assert!(
+        crate::report::load_history(dir.path(), None, &[])
+            .rows
+            .is_empty()
     );
 }

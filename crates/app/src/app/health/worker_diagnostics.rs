@@ -1,22 +1,24 @@
 //! Internal owner attribution at the existing health-summary cadence.
 use crate::pane::ChartPane;
-use crate::tab::Tab;
 use crate::worker_progress::ProgressSnapshot;
 
 // Preserve the existing health-summary sampling cadence for every worker owner.
 const SUMMARY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-pub(super) fn emit_if_due(tabs: &[Tab], elapsed: std::time::Duration) -> bool {
+pub(super) fn emit_if_due(
+    tabs: &crate::app::arrangement_host::ArrangementHost,
+    elapsed: std::time::Duration,
+) -> bool {
     if elapsed < SUMMARY_INTERVAL {
         return false;
     }
     if !tracing::enabled!(target: "quantick::app", tracing::Level::INFO) {
         return true;
     }
-    for tab in tabs {
+    for (tab_id, tab) in tabs.iter_with_ids() {
         for (pane, side) in tab.panes() {
             for (kind, progress) in pane_workers(pane) {
-                record(tab.id, pane.id, side.index(), kind, progress);
+                record(tab_id, pane.id, side.index(), kind, progress);
             }
         }
     }

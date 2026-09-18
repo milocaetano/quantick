@@ -286,13 +286,24 @@ fn declaration(window: &str) -> &str {
 /// `Chart N up` / `Chart N down` entries.
 pub(crate) const COMPUTED_MENU_LABELS: usize = 12;
 
+/// The actual owners that render the menu bar and its workspace file actions.
+const MENU_SOURCES: &[&str] = &[
+    "crates/app/src/app/menu_bar.rs",
+    "crates/app/src/app/workspace_bundle_adapter.rs",
+    "crates/app/src/workspace_picker.rs",
+];
+
 /// The menu bar's own labels, and the count of the ones it computes.
 ///
-/// Parsed from `menu_bar.rs` rather than declared beside it, for the reason
-/// the hook registry gives: a list kept by hand beside the code is the
+/// Parsed from its rendering owners rather than declared beside them, for the
+/// reason the hook registry gives: a list kept by hand beside the code is the
 /// duplicated truth that drifts the first time either side gains an entry.
 fn menu_labels() -> (Vec<String>, usize) {
-    let text = read("crates/app/src/app/menu_bar.rs");
+    let text = MENU_SOURCES
+        .iter()
+        .map(|relative| read(relative))
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut labels = Vec::new();
     let mut computed = 0usize;
     // `.menu_button(` is checked before `.button(` would match it; it cannot,
@@ -419,6 +430,31 @@ fn duplicate_keys(sorted: &[Registered]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every actual rendering owner contributes to the same menu inventory.
+    /// Dropping either extracted owner must lose a literal door or the recent
+    /// file's computed entry, even though the original menu file still parses.
+    #[test]
+    fn the_menu_walk_keeps_the_original_and_extracted_file_actions() {
+        let (labels, computed) = menu_labels();
+        assert_eq!(computed, 12);
+        for expected in [
+            "Save as…",
+            "Export to file…",
+            "Open from file…",
+            "Open recent",
+            "Show where it's saved",
+        ] {
+            assert_eq!(
+                labels
+                    .iter()
+                    .filter(|label| label.as_str() == expected)
+                    .count(),
+                1,
+                "the actual menu must register {expected} exactly once",
+            );
+        }
+    }
 
     /// The scan reads a declaration, not a line. rustfmt breaks a long one
     /// after the name, and a binding whose type lands on the next line used to

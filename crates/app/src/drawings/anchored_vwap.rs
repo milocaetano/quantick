@@ -17,6 +17,9 @@
 //! - a pane that cannot name its bar width (`px_per_bar <= 0`) draws only
 //!   the anchor, never a guessed series.
 
+use quantick_anchored_studies::{AnchoredAverage as AvwapCache, AverageOutput, AvwapBand};
+#[cfg(test)]
+use quantick_anchored_studies::AvwapCacheKey;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_indicators::SourceId;
@@ -38,7 +41,6 @@ const PRESET_FORMAT_VERSION: u32 = 1;
 /// mis-sizing every cached row.
 pub use quantick_indicators::native::{
     AVWAP_BAND_MULTS as AVWAP_DEFAULT_MULTS, AVWAP_BAND_PAIRS,
-    AVWAP_PLOT_COUNT as AVWAP_ROW_WIDTH,
 };
 /// Band *lines* fade with distance from the vwap; the trader's colour keeps
 /// carrying the object, so these are alphas over `style.color`, not hues.
@@ -74,59 +76,6 @@ pub const AVWAP_SOURCES: [SourceId; 7] = [
     SourceId::Hlc3,
     SourceId::Ohlc4,
 ];
-
-/// One σ-band pair's configuration.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AvwapBand {
-    pub on: bool,
-    pub mult: f64,
-}
-
-/// Everything one refresh computed for one object. Derived state: excluded
-/// from equality and presets (the [`FrvpCache`](super::FrvpCache) rule), so a
-/// recompute can never read as a user edit to the undo history.
-#[derive(Debug, Clone)]
-pub struct AvwapCache {
-    /// The **closed-state** inputs the rows were computed from;
-    /// `avwap::refresh` replays only when this misses. The forming bar has
-    /// its own signature ([`AvwapCache::partial`]) precisely so a live tick
-    /// re-evaluates one row, never the anchored span.
-    pub key: AvwapCacheKey,
-    /// The forming bar the last row describes, when one is on the tape.
-    pub partial: Option<AvwapPartialSig>,
-    /// The slot the first row belongs to — the anchor's own bar.
-    pub first_slot: usize,
-    /// One row per bar from the anchor to the newest — the forming bar's
-    /// row last, when `partial` is set: `[vwap, u1, l1, u2, l2, u3, l3]`,
-    /// `NaN` where the kernel answered `na` or the pair is off.
-    pub rows: Vec<[f64; AVWAP_ROW_WIDTH]>,
-    /// The kernel as of the last **closed** bar — the accumulators the next
-    /// bar close extends and the next forming-bar tick previews against,
-    /// so neither replays the anchored span.
-    pub(crate) kernel: quantick_indicators::native::AnchoredVwap,
-}
-
-/// The forming bar's exact signature — its last-trade instant and trade
-/// count — so the live row recomputes when (and only when) it changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AvwapPartialSig {
-    pub close_time: i64,
-    pub trades: u64,
-}
-
-/// Everything the **closed-bar** replay depends on. An anchor drag changes
-/// the slot, a bar close bumps `closed_len`, a config edit changes
-/// source/bands, a rebuild bumps the revision, a backfill page grows the
-/// prefix.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AvwapCacheKey {
-    pub anchor_slot: usize,
-    pub timeline_revision: u64,
-    pub closed_len: usize,
-    pub prefix_len: usize,
-    pub source: SourceId,
-    pub bands: [AvwapBand; AVWAP_BAND_PAIRS],
-}
 
 /// The versioned on-disk shape of a saved preset — config only, never
 /// coordinates or cache.
@@ -243,7 +192,7 @@ fn slot_x(anchor_x: f32, anchor_bar: f32, px_per_bar: f32, slot: usize) -> f32 {
 /// The cached slots whose x falls inside `chart_rect`, padded by one so a
 /// segment entering from off screen still draws its visible half.
 fn visible_rows(
-    cache: &AvwapCache,
+    cache: &AverageOutput<'_>,
     anchor_x: f32,
     anchor_bar: f32,
     px_per_bar: f32,
@@ -269,7 +218,7 @@ fn visible_rows(
 #[allow(clippy::too_many_arguments)]
 fn stroke_column(
     painter: &egui::Painter,
-    cache: &AvwapCache,
+    cache: &AverageOutput<'_>,
     range: std::ops::Range<usize>,
     column: usize,
     anchor_x: f32,
@@ -304,7 +253,7 @@ fn stroke_column(
 #[allow(clippy::too_many_arguments)]
 fn fill_pair(
     painter: &egui::Painter,
-    cache: &AvwapCache,
+    cache: &AverageOutput<'_>,
     range: std::ops::Range<usize>,
     pair: usize,
     anchor_x: f32,
@@ -420,9 +369,9 @@ impl DrawingToolImpl for AnchoredVwapTool {
         let anchor_bar = ctxt.anchors.first().map(|point| point.bar);
 
         if let (Some(cache), Some(anchor_bar), true) =
-            (payload.cache.as_ref(), anchor_bar, ctxt.px_per_bar > 0.0)
+            (payload.cache.as_ref().map(AvwapCache::output), anchor_bar, ctxt.px_per_bar > 0.0)
         {
-            let range = visible_rows(cache, anchor.x, anchor_bar, ctxt.px_per_bar, chart_rect);
+            let range = visible_rows(&cache, anchor.x, anchor_bar, ctxt.px_per_bar, chart_rect);
             if !ctxt.halo {
                 // Fills behind everything, farthest pair first so the nearer,
                 // denser fills layer on top.
@@ -436,7 +385,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                     let color = style.color.gamma_multiply(alpha / 255.0);
                     fill_pair(
                         painter,
-                        cache,
+                        &cache,
                         range.clone(),
                         pair,
                         anchor.x,
@@ -457,7 +406,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                     for column in [1 + 2 * pair, 2 + 2 * pair] {
                         stroke_column(
                             painter,
-                            cache,
+                            &cache,
                             range.clone(),
                             column,
                             anchor.x,
@@ -472,7 +421,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
             // The vwap itself — the one stroke the halo pass repaints.
             stroke_column(
                 painter,
-                cache,
+                &cache,
                 range,
                 0,
                 anchor.x,
@@ -492,7 +441,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
             // A click past the newest bar clamps to it, and the ring saying
             // so is the honesty the marker owes. Falls back to the clicked
             // point only while no cache exists yet.
-            let marker = match (payload.cache.as_ref(), anchor_bar) {
+            let marker = match (payload.cache.as_ref().map(AvwapCache::output), anchor_bar) {
                 (Some(cache), Some(anchor_bar))
                     if ctxt.px_per_bar > 0.0
                         && cache.rows.first().is_some_and(|row| !row[0].is_nan()) =>
@@ -522,6 +471,20 @@ impl DrawingToolImpl for AnchoredVwapTool {
         radius_px: f32,
         ctxt: &DrawContext<'_>,
     ) -> bool {
+        let cache = ctxt.payload.as_any().downcast_ref::<AvwapPayload>()
+            .and_then(|payload| payload.cache.as_ref()).map(AvwapCache::output);
+        hit_output(chart_rect, points, position, radius_px, ctxt, cache)
+    }
+    #[cfg(test)]
+    fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
+        (vec![egui::pos2(200.0, 150.0)], egui::pos2(201.0, 151.0))
+    }
+}
+
+fn hit_output(
+    chart_rect: egui::Rect, points: &[egui::Pos2], position: egui::Pos2,
+    radius_px: f32, ctxt: &DrawContext<'_>, cache: Option<AverageOutput<'_>>,
+) -> bool {
         let Some(anchor) = points.first().copied() else {
             return false;
         };
@@ -531,10 +494,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
         // Near the vwap line: resolve the bar under the pointer and compare
         // against that slot's cached value (and its neighbours', so a steep
         // segment is still grabbable between two centres).
-        let Some(payload) = ctxt.payload.as_any().downcast_ref::<AvwapPayload>() else {
-            return false;
-        };
-        let (Some(cache), Some(anchor_point)) = (payload.cache.as_ref(), ctxt.anchors.first())
+        let (Some(cache), Some(anchor_point)) = (cache, ctxt.anchors.first())
         else {
             return false;
         };
@@ -561,11 +521,6 @@ impl DrawingToolImpl for AnchoredVwapTool {
             }
         }
         false
-    }
-    #[cfg(test)]
-    fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2) {
-        (vec![egui::pos2(200.0, 150.0)], egui::pos2(201.0, 151.0))
-    }
 }
 
 /// The VWAP tab in the inspector: source, the three band pairs, and named
@@ -670,11 +625,12 @@ fn draw_vwap_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Preset
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_indicators::native::AVWAP_PLOT_COUNT as AVWAP_ROW_WIDTH;
     use crate::chart::PriceScale;
     use crate::drawings::{ChartPoint, ValueUnit};
 
-    fn cache_with_rows(first_slot: usize, rows: Vec<[f64; AVWAP_ROW_WIDTH]>) -> AvwapCache {
-        AvwapCache {
+    fn cache_with_rows(first_slot: usize, rows: &[[f64; AVWAP_ROW_WIDTH]]) -> AverageOutput<'_> {
+        AverageOutput {
             key: AvwapCacheKey {
                 anchor_slot: first_slot,
                 timeline_revision: 0,
@@ -686,7 +642,6 @@ mod tests {
             partial: None,
             first_slot,
             rows,
-            kernel: quantick_indicators::native::AnchoredVwap::default(),
         }
     }
 
@@ -702,8 +657,19 @@ mod tests {
                     mult: 3.0,
                 },
             ],
-            cache: Some(cache_with_rows(2, vec![[100.0; AVWAP_ROW_WIDTH]])),
+            cache: None,
         };
+        let mut builder = quantick_engine::bar_registry::BarConfiguration::from(quantick_engine::BarSpec::Tick(1)).build();
+        let bar = builder.push(&quantick_engine::Trade {
+            agg_id: 1, timestamp_ms: 0, price: rust_decimal::Decimal::from(100),
+            quantity: rust_decimal::Decimal::ONE, side: quantick_engine::Side::Buy,
+        }).unwrap();
+        AvwapCache::refresh(&mut payload.cache, quantick_anchored_studies::AverageRequest {
+            anchor_bar: 2.0, source: payload.source, bands: payload.bands,
+        }, &quantick_anchored_studies::AverageInputs {
+            closed: &[bar.clone(), bar.clone(), bar], partial: None, prefix: &[], timeline_revision: 0,
+        });
+        assert!(payload.cache.is_some());
         let exported = payload.export_preset().expect("avwap exports its preset");
         assert!(!exported.to_string().contains("cache"));
 
@@ -762,17 +728,13 @@ mod tests {
     #[test]
     fn hit_test_finds_the_line_and_na_breaks_it() {
         let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
-        let payload = AvwapPayload {
-            cache: Some(cache_with_rows(
-                10,
-                vec![
-                    [100.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN],
-                    [f64::NAN; AVWAP_ROW_WIDTH],
-                    [100.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN],
-                ],
-            )),
-            ..AvwapPayload::default()
-        };
+        let payload = AvwapPayload::default();
+        let rows = [
+            [100.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN],
+            [f64::NAN; AVWAP_ROW_WIDTH],
+            [100.0, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN],
+        ];
+        let cache = cache_with_rows(10, &rows);
         let anchors = [ChartPoint::at(10.0, 100.0)];
         let chart_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
         // Anchor bar 10 sits at x=100 with 20 px per bar.
@@ -791,29 +753,32 @@ mod tests {
         };
         let y = scale.y(100.0);
         // On the line at slot 10 and slot 12.
-        assert!(TOOL.hit_test(chart_rect, &anchor_screen, egui::pos2(100.0, y), 4.0, &ctxt));
-        assert!(TOOL.hit_test(chart_rect, &anchor_screen, egui::pos2(140.0, y), 4.0, &ctxt));
+        assert!(hit_output(chart_rect, &anchor_screen, egui::pos2(100.0, y), 4.0, &ctxt, Some(cache)));
+        assert!(hit_output(chart_rect, &anchor_screen, egui::pos2(140.0, y), 4.0, &ctxt, Some(cache)));
         // Slot 11 is `na`: nothing to grab there but the neighbours' reach.
-        assert!(!TOOL.hit_test(
+        assert!(!hit_output(
             chart_rect,
             &anchor_screen,
             egui::pos2(120.0, y + 30.0),
             4.0,
-            &ctxt
+            &ctxt,
+            Some(cache)
         ));
         // Far from the line and the anchor: no hit.
-        assert!(!TOOL.hit_test(
+        assert!(!hit_output(
             chart_rect,
             &anchor_screen,
             egui::pos2(300.0, y - 80.0),
             4.0,
-            &ctxt
+            &ctxt,
+            Some(cache)
         ));
     }
 
     #[test]
     fn visible_rows_clips_to_the_chart() {
-        let cache = cache_with_rows(0, vec![[100.0; AVWAP_ROW_WIDTH]; 100]);
+        let rows = [[100.0; AVWAP_ROW_WIDTH]; 100];
+        let cache = cache_with_rows(0, &rows);
         let chart_rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(200.0, 400.0));
         // 20 px per bar, anchor bar 0 at x=0: slots 0..=10 are on screen.
         let range = visible_rows(&cache, 0.0, 0.0, 20.0, chart_rect);

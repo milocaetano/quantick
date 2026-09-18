@@ -83,6 +83,7 @@ impl Tab {
     /// Pointer and admitted remote callers share this operation and its floors.
     pub(crate) fn resize_context_pair(
         &mut self,
+        tab_id: u64,
         request: ResizeContextPair,
         actor: ActorKind,
     ) -> Result<ContextPairResult, ContextResizeError> {
@@ -104,7 +105,7 @@ impl Tab {
             .resize(index, request.wanted_y, column, &bands.dividers)?;
         if result.changed {
             tracing::info!(target: "quantick::app", event_code = "LAYOUT_CONTEXT_PAIR_RESIZED",
-                tab_id = self.id, upper_pane_id = request.upper_pane_id,
+                tab_id = tab_id, upper_pane_id = request.upper_pane_id,
                 lower_pane_id = request.lower_pane_id, ?actor,
                 fraction = result.fraction, "a context boundary was resized");
         }

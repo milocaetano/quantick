@@ -248,12 +248,12 @@ fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
     FeedSnapshot {
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| {
+            .iter_with_ids()
+            .map(|(tab_id, tab)| {
                 let capabilities = tab.capabilities(config);
                 let replay = tab.replay.is_some();
                 FeedTabSnapshot {
-                    tab_id: WireU64::new(tab.id),
+                    tab_id: WireU64::new(tab_id),
                     requested_feed_id: tab.feed_id.clone(),
                     requested_symbol: tab.symbol.clone(),
                     active_feed_id: tab.active.0.clone(),

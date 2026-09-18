@@ -33,7 +33,7 @@ pub(crate) fn maintain(
 
 pub(crate) fn restore(
     workspace: &mut WorkspaceStore,
-    tabs: &mut [Tab],
+    tabs: &mut crate::app::arrangement_host::ArrangementHost,
     active: usize,
     style: &mut ChartStyle,
 ) {
@@ -58,5 +58,5 @@ pub(crate) fn restore(
     }
     workspace
         .layers_mut()
-        .rebaseline(tabs[active].id, tabs[active].flow_pane.layer_mask(style));
+        .rebaseline(tabs.id_at(active), tabs[active].flow_pane.layer_mask(style));
 }

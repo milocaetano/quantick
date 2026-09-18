@@ -25,7 +25,6 @@ mod shared_routing_tests {
         let (cmd_tx, _cmd_rx) = mpsc::channel(8);
         let mut tab = Tab::new(
             0,
-            0,
             "binance".to_owned(),
             "BTCUSDT".to_owned(),
             BarSpec::Tick(50),
@@ -224,7 +223,6 @@ mod move_pane_tests {
         let (cmd_tx, _cmd_rx) = mpsc::channel(8);
         let tab = Tab::new(
             0,
-            0,
             "binance".to_owned(),
             "BTCUSDT".to_owned(),
             BarSpec::Tick(50),
@@ -275,7 +273,7 @@ mod move_pane_tests {
                 remaining: Some(4),
             })
             .expect("the test channel has room");
-        tab.drain_feed();
+        tab.drain_feed(0);
 
         assert_eq!(
             tab.loading.count(LoadingTask::History),
@@ -304,7 +302,7 @@ mod move_pane_tests {
         feed_tx
             .try_send(FeedEvent::HistoryPrepended(vec![older_trade(1_000)]))
             .expect("the test channel has room");
-        tab.drain_feed();
+        tab.drain_feed(0);
         assert_eq!(
             tab.loading.count(LoadingTask::History),
             before - 1,
@@ -317,7 +315,6 @@ mod move_pane_tests {
         let (_book_tx, book_rx) = mpsc::channel(8);
         let (cmd_tx, _cmd_rx) = mpsc::channel(8);
         let mut tab = Tab::new(
-            0,
             0,
             "binance".to_owned(),
             "BTCUSDT".to_owned(),
@@ -358,7 +355,7 @@ mod move_pane_tests {
         assert_eq!(ids, vec![200, 201, 202]);
 
         assert!(
-            tab.move_context_pane(3, 1),
+            tab.move_context_pane(0, 3, 1),
             "the bottom chart moves to the top"
         );
         let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
@@ -372,7 +369,7 @@ mod move_pane_tests {
     #[test]
     fn moving_a_chart_one_slot_swaps_it_with_its_neighbour() {
         let mut tab = tab_with(2);
-        assert!(tab.move_context_pane(1, 2));
+        assert!(tab.move_context_pane(0, 1, 2));
         let after: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
         assert_eq!(after, vec![201, 200]);
     }
@@ -384,8 +381,14 @@ mod move_pane_tests {
     fn the_flow_pane_refuses_to_move() {
         let mut tab = tab_with(2);
         let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
-        assert!(!tab.move_context_pane(0, 1), "address 0 is the flow pane");
-        assert!(!tab.move_context_pane(1, 0), "and it is not a destination");
+        assert!(
+            !tab.move_context_pane(0, 0, 1),
+            "address 0 is the flow pane"
+        );
+        assert!(
+            !tab.move_context_pane(0, 1, 0),
+            "and it is not a destination"
+        );
         assert_eq!(
             tab.time_panes
                 .iter()
@@ -405,7 +408,7 @@ mod move_pane_tests {
         let before: Vec<u64> = tab.time_panes.iter().map(|pane| pane.id).collect();
         for (from, to) in [(1_usize, 9_usize), (9, 1), (7, 8)] {
             assert!(
-                !tab.move_context_pane(from, to),
+                !tab.move_context_pane(0, from, to),
                 "moving {from} to {to} names a chart that is not there"
             );
         }
@@ -424,16 +427,16 @@ mod move_pane_tests {
     #[test]
     fn moving_a_chart_onto_itself_reports_no_change() {
         let mut tab = tab_with(2);
-        assert!(!tab.move_context_pane(1, 1));
-        assert!(!tab.move_context_pane(2, 2));
+        assert!(!tab.move_context_pane(0, 1, 1));
+        assert!(!tab.move_context_pane(0, 2, 2));
     }
 
     /// A single context chart has nowhere to go.
     #[test]
     fn a_lone_context_chart_cannot_be_reordered() {
         let mut tab = tab_with(1);
-        assert!(!tab.move_context_pane(1, 1));
-        assert!(!tab.move_context_pane(1, 2));
+        assert!(!tab.move_context_pane(0, 1, 1));
+        assert!(!tab.move_context_pane(0, 1, 2));
         assert_eq!(tab.time_panes.len(), 1);
     }
 }
@@ -452,7 +455,6 @@ mod collapse_path_tests {
         let (_book_tx, book_rx) = mpsc::channel(8);
         let (cmd_tx, _cmd_rx) = mpsc::channel(8);
         Tab::new(
-            0,
             0,
             "binance".to_owned(),
             "BTCUSDT".to_owned(),
@@ -541,8 +543,8 @@ mod collapse_path_tests {
         };
         let style = crate::style::ChartStyle::default();
         let mut ids = PaneIdAllocator::new();
-        tab.apply_pending_layout(&config, &style, &mut ids);
-        tab.apply_pending_layout(&config, &style, &mut ids);
+        tab.apply_pending_layout(0, &config, &style, &mut ids);
+        tab.apply_pending_layout(0, &config, &style, &mut ids);
         assert_eq!(tab.time_panes.len(), 2, "both charts were built");
         assert_eq!(
             tab.time_panes[0].spec.retained(crate::state::BarKind::Time),

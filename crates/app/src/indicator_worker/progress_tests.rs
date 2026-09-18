@@ -12,7 +12,7 @@ impl IndicatorWorker {
         let (events, output) = sync_channel(INDICATOR_EVENT_QUEUE);
         let observed = progress.consumer();
         let worker = Self {
-            commands: progress.bind_merging(commands, fold_parked),
+            commands: progress.bind_merging(commands, fold_commands),
             events: output,
             partial_updates: std::cell::Cell::new(0),
             lane_traffic: std::cell::Cell::new(0),
@@ -41,7 +41,7 @@ fn add() -> IndicatorCommand {
 }
 fn acknowledge(worker: &IndicatorWorker) -> Receiver<()> {
     let (tx, rx) = channel();
-    worker.send(IndicatorCommand::Flush(tx));
+    worker.send(crate::indicator_worker::WorkerCommand::Flush(tx));
     rx
 }
 fn assert_output(events: Vec<IndicatorEvent>, preview: bool) {

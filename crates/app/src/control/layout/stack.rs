@@ -71,6 +71,7 @@ fn resize(
         .to_f32()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;
     let index = super::tab_index(app, input.target)?;
+    let tab_id = app.control_tabs().id_at(index);
     let tab = app
         .control_tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
@@ -81,6 +82,7 @@ fn resize(
     })?;
     let result = tab
         .resize_context_pair(
+            tab_id,
             ResizeContextPair {
                 upper_pane_id: input.upper_pane_id.get(),
                 lower_pane_id: input.lower_pane_id.get(),
@@ -90,7 +92,7 @@ fn resize(
         )
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let result = ResizePairResult {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         upper_pane_id: input.upper_pane_id,
         lower_pane_id: input.lower_pane_id,
         fraction: canonical_f32(result.fraction, SPLIT_FRACTION_DECIMAL_PLACES)

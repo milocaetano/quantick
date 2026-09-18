@@ -3,6 +3,8 @@
 //! All coordinates, owner facts and revisions are supplied by the caller.
 //! Updates allocate nothing; drawing construction happens only through effects.
 
+pub mod conversion_plan;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Profile,

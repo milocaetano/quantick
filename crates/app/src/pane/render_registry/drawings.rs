@@ -88,7 +88,7 @@ impl DrawingPass<'_> {
             // the mirrored marks use for the same reason.
             let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
-                    color: crate::pane::ChartPane::painted_color(drawing),
+                    color: crate::drawings::painted_color(drawing),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -195,5 +195,60 @@ impl DrawingPass<'_> {
                 paint_placement_hint(&clipped, chart_rect, cursor, draft.tool, draft.points.len());
             }
         }
+    }
+}
+
+impl DrawingPass<'_> {
+    pub fn paint(
+        &mut self,
+        registry: &super::RenderRegistry,
+        anchors: &crate::strategy_anchors::StrategyAnchors,
+        projection: &super::super::drawing_projection::DrawingProjection<'_>,
+        closed_slots: usize,
+    ) {
+        let DrawingPass {
+            painter,
+            band,
+            band_index,
+            drawings,
+            history_right,
+            total,
+            pass,
+            ..
+        } = *self;
+        registry.drawings(self);
+        if pass == DrawPass::UnderCandles {
+            return;
+        }
+        let Some(scale) = band.scale.as_ref() else {
+            return;
+        };
+        let clipped = painter.with_clip_rect(band.rect);
+        // Badges paint outside the visibility gate above: a hidden drawing
+        // hides its geometry, never the fact that a bot rides it — an
+        // invisible armed instance is the one state this surface must not
+        // allow. O(armed instances), zero when none.
+        for instance in &anchors.instances {
+            let Some(index) = drawings.index_of(instance.drawing) else {
+                continue;
+            };
+            let drawing = &drawings.items()[index];
+            if !bands::drawing_in_band(drawing, band)
+                || (drawing.band == DrawingBand::AllBands && band_index != 0)
+            {
+                continue;
+            }
+            let points = projection.projected_drawing_points(drawing, history_right, total, scale);
+            super::super::strategy_badges::paint_strategy_badge(
+                &clipped,
+                instance,
+                drawing,
+                &points,
+                drawings.all_hidden(),
+                closed_slots,
+            );
+        }
+
+        registry.drawing_draft(self);
     }
 }

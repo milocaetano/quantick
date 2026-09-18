@@ -291,14 +291,14 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
         },
         tabs: app
             .control_tabs()
-            .iter()
-            .map(|tab| {
+            .iter_with_ids()
+            .map(|(tab_id, tab)| {
                 let panes: Vec<PaneHealthSnapshot> = tab
                     .panes()
                     .map(|(pane, side)| pane_health(pane, side))
                     .collect();
                 TabHealthSnapshot {
-                    tab_id: WireU64::new(tab.id),
+                    tab_id: WireU64::new(tab_id),
                     feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
                         let integrity = tab.feed_integrity;
                         FeedIntegritySnapshot {

@@ -15,6 +15,7 @@ use eframe::egui;
 
 use crate::drawings::{self, DrawingBand};
 use crate::theme;
+use crate::toolrail::Tool;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
@@ -228,7 +229,22 @@ impl ChartPane {
                     .context_menu_label()
                     .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
+                    let completion = self.gestures.place_point(
+                        &mut self.drawings,
+                        tool,
+                        &DrawingBand::Price,
+                        point,
+                        super::placement_gestures::PlacementDefaults {
+                            presets: chrome.presets,
+                            repeat: chrome.toolrail.repeat(),
+                        },
+                    );
+                    if completion.arm_pointer {
+                        chrome.toolrail.arm(Tool::Pointer);
+                    }
+                    if completion.begin_text_edit {
+                        *chrome.begin_text_edit = true;
+                    }
                     ui.close_menu();
                 }
             }

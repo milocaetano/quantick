@@ -5,15 +5,30 @@ use super::{DrawingChromeAsk, DrawingEnv};
 use crate::drawings::{self, ChartPoint, DrawingPayload, NewDrawing};
 use crate::pane::PaneSide;
 use crate::widgets::{IconButton, TOOLRAIL_ICON};
+use core::conversion_plan::{
+    ConversionInput, ConversionReadback, PendingConversion, PlacementOutcome,
+    QuickRangeConversionPlan, StartedConversion,
+};
 use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
-use quantick_chart_interaction::quick_range::{self as core, Command, Effect, Event, Phase};
+use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
+
+#[cfg(feature = "quick-range-harness")]
+mod launch;
+#[cfg(feature = "quick-range-harness")]
+pub(crate) use launch::QuickRangeLaunch;
+
+crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
 pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
 pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
+
+#[cfg(test)]
+#[path = "quick_range/tests/conversion.rs"]
+mod conversion_tests;
 
 /// The model owns operation identity; the adapter supplies registry/UI names.
 pub(crate) trait ActionUi {
@@ -87,9 +102,9 @@ impl Owner {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PlaceRequest {
-    pub operation: core::PlaceRequest,
+#[derive(Debug, PartialEq)]
+pub(crate) struct PendingRangePlacement {
+    pub conversion: PendingConversion,
     pub side: PaneSide,
 }
 
@@ -123,6 +138,8 @@ pub(crate) struct QuickRange {
     action_rects: [Option<egui::Rect>; 3],
     #[cfg(feature = "quick-range-harness")]
     demo_requested: Option<(bool, bool)>,
+    #[cfg(feature = "quick-range-harness")]
+    pending_launch: Option<QuickRangeLaunch>,
 }
 
 fn anchor(point: ChartPoint) -> core::Anchor {
@@ -139,21 +156,6 @@ fn point(anchor: core::Anchor) -> ChartPoint {
 
 impl QuickRange {
     /// Read-only application adapter. The model handles removal, layout and revision changes.
-    pub fn reconcile_panes(&mut self, tab: &crate::tab::Tab) {
-        self.reconcile_tab(tab.id);
-        let Some(owner) = self.owner() else { return };
-        let current = tab.sides().find_map(|side| {
-            let pane = tab.pane(side);
-            (pane.id == owner.pane).then_some(Owner {
-                tab: tab.id,
-                side,
-                pane: pane.id,
-                revision: pane.pagination_revision(),
-                layout: pane.layout.map(|id| id.0),
-            })
-        });
-        self.reconcile(current);
-    }
     pub fn reconcile(&mut self, owner: Option<Owner>) {
         match owner {
             Some(owner) => self.reconcile_owner(owner),
@@ -321,66 +323,24 @@ impl QuickRange {
         }))
     }
 
-    fn convert(&mut self, action: Action) -> Option<PlaceRequest> {
+    pub(crate) fn convert(&mut self, action: Action) -> Option<PendingRangePlacement> {
         let context = self.model.context()?;
-        let Some(Effect::Place(operation)) =
-            self.model.update(Command::Convert(action), context).effect
+        let side = self.side?;
+        let StartedConversion::Awaiting(conversion) =
+            QuickRangeConversionPlan::start(&mut self.model, ConversionInput { action, context })
         else {
             return None;
         };
-        Some(PlaceRequest {
-            operation,
-            side: self.side?,
-        })
+        Some(PendingRangePlacement { conversion, side })
     }
 
-    pub fn completed(&mut self, id: u64, succeeded: bool) -> bool {
-        let event = if succeeded {
-            Event::Completed(id)
-        } else {
-            Event::Refused(id)
-        };
-        self.model
-            .observe(event, self.model.context().unwrap_or_default())
-            .effect
-            == Some(Effect::ExplainRefusal)
-    }
-
-    #[cfg(feature = "quick-range-harness")]
-    pub fn request_demo(&mut self, ready: bool, future: bool) {
-        self.demo_requested = Some((ready, future));
-    }
-
-    #[cfg(feature = "quick-range-harness")]
-    pub fn stage_demo(
+    pub fn finish_conversion(
         &mut self,
-        owner: Owner,
-        opening: impl FnOnce(bool) -> Option<([ChartPoint; 2], NewDrawing)>,
-    ) {
-        let Some((ready, future)) = self.demo_requested else {
-            return;
-        };
-        let Some((anchors, look)) = opening(future) else {
-            return;
-        };
-        self.demo_requested = None;
-        self.press(
-            owner,
-            egui::pos2(0.0, 0.0),
-            anchors[0],
-            core::GestureEligibility {
-                pointer_tool: true,
-                unoccluded: true,
-                area: core::GestureArea {
-                    min: [0.0; 2],
-                    max: [20.0; 2],
-                },
-            },
-        );
-        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, || look);
-        if ready {
-            self.release(owner);
-        }
+        conversion: PendingConversion,
+        outcome: PlacementOutcome,
+    ) -> ConversionReadback {
+        let context = self.model.context().unwrap_or_default();
+        conversion.finish(&mut self.model, context, outcome)
     }
 }
 
@@ -458,41 +418,5 @@ pub(super) fn draw(
         place_quick_range: clicked.and_then(|action| quick.convert(action)),
         dismiss_quick_range: dismiss,
         ..DrawingChromeAsk::default()
-    }
-}
-
-#[cfg(all(test, feature = "quick-range-harness"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn demo_is_one_shot_and_enters_the_production_owner() {
-        let owner = Owner {
-            tab: 1,
-            pane: 2,
-            side: PaneSide::Flow,
-            revision: 3,
-            layout: Some(4),
-        };
-        let mut quick = QuickRange::default();
-        quick.request_demo(true, true);
-        quick.stage_demo(owner, |future| {
-            assert!(future);
-            let tool = drawings::DrawingTool::by_id("measure").unwrap();
-            Some((
-                [
-                    ChartPoint::at_time(1.5, 100.0, Some(1)),
-                    ChartPoint::at(10.5, 101.0),
-                ],
-                NewDrawing {
-                    style: tool.default_style(),
-                    payload: tool.default_payload(),
-                },
-            ))
-        });
-        assert!(quick.model.view().unwrap().actionable());
-        quick.dismiss();
-        quick.stage_demo(owner, |_| panic!("the demo was consumed"));
-        assert!(!quick.model.present());
     }
 }

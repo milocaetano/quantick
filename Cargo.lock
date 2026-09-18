@@ -2897,6 +2897,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "quantick-anchored-studies"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-app"
 version = "0.1.0"
 dependencies = [
@@ -2906,6 +2915,7 @@ dependencies = [
  "egui-phosphor",
  "getrandom 0.3.4",
  "png",
+ "quantick-anchored-studies",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
@@ -2916,6 +2926,7 @@ dependencies = [
  "quantick-feed-binance",
  "quantick-feed-hyperliquid",
  "quantick-feed-mt5",
+ "quantick-indicator-session",
  "quantick-indicators",
  "quantick-layers",
  "quantick-orderbook",
@@ -2925,6 +2936,7 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "quantick-workspace",
  "raw-window-handle",
  "rfd",
  "rodio",
@@ -3078,6 +3090,16 @@ name = "quantick-guards"
 version = "0.1.0"
 
 [[package]]
+name = "quantick-indicator-session"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-pine",
+ "rust_decimal",
+]
+
+[[package]]
 name = "quantick-indicators"
 version = "0.1.0"
 dependencies = [
@@ -3175,6 +3197,14 @@ version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-workspace"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.20",
 ]
 
 [[package]]
