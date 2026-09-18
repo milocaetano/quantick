@@ -10,7 +10,7 @@ use quantick_feed::{self as feed, FeedHandle, history_reach};
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) config: &'a AppConfig,
-    pub(super) style: &'a crate::style::ChartStyle,
+    pub(super) style: &'a mut crate::style::ChartStyle,
     pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
     pub(super) workspace: &'a mut crate::workspace_store::WorkspaceStore,
     pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
