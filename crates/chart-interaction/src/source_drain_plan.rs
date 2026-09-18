@@ -1,55 +1,37 @@
 //! Synchronous source-drain dependencies. Workers may still be pending afterward.
 //! Event payloads, FIFO reception and intrinsic publication belong to the caller.
 
-use crate::stage_plan::Step;
+use crate::stage_registry::declare_stages;
 
 #[cfg(test)]
 mod tests;
 
-crate::stage_plan::stage_enum! {
+declare_stages! {
+    // These are actual synchronous prerequisites, not worker readiness claims.
     pub enum SourceDrainStage {
-        PrepareSymbol,
-        ReceiveAvailable,
-        PublishLatestPartial,
-        LandGap,
-        SettleReanchors,
-        TickDealRecording,
+        /// Before ingress: the first new print belongs to this market.
+        PrepareSymbol after [],
+        ReceiveAvailable after [PrepareSymbol],
+        PublishLatestPartial after [ReceiveAvailable],
+        LandGap after [PublishLatestPartial],
+        SettleReanchors after [LandGap],
+        TickDealRecording after [SettleReanchors],
     }
 }
 
-// These are actual synchronous prerequisites, not worker readiness claims.
-const STAGES: [Step<SourceDrainStage>; 6] = [
-    Step {
-        stage: SourceDrainStage::PrepareSymbol,
-        after: 0,
-    },
-    Step {
-        stage: SourceDrainStage::ReceiveAvailable,
-        after: SourceDrainStage::PrepareSymbol.bit(),
-    },
-    Step {
-        stage: SourceDrainStage::PublishLatestPartial,
-        after: SourceDrainStage::ReceiveAvailable.bit(),
-    },
-    Step {
-        stage: SourceDrainStage::LandGap,
-        after: SourceDrainStage::PublishLatestPartial.bit(),
-    },
-    Step {
-        stage: SourceDrainStage::SettleReanchors,
-        after: SourceDrainStage::LandGap.bit(),
-    },
-    Step {
-        stage: SourceDrainStage::TickDealRecording,
-        after: SourceDrainStage::SettleReanchors.bit(),
-    },
-];
-const _: () = assert!(valid(&STAGES));
+// The test-facing names the reorder proofs in `tests` are written against.
+#[cfg(test)]
+const STAGES: [SourceDrainStage; SourceDrainStage::COUNT] = SourceDrainStage::ORDER;
+
+#[cfg(test)]
+const fn valid(stages: &[SourceDrainStage]) -> bool {
+    SourceDrainStage::is_valid_order(stages)
+}
 
 /// Canonical traversal; no allocation, event queue, clock or success receipt.
 pub struct SourceDrainPlan;
 impl SourceDrainPlan {
     pub fn stages() -> impl ExactSizeIterator<Item = SourceDrainStage> {
-        STAGES.iter().map(|step| step.stage)
+        SourceDrainStage::canonical()
     }
 }
