@@ -10,6 +10,8 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
+pub(crate) use quantick_control_schema::attention::*;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -26,9 +28,13 @@ use quantick_control::{
     schema::{CompiledSchema, generated_schema},
     wire::{ActorContext, ActorKind, WireU64},
 };
+
 use quantick_control_host::contract::ExternalSchemas;
+
 use schemars::JsonSchema;
+
 use serde::{Deserialize, Serialize};
+
 use serde_json::{Value, json};
 
 use crate::{app::QuantickApp, metrics};
@@ -39,19 +45,12 @@ use super::{
     journal::{EventActor, NewEvent},
 };
 
-/// The first registered action: a human (or, later, an agent) points at what
-/// is under the pointer and says "this".
-pub(crate) const MARK_CAPABILITY_ID: &str = "attention.mark.create";
-pub(crate) const MARK_EVENT_KIND: &str = "attention.mark.created";
 /// The annotate tier's identifiers this action docks into (contract §7).
 pub(crate) use quantick_control_host::authority::{
     ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
     ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
     UI_BOUNDED_COST_ID,
 };
-
-/// The version of `attention.mark.create` the hotkey and the hook invoke.
-pub(crate) const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 
 /// One action's handler. It receives the application and the control access
 /// it lives in (the journal, the trace), the trusted actor, and the resolved

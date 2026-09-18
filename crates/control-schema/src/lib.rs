@@ -8,16 +8,21 @@
 //! every function is a total function of what it is handed.
 
 pub mod analysis;
+pub mod attention;
 pub mod chart;
 pub mod deal_recording;
+pub mod evidence;
 pub mod feed;
 pub mod health;
+pub mod indicator_guide;
 pub mod layers;
 pub mod layout;
 pub mod layout_v2;
 pub mod notify;
 pub mod orderflow;
 pub mod recovery;
+pub mod retry_matrix;
+pub mod scene;
 pub mod script;
 pub mod session;
 pub mod trade;

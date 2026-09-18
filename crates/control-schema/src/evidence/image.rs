@@ -13,13 +13,11 @@ use quantick_control::{
     wire::{Base64Bytes, WireU64},
 };
 
-use super::super::{
-    scene::{SceneBoundsSnapshot, SceneSnapshot},
-    types::{canonical_f32, canonical_f64, wire_usize},
-};
 use super::{
     EvidenceControlRegion, EvidenceGap, EvidenceImage, EvidenceScreenshot, screenshot_gap,
 };
+use crate::scene::{SceneBoundsSnapshot, SceneSnapshot};
+use quantick_control_host::wire::{canonical_f32, canonical_f64, wire_usize};
 // The one thing this file borrows from the other side of the seam: the
 // digest helper, so an image and a chunk are hashed the same way.
 use quantick_control_host::evidence::raw_sha256;
@@ -57,7 +55,7 @@ const fn base64_len(bytes: usize) -> usize {
 /// measured in microseconds. So the geometry travels eagerly and the rows
 /// travel as a closure the response worker calls, beside the PNG encoding it
 /// was always going to pay for.
-pub(crate) struct RawScreenshot {
+pub struct RawScreenshot {
     pub width_px: u32,
     pub height_px: u32,
     pub pixels_per_point: f32,
@@ -67,7 +65,7 @@ pub(crate) struct RawScreenshot {
 }
 
 /// The rows of one frame, still unpaid for.
-pub(crate) struct ScreenshotPixels(Box<dyn FnOnce() -> Vec<u8> + Send>);
+pub struct ScreenshotPixels(Box<dyn FnOnce() -> Vec<u8> + Send>);
 
 impl ScreenshotPixels {
     pub fn new(produce: impl FnOnce() -> Vec<u8> + Send + 'static) -> Self {
@@ -101,7 +99,7 @@ impl std::fmt::Debug for RawScreenshot {
 /// measured in. That scaling is the only arithmetic here, and it is why the
 /// two have to share a capture revision: a scene from another frame would name
 /// controls that have since moved.
-pub(super) fn encode_screenshot(
+pub fn encode_screenshot(
     raw: RawScreenshot,
     capture_revision: WireU64,
     scene: Option<&SceneSnapshot>,

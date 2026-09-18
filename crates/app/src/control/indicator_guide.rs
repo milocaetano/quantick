@@ -1,5 +1,7 @@
 //! Durable per-indicator price-hover guide, shared by UI and automation.
 
+pub(crate) use quantick_control_schema::indicator_guide::*;
+
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -13,10 +15,9 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
-    wire::{ActorContext, WireU64},
+    wire::ActorContext,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use serde_json::Value;
 
 use crate::{app::QuantickApp, indicator_worker::SlotId};
@@ -28,26 +29,6 @@ use super::{
     journal::{EventActor, NewEvent},
     script::SCRIPT_MODULE_ID,
 };
-
-pub(crate) const INDICATOR_GUIDE_CAPABILITY_ID: &str = "indicator.mouse_vertical_line.set";
-pub(crate) const INDICATOR_GUIDE_EVENT_KIND: &str = "indicator.mouse_vertical_line.changed";
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct IndicatorGuideInput {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub slot_id: WireU64,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct IndicatorGuideResult {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub slot_id: WireU64,
-    pub enabled: bool,
-}
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(

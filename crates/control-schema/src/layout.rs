@@ -12,9 +12,10 @@
 //! under a grant whose own words deny it would be a trust bug with no surface
 //! to find it on.
 
+use crate::retry_matrix::Readback;
 use quantick_control_host::authority::{
     CAPABILITY_VERSION, COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID,
-    NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
+    NO_CONFIRMATION_ID, SNAPSHOT_CAPABILITY_ID, UI_BOUNDED_COST_ID,
 };
 
 use std::collections::BTreeSet;
@@ -291,3 +292,17 @@ pub fn descriptor(
         pagination: None,
     }
 }
+
+pub const RESIZE_PAIR_CAPABILITY_ID: &str = "layout.pane.resize_pair";
+
+/// The scene reports the same splitter's current bounds after an uncertain call.
+pub const READBACK: Readback = Readback {
+    capability: RESIZE_PAIR_CAPABILITY_ID,
+    policy: IdempotencyPolicy::Optional,
+    read: SNAPSHOT_CAPABILITY_ID,
+    scope: Some(crate::scene::CONTROLS_SCOPE_ID),
+    event: None,
+    field: "controls[].bounds",
+    applied_when: "the addressed context divider's bounds reflect the applied vertical position",
+    proven_by: &["every_reachable_optional_row_replays_a_dropped_answer_and_begins_once"],
+};

@@ -47,9 +47,10 @@ pub(crate) use reads::EventsReadInvocation;
 pub(crate) use quantick_control_host::authority::DESCRIBE_CAPABILITY_ID;
 pub(crate) use quantick_control_host::authority::{
     COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID,
-    DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, SNAPSHOT_CAPABILITY_ID,
-    SnapshotReadInput, TRADER_PROFILE_ID,
+    DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, SnapshotReadInput,
 };
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -58,8 +59,6 @@ pub(crate) struct ChartWindowInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<quantick_control::cursor::PageCursor>,
 }
-
-pub(crate) use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),
@@ -231,12 +230,13 @@ impl PreparedDispatch {
     }
 }
 
-struct PreparedCapability {
+pub(crate) struct PreparedCapability {
     dispatch: PreparedDispatch,
     dynamic_permissions: BTreeSet<PermissionId>,
 }
 
-type PrepareHandler = fn(ScopeCatalogue<'_>, &Value) -> Result<PreparedCapability, ControlError>;
+pub(crate) type PrepareHandler =
+    fn(ScopeCatalogue<'_>, &Value) -> Result<PreparedCapability, ControlError>;
 
 pub(crate) struct ObserverContract {
     contract: CapabilityContract<PrepareHandler>,
@@ -281,6 +281,13 @@ impl ObserverContract {
         })
     }
 
+    /// The host contract this one composes: the registry, the profiles, the
+    /// permissions and the snapshot catalogue, for a generator or a check
+    /// that reads them without the handlers.
+    pub fn capabilities(&self) -> &CapabilityContract<PrepareHandler> {
+        &self.contract
+    }
+
     pub fn registry(&self) -> &ControlRegistry {
         self.contract.registry()
     }
@@ -313,15 +320,6 @@ impl ObserverContract {
         grant: &BTreeSet<PermissionId>,
     ) -> Vec<quantick_control::id::SnapshotScopeId> {
         self.contract.readable_scopes(grant)
-    }
-
-    /// One registered snapshot scope, by id — what the retry matrix checks a
-    /// named readback against.
-    pub fn snapshot_scope(&self, id: &str) -> Option<&SnapshotScopeDescriptor> {
-        self.contract
-            .snapshot_scopes()
-            .iter()
-            .find(|descriptor| descriptor.id.as_str() == id)
     }
 
     pub fn selectable_permissions(&self) -> impl Iterator<Item = &PermissionDescriptor> {

@@ -27,7 +27,8 @@
 //!
 //! One naming rule, enforced here: every capability identifier reaches the
 //! registry through a `const <NAME>_CAPABILITY_ID: &str = "…";` in
-//! `crates/app/src/control/` or the shared annotation contract. Twelve `layout.*`
+//! `crates/app/src/control/`, `crates/control-host/src/`,
+//! `crates/control-schema/src/` or the shared annotation contract. Twelve `layout.*`
 //! and `feed.*` capabilities used a bare `_ID` suffix — and making it exactly
 //! true was cheaper than teaching this guard a denylist of the six other
 //! suffixes (`_SCOPE_ID`, `_PERMISSION_ID`, `_EVENT_KIND`, `_CONTROL_ID`,
@@ -138,7 +139,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
 
 /// The cheap half of the retry matrix's guard.
 ///
-/// `crates/app/src/control/retry_matrix.rs` holds the authoritative one: it
+/// `crates/control-schema/src/retry_matrix.rs` holds the authoritative one: it
 /// builds the registry and refuses to render a row whose policy, read, scope
 /// or field disagrees with it. What this can do in a second, from the two
 /// generated documents alone, is the comparison that goes stale when a
@@ -187,7 +188,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 ),
                 "A read was renamed or withdrawn while the row kept the old identifier, or the \
                  inventory is stale. Regenerate both, then fix the row in \
-                 crates/app/src/control/retry_matrix.rs.",
+                 crates/control-schema/src/retry_matrix.rs.",
             ));
         }
         if !mutable.contains(&id) {
@@ -207,7 +208,7 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 "{RETRY_MATRIX_PATH}: `{id}` can change state and has no row saying how a client \
                  reconciles a call to it"
             ),
-            "Add its readback to READBACKS in crates/app/src/control/retry_matrix.rs, then \
+            "Add its readback to READBACKS in crates/control-schema/src/retry_matrix.rs, then \
              regenerate: `cargo run -p quantick-app -- --dump-retry-matrix > \
              docs/control-plane/retry-matrix.md`.",
         ));
@@ -862,7 +863,7 @@ mod tests {
     fn every_tree_that_declares_capabilities_is_scanned() {
         let declared = declared_capabilities(&workspace_root());
         assert!(declared["annotate.fixed_range_profile.create"].starts_with(ANNOTATION_CONTRACT));
-        assert!(declared["attention.mark.create"].starts_with(CONTROL_DIR));
+        assert!(declared["attention.mark.create"].starts_with(CONTROL_SCHEMA_DIR));
         assert!(declared["feed.reconnect"].starts_with(CONTROL_SCHEMA_DIR));
         assert!(declared["events.read"].starts_with(CONTROL_HOST_DIR));
         assert!(!declared.contains_key("annotate.created"));

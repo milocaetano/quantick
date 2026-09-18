@@ -8,7 +8,7 @@ per mutable capability the running application registers; read-only
 capabilities change nothing and need no reconciling.
 
 This file is generated; a hand edit is a guard failure, not a correction.
-The rows live in `crates/app/src/control/retry_matrix.rs`, and the
+The rows live in `crates/control-schema/src/retry_matrix.rs`, and the
 generator refuses to render while any of them disagrees with the registry.
 To change a row, change the table or the capability and regenerate:
 

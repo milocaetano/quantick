@@ -385,11 +385,8 @@ impl ClientRateLimiter {
 /// matrix reads this list to say which capabilities an agent can reach at all,
 /// and a gateway test pins `configured_profile` to it, so a branch that starts
 /// handing out another ceiling fails there before the matrix can go stale.
-pub(crate) const GRANTABLE_PROFILE_IDS: [&str; 3] = [
-    OBSERVER_PROFILE_ID,
-    ANNOTATOR_PROFILE_ID,
-    COCKPIT_PROFILE_ID,
-];
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::GRANTABLE_PROFILE_IDS;
 
 /// Whether a permission belongs to the trade tier — see the access
 /// panel's read-scope filter for why it is excluded from every section.

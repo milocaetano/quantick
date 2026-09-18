@@ -126,6 +126,14 @@ pub const EVIDENCE_READ_CAPABILITY_ID: &str = "evidence.read";
 
 pub use crate::events::{EVENTS_MODULE_ID, EVENTS_PERMISSION_ID};
 
+/// The profiles a grant can hand out, lowest ceiling first. `trader` is
+/// registered and never handed out: nothing constructs it as a ceiling.
+pub const GRANTABLE_PROFILE_IDS: [&str; 3] = [
+    OBSERVER_PROFILE_ID,
+    ANNOTATOR_PROFILE_ID,
+    COCKPIT_PROFILE_ID,
+];
+
 pub const SAFE_DEFAULT_SCOPE_IDS: &[&str] = &[
     "observe.system",
     "observe.workspace",

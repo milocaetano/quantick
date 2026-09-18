@@ -18,6 +18,9 @@ quantick-orderflow = { path = "../orderflow" }
 quantick-pine = { path = "../pine" }
 quantick-sim = { path = "../sim" }
 quantick-stores = { path = "../stores" }
+# PNG encoding for the evidence screenshot: a raster no viewer accepts would
+# make an evidence image useless to the human reading the bundle.
+png = { workspace = true }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
