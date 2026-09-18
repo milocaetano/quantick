@@ -43,19 +43,15 @@ use super::{
 /// is under the pointer and says "this".
 pub(crate) const MARK_CAPABILITY_ID: &str = "attention.mark.create";
 pub(crate) const MARK_EVENT_KIND: &str = "attention.mark.created";
-pub(crate) const ATTENTION_MODULE_ID: &str = "attention";
-
 /// The annotate tier's identifiers this action docks into (contract §7).
-pub(crate) const ANNOTATE_PERMISSION_ID: &str = "annotate";
-pub(crate) const ANNOTATE_ATTENTION_PERMISSION_ID: &str = "annotate.attention";
-pub(crate) const ANNOTATE_EFFECT_ID: &str = "annotate";
-pub(crate) const ANNOTATOR_PROFILE_ID: &str = "annotator";
+pub(crate) use quantick_control_host::authority::{
+    ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
+    ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, CAPABILITY_VERSION, NO_CONFIRMATION_ID,
+    UI_BOUNDED_COST_ID,
+};
 
-pub(crate) const CAPABILITY_VERSION: u32 = 1;
 /// The version of `attention.mark.create` the hotkey and the hook invoke.
 pub(crate) const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
-pub(crate) const NO_CONFIRMATION_ID: &str = "none";
-pub(crate) const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
 /// One action's handler. It receives the application and the control access
 /// it lives in (the journal, the trace), the trusted actor, and the resolved

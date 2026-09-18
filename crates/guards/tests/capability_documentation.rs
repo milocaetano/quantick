@@ -142,7 +142,7 @@ fn the_next_owner_requires_documentation_and_removal_leaves_an_orphan() {
     fs::write(&owner, "").unwrap();
     assert_only_finding(
         &root,
-        "docs/control-plane/capability-inventory.md:5: `orderflow.l2.read` is documented but no `*_CAPABILITY_ID` constant under crates/app/src/control or crates/control/src/annotation.rs declares it",
+        "docs/control-plane/capability-inventory.md:5: `orderflow.l2.read` is documented but no `*_CAPABILITY_ID` constant under crates/app/src/control, crates/control-host/src or crates/control/src/annotation.rs declares it",
     );
 }
 

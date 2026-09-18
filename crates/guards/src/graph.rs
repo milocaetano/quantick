@@ -72,7 +72,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("chart-interaction", &[]),
     ("control", &[]),
     ("control-local", &["control"]),
-    ("control-host", &["control"]),
+    ("control-host", &["control", "engine"]),
     ("mcp", &["control", "control-local"]),
     // The operability contract is a table and a comparison over it; the
     // interface walks its own registries and hands them in.

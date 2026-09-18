@@ -79,17 +79,13 @@ use quantick_control_host::evidence::{BUNDLE_MEDIA_TYPE, MAX_CHUNKS_PER_BUNDLE, 
 pub(crate) use quantick_control_host::evidence::{EvidenceChunkPage, EvidenceStore};
 
 /// The module that owns both evidence capabilities.
-pub(crate) const EVIDENCE_MODULE_ID: &str = "evidence";
+pub(crate) use quantick_control_host::authority::EVIDENCE_PERMISSION_ID;
 /// The scope the tier is gated on. Sensitive and off by default: a bundle is
 /// every granted scope at once, in one durable object.
-pub(crate) const EVIDENCE_PERMISSION_ID: &str = "observe.evidence";
 /// Rasterising the window is its own decision, separately granted.
 pub(crate) const SCREENSHOT_PERMISSION_ID: &str = "observe.screenshot";
 /// The scope one projection publishes the trader's own words under.
 const USER_TEXT_PERMISSION_ID: &str = "observe.user_text";
-
-pub(crate) const CAPTURE_CAPABILITY_ID: &str = "evidence.capture";
-pub(crate) const READ_CAPABILITY_ID: &str = "evidence.read";
 
 /// The renderer this build links, from the `eframe` feature the application
 /// manifest selects. Reported so a defect that reproduces on one backend can

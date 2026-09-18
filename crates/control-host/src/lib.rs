@@ -13,11 +13,20 @@
 //! this crate through the same module paths it used before the move.
 
 pub mod admission;
+pub mod authority;
 pub mod catalogue;
 pub mod clock;
 pub mod contract;
 pub mod dispatch;
+pub mod events;
 pub mod evidence;
 pub mod idempotency;
+pub mod inventory;
 pub mod journal;
 pub mod projection;
+pub mod refusal;
+#[cfg(test)]
+mod scratch;
+pub mod system;
+pub mod trace;
+pub mod wire;

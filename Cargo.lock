@@ -3011,6 +3011,8 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "quantick-control",
+ "quantick-engine",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",

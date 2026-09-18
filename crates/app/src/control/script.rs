@@ -43,9 +43,7 @@ pub(crate) use super::types::known_error;
 /// The module both script capabilities belong to — the same module the
 /// indicator scopes will register under, because a capability belongs to the
 /// module its ID names (contract §5).
-pub(crate) const SCRIPT_MODULE_ID: &str = "indicator";
-/// The scope that lets an operator put code on the chart.
-pub(crate) const SCRIPT_PERMISSION_ID: &str = "annotate.script";
+pub(crate) use quantick_control_host::authority::{SCRIPT_MODULE_ID, SCRIPT_PERMISSION_ID};
 
 pub(crate) const ATTACH_CAPABILITY_ID: &str = "indicator.script.attach";
 pub(crate) const DETACH_CAPABILITY_ID: &str = "indicator.script.detach";
@@ -53,9 +51,9 @@ pub(crate) const DETACH_CAPABILITY_ID: &str = "indicator.script.detach";
 pub(crate) const SCRIPT_ATTACHED_EVENT_KIND: &str = "indicator.script.attached";
 pub(crate) const SCRIPT_DETACHED_EVENT_KIND: &str = "indicator.script.detached";
 
-const CAPABILITY_VERSION: u32 = 1;
-const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
+use quantick_control_host::authority::{
+    CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
+};
 
 /// The longest script this capability accepts. An indicator written in a
 /// conversation is tens of lines; the bound keeps one call from carrying a

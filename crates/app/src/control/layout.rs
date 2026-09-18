@@ -42,7 +42,7 @@ mod v2;
 pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
 
 /// The module every layout capability belongs to.
-pub(crate) const LAYOUT_MODULE_ID: &str = "layout";
+pub(crate) use quantick_control_host::authority::LAYOUT_MODULE_ID;
 
 const APPLY_PRESET_CAPABILITY_ID: &str = "layout.preset.apply";
 const MOVE_PANE_CAPABILITY_ID: &str = "layout.pane.move";

@@ -24,8 +24,8 @@ use quantick_control::{
     },
     limits::{CONTROL_NOTIFICATION_BURST, CONTROL_NOTIFICATION_RATE_PER_MINUTE},
     registry::{
-        Availability, CapabilityDescriptor, EffectConstraints, EffectPersistence, EffectPolicy,
-        ExpectedCost, IdempotencyPolicy, McpHintFloor, RegistryError, RevisionPolicy,
+        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
+        RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
     wire::ActorContext,
@@ -44,17 +44,16 @@ use super::{
 };
 
 /// The module the notification capabilities belong to.
-pub(crate) const NOTIFY_MODULE_ID: &str = "notify";
 /// Popup and toast: an interruption the trader can read and dismiss.
-pub(crate) const NOTIFY_PERMISSION_ID: &str = "annotate.notification";
 /// Sound: off unless the trader says otherwise, because it reaches them even
 /// when they are not looking at the window.
-pub(crate) const NOTIFY_SOUND_PERMISSION_ID: &str = "annotate.sound";
 /// The effect every notification carries. Separate from `annotate` because
 /// nothing here is reversible.
-pub(crate) const NOTIFY_EFFECT_ID: &str = "notify";
 /// Declared by every notification: it takes attention that was somewhere else.
-pub(crate) const USER_INTERRUPT_RISK_FLAG: &str = "user_interrupt";
+pub(crate) use quantick_control_host::authority::{
+    CAPABILITY_VERSION, NO_CONFIRMATION_ID, NOTIFY_EFFECT_ID, NOTIFY_MODULE_ID,
+    NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID, UI_BOUNDED_COST_ID, USER_INTERRUPT_RISK_FLAG,
+};
 /// Declared by the one that also makes noise.
 pub(crate) const AUDIBLE_OUTPUT_RISK_FLAG: &str = "audible_output";
 
@@ -63,10 +62,6 @@ pub(crate) const TOAST_CAPABILITY_ID: &str = "notify.toast";
 pub(crate) const SOUND_CAPABILITY_ID: &str = "notify.sound";
 
 pub(crate) const NOTIFICATION_EVENT_KIND: &str = "notify.raised";
-
-const CAPABILITY_VERSION: u32 = 1;
-const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 
 /// The longest notification text. A popup is a sentence the trader reads
 /// mid-session, not a report; the report goes in a snapshot.
@@ -181,42 +176,6 @@ impl NotificationLimiter {
     }
 }
 
-/// The effect policy notifications answer to. Registered beside `annotate`
-/// and `observe`; nothing else uses it.
-pub(crate) fn effect_policy(annotator: &quantick_control::id::ProfileId) -> EffectPolicy {
-    EffectPolicy {
-        id: EffectId::new(NOTIFY_EFFECT_ID).expect("static effect ID is valid"),
-        permission_floor: PermissionId::new(ANNOTATE_PERMISSION_ID)
-            .expect("static permission ID is valid"),
-        profile_ceilings: BTreeSet::from([annotator.clone()]),
-        confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        risk_reducing_confirmation_class: None,
-        mcp_hint_floor: McpHintFloor {
-            read_only: false,
-            destructive: false,
-            idempotent: false,
-            open_world: false,
-        },
-        // Every capability under this policy must say that it interrupts.
-        required_risk_flags: BTreeSet::from([
-            RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid")
-        ]),
-        constraints: EffectConstraints {
-            required_read_only: Some(false),
-            allows_destructive: false,
-            durable_requires_reversible: true,
-            // A notification is transient and cannot be taken back, so the
-            // contract demands the flag that says so.
-            irreversible_transient_risk: Some(
-                RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid"),
-            ),
-            allows_risk_reducing: false,
-        },
-    }
-}
-
-/// Dock the notification actions.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         notify_descriptor(

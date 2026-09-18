@@ -56,9 +56,9 @@ use super::{
     types::known_error,
 };
 
-pub(crate) const TRADE_MODULE_ID: &str = "trade";
-pub(crate) const TRADE_EFFECT_ID: &str = "trade";
-pub(crate) const TRADE_PERMISSION_ID: &str = "trade";
+pub(crate) use quantick_control_host::authority::{
+    TRADE_EFFECT_ID, TRADE_MODULE_ID, TRADE_PERMISSION_ID,
+};
 
 /// The journal kinds each action appends. An order that something other
 /// than the trader's own hand asked for has to be distinguishable from one
