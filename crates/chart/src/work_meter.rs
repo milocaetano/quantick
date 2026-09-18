@@ -19,7 +19,7 @@ use std::cell::Cell;
 
 /// Heap work done by one thread since it started.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Tally {
+pub struct Tally {
     /// Fresh allocations (`alloc`, `alloc_zeroed`).
     pub allocs: u64,
     /// Bytes those allocations asked for.
@@ -47,7 +47,7 @@ impl Tally {
     /// The largest copy is the largest seen since the thread started, so a
     /// caller that needs it per window resets it with [`reset_largest`].
     #[must_use]
-    pub(crate) fn since(self, earlier: Self) -> Self {
+    pub fn since(self, earlier: Self) -> Self {
         Self {
             allocs: self.allocs - earlier.allocs,
             alloc_bytes: self.alloc_bytes - earlier.alloc_bytes,
@@ -66,13 +66,13 @@ thread_local! {
 
 /// This thread's heap work so far.
 #[must_use]
-pub(crate) fn tally() -> Tally {
+pub fn tally() -> Tally {
     TALLY.try_with(Cell::get).unwrap_or_default()
 }
 
 /// Forget the largest reallocation this thread has seen, so the next
 /// [`tally`] reports the largest within a window.
-pub(crate) fn reset_largest() {
+pub fn reset_largest() {
     let _ = TALLY.try_with(|cell| {
         let mut tally = cell.get();
         tally.largest_realloc_copy = 0;
@@ -90,7 +90,7 @@ fn record(update: impl FnOnce(&mut Tally)) {
 }
 
 /// The system allocator, tallying per thread.
-pub(crate) struct Counting;
+pub struct Counting;
 
 // SAFETY: every call is forwarded unchanged to `System`, which upholds the
 // `GlobalAlloc` contract; the tally only reads sizes and touches a

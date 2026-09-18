@@ -2916,6 +2916,7 @@ dependencies = [
  "getrandom 0.3.4",
  "png",
  "quantick-anchored-studies",
+ "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
@@ -2929,12 +2930,14 @@ dependencies = [
  "quantick-indicator-session",
  "quantick-indicators",
  "quantick-layers",
+ "quantick-operability",
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-paper",
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
+ "quantick-stores",
  "quantick-strategy",
  "quantick-workspace",
  "raw-window-handle",
@@ -2964,6 +2967,18 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "rust_decimal",
+]
+
+[[package]]
+name = "quantick-chart"
+version = "0.1.0"
+dependencies = [
+ "quantick-chart-interaction",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-orderbook",
+ "quantick-orderflow",
  "rust_decimal",
 ]
 
@@ -3127,6 +3142,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-operability"
+version = "0.1.0"
+
+[[package]]
 name = "quantick-orderbook"
 version = "0.1.0"
 dependencies = [
@@ -3180,6 +3199,22 @@ dependencies = [
  "quantick-engine",
  "quantick-trading",
  "rust_decimal",
+]
+
+[[package]]
+name = "quantick-stores"
+version = "0.1.0"
+dependencies = [
+ "quantick-chart",
+ "quantick-engine",
+ "quantick-feed",
+ "quantick-indicators",
+ "quantick-orderflow",
+ "quantick-workspace",
+ "rust_decimal",
+ "serde",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

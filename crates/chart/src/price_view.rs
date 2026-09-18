@@ -9,7 +9,7 @@
 //! "Inverted chart" toggle flips it outright. This is the pure state behind
 //! all of that, unit-tested in CI.
 
-use crate::chart::PriceScale;
+use crate::geometry::PriceScale;
 
 /// How many auto-fit spans wide the price window can be stretched before an
 /// expanding drag flips the chart upside down instead of shrinking it further.

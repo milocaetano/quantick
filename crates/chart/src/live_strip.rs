@@ -23,28 +23,28 @@ use quantick_orderflow::projection::AggressionPrimitive;
 
 /// Width of the strip, in pixels. The proposal band is 72–96 px: wide enough
 /// for the histogram to read, narrow enough to never crowd the chart.
-pub(crate) const LIVE_STRIP_WIDTH_PX: f32 = 84.0;
+pub const LIVE_STRIP_WIDTH_PX: f32 = 84.0;
 
 /// Stroke of the best bid/ask touch markers, in pixels.
-pub(crate) const TOUCH_MARKER_STROKE_PX: f32 = 1.5;
+pub const TOUCH_MARKER_STROKE_PX: f32 = 1.5;
 
 /// Alpha of the strip's left border line, against the chart body.
-pub(crate) const STRIP_BORDER_ALPHA: f32 = 0.3;
+pub const STRIP_BORDER_ALPHA: f32 = 0.3;
 
 /// Left inset of the strip's content, in pixels, so the border stays visible.
-pub(crate) const STRIP_ROW_INSET_PX: f32 = 1.0;
+pub const STRIP_ROW_INSET_PX: f32 = 1.0;
 
 /// Opacity of the histogram bars.
-pub(crate) const HISTOGRAM_ALPHA: f32 = 0.8;
+pub const HISTOGRAM_ALPHA: f32 = 0.8;
 
 /// Widest histogram bar, as a fraction of the strip's half width, leaving a
 /// sliver of background visible even at full scale.
-pub(crate) const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
+pub const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
 
 /// One histogram row: the forming bar's aggression at one price bucket,
 /// both sides together because the drawing mirrors them around one centre.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HistogramRow {
+pub struct HistogramRow {
     /// Inclusive lower price edge, in the projection's own bucket space.
     pub price_bucket: Decimal,
     /// Price height the row covers from its lower edge — the widest span any
@@ -104,7 +104,7 @@ fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
 /// the display grouping, so without this one price arrives as two keys and the
 /// strip draws two rows for it, each sized against a width that matches
 /// neither.
-pub(crate) fn aggression_rows(
+pub fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
     summarized: bool,
@@ -150,7 +150,7 @@ pub(crate) fn aggression_rows(
 /// Full-width reference for the histogram: the forming bar's own biggest
 /// single-side bucket, per the "normalized by the bar" rule — the bar's
 /// heaviest price level always reaches full width, whatever its size.
-pub(crate) fn histogram_reference(rows: &[HistogramRow]) -> Decimal {
+pub fn histogram_reference(rows: &[HistogramRow]) -> Decimal {
     rows.iter()
         .map(|row| row.buy.max(row.sell))
         .max()

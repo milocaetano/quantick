@@ -52,6 +52,7 @@ const SCRATCH_MODULES: &[&str] = &[
     "crates/mcp/tests/common/mod.rs",
     "crates/paper/src/scratch.rs",
     "crates/replay/src/scratch.rs",
+    "crates/stores/src/scratch.rs",
 ];
 
 /// Files outside a scratch module that may still read the temporary

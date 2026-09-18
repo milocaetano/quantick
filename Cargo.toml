@@ -2,11 +2,13 @@
 resolver = "3"
 members = [
     "crates/anchored-studies",
+    "crates/chart",
     "crates/chart-interaction",
     "crates/control",
     "crates/control-local",
     "crates/control-host",
     "crates/mcp",
+    "crates/operability",
     "crates/engine",
     "crates/indicators",
     "crates/indicator-session",
@@ -15,6 +17,7 @@ members = [
     "crates/pine",
     "crates/replay",
     "crates/sim",
+    "crates/stores",
     "crates/paper",
     "crates/civil",
     "crates/layers",

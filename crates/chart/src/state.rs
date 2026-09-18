@@ -10,7 +10,6 @@
 //! No egui, no async here, so the ingest, dispatch and rebuild logic is
 //! unit-tested in CI.
 
-#[cfg(test)]
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};

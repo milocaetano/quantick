@@ -57,11 +57,26 @@ use crate::Finding;
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
     ("anchored-studies", &["engine", "indicators"]),
+    // The headless chart model: bar state over the engine, plus the
+    // geometry, style and strip the window paints from.
+    (
+        "chart",
+        &[
+            "chart-interaction",
+            "engine",
+            "indicators",
+            "orderbook",
+            "orderflow",
+        ],
+    ),
     ("chart-interaction", &[]),
     ("control", &[]),
     ("control-local", &["control"]),
     ("control-host", &["control"]),
     ("mcp", &["control", "control-local"]),
+    // The operability contract is a table and a comparison over it; the
+    // interface walks its own registries and hands them in.
+    ("operability", &[]),
     ("engine", &[]),
     ("orderbook", &[]),
     // The order-flow engine reads bars from `engine` and depth events from
@@ -89,6 +104,19 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // it: it is what `sim` and any future broker adapter both speak.
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
+    // The cockpit stores: documents over the vocabularies they persist. The
+    // window resolves every path; the store never reads the environment.
+    (
+        "stores",
+        &[
+            "chart",
+            "engine",
+            "feed",
+            "indicators",
+            "orderflow",
+            "workspace",
+        ],
+    ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
     ("paper", &["civil", "engine", "sim"]),
     // Civil dates and the display offset: pure arithmetic, reached by the

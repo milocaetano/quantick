@@ -74,6 +74,7 @@ use crate::{Finding, size};
 /// fails rather than going quietly unguarded.
 pub const HEADLESS_CRATES: &[&str] = &[
     "anchored-studies",
+    "chart",
     "chart-interaction",
     "layers",
     "workspace",
@@ -84,11 +85,13 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "control",
     "control-local",
     "control-host",
+    "operability",
     "indicators",
     "indicator-session",
     "pine",
     "replay",
     "sim",
+    "stores",
     "paper",
     "civil",
     "strategy",

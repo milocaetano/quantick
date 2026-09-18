@@ -16,7 +16,7 @@ use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 /// Every one of these cites the same issue on purpose: the matrix is the
 /// enumeration, and thirty stub issues would put that list in two places. The
 /// text differs so a reader sees what each group is actually missing.
-pub(crate) const PENDING_ISSUE: &str = "https://github.com/milocaetano/quantick/issues/401";
+pub const PENDING_ISSUE: &str = "https://github.com/milocaetano/quantick/issues/401";
 
 /// One capability, as a slice, because [`Mapping::Capabilities`] takes the
 /// plural case as the general one.
@@ -90,7 +90,7 @@ const AUTHORITY_ARBITRARY_PATH: Mapping = Mapping::Excluded {
 /// reviewer reads. Grouped by what the trader is doing rather than by which
 /// registry registered it, because "what can I not do without a mouse" is the
 /// question this answers.
-pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
+pub const UI_BEHAVIOURS: &[UiBehaviour] = &[
     // ---- The window and its market tabs -------------------------------
     UiBehaviour {
         id: "app.exit",
@@ -1076,7 +1076,7 @@ pub(crate) const UI_BEHAVIOURS: &[UiBehaviour] = &[
 /// Each carries its reason, for the same reason `hooks::NOT_HOOKS` does: an
 /// allowlist is how a parity guard is quietly defeated, and a reader who
 /// disagrees with an entry needs something to disagree with.
-pub(crate) const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
+pub const NOT_A_BEHAVIOUR: &[(Source, &str, &str)] = &[
     (
         Source::MenuEntry,
         "File",

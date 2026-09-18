@@ -18,15 +18,15 @@
 use quantick_indicators::{PlotSpec, Rgba8};
 
 /// Thinnest a plot may be dragged to and still be a line rather than a rumour.
-pub(crate) const MIN_PLOT_WIDTH_PX: f32 = 0.5;
+pub const MIN_PLOT_WIDTH_PX: f32 = 0.5;
 /// Thickest, past which a line stops reading as a series and starts reading as
 /// a band — and hides the candles it is drawn over.
-pub(crate) const MAX_PLOT_WIDTH_PX: f32 = 8.0;
+pub const MAX_PLOT_WIDTH_PX: f32 = 8.0;
 
 /// What the trader changed about one plot. Every field `None` means "whatever
 /// the indicator declared" — the state a plot nobody touched is always in.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub(crate) struct PlotOverride {
+pub struct PlotOverride {
     /// Draw this plot at all. Distinct from the legend's eye, which hides the
     /// whole indicator: this hides one series of several.
     pub visible: Option<bool>,
@@ -38,7 +38,7 @@ pub(crate) struct PlotOverride {
 
 impl PlotOverride {
     /// Nothing was changed about this plot.
-    pub(crate) fn is_default(self) -> bool {
+    pub fn is_default(self) -> bool {
         self.visible.is_none() && self.color.is_none() && self.width.is_none()
     }
 }
@@ -48,7 +48,7 @@ impl PlotOverride {
 /// rebuilds with different declared colours still shows them everywhere the
 /// trader did not override.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ResolvedPlot {
+pub struct ResolvedPlot {
     pub visible: bool,
     pub color: Rgba8,
     pub width: f32,
@@ -60,13 +60,13 @@ pub(crate) struct ResolvedPlot {
 /// an indicator nobody has styled carries an empty `Vec` and allocates
 /// nothing.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct StyleOverride {
+pub struct StyleOverride {
     plots: Vec<PlotOverride>,
 }
 
 impl StyleOverride {
     /// Build from a saved layer, in plot order.
-    pub(crate) fn from_plots(plots: Vec<PlotOverride>) -> Self {
+    pub fn from_plots(plots: Vec<PlotOverride>) -> Self {
         let mut style = Self { plots };
         style.trim();
         style
@@ -74,12 +74,12 @@ impl StyleOverride {
 
     /// What the trader set for plot `index` — the empty override when they set
     /// nothing, which is every plot until they open the dialog.
-    pub(crate) fn get(&self, index: usize) -> PlotOverride {
+    pub fn get(&self, index: usize) -> PlotOverride {
         self.plots.get(index).copied().unwrap_or_default()
     }
 
     /// Record an override for plot `index`, growing the layer if needed.
-    pub(crate) fn set(&mut self, index: usize, over: PlotOverride) {
+    pub fn set(&mut self, index: usize, over: PlotOverride) {
         if index >= self.plots.len() {
             if over.is_default() {
                 return;
@@ -91,22 +91,22 @@ impl StyleOverride {
     }
 
     /// Hand every plot back to what the indicator declared.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.plots.clear();
     }
 
     /// Nothing here overrides anything.
-    pub(crate) fn is_default(&self) -> bool {
+    pub fn is_default(&self) -> bool {
         self.plots.iter().all(|plot| plot.is_default())
     }
 
     /// The layer as stored, for persistence.
-    pub(crate) fn plots(&self) -> &[PlotOverride] {
+    pub fn plots(&self) -> &[PlotOverride] {
         &self.plots
     }
 
     /// The style plot `index` draws with, given what its spec declared.
-    pub(crate) fn resolve(&self, index: usize, spec: &PlotSpec) -> ResolvedPlot {
+    pub fn resolve(&self, index: usize, spec: &PlotSpec) -> ResolvedPlot {
         let over = self.get(index);
         ResolvedPlot {
             visible: over.visible.unwrap_or(true),
