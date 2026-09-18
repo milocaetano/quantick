@@ -305,7 +305,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
 fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
-    app.control_tabs()
+    app.control_reads()
+        .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| AnalysisRevisionKey {
             tab_id,
@@ -404,7 +405,8 @@ fn project_drawings(app: &QuantickApp, _context: CaptureContext) -> DrawingsSnap
 fn indicators_snapshot(app: &QuantickApp) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabIndicatorsSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -539,7 +541,8 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
 fn drawings_snapshot(app: &QuantickApp) -> DrawingsSnapshot {
     DrawingsSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabDrawingsSnapshot {
                 tab_id: WireU64::new(tab_id),

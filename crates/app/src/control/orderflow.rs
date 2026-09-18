@@ -357,7 +357,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// underwent: a layer switched, a grouping changed, a setup edited, the
 /// capture state moving between disabled, syncing and live.
 fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
-    app.control_tabs()
+    app.control_reads()
+        .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| OrderflowRevisionKey {
             tab_id,
@@ -369,7 +370,7 @@ fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
                     footprint_overridden: pane.footprint.config.is_some(),
                     footprint_setup: format!(
                         "{:?}",
-                        pane.footprint_config(app.control_footprint_config())
+                        pane.footprint_config(app.control_reads().footprint_config())
                     ),
                     engine: pane.orderflow.as_ref().map(|view| {
                         let (status, _ladder, grouping) = view.cached_book();
@@ -426,7 +427,8 @@ struct EngineRevisionKey {
 fn project_tape(app: &QuantickApp, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabTapeSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -464,10 +466,11 @@ fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeS
 }
 
 fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSnapshot {
-    let window = app.control_footprint_config();
+    let window = app.control_reads().footprint_config();
     FootprintSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabFootprintSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -505,7 +508,8 @@ fn footprint_setup(
 fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapshot {
     BubblesSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabBubblesSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -533,7 +537,8 @@ fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapsh
 fn project_heatmap(app: &QuantickApp, _context: CaptureContext) -> HeatmapSnapshot {
     HeatmapSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabHeatmapSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -569,7 +574,8 @@ fn heatmap_state(view: &OrderflowView) -> HeatmapStateSnapshot {
 fn project_l2(app: &QuantickApp, _context: CaptureContext) -> L2Snapshot {
     L2Snapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabL2Snapshot {
                 tab_id: WireU64::new(tab_id),

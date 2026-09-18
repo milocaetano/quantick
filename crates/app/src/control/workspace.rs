@@ -150,12 +150,12 @@ fn project(app: &QuantickApp, _context: CaptureContext) -> WorkspaceSnapshot {
 }
 
 fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
-    let active_index = app.control_active_tab_index();
-    let tabs = app.control_tabs();
-    let timezone = app.control_timezone();
+    let active_index = app.control_reads().active_tab_index();
+    let tabs = app.control_reads().tabs();
+    let timezone = app.control_reads().timezone();
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
-        app.control_workspace_flags();
-    let (history_reach, venue_lead_in) = app.control_history_settings();
+        app.control_reads().workspace_flags();
+    let (history_reach, venue_lead_in) = app.control_reads().history_settings();
     let history_reach_running = tabs
         .get(active_index)
         .is_some_and(|tab| tab.history_reach_running());
@@ -172,10 +172,12 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         performance_readings_visible,
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
-        history_reach_span_minutes: WireU64::new(app.control_history_reach_span_minutes().into()),
+        history_reach_span_minutes: WireU64::new(
+            app.control_reads().history_reach_span_minutes().into(),
+        ),
         history_reach_running,
         venue_lead_in,
-        replay_day_before: app.control_replay_day_before(),
+        replay_day_before: app.control_reads().replay_day_before(),
         tabs: tabs
             .iter()
             .enumerate()

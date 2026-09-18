@@ -252,7 +252,8 @@ fn resize(
     // been shown.
     let index = super::tab_index(app, input.target)?;
     let drawn = app
-        .control_tab_at(index)
+        .control_reads()
+        .tab_at(index)
         .is_some_and(|tab| tab.last_canvas_width() > 0.0);
     if !drawn {
         return Err(ControlError::invalid_request(

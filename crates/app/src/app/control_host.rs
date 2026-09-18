@@ -23,6 +23,7 @@ use crate::toolrail::ToolRail;
 
 use quantick_feed::history_reach;
 
+use super::arrangement_host::ArrangementHost;
 use super::{ControlFrameMetrics, QuantickApp};
 
 /// The ordinary local gateway and its opt-in launch scenarios.
@@ -325,168 +326,75 @@ crate::hooks::declare_hooks![
     "QUANTICK_CONTROL_SCOPES"
 ];
 
-impl QuantickApp {
-    /// The active tab beside the config it reads.
-    ///
-    /// Split here, once, because almost every tab operation needs both and
-    /// `self.tabs[i].f(&self.config)` is a borrow error at every call site.
-    pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
-        (
-            self.tabs.runtime_mut(self.tabs.active_index()),
-            &self.config,
-        )
-    }
+/// Read-only application roots available to the on-demand control
+/// projections, borrowed once. The gateway never receives `QuantickApp`; it
+/// receives the owned DTOs built from this narrow view. Every accessor takes
+/// the view by value and hands back the root's own borrow, so a projection
+/// keeps what it read for as long as it holds the window.
+#[derive(Clone, Copy)]
+pub(crate) struct ControlReads<'a> {
+    pub(super) tabs: &'a ArrangementHost,
+    pub(super) config: &'a AppConfig,
+    pub(super) footprint_config: &'a crate::footprint_config::FootprintConfig,
+    pub(super) style: &'a ChartStyle,
+    pub(super) toolrail: &'a ToolRail,
+    pub(super) chrome: &'a super::chrome::ChromeState,
+    pub(super) dock: &'a Dock,
+    pub(super) tz: TzOffset,
+    pub(super) presets: &'a drawings::presets::PresetStore,
+    pub(super) workspace: &'a crate::workspace_store::WorkspaceStore,
+    pub(super) health: &'a super::health::HealthCounters,
+    pub(super) history: &'a super::tabs::HistorySettings,
+    pub(super) replay_view: &'a crate::replay_view::ReplayView,
+}
 
-    /// The tab on screen.
-    pub(super) fn active_tab(&self) -> &Tab {
-        &self.tabs[self.tabs.active_index()]
-    }
-
-    /// See [`Self::active_tab`].
-    pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
-        self.tabs.runtime_mut(self.tabs.active_index())
-    }
-
-    /// Read-only application roots available to the on-demand control
-    /// projections. The gateway never receives `QuantickApp`; it receives the
-    /// owned DTOs built from these narrow views.
+impl<'a> ControlReads<'a> {
     /// One tab by position, for a control capability that resolved an id.
-    pub(crate) fn control_tab_at(&self, index: usize) -> Option<&Tab> {
+    pub(crate) fn tab_at(self, index: usize) -> Option<&'a Tab> {
         self.tabs.get(index)
     }
 
-    /// The mutable twin, for the cockpit tier.
-    ///
-    /// Narrow on purpose: the layout capabilities need to *change* a tab, and
-    /// handing them the whole application would let a later one reach past the
-    /// canvas into the feed or the simulator.
-    pub(crate) fn control_tab_at_mut(&mut self, index: usize) -> Option<&mut Tab> {
-        self.tabs.get_mut(index)
-    }
-
-    /// One tab beside the configuration it reads, by position.
-    ///
-    /// [`Self::active_with_config`] for a tab that is not necessarily the
-    /// active one — a capability names the tab it acts on, and respawning a
-    /// feed needs the feed table the same way a click in the corner does.
-    pub(crate) fn control_tab_with_config(
-        &mut self,
-        index: usize,
-    ) -> Option<(&mut Tab, &AppConfig)> {
-        let Self { tabs, config, .. } = self;
-        tabs.get_mut(index).map(|tab| (tab, &*config))
-    }
-
-    /// The trading host of the tab on screen — where the `trade.*` actions
-    /// land. The active tab and not an addressed one: an order belongs to
-    /// the symbol the trader is looking at, and a call that could quietly
-    /// trade a chart nobody has open is a call nobody should be able to
-    /// make.
-    pub(crate) fn control_active_paper_mut(
-        &mut self,
-    ) -> Option<&mut crate::paper_trading::PaperTrading> {
-        // Fallible, because the rest of the control code does not trust the
-        // invariant either: `annotate::resolve_target` guards an empty tab
-        // list and clamps the index, and two more sites clamp it. A
-        // `trade.*` call must answer "this window has no chart open" rather
-        // than panic the whole trading application, and it must resolve the
-        // *same* tab its own read-back resolves.
-        self.tabs
-            .get_mut(self.tabs.active_index())
-            .map(|tab| &mut tab.paper)
-    }
-
-    /// The read side of [`Self::control_active_paper_mut`], resolved the same
-    /// way so a call and its read-back can never name different tabs.
-    pub(crate) fn control_active_paper(&self) -> Option<&crate::paper_trading::PaperTrading> {
+    /// The read side of [`ControlActions::active_paper_mut`], resolved the
+    /// same way so a call and its read-back can never name different tabs.
+    pub(crate) fn active_paper(self) -> Option<&'a crate::paper_trading::PaperTrading> {
         self.tabs
             .get(self.tabs.active_index())
             .map(|tab| &tab.paper)
     }
 
-    pub(crate) fn control_tabs(&self) -> &crate::app::arrangement_host::ArrangementHost {
-        &self.tabs
+    pub(crate) fn tabs(self) -> &'a ArrangementHost {
+        self.tabs
     }
 
-    pub(crate) fn control_active_tab_index(&self) -> usize {
+    pub(crate) fn active_tab_index(self) -> usize {
         self.tabs.active_index()
-    }
-
-    /// Open the assistant's popup. One at a time: a second message replaces
-    /// the first rather than stacking windows over a chart someone is
-    /// trading, and the trader dismisses it.
-    pub(crate) fn show_agent_popup(&mut self, popup: crate::control::AgentPopup) {
-        self.surfaces.agent_popup.show(popup);
-    }
-
-    /// Post one line to the window's own acknowledgement lane — the same
-    /// channel a delete or a workspace save uses, with no Undo: there is
-    /// nothing to take back from having been told something.
-    pub(crate) fn show_agent_toast(&mut self, message: String) {
-        self.surfaces.toast.note(message, Instant::now());
-    }
-
-    /// Ask for the platform's attention sound, through the same sink the
-    /// alarms use, and report honestly when it could not be made rather
-    /// than letting a client believe it was heard.
-    pub(crate) fn sound_agent_alert(&mut self) -> Option<String> {
-        self.audio
-            .alerts
-            .play(&[crate::audio::Cue::default()])
-            .err()
-            .map(ToOwned::to_owned)
-    }
-
-    /// One pane, by tab position and side — the mutable half of
-    /// [`Self::control_tabs`], for the actions that place objects.
-    pub(crate) fn control_pane_mut(
-        &mut self,
-        tab_index: usize,
-        side: crate::pane::PaneSide,
-    ) -> &mut ChartPane {
-        self.tabs.runtime_mut(tab_index).pane_mut(side)
     }
 
     /// What a freshly placed object of `tool` opens with, through the same
     /// door the click path uses — saved defaults, named preset and all.
-    pub(crate) fn control_new_drawing(&self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
-        drawings::new_drawing_from_defaults(&self.drawings.presets, tool)
+    pub(crate) fn new_drawing(self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
+        drawings::new_drawing_from_defaults(self.presets, tool)
     }
 
-    pub(crate) fn control_config(&self) -> &AppConfig {
-        &self.config
+    pub(crate) fn config(self) -> &'a AppConfig {
+        self.config
     }
 
     /// The window's footprint setup — the one a pane falls back to when it
     /// carries no override of its own.
-    pub(crate) fn control_footprint_config(&self) -> &crate::footprint_config::FootprintConfig {
-        &self.footprint_config
+    pub(crate) fn footprint_config(self) -> &'a crate::footprint_config::FootprintConfig {
+        self.footprint_config
     }
 
     /// The window's shared chart style, which owns the layers no pane does.
-    pub(crate) fn control_style(&self) -> &ChartStyle {
-        &self.style
-    }
-
-    pub(crate) fn control_set_layer(
-        &mut self,
-        tab: usize,
-        side: crate::pane::PaneSide,
-        layer: crate::chart_layers::ChartLayer,
-        visible: bool,
-    ) {
-        self.tabs.runtime_mut(tab).pane_mut(side).set_layer_visible(
-            layer,
-            visible,
-            &mut self.workspace.layers_mut().actions,
-        );
-        self.layer_wiring().apply_actions();
+    pub(crate) fn style(self) -> &'a ChartStyle {
+        self.style
     }
 
     /// The drawing tool rail: which tool is armed, and whether it is on
     /// screen at all.
-    pub(crate) fn control_tool_rail(&self) -> &ToolRail {
-        &self.toolrail
+    pub(crate) fn tool_rail(self) -> &'a ToolRail {
+        self.toolrail
     }
 
     /// The colour the chart's corner is wearing, or `None` while the chart
@@ -499,11 +407,11 @@ impl QuantickApp {
     /// `offline`, about the same feed, at the same moment. Two surfaces
     /// disagreeing about the one question the trader is asking is worse than
     /// either answer alone, so there is one report and both read it.
-    pub(super) fn feed_offline_accent(
-        &self,
+    pub(crate) fn feed_offline_accent(
+        self,
         stall: Option<&quantick_feed::stall::Stall>,
     ) -> Option<egui::Color32> {
-        feed_notice::report(&self.active_tab().notice, stall)
+        feed_notice::report(&self.tabs[self.tabs.active_index()].notice, stall)
             .filter(feed_notice::Report::is_offline)
             .map(|report| report.accent())
     }
@@ -512,26 +420,26 @@ impl QuantickApp {
     ///
     /// The projection reads what was drawn rather than re-deciding it, so the
     /// scene and the screen cannot disagree across the edge of a stall budget.
-    pub(crate) fn control_feed_chip_rect(&self) -> Option<egui::Rect> {
+    pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
         self.chrome.feed_chip_rect
     }
 
     /// Whether the recovery popup that chip opens is showing, on the chart
     /// the trader is looking at.
-    pub(crate) fn control_feed_popup_open(&self) -> bool {
+    pub(crate) fn feed_popup_open(self) -> bool {
         self.chrome.feed_popup_tab == Some(self.tabs.active_id())
     }
 
     /// The right-hand dock: whether it is shown, and which tab is open.
-    pub(crate) fn control_dock(&self) -> &Dock {
-        &self.dock
+    pub(crate) fn dock(self) -> &'a Dock {
+        self.dock
     }
 
-    pub(crate) fn control_timezone(&self) -> TzOffset {
+    pub(crate) fn timezone(self) -> TzOffset {
         self.tz
     }
 
-    pub(crate) fn control_workspace_flags(&self) -> (bool, bool, bool) {
+    pub(crate) fn workspace_flags(self) -> (bool, bool, bool) {
         (
             self.workspace.session().save_on_exit(),
             self.health.show_perf,
@@ -539,31 +447,9 @@ impl QuantickApp {
         )
     }
 
-    /// Choose how far one press of *load older* reaches.
-    ///
-    /// The named call behind the history menu's reach chips and the
-    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
-    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
-    /// where a run in flight also reads it: withdrawing the longer reach is
-    /// how a trader calls that run off.
-    pub(crate) fn set_history_reach(&mut self, reach: history_reach::HistoryReach) {
-        self.history.history_reach = reach;
-    }
-
-    /// How far back one press of the `by time` reach pulls, in minutes of
-    /// traded time.
-    ///
-    /// Clamped rather than refused: a span of zero is a press that asks for
-    /// nothing, and the operator that sent it meant *some* history. The
-    /// ceiling is the campaign's own span cap, past which no run can reach
-    /// anyway, so accepting a larger number would be promising a reach the
-    /// budgets forbid.
-    pub(crate) fn set_history_reach_span_minutes(&mut self, minutes: u32) {
-        self.history.set_span_minutes(minutes);
-    }
-
-    /// What that span is now, for an operator reading back what it set.
-    pub(crate) fn control_history_reach_span_minutes(&self) -> u32 {
+    /// What the `by time` reach's span is now, for an operator reading back
+    /// what it set.
+    pub(crate) fn history_reach_span_minutes(self) -> u32 {
         self.history.history_reach_span_minutes
     }
 
@@ -573,7 +459,7 @@ impl QuantickApp {
     /// Both are choices an operator without a mouse has to be able to read
     /// back after setting them — the reach especially, since it decides
     /// whether one press is one request or a run of them.
-    pub(crate) fn control_history_settings(&self) -> (history_reach::HistoryReach, bool) {
+    pub(crate) fn history_settings(self) -> (history_reach::HistoryReach, bool) {
         (self.history.history_reach, self.history.venue_lead_in)
     }
 
@@ -582,146 +468,11 @@ impl QuantickApp {
     ///
     /// A choice an operator without a mouse has to be able to read back after
     /// setting it: it decides what a replay they are about to open will hold.
-    pub(crate) fn control_replay_day_before(&self) -> bool {
+    pub(crate) fn replay_day_before(self) -> bool {
         self.replay_view.day_before()
     }
 
-    /// Invoke one registered control action from inside the application,
-    /// attributed to the human at this window (or to automation when a
-    /// control trace replays it). The hotkey, the `QUANTICK_CONTROL_MARK`
-    /// hook and the tests all arrive here; there is no second path.
-    pub(crate) fn control_action(
-        &mut self,
-        capability_id: &str,
-        capability_version: u32,
-        origin: crate::control::ActionOrigin,
-        input: serde_json::Value,
-    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control.control_access.take() else {
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "control access is not installed",
-            ));
-        };
-        let outcome =
-            access.invoke_local_action(self, capability_id, capability_version, input, origin);
-        self.control.control_access = Some(access);
-        outcome
-    }
-
-    /// Launch scenarios invoke the registered label and notification handlers
-    /// through trusted local actions with an agent actor. Unlike remote calls,
-    /// these local actions do not pass through configured remote-grant admission.
-    #[cfg(any(feature = "control-harness", test))]
-    pub(super) fn apply_control_annotate_hooks(&mut self) {
-        if self.control.scenarios.has_annotation() {
-            let pane = self.active_tab().drawing_pane();
-            let slot = pane.slots().saturating_sub(1);
-            let anchor = match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
-                (Some(time), Some(bar)) => Some(serde_json::json!({
-                    "time_unix_ms": time,
-                    "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
-                })),
-                _ => None,
-            };
-            if let Some(input) = self.control.scenarios.annotation(anchor) {
-                self.run_hook_action("annotate.label.create", input);
-            }
-        }
-        match self.control.scenarios.notification() {
-            Some(NotificationStep::Ready { capability, input }) => {
-                self.run_hook_action(capability, input)
-            }
-            Some(NotificationStep::Refused { channel }) => tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
-                channel = %channel,
-                "QUANTICK_CONTROL_NOTIFY names no notification channel"
-            ),
-            None => {}
-        }
-    }
-
-    /// Invoke one registered action as an *agent* would, from inside this
-    /// window. The hooks use it so a screenshot shows a real assistant's
-    /// object, attribution and all, without a client on the socket.
-    #[cfg(any(feature = "control-harness", test))]
-    pub(super) fn run_agent_action(
-        &mut self,
-        capability_id: &str,
-        input: serde_json::Value,
-    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control.control_access.take() else {
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "control access is not installed",
-            ));
-        };
-        // No identity, no actor to sign with: the same structured refusal an
-        // action gets, rather than a panic on the first frame.
-        let Some(actor) = access.hook_agent_actor() else {
-            self.control.control_access = Some(access);
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "this window has no control identity to act with",
-            ));
-        };
-        let outcome = access.invoke_local_action(
-            self,
-            capability_id,
-            1,
-            input,
-            crate::control::ActionOrigin::Remote(Box::new(actor)),
-        );
-        self.control.control_access = Some(access);
-        outcome
-    }
-
-    /// A launch hook's action, with its failure reported where a scripted run
-    /// will see it: the hook is fire-and-forget, so nothing else would.
-    #[cfg(any(feature = "control-harness", test))]
-    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
-        if let Err(error) = self.run_agent_action(capability_id, input) {
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_HOOK_ACTION_FAILED",
-                capability = capability_id,
-                error_code = %error.code,
-                error = %error.message,
-                "an annotate hook could not run its action"
-            );
-        }
-    }
-
-    /// The mark hotkey's body: `attention.mark.create` with the resolved
-    /// cursor target, attributed to the human.
-    pub(crate) fn take_mark(&mut self, note: Option<String>) {
-        let mut input = serde_json::Map::new();
-        if let Some(note) = note {
-            input.insert("note".to_owned(), serde_json::Value::String(note));
-        }
-        // No target: the action port resolves the pointer at the moment of
-        // the gesture and records the resolved input, so the trace line
-        // determines the mark on its own and a rerun marks the same bar.
-        match self.control_action(
-            crate::control::MARK_CAPABILITY_ID,
-            crate::control::MARK_CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::Value::Object(input),
-        ) {
-            Ok(result) => tracing::info!(
-                target: "quantick::control",
-                event_code = "CONTROL_MARK_TAKEN",
-                sequence = %result["sequence"],
-                "mark taken"
-            ),
-            Err(error) => tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_MARK_REFUSED",
-                code = %error.code,
-                "mark refused"
-            ),
-        }
-    }
-
-    pub(crate) fn control_frame_metrics(&self) -> ControlFrameMetrics {
+    pub(crate) fn frame_metrics(self) -> ControlFrameMetrics {
         ControlFrameMetrics {
             wall_average_ms: self.health.frames.avg_ms(),
             wall_worst_ms: self.health.frames.worst_ms(),
@@ -730,26 +481,84 @@ impl QuantickApp {
             cpu_worst_ms: self.health.cpu_frames.worst_ms(),
         }
     }
+}
 
-    /// The pane the chrome speaks for: the active tab's focused pane (§11).
-    pub(super) fn focused_pane(&self) -> &ChartPane {
-        self.active_tab().focused_pane()
+/// The mutable half of [`ControlReads`], for the cockpit tier: the tabs an
+/// action changes and the three lanes the assistant answers on.
+///
+/// Narrow on purpose: the layout capabilities need to *change* a tab, and
+/// handing them the whole application would let a later one reach past the
+/// canvas into the feed or the simulator. Each accessor consumes the view
+/// and hands back one borrow, so an action names its target once.
+pub(crate) struct ControlActions<'a> {
+    pub(super) tabs: &'a mut ArrangementHost,
+    pub(super) config: &'a AppConfig,
+    pub(super) agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
+    pub(super) toast: &'a mut crate::surfaces::ToastSurface,
+    pub(super) audio: &'a mut super::replay_and_history::AlertState,
+}
+
+impl<'a> ControlActions<'a> {
+    /// The mutable twin of [`ControlReads::tab_at`].
+    pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
+        self.tabs.get_mut(index)
     }
 
-    /// See [`Self::focused_pane`].
-    pub(super) fn focused_pane_mut(&mut self) -> &mut ChartPane {
-        self.active_tab_mut().focused_pane_mut()
-    }
-
-    /// The pane every drawing surface speaks for: the one holding the
-    /// selection, which is the focused pane unless a shared mark was taken
-    /// from the chart it is mirrored on (see [`Tab::drawing_side`]).
+    /// One tab beside the configuration it reads, by position.
     ///
-    /// The inspector, the keyboard, the object manager and the toast all read
-    /// through here, so an object selected on either of its two charts is
-    /// edited and deleted from either of them.
-    pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
-        self.active_tab_mut().drawing_pane_mut()
+    /// [`QuantickApp::active_with_config`] for a tab that is not necessarily
+    /// the active one — a capability names the tab it acts on, and respawning
+    /// a feed needs the feed table the same way a click in the corner does.
+    pub(crate) fn tab_with_config(self, index: usize) -> Option<(&'a mut Tab, &'a AppConfig)> {
+        let config = self.config;
+        self.tabs.get_mut(index).map(|tab| (tab, config))
+    }
+
+    /// The trading host of the tab on screen — where the `trade.*` actions
+    /// land. The active tab and not an addressed one: an order belongs to
+    /// the symbol the trader is looking at, and a call that could quietly
+    /// trade a chart nobody has open is a call nobody should be able to
+    /// make.
+    pub(crate) fn active_paper_mut(self) -> Option<&'a mut crate::paper_trading::PaperTrading> {
+        // Fallible, because the rest of the control code does not trust the
+        // invariant either: `annotate::resolve_target` guards an empty tab
+        // list and clamps the index, and two more sites clamp it. A
+        // `trade.*` call must answer "this window has no chart open" rather
+        // than panic the whole trading application, and it must resolve the
+        // *same* tab its own read-back resolves.
+        let active = self.tabs.active_index();
+        self.tabs.get_mut(active).map(|tab| &mut tab.paper)
+    }
+
+    /// One pane, by tab position and side — the mutable half of
+    /// [`ControlReads::tabs`], for the actions that place objects.
+    pub(crate) fn pane_mut(
+        self,
+        tab_index: usize,
+        side: crate::pane::PaneSide,
+    ) -> &'a mut ChartPane {
+        self.tabs.runtime_mut(tab_index).pane_mut(side)
+    }
+
+    /// Open the assistant's popup. One at a time: a second message replaces
+    /// the first rather than stacking windows over a chart someone is
+    /// trading, and the trader dismisses it.
+    pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
+        self.agent_popup.show(popup);
+    }
+
+    /// Post one line to the window's own acknowledgement lane — the same
+    /// channel a delete or a workspace save uses, with no Undo: there is
+    /// nothing to take back from having been told something.
+    pub(crate) fn show_toast(self, message: String) {
+        self.toast.note(message, Instant::now());
+    }
+
+    /// Ask for the platform's attention sound, through the same sink the
+    /// alarms use, and report honestly when it could not be made rather
+    /// than letting a client believe it was heard.
+    pub(crate) fn sound_alert(self) -> Option<String> {
+        self.audio.play(&[crate::audio::Cue::default()])
     }
 }
 

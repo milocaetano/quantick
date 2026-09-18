@@ -456,7 +456,8 @@ fn tab_switch(
         },
     )?;
     let tab = app
-        .control_tab_at(index)
+        .control_reads()
+        .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let side = match input.pane {
         Some(pane) => {
@@ -470,7 +471,7 @@ fn tab_switch(
         }
         None => tab.focused_side(),
     };
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.control_reads().tabs().id_at(index);
     let changed = app
         .layout_adapter()
         .switch_pane_layout(tab_id, side, id)
@@ -574,20 +575,22 @@ pub(super) fn descriptor(
 /// a different market is the worst answer available.
 pub(super) fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
     let Some(id) = target.tab_id else {
-        return Ok(app.control_active_tab_index());
+        return Ok(app.control_reads().active_tab_index());
     };
-    app.control_tabs()
+    app.control_reads()
+        .tabs()
         .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 
 fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, ControlError> {
     let tab = app
-        .control_tab_at(index)
+        .control_reads()
+        .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
-        tab_id: WireU64::new(app.control_tabs().id_at(index)),
+        tab_id: WireU64::new(app.control_reads().tabs().id_at(index)),
         preset_id: tab.layout.preset().id.to_owned(),
         pane_count: WireU64::new(tab.pane_count() as u64),
         focused_pane: WireU64::new(focused),
@@ -622,7 +625,8 @@ fn apply_preset(
         ))
     })?;
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let changed = tab.layout != layout;
     tab.set_layout(layout);
@@ -639,9 +643,10 @@ fn move_pane(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    app.control_tab_at(index)
+    app.control_reads()
+        .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.control_reads().tabs().id_at(index);
     // The one reposition path — the same call the View menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
     let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
@@ -658,7 +663,8 @@ fn resize(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The descriptor promises a call cannot reach a width a hand could not,
     // and that promise moved when the floor did: `clamp_pane_fraction` is a
@@ -715,7 +721,8 @@ fn set_collapsed(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input)?;
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The same call the divider drag, the rail and the menu take.
     let changed = tab.set_context_collapsed(collapsed);
@@ -733,7 +740,8 @@ fn focus(
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(
@@ -773,7 +781,8 @@ fn set_interval(
         ));
     }
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let Some(chart) = tab.pane_at_mut(pane) else {
         return Err(ControlError::invalid_request(format!(
@@ -805,7 +814,8 @@ fn set_bar_spec(
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(

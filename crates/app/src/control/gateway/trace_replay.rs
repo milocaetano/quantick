@@ -151,7 +151,7 @@ impl ControlAccess {
         // one did, a human gesture's worth of times per session.
         let mut due: Vec<TraceEntry> = Vec::new();
         {
-            let tabs = app.control_tabs();
+            let tabs = app.control_reads().tabs();
             if !self.trace_reinjection.is_empty() {
                 self.trace_reinjection.retain(|path, _| {
                     tabs.iter().any(|tab| {

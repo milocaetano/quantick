@@ -139,9 +139,10 @@ fn recover(
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.control_reads().tabs().id_at(index);
     let (tab, config) = app
-        .control_tab_with_config(index)
+        .control_actions()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // Asked of the tab rather than inferred from one of its fields: a
     // recorded session owns the chart while it plays, and a tab whose feed id
@@ -168,9 +169,10 @@ fn recover(
 /// Which tab a call named, or the one the trader is looking at.
 pub(crate) fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<usize, ControlError> {
     let Some(id) = tab_id else {
-        return Ok(app.control_active_tab_index());
+        return Ok(app.control_reads().active_tab_index());
     };
-    app.control_tabs()
+    app.control_reads()
+        .tabs()
         .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }

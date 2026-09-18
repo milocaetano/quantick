@@ -179,7 +179,7 @@ fn place_chart(
     let required = tool.required_points();
     let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
-    let fresh = app.control_new_drawing(tool);
+    let fresh = app.control_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
 
     let validated = series::resolve(pane, tab_id, &input, required)?;
@@ -311,7 +311,7 @@ fn place(
     // trader would have drawn. One is enough for the whole placement —
     // `place_with` asks for the opening only when it installs the draft, so
     // the second anchor of an arrow or a zone never calls for another.
-    let fresh = app.control_new_drawing(tool);
+    let fresh = app.control_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
     // The trader is mid-gesture: `place_with` would push this call's anchor
@@ -429,7 +429,7 @@ fn remove_annotation(
     let annotation_id = input.annotation_id.get();
     let mut found = None;
     for (tab_index, side) in annotated_panes(app) {
-        let pane = app.control_pane_mut(tab_index, side);
+        let pane = app.control_actions().pane_mut(tab_index, side);
         let Some(index) = pane
             .drawings
             .items()
@@ -462,7 +462,7 @@ fn remove_annotation(
         })
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")));
     };
-    let tab_id = app.control_tabs().id_at(tab_index);
+    let tab_id = app.control_reads().tabs().id_at(tab_index);
     let result = RemoveResult {
         annotation_id: input.annotation_id,
         tab_id: WireU64::new(tab_id),
@@ -477,7 +477,7 @@ fn remove_annotation(
 /// Every (tab, pane) an annotation could be sitting on.
 fn annotated_panes(app: &QuantickApp) -> Vec<(usize, crate::pane::PaneSide)> {
     let mut panes = Vec::new();
-    for (index, tab) in app.control_tabs().iter().enumerate() {
+    for (index, tab) in app.control_reads().tabs().iter().enumerate() {
         panes.extend(tab.sides().map(|side| (index, side)));
     }
     panes
@@ -513,11 +513,11 @@ fn resolve_target(
     app: &QuantickApp,
     target: Option<&AnnotationTarget>,
 ) -> Result<(u64, crate::pane::PaneSide), ControlError> {
-    let tabs = app.control_tabs();
+    let tabs = app.control_reads().tabs();
     if tabs.is_empty() {
         return Err(capability_unavailable("this window has no chart open"));
     }
-    let active = app.control_active_tab_index().min(tabs.len() - 1);
+    let active = app.control_reads().active_tab_index().min(tabs.len() - 1);
     let tab_index = match target.and_then(|target| target.tab_id) {
         None => active,
         Some(tab_id) => tabs.position(tab_id.get()).ok_or_else(|| {
@@ -551,10 +551,11 @@ fn control_pane_mut(
     side: crate::pane::PaneSide,
 ) -> Result<&mut ChartPane, ControlError> {
     let index = app
-        .control_tabs()
+        .control_reads()
+        .tabs()
         .position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
-    Ok(app.control_pane_mut(index, side))
+    Ok(app.control_actions().pane_mut(index, side))
 }
 
 /// The slot a market time falls on, and the time that slot actually opened.

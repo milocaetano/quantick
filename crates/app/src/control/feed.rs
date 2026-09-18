@@ -244,10 +244,11 @@ pub(crate) fn market_data_provenance(
 }
 
 fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
-    let config = app.control_config();
+    let config = app.control_reads().config();
     FeedSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {
                 let capabilities = tab.capabilities(config);

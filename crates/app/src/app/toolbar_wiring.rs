@@ -180,10 +180,10 @@ impl QuantickApp {
         if !bars_menu {
             self.harness.clear_bars_menu();
         }
-        self.set_history_reach(history_reach);
+        self.history.set_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
-        self.set_history_reach_span_minutes(history_reach_span_minutes);
+        self.history.set_span_minutes(history_reach_span_minutes);
         self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,

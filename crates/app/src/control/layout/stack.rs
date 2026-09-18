@@ -71,9 +71,10 @@ fn resize(
         .to_f32()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;
     let index = super::tab_index(app, input.target)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.control_reads().tabs().id_at(index);
     let tab = app
-        .control_tab_at_mut(index)
+        .control_actions()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let (column, _) = tab.context_stack_geometry().ok_or_else(|| {
         ControlError::invalid_request(

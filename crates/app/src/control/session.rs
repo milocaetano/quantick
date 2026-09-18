@@ -315,7 +315,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// playing or finished, the speed, a seek, and the shape of the simulated
 /// book — the same reasoning `health.rs` applies to its frame averages.
 fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
-    app.control_tabs()
+    app.control_reads()
+        .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| SessionRevisionKey {
             tab_id,
@@ -407,7 +408,8 @@ fn project_paper(app: &QuantickApp, _context: CaptureContext) -> PaperSnapshot {
 fn replay_snapshot(app: &QuantickApp) -> ReplaySnapshot {
     ReplaySnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabReplaySnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -468,7 +470,8 @@ fn replay_session_snapshot(link: &quantick_feed::replay::ReplayLink) -> ReplaySe
 fn paper_snapshot(app: &QuantickApp) -> PaperSnapshot {
     PaperSnapshot {
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(id, tab)| tab_paper_snapshot(id, tab))
             .collect(),

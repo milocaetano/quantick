@@ -109,9 +109,10 @@ impl ControlAccess {
         // a live tab has nothing to record. Opening the sidecar is rare and
         // off the hot path (an action is a human gesture).
         let replaying = {
-            let tabs = app.control_tabs();
+            let tabs = app.control_reads().tabs();
             let active = &tabs[app
-                .control_active_tab_index()
+                .control_reads()
+                .active_tab_index()
                 .min(tabs.len().saturating_sub(1))];
             active
                 .replay

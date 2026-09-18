@@ -218,9 +218,10 @@ impl ControlAccess {
     /// when the human opens the door and records changes, not the state it
     /// found.
     pub(super) fn emit_semantic_changes(&mut self, app: &QuantickApp) {
-        let tabs = app.control_tabs();
+        let tabs = app.control_reads().tabs();
         let active = &tabs[app
-            .control_active_tab_index()
+            .control_reads()
+            .active_tab_index()
             .min(tabs.len().saturating_sub(1))];
         let active_tab_id = tabs.active_id();
         let focused_pane_id = active.pane(active.focused_side()).id;

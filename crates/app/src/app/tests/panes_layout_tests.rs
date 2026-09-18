@@ -834,29 +834,35 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     }
     app.tabs.select(0);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .control_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open(), "opened on the first chart");
+    assert!(
+        app.control_reads().feed_popup_open(),
+        "opened on the first chart"
+    );
 
     app.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_feed_chip_rect().is_some(),
+        app.control_reads().feed_chip_rect().is_some(),
         "the second chart is stalled too, so it has its own corner"
     );
     assert!(
-        !app.control_feed_popup_open(),
+        !app.control_reads().feed_popup_open(),
         "but nobody pressed that corner"
     );
 
     app.tabs.select(0);
     run_frame(&mut app, &ctx);
     assert!(
-        !app.control_feed_popup_open(),
+        !app.control_reads().feed_popup_open(),
         "and leaving the chart put it away, the way clicking elsewhere does"
     );
     assert!(
-        app.control_feed_chip_rect().is_some(),
+        app.control_reads().feed_chip_rect().is_some(),
         "the corner itself stays: the feed is still stalled"
     );
 }

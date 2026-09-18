@@ -270,7 +270,7 @@ fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
 }
 
 fn snapshot(app: &QuantickApp) -> HealthSnapshot {
-    let frame = app.control_frame_metrics();
+    let frame = app.control_reads().frame_metrics();
     HealthSnapshot {
         frame: FrameHealthSnapshot {
             wall_average_ms: frame
@@ -290,7 +290,8 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
         },
         tabs: app
-            .control_tabs()
+            .control_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {
                 let panes: Vec<PaneHealthSnapshot> = tab

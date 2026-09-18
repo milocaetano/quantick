@@ -262,6 +262,25 @@ impl QuantickApp {
 }
 
 impl HistorySettings {
+    /// Choose how far one press of *load older* reaches.
+    ///
+    /// The named call behind the history menu's reach chips and the
+    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
+    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
+    /// where a run in flight also reads it: withdrawing the longer reach is
+    /// how a trader calls that run off.
+    pub(super) fn set_reach(&mut self, reach: history_reach::HistoryReach) {
+        self.history_reach = reach;
+    }
+
+    /// How far back one press of the `by time` reach pulls, in minutes of
+    /// traded time.
+    ///
+    /// Clamped rather than refused: a span of zero is a press that asks for
+    /// nothing, and the operator that sent it meant *some* history. The
+    /// ceiling is the campaign's own span cap, past which no run can reach
+    /// anyway, so accepting a larger number would be promising a reach the
+    /// budgets forbid.
     pub(super) fn set_span_minutes(&mut self, minutes: u32) {
         let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
         self.history_reach_span_minutes = minutes.clamp(1, ceiling);

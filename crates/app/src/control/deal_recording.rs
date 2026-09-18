@@ -217,9 +217,10 @@ fn set(
     let input: DealRecordingInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.control_reads().tabs().id_at(index);
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .control_actions()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // A replay is another tape: the live market's recorder is not reachable
     // over it, and the answer says so rather than reading as "no counter".
@@ -256,7 +257,8 @@ fn set(
     };
     let _ = tab;
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .control_actions()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if let Some(index) = day_index {
         tab.load_recorded_day_checked(index)
@@ -275,7 +277,8 @@ fn set(
         crate::app::deal_recording_wiring::set_default(app, on);
     }
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .control_actions()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let result = DealRecordingResult {
         tab_id: WireU64::new(tab_id),

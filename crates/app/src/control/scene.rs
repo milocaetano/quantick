@@ -342,8 +342,8 @@ pub(crate) fn pane_canvas_control_id(pane_id: u64) -> String {
 }
 
 pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
-    let tabs = app.control_tabs();
-    let active = &tabs[app.control_active_tab_index()];
+    let tabs = app.control_reads().tabs();
+    let active = &tabs[app.control_reads().active_tab_index()];
     let focused_side = active.focused_side();
     let mut controls = Vec::new();
 
@@ -523,14 +523,15 @@ fn push_tab_strip(
 /// The toolbar's LAYERS group: one toggle per visual layer, each answering
 /// for the same field the pane's own layer menu writes.
 fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp, tab: &Tab) {
-    let capabilities = tab.capabilities(app.control_config());
+    let capabilities = tab.capabilities(app.control_reads().config());
     // `LayerToggle::ALL` is call order, which the group's right-to-left layout
     // turns into right-to-left screen order. Reversed here so the scene lists
     // them the way the trader reads them: an assistant asked about "the third
     // button from the left" must count the same direction the eye does.
     for toggle in LayerToggle::ALL.into_iter().rev() {
         let layer = toggle.layer();
-        let (on, blocked) = tab.layer_toggle_state(layer, app.control_style(), capabilities);
+        let (on, blocked) =
+            tab.layer_toggle_state(layer, app.control_reads().style(), capabilities);
         controls.push(SceneControlSnapshot {
             control_id: layer_control_id(layer),
             label: layer.label().to_owned(),
@@ -560,7 +561,7 @@ fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickAp
 /// [`crate::toolrail::ToolRail::painted_controls`] answers with nothing in
 /// that case, so the rule lives with the rail rather than here.
 fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let rail = app.control_tool_rail();
+    let rail = app.control_reads().tool_rail();
     // What the rail *painted*, folded through the same slots the draw folds
     // through and cut by the stage and the band window the draw recorded.
     // Listing the registry instead would name thirteen tools that live behind
@@ -586,7 +587,7 @@ fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
 
 /// The dock's tab strip, when the dock is on screen.
 fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let dock = app.control_dock();
+    let dock = app.control_reads().dock();
     if !dock.visible() {
         return;
     }
@@ -619,14 +620,14 @@ fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
 /// this module to name the capability that operates them, which is the whole
 /// reason `capability_id` exists.
 fn push_feed_status(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let Some(chip) = app.control_feed_chip_rect() else {
+    let Some(chip) = app.control_reads().feed_chip_rect() else {
         return;
     };
     let owner = || SceneOwnerSnapshot {
         kind: SceneOwnerKindDto::FeedStatus,
         id: FEED_STATUS_OWNER_ID.to_owned(),
     };
-    let popup_open = app.control_feed_popup_open();
+    let popup_open = app.control_reads().feed_popup_open();
     let chip_bounds = rect_bounds(chip);
     controls.push(SceneControlSnapshot {
         control_id: FEED_CHIP_CONTROL_ID.to_owned(),

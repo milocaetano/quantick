@@ -29,6 +29,23 @@ pub(crate) struct LayerWiring<'a> {
 }
 
 impl LayerWiring<'_> {
+    /// Switch one pane's layer the way its menu does, then apply what the
+    /// switch left for the window — the control plane's `layers.*` door.
+    pub(crate) fn set_visible(
+        &mut self,
+        tab: usize,
+        side: crate::pane::PaneSide,
+        layer: chart_layers::ChartLayer,
+        visible: bool,
+    ) {
+        self.tabs.runtime_mut(tab).pane_mut(side).set_layer_visible(
+            layer,
+            visible,
+            &mut self.workspace.layers_mut().actions,
+        );
+        self.apply_actions();
+    }
+
     /// What a pane's layer menu could not switch itself.
     ///
     /// Drained right after the canvas, so the frame that clicked the entry is

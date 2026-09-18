@@ -241,10 +241,10 @@ fn project(app: &QuantickApp, _context: CaptureContext) -> ChartSnapshot {
 }
 
 fn snapshot(app: &QuantickApp) -> ChartSnapshot {
-    let active = app.control_active_tab_index();
-    let config = app.control_config();
+    let active = app.control_reads().active_tab_index();
+    let config = app.control_reads().config();
     let mut panes = Vec::new();
-    for (tab_index, tab) in app.control_tabs().iter().enumerate() {
+    for (tab_index, tab) in app.control_reads().tabs().iter().enumerate() {
         let focused = tab.focused_side();
         let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
         for (pane, side) in tab.panes() {
@@ -253,7 +253,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
                 PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
             };
             panes.push(pane_snapshot(
-                app.control_tabs().id_at(tab_index),
+                app.control_reads().tabs().id_at(tab_index),
                 tab,
                 pane,
                 side,
@@ -485,7 +485,8 @@ pub(crate) fn chart_window_prevalidated(
         )));
     }
     let tab = app
-        .control_tabs()
+        .control_reads()
+        .tabs()
         .by_id(query.tab_id.get())
         .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
     let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
@@ -578,7 +579,7 @@ pub(crate) fn chart_window_prevalidated(
         ));
     }
     let end = start.saturating_add(query.page_size).min(stop);
-    let provenance = provenance_context(tab, app.control_config());
+    let provenance = provenance_context(tab, app.control_reads().config());
     let items = (start..end)
         .filter_map(|slot| {
             pane.closed_bar(slot).map(|bar| {

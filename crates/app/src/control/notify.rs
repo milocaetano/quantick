@@ -367,7 +367,7 @@ fn raise(
     let displayed_text = format!("{} — {author}", input.message);
     let unavailable_reason = match channel {
         NotifyChannel::Popup => {
-            app.show_agent_popup(AgentPopup {
+            app.control_actions().show_popup(AgentPopup {
                 title: input
                     .title
                     .clone()
@@ -378,10 +378,10 @@ fn raise(
             None
         }
         NotifyChannel::Toast => {
-            app.show_agent_toast(displayed_text.clone());
+            app.control_actions().show_toast(displayed_text.clone());
             None
         }
-        NotifyChannel::Sound => app.sound_agent_alert(),
+        NotifyChannel::Sound => app.control_actions().sound_alert(),
     };
 
     let event_actor = EventActor {

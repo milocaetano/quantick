@@ -253,21 +253,25 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
     });
     TradeResult {
         selected_strategy: app
-            .control_active_paper()
+            .control_reads()
+            .active_paper()
             .and_then(|paper| paper.account().selected_order_strategy())
             .map(|strategy| strategy.name.clone()),
         ruler_ticks: app
-            .control_active_paper()
+            .control_reads()
+            .active_paper()
             .map_or(0, crate::paper_trading::PaperTrading::ruler_ticks),
         accepted: rejected_because.is_none(),
         rejected_because,
         order_id,
         mark_price: app
-            .control_active_paper()
+            .control_reads()
+            .active_paper()
             .and_then(PaperTrading::mark_price)
             .map(|price| price.to_string()),
         working_orders: app
-            .control_active_paper()
+            .control_reads()
+            .active_paper()
             .map(PaperTrading::working_orders)
             .unwrap_or_default()
             .iter()
@@ -392,7 +396,10 @@ fn place_order(
     // that ladder would be the two-surfaces bug this rule exists to
     // prevent.
     let bracket = if named.is_empty() {
-        let paper = app.control_active_paper().ok_or_else(no_chart_open)?;
+        let paper = app
+            .control_reads()
+            .active_paper()
+            .ok_or_else(no_chart_open)?;
         let reference = intent
             .price
             .or_else(|| paper.account().mark_price())
@@ -402,7 +409,10 @@ fn place_order(
         named
     };
     let intent = intent.with_bracket(bracket);
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .control_actions()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     // The risk per trade is a ceiling on the account, so it holds on this
     // path too. Asked of the same function the ticket asks, so an operator
     // reads the refusal the trader would have read - and gets it as an
@@ -438,7 +448,8 @@ fn bracket_order(
             .transpose()?,
     );
     let events = app
-        .control_active_paper_mut()
+        .control_actions()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .set_order_bracket(OrderId(input.order_id), bracket);
@@ -457,7 +468,8 @@ fn cancel_order(
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
-        .control_active_paper_mut()
+        .control_actions()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .cancel_order(OrderId(input.order_id));
@@ -676,7 +688,10 @@ fn select_strategy(
     let asked = input.clone();
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .control_actions()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     let strategies = paper.account().order_strategies().to_vec();
     if let Some(name) = input.name.as_deref()
         && !strategies.iter().any(|strategy| strategy.name == name)
@@ -704,7 +719,8 @@ fn set_ruler(
     let asked = input.clone();
     let input: SetRulerInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.control_active_paper_mut()
+    app.control_actions()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
     let result = answer(app, &[]);
@@ -780,7 +796,10 @@ fn set_risk(
             ));
         }
     };
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .control_actions()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     // The currency an amount set through this call is denominated in: the one
     // the call named, or the chart's own instrument. Read before the mutation
     // so it describes the instrument the caller was looking at.
@@ -829,7 +848,10 @@ fn set_instrument_money(
     let asked = input.clone();
     let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .control_actions()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     let symbol = match input.symbol.as_deref().map(str::trim) {
         Some(symbol) if !symbol.is_empty() => symbol.to_owned(),
         _ => paper.account().symbol().to_owned(),

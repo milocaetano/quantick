@@ -90,7 +90,7 @@ impl QuantickApp {
         // like a press that ignored the run it was told to make.
         if let Ok(token) = std::env::var("QUANTICK_HISTORY_REACH") {
             match history_reach::HistoryReach::from_token(&token) {
-                Some(reach) => self.set_history_reach(reach),
+                Some(reach) => self.history.set_reach(reach),
                 None => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,
@@ -106,7 +106,7 @@ impl QuantickApp {
             // goes are one choice: a hook that could pick `by time` but not say
             // how much time would leave the operator setting half of it.
             match raw.trim().parse::<u32>() {
-                Ok(minutes) => self.set_history_reach_span_minutes(minutes),
+                Ok(minutes) => self.history.set_span_minutes(minutes),
                 Err(_) => tracing::warn!(
                     target: "quantick::app",
                     schema_version = 1_u8,

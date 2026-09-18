@@ -320,7 +320,7 @@ impl QuantickApp {
         if let Some(cue) = surfaces.test_alert
             && let Some(note) = self.audio.play(&[cue])
         {
-            self.show_agent_toast(note);
+            self.control_actions().show_toast(note);
         }
         if let Some(request) = surfaces.arm_strategy {
             let outcome = self
@@ -368,7 +368,7 @@ impl QuantickApp {
         let stall = self
             .active_tab()
             .stall_at(&self.config, metrics::wall_clock_ms());
-        let offline_accent = self.feed_offline_accent(stall.as_ref());
+        let offline_accent = self.control_reads().feed_offline_accent(stall.as_ref());
         let status = self.status_model();
         let status_response = statusbar::draw(ctx, &status, &mut self.tz, offline_accent);
         if status_response.open_trading_tab {
@@ -787,7 +787,7 @@ impl QuantickApp {
             tab.apply_strategy_cleanup();
         }
         if let Some(note) = self.audio.play_pending(&mut self.tabs) {
-            self.show_agent_toast(note);
+            self.control_actions().show_toast(note);
         }
         super::frame_tail::FrameTailOwners {
             tabs: &mut self.tabs,
