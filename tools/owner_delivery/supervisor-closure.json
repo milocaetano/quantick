@@ -1,8 +1,0 @@
-{
-  "tools/edit_loop/supervisor.py": "0c457e6302198093892793e0f1d7e29b0f0264988d8c0676fe2877042f0ee5d8",
-  "tools/edit_loop/worker.py": "96333bbe13688b0f7b4150979b55a523b67e8dc46f62eff0b563ce30f40b8394",
-  "tools/edit_loop/inputs.py": "bf7d89b919070c54d25649ab34ca22856ab0371fcbce2622d61197ea44819c5d",
-  "tools/edit_loop/process_owner.py": "d79645633c2dfc2077a39e79ea1c5c0e491093542cab2cac6d9939a3f91ea53f",
-  "tools/edit_loop/job_diagnostics.py": "8864fda97ccdcf076ac045b6593cc2d09c41a2f1130906989aca7a38d78fb9ff",
-  "tools/outside_score/measure.py": "bb6160b9217c9109bfac50c5c98c0256a3fed2e438a6ab0e43332385057b8653"
-}
