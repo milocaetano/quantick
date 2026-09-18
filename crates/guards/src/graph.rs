@@ -104,7 +104,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `orderbook`, and is told the time by its caller. It sits beside
     // `indicators`: something the chart draws and `backtest` may consume.
     ("orderflow", &["engine", "orderbook"]),
-    ("replay", &["engine"]),
+    ("replay", &["civil", "engine"]),
     // The feed host: the port every venue implements, and the adapters that
     // run one. It sits above the three `feed-*` venue crates and `replay` —
     // a recorded session is a source like any other — and below `app`. It is
@@ -139,7 +139,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
-    ("paper", &["civil", "engine", "sim"]),
+    ("paper", &["civil", "engine", "replay", "sim"]),
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account below `app` and by the chart above it.
     ("civil", &[]),

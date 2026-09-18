@@ -10,6 +10,10 @@ publish.workspace = true
 quantick-engine = { path = "../engine" }
 quantick-sim = { path = "../sim" }
 rust_decimal = { workspace = true }
+# The preset bank is a versioned TOML document.
+serde = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
 
 [lints]
 workspace = true

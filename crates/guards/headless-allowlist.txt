@@ -21,3 +21,4 @@ crates/paper/src/scratch.rs SystemTime::now test-only helper; the same copy agai
 crates/orderflow/src/engine.rs Instant::now a stopwatch around the projection build and the live pass, feeding `last_projection_ms` and `last_live_ms`. Both are diagnostic counters the health panel reads; neither reaches anything the projection returns, and `project_at` is told `now` by its caller, so the cache cadence stays deterministic.
 crates/stores/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the cockpit stores' file round-trip tests.
 crates/control-host/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the control trace's sidecar-file tests.
+crates/strategy/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the preset bank's file round-trip tests.

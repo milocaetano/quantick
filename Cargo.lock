@@ -3204,9 +3204,11 @@ version = "0.1.0"
 dependencies = [
  "quantick-civil",
  "quantick-engine",
+ "quantick-replay",
  "quantick-sim",
  "rust_decimal",
  "serde",
+ "toml 0.8.20",
  "tracing",
 ]
 
@@ -3221,6 +3223,7 @@ dependencies = [
 name = "quantick-replay"
 version = "0.1.0"
 dependencies = [
+ "quantick-civil",
  "quantick-engine",
  "rust_decimal",
  "serde_json",
@@ -3258,6 +3261,9 @@ dependencies = [
  "quantick-engine",
  "quantick-sim",
  "rust_decimal",
+ "serde",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

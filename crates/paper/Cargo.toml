@@ -12,9 +12,13 @@ publish.workspace = true
 [dependencies]
 quantick-civil = { path = "../civil" }
 quantick-engine = { path = "../engine" }
+# The folder a symbol names, shared with the deal recorder.
+quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
+# The sidecar is a versioned TOML document.
+toml = { workspace = true }
 tracing = { workspace = true }
 
 [lints]

@@ -22,7 +22,7 @@ mod windows_player {
     use rodio::source::Source as _;
     use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player};
 
-    use super::super::{Clip, PlayLength};
+    use super::super::{ClipId, PlayLength};
 
     /// The open device and whatever it is currently playing.
     pub(in crate::audio) struct ClipPlayer {
@@ -99,11 +99,11 @@ mod windows_player {
         /// decode, leaves the previous batch alone and reports.
         pub(in crate::audio) fn play(
             &mut self,
-            clips: &[(&'static Clip, PlayLength)],
+            clips: &[(ClipId, PlayLength)],
         ) -> Result<(), &'static str> {
             let sources = clips
                 .iter()
-                .map(|(clip, length)| cue_source(clip, *length))
+                .map(|(clip, length)| cue_source(*clip, *length))
                 .collect::<Result<Vec<_>, _>>()?;
             let player = Player::connect_new(self.device.mixer());
             for source in sources {
@@ -120,20 +120,23 @@ mod windows_player {
     /// Its own function so the cut can be asserted by decoding — the rodio
     /// `Source` is the same object the device plays, with no device in sight.
     pub(in crate::audio) fn cue_source(
-        clip: &'static Clip,
+        id: ClipId,
         length: PlayLength,
     ) -> Result<Box<dyn rodio::Source + Send>, &'static str> {
-        let decoder = rodio::Decoder::new(Cursor::new(clip.bytes)).map_err(|error| {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "AUDIO_CLIP_UNDECODABLE",
-                clip = clip.token,
-                error = %error,
-                "an alarm clip shipped in this build does not decode"
-            );
-            "the alarm clip could not be decoded"
-        })?;
+        let clip = id.clip();
+        let decoder = rodio::Decoder::new(Cursor::new(super::super::library::bytes(id))).map_err(
+            |error| {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "AUDIO_CLIP_UNDECODABLE",
+                    clip = clip.token,
+                    error = %error,
+                    "an alarm clip shipped in this build does not decode"
+                );
+                "the alarm clip could not be decoded"
+            },
+        )?;
         Ok(match length {
             PlayLength::Whole => Box::new(decoder),
             PlayLength::Capped(duration) => Box::new(decoder.take_duration(duration)),
@@ -145,7 +148,6 @@ mod windows_player {
         use std::time::Duration;
 
         use super::*;
-        use crate::audio::library::CLIPS;
         use crate::audio::{AlertSound, SoundCategory};
 
         /// How long a source runs, measured by pulling every sample out of it
@@ -179,15 +181,13 @@ mod windows_player {
             else {
                 panic!("a standard-category sound is a clip");
             };
-            let clip = id.clip();
-            let whole = measured_length(cue_source(clip, PlayLength::Whole).expect("decodes"));
+            let whole = measured_length(cue_source(id, PlayLength::Whole).expect("decodes"));
             assert!(
                 whole > Duration::from_secs(3),
                 "the whole clip is longer than the cap under test: {whole:?}"
             );
 
-            let capped =
-                measured_length(cue_source(clip, PlayLength::seconds(2)).expect("decodes"));
+            let capped = measured_length(cue_source(id, PlayLength::seconds(2)).expect("decodes"));
             let target = Duration::from_secs(2);
             assert!(
                 capped.abs_diff(target) <= SLACK,
@@ -196,7 +196,7 @@ mod windows_player {
 
             // A cap past the end changes nothing.
             let generous =
-                measured_length(cue_source(clip, PlayLength::seconds(3_600)).expect("decodes"));
+                measured_length(cue_source(id, PlayLength::seconds(3_600)).expect("decodes"));
             assert!(
                 generous.abs_diff(whole) <= SLACK,
                 "a cap longer than the clip plays it whole: {generous:?} vs {whole:?}"
@@ -210,8 +210,9 @@ mod windows_player {
         /// its name says; the full decode of one clip is the test above.
         #[test]
         fn every_shipped_clip_decodes() {
-            for clip in CLIPS {
-                let mut source = cue_source(clip, PlayLength::Whole)
+            for id in ClipId::all() {
+                let clip = id.clip();
+                let mut source = cue_source(id, PlayLength::Whole)
                     .unwrap_or_else(|reason| panic!("{}: {reason}", clip.token));
                 assert!(source.sample_rate().get() > 0, "{}", clip.token);
                 assert!(source.channels().get() > 0, "{}", clip.token);
@@ -232,7 +233,7 @@ pub(in crate::audio) use windows_player::ClipPlayer;
 /// The stub every platform but Windows compiles: no device, no decoder,
 /// and an honest refusal for every clip.
 #[cfg(not(windows))]
-use super::{Clip, PlayLength};
+use super::{ClipId, PlayLength};
 
 #[cfg(not(windows))]
 pub(in crate::audio) struct ClipPlayer;
@@ -251,7 +252,7 @@ impl ClipPlayer {
 
     pub(in crate::audio) fn play(
         &mut self,
-        clips: &[(&'static Clip, PlayLength)],
+        clips: &[(ClipId, PlayLength)],
     ) -> Result<(), &'static str> {
         // What was asked for goes to the log, so a session on a build
         // without audio still shows which clip, and how much of it, an
@@ -266,7 +267,7 @@ impl ClipPlayer {
                 schema_version = 1_u8,
                 event_code = "AUDIO_CLIP_UNPLAYABLE",
                 clip = clip.token,
-                bytes = clip.bytes.len(),
+                bytes = super::library::bytes(id).len(),
                 cut_secs,
                 "an alarm clip was asked for on a build with no audio backend"
             );

@@ -60,7 +60,11 @@
 mod alarm;
 mod armed;
 mod force;
+pub mod presets;
 mod region;
+#[cfg(test)]
+mod scratch;
+pub mod sound;
 mod trigger;
 
 pub use alarm::{AlarmEvent, AlarmParams, AlarmWhen, RepeatPolicy, SignalAlarm};

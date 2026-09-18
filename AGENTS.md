@@ -145,10 +145,11 @@ graph TD
   controllocal["control-local<br/>local transport"] --> control
   controlhost["control-host<br/>host machinery"] --> control
   indicators["indicators<br/>bars → plot series"] --> engine
-  replay["replay<br/>recorded sessions"] --> engine
+  replay["replay<br/>recorded sessions"] --> engine & civil
   paper["paper<br/>paper account"] --> sim
   paper --> engine
   paper --> civil
+  paper --> replay
   sim["sim<br/>paper-trading fills"] --> trading
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
@@ -182,19 +183,19 @@ graph TD
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects keep feature owners. |
 | `anchored-studies` | Resumable profile and anchored-average state; the caller schedules and paints. |
 | `workspace` | Layout documents and pane membership transitions. |
-| `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock; depends on nothing. |
+| `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock, no dependencies. |
 | `orderbook` | Deterministic order-book core: validated snapshots, absolute level updates, update-id continuity. |
 | `orderflow` | Liquidity history, grouping, timeline, settled/live heatmap projections. Headless; told the time. |
-| `indicator-session` | Headless source binding, batches and deltas. |
+| `indicator-session` | Headless source binding, batches, deltas. |
 | `indicators` | Headless host, `Indicator` commit/preview rollback, incremental `ta.*`, draw objects. |
-| `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes and interpreter; no dependencies. |
-| `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock, *told* the time. |
+| `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes, interpreter; no dependencies. |
+| `replay` | Recorded sessions: the CSV format, the folder scan, the deal recorder, the playback clock, *told* the time. |
 | `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, history reach, session export. Owns runtimes, threads and clock below `app`. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements; a broker adapter docks where the paper simulator sits. |
 | `sim` | Deterministic paper trading: one `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
-| `paper` | The paper account: orders, risk sizing, the journal and report numbers over a `sim` venue. Headless. |
-| `civil` | Civil dates and the display offset: one date law for the journal, the report and the chart axis. |
-| `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine and its `SignalAlarm`. |
+| `paper` | The paper account: orders, risk sizing, the journal, its home and sidecar, the report numbers over a `sim` venue. |
+| `civil` | Civil dates and the display offset: one date law for journal, report and chart axis. |
+| `strategy` | The strategy kernel: armed regions, projected brackets, the armed-instance state machine, its `SignalAlarm`, the alarm sounds and the preset bank. |
 | `control` | Transport-neutral contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, `fake` host/client ports. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client; one ownership check serves publisher and client. |
 | `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |

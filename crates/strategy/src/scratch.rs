@@ -27,15 +27,15 @@ fn run_token() -> &'static str {
 
 /// A directory of this test's own, removed with everything under it when the
 /// value is dropped — including on a panic, which unwinds.
-pub(crate) struct ScratchDir(PathBuf);
+pub struct ScratchDir(PathBuf);
 
 impl ScratchDir {
-    /// A fresh directory named `quantick-paper-<pid>-<nanos>-<counter>-<label>`.
+    /// A fresh directory named `quantick-strategy-<pid>-<nanos>-<counter>-<label>`.
     /// Created, so a caller can write into it at once.
-    pub(crate) fn new(label: &str) -> Self {
+    pub fn new(label: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "quantick-paper-{}-{}-{label}",
+            "quantick-strategy-{}-{}-{label}",
             run_token(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -44,7 +44,7 @@ impl ScratchDir {
     }
 
     /// The directory itself.
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -57,8 +57,8 @@ thread_local! {
 }
 
 /// A directory shared by every call on this thread with the same `label`,
-/// for the store tests that have no value to hold a [`ScratchDir`] in.
-/// Gone when the thread ends.
+/// for the `cfg!(test)` store paths that have no value to hold a
+/// [`ScratchDir`] in. Gone when the thread ends.
 pub(crate) fn thread_dir(label: &str) -> PathBuf {
     OWNED.with(|owned| {
         let mut dirs = owned.borrow_mut();
