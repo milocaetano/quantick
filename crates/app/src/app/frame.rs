@@ -317,10 +317,10 @@ impl QuantickApp {
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
-        if let Some(cue) = surfaces.test_alert {
-            if let Some(note) = self.audio.play(&[cue]) {
-                self.show_agent_toast(note);
-            }
+        if let Some(cue) = surfaces.test_alert
+            && let Some(note) = self.audio.play(&[cue])
+        {
+            self.show_agent_toast(note);
         }
         if let Some(request) = surfaces.arm_strategy {
             let outcome = self

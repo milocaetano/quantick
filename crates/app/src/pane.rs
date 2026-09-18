@@ -744,6 +744,7 @@ impl ChartPane {
 
     /// The strategies beside the series their rulers warm on, for a
     /// re-arm from outside the pane.
+    #[cfg(test)]
     pub(crate) fn strategies_with_series(
         &mut self,
     ) -> (&mut PaneStrategies, drawing_projection::PaneSeriesRead<'_>) {
