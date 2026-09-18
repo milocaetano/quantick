@@ -46,7 +46,9 @@ show or because something failed.
 
 Before reading pixels, read the live control plane — the mechanics are in
 `ui-harness` under *Reading the running app through the control plane*; the
-launch needs `QUANTICK_CONTROL_ACCESS=1` and the scopes the reads use. For
+launch needs a `--features control-harness` build (plus `drawing-harness` /
+`quick-range-harness` for those surfaces' hooks), `QUANTICK_CONTROL_ACCESS=1`
+and the scopes the reads use. For
 each in-scope surface:
 
 - `quantick_get_scene` — every control on screen by name, with `selected`, and

@@ -4,30 +4,21 @@ use super::{
     Action, Command, Effect, Event, PlaceRequest, QuickRangeModel, RangeContext, RangeView,
 };
 
+use crate::stage_plan::Step;
+
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
-    Update,
-    YieldEffect,
-    DeliverResult,
-    Readback,
-}
-
-impl Stage {
-    const fn bit(self) -> u8 {
-        1 << self as u8
+crate::stage_plan::stage_enum! {
+    enum Stage {
+        Update,
+        YieldEffect,
+        DeliverResult,
+        Readback,
     }
 }
 
-#[derive(Clone, Copy)]
-struct Step {
-    stage: Stage,
-    after: u8,
-}
-
-const STEPS: [Step; 4] = [
+const STEPS: [Step<Stage>; 4] = [
     Step {
         stage: Stage::Update,
         after: 0,
@@ -45,22 +36,6 @@ const STEPS: [Step; 4] = [
         after: Stage::DeliverResult.bit(),
     },
 ];
-
-// Fixed-size validation also rejects cycles: no member of a cycle can have
-// all its prerequisites among the stages already visited.
-const fn valid(steps: &[Step]) -> bool {
-    let mut seen = 0;
-    let mut index = 0;
-    while index < steps.len() {
-        let step = steps[index];
-        if seen & step.stage.bit() != 0 || step.after & seen != step.after {
-            return false;
-        }
-        seen |= step.stage.bit();
-        index += 1;
-    }
-    seen == 15
-}
 
 const _: () = assert!(valid(&STEPS));
 
@@ -137,7 +112,7 @@ impl PendingConversion {
         model: &mut QuickRangeModel,
         current_context: RangeContext,
         outcome: PlacementOutcome,
-        steps: &[Step],
+        steps: &[Step<Stage>],
     ) -> ConversionReadback {
         let mut execution = Execution {
             input: ConversionInput {
@@ -180,7 +155,7 @@ impl Execution {
         }
     }
 
-    fn start(mut self, model: &mut QuickRangeModel, steps: &[Step]) -> StartedConversion {
+    fn start(mut self, model: &mut QuickRangeModel, steps: &[Step<Stage>]) -> StartedConversion {
         if self.run(model, self.input.context, steps) {
             // Only the request and resume position cross the effect boundary.
             // A supplied finish outcome replaces any private seeded outcome.
@@ -200,7 +175,12 @@ impl Execution {
 
     /// Both production halves and private order-mutation tests use these
     /// bodies. The cursor advances before handing the effect to the caller.
-    fn run(&mut self, model: &mut QuickRangeModel, context: RangeContext, steps: &[Step]) -> bool {
+    fn run(
+        &mut self,
+        model: &mut QuickRangeModel,
+        context: RangeContext,
+        steps: &[Step<Stage>],
+    ) -> bool {
         while let Some(step) = steps.get(self.cursor) {
             self.cursor += 1;
             match step.stage {

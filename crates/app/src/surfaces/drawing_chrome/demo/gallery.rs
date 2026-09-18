@@ -4,6 +4,44 @@ use crate::drawings::{self, ChartPoint, DRAWING_TOOLS, DrawingBand, DrawingTool,
 use crate::pane::ParkedHand;
 use eframe::egui;
 
+/// How many demo objects wide the visible window is — the reciprocal of how
+/// far a multi-anchor object reaches. Four keeps a rectangle big enough to
+/// read while still leaving the tools distinguishable from each other.
+const DEMO_SPANS_PER_WINDOW: usize = 4;
+/// How far apart, as a fraction of the visible price band, the demo places
+/// the successive anchors of one object and the successive rows of objects.
+/// Both are small enough that the widest object still lands inside the band
+/// the chart is showing.
+const DEMO_ANCHOR_BAND_STEP: f64 = 0.12;
+const DEMO_ROW_BAND_STEP: f64 = 0.22;
+/// Points the demo hook gives a freehand tool, which declares no anchor
+/// count of its own. Enough to read as a path rather than as a line.
+const DEMO_FREEHAND_POINTS: usize = 4;
+/// How much of the visible window and of the visible price band the
+/// `QUANTICK_DRAWING_DRAFT` hook's anchors span. Wide enough that the
+/// half-made object reads at a glance, and centred, so the segment its
+/// anchors describe passes through the parked pointer at the chart's middle.
+///
+/// Much wider than it is tall, because a trend line a trader would actually
+/// draw runs *along* the tape. A near-vertical draft photographs the
+/// mechanism but nothing about whether the shape reads, which is what a QA
+/// reference image is for.
+const DEMO_DRAFT_SPAN: f32 = 0.6;
+const DEMO_DRAFT_BAND_SPAN: f64 = 0.12;
+/// Where the parked pointer stands when a single anchor is down, as a
+/// fraction of the chart from its centre.
+///
+/// A lone anchor sits at that centre, so parking the pointer there too gives
+/// a rubber band of no length — an invisible draft, which is the one thing
+/// this hook exists not to photograph. Offset, there is a line to see, and it
+/// is a *sloped* one, which is what makes the levelled state worth its own
+/// capture.
+const DEMO_DRAFT_POINTER_OFFSET: egui::Vec2 = egui::vec2(0.2, -0.15);
+/// How far before the loaded history the re-cut demo anchors its off-series
+/// mark. Any distance the tab cannot possibly hold would do; an hour is
+/// unambiguous at every timeframe the chart offers.
+const DEMO_OFF_SERIES_LEAD_MS: i64 = 3_600_000;
+
 pub(crate) struct GalleryPlan {
     anchors: Vec<Anchor>,
     bands: Vec<Anchor>,
@@ -21,19 +59,20 @@ impl DrawingsDemo {
             .map_or_else(Vec::new, |slot| crate::bands::samples_at(indicators, slot));
         let (visible, first, center, band) = facts.window();
         let stride = (visible / DRAWING_TOOLS.len()).max(1);
-        let span = (visible / 4).max(2);
+        let span = (visible / DEMO_SPANS_PER_WINDOW).max(2);
         let mut anchors = Vec::new();
         for (index, tool) in DRAWING_TOOLS.into_iter().enumerate() {
             let count = if tool.freehand() {
-                4
+                DEMO_FREEHAND_POINTS
             } else {
                 tool.required_points()
             };
             for anchor in 0..count {
                 let slot =
                     (first + index * stride + anchor * span).min(facts.slots.saturating_sub(1));
-                let price = center + (f64::from(anchor as i32) - 1.0) * band * 0.12
-                    - (f64::from(index as i32 % 3) - 1.0) * band * 0.22;
+                let price = center
+                    + (f64::from(anchor as i32) - 1.0) * band * DEMO_ANCHOR_BAND_STEP
+                    - (f64::from(index as i32 % 3) - 1.0) * band * DEMO_ROW_BAND_STEP;
                 let mut action = Anchor::new(tool, slot, slot as f32 + 0.5, price, Look::Tool);
                 action.finish = tool.freehand() && anchor + 1 == count;
                 anchors.push(action);
@@ -121,20 +160,21 @@ impl DrawingDraft {
         let mut anchors = Vec::new();
         for anchor in 0..count {
             let offset = (anchor as f32 + 0.5) / count as f32 - 0.5;
-            let slot = ((first as f32 + visible as f32 * (0.5 + offset * 0.6)) as usize)
+            let slot = ((first as f32 + visible as f32 * (0.5 + offset * DEMO_DRAFT_SPAN))
+                as usize)
                 .min(facts.slots.saturating_sub(1));
             anchors.push(Anchor::new(
                 tool,
                 slot,
                 slot as f32 + 0.5,
-                center + f64::from(offset) * band * 0.12,
+                center + f64::from(offset) * band * DEMO_DRAFT_BAND_SPAN,
                 Look::Tool,
             ));
         }
         let position = if count >= 2 {
             chart.center()
         } else {
-            chart.center() + egui::vec2(chart.width() * 0.2, chart.height() * -0.15)
+            chart.center() + DEMO_DRAFT_POINTER_OFFSET * chart.size()
         };
         DraftPlan {
             anchors,
@@ -173,7 +213,7 @@ pub(crate) fn apply_recut_marker(
             .find(|tool| tool.id() == "horizontal-line")
     {
         let mut anchor = Anchor::new(tool, 0, 0.5, close.unwrap_or(1.0), Look::Default);
-        anchor.point.time_ms = Some(first - 3_600_000);
+        anchor.point.time_ms = Some(first - DEMO_OFF_SERIES_LEAD_MS);
         let placed = anchor.apply(target);
         debug_assert!(placed, "a horizontal line completes on one anchor");
     }

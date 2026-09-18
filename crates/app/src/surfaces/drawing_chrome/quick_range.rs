@@ -18,6 +18,8 @@ mod launch;
 #[cfg(feature = "quick-range-harness")]
 pub(crate) use launch::QuickRangeLaunch;
 
+crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];
+
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
 pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";

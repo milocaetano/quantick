@@ -122,6 +122,21 @@ impl DrawingDemoState {
     }
 }
 
+/// How much of the newest chart the `QUANTICK_DRAWINGS_DEMO` hook spreads its
+/// objects across. Close to what a default viewport shows, so every object
+/// lands on screen — a demo the camera cannot see proves nothing.
+const DEMO_VISIBLE_SLOTS: usize = 90;
+/// The band to spread across before the pane has an auto-range to read (no
+/// bars yet): a fraction of price, since there is nothing better to ask.
+const DEMO_FALLBACK_BAND_FRACTION: f64 = 0.004;
+/// One-minute venue candles the `=stress` scene installs behind the tape — a
+/// time chart's worth of history, and far more than one fold pass spends, so
+/// the range folds across frames rather than in the one that placed it. The
+/// time pane folds them to whatever interval it is showing, so the slot count
+/// is this number only at 1m — the scene is about the fold surviving a long
+/// history, not about an exact count.
+const FRVP_STRESS_CANDLES: i64 = 25_000;
+
 /// Fresh geometry facts; timestamp projection happens only for chosen slots.
 #[derive(Clone, Copy)]
 pub(crate) struct SeriesFacts {
@@ -131,12 +146,12 @@ pub(crate) struct SeriesFacts {
 }
 impl SeriesFacts {
     fn window(self) -> (usize, usize, f64, f64) {
-        let visible = 90.min(self.slots);
+        let visible = DEMO_VISIBLE_SLOTS.min(self.slots);
         let close = self.last_close.unwrap_or(1.0);
         let (center, band) = self
             .auto_range
             .filter(|(lo, hi)| hi > lo)
-            .map_or((close, close * 0.004), |(lo, hi)| {
+            .map_or((close, close * DEMO_FALLBACK_BAND_FRACTION), |(lo, hi)| {
                 ((lo + hi) / 2.0, hi - lo)
             });
         (visible, self.slots - visible, center, band)
@@ -182,7 +197,9 @@ impl DrawingDemoState {
             return ProfilePreparation::Wait;
         }
         if request.stress {
-            ProfilePreparation::Prefix { candles: 25_000 }
+            ProfilePreparation::Prefix {
+                candles: FRVP_STRESS_CANDLES,
+            }
         } else {
             ProfilePreparation::Ready
         }

@@ -101,12 +101,7 @@ impl ArrangementAdapter<'_> {
                 }
                 RestoreEffect::CloseStale { .. } => {
                     if let Some(plan) = self.tabs.plan_restore(&step) {
-                        self.tabs
-                            .close_planned(
-                                plan,
-                                self.indicators,
-                                self.workspace.layouts_mut().session_mut(),
-                            )
+                        self.close_planned(plan)
                             .expect("exclusive restore keeps close current");
                     }
                 }

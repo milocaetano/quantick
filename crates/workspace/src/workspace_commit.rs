@@ -2,7 +2,7 @@
 //! the caller owns file reads, diagnostics, writes, and immediate result delivery.
 use crate::workspace_document::{NamedArrangement, Workspace};
 
-pub const MAX_RECENT: usize = 10;
+pub(crate) const MAX_RECENT: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FrameSave {

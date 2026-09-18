@@ -4,7 +4,6 @@ pub mod average;
 pub mod profile;
 pub use average::{
     AnchoredAverage, AverageInputs, AverageOutput, AverageRequest, AvwapBand, AvwapCacheKey,
-    AvwapPartialSig,
 };
 pub use profile::{
     FrvpCacheKey, FrvpEmpty, ProfileInputs, ProfileOutput, ProfileRequest, RangeProfile,

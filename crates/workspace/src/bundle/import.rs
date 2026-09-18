@@ -1,4 +1,4 @@
-use super::{Bundle, BundleStore, FORMAT_VERSION, merge_local_keys};
+use super::{Bundle, BundleStore, FORMAT_VERSION, SectionError, merge_local_keys};
 use std::collections::VecDeque;
 
 /// Private progress; only consuming typed replies can reach an install receipt.
@@ -30,21 +30,21 @@ pub enum ImportFailure {
     Version(u32),
     InvalidSection {
         store_index: usize,
-        message: String,
+        error: SectionError,
     },
     RenderSection {
         store_index: usize,
-        message: String,
+        error: SectionError,
     },
     Stage {
         store_index: usize,
-        message: String,
+        error: SectionError,
     },
     Install {
         store_index: usize,
         installed: usize,
         total: usize,
-        message: String,
+        error: SectionError,
     },
 }
 
@@ -145,14 +145,14 @@ impl<'bundle, 'stores, S: BundleStore> ImportTransaction<'bundle, 'stores, S> {
                 Err(error) => {
                     return ImportStep::Finished(Err(ImportFailure::RenderSection {
                         store_index: index,
-                        message: error.to_string(),
+                        error: SectionError::Malformed(error.to_string()),
                     }));
                 }
             };
-            if let Err(message) = store.validate_text(&text) {
+            if let Err(error) = store.validate_text(&text) {
                 return ImportStep::Finished(Err(ImportFailure::InvalidSection {
                     store_index: index,
-                    message,
+                    error,
                 }));
             }
         }
@@ -235,7 +235,7 @@ impl<'bundle, 'stores, S: BundleStore> PrepareStore<'bundle, 'stores, S> {
                 .transaction
                 .fail_before_install(ImportFailure::RenderSection {
                     store_index: self.index,
-                    message,
+                    error: SectionError::Malformed(message),
                 }),
         }
     }
@@ -247,15 +247,15 @@ impl<'bundle, 'stores, S: BundleStore> StageStore<'bundle, 'stores, S> {
     pub fn text(&self) -> &str {
         &self.text
     }
-    pub fn complete(mut self, result: Result<(), String>) -> ImportStep<'bundle, 'stores, S> {
+    pub fn complete(mut self, result: std::io::Result<()>) -> ImportStep<'bundle, 'stores, S> {
         match result {
             Ok(()) => {
                 self.transaction.staged += 1;
                 self.transaction.prepare()
             }
-            Err(message) => self.transaction.fail_before_install(ImportFailure::Stage {
+            Err(error) => self.transaction.fail_before_install(ImportFailure::Stage {
                 store_index: self.index,
-                message,
+                error: error.into(),
             }),
         }
     }
@@ -264,18 +264,18 @@ impl<'bundle, 'stores, S: BundleStore> InstallStore<'bundle, 'stores, S> {
     pub fn store_index(&self) -> usize {
         self.index
     }
-    pub fn complete(mut self, result: Result<(), String>) -> ImportStep<'bundle, 'stores, S> {
+    pub fn complete(mut self, result: std::io::Result<()>) -> ImportStep<'bundle, 'stores, S> {
         match result {
             Ok(()) => {
                 self.transaction.installed += 1;
                 self.transaction.install()
             }
-            Err(message) => {
+            Err(error) => {
                 self.transaction.failure = Some(ImportFailure::Install {
                     store_index: self.index,
                     installed: self.transaction.installed,
                     total: self.transaction.selected.len(),
-                    message,
+                    error: error.into(),
                 });
                 self.transaction.cleanup.push_back(self.index);
                 self.transaction.cleanup()
