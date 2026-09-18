@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 #[cfg(test)]
+#[path = "indicator_worker/tests/event_fixture.rs"]
 pub(crate) mod event_fixture;
 /// Transport markers stay outside the domain command vocabulary.
 pub(crate) enum WorkerCommand {

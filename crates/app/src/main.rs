@@ -398,7 +398,11 @@ fn main() -> eframe::Result {
     )
 }
 
+// Test-only, and filed as tests so the sidecar rule can see they are:
+// benchmarks the ordinary suite runs, never the binary.
 #[cfg(test)]
+#[path = "worker_progress/tests/bench.rs"]
 mod worker_progress_bench;
 #[cfg(test)]
+#[path = "worker_progress/tests/bench_observer.rs"]
 mod worker_progress_bench_observer;

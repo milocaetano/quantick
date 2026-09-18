@@ -10,6 +10,7 @@
 //! table against the interface it describes rather than against itself.
 
 #[cfg(test)]
+#[path = "tests/sources.rs"]
 pub(crate) mod sources;
 
 pub(crate) use quantick_operability::matrix;
