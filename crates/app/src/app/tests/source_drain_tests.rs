@@ -198,7 +198,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
             .try_send(FeedEvent::Backfilled(prints(50, 250)))
             .unwrap();
         if early {
-            app.active_tab_mut().drain_feed_with_stages(
+            app.active_tab_mut().drain_feed_test_order(
                 tab_id,
                 || panic!("backfill must not read the arrival clock"),
                 [
@@ -211,7 +211,7 @@ fn source_drain_same_interpreter_early_reanchor_leaves_real_coordinates_stale() 
                 ],
             );
         } else {
-            app.active_tab_mut().drain_feed_with_stages(
+            app.active_tab_mut().drain_feed_test_order(
                 tab_id,
                 || panic!("backfill must not read the arrival clock"),
                 SourceDrainPlan::stages(),
@@ -263,7 +263,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
             .try_send(FeedEvent::LiveBatch(prints(101, 103)))
             .unwrap();
         if early {
-            app.active_tab_mut().drain_feed_with_stages(
+            app.active_tab_mut().drain_feed_test_order(
                 tab_id,
                 || 100_000,
                 [
@@ -276,7 +276,7 @@ fn source_drain_same_interpreter_early_publication_omits_the_actual_worker_previ
                 ],
             );
         } else {
-            app.active_tab_mut().drain_feed_with_stages(
+            app.active_tab_mut().drain_feed_test_order(
                 tab_id,
                 || 100_000,
                 SourceDrainPlan::stages(),

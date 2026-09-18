@@ -78,6 +78,18 @@ impl LiveTradeOwners<'_> {
 
 #[cfg(test)]
 impl Tab {
+    /// A drain whose stages run in the given order, for the mutant-order
+    /// proofs; production drains only through the validated plan.
+    pub(crate) fn drain_feed_test_order(
+        &mut self,
+        tab_id: u64,
+        wall_clock_ms: impl FnMut() -> i64,
+        stages: impl IntoIterator<
+            Item = quantick_chart_interaction::source_drain_plan::SourceDrainStage,
+        >,
+    ) {
+        self.drain_feed_with_stages(tab_id, wall_clock_ms, stages);
+    }
     pub(crate) fn ingest_live_trade_test_order(
         &mut self,
         trade: &quantick_engine::Trade,
@@ -431,7 +443,7 @@ impl Tab {
         );
     }
 
-    pub(crate) fn drain_feed_with_stages(
+    fn drain_feed_with_stages(
         &mut self,
         tab_id: u64,
         mut wall_clock_ms: impl FnMut() -> i64,
