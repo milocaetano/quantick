@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -122,14 +121,6 @@ class TouchTests(Fixture):
         with self.assertRaisesRegex(ValueError, "hard-linked"):
             sampling.SourceTouch(self.repo, path, sha, self.output)
         self.assertEqual(linked.stat().st_mtime_ns, before)
-
-    def test_touch_waits_for_a_coarse_clock_to_pass_a_fresh_mtime(self):
-        now = time.time_ns()
-        self.assertGreater(sampling.SourceTouch._clock_past(now), now)
-
-    def test_touch_still_refuses_a_clock_that_stays_behind(self):
-        future = time.time_ns() + 60_000_000_000
-        self.assertLessEqual(sampling.SourceTouch._clock_past(future, limit_ns=5_000_000), future)
 
     def test_touch_changes_only_mtime_and_restores_metadata_after_exception(self):
         path = self.write("crates/a/src/lib.rs", "pub fn unchanged() {}\n")

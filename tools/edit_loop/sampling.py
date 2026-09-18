@@ -11,9 +11,6 @@ from process_owner import ProcessStillRunning
 from source_time import MetadataHandle
 from supervisor import run_process as run_process
 
-# How long touch() waits for a coarse wall clock to pass the source mtime.
-CLOCK_WAIT_LIMIT_NS = 2_000_000_000
-
 # A full second above the previous completion avoids coarse filesystem ticks.
 TOUCH_SEPARATION_NS = 2_000_000_000
 
@@ -59,7 +56,7 @@ class SourceTouch:
                 or (current.st_ino, current.st_dev) != (self.original.st_ino, self.original.st_dev)
                 or self.path.read_bytes() != self.content):
             raise ValueError("source changed before touch")
-        timestamp = self._clock_past(self.path.stat().st_mtime_ns) if now_ns is None else now_ns
+        timestamp = time.time_ns() if now_ns is None else now_ns
         if timestamp <= self.path.stat().st_mtime_ns:
             raise ValueError("touch timestamp did not advance")
         self.handle.set_times(self.original.st_atime_ns, timestamp)
@@ -69,21 +66,6 @@ class SourceTouch:
         self.record.update(state="touched", touched_mtime_ns=actual)
         self.save()
         return actual
-
-    @staticmethod
-    def _clock_past(mtime_ns, limit_ns=CLOCK_WAIT_LIMIT_NS):
-        """Read the wall clock until it passes `mtime_ns`, for at most `limit_ns`.
-
-        A coarse clock (about 15.6 ms on Windows) can still equal the mtime of a
-        file written moments earlier. Waiting keeps the "timestamp must advance"
-        refusal intact; only a clock that stays behind past the limit is refused.
-        """
-        deadline = time.monotonic_ns() + limit_ns
-        timestamp = time.time_ns()
-        while timestamp <= mtime_ns and time.monotonic_ns() < deadline:
-            time.sleep(0.001)
-            timestamp = time.time_ns()
-        return timestamp
 
     def __exit__(self, exception_type, *_):
         try:
