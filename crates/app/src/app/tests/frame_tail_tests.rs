@@ -2,7 +2,7 @@ use super::*;
 
 const WINDOW: egui::Vec2 = egui::vec2(2000.0, 1200.0);
 
-fn print(id: u64, price: i64) -> quantick_engine::Trade {
+pub(super) fn print(id: u64, price: i64) -> quantick_engine::Trade {
     quantick_engine::Trade {
         agg_id: id,
         timestamp_ms: 1_700_000_000_000 + id as i64 * 1000,

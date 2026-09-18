@@ -11,8 +11,8 @@
 //! them as no-ops, which keeps one plan for every build.
 //!
 //! What it replaced: the frame's order used to be the statement order of one
-//! 734-line root method, with 49 conditional lines deciding what ran where.
-//! That method is now 8 lines with no branch; the order is 30 stages and 30
+//! 734-line root method, where 49 lines start an `if`, `match`, `for` or
+//! `while` or hold an `else` to decide what ran where. That method is now 8 lines with no branch; the order is 30 stages and 31
 //! declared edges, pinned by the tests beside this file. Adding an
 //! independent stage costs one `Name after []` line here and one executor
 //! arm in the application: no other declaration moves, and the constant
@@ -111,8 +111,11 @@ declare_stages! {
         /// that can disarm one this frame.
         StrategyCleanup after [Surfaces, Canvas, DrawingChrome],
         /// The frame tail: the feed notice's action, paper settlement and
-        /// report, the popup state. After the canvas that answered them.
-        Tail after [Canvas],
+        /// report, the popup state. After the canvas that answered them, and
+        /// after the drain: a replay seek arrives there as a reset that
+        /// closes the paper position, and the report projects that close on
+        /// the frame it happened.
+        Tail after [Canvas, DrainSources],
         /// Keep polling the feed about sixty times a second.
         RequestRepaint after [],
     }

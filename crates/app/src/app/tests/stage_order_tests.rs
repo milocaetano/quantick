@@ -464,3 +464,65 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
         "drawn first, the surfaces label a preview that is already gone"
     );
 }
+
+#[test]
+fn the_report_before_the_seek_drains_misses_the_round_trip_it_closed() {
+    use super::frame_tail_tests::print;
+    // The drain and the housekeeping that reads it, moved behind the tail
+    // together: only the tail's own declaration on the drain refuses this.
+    let mut late_drain = FrameStage::ORDER.to_vec();
+    for stage in [FrameStage::DrainSources, FrameStage::WindowHousekeeping] {
+        late_drain.retain(|candidate| *candidate != stage);
+        let tail = position(&late_drain, FrameStage::Tail);
+        late_drain.insert(tail + 1, stage);
+    }
+    assert!(
+        !FrameStage::is_valid_order(&late_drain),
+        "Tail declares DrainSources"
+    );
+    let projected_rows_on_the_seek_frame = |order: &[FrameStage]| {
+        let (mut app, events, _commands, _book) = test_app();
+        let ctx = egui::Context::default();
+        let dir = crate::scratch::ScratchDir::new("stage-order-seek-report");
+        staged_frame(&mut app, &ctx, &FrameStage::ORDER);
+        {
+            let symbol = app.active_tab().symbol.clone();
+            let paper = &mut app.active_tab_mut().paper;
+            paper.redirect_history_dir(dir.path().to_path_buf());
+            paper.set_symbol(&symbol);
+            paper.seed(&print(0, 100));
+            paper.market(quantick_engine::Side::Buy);
+            paper.on_trade(&print(1, 100));
+            paper.on_trade(&print(2, 105));
+            assert!(paper.position_summary().is_some());
+            let (report, env) = paper.report_parts();
+            report.set_report_list_open(true);
+            report.open(&env);
+        }
+        staged_frame(&mut app, &ctx, &FrameStage::ORDER);
+        // A replay seek reaches the tab as a reset of its timeline.
+        events.try_send(FeedEvent::Reset).unwrap();
+        staged_frame(&mut app, &ctx, order);
+        assert!(
+            app.active_tab().paper.position_summary().is_none(),
+            "the seek closed the position on this frame either way"
+        );
+        app.active_tab()
+            .paper
+            .report_state()
+            .snapshot()
+            .expect("the report is open")
+            .rows
+            .len()
+    };
+    assert_eq!(
+        projected_rows_on_the_seek_frame(&FrameStage::ORDER),
+        1,
+        "the report projects the round trip the seek closed"
+    );
+    assert_eq!(
+        projected_rows_on_the_seek_frame(&late_drain),
+        0,
+        "projected before the drain, the report misses it for the frame"
+    );
+}
