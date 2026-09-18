@@ -83,3 +83,11 @@ fn validation_refuses_missing_duplicate_cycles_self_edges_and_unknown_bits() {
     out_of_range[3].bit = 1 << 9;
     assert!(!nodes_in_valid_order(&out_of_range, Diamond::COUNT));
 }
+
+#[test]
+fn coverage_follows_the_declared_variants_not_a_hand_mask() {
+    // Dropping the last stage is refused because the macro counted four.
+    assert!(Diamond::is_valid_order(&Diamond::ORDER));
+    assert!(!Diamond::is_valid_order(&Diamond::ORDER[..3]));
+    assert!(!Diamond::is_valid_order(&[]));
+}

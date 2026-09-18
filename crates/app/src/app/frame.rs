@@ -45,6 +45,34 @@ struct FrameScratch {
     canvas: canvas::CanvasAnswers,
 }
 
+#[cfg(test)]
+impl QuantickApp {
+    /// A frame whose tail runs `stages` in the given order: the mutant-order
+    /// proof's door, closed to production callers so the plan's `const`
+    /// validation cannot be bypassed.
+    pub(super) fn draw_frame_test_order(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameTailStage>,
+    ) {
+        self.draw_frame_with_tail(ctx, now, spawn, stages);
+    }
+
+    /// A frame whose own stages run in the given order, behind the same
+    /// test-only door as the tail's.
+    pub(super) fn draw_frame_stage_test_order(
+        &mut self,
+        ctx: &egui::Context,
+        now: Instant,
+        spawn: &mut crate::tab::LiveFeedSpawn<'_>,
+        stages: impl IntoIterator<Item = FrameStage>,
+    ) {
+        self.draw_frame_with_stages(ctx, now, spawn, stages, FrameTailPlan::stages());
+    }
+}
+
 impl QuantickApp {
     /// One frame of the application: drain, lay out the chrome, draw the
     /// chart.
@@ -62,7 +90,7 @@ impl QuantickApp {
         );
     }
 
-    pub(super) fn draw_frame_with_tail(
+    fn draw_frame_with_tail(
         &mut self,
         ctx: &egui::Context,
         now: Instant,
@@ -73,9 +101,10 @@ impl QuantickApp {
     }
 
     /// Run `stages` in the order given. Production passes the validated
-    /// plan; tests replay a swapped order through these same adapters to
-    /// show the harm the declared dependencies prevent.
-    pub(super) fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
+    /// plan; tests replay a swapped order through these same adapters, via
+    /// the `#[cfg(test)]` door, to show the harm the declared dependencies
+    /// prevent.
+    fn draw_frame_with_stages<T: IntoIterator<Item = FrameTailStage>>(
         &mut self,
         ctx: &egui::Context,
         now: Instant,

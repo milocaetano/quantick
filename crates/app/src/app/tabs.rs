@@ -166,12 +166,7 @@ impl QuantickApp {
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.live_trades;
-            tab.drain_frame(
-                tab_id,
-                config,
-                policy,
-                quantick_chart_interaction::tab_drain_plan::TabDrainPlan::stages(),
-            );
+            tab.drain_frame(tab_id, config, policy);
             trades += tab.live_trades - before;
         }
         // What the window ingested, across every market it is holding.

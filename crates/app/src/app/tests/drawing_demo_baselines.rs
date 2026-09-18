@@ -1,7 +1,80 @@
 //! Characterization of the actual demo consumers, before ownership changes.
-//! The external baseline runner supplies each literal environment case in a
-//! separate process. The normal workspace run retains the gallery fixture.
+//! Each case is a literal hook table fed through `fixed_env`, so every case
+//! runs in the ordinary workspace test and none reads the process environment.
 use super::*;
+
+type Env = &'static [(&'static str, &'static str)];
+
+const CASES: &[(&str, Env)] = &[
+    ("gallery-default", &[]),
+    ("gallery", &[("QUANTICK_DRAWINGS_DEMO", "1")]),
+    (
+        "shared",
+        &[
+            ("QUANTICK_DRAWINGS_DEMO", "1"),
+            ("QUANTICK_DRAWINGS_DEMO_SHARED", "1"),
+            ("QUANTICK_DRAWINGS_DEMO_SELECT", "horizontal-line"),
+            ("QUANTICK_FRVP_DEMO", "stress"),
+        ],
+    ),
+    ("bands", &[("QUANTICK_DRAWINGS_DEMO", "bands")]),
+    (
+        "recut",
+        &[
+            ("QUANTICK_DRAWINGS_DEMO", "1"),
+            ("QUANTICK_DRAWINGS_DEMO_RECUT", "1"),
+        ],
+    ),
+    (
+        "draft",
+        &[
+            ("QUANTICK_DRAWING_DRAFT", " 2 "),
+            ("QUANTICK_DRAWING_CONSTRAIN", "1"),
+        ],
+    ),
+    (
+        "draft-zero",
+        &[
+            ("QUANTICK_DRAWING_DRAFT", "1"),
+            ("QUANTICK_DRAWING_CONSTRAIN", "1"),
+        ],
+    ),
+    (
+        "profile",
+        &[
+            ("QUANTICK_FRVP_DEMO", "1"),
+            ("QUANTICK_FRVP_DEMO_SELECT", "1"),
+        ],
+    ),
+    (
+        "compare",
+        &[
+            ("QUANTICK_FRVP_DEMO", " compare "),
+            ("QUANTICK_FRVP_DEMO_SELECT", "1"),
+        ],
+    ),
+    ("compare-wait", &[("QUANTICK_FRVP_DEMO", "compare")]),
+    ("avwap", &[("QUANTICK_AVWAP_DEMO", "1")]),
+    (
+        "wait",
+        &[
+            ("QUANTICK_DRAWINGS_DEMO", "1"),
+            ("QUANTICK_FRVP_DEMO", "1"),
+            ("QUANTICK_AVWAP_DEMO", "1"),
+        ],
+    ),
+    (
+        "invalid",
+        &[
+            ("QUANTICK_DRAWINGS_DEMO", "yes"),
+            ("QUANTICK_FRVP_DEMO", "bogus"),
+            ("QUANTICK_AVWAP_DEMO", "0"),
+            ("QUANTICK_DRAWING_DRAFT", "0"),
+            ("QUANTICK_DRAWINGS_DEMO_RECUT", "1"),
+        ],
+    ),
+    ("stress", &[("QUANTICK_FRVP_DEMO", "stress")]),
+];
 
 #[test]
 fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
@@ -48,17 +121,23 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
 
 #[test]
 fn nine_hook_consumer_baseline() {
-    let case = std::env::var("H2B_BASELINE_CASE").unwrap_or_else(|_| "gallery-default".into());
-    let count = match case.as_str() {
+    for &(case, env) in CASES {
+        nine_hook_case(case, env);
+    }
+}
+
+fn nine_hook_case(case: &str, env: Env) {
+    eprintln!("drawing demo case {case}");
+    let count = match case {
         "compare-wait" => 30,
         "wait" => 5,
         "stress" => 20_000,
         _ => 200,
     };
     let launch = AppLaunch {
-        drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| {
-            std::env::var_os(name)
-        }),
+        drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(fixed_env(
+            env,
+        )),
         ..Default::default()
     };
     let (mut app, _commands) = app_with_history_and_launch(count, launch);
@@ -76,7 +155,7 @@ fn nine_hook_consumer_baseline() {
     if case == "bands" {
         add_pane_indicator(&mut app, "Baseline band", vec![8.0; 200]);
     }
-    match case.as_str() {
+    match case {
         "gallery-default" | "gallery" | "shared" | "bands" | "recut" => {
             if case == "shared" {
                 app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);

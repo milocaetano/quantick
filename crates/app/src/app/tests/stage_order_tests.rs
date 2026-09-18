@@ -4,7 +4,6 @@
 
 use super::*;
 use quantick_chart_interaction::frame_plan::FrameStage;
-use quantick_chart_interaction::frame_tail_plan::FrameTailPlan;
 use quantick_chart_interaction::stage_registry::hoisted;
 use quantick_chart_interaction::tab_drain_plan::TabDrainStage;
 
@@ -36,12 +35,11 @@ fn staged_frame(app: &mut QuantickApp, ctx: &egui::Context, order: &[FrameStage]
             ..Default::default()
         },
         |ctx| {
-            app.draw_frame_with_stages(
+            app.draw_frame_stage_test_order(
                 ctx,
                 Instant::now(),
                 &mut quantick_feed::spawn_live,
                 order.iter().copied(),
-                FrameTailPlan::stages(),
             );
         },
     );
@@ -116,7 +114,7 @@ fn the_capture_heartbeat_before_the_source_drain_leaves_a_reset_market_unrecorde
             venue_lead_in: app.history.venue_lead_in,
         };
         with_config(&mut app, |tab, config| {
-            tab.drain_frame(tab_id, config, policy, order.iter().copied());
+            tab.drain_frame_test_order(tab_id, config, policy, order.iter().copied());
         });
         app.active_tab().tape().enabled()
     };

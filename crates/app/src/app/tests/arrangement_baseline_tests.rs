@@ -193,11 +193,7 @@ fn arrangement_stale_close_does_not_flatten_journal_remove_or_drop() {
     let layout = membership.layout();
     let plan = app.tabs.plan_close(1).unwrap();
     app.tabs.select(0);
-    let result = app.tabs.close_planned(
-        plan,
-        &mut app.indicators,
-        app.workspace.layouts_mut().session_mut(),
-    );
+    let result = app.arrangement_adapter().close_planned(plan);
     assert!(matches!(
         result,
         Err(quantick_workspace::arrangement::ArrangementError::StaleTransition)

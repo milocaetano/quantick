@@ -27,11 +27,11 @@ impl DrawingController {
 }
 /// Notices preserve operation order: an ordinary note following an Undo is
 /// deferred by the toast owner. Seven chrome branches can announce in one
-/// response; keyboard handling can announce at most three. No heap queue.
+/// response; keyboard handling can announce at most three. Inline capacity
+/// covers that without a heap queue; a ninth notice spills rather than panics.
 #[derive(Default)]
 pub(crate) struct DrawingEffects {
-    notices: [Option<(String, Instant, bool)>; 8],
-    count: usize,
+    notices: smallvec::SmallVec<[(String, Instant, bool); 8]>,
     pub(crate) inspector_moved: bool,
 }
 impl DrawingEffects {
@@ -42,16 +42,36 @@ impl DrawingEffects {
         self.push(text.into(), now, true);
     }
     fn push(&mut self, text: String, now: Instant, undo: bool) {
-        self.notices[self.count] = Some((text, now, undo));
-        self.count += 1;
+        self.notices.push((text, now, undo));
     }
     pub(crate) fn apply_notice(self, toast: &mut crate::surfaces::toast::ToastSurface) {
-        for (message, now, undo) in self.notices.into_iter().flatten() {
+        for (message, now, undo) in self.notices {
             if undo {
                 toast.note_with_undo(message, now);
             } else {
                 toast.note(message, now);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod effects_tests {
+    use super::DrawingEffects;
+
+    #[test]
+    fn a_ninth_notice_in_one_frame_is_kept_in_order() {
+        let now = std::time::Instant::now();
+        let mut effects = DrawingEffects::default();
+        for index in 0..9 {
+            effects.note(format!("notice {index}"), now);
+        }
+        let texts: Vec<&str> = effects
+            .notices
+            .iter()
+            .map(|(text, ..)| text.as_str())
+            .collect();
+        assert_eq!(texts.len(), 9);
+        assert_eq!(texts.last(), Some(&"notice 8"));
     }
 }

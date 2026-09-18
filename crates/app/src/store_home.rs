@@ -89,8 +89,8 @@ impl quantick_workspace::bundle::BundleStore for CockpitStore {
     fn local_keys(&self) -> &[&str] {
         self.local_keys
     }
-    fn validate_text(&self, text: &str) -> Result<(), String> {
-        (self.validate)(text)
+    fn validate_text(&self, text: &str) -> Result<(), quantick_workspace::bundle::SectionError> {
+        (self.validate)(text).map_err(quantick_workspace::bundle::SectionError::Malformed)
     }
 }
 

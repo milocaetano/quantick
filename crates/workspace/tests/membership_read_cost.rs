@@ -117,3 +117,90 @@ fn idle_commit_policy_and_session_reads_allocate_nothing() {
     TRACK.with(|track| track.set(false));
     assert_eq!(ALLOCATIONS.with(Cell::get), 0);
 }
+
+/// Twelve layouts, the book's cap: the first eleven hold `others` panes each
+/// and the last, the one a delete removes, holds `members`. Returns the
+/// session, every pane with its retained view in order, and the last layout.
+fn full_book(
+    others: u64,
+    members: u64,
+) -> (
+    LayoutSession,
+    Vec<(u64, quantick_workspace::session::LayoutView)>,
+    LayoutId,
+) {
+    use quantick_workspace::layout_document::MAX_LAYOUTS;
+    let mut session = LayoutSession::new(LayoutBook::default());
+    let mut layouts = vec![LayoutId(1)];
+    while layouts.len() < MAX_LAYOUTS {
+        layouts.push(session.create(None).unwrap());
+    }
+    let last = *layouts.last().unwrap();
+    let mut views = Vec::new();
+    for (index, layout) in layouts.iter().enumerate() {
+        let count = if *layout == last { members } else { others };
+        for slot in 0..count {
+            let pane = index as u64 * 1_000 + slot;
+            views.push((pane, session.register(pane, Some(*layout))));
+        }
+    }
+    (session, views, last)
+}
+
+/// Allocations `work` makes on this thread.
+fn allocations(work: impl FnOnce()) -> usize {
+    ALLOCATIONS.with(|n| n.set(0));
+    TRACK.with(|track| track.set(true));
+    work();
+    TRACK.with(|track| track.set(false));
+    ALLOCATIONS.with(Cell::get)
+}
+
+/// Planning a delete of the last layout, over every registered pane: the
+/// number of selections and the allocations the plan made.
+fn delete_cost(others: u64, members: u64) -> (usize, usize) {
+    use quantick_workspace::session::PaneFacts;
+    let (session, views, last) = full_book(others, members);
+    let facts: Vec<(u64, PaneFacts)> = views
+        .iter()
+        .map(|(pane, _)| (*pane, PaneFacts::default()))
+        .collect();
+    let mut planned = 0;
+    let cost = allocations(|| {
+        planned = session.plan_delete(last, facts.into_iter()).unwrap().len();
+    });
+    (planned, cost)
+}
+
+/// #526 A4 at the book's cap: mirror reads walk every pane of twelve layouts
+/// without allocating, and planning a delete allocates for the deleted
+/// layout's own members only, the same count whether the other eleven
+/// layouts hold eight panes each or eighty.
+#[test]
+fn twelve_layout_reads_allocate_nothing_and_delete_scales_with_its_members() {
+    let (session, views, _) = full_book(8, 8);
+    let order: Vec<u64> = views.iter().map(|(pane, _)| *pane).collect();
+    let reads = allocations(|| {
+        for _ in 0..100 {
+            for layout in 1..=12 {
+                let id = LayoutId(layout);
+                std::hint::black_box(session.targets(id, order.iter().copied()).count());
+                std::hint::black_box(
+                    session
+                        .matching(id, views.iter().map(|(pane, view)| (*pane, view)))
+                        .count(),
+                );
+            }
+        }
+    });
+    assert_eq!(reads, 0, "targets and matching over 12 layouts x 8 panes");
+
+    let (planned, narrow) = delete_cost(8, 8);
+    assert_eq!(planned, 8, "one selection per member of the deleted layout");
+    let (planned, wide) = delete_cost(80, 8);
+    assert_eq!(planned, 8);
+    assert_eq!(
+        narrow, wide,
+        "ten times the other panes, the same allocating work"
+    );
+}

@@ -1,4 +1,6 @@
-//! Literal startup inputs supplied only by the external child-process runner.
+//! Literal control launch inputs: each case is a hook table fed through
+//! `fixed_env`, so every case runs in `cargo test` and none reads the
+//! process environment.
 use super::*;
 use quantick_feed::replay::test_support as replay_test_support;
 use serde_json::{Value, json};
@@ -53,12 +55,59 @@ fn description(app: &mut QuantickApp) -> Value {
     local_read(app, crate::control::DESCRIBE_CAPABILITY_ID, json!({}))
 }
 
-fn captured_control_launch() -> super::super::AppLaunch {
+type Env = &'static [(&'static str, &'static str)];
+
+fn captured_control_launch(env: Env) -> super::super::AppLaunch {
     super::super::AppLaunch {
-        control: super::super::control_host::ControlLaunch::capture(|name| std::env::var_os(name)),
+        control: super::super::control_host::ControlLaunch::capture(fixed_env(env)),
         ..Default::default()
     }
 }
+
+const CONSTRUCTOR_CASES: &[(&str, Env)] = &[
+    ("C01", &[]),
+    ("C02", &[("QUANTICK_CONTROL_PANEL", "1")]),
+    ("panel-padded", &[("QUANTICK_CONTROL_PANEL", " 1 ")]),
+    ("panel-zero", &[("QUANTICK_CONTROL_PANEL", "0")]),
+    ("C05", &[("QUANTICK_CONTROL_ACCESS", "1")]),
+    ("access-padded", &[("QUANTICK_CONTROL_ACCESS", " 1")]),
+    ("access-word", &[("QUANTICK_CONTROL_ACCESS", "true")]),
+    ("C08", &[("QUANTICK_CONTROL_MARK", "1")]),
+    ("C09", &[("QUANTICK_CONTROL_MARK", " 1 ")]),
+    ("C10", &[("QUANTICK_CONTROL_MARK", " keep this ")]),
+    ("mark-blank", &[("QUANTICK_CONTROL_MARK", "   ")]),
+    ("C12", &[("QUANTICK_CONTROL_ANNOTATE", " keep this ")]),
+    ("C13", &[("QUANTICK_CONTROL_NOTIFY", " popup :a:b ")]),
+    (
+        "C14",
+        &[("QUANTICK_CONTROL_EVIDENCE", " all, scene.controls ,all ")],
+    ),
+    (
+        "blank-actions",
+        &[
+            ("QUANTICK_CONTROL_ANNOTATE", " "),
+            ("QUANTICK_CONTROL_NOTIFY", ""),
+            ("QUANTICK_CONTROL_EVIDENCE", "  "),
+        ],
+    ),
+    ("C18", &[("QUANTICK_CONTROL_SCOPES", "annotate-tier")]),
+    (
+        "C19",
+        &[("QUANTICK_CONTROL_SCOPES", "observe.chart,not.a.scope")],
+    ),
+    ("C20", &[("QUANTICK_CONTROL_SCOPES", " , ")]),
+    (
+        "C22",
+        &[
+            ("QUANTICK_CONTROL_PANEL", "1"),
+            ("QUANTICK_CONTROL_ACCESS", "1"),
+            ("QUANTICK_CONTROL_MARK", "phase"),
+            ("QUANTICK_CONTROL_ANNOTATE", "alpha"),
+            ("QUANTICK_CONTROL_NOTIFY", "toast:beta"),
+            ("QUANTICK_CONTROL_EVIDENCE", "all"),
+        ],
+    ),
+];
 
 const DEFAULT_GRANT: &[&str] = &[
     "observe",
@@ -86,31 +135,37 @@ const ANNOTATE_GRANT: &[&str] = &[
 
 #[test]
 fn literal_constructor() {
-    let case = std::env::var("H4_BASELINE_CASE").unwrap_or_else(|_| "C01".into());
+    for &(case, env) in CONSTRUCTOR_CASES {
+        constructor_case(case, env);
+    }
+}
+
+fn constructor_case(case: &str, env: Env) {
+    eprintln!("control constructor case {case}");
     let recorded = RecordedEvents::default();
     let subscriber = tracing_subscriber::registry().with(recorded.clone());
     tracing::subscriber::with_default(subscriber, || {
-        let (mut app, _, _, _) = test_app_with_launch(captured_control_launch());
-        let panel = matches!(case.as_str(), "C02" | "C22");
-        let enable = matches!(case.as_str(), "C05" | "C22");
-        let mark = match case.as_str() {
+        let (mut app, _, _, _) = test_app_with_launch(captured_control_launch(env));
+        let panel = matches!(case, "C02" | "C22");
+        let enable = matches!(case, "C05" | "C22");
+        let mark = match case {
             "C08" => Some(""),
             "C09" => Some(" 1 "),
             "C10" => Some(" keep this "),
             "C22" => Some("phase"),
             _ => None,
         };
-        let annotation = match case.as_str() {
+        let annotation = match case {
             "C12" => Some(" keep this "),
             "C22" => Some("alpha"),
             _ => None,
         };
-        let notification = match case.as_str() {
+        let notification = match case {
             "C13" => Some(" popup :a:b "),
             "C22" => Some("toast:beta"),
             _ => None,
         };
-        let evidence = match case.as_str() {
+        let evidence = match case {
             "C14" => Some(" all, scene.controls ,all "),
             "C22" => Some("all"),
             _ => None,
@@ -121,7 +176,7 @@ fn literal_constructor() {
         assert_eq!(app.control.scenarios.pending().notification, notification);
         assert_eq!(app.control.scenarios.pending().evidence, evidence);
         let described = description(&mut app);
-        let grant = match case.as_str() {
+        let grant = match case {
             "C18" => ANNOTATE_GRANT,
             "C20" => &["observe"],
             _ => DEFAULT_GRANT,
@@ -193,19 +248,104 @@ fn hook_bundle(app: &mut QuantickApp, recorded: &RecordedEvents) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+const ALL_READS: (&str, &str) = ("QUANTICK_CONTROL_SCOPES", "all-reads");
+const EVIDENCE_READS: (&str, &str) = ("QUANTICK_CONTROL_SCOPES", "all-reads,observe.evidence");
+const SCREENSHOT_READS: (&str, &str) = (
+    "QUANTICK_CONTROL_SCOPES",
+    "all-reads,observe.evidence,observe.screenshot",
+);
+const EVIDENCE_WITH_IMAGE: (&str, &str) = ("QUANTICK_CONTROL_EVIDENCE", "all,screenshot");
+
+const RECIPIENT_CASES: &[(&str, Env)] = &[
+    ("F01", &[("QUANTICK_CONTROL_ACCESS", "1")]),
+    ("F03-empty", &[("QUANTICK_CONTROL_MARK", "1")]),
+    ("F03-padded", &[("QUANTICK_CONTROL_MARK", " 1 ")]),
+    ("F04", &[("QUANTICK_CONTROL_MARK", "after-sidecar")]),
+    ("F05", &[("QUANTICK_CONTROL_ANNOTATE", " alpha ")]),
+    ("F06", &[("QUANTICK_CONTROL_ANNOTATE", "   ")]),
+    ("F07-toast", &[("QUANTICK_CONTROL_NOTIFY", "toast:message")]),
+    (
+        "F07-popup",
+        &[("QUANTICK_CONTROL_NOTIFY", "popup:hello:again")],
+    ),
+    ("F07-sound", &[("QUANTICK_CONTROL_NOTIFY", "sound:beep")]),
+    ("F07-invalid", &[("QUANTICK_CONTROL_NOTIFY", "shout:loud")]),
+    (
+        "F08",
+        &[EVIDENCE_READS, ("QUANTICK_CONTROL_EVIDENCE", "all")],
+    ),
+    (
+        "F09-all",
+        &[EVIDENCE_READS, ("QUANTICK_CONTROL_EVIDENCE", "all")],
+    ),
+    (
+        "F09-empty",
+        &[EVIDENCE_READS, ("QUANTICK_CONTROL_EVIDENCE", " all , ")],
+    ),
+    ("F10", &[EVIDENCE_READS, EVIDENCE_WITH_IMAGE]),
+    ("F11", &[SCREENSHOT_READS, EVIDENCE_WITH_IMAGE]),
+    ("F12", &[SCREENSHOT_READS, EVIDENCE_WITH_IMAGE]),
+    ("F13", &[SCREENSHOT_READS, EVIDENCE_WITH_IMAGE]),
+    ("F14", &[SCREENSHOT_READS, EVIDENCE_WITH_IMAGE]),
+    (
+        "F15-refusal",
+        &[
+            ALL_READS,
+            ("QUANTICK_CONTROL_MARK", "phase"),
+            ("QUANTICK_CONTROL_ANNOTATE", "alpha"),
+            ("QUANTICK_CONTROL_NOTIFY", "toast:beta"),
+            ("QUANTICK_CONTROL_EVIDENCE", "all"),
+        ],
+    ),
+    (
+        "F15-bundle",
+        &[
+            EVIDENCE_READS,
+            ("QUANTICK_CONTROL_MARK", "phase"),
+            ("QUANTICK_CONTROL_ANNOTATE", "alpha"),
+            ("QUANTICK_CONTROL_NOTIFY", "toast:beta"),
+            ("QUANTICK_CONTROL_EVIDENCE", "all"),
+        ],
+    ),
+];
+
 #[test]
 fn literal_recipient() {
-    let Ok(case) = std::env::var("H4_RECIPIENT_CASE") else {
-        return;
-    };
-    let recorded = RecordedEvents::default();
-    let subscriber = tracing_subscriber::registry().with(recorded.clone());
-    tracing::subscriber::with_default(subscriber, || recipient(&case, &recorded));
+    for &(case, env) in RECIPIENT_CASES {
+        recipient_case(case, env);
+    }
 }
 
-fn recipient(case: &str, recorded: &RecordedEvents) {
+/// The combined case enables real local access: it publishes a descriptor in
+/// the host's own runtime discovery directory and asserts that directory's
+/// inventory is unchanged afterwards, which a live Quantick instance or a
+/// parallel test publishing beside it would break. Run it alone, on a host
+/// with no instance open:
+/// `cargo test -p quantick-app literal_recipient_owned_instance -- --ignored`.
+#[test]
+#[ignore = "publishes into the host's real runtime discovery directory"]
+fn literal_recipient_owned_instance() {
+    const OWNED: Env = &[
+        ("QUANTICK_CONTROL_ACCESS", "1"),
+        ALL_READS,
+        ("QUANTICK_CONTROL_MARK", "phase"),
+        ("QUANTICK_CONTROL_ANNOTATE", "alpha"),
+        ("QUANTICK_CONTROL_NOTIFY", "toast:beta"),
+        ("QUANTICK_CONTROL_EVIDENCE", "all"),
+    ];
+    recipient_case("F02-F15", OWNED);
+}
+
+fn recipient_case(case: &str, env: Env) {
+    eprintln!("control recipient case {case}");
+    let recorded = RecordedEvents::default();
+    let subscriber = tracing_subscriber::registry().with(recorded.clone());
+    tracing::subscriber::with_default(subscriber, || recipient(case, env, &recorded));
+}
+
+fn recipient(case: &str, env: Env, recorded: &RecordedEvents) {
     let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history_and_launch(8, captured_control_launch());
+    let (mut app, _commands) = app_with_history_and_launch(8, captured_control_launch(env));
     match case {
         "F02-F15" => combined_owned_instance(&mut app, &ctx, recorded),
         "F15-refusal" => {
@@ -299,7 +439,7 @@ fn recipient(case: &str, recorded: &RecordedEvents) {
         "F04" => {
             let directory = crate::scratch::ScratchDir::new("control7-trace-order");
             let session = recording_at(&directory);
-            let (mut seed, _) = app_with_history_and_launch(8, captured_control_launch());
+            let (mut seed, _) = app_with_history_and_launch(8, captured_control_launch(env));
             seed.active_tab_mut().replay =
                 Some(replay_test_support::detached_link(session.clone()));
             seed.take_mark(Some("sidecar-first".to_owned()));
@@ -325,7 +465,7 @@ fn recipient(case: &str, recorded: &RecordedEvents) {
         }
         "F05" => {
             let (mut empty, sender, _commands, _book) =
-                test_app_with_launch(captured_control_launch());
+                test_app_with_launch(captured_control_launch(env));
             assert_eq!(empty.active_tab().drawing_pane().slots(), 0);
             run_frame(&mut empty, &ctx);
             assert_eq!(
