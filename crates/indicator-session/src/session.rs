@@ -54,6 +54,11 @@ impl IndicatorSession {
         source: IndicatorSource,
         effects: &mut impl SessionEffects,
     ) {
+        // An Add on a live slot replaces it: the instance it held is removed
+        // from the host, never left evaluating where Remove cannot reach it.
+        if let Some(previous) = self.slots.remove(&slot).and_then(|mirror| mirror.host_id) {
+            self.host.remove(previous);
+        }
         let host = &mut self.host;
         let slots = &mut self.slots;
         match source.build(effects) {
