@@ -243,7 +243,8 @@ pub(crate) fn log_unknown_hooks() {
             target: "quantick::app",
             event_code = "UNKNOWN_HOOK",
             hook = %name,
-            "no launch hook by this name is registered; it will do nothing.              Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
+            "no launch hook by this name is registered; it will do nothing. \
+             Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
         );
     }
 }
