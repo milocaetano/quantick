@@ -12,3 +12,4 @@ mod tests;
 pub mod frame_tail_plan;
 
 pub mod source_drain_plan;
+mod stage_plan;

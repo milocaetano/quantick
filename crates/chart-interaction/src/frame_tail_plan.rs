@@ -3,63 +3,38 @@
 //! Recovery may journal a close, so every account settles before the active
 //! report is painted. Feature outcomes remain with the caller.
 
+use crate::stage_plan::Step;
+
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameTailStage {
-    ApplyNoticeAction,
-    SettlePaperPanels,
-    DrawPaperReport,
-    PublishFeedPopup,
-}
-
-impl FrameTailStage {
-    const fn bit(self) -> u8 {
-        1 << self as u8
+crate::stage_plan::stage_enum! {
+    pub enum FrameTailStage {
+        ApplyNoticeAction,
+        SettlePaperPanels,
+        DrawPaperReport,
+        PublishFeedPopup,
     }
 }
 
-#[derive(Clone, Copy)]
-struct StageDescriptor {
-    stage: FrameTailStage,
-    after: u8,
-}
-
-const STAGES: [StageDescriptor; 4] = [
-    StageDescriptor {
+const STAGES: [Step<FrameTailStage>; 4] = [
+    Step {
         stage: FrameTailStage::ApplyNoticeAction,
         after: 0,
     },
-    StageDescriptor {
+    Step {
         stage: FrameTailStage::SettlePaperPanels,
         after: FrameTailStage::ApplyNoticeAction.bit(),
     },
-    StageDescriptor {
+    Step {
         stage: FrameTailStage::DrawPaperReport,
         after: FrameTailStage::SettlePaperPanels.bit(),
     },
-    StageDescriptor {
+    Step {
         stage: FrameTailStage::PublishFeedPopup,
         after: FrameTailStage::DrawPaperReport.bit(),
     },
 ];
-
-// Requiring every prerequisite to have been visited rejects forward edges,
-// self edges, cycles and unknown prerequisite bits as well as bad coverage.
-const fn valid(stages: &[StageDescriptor]) -> bool {
-    let mut seen = 0;
-    let mut index = 0;
-    while index < stages.len() {
-        let descriptor = stages[index];
-        if seen & descriptor.stage.bit() != 0 || descriptor.after & seen != descriptor.after {
-            return false;
-        }
-        seen |= descriptor.stage.bit();
-        index += 1;
-    }
-    seen == 15
-}
 
 const _: () = assert!(valid(&STAGES));
 
