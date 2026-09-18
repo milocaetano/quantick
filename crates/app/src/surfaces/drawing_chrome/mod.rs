@@ -69,7 +69,7 @@ pub(crate) use quick_range::QuickRangeLaunch;
 
 pub(crate) use quick_range::{
     Action as QuickRangeAction, ActionUi as QuickRangeActionUi, Control as QuickRangeControl,
-    Owner as QuickRangeOwner,
+    HOOKS as QUICK_RANGE_HOOKS, Owner as QuickRangeOwner,
 };
 
 use eframe::egui;
@@ -1220,7 +1220,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_DRAWING_INSPECTOR",
     "QUANTICK_DRAWING_INSPECTOR_POS",
     "QUANTICK_DRAWING_INSPECTOR_TAB",
-    "QUANTICK_QUICK_RANGE_DEMO",
     "QUANTICK_TEXT_NOTE"
 ];
 

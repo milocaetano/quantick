@@ -67,3 +67,55 @@ macro_rules! declare_hooks {
 }
 
 pub use declare_hooks;
+
+/// A family of declared hooks the binary reads only under one Cargo feature,
+/// and whether this build carries that feature.
+#[derive(Debug, Clone, Copy)]
+pub struct FeatureGate {
+    /// The feature to build with.
+    pub feature: &'static str,
+    /// Whether the executable was built with it.
+    pub compiled: bool,
+    /// The declarations the feature gates.
+    pub hooks: &'static [HookSpec],
+}
+
+/// The set names whose family this build compiled out, with the feature each
+/// needs, sorted and unique; the environment is injected as in [`undeclared`].
+pub fn compiled_out<'a>(
+    environment: impl Iterator<Item = &'a str>,
+    gates: &[FeatureGate],
+) -> Vec<(String, &'static str)> {
+    let mut out: Vec<(String, &'static str)> = environment
+        .filter_map(|name| {
+            let gate = gates
+                .iter()
+                .find(|gate| !gate.compiled && gate.hooks.iter().any(|spec| spec.name == name))?;
+            Some((name.to_owned(), gate.feature))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The `QUANTICK_*` names in `environment` that nothing declares and no
+/// `exempt` row excuses, sorted and unique. The environment is an iterator
+/// rather than a read, so a test exercises the real comparison without
+/// touching process state (setting a variable is `unsafe` in this edition
+/// and racy under a threaded test runner).
+pub fn undeclared<'a>(
+    environment: impl Iterator<Item = &'a str>,
+    declared: &std::collections::BTreeSet<&'static str>,
+    exempt: &[(&str, &str)],
+) -> Vec<String> {
+    let mut out: Vec<String> = environment
+        .filter(|name| name.starts_with("QUANTICK_"))
+        .filter(|name| !declared.contains(name))
+        .filter(|name| !exempt.iter().any(|(known, _)| known == name))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}

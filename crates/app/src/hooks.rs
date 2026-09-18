@@ -23,22 +23,19 @@
 //!
 //! [`log_unknown_hooks`] warns once at startup about undeclared names, except
 //! for the documented [`NOT_HOOKS`] entries. A declared but disabled scenario
-//! is known, so it is not `UNKNOWN_HOOK`. This warning does not enable hooks
-//! or refuse startup: availability follows the owner's feature and behavior.
+//! is known, so it is not `UNKNOWN_HOOK`; set without its feature it is
+//! `HOOK_DISABLED` ([`FEATURE_GATED`]). Neither enables a hook or stops startup.
 
 use std::collections::BTreeSet;
 
-// The declaration half — the `HookSpec` type and the `declare_hooks!` macro
-// that writes a module's slice — is defined in `quantick-feed` and re-exported
-// here, so every module in the workspace declares its hooks the same way and
-// `OWNERS` below can hold them all in one array.
-//
-// It sits there rather than here because four of that crate's adapters read a
-// hook and it cannot depend on this one; the graph runs the other way. This
-// module is still where the registry is: `OWNERS`, `NOT_HOOKS` and the
-// startup warning are all below, and this is the file to open to find out
-// which hooks exist.
-pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
+// `HookSpec`, `declare_hooks!` and the two pure environment comparisons live
+// in `quantick-feed`, whose adapters read hooks and cannot depend on this
+// crate. This module is still the registry: `OWNERS`, `NOT_HOOKS`,
+// `FEATURE_GATED` and the startup warning are below.
+use crate::surfaces::drawing_chrome;
+pub(crate) use quantick_feed::hooks::{
+    FeatureGate, HookSpec, compiled_out, declare_hooks, undeclared,
+};
 
 /// `QUANTICK_*` variables that are deliberately **not** launch hooks.
 ///
@@ -160,6 +157,10 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         crate::surfaces::drawing_chrome::HOOKS,
     ),
     (
+        "crates/app/src/surfaces/drawing_chrome/quick_range.rs",
+        crate::surfaces::drawing_chrome::QUICK_RANGE_HOOKS,
+    ),
+    (
         "crates/app/src/surfaces/footprint_settings.rs",
         crate::surfaces::footprint_settings::HOOKS,
     ),
@@ -188,6 +189,25 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
     ("crates/app/src/ui_state.rs", crate::ui_state::HOOKS),
 ];
 
+/// A family `main.rs` captures only under `$feature`, by that same `cfg!`.
+macro_rules! gate {
+    ($feature:literal, $hooks:expr) => {
+        FeatureGate {
+            feature: $feature,
+            compiled: cfg!(feature = $feature),
+            hooks: $hooks,
+        }
+    };
+}
+
+/// Declared hooks that are inert unless their feature is built in.
+pub(crate) const FEATURE_GATED: &[FeatureGate] = &[
+    gate!("control-harness", crate::app::control_host::HOOKS),
+    gate!("drawing-harness", crate::toolrail::HOOKS),
+    gate!("drawing-harness", crate::surfaces::drawing_chrome::HOOKS),
+    gate!("quick-range-harness", drawing_chrome::QUICK_RANGE_HOOKS),
+];
+
 /// Every declared hook, with the file that owns it, in name order.
 pub(crate) fn all() -> Vec<(&'static str, &'static HookSpec)> {
     let mut out: Vec<(&'static str, &'static HookSpec)> = OWNERS
@@ -206,38 +226,24 @@ pub(crate) fn declared_names() -> BTreeSet<&'static str> {
         .collect()
 }
 
-/// The `QUANTICK_*` variables set in this environment that no slice declares.
-///
-/// Takes the environment as an iterator rather than reading it, so the test
-/// can exercise the real comparison without touching process state — setting
-/// an environment variable is `unsafe` in this edition and racy under a
-/// threaded test runner.
-pub(crate) fn unknown_hooks<'a>(
-    environment: impl Iterator<Item = &'a str>,
-    declared: &BTreeSet<&'static str>,
-) -> Vec<String> {
-    let mut out: Vec<String> = environment
-        .filter(|name| name.starts_with("QUANTICK_"))
-        .filter(|name| !declared.contains(name))
-        .filter(|name| !NOT_HOOKS.iter().any(|(known, _)| known == name))
-        .map(str::to_owned)
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
-/// Warn once at startup about undeclared, non-exempt `QUANTICK_*` names.
+/// Warn once at startup about undeclared, non-exempt `QUANTICK_*` names, and
+/// about declared ones this build compiled out.
 pub(crate) fn log_unknown_hooks() {
-    let declared = declared_names();
-    let environment: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
-    for name in unknown_hooks(environment.iter().map(String::as_str), &declared) {
+    let names: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
+    for (hook, feature) in compiled_out(names.iter().map(String::as_str), FEATURE_GATED) {
+        tracing::warn!(target: "quantick::app", event_code = "HOOK_DISABLED", %hook, feature,
+            "compiled out of this build, so it does nothing; add `--features {feature}`");
+    }
+    for name in undeclared(
+        names.iter().map(String::as_str),
+        &declared_names(),
+        NOT_HOOKS,
+    ) {
         tracing::warn!(
             target: "quantick::app",
             event_code = "UNKNOWN_HOOK",
             hook = %name,
-            "no launch hook by this name is registered; it will do nothing. \
-             Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
+            "no launch hook by this name is registered; it will do nothing.              Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
         );
     }
 }
@@ -309,7 +315,9 @@ fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> 
 ",
         "disabled hooks remain cataloged. Undeclared, non-exempt names in the
 ",
-        "environment are logged at startup as `UNKNOWN_HOOK`.
+        "environment are logged at startup as `UNKNOWN_HOOK`; declared names
+",
+        "this build compiled out, as `HOOK_DISABLED` with the feature to add.
 ",
         "
 ",
@@ -467,6 +475,13 @@ pub(crate) fn hook_names(cell: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn unknown_hooks<'a>(
+        environment: impl Iterator<Item = &'a str>,
+        declared: &BTreeSet<&'static str>,
+    ) -> Vec<String> {
+        undeclared(environment, declared, NOT_HOOKS)
+    }
+
     /// The committed registry is what the generator emits today.
     ///
     /// The authoritative half of the pair: `crates/guards` compares name sets
@@ -521,6 +536,47 @@ mod tests {
         assert!(
             unknown_hooks(["PATH", "QUANTICKISH", "RUST_LOG"].into_iter(), &declared).is_empty()
         );
+    }
+
+    #[test]
+    fn a_set_hook_whose_feature_is_off_is_reported_disabled() {
+        let gates = [
+            FeatureGate {
+                feature: "control-harness",
+                compiled: false,
+                hooks: crate::app::control_host::HOOKS,
+            },
+            FeatureGate {
+                feature: "drawing-harness",
+                compiled: true,
+                hooks: crate::toolrail::HOOKS,
+            },
+        ];
+        let environment = [
+            "QUANTICK_CONTROL_ACCESS",
+            "QUANTICK_DRAWING_TOOL",
+            "QUANTICK_TOAST",
+            "QUANTICK_CONTROL_ACCESS",
+        ];
+        assert_eq!(
+            compiled_out(environment.into_iter(), &gates),
+            [("QUANTICK_CONTROL_ACCESS".to_owned(), "control-harness")]
+        );
+    }
+
+    #[test]
+    fn every_gated_hook_is_declared_and_its_flag_follows_the_feature() {
+        let declared = declared_names();
+        for gate in FEATURE_GATED {
+            assert!(gate.hooks.iter().all(|spec| declared.contains(spec.name)));
+            let expected = match gate.feature {
+                "control-harness" => cfg!(feature = "control-harness"),
+                "drawing-harness" => cfg!(feature = "drawing-harness"),
+                "quick-range-harness" => cfg!(feature = "quick-range-harness"),
+                other => panic!("{other} is not a quantick-app feature"),
+            };
+            assert_eq!(gate.compiled, expected, "{}", gate.feature);
+        }
     }
 
     /// Every hook the application actually declares is silent at startup.
