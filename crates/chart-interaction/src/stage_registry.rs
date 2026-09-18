@@ -16,7 +16,7 @@
 mod tests;
 
 /// The widest pipeline a `u64` dependency mask can describe.
-pub const MAX_STAGES: usize = 64;
+pub(crate) const MAX_STAGES: usize = 64;
 
 /// One registered stage: its identity, its name, and what it runs after.
 ///
@@ -36,7 +36,7 @@ pub struct StageNode<S> {
 /// Requiring each prerequisite to have been visited already rejects forward
 /// edges, self edges, cycles and unknown prerequisite bits as well as a
 /// missing or duplicated stage.
-pub const fn nodes_in_valid_order<S>(nodes: &[StageNode<S>], count: usize) -> bool {
+pub(crate) const fn nodes_in_valid_order<S>(nodes: &[StageNode<S>], count: usize) -> bool {
     if count == 0 || count > MAX_STAGES {
         return false;
     }
@@ -58,7 +58,10 @@ pub const fn nodes_in_valid_order<S>(nodes: &[StageNode<S>], count: usize) -> bo
 /// Positions `(earlier, later)` in `nodes` where the later stage declares the
 /// earlier one. Moving `later` in front of `earlier` must be refused; tests
 /// walk every pair to pin each declared dependency.
-pub fn dependency_pairs<S>(nodes: &[StageNode<S>]) -> impl Iterator<Item = (usize, usize)> + '_ {
+#[cfg(test)]
+pub(crate) fn dependency_pairs<S>(
+    nodes: &[StageNode<S>],
+) -> impl Iterator<Item = (usize, usize)> + '_ {
     nodes.iter().enumerate().flat_map(move |(later, node)| {
         nodes[..later]
             .iter()
