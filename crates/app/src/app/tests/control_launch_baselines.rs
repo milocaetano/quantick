@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use tracing_subscriber::prelude::*;
 
 #[derive(Clone, Default)]
-struct RecordedEvents(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
+pub(super) struct RecordedEvents(Arc<Mutex<Vec<BTreeMap<String, String>>>>);
 
 #[derive(Default)]
 struct Fields(BTreeMap<String, String>);
@@ -44,7 +44,7 @@ impl RecordedEvents {
     }
 }
 
-fn local_read(app: &mut QuantickApp, name: &str, input: Value) -> Value {
+pub(super) fn local_read(app: &mut QuantickApp, name: &str, input: Value) -> Value {
     let mut access = app.control.control_access.take().unwrap();
     let result = access.invoke_local_read(app, name, input);
     app.control.control_access = Some(access);
@@ -226,7 +226,7 @@ fn events(app: &QuantickApp) -> Vec<Value> {
         .collect()
 }
 
-fn hook_bundle(app: &mut QuantickApp, recorded: &RecordedEvents) -> Value {
+pub(super) fn hook_bundle(app: &mut QuantickApp, recorded: &RecordedEvents) -> Value {
     let captures = recorded.named("CONTROL_EVIDENCE_CAPTURED");
     let id = &captures.last().expect("the actual hook logged a capture")["evidence_id"];
     let mut bytes = Vec::new();

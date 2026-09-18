@@ -11,7 +11,7 @@ fn the_frame_executes_its_registered_order() {
 #[test]
 fn the_frame_refuses_every_hoisted_dependency() {
     let pairs: Vec<_> = dependency_pairs(&FrameStage::NODES).collect();
-    assert!(pairs.len() >= 20, "{pairs:?}");
+    assert_eq!(pairs.len(), 30, "{pairs:?}");
     for (earlier, later) in pairs {
         let order = hoisted(FrameStage::ORDER, earlier, later);
         assert!(!FrameStage::is_valid_order(&order), "{order:?}");

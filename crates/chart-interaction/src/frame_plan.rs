@@ -9,6 +9,14 @@
 //!
 //! Harness-only stages are registered unconditionally; a release build runs
 //! them as no-ops, which keeps one plan for every build.
+//!
+//! What it replaced: the frame's order used to be the statement order of one
+//! 734-line root method, with 49 conditional lines deciding what ran where.
+//! That method is now 8 lines with no branch; the order is 30 stages and 30
+//! declared edges, pinned by the tests beside this file. Adding an
+//! independent stage costs one `Name after []` line here and one executor
+//! arm in the application: no other declaration moves, and the constant
+//! validation covers it the moment it compiles.
 
 use crate::stage_registry::declare_stages;
 
@@ -31,8 +39,9 @@ declare_stages! {
         EnableControlAccess after [],
         /// A control trace beside a replayed session re-injects its actions.
         ReplayTrace after [],
-        /// The harness mark. After the trace: a loaded sidecar has seeded
-        /// the trace sequence the mark takes.
+        /// The harness mark. After the trace: a mark taken before its
+        /// recording's trace loads is read back from the sidecar as a
+        /// recorded action and re-injected as a second, replayed mark.
         TakeMark after [ReplayTrace],
         /// The harness writes its annotations.
         AnnotateHooks after [],
@@ -72,8 +81,10 @@ declare_stages! {
         /// The right dock and what it asked for, inside the same chrome.
         Dock after [TopChrome, ReplayBrowser],
         /// The pinned drawing inspector: a right panel, so after the dock,
-        /// which keeps the outer edge.
-        PinnedInspector after [Dock],
+        /// which keeps the outer edge. After the scenario hooks: a drawing
+        /// demo selects what it placed, and the panel shows that selection
+        /// on the frame it was made rather than the next.
+        PinnedInspector after [Dock, ScenarioHooks],
         /// A changed market respawns its feed and pending layouts settle.
         /// After the surfaces, whose market request this frame applies.
         FeedAndLayoutSwitches after [Surfaces],
