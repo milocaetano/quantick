@@ -17,6 +17,8 @@
 //! hook, and `quantick-app` re-exports both; the registry stays whole and there
 //! is still exactly one definition of each.
 
+pub mod registry;
+
 /// One hook, declared where it is read.
 ///
 /// A named struct rather than a bare `&str` so a later field — a surface, a

@@ -82,7 +82,7 @@ use quantick_control_host::evidence::{BUNDLE_MEDIA_TYPE, MAX_CHUNKS_PER_BUNDLE, 
 
 pub use quantick_control_host::evidence::{EvidenceChunkPage, EvidenceStore};
 
-/// The module that owns both evidence capabilities.
+// The module that owns both evidence capabilities.
 
 /// The scope the tier is gated on. Sensitive and off by default: a bundle is
 /// every granted scope at once, in one durable object.

@@ -337,7 +337,7 @@ impl<T> ObservedSender<T> {
     /// nothing new is sent. Free when nothing is parked: one length read.
     pub fn pump(&self) {
         let mut parked = self.parked.borrow_mut();
-        if parked.len() == 0 {
+        if parked.is_empty() {
             return;
         }
         match parked.drain(&self.sender) {

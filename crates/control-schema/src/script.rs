@@ -40,9 +40,9 @@ use serde_json::{Value, json};
 
 use quantick_control_host::admission::known_error;
 
-/// The module both script capabilities belong to — the same module the
-/// indicator scopes will register under, because a capability belongs to the
-/// module its ID names (contract §5).
+// The module both script capabilities belong to — the same module the
+// indicator scopes will register under, because a capability belongs to the
+// module its ID names (contract §5).
 
 pub const ATTACH_CAPABILITY_ID: &str = "indicator.script.attach";
 

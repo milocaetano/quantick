@@ -17,9 +17,11 @@
 //! every document names, and are read here at compile time only.
 
 pub mod bubble_presets;
+pub mod bundle;
 pub mod config;
 pub mod footprint_config;
 pub mod footprint_presets;
+pub mod home;
 pub mod indicator_presets;
 pub mod indicator_state;
 #[cfg(test)]

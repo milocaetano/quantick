@@ -29,6 +29,29 @@ impl From<CanvasLayout> for CanvasLayoutDto {
     }
 }
 
+/// The panes the active layout actually shows, in the order they are drawn.
+///
+/// One rule for every projection that walks a tab's canvases: a pane the
+/// cursor can resolve against is a pane the scene lists, because both ask
+/// here.
+pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
+    let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
+    if tab.layout.shows_time() && !tab.context_collapsed {
+        let shown = tab.context_panes_shown();
+        panes.extend(
+            tab.time_panes
+                .iter()
+                .take(shown)
+                .enumerate()
+                .map(|(slot, time)| (time, PaneSide::Time(slot))),
+        );
+    }
+    if tab.layout.shows_flow() {
+        panes.push((&tab.flow_pane, PaneSide::Flow));
+    }
+    panes
+}
+
 #[cfg(test)]
 mod bar_wire_tests {
     use super::*;
@@ -96,27 +119,4 @@ mod bar_wire_tests {
             );
         }
     }
-}
-
-/// The panes the active layout actually shows, in the order they are drawn.
-///
-/// One rule for every projection that walks a tab's canvases: a pane the
-/// cursor can resolve against is a pane the scene lists, because both ask
-/// here.
-pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
-    let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
-    if tab.layout.shows_time() && !tab.context_collapsed {
-        let shown = tab.context_panes_shown();
-        panes.extend(
-            tab.time_panes
-                .iter()
-                .take(shown)
-                .enumerate()
-                .map(|(slot, time)| (time, PaneSide::Time(slot))),
-        );
-    }
-    if tab.layout.shows_flow() {
-        panes.push((&tab.flow_pane, PaneSide::Flow));
-    }
-    panes
 }

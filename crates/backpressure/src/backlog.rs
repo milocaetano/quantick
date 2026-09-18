@@ -75,8 +75,14 @@ impl<T> Parked<T> {
         }
     }
 
+    /// How many commands are parked.
     pub fn len(&self) -> usize {
         self.commands.len()
+    }
+
+    /// Whether nothing is parked.
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
     }
 
     /// Offer `command` to the queue, behind anything already parked.

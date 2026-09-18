@@ -34,13 +34,13 @@ use schemars::JsonSchema;
 
 use serde::{Deserialize, Serialize};
 
-/// The module the notification capabilities belong to.
-/// Popup and toast: an interruption the trader can read and dismiss.
-/// Sound: off unless the trader says otherwise, because it reaches them even
-/// when they are not looking at the window.
-/// The effect every notification carries. Separate from `annotate` because
-/// nothing here is reversible.
-/// Declared by every notification: it takes attention that was somewhere else.
+// The module the notification capabilities belong to.
+// Popup and toast: an interruption the trader can read and dismiss.
+// Sound: off unless the trader says otherwise, because it reaches them even
+// when they are not looking at the window.
+// The effect every notification carries. Separate from `annotate` because
+// nothing here is reversible.
+// Declared by every notification: it takes attention that was somewhere else.
 
 /// Declared by the one that also makes noise.
 pub const AUDIBLE_OUTPUT_RISK_FLAG: &str = "audible_output";

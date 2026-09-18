@@ -18,7 +18,7 @@ pub const MARK_CAPABILITY_ID: &str = "attention.mark.create";
 
 pub const MARK_EVENT_KIND: &str = "attention.mark.created";
 
-/// The annotate tier's identifiers this action docks into (contract §7).
+// The annotate tier's identifiers this action docks into (contract §7).
 
 /// The version of `attention.mark.create` the hotkey and the hook invoke.
 pub const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;

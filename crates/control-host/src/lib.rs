@@ -12,6 +12,7 @@
 //! gateway's socket loop and everything that touches a frame, and reaches
 //! this crate through the same module paths it used before the move.
 
+pub mod actions;
 pub mod admission;
 pub mod authority;
 pub mod catalogue;

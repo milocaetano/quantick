@@ -189,13 +189,13 @@ graph TD
 | `indicator-session` | Headless source binding, batches, deltas. |
 | `indicators` | Headless host, `Indicator` commit/preview rollback, incremental `ta.*`, draw objects. |
 | `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes, interpreter; no dependencies. |
-| `replay` | Recorded sessions: the CSV format, the folder scan, the deal recorder, the playback clock, *told* the time. |
+| `replay` | Recorded sessions: the CSV format, the folder scan, the deal recorder, the playback clock; *told* the time. |
 | `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, history reach, session export. Owns runtimes, threads and clock below `app`. |
-| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements; a broker adapter docks where the paper simulator sits. |
+| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements; a broker adapter docks where the simulator sits. |
 | `sim` | Deterministic paper trading: one `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
-| `paper` | The paper account: orders, risk sizing, the journal, its home and sidecar, the report numbers over a `sim` venue. |
+| `paper` | The paper account: orders, risk sizing, the journal, its home and sidecar, report numbers over a `sim` venue. |
 | `civil` | Civil dates and the display offset: one date law for journal, report and chart axis. |
-| `strategy` | The strategy kernel: armed regions, projected brackets, the armed-instance state machine, its `SignalAlarm`, the alarm sounds and the preset bank. |
+| `strategy` | The strategy kernel: armed regions, brackets, the armed-instance state machine, its `SignalAlarm`, alarm sounds, the preset bank. |
 | `control` | Transport-neutral contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, `fake` host/client ports. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client; one ownership check serves publisher and client. |
 | `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
@@ -203,8 +203,8 @@ graph TD
 | `mcp` | The MCP adapter. A leaf over `control` and `control-local`, never `app`; stdout carries MCP frames only. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources: trades out, never the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the chart's exact engine and indicator path. |
-| `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies. |
-| `app` | Desktop chart (egui), engine consumer, session transport. |
+| `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. |
+| `app` | Desktop chart (egui), engine consumer, transport. |
 
 ## The non-negotiable design rules
 
