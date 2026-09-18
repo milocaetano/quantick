@@ -110,9 +110,123 @@ impl ReportState {
             self.reload_ledger(env);
         }
         self.ledger_tz = tz;
-        let mut action = None;
 
-        // Scope row: which instrument's saved history the ledger lists.
+        self.draw_scope_row(ui, env);
+        ui.horizontal(|ui| {
+            ui.label(caption("TRADE"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(caption("PTS"));
+            });
+        });
+        ui.separator();
+
+        // The open position rides above the scroll — panning through
+        // history must never hide the trade you are in.
+        if let Some(open) = &env.open {
+            ui.label(caption("OPEN"));
+            let symbol = (!env.symbol.is_empty()).then_some(env.symbol);
+            draw_open_row(ui, &open.summary, symbol, open.mark_price, open.held_ms);
+        }
+
+        let session: Vec<(usize, &ClosedTrade)> =
+            env.session_trades.iter().enumerate().rev().collect();
+        let saved_len = self
+            .history_cache
+            .as_ref()
+            .map_or(0, |cache| cache.rows.len());
+        // Only the revealed pages are turned into rows; the rest stay
+        // loaded and counted, which is what the control below them says.
+        // The `take` is the point — a year of sessions must cost the same
+        // per frame as a week of them, so the untouched tail is never even
+        // walked into a Vec.
+        let page = LedgerPage::of(saved_len, self.ledger_pages);
+        let earlier: Vec<(&str, &ClosedTrade)> = self
+            .history_cache
+            .as_ref()
+            .map(|cache| {
+                cache
+                    .rows
+                    .iter()
+                    .rev()
+                    .take(page.shown)
+                    .map(|row| (row.symbol.as_str(), &row.trade))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let earlier = earlier.as_slice();
+
+        if session.is_empty() && saved_len == 0 {
+            let action = if env.open.is_none() {
+                self.draw_empty_state(ui, env)
+            } else {
+                None
+            };
+            self.draw_ledger_disclosure(ui);
+            return action;
+        }
+
+        // Rows are cut newest first, so day headers open each day as the
+        // list walks back in time.
+        let mut rows = Vec::new();
+        if !session.is_empty() {
+            rows.push(LedgerRow::Header("THIS SESSION", session.len()));
+            push_by_day(
+                &mut rows,
+                &session,
+                tz,
+                &self.collapsed_days,
+                |item| item.1,
+                |item| LedgerRow::Session(item.0, item.1),
+            );
+        }
+        if !earlier.is_empty() {
+            rows.push(LedgerRow::Header("EARLIER SESSIONS", saved_len));
+            push_by_day(
+                &mut rows,
+                earlier,
+                tz,
+                &self.collapsed_days,
+                |item| item.1,
+                |item| LedgerRow::Earlier(item.0, item.1),
+            );
+        }
+        if page.remaining > 0 {
+            rows.push(LedgerRow::More(page.remaining));
+        }
+
+        // Totals over everything *in scope*, not everything listed: the
+        // rows above are one revealed page and the strip must not swing
+        // every time the trader reveals another. The saved half was summed
+        // when the folder was read; only this session's own trades — a
+        // handful — are counted here.
+        let totals = self
+            .saved_totals
+            .plus(LedgerTotals::of(env.session_trades.iter()));
+
+        let rows_listed = session.len() + earlier.len();
+        let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
+        // Session rows carry the chart's own instrument; a ledger row that
+        // does not name its market is unreadable the moment a second tab
+        // exists.
+        let own_symbol = (!env.symbol.is_empty()).then_some(env.symbol);
+        let presses = RowList {
+            rows: &rows,
+            selected: self.selected_trade,
+            own_symbol,
+            tz,
+        }
+        .show(ui, list_height);
+        let action = self.apply_row_presses(presses);
+
+        ui.separator();
+        draw_totals_strip(ui, totals, page, rows_listed);
+        self.draw_ledger_disclosure(ui);
+        action
+    }
+
+    /// Scope row: which instrument's saved history the ledger lists, the
+    /// re-read button and the fold-every-day switch.
+    fn draw_scope_row(&mut self, ui: &mut egui::Ui, env: &ReportEnv<'_>) {
         let mut reload = false;
         let mut picked: Option<LedgerScope> = None;
         ui.horizontal(|ui| {
@@ -177,207 +291,46 @@ impl ReportState {
         if reload {
             self.rescope_ledger(env);
         }
+    }
 
-        ui.horizontal(|ui| {
-            ui.label(caption("TRADE"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(caption("PTS"));
-            });
-        });
-        ui.separator();
-
-        // The open position rides above the scroll — panning through
-        // history must never hide the trade you are in.
-        if let Some(open) = &env.open {
-            ui.label(caption("OPEN"));
-            let symbol = (!env.symbol.is_empty()).then_some(env.symbol);
-            draw_open_row(ui, &open.summary, symbol, open.mark_price, open.held_ms);
-        }
-
-        let session: Vec<(usize, &ClosedTrade)> =
-            env.session_trades.iter().enumerate().rev().collect();
-        let saved_len = self
-            .history_cache
-            .as_ref()
-            .map_or(0, |cache| cache.rows.len());
-        // Only the revealed pages are turned into rows; the rest stay
-        // loaded and counted, which is what the control below them says.
-        // The `take` is the point — a year of sessions must cost the same
-        // per frame as a week of them, so the untouched tail is never even
-        // walked into a Vec.
-        let page = LedgerPage::of(saved_len, self.ledger_pages);
-        let earlier: Vec<(&str, &ClosedTrade)> = self
-            .history_cache
-            .as_ref()
-            .map(|cache| {
-                cache
-                    .rows
-                    .iter()
-                    .rev()
-                    .take(page.shown)
-                    .map(|row| (row.symbol.as_str(), &row.trade))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let earlier = earlier.as_slice();
-
-        if session.is_empty() && saved_len == 0 {
-            if env.open.is_none() {
-                ui.add_space(12.0);
-                let headline = match self.ledger_scope.folder(env.symbol) {
-                    Some(symbol) if !symbol.is_empty() => {
-                        format!("No trades for {symbol}.")
-                    }
-                    _ => "No simulated trades yet.".to_owned(),
-                };
-                ui.label(egui::RichText::new(headline).color(theme::TEXT_PRIMARY));
-                ui.label(
-                    egui::RichText::new(
-                        "Close a position and it lands here - this session and every saved one.",
-                    )
-                    .color(theme::TEXT_SUPPORT)
-                    .small(),
-                );
-                ui.add_space(4.0);
-                if ui
-                    .button("Open the ticket")
-                    .on_hover_text("switch to the Trading tab and place an order")
-                    .clicked()
-                {
-                    action = Some(LedgerAction::OpenTicket);
-                }
+    /// Nothing closed and nothing open: say so, and offer the ticket.
+    fn draw_empty_state(&self, ui: &mut egui::Ui, env: &ReportEnv<'_>) -> Option<LedgerAction> {
+        ui.add_space(12.0);
+        let headline = match self.ledger_scope.folder(env.symbol) {
+            Some(symbol) if !symbol.is_empty() => {
+                format!("No trades for {symbol}.")
             }
-            self.draw_ledger_disclosure(ui);
-            return action;
-        }
+            _ => "No simulated trades yet.".to_owned(),
+        };
+        ui.label(egui::RichText::new(headline).color(theme::TEXT_PRIMARY));
+        ui.label(
+            egui::RichText::new(
+                "Close a position and it lands here - this session and every saved one.",
+            )
+            .color(theme::TEXT_SUPPORT)
+            .small(),
+        );
+        ui.add_space(4.0);
+        let open_ticket = ui
+            .button("Open the ticket")
+            .on_hover_text("switch to the Trading tab and place an order")
+            .clicked();
+        open_ticket.then_some(LedgerAction::OpenTicket)
+    }
 
-        // Rows are cut newest first, so day headers open each day as the
-        // list walks back in time.
-        let mut rows = Vec::new();
-        if !session.is_empty() {
-            rows.push(LedgerRow::Header("THIS SESSION", session.len()));
-            push_by_day(
-                &mut rows,
-                &session,
-                tz,
-                &self.collapsed_days,
-                |item| item.1,
-                |item| LedgerRow::Session(item.0, item.1),
-            );
-        }
-        if !earlier.is_empty() {
-            rows.push(LedgerRow::Header("EARLIER SESSIONS", saved_len));
-            push_by_day(
-                &mut rows,
-                earlier,
-                tz,
-                &self.collapsed_days,
-                |item| item.1,
-                |item| LedgerRow::Earlier(item.0, item.1),
-            );
-        }
-        if page.remaining > 0 {
-            rows.push(LedgerRow::More(page.remaining));
-        }
-
-        // Totals over everything *in scope*, not everything listed: the
-        // rows above are one revealed page and the strip must not swing
-        // every time the trader reveals another. The saved half was summed
-        // when the folder was read; only this session's own trades — a
-        // handful — are counted here.
-        let totals = self
-            .saved_totals
-            .plus(LedgerTotals::of(env.session_trades.iter()));
-
-        let rows_listed = session.len() + earlier.len();
-        let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
-        let selected = self.selected_trade;
-        // Session rows carry the chart's own instrument; a ledger row that
-        // does not name its market is unreadable the moment a second tab
-        // exists.
-        let own_symbol = (!env.symbol.is_empty()).then_some(env.symbol);
-        let mut reveal_more = false;
-        let mut fold: Option<(CivilDate, bool)> = None;
-        let mut clicked: Option<Option<usize>> = None;
-        let mut navigate = None;
-        egui::ScrollArea::vertical()
-            .id_salt("paper_trades_ledger")
-            .auto_shrink([false, false])
-            .max_height(list_height)
-            .show_rows(ui, LEDGER_ROW_HEIGHT_PX, rows.len(), |ui, range| {
-                for index in range {
-                    match &rows[index] {
-                        LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
-                        LedgerRow::Day(date, count, net, folded) => {
-                            if draw_day_header(ui, *date, *count, *net, *folded) {
-                                fold = Some((*date, !*folded));
-                            }
-                        }
-                        LedgerRow::Session(trade_index, trade) => {
-                            let is_selected = selected == Some(*trade_index);
-                            let response =
-                                draw_ledger_row(ui, trade, own_symbol, is_selected, true, tz);
-                            if response.navigate {
-                                navigate =
-                                    Some(LedgerAction::Navigate(trade.opened_ms, trade.closed_ms));
-                            } else if response.clicked {
-                                clicked = Some((!is_selected).then_some(*trade_index));
-                            }
-                        }
-                        LedgerRow::Earlier(symbol, trade) => {
-                            draw_ledger_row(ui, trade, Some(symbol), false, false, tz);
-                        }
-                        LedgerRow::More(remaining) => {
-                            reveal_more |= draw_more_row(ui, *remaining);
-                        }
-                    }
-                }
-            });
-        if let Some(selection) = clicked {
+    /// Apply what the list was pressed for, after it drew. The navigation,
+    /// if any, is the host's to perform and is handed back.
+    fn apply_row_presses(&mut self, presses: RowPresses) -> Option<LedgerAction> {
+        if let Some(selection) = presses.select {
             self.selected_trade = selection;
         }
-        if navigate.is_some() {
-            action = navigate;
-        }
-        if reveal_more {
+        if presses.reveal_more {
             self.ledger_pages = self.ledger_pages.saturating_add(1);
         }
-        if let Some((day, collapsed)) = fold {
+        if let Some((day, collapsed)) = presses.fold {
             self.set_day_collapsed(day, collapsed);
         }
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            let win_rate = totals
-                .win_rate()
-                .map_or_else(String::new, |rate| format!(" · {rate}% win"));
-            let scope = if page.remaining > 0 {
-                // The strip counts more than the list shows, so it says so
-                // rather than letting the two look like a contradiction.
-                format!(" · {} listed", rows_listed)
-            } else {
-                String::new()
-            };
-            ui.label(
-                egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
-                    .monospace()
-                    .color(theme::TEXT_MUTED),
-            )
-            .on_hover_text(
-                "every trade in scope - this session plus the saved history, whether or not \
-                 the list has revealed it yet",
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(totals.net)))
-                        .monospace()
-                        .strong()
-                        .color(points_color(totals.net)),
-                );
-            });
-        });
-        self.draw_ledger_disclosure(ui);
-        action
+        presses.navigate
     }
 
     /// The honesty line under the ledger: unreadable files and skipped rows
@@ -400,7 +353,114 @@ impl ReportState {
     }
 }
 
-/// Which saved history the ledger lists. Three cases, not two: following
+/// The ledger's scrolling list as a view: the rows already cut, and the
+/// readings a row needs to paint itself. It reports what was pressed as
+/// [`RowPresses`] and changes nothing.
+struct RowList<'a, 'r> {
+    rows: &'a [LedgerRow<'r>],
+    selected: Option<usize>,
+    own_symbol: Option<&'a str>,
+    tz: TzOffset,
+}
+
+/// What the ledger's rows were pressed for in one frame.
+#[derive(Default)]
+struct RowPresses {
+    /// A session row's selection changed: `Some(index)` selects, `None`
+    /// clears.
+    select: Option<Option<usize>>,
+    /// Center the chart on a round trip.
+    navigate: Option<LedgerAction>,
+    /// Reveal one more page of saved history.
+    reveal_more: bool,
+    /// Fold (`true`) or unfold one day.
+    fold: Option<(CivilDate, bool)>,
+}
+
+impl RowList<'_, '_> {
+    fn show(self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
+        let mut presses = RowPresses::default();
+        egui::ScrollArea::vertical()
+            .id_salt("paper_trades_ledger")
+            .auto_shrink([false, false])
+            .max_height(list_height)
+            .show_rows(ui, LEDGER_ROW_HEIGHT_PX, self.rows.len(), |ui, range| {
+                for index in range {
+                    self.row(ui, &self.rows[index], &mut presses);
+                }
+            });
+        presses
+    }
+
+    fn row(&self, ui: &mut egui::Ui, row: &LedgerRow<'_>, presses: &mut RowPresses) {
+        match row {
+            LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
+            LedgerRow::Day(date, count, net, folded) => {
+                if draw_day_header(ui, *date, *count, *net, *folded) {
+                    presses.fold = Some((*date, !*folded));
+                }
+            }
+            LedgerRow::Session(trade_index, trade) => {
+                let is_selected = self.selected == Some(*trade_index);
+                let response =
+                    draw_ledger_row(ui, trade, self.own_symbol, is_selected, true, self.tz);
+                if response.navigate {
+                    presses.navigate =
+                        Some(LedgerAction::Navigate(trade.opened_ms, trade.closed_ms));
+                } else if response.clicked {
+                    presses.select = Some((!is_selected).then_some(*trade_index));
+                }
+            }
+            LedgerRow::Earlier(symbol, trade) => {
+                draw_ledger_row(ui, trade, Some(symbol), false, false, self.tz);
+            }
+            LedgerRow::More(remaining) => {
+                presses.reveal_more |= draw_more_row(ui, *remaining);
+            }
+        }
+    }
+}
+
+/// The strip under the list: trades and win rate over everything in scope,
+/// and the net points.
+fn draw_totals_strip(
+    ui: &mut egui::Ui,
+    totals: LedgerTotals,
+    page: LedgerPage,
+    rows_listed: usize,
+) {
+    ui.horizontal(|ui| {
+        let win_rate = totals
+            .win_rate()
+            .map_or_else(String::new, |rate| format!(" · {rate}% win"));
+        let scope = if page.remaining > 0 {
+            // The strip counts more than the list shows, so it says so
+            // rather than letting the two look like a contradiction.
+            format!(" · {} listed", rows_listed)
+        } else {
+            String::new()
+        };
+        ui.label(
+            egui::RichText::new(format!("{} trades{win_rate}{scope}", totals.trades))
+                .monospace()
+                .color(theme::TEXT_MUTED),
+        )
+        .on_hover_text(
+            "every trade in scope - this session plus the saved history, whether or not \
+             the list has revealed it yet",
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(format!("{} pts", fmt_signed_points(totals.net)))
+                    .monospace()
+                    .strong()
+                    .color(points_color(totals.net)),
+            );
+        });
+    });
+}
+
+// Which saved history the ledger lists. Three cases, not two: following
 /// the chart is what the panel opens on, but a trader reviewing yesterday
 /// wants to name an instrument without retuning the chart to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
