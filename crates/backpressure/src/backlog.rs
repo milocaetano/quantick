@@ -7,7 +7,7 @@
 //! into it — a forming-bar update carries its predecessor's unsent prints, a
 //! layout request replaces the layout it obsoletes — so a burst the worker is
 //! behind on is queued as work, never as a longer history of the same work.
-//! Both events are counted; [`crate::worker_progress`] publishes the counts.
+//! Both events are counted; [`crate::progress`] publishes the counts.
 //!
 //! Which pairs fold is the command type's own knowledge, handed in as a plain
 //! function: a payload with no superseding pairs uses [`never`], and the
@@ -20,18 +20,18 @@ use std::sync::mpsc::{SyncSender, TrySendError};
 ///
 /// Return `None` after folding `newer` into `older`; return `Some(newer)` when
 /// both must reach the worker, in that order.
-pub(crate) type Merge<T> = fn(older: &mut T, newer: T) -> Option<T>;
+pub type Merge<T> = fn(older: &mut T, newer: T) -> Option<T>;
 
 /// The policy for a payload with no superseding pairs: every command keeps
 /// its place.
-#[cfg(test)]
-pub(crate) fn never<T>(_older: &mut T, newer: T) -> Option<T> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn never<T>(_older: &mut T, newer: T) -> Option<T> {
     Some(newer)
 }
 
 /// What became of one offered command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Admitted {
+pub enum Admitted {
     /// It is in the worker's queue.
     Queued,
     /// The queue was full; it waits here, behind everything parked before it.
@@ -45,7 +45,7 @@ pub(crate) enum Admitted {
 /// many had entered the channel before the disconnect was seen — accepted,
 /// and to be counted as such.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Disconnected {
+pub struct Disconnected {
     pub lost: usize,
     pub sent: usize,
 }
@@ -55,27 +55,27 @@ pub(crate) struct Disconnected {
 /// (the returned command is not among them) and of those that entered the
 /// channel before it was seen.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Refused<T> {
+pub struct Refused<T> {
     pub command: T,
     pub lost: usize,
     pub sent: usize,
 }
 
 /// Commands accepted from the owner that the queue has not taken yet.
-pub(crate) struct Parked<T> {
+pub struct Parked<T> {
     commands: VecDeque<T>,
     merge: Merge<T>,
 }
 
 impl<T> Parked<T> {
-    pub(crate) fn new(merge: Merge<T>) -> Self {
+    pub fn new(merge: Merge<T>) -> Self {
         Self {
             commands: VecDeque::new(),
             merge,
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.commands.len()
     }
 
@@ -83,7 +83,7 @@ impl<T> Parked<T> {
     ///
     /// Returns what became of it and how many earlier parked commands entered
     /// the queue on the way.
-    pub(crate) fn offer(
+    pub fn offer(
         &mut self,
         sender: &SyncSender<T>,
         command: T,
@@ -130,7 +130,7 @@ impl<T> Parked<T> {
 
     /// Move parked commands into the queue, oldest first, until it is full or
     /// this buffer is empty. Returns how many entered.
-    pub(crate) fn drain(&mut self, sender: &SyncSender<T>) -> Result<usize, Disconnected> {
+    pub fn drain(&mut self, sender: &SyncSender<T>) -> Result<usize, Disconnected> {
         let mut sent = 0;
         while let Some(command) = self.commands.pop_front() {
             match sender.try_send(command) {

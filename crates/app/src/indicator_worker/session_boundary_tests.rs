@@ -1,6 +1,6 @@
 //! Before-extraction characterizations through the actual bounded worker.
 use super::*;
-use crate::worker_progress::{Phase, tests::Gate};
+use crate::worker_progress::{Phase, test_support::Gate};
 use std::time::{Duration, Instant};
 
 fn native(slot: u64, id: &str) -> IndicatorCommand {
@@ -15,7 +15,7 @@ fn native(slot: u64, id: &str) -> IndicatorCommand {
 
 #[test]
 fn an_applying_error_blocks_later_markers_and_keeps_raw_event_order() {
-    let progress = WorkerProgress::new();
+    let progress = crate::worker_progress::monotonic();
     let observed = progress.consumer();
     let (tx, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
     let commands = progress.bind_merging(tx, fold_commands);
@@ -167,7 +167,7 @@ fn applying_effect_unwind_keeps_the_reached_subsets_in_the_actual_runtime_guard(
             unreachable!();
         }
     }
-    let progress = WorkerProgress::new();
+    let progress = crate::worker_progress::monotonic();
     let observed = progress.consumer();
     let (tx, _rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
     let sender = progress.bind_merging(tx, fold_commands);
@@ -196,7 +196,7 @@ fn applying_effect_unwind_keeps_the_reached_subsets_in_the_actual_runtime_guard(
     ];
     let mut session = IndicatorSession::new();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _lifecycle = observed.lifecycle();
+        let _lifecycle = observed.lifecycle(std::thread::panicking);
         observed.begin(commands.len());
         let mut subsets = Coalescing::new(&observed);
         let mut applying = session.begin_batch(commands.iter().enumerate());

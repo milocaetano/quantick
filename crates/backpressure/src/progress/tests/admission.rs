@@ -17,7 +17,7 @@ fn sum_equal_parity(older: &mut u64, newer: u64) -> Option<u64> {
 
 #[test]
 fn a_full_channel_parks_folds_and_counts_and_a_pump_drains_it() {
-    let producer = WorkerProgress::new();
+    let producer = fresh();
     let observer = producer.observer().clone();
     let (tx, rx) = sync_channel(2);
     let tx = producer.bind_merging(tx, sum_equal_parity);
@@ -54,7 +54,7 @@ fn a_full_channel_parks_folds_and_counts_and_a_pump_drains_it() {
 
 #[test]
 fn a_gone_worker_turns_every_parked_command_into_a_counted_failure() {
-    let producer = WorkerProgress::new();
+    let producer = fresh();
     let observer = producer.observer().clone();
     let (tx, rx) = sync_channel(1);
     let tx = producer.bind(tx);

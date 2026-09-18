@@ -1,13 +1,106 @@
-//! Adversarial ledger protocol schedules frozen independently in
-//! Q8-PERF-001-repair1-independent-schedules.md (S1-S4). Direct enqueue plus
-//! the production record_send helper exposes the bookkeeping interval; it is
-//! not a replacement for ordinary send-wrapper or domain-worker tests.
-//! Repair 2 preserves the schedules while local acceptance replaces the old
-//! producer mutex. Only the consumer Arc moves into the worker thread.
+//! What a test drives a worker with: a clock the test advances and can park
+//! the worker on at a named phase, and the ledger schedules the repairs were
+//! proven against.
+//!
+//! Compiled for this crate's own tests and, under the `test-support` feature,
+//! for the tests of a crate that runs real workers on this port — the window
+//! drives its indicator and book workers through the same [`Gate`] so the
+//! schedule is the schedule, not a copy of it. Never part of a shipping
+//! build: the feature is a dev-dependency's to ask for.
 
-use super::*;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-fn core(s: &ProgressSnapshot, instance: Option<u64>, expected: [u64; 6]) {
+use super::{Age, ObservedSender, Phase, ProgressClock, ProgressSnapshot};
+
+/// Room enough that no fixture here ever finds its queue full; the bounded
+/// behaviour itself is `worker_backlog`'s and `live_envelope`'s to test.
+pub const TEST_QUEUE: usize = 1 << 12;
+
+pub struct Gate {
+    now: AtomicU64,
+    holds: Mutex<VecDeque<PhaseHold>>,
+}
+struct PhaseHold {
+    phase: Phase,
+    reached: Sender<()>,
+    release: Receiver<bool>,
+}
+pub struct Hold {
+    reached: Receiver<()>,
+    release: Sender<bool>,
+}
+impl Hold {
+    pub fn reached(&self) {
+        self.reached
+            .recv_timeout(Duration::from_secs(10))
+            .expect("worker reached the prescribed phase");
+    }
+    pub fn release(self) {
+        self.release.send(false).expect("held worker is alive");
+    }
+    pub fn unwind(self) {
+        self.release.send(true).expect("held worker is alive");
+    }
+}
+impl Gate {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            now: AtomicU64::new(0),
+            holds: Mutex::new(VecDeque::new()),
+        })
+    }
+    pub fn at(&self, ns: u64) {
+        self.now.store(ns, Ordering::SeqCst);
+    }
+    pub fn hold(&self, phase: Phase) -> Hold {
+        let (tx, reached) = channel();
+        let (release, rx) = channel();
+        self.holds.lock().unwrap().push_back(PhaseHold {
+            phase,
+            reached: tx,
+            release: rx,
+        });
+        Hold { reached, release }
+    }
+}
+impl ProgressClock for Gate {
+    fn source(&self) -> &'static str {
+        "fixture_explicit"
+    }
+    fn now_ns(&self) -> Option<u64> {
+        Some(self.now.load(Ordering::SeqCst))
+    }
+    fn phase(&self, phase: Phase) {
+        let step = {
+            let mut holds = self.holds.lock().unwrap();
+            if holds.front().is_some_and(|s| s.phase == phase) {
+                holds.pop_front()
+            } else {
+                None
+            }
+        };
+        if let Some(PhaseHold {
+            reached: tx,
+            release: rx,
+            ..
+        }) = step
+        {
+            tx.send(()).unwrap();
+            assert!(
+                !rx.recv_timeout(Duration::from_secs(10))
+                    .expect("fixture releases worker"),
+                "prescribed worker unwind"
+            );
+        }
+    }
+}
+
+/// The ledger's six core counts, asserted together.
+pub fn core(s: &ProgressSnapshot, instance: Option<u64>, expected: [u64; 6]) {
     assert!(s.valid);
     assert_eq!(s.instance, instance);
     assert_eq!(
@@ -25,7 +118,8 @@ fn core(s: &ProgressSnapshot, instance: Option<u64>, expected: [u64; 6]) {
     assert_eq!(s.counts.output_attempts, s.counts.output_successes);
 }
 
-fn inactive(s: &ProgressSnapshot) {
+/// Every age reads not-applicable: nothing is in flight.
+pub fn inactive(s: &ProgressSnapshot) {
     assert_eq!(s.sampled_ticket, None);
     assert_eq!(s.sample_age, Age::NotApplicable);
     assert_eq!(s.oldest_wait, Age::NotApplicable);
@@ -33,12 +127,14 @@ fn inactive(s: &ProgressSnapshot) {
     assert_eq!(s.since_progress, Age::NotApplicable);
 }
 
-fn acknowledge(rx: Receiver<()>) {
+/// Wait for the worker's acknowledgement of a flush.
+pub fn acknowledge(rx: Receiver<()>) {
     rx.recv_timeout(Duration::from_secs(10))
         .expect("actual worker Flush acknowledged the completed publication");
 }
 
-fn evidence(stage: &str, snapshot: &ProgressSnapshot) {
+/// One observation of a frozen schedule, printed as JSON.
+pub fn evidence(stage: &str, snapshot: &ProgressSnapshot) {
     println!(
         "Q8_REPAIR_PROTOCOL {}",
         serde_json::json!({"schedule": stage, "observation": snapshot})
@@ -46,7 +142,7 @@ fn evidence(stage: &str, snapshot: &ProgressSnapshot) {
 }
 
 /// S1-S3 run against the caller's real worker consumer and actual Flush port.
-pub(crate) fn delayed_bookkeeping<T>(
+pub fn delayed_bookkeeping<T>(
     clock: &Arc<Gate>,
     commands: &ObservedSender<T>,
     flush: impl Fn(Sender<()>) -> T,
@@ -172,97 +268,4 @@ pub(crate) fn delayed_bookkeeping<T>(
     assert_eq!(s.last_sampled_ticket, Some(3));
     assert_eq!(s.last_sample_residence, Age::Known(50));
     evidence("S3-completed-recovery", &s);
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Terminal {
-    Retired,
-    Unwound,
-    Unadmitted,
-}
-
-fn terminal_schedule(branch: Terminal) {
-    let clock = Gate::new();
-    let producer = WorkerProgress::with_clock(clock.clone());
-    let p = producer.observer().clone();
-    let instance = p.snapshot().instance;
-    assert!(instance.is_some_and(|id| id > 0));
-    let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
-    let observed = producer.consumer();
-    let tx = producer.bind(tx);
-    let (done_tx, done_rx) = channel();
-    clock.at(100);
-    tx.sender.send(()).unwrap();
-    let worker_clock = clock.clone();
-    let worker = std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let lifecycle = observed.lifecycle();
-            if branch != Terminal::Unadmitted {
-                rx.recv_timeout(Duration::from_secs(10)).unwrap();
-                worker_clock.at(120);
-                observed.begin(1);
-            }
-            worker_clock.at(150);
-            match branch {
-                Terminal::Retired => {
-                    observed.finish(false);
-                    worker_clock.at(180);
-                }
-                Terminal::Unwound => panic!("S4 prescribed admitted unfinished unwind"),
-                Terminal::Unadmitted => {}
-            }
-            drop(lifecycle);
-        }));
-        done_tx.send((rx, result.is_err())).unwrap();
-    });
-    let (rx, unwound) = done_rx
-        .recv_timeout(Duration::from_secs(10))
-        .expect("terminal transition completed while producer bookkeeping was held");
-    worker.join().expect("checked protocol consumer join");
-    assert_eq!(unwound, branch == Terminal::Unwound);
-    clock.at(200);
-    tx.progress.record_send(true);
-
-    let phase = if branch == Terminal::Unwound {
-        Phase::Unwound
-    } else {
-        Phase::Closed
-    };
-    let (retired, unfinished, cycles) = if branch == Terminal::Retired {
-        (1, 0, 1)
-    } else {
-        (0, 1, 0)
-    };
-    clock.at(230);
-    let s = p.snapshot();
-    core(&s, instance, [1, 0, 0, retired, unfinished, 0]);
-    inactive(&s);
-    assert_eq!(s.phase, phase);
-    assert_eq!(s.counts.cycles, cycles);
-    evidence(&format!("S4-{branch:?}-successful"), &s);
-    drop(rx);
-    clock.at(260);
-    assert!(tx.send(()).is_err());
-    clock.at(280);
-    let s = p.snapshot();
-    core(&s, instance, [1, 0, 0, retired, unfinished, 1]);
-    inactive(&s);
-    assert_eq!(s.phase, phase);
-    assert_eq!(s.counts.cycles, cycles);
-    evidence(&format!("S4-{branch:?}-failed"), &s);
-}
-
-#[test]
-fn late_success_after_retirement_and_closure_is_not_unfinished() {
-    terminal_schedule(Terminal::Retired);
-}
-
-#[test]
-fn late_success_after_unwind_is_unfinished() {
-    terminal_schedule(Terminal::Unwound);
-}
-
-#[test]
-fn late_success_without_admission_is_unfinished() {
-    terminal_schedule(Terminal::Unadmitted);
 }

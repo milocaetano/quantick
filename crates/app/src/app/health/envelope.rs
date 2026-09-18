@@ -218,9 +218,7 @@ mod tests {
     use crate::worker_progress::Counts;
 
     fn snapshot(instance: u64, counts: Counts) -> ProgressSnapshot {
-        let mut progress = crate::worker_progress::WorkerProgress::new()
-            .observer()
-            .snapshot();
+        let mut progress = crate::worker_progress::monotonic().observer().snapshot();
         progress.instance = Some(instance);
         progress.counts = counts;
         progress

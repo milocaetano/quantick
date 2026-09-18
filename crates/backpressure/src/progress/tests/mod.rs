@@ -1,94 +1,25 @@
 use super::*;
-use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, channel};
-use std::time::Duration;
-
-/// Room enough that no fixture here ever finds its queue full; the bounded
-/// behaviour itself is `worker_backlog`'s and `live_envelope`'s to test.
-pub(crate) const TEST_QUEUE: usize = 1 << 12;
+use crate::progress::test_support::*;
+use std::time::Instant;
 
 mod admission;
 mod ownership;
-pub(crate) mod protocol;
+mod protocol;
 
-pub(crate) struct Gate {
-    now: AtomicU64,
-    holds: Mutex<VecDeque<PhaseHold>>,
-}
-struct PhaseHold {
-    phase: Phase,
-    reached: Sender<()>,
-    release: Receiver<bool>,
-}
-pub(crate) struct Hold {
-    reached: Receiver<()>,
-    release: Sender<bool>,
-}
-impl Hold {
-    pub(crate) fn reached(&self) {
-        self.reached
-            .recv_timeout(Duration::from_secs(10))
-            .expect("worker reached the prescribed phase");
-    }
-    pub(crate) fn release(self) {
-        self.release.send(false).expect("held worker is alive");
-    }
-    pub(crate) fn unwind(self) {
-        self.release.send(true).expect("held worker is alive");
-    }
-}
-impl Gate {
-    pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self {
-            now: AtomicU64::new(0),
-            holds: Mutex::new(VecDeque::new()),
-        })
-    }
-    pub(crate) fn at(&self, ns: u64) {
-        self.now.store(ns, Ordering::SeqCst);
-    }
-    pub(crate) fn hold(&self, phase: Phase) -> Hold {
-        let (tx, reached) = channel();
-        let (release, rx) = channel();
-        self.holds.lock().unwrap().push_back(PhaseHold {
-            phase,
-            reached: tx,
-            release: rx,
-        });
-        Hold { reached, release }
-    }
-}
-impl ProgressClock for Gate {
-    fn source(&self) -> &'static str {
-        "fixture_explicit"
-    }
+/// The clock the window installs: elapsed time since the worker started.
+struct Monotonic(Instant);
+impl ProgressClock for Monotonic {
     fn now_ns(&self) -> Option<u64> {
-        Some(self.now.load(Ordering::SeqCst))
-    }
-    fn phase(&self, phase: Phase) {
-        let step = {
-            let mut holds = self.holds.lock().unwrap();
-            if holds.front().is_some_and(|s| s.phase == phase) {
-                holds.pop_front()
-            } else {
-                None
-            }
-        };
-        if let Some(PhaseHold {
-            reached: tx,
-            release: rx,
-            ..
-        }) = step
-        {
-            tx.send(()).unwrap();
-            assert!(
-                !rx.recv_timeout(Duration::from_secs(10))
-                    .expect("fixture releases worker"),
-                "prescribed worker unwind"
-            );
-        }
+        self.0.elapsed().as_nanos().try_into().ok()
     }
 }
+
+/// A progress on the monotonic clock, as the window builds one.
+pub(crate) fn fresh() -> WorkerProgress {
+    WorkerProgress::with_clock(Arc::new(Monotonic(Instant::now())))
+}
+use std::sync::mpsc::{Sender, channel};
+use std::time::Duration;
 
 #[test]
 fn sampled_ticket_does_not_claim_unobserved_head_or_idle_stall() {
@@ -164,7 +95,7 @@ fn unavailable_clock_is_unknown() {
 fn coalescing_subsets_survive_an_unfinished_domain_batch() {
     // Three accepted commands; two input supersessions occurred before a
     // domain unwind. They remain subsets of the three unfinished commands.
-    let producer = WorkerProgress::new();
+    let producer = fresh();
     let p = producer.observer().clone();
     let observed = producer.consumer();
     let (tx, _rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
@@ -173,7 +104,7 @@ fn coalescing_subsets_survive_an_unfinished_domain_batch() {
         tx.send(()).unwrap();
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let _lifecycle = observed.lifecycle();
+        let _lifecycle = observed.lifecycle(std::thread::panicking);
         observed.begin(3);
         let mut subsets = Coalescing::new(&observed);
         subsets.inputs = 2;
@@ -211,7 +142,7 @@ fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
         tx.send(()).unwrap();
     }
     let worker = std::thread::spawn(move || {
-        let _lifecycle = observed.lifecycle();
+        let _lifecycle = observed.lifecycle(std::thread::panicking);
         for _ in 0..3 {
             rx.recv_timeout(Duration::from_secs(10)).unwrap();
         }
@@ -265,10 +196,10 @@ fn publishing_unwind_records_nonzero_subsets_once_and_keeps_delivered_output() {
 
 #[test]
 fn send_racing_receiver_destruction_is_unfinished_after_terminal_observation() {
-    let producer = WorkerProgress::new();
+    let producer = fresh();
     let p = producer.observer().clone();
     let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
-    drop(producer.consumer().lifecycle());
+    drop(producer.consumer().lifecycle(std::thread::panicking));
     let tx = producer.bind(tx);
     // The receiver still exists for the small interval after run() returns.
     tx.send(()).unwrap();

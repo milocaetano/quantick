@@ -14,6 +14,8 @@ control-harness = []
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }
+# Bounded admission between the window and its workers, and their progress.
+quantick-backpressure = { path = "../backpressure" }
 # The headless chart model: bar state, geometry, viewport, style.
 quantick-chart = { path = "../chart" }
 quantick-workspace = { path = "../workspace" }
@@ -99,6 +101,9 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+# The gate clock the worker tests park a real worker on, and the ledger
+# schedules; the same fixture the crate proves itself with.
+quantick-backpressure = { path = "../backpressure", features = ["test-support"] }
 # The same crate the `[dependencies]` table already carries, asking for the
 # throwaway native the docking port is tested through. Feature resolution
 # keeps a dev-dependency's features out of the normal build, so the binary

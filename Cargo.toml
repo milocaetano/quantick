@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/anchored-studies",
+    "crates/backpressure",
     "crates/chart",
     "crates/chart-interaction",
     "crates/control",

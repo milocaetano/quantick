@@ -104,7 +104,6 @@ mod trade_paint;
 mod ui_state;
 mod widgets;
 mod window_scale;
-mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
 mod workspace_picker;

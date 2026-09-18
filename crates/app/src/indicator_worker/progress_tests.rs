@@ -1,5 +1,5 @@
 use super::*;
-use crate::worker_progress::{Age, Phase, tests::Gate};
+use crate::worker_progress::{Age, Phase, test_support::Gate};
 use quantick_engine::Side;
 use rust_decimal::Decimal;
 use std::time::Duration;

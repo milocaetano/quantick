@@ -2916,6 +2916,7 @@ dependencies = [
  "getrandom 0.3.4",
  "png",
  "quantick-anchored-studies",
+ "quantick-backpressure",
  "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
@@ -2955,6 +2956,14 @@ dependencies = [
  "tracing-subscriber",
  "windows-sys 0.61.2",
  "winresource",
+]
+
+[[package]]
+name = "quantick-backpressure"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

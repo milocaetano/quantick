@@ -57,6 +57,9 @@ use crate::Finding;
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
     ("anchored-studies", &["engine", "indicators"]),
+    // Queue discipline and progress counts between an owner and a worker;
+    // told the time, and whether the worker unwound.
+    ("backpressure", &[]),
     // The headless chart model: bar state over the engine, plus the
     // geometry, style and strip the window paints from.
     (
