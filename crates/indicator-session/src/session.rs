@@ -42,6 +42,12 @@ impl IndicatorSession {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Instances the host is evaluating: at most one per loaded slot. A
+    /// diagnostic, like [`Self::lane_diagnostics`], so a consumer can check
+    /// that replacing or removing slots leaks no instance.
+    pub fn live_instances(&self) -> usize {
+        self.host.indicator_count()
+    }
     pub(crate) fn add(
         &mut self,
         slot: SlotId,
