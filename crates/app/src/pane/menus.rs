@@ -333,7 +333,17 @@ impl ChartPane {
             self.drawings.rename_at(index, &name);
             self.context_menu.rename = name;
         }
-        self.draw_strategy_menu_entries(ui, index);
+        self.strategies.draw_menu_entries(
+            ui,
+            &self.drawings,
+            index,
+            super::drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            &mut self.context_menu,
+        );
         let locked = self.drawings.items()[index].locked;
         let hidden = self.drawings.items()[index].hidden;
         let lock = ui
@@ -368,7 +378,7 @@ impl ChartPane {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    self.remove_strategy_for_drawing(doomed);
+                    self.strategies.remove_for_drawing(doomed);
                 }
                 self.context_menu.drawing = None;
                 ui.close_menu();

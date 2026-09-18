@@ -275,7 +275,7 @@ impl Tab {
                 .strategies
                 .anchors
                 .disarm_all(quantick_strategy::DisarmReason::MarketChanged);
-            let _ = pane.take_strategy_bars();
+            let _ = pane.strategies.take_bars();
         }
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed

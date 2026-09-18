@@ -293,7 +293,8 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     assert!(
         app.active_tab()
             .flow_pane
-            .strategy_region(drawing, 3)
+            .strategies
+            .region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
             .1
     );
@@ -307,7 +308,8 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     assert!(
         app.active_tab()
             .flow_pane
-            .strategy_region(drawing, 3)
+            .strategies
+            .region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
             .1
     );

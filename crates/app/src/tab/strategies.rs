@@ -47,7 +47,7 @@ pub(super) fn evaluate(
                 }
             }
         }
-        let bars = pane.take_strategy_bars();
+        let bars = pane.strategies.take_bars();
         if !bars.is_empty() {
             // An instance whose drawing was deleted from a surface that
             // could not remove it directly dies here, in the sweep.
@@ -76,13 +76,16 @@ pub(super) fn evaluate(
                 // its series, another market) holds fire but never
                 // starves the ruler: the trigger's contract is every
                 // closed bar, so the gates shut instead of the feed.
-                let (region, active) = pane.strategy_region(drawing, *slot).unwrap_or((
-                    quantick_strategy::Region::new(
-                        rust_decimal::Decimal::ZERO,
-                        rust_decimal::Decimal::ZERO,
-                    ),
-                    false,
-                ));
+                let (region, active) = pane
+                    .strategies
+                    .region(&pane.drawings, drawing, *slot)
+                    .unwrap_or((
+                        quantick_strategy::Region::new(
+                            rust_decimal::Decimal::ZERO,
+                            rust_decimal::Decimal::ZERO,
+                        ),
+                        false,
+                    ));
                 let flat = paper.is_flat();
                 let commands = pane.strategies.anchors.instances[index]
                     .armed
@@ -133,13 +136,16 @@ pub(super) fn evaluate(
                     continue;
                 }
                 let drawing = pane.strategies.anchors.instances[index].drawing;
-                let (region, active) = pane.strategy_region(drawing, slot).unwrap_or((
-                    quantick_strategy::Region::new(
-                        rust_decimal::Decimal::ZERO,
-                        rust_decimal::Decimal::ZERO,
-                    ),
-                    false,
-                ));
+                let (region, active) = pane
+                    .strategies
+                    .region(&pane.drawings, drawing, slot)
+                    .unwrap_or((
+                        quantick_strategy::Region::new(
+                            rust_decimal::Decimal::ZERO,
+                            rust_decimal::Decimal::ZERO,
+                        ),
+                        false,
+                    ));
                 sounds.extend(
                     pane.strategies.anchors.instances[index]
                         .alarm_on_forming_bar(&partial, &region, active, progress, now_ms),
@@ -165,7 +171,7 @@ impl Tab {
             ..
         } = self;
         for pane in std::iter::once(flow_pane).chain(time_panes.iter_mut()) {
-            for command in pane.take_strategy_cleanup() {
+            for command in pane.strategies.take_cleanup() {
                 let _ = paper.account_mut().apply_strategy_command(command);
             }
         }
@@ -286,7 +292,7 @@ impl Tab {
             // exist to prevent. One predicate, shared with re-arm and the
             // evaluation sweep (`Pane::strategy_region_can_fire`), refuses
             // it with the fix in hand.
-            if !crate::pane::strategy_badges::region_can_fire(target, pane.closed_slots()) {
+            if !crate::pane::strategies::region_can_fire(target, pane.closed_slots()) {
                 return Err(
                     "the region ends before the next bar, so nothing can ever fire — \
                      stretch it past the right edge, or turn on \"extend right\" in its \
@@ -304,7 +310,11 @@ impl Tab {
             // declares its own depth (`warmup_bars`), and the pane keeps
             // venue-prefix candles out: they measure another ruler
             // entirely (a 1-minute body dwarfs a tick-bar body).
-            armed.warm(&pane.strategy_warmup_bars(armed.trigger().warmup_bars()));
+            armed.warm(
+                &pane
+                    .series_read()
+                    .warmup_bars(armed.trigger().warmup_bars()),
+            );
             pane.strategies
                 .anchors
                 .arm(crate::strategy_anchors::AnchoredInstance {

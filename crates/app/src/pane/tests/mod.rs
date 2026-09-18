@@ -22,18 +22,24 @@ fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
 
     // No lane drawn yet: there is one pane, and every click is its.
-    assert!(!pane.click_on_tape(0.0));
-    assert!(!pane.click_on_tape(999.0));
+    assert!(!pane.frame.click_on_tape(0.0));
+    assert!(!pane.frame.click_on_tape(999.0));
 
     pane.frame.lane_divider_x = Some(700.0);
-    assert!(!pane.click_on_tape(699.9), "the candles' last pixel");
-    assert!(pane.click_on_tape(700.0), "the divider belongs to the tape");
-    assert!(pane.click_on_tape(880.0), "and so does everything past it");
+    assert!(!pane.frame.click_on_tape(699.9), "the candles' last pixel");
+    assert!(
+        pane.frame.click_on_tape(700.0),
+        "the divider belongs to the tape"
+    );
+    assert!(
+        pane.frame.click_on_tape(880.0),
+        "and so does everything past it"
+    );
 
     // A lane that goes away takes its side of the question with it: no
     // click may configure a tape that is no longer drawn.
     pane.frame.lane_divider_x = None;
-    assert!(!pane.click_on_tape(880.0));
+    assert!(!pane.frame.click_on_tape(880.0));
 }
 
 #[test]
@@ -701,7 +707,7 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
     // The other chart reports where it put the handle in market time; this
     // pane is the one that knows which of *its* bars that is.
     let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
-    pane.apply_shared_edit(SharedEdit::MoveAnchor {
+    pane.shared_marks_mut().apply_edit(SharedEdit::MoveAnchor {
         index: 0,
         anchor: 0,
         time_ms: moved_to,
@@ -720,7 +726,7 @@ fn a_body_drag_from_the_other_pane_moves_every_anchor_by_the_same_time() {
     shared_mark_at(&mut pane, 4, 100.0);
     let before = pane.drawings.items()[0].points[0];
 
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: 3_000,
         delta_price: 2.0,
@@ -750,13 +756,13 @@ fn a_locked_mark_refuses_an_edit_from_the_other_pane_too() {
         .locked = true;
     let before = pane.drawings.items()[0].points.clone();
 
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: 3_000,
         delta_price: 2.0,
     });
     let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
-    pane.apply_shared_edit(SharedEdit::MoveAnchor {
+    pane.shared_marks_mut().apply_edit(SharedEdit::MoveAnchor {
         index: 0,
         anchor: 0,
         time_ms: moved_to,
@@ -778,7 +784,7 @@ fn a_drag_this_pane_cannot_place_moves_nothing_at_all() {
 
     // Back past the first bar this pane holds: there is no slot for it,
     // and half a shape on a bar and half on an instant is not an option.
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: -600_000,
         delta_price: 0.0,
@@ -1169,6 +1175,7 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
         .pointer_bar(&pane.viewport, x, right, total)
         .expect("the pointer is on a candle");
     let cursor = pane
+        .hit_test()
         .control_pointer_hit()
         .expect("and the control plane can see the same pointer");
     assert_eq!(compass.slot, slot);
@@ -1883,7 +1890,10 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
     let mut pane = pane_with_overlay(vec![50.0; 8]);
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let expected = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     let on_the_line = egui::pos2(
         pane.viewport.x_center(start + 1, right, total),
@@ -1915,17 +1925,21 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
 fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
     let mut pane = pane_with_overlay(vec![50.0; 6]);
     let slot = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     let on_the_line = egui::pos2(pane.viewport.x_center(start, right, total), scale.y(50.0));
 
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         Some(slot),
         "the pointer is on the curve"
     );
     assert_eq!(
-        pane.overlay_plot_at(on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 8.0)),
+        pane.hit_test()
+            .overlay_plot_at(on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 8.0)),
         None,
         "open chart still means the viewport, not the indicator"
     );
@@ -1940,7 +1954,7 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
         },
     );
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         None,
         "a line nobody is drawing cannot be grabbed"
     );
@@ -1952,14 +1966,18 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
 fn the_pick_honours_hidden_indicators_and_nan_gaps() {
     let mut pane = pane_with_overlay(vec![50.0, f64::NAN, 50.0, 50.0]);
     let slot = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     // Midway across the NaN cell: the renderer draws no segment here.
     let gap_x = (pane.viewport.x_center(start, right, total)
         + pane.viewport.x_center(start + 1, right, total))
         / 2.0;
     assert_eq!(
-        pane.overlay_plot_at(egui::pos2(gap_x, scale.y(50.0))),
+        pane.hit_test()
+            .overlay_plot_at(egui::pos2(gap_x, scale.y(50.0))),
         None,
         "a gap in the data is a gap in what can be picked"
     );
@@ -1968,11 +1986,11 @@ fn the_pick_honours_hidden_indicators_and_nan_gaps() {
         + pane.viewport.x_center(start + 3, right, total))
         / 2.0;
     let on_the_line = egui::pos2(joined_x, scale.y(50.0));
-    assert_eq!(pane.overlay_plot_at(on_the_line), Some(slot));
+    assert_eq!(pane.hit_test().overlay_plot_at(on_the_line), Some(slot));
 
     pane.indicators.toggle_hidden(slot);
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         None,
         "the legend's eye takes the line off the chart, pick included"
     );
@@ -1999,7 +2017,10 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
         slot.rect.contains(header.center()),
         "the header is inside its own pane"
     );
-    assert!(ChartPane::pane_chrome_hit(&areas, header.center()));
+    assert!(super::primary_button::pane_chrome_hit(
+        &areas,
+        header.center()
+    ));
 
     // A collapsed strip has no header of its own: the strip *is* the
     // disclosure, and reads its double click from there.
@@ -2119,13 +2140,16 @@ fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one indicator pane");
     let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
-    assert!(ChartPane::pane_chrome_hit(&areas, chevron.center()));
-    assert!(ChartPane::pane_chrome_hit(
+    assert!(super::primary_button::pane_chrome_hit(
+        &areas,
+        chevron.center()
+    ));
+    assert!(super::primary_button::pane_chrome_hit(
         &areas,
         egui::pos2(slot.rect.center().x, slot.rect.top())
     ));
     assert!(
-        !ChartPane::pane_chrome_hit(&areas, slot.rect.center()),
+        !super::primary_button::pane_chrome_hit(&areas, slot.rect.center()),
         "the middle of the pane is canvas"
     );
 }
@@ -2680,7 +2704,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
     let id = pane.drawings.items()[0].id;
     assert!(
-        pane.strategy_region(id, 5).is_some(),
+        pane.strategies.region(&pane.drawings, id, 5).is_some(),
         "nothing wrong: the region is testable"
     );
     for break_it in [
@@ -2695,7 +2719,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         pane.drawings.items_mut()[index] = drawing;
         assert!(word.is_some(), "this fault owes the badge a word");
         assert!(
-            pane.strategy_region(id, 5).is_none(),
+            pane.strategies.region(&pane.drawings, id, 5).is_none(),
             "and shuts the gate: {word:?}"
         );
         // Put it back for the next fault.
@@ -2752,7 +2776,7 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
     // whose resting order would need sweeping.
     assert!(pane.strategies.anchors.arm(instance).is_empty());
 
-    let badge = crate::pane::strategy_badges::strategy_badge_text(
+    let badge = strategy_badge_text(
         &pane.strategies.anchors,
         &pane.drawings,
         id,
@@ -2877,7 +2901,7 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
     );
 
     assert!(pane.strategies.anchors.arm(instance).is_empty());
-    let badge = crate::pane::strategy_badges::strategy_badge_text(
+    let badge = strategy_badge_text(
         &pane.strategies.anchors,
         &pane.drawings,
         id,

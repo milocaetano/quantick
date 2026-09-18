@@ -856,7 +856,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
     {
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.drawings.delete_all();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
     }
     app.active_tab_mut().apply_strategy_cleanup();
     assert!(

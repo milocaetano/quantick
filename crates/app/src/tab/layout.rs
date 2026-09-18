@@ -373,7 +373,7 @@ impl Tab {
             // itself continues, so any pending bot entry is swept here
             // and now — through the same funnel manual orders use.
             let cleanup = pane.strategies.anchors.disarm_all(reason);
-            let _ = pane.take_strategy_bars();
+            let _ = pane.strategies.take_bars();
             for command in cleanup {
                 let _ = self.paper.account_mut().apply_strategy_command(command);
             }

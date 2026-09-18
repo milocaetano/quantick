@@ -346,7 +346,7 @@ impl QuantickApp {
             pane.drawings.undo();
             // Same orphan risk as the keyboard undo: the drawing an armed
             // instance rides may just have been taken away.
-            pane.sweep_strategy_orphans();
+            pane.strategies.sweep_orphans(&pane.drawings);
         }
         for (owner, name, text) in self.indicators.poll_script_files() {
             IndicatorState::log_reload(owner, &name);

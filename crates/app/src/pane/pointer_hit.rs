@@ -1,20 +1,27 @@
 //! What is under the pointer, answered off the geometry the last frame
-//! painted: the control plane's cursor scope, and the overlay plot a double
-//! click opens the settings of.
+//! painted: the control plane's cursor scope, the overlay plot a double
+//! click opens the settings of, and the shared marks another pane holds.
 //!
-//! Both are pull operations — nothing here runs on the frame loop. They read
-//! the projection `draw_chart` cached (`last_projection`) rather than
-//! re-measuring a world a gesture may have moved (§D8). A pure move out of
-//! `pane.rs`.
+//! All of it is a pull operation — nothing here runs on the frame loop. It
+//! reads the projection `draw_chart` cached (`last_projection`) rather than
+//! re-measuring a world a gesture may have moved (§D8). [`PaneHitTest`] is
+//! that cached geometry lent out for one question: the frame the draw
+//! published, the price view it was scaled by, the drawings and the tape it
+//! painted, and the projection every pixel is read back through. It never
+//! holds the pane, so the same answers serve a gesture, the control plane's
+//! cursor scope and a test that never lays a pane out.
 
 use eframe::egui;
 
 use crate::bands;
 use crate::chart::PriceScale;
-use crate::drawings::{self, DrawingBand};
+use crate::drawings::{self, DrawingBand, Drawings};
 use crate::indicator_worker::SlotId;
+use crate::orderflow_view::OrderflowView;
+use crate::price_view::PriceView;
 
-use super::ChartPane;
+use super::drawing_projection::DrawingProjection;
+use super::frame::PaneFrame;
 
 /// How near an overlay's plotted line a double click has to land to be read as
 /// a click on *that line* rather than on the chart behind it.
@@ -56,10 +63,21 @@ pub(crate) struct ControlPointerHit {
     pub drawing: Option<ControlDrawingHit>,
 }
 
-impl ChartPane {
+/// The geometry the last frame painted, lent out for a hit test. See the
+/// module docs.
+pub(crate) struct PaneHitTest<'a> {
+    pub(super) frame: &'a PaneFrame,
+    pub(super) price_view: &'a PriceView,
+    pub(super) drawings: &'a Drawings,
+    pub(super) orderflow: Option<&'a OrderflowView>,
+    pub(super) hover_pos: Option<egui::Pos2>,
+    pub(super) projection: DrawingProjection<'a>,
+}
+
+impl PaneHitTest<'_> {
     /// This pane's own projection, rebuilt from the geometry the last
-    /// [`Self::draw_chart`] cached. `None` before the pane has drawn once, or
-    /// while it has no price range to project against.
+    /// draw cached. `None` before the pane has drawn once, or while it has
+    /// no price range to project against.
     pub(super) fn last_projection(&self) -> Option<(egui::Rect, f32, usize, PriceScale)> {
         let chart = self.frame.chart_area?;
         let auto = self.frame.auto_range?;
@@ -72,7 +90,7 @@ impl ChartPane {
         Some((
             crate::bands::drawing_area(chart, self.frame.lane_divider_x),
             history_right,
-            self.slots(),
+            self.projection.series.slots(),
             scale,
         ))
     }
@@ -92,13 +110,17 @@ impl ChartPane {
         }
         let band = bands::band_at(&self.frame.bands, position)?;
         let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
-        let total = self.slots();
+        let total = self.projection.series.slots();
 
         // The same question the axis compass paints the answer to, asked
         // through the same owner: a client reading the cursor and a trader
         // reading the axis may not be told two different bars.
         let slot = (total > 0 && position.x <= history_right)
-            .then(|| self.viewport.slot_at_x(position.x, history_right, total))
+            .then(|| {
+                self.projection
+                    .viewport
+                    .slot_at_x(position.x, history_right, total)
+            })
             .flatten();
         let axis_value = band.scale.as_ref().map(|scale| scale.price_at(position.y));
         // What the pointer's y means on this band. A time-only band has no
@@ -110,12 +132,12 @@ impl ChartPane {
         };
 
         let drawing_pick = self
-            .drawing_projection()
-            .drawing_handle_at(&self.drawings, position, band, history_right, total)
+            .projection
+            .drawing_handle_at(self.drawings, position, band, history_right, total)
             .map(|(index, handle)| (index, Some(handle)))
             .or_else(|| {
-                self.drawing_projection()
-                    .drawing_at(&self.drawings, position, band, history_right, total)
+                self.projection
+                    .drawing_at(self.drawings, position, band, history_right, total)
                     .map(|index| (index, None))
             });
         let drawing = drawing_pick.and_then(|(index, handle_index)| {
@@ -132,10 +154,10 @@ impl ChartPane {
         });
 
         let lane_width_px = (chart.right() - history_right).max(0.0);
-        let flow_cell = self.orderflow.as_ref().and_then(|orderflow| {
+        let flow_cell = self.orderflow.and_then(|orderflow| {
             orderflow.control_flow_cell_at(
                 chart,
-                &self.viewport,
+                self.projection.viewport,
                 total,
                 lane_width_px,
                 self.price_view.is_inverted(),
@@ -150,7 +172,7 @@ impl ChartPane {
             axis_value,
             axis_unit,
             slot,
-            bar: slot.and_then(|slot| self.series_read().candle_at_slot(slot).cloned()),
+            bar: slot.and_then(|slot| self.projection.series.candle_at_slot(slot).cloned()),
             flow_cell,
             drawing,
         })
@@ -171,9 +193,10 @@ impl ChartPane {
     /// renderer already walks every frame.
     pub(super) fn overlay_plot_at(&self, pos: egui::Pos2) -> Option<SlotId> {
         let (chart, right, total, scale) = self.last_projection()?;
-        let (start, end) = self.viewport.visible_range(chart.width(), total);
+        let viewport = self.projection.viewport;
+        let (start, end) = viewport.visible_range(chart.width(), total);
         let mut best: Option<(f32, SlotId)> = None;
-        for view in self.indicators.visible_overlays() {
+        for view in self.projection.indicators.visible_overlays() {
             for index in 0..view.descriptor.plots.len() {
                 let Some(resolved) = view.plot_style(index) else {
                     continue;
@@ -196,8 +219,7 @@ impl ChartPane {
                         previous = None;
                         continue;
                     }
-                    let point =
-                        egui::pos2(self.viewport.x_center(row, right, total), scale.y(value));
+                    let point = egui::pos2(viewport.x_center(row, right, total), scale.y(value));
                     if let Some(from) = previous {
                         let distance = drawings::distance_to_segment(pos, from, point);
                         if distance <= PLOT_PICK_TOLERANCE_PX

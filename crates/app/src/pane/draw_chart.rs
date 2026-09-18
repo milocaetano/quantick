@@ -152,7 +152,7 @@ impl ChartPane {
                     painter,
                     rect: chart_rect,
                     tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-                    tape_hovered: self.tape_switch_hovered,
+                    tape_hovered: self.tape_switch.hovered(),
                     state: &self.layers,
                     facts: self.layer_facts(Some(chrome.capabilities)),
                 });
@@ -752,7 +752,8 @@ impl ChartPane {
                 self.closed_slots(),
             );
         }
-        self.draw_quick_range(painter, &carved, right, total, chrome);
+        self.quick_range_view(chrome.tab, chrome.side)
+            .draw(painter, &carved, right, total, chrome);
         self.frame.bands = carved;
         // Which band the next anchor lands in, said the way the split view
         // already says which pane has focus: one accent hairline on the top

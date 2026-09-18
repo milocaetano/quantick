@@ -113,4 +113,15 @@ impl PaneFrame {
     pub(crate) fn cached_bands(&self) -> &[crate::bands::Band] {
         &self.bands
     }
+
+    /// Whether a click at this x belongs to the tape rather than the candles.
+    ///
+    /// Read off the divider the draw already published, never a second copy of
+    /// the lane's geometry — the two could then disagree, and the menu would
+    /// configure a pane the trader did not click. A canvas with no lane has no
+    /// divider, and every click on it is the candles'.
+    #[must_use]
+    pub(crate) fn click_on_tape(&self, x: f32) -> bool {
+        self.lane_divider_x.is_some_and(|divider| x >= divider)
+    }
 }

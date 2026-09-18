@@ -2,22 +2,35 @@
 //!
 //! Input resolves pixels into the pane's chart coordinates; paint projects
 //! those coordinates back through the registered ruler. The window-level
-//! state and its action bar stay in `surfaces::drawing_chrome`.
+//! state and its action bar stay in `surfaces::drawing_chrome`; the headless
+//! owner is `quantick_chart_interaction::quick_range`. What the pane lends
+//! both is a [`QuickRangeView`]: who it is, as the owner's key, and the
+//! projection its pixels are read through — never the pane itself.
 
 use eframe::egui;
 
 use crate::bands::Band;
 use crate::drawings::{self, DrawContext};
+use crate::surfaces::drawing_chrome::QuickRangeOwner;
 use crate::toolrail::Tool;
 
-use super::{ChartPane, DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
+use super::drawing_projection::DrawingProjection;
+use super::{DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
 
 /// Enough history for the demo's two anchors to span a real, visible range.
 #[cfg(feature = "quick-range-harness")]
 const DEMO_MIN_BARS: usize = 72;
 
-impl ChartPane {
-    pub(super) fn handle_quick_range(
+/// One pane's side of the quick range for one frame.
+pub(super) struct QuickRangeView<'a> {
+    /// The pane as the window-level owner keys it: tab, side, pane id, the
+    /// series revision and the layout it shows.
+    pub(super) owner: QuickRangeOwner,
+    pub(super) projection: DrawingProjection<'a>,
+}
+
+impl QuickRangeView<'_> {
+    pub(super) fn handle(
         &self,
         ui: &egui::Ui,
         price_band: &Band,
@@ -26,13 +39,7 @@ impl ChartPane {
         magnet: bool,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let owner = crate::surfaces::drawing_chrome::QuickRangeOwner {
-            tab: chrome.tab,
-            side: chrome.side,
-            pane: self.id,
-            revision: self.pagination_revision(),
-            layout: self.layout_id().map(|id| id.0),
-        };
+        let owner = self.owner;
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         let area = quantick_chart_interaction::quick_range::GestureArea {
             min: [price_band.rect.left(), price_band.rect.top()],
@@ -55,7 +62,7 @@ impl ChartPane {
         if let Some(measure) = drawings::DrawingTool::by_id("measure") {
             if pressed
                 && let Some(position) = pointer
-                && let Some(anchor) = self.drawing_projection().drawing_point_at(
+                && let Some(anchor) = self.projection.drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -92,7 +99,7 @@ impl ChartPane {
                 // after a layout change; `clamp` panics on an inverted range.
                 let [x, y] = area.clamp([position.x, position.y]);
                 let position = egui::pos2(x, y);
-                if let Some(anchor) = self.drawing_projection().drawing_point_at(
+                if let Some(anchor) = self.projection.drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -115,7 +122,7 @@ impl ChartPane {
         }
     }
 
-    pub(super) fn draw_quick_range(
+    pub(super) fn draw(
         &self,
         painter: &egui::Painter,
         bands: &[Band],
@@ -123,13 +130,7 @@ impl ChartPane {
         total: usize,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let owner = crate::surfaces::drawing_chrome::QuickRangeOwner {
-            tab: chrome.tab,
-            side: chrome.side,
-            pane: self.id,
-            revision: self.pagination_revision(),
-            layout: self.layout_id().map(|id| id.0),
-        };
+        let owner = self.owner;
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
         #[cfg(feature = "quick-range-harness")]
         if chrome.side == super::PaneSide::Flow {
@@ -150,7 +151,7 @@ impl ChartPane {
                             drawings::ChartPoint::at_time(
                                 slot as f32 + 0.5,
                                 scale.price_at(y),
-                                self.series_read().anchor_time(slot as f32 + 0.5),
+                                self.projection.series.anchor_time(slot as f32 + 0.5),
                             )
                         };
                         (
@@ -172,18 +173,14 @@ impl ChartPane {
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
                 let points = quick.anchors.map(|anchor| {
-                    self.drawing_projection().drawing_screen_point(
-                        anchor,
-                        history_right,
-                        total,
-                        scale,
-                    )
+                    self.projection
+                        .drawing_screen_point(anchor, history_right, total, scale)
                 });
                 let ctxt = DrawContext {
                     payload: quick.payload,
                     anchors: &quick.anchors,
                     scale,
-                    px_per_bar: self.viewport.px_per_bar(),
+                    px_per_bar: self.projection.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: true,
                     style: quick.style,

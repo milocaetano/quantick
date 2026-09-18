@@ -449,7 +449,7 @@ fn remove_annotation(
         // An annotation can be the region a strategy is armed on, like any
         // other object: the same sweep every removal path in the interface
         // does, so no resting simulated order outlives the mark it names.
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
         found = Some((tab_index, pane_id));
         break;
     }

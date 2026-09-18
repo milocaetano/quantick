@@ -202,7 +202,8 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
     let pointer = visible_panes(tab).into_iter().find_map(|(pane, side)| {
-        pane.control_pointer_hit()
+        pane.hit_test()
+            .control_pointer_hit()
             .map(|hit| pointer_snapshot(app, app.control_tabs().active_id(), tab, pane, side, hit))
     });
     let pointer_availability = if pointer.is_some() {
@@ -425,7 +426,8 @@ fn shared_drawing_hit(
         .panes()
         .filter(|(_, owner_side)| *owner_side != side)
         .find_map(|(owner, owner_side)| {
-            pane.shared_pick(owner, position)
+            pane.hit_test()
+                .shared_pick(&owner.drawings, position)
                 .map(|(index, handle)| (owner, owner_side, index, handle))
         })?;
     let drawing = owner.drawings.items().get(index)?;

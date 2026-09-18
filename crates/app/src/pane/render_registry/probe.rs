@@ -53,7 +53,7 @@ fn render(pane: &ChartPane) -> egui::FullOutput {
                 painter: &painter,
                 rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0)),
                 tape_on: pane.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-                tape_hovered: pane.tape_switch_hovered,
+                tape_hovered: pane.tape_switch.hovered(),
                 state: &pane.layers,
                 facts: pane.layer_facts(Some(crate::config::ProviderKind::Binance.capabilities())),
             });

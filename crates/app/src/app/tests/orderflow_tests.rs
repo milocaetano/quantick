@@ -239,7 +239,7 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             }),
             "the reason is readable as a value, not only as a sentence",
         );
-        crate::pane::strategy_badges::strategy_badge_text(
+        crate::pane::strategies::strategy_badge_text(
             &tab.flow_pane.strategies.anchors,
             &tab.flow_pane.drawings,
             drawing,
@@ -297,7 +297,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {
-            pane.aim_context_menu_at_tape(on_tape);
+            pane.context_menu.aim_at_tape(on_tape);
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),

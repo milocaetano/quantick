@@ -178,6 +178,17 @@ impl<'a> PaneSeriesRead<'a> {
         self.closed_bar(slot)
             .or_else(|| (slot == self.closed_slots()).then(|| self.state.partial())?)
     }
+
+    /// The last `want` closed bars of the live series — never venue-prefix
+    /// candles, whose bodies measure another ruler — for warming a strategy
+    /// trigger at arm or re-arm time.
+    pub(crate) fn warmup_bars(&self, want: usize) -> Vec<quantick_engine::Bar> {
+        let slots = self.slots();
+        let first_live = self.seam_slot();
+        (slots.saturating_sub(want).max(first_live)..slots)
+            .filter_map(|slot| self.closed_bar(slot).cloned())
+            .collect()
+    }
 }
 
 pub(crate) struct DrawingProjection<'a> {
