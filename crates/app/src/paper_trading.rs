@@ -353,7 +353,7 @@ enum TagKey {
 pub struct PaperTrading {
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
-    #[cfg(any(feature = "scenario-harness", test))]
+    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     order_bracket_demo: bool,
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
@@ -374,7 +374,7 @@ pub struct PaperTrading {
     order_hover_force: bool,
     /// Harness override: how many rungs of resting orders to place on the
     /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
-    #[cfg(any(feature = "scenario-harness", test))]
+    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     orders_demo: Option<u8>,
     // Order-entry form.
     qty_text: String,
@@ -540,14 +540,12 @@ impl PaperTrading {
         )]
         let host = Self {
             account: crate::paper_account::PaperAccount::with_trades_dir(dir),
-            #[cfg(any(feature = "scenario-harness", test))]
             order_bracket_demo: false,
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
             cmd_preview_force: None,
             order_hover_force: false,
-            #[cfg(any(feature = "scenario-harness", test))]
             orders_demo: None,
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
@@ -574,11 +572,7 @@ impl PaperTrading {
             hovered_order: None,
         };
         #[cfg(any(feature = "scenario-harness", test))]
-        let host = {
-            let mut host = host;
-            host.apply_launch_hooks();
-            host
-        };
+        let host = host.with_launch_hooks();
         host
     }
 
@@ -587,7 +581,7 @@ impl PaperTrading {
     /// editor and the ruler notches. Compiled only with the scenario harness
     /// (or under test).
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_launch_hooks(&mut self) {
+    fn with_launch_hooks(mut self) -> Self {
         self.order_bracket_demo =
             std::env::var(PAPER_ORDER_BRACKET_ENV).is_ok_and(|value| value == "1");
         self.cmd_preview_force = std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
@@ -631,6 +625,7 @@ impl PaperTrading {
             .ok()
             .and_then(|value| value.trim().parse::<u32>().ok())
             .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES));
+        self
     }
 
     /// Everything the account needs from the ticket for one call.
