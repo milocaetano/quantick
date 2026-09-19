@@ -199,6 +199,16 @@ class Command(unittest.TestCase):
         )
         return base, run(self.root, "git", "rev-parse", "HEAD")
 
+    def test_marker_mode_prints_the_key_the_comment_carries(self):
+        status, printed = captured(["marker"])
+
+        self.assertEqual(status, 0)
+        self.assertEqual(printed.strip(), report.MARKER)
+        self.assertTrue(
+            report.comment(measured([("crates/core/src/lib.rs", 1, ["touched"])]))
+            .startswith(printed.strip())
+        )
+
     def test_comment_mode_renders_the_ceiling_from_the_ledger(self):
         path = self.json_report(
             measured([("crates/core/src/lib.rs", 10, ["touched"])])

@@ -124,10 +124,18 @@ jobs:
           body = pathlib.Path("artifacts/read-cost.md").read_text(encoding="utf-8")
           print(json.dumps({"body": body}))
           PY
-          existing=$(gh api --paginate \
+          # The key comes from the renderer, never from a copy spelled here:
+          # a stale copy stops matching and every build posts a new comment.
+          MARKER=$(python3 tools/read_cost/report.py marker)
+          export MARKER
+          # Written out and then read, rather than piped into `head`: closing
+          # the pipe early kills `gh` with SIGPIPE, and under a pipefail shell
+          # that turns "the comment exists" into "the step failed".
+          gh api --paginate \
             "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            --jq '.[] | select(.body | startswith("<!-- quantick-read-cost:v1 -->")) | .id' \
-            | head -n 1)
+            --jq '.[] | select(.body | startswith(env.MARKER)) | .id' \
+            > artifacts/read-cost-comment-ids.txt
+          existing=$(head -n 1 artifacts/read-cost-comment-ids.txt)
           if [ -n "$existing" ]; then
             gh api --method PATCH \
               "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \

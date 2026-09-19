@@ -115,6 +115,15 @@ SIZE_EXCLUDES=":(exclude).claude/GOAL.md"
 # asked for and ships with no delivery-review — reproduced against the first
 # version of this feature, which stored the word alone.
 TIER_FILE_NAME="mission-tier"
+# How long the read-cost advisory may delay a command before it is dropped.
+# The calculator is fast on an ordinary branch - a third of a second - but it
+# walks every changed file's references, and the largest branch in the ledger,
+# 408 changed files, takes 24 seconds. That is a stall in front of `gh pr
+# create` for a line the pull request comment prints anyway, so past this
+# budget the advice is dropped like anything else the advisory cannot
+# determine in time. The budget is the whole advisory's, not each
+# interpreter's: see `read_cost_advisory`.
+READ_COST_ADVISORY_SECONDS=10
 # Every tier `mission` may declare, in the order they cost. A file holding
 # anything else is treated as no declaration at all: an unrecognised word must
 # never be the difference between a graded branch and an ungraded one.
@@ -697,43 +706,55 @@ read_cost_advisory() {
     # request exists.
     advisory_pr=${3:-}
 
-    # A bound on how long advice may delay a command. The calculator is fast
-    # on an ordinary branch - a third of a second here - but it walks every
-    # changed file's references, and the largest branch in the ledger, 408
-    # changed files, takes 24 seconds. That is a stall in front of `gh pr
-    # create`, for a line the pull request comment will print anyway. Past the
-    # budget the advisory is dropped, like every other thing it cannot
-    # determine in time.
-    advisory_limit=
-    command -v timeout >/dev/null 2>&1 && advisory_limit="timeout 20"
-
-    for advisory_python in python3 python; do
-        command -v "$advisory_python" >/dev/null 2>&1 || continue
-        if [ -n "$advisory_pr" ]; then
-            advisory_out=$($advisory_limit "$advisory_python" \
-                "$advisory_script" warn \
-                --repo "$1" --base "$2" --head HEAD \
-                --branch "$advisory_branch" --pr "$advisory_pr" \
-                2>/dev/null) || continue
-        else
-            advisory_out=$($advisory_limit "$advisory_python" \
-                "$advisory_script" warn \
-                --repo "$1" --base "$2" --head HEAD \
-                --branch "$advisory_branch" 2>/dev/null) || continue
-        fi
-        printf '%s' "$advisory_out"
-        return 0
+    # The interpreter is chosen before the measurement, not by attempting it.
+    # Choosing by attempt gave every interpreter its own budget: a branch that
+    # exhausted the first one was killed, read as "that interpreter did not
+    # run", and measured again under the second, so a 20-second cap delayed a
+    # command by 40.
+    advisory_python=
+    for advisory_candidate in python3 python; do
+        command -v "$advisory_candidate" >/dev/null 2>&1 || continue
+        "$advisory_candidate" -c "" >/dev/null 2>&1 || continue
+        advisory_python=$advisory_candidate
+        break
     done
+    [ -n "$advisory_python" ] || return 0
+
+    advisory_limit=
+    command -v timeout >/dev/null 2>&1 &&
+        advisory_limit="timeout $READ_COST_ADVISORY_SECONDS"
+
+    if [ -n "$advisory_pr" ]; then
+        $advisory_limit "$advisory_python" "$advisory_script" warn \
+            --repo "$1" --base "$2" --head HEAD \
+            --branch "$advisory_branch" --pr "$advisory_pr" 2>/dev/null
+    else
+        $advisory_limit "$advisory_python" "$advisory_script" warn \
+            --repo "$1" --base "$2" --head HEAD \
+            --branch "$advisory_branch" 2>/dev/null
+    fi
+    return 0
 }
 
-# Leave the gate without a decision, carrying whatever the advisory had to
+# Leave the gate without a decision, carrying whatever the advisory has to
 # say. `systemMessage` is what a person sees and `additionalContext` is what
 # the session reads; both hold the same sentence, and neither is a permission
 # decision, so the normal flow continues exactly as it did before.
+#
+# The measurement happens here, on the way past, rather than when the gate
+# starts. A denial says its own thing and the advice returns on the attempt
+# that passes, so measuring earlier would only put the calculator's seconds in
+# front of a command that was about to be refused anyway.
+#
+# An invalid review base is the gate's business, not the advisory's: with
+# nothing to measure against it simply says nothing.
 pass_pr_gate() {
-    if [ -n "${read_cost_note:-}" ]; then
-        printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":%s}}\n' \
-            "$read_cost_note" "$read_cost_note"
+    if pass_base=$(review_base "$1" 2>/dev/null); then
+        pass_note=$(read_cost_advisory "$1" "$pass_base" "${2:-}")
+        if [ -n "$pass_note" ]; then
+            printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":%s}}\n' \
+                "$pass_note" "$pass_note"
+        fi
     fi
     exit 0
 }
@@ -771,20 +792,10 @@ pr_gate() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
-    # Read before the draft exemption below, because a draft is where an
-    # author can still act on it. An invalid review base is the gate's
-    # business further down, not the advisory's: it simply has nothing to
-    # measure against and says nothing.
-    read_cost_note=
-    if read_cost_base=$(review_base "$dir" 2>/dev/null); then
-        read_cost_note=$(read_cost_advisory "$dir" "$read_cost_base" \
-            "$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")")
-    fi
-
     if [ "$gate_action" = create ]; then
         gate_statement=$(gh_statement "$command" "gh pr create")
         if draft_flag "$gate_statement"; then
-            pass_pr_gate
+            pass_pr_gate "$dir"
         fi
     fi
 
@@ -845,7 +856,7 @@ pr_gate() {
     # and only the two commands that actually ship work are held on them: a PR
     # may be created, draft or not, while findings are still open — the PR is
     # where they live.
-    [ "$gate_action" = create ] && pass_pr_gate
+    [ "$gate_action" = create ] && pass_pr_gate "$dir"
 
     # Every tier owes a completed AI review, even when there were no findings.
     # Keep this separate from the unchanged unresolved-thread gate below.
@@ -938,7 +949,7 @@ pr_gate() {
         fi
     fi
 
-    pass_pr_gate
+    pass_pr_gate "$dir" "$gate_pr"
 }
 
 # --- commit-reminder --------------------------------------------------------

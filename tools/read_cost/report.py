@@ -12,6 +12,9 @@ evidence nobody downloads. This module renders that JSON twice:
     What ``pr-gate`` prints, as a JSON string ready to drop into a hook
     payload: that a feature branch is over the ledger's ceiling, that the
     pull request has not recorded its row yet, or nothing at all.
+``marker``
+    The comment's key, for the workflow that has to find last build's comment
+    before it can update it in place.
 
 Both name the same thing: the referenced files, largest first. A referenced
 file is one the diff never touched and a reader still has to open, so it is
@@ -157,7 +160,16 @@ def main(argv=None):
     warn.add_argument("--pr", type=int, help="the pull request, when one is named")
     warn.add_argument("--ledger", help="ledger to read the ceiling from")
 
+    modes.add_parser("marker", help="print the sticky comment's key")
+
     args = parser.parse_args(argv)
+    if args.mode == "marker":
+        # The one caller is the workflow that updates the comment in place. It
+        # asks rather than restating the string, because a second copy of the
+        # key drifts silently: the search stops matching, and every build
+        # posts a new comment instead of updating the one before it.
+        print(MARKER)
+        return 0
     ledger_path = args.ledger
     if args.mode == "comment":
         with open(args.json, encoding="utf-8") as stream:
