@@ -591,8 +591,16 @@ impl<'a> ControlActions<'a> {
     /// Ask for the platform's attention sound, through the same sink the
     /// alarms use, and report honestly when it could not be made rather
     /// than letting a client believe it was heard.
+    ///
+    /// Straight to the sink, not through the alarms' once-per-run report:
+    /// every refused call answers with its reason, and the trader's alarm
+    /// failure state is not the assistant's to set or clear.
     pub(crate) fn sound_alert(self) -> Option<String> {
-        self.audio.play(&[crate::audio::Cue::default()])
+        self.audio
+            .alerts
+            .play(&[crate::audio::Cue::default()])
+            .err()
+            .map(ToOwned::to_owned)
     }
 }
 

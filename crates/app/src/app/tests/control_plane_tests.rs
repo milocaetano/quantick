@@ -6129,3 +6129,29 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// An agent's `notify.sound` reports every refusal, not only the first of a
+/// run, and leaves the trader's alarm-failure state alone: that state decides
+/// whether the *alarm* toast shows, and an assistant's call is not an alarm.
+#[test]
+fn every_refused_agent_sound_is_reported_and_the_alarm_state_is_untouched() {
+    struct Refusing;
+    impl crate::audio::AlertSink for Refusing {
+        fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
+            Err("no audio output device could be opened")
+        }
+    }
+    let (mut app, _commands) = app_with_history(4);
+    app.audio.alerts = Box::new(Refusing);
+    for call in 0..2 {
+        assert_eq!(
+            app.control_actions().sound_alert().as_deref(),
+            Some("no audio output device could be opened"),
+            "call {call} must report the refusal, not claim it was heard"
+        );
+    }
+    assert_eq!(
+        app.audio.alert_failure, None,
+        "an agent's sound call must not mark the trader's alarm as already reported"
+    );
+}
