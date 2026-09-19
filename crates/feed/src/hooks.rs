@@ -90,3 +90,32 @@ pub fn undeclared<'a>(
     out.dedup();
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The comparison a default build's saves-off decision rests on: only
+    /// the exact `QUANTICK_` prefix counts, declared names and exempt rows
+    /// are excused, and the answer is sorted and unique.
+    #[test]
+    fn undeclared_keeps_only_unexcused_prefixed_names_sorted_and_unique() {
+        let declared = std::collections::BTreeSet::from(["QUANTICK_CONFIG"]);
+        let exempt = [("QUANTICK_GIT_COMMIT", "build metadata")];
+        let environment = [
+            "PATH",
+            "QUANTICK_UI_STATE",
+            "QUANTICK_CONFIG",
+            "QUANTICK_GIT_COMMIT",
+            "quantick_ui_state",
+            "XQUANTICK_LAYOUTS",
+            "QUANTICK_LAYOUTS",
+            "QUANTICK_UI_STATE",
+        ];
+        assert_eq!(
+            undeclared(environment.into_iter(), &declared, &exempt),
+            ["QUANTICK_LAYOUTS", "QUANTICK_UI_STATE"]
+        );
+        assert!(undeclared(["PATH", "QUANTICK_CONFIG"].into_iter(), &declared, &exempt).is_empty());
+    }
+}
