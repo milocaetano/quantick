@@ -83,6 +83,46 @@ fn a_stray_store_hook_in_a_default_build_turns_saving_off_and_says_so() {
     );
 }
 
+/// Opening a workspace file and forgetting the saved workspace write the
+/// cockpit too, so a saves-off session (DS7) does neither.
+#[test]
+fn a_saves_off_session_neither_opens_a_workspace_nor_forgets_one() {
+    let source = crate::scratch::thread_dir("ds7-import-source");
+    assert!(crate::ui_state::save(
+        &source.join(crate::ui_state::UI_STATE_FILE),
+        &ui_state::Workspace::default()
+    ));
+    let stores = crate::store_home::COCKPIT_STORES;
+    let bundle =
+        crate::workspace_bundle::capture("other", stores, &|store| source.join(store.file))
+            .expect("capture");
+
+    let live = crate::scratch::thread_dir("ds7-import-live");
+    let live_state = live.join(crate::ui_state::UI_STATE_FILE);
+    // The live file differs from the bundle, so an import would show.
+    let before = format!(
+        "# the trader's own
+{}",
+        std::fs::read_to_string(source.join(crate::ui_state::UI_STATE_FILE)).unwrap()
+    );
+    std::fs::write(&live_state, &before).unwrap();
+
+    let _refusal = RefusalOnThisThread::hold(Some("saving is off: QUANTICK_UI_STATE set".into()));
+    let error = crate::workspace_bundle::apply(&bundle, stores, &|store| live.join(store.file))
+        .expect_err("the import is refused");
+    assert!(error.contains("saving is off"), "{error}");
+    assert!(
+        !crate::ui_state::forget(&live_state),
+        "forgetting is refused"
+    );
+    assert_eq!(std::fs::read_to_string(&live_state).unwrap(), before);
+    let names: Vec<_> = std::fs::read_dir(&live)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no staged import file either: {names:?}");
+}
+
 /// The same scan over configuration alone refuses nothing, and saving works.
 #[test]
 fn configuration_alone_keeps_saving_on() {

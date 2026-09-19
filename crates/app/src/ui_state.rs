@@ -528,6 +528,11 @@ pub fn save(path: &Path, workspace: &Workspace) -> bool {
 /// defaults. `true` when nothing is left on disk — a file that was never
 /// written is already forgotten, so a missing file is a success.
 pub fn forget(path: &Path) -> bool {
+    // Deleting the file is a store write too: a session that writes no store
+    // (DS7) leaves it where it is.
+    if crate::store_home::guard_write(path).is_err() {
+        return false;
+    }
     match std::fs::remove_file(path) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,

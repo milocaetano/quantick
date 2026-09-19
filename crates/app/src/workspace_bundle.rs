@@ -119,6 +119,12 @@ pub(crate) fn apply<'stores>(
     stores: &'stores [CockpitStore],
     path_of: StorePath<'_>,
 ) -> Result<InstalledStores<'stores>, String> {
+    // A session that writes no store (DS7) opens no workspace file either:
+    // an import is every store written at once.
+    for store in stores {
+        crate::store_home::guard_write(&path_of(store))
+            .map_err(|reason| format!("nothing was opened: {reason}"))?;
+    }
     apply_with_rename(bundle, stores, path_of, |temp, live| {
         std::fs::rename(temp, live)
     })
