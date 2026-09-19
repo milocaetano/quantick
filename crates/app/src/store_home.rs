@@ -31,31 +31,33 @@
 
 use std::path::{Path, PathBuf};
 
-/// Why this session writes no store (DS7; see `launch::persistence_refusal`).
-/// Every store write asks [`guard_write`] first, so the session writes
-/// nothing rather than some files; the status line says so while it runs.
-static WRITES_REFUSED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+pub(crate) use quantick_workspace::write_refusal::WritesRefused;
+
+/// This session's refusal (see `launch::persistence_refusal`). Every store
+/// write asks [`guard_write`] first, so the session writes nothing rather
+/// than some files; the status line says so while it runs.
+static WRITES_REFUSED: std::sync::OnceLock<WritesRefused> = std::sync::OnceLock::new();
 
 #[cfg(test)]
 thread_local! {
     /// The same refusal for one test thread only.
-    static TEST_WRITES_REFUSED: std::cell::RefCell<Option<String>> =
+    static TEST_WRITES_REFUSED: std::cell::RefCell<Option<WritesRefused>> =
         const { std::cell::RefCell::new(None) };
 }
 
-/// Refuse every store write for the rest of this session, saying `reason`.
-pub(crate) fn refuse_writes(reason: String) {
-    let _ = WRITES_REFUSED.set(reason);
+/// Refuse every store write for the rest of this session.
+pub(crate) fn refuse_writes(refused: WritesRefused) {
+    let _ = WRITES_REFUSED.set(refused);
 }
 
 /// [`refuse_writes`] for the calling test thread only.
 #[cfg(test)]
-pub(crate) fn refuse_writes_on_this_thread(reason: Option<String>) {
-    TEST_WRITES_REFUSED.with(|refused| *refused.borrow_mut() = reason);
+pub(crate) fn refuse_writes_on_this_thread(refused: Option<WritesRefused>) {
+    TEST_WRITES_REFUSED.with(|slot| *slot.borrow_mut() = refused);
 }
 
 /// Why store writes are refused this session, if they are.
-pub(crate) fn writes_refused() -> Option<String> {
+pub(crate) fn writes_refused() -> Option<WritesRefused> {
     #[cfg(test)]
     if let Some(reason) = TEST_WRITES_REFUSED.with(|refused| refused.borrow().clone()) {
         return Some(reason);
@@ -65,13 +67,13 @@ pub(crate) fn writes_refused() -> Option<String> {
 
 /// Ask before writing `path`: `Err` with the reason, logged, when this
 /// session writes no store.
-pub(crate) fn guard_write(path: &Path) -> Result<(), String> {
+pub(crate) fn guard_write(path: &Path) -> Result<(), WritesRefused> {
     guard_writes(&path.display())
 }
 
 /// [`guard_write`] for a write that touches several stores, named by
 /// `target` rather than by one path.
-pub(crate) fn guard_writes(target: &dyn std::fmt::Display) -> Result<(), String> {
+pub(crate) fn guard_writes(target: &dyn std::fmt::Display) -> Result<(), WritesRefused> {
     match writes_refused() {
         None => Ok(()),
         Some(reason) => {

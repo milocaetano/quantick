@@ -171,7 +171,7 @@ impl LaunchConfig {
 
 /// Why this session must write no store: `Some` when the environment's
 /// variable names (`environment`) include a `QUANTICK_*` not `registered`, all
-/// of them logged in one line. `main` asks before any store is read or
+/// of them logged in one line and carried by name. `main` asks before any store is read or
 /// written and, on `Some`, refuses every store write for the session.
 ///
 /// A capture run points each store at scratch through a harness hook; against
@@ -182,7 +182,7 @@ impl LaunchConfig {
 pub(crate) fn persistence_refusal<'a>(
     environment: impl Iterator<Item = &'a str>,
     registered: &std::collections::BTreeSet<&'static str>,
-) -> Option<String> {
+) -> Option<crate::store_home::WritesRefused> {
     let unknown = crate::hooks::unknown_hooks(environment, registered);
     if unknown.is_empty() {
         return None;
@@ -197,10 +197,7 @@ pub(crate) fn persistence_refusal<'a>(
          Check the spelling against .claude/skills/ui-harness/references/hook-registry.md; \
          harness hooks need a `--features harness` build"
     );
-    Some(format!(
-        "saving is off: {names} set, which this build does not read \
-         (capture hooks need a --features harness build)"
-    ))
+    Some(crate::store_home::WritesRefused { hooks: unknown })
 }
 
 static OPERATOR_PATHS: std::sync::OnceLock<OperatorPaths> = std::sync::OnceLock::new();

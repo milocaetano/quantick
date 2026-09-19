@@ -136,7 +136,7 @@ impl QuantickApp {
             frame_avg_ms: self.health.frames.avg_ms(),
             frame_cpu_ms: self.health.cpu_frames.avg_ms(),
             show_perf: self.health.show_perf,
-            saves_off: crate::store_home::writes_refused(),
+            saves_off: crate::store_home::writes_refused().map(|refused| refused.to_string()),
         }
     }
 }

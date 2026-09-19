@@ -28,7 +28,7 @@ fn an_app_without_scenario_inputs_applies_no_scenario() {
 struct RefusalOnThisThread;
 
 impl RefusalOnThisThread {
-    fn hold(reason: Option<String>) -> Self {
+    fn hold(reason: Option<crate::store_home::WritesRefused>) -> Self {
         crate::store_home::refuse_writes_on_this_thread(reason);
         Self
     }
@@ -51,7 +51,9 @@ fn a_stray_store_hook_in_a_default_build_turns_saving_off_and_says_so() {
         environment.into_iter(),
         &crate::hooks::configuration_names(),
     );
-    let reason_text = reason.clone().expect("the stray hook refuses writes");
+    let refused = reason.clone().expect("the stray hook refuses writes");
+    assert_eq!(refused.hooks, ["QUANTICK_UI_STATE"]);
+    let reason_text = refused.to_string();
     assert!(reason_text.contains("QUANTICK_UI_STATE"), "{reason_text}");
     assert!(!reason_text.contains("QUANTICK_CONFIG"), "{reason_text}");
     let _refusal = RefusalOnThisThread::hold(reason);
@@ -81,6 +83,23 @@ fn a_stray_store_hook_in_a_default_build_turns_saving_off_and_says_so() {
             .is_some_and(|text| text.contains("QUANTICK_UI_STATE")),
         "{notice:?}"
     );
+    // And an agent reads it without the pixels: `health.summary` names it.
+    assert_eq!(
+        health_saves_off(&app),
+        serde_json::json!(["QUANTICK_UI_STATE"])
+    );
+}
+
+/// `health.summary`'s `saves_off_unread_hooks`, `Null` when absent.
+fn health_saves_off(app: &QuantickApp) -> serde_json::Value {
+    let scope = observer_scope("health.summary");
+    let snapshot = crate::control::standard_registry()
+        .unwrap()
+        .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    snapshot.scopes[&scope].value["saves_off_unread_hooks"].clone()
 }
 
 /// Opening a workspace file and forgetting the saved workspace write the
@@ -107,7 +126,9 @@ fn a_saves_off_session_neither_opens_a_workspace_nor_forgets_one() {
     );
     std::fs::write(&live_state, &before).unwrap();
 
-    let _refusal = RefusalOnThisThread::hold(Some("saving is off: QUANTICK_UI_STATE set".into()));
+    let _refusal = RefusalOnThisThread::hold(Some(crate::store_home::WritesRefused {
+        hooks: vec!["QUANTICK_UI_STATE".to_owned()],
+    }));
     let error = crate::workspace_bundle::apply(&bundle, stores, &|store| live.join(store.file))
         .expect_err("the import is refused");
     assert!(error.contains("saving is off"), "{error}");
@@ -143,4 +164,5 @@ fn configuration_alone_keeps_saving_on() {
     assert!(workspace.is_file());
     let (app, _evt, _cmd, _book) = test_app();
     assert_eq!(app.status_model().saves_off, None);
+    assert_eq!(health_saves_off(&app), serde_json::Value::Null);
 }

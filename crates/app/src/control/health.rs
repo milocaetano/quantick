@@ -31,6 +31,10 @@ const METRIC_DECIMAL_PLACES: u32 = 6;
 pub(crate) struct HealthSnapshot {
     pub frame: FrameHealthSnapshot,
     pub tabs: Vec<TabHealthSnapshot>,
+    /// Present when this session writes no store (decision DS7): the
+    /// `QUANTICK_*` names set at launch that this build does not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saves_off_unread_hooks: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -323,6 +327,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 }
             })
             .collect(),
+        saves_off_unread_hooks: crate::store_home::writes_refused().map(|refused| refused.hooks),
     }
 }
 
