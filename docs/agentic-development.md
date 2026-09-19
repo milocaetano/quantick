@@ -40,21 +40,22 @@ The adapter location and `$name` spelling follow the
 | Skill | What it owns |
 | --- | --- |
 | `mission` | The orchestrator. Captures the session objective in English, classifies it, and derives the acceptance criteria — including which of the gates below are part of *done* for this kind of work, so the maintainer never has to list them. It also takes a **tier** — `small` (the default), `medium`, `high`, `max` — which scales all of that to the size of the change, down to how hard the bug pass looks and whether the conformance review runs at all. One session, one mission. |
-| `new-task` | Starts work from a GitHub issue: reads it, branches from updated `main` with the right prefix, moves the board card. |
 | `new-extension` | The build-time twin of the review question below. `arch-review` asks after the fact whether a feature could have been a new file plus one registration line; this skill designs it that way from the start. |
 | `quantick-score` | The project baseline. It assigns evidence-based scores to sustainable engineering, scalability, agentic development and AI-operated product behavior; unlike `ai-review`, it measures a repository revision rather than a diff. |
 | `outside-score` | The dissenting baseline. It scores architecture, software engineering and agent change cost the way an outside architect would, from measured rows (`tools/outside_score/measure.py`) and without reading `quantick-score` first, then reports where the two rubrics disagree. |
 | `arch-review` | The pre-PR review. Step 0 runs a correctness pass; then it grades *shape* — does the change dock like a module, does it declare its performance impact, do its tests stay out of the shipped binary, is it drivable without a mouse, does it hide anything behind a magic number, is it English throughout. |
 | `delivery-review` | The other pre-PR review, and the one that asks a different question: not *is this well built* but **is this what was asked for**. It grades every ask in the mission's request ledger and every acceptance criterion — DELIVERED, PARTIAL, MISSING or UNPROVEN — from a fresh-context subagent that never sees the implementing session's account of its own work. |
-| `visual-qa` | Autonomous visual QA. Drives every affected surface through the harness hooks, **asks the live control plane what the application believes is on screen**, captures a state matrix, and reads the images against a defect checklist. |
-| `trader-ux-review` | The same screenshots, judged by trader personas against order-flow heuristics: does this cost attention, clicks or trust at a moment the market is moving? |
-| `ui-harness` | The contract that makes the two above possible: every user-visible surface must be reachable from a fresh launch by environment hooks alone, zero clicks. A new panel that cannot be opened without a mouse is an incomplete panel. |
-| `issue` | Turns an idea into a well-formed issue with scope, acceptance criteria, labels and board placement — or redirects it to Discussions when there is no concrete deliverable yet. |
+| `trader-ux-review` | The harness's screenshots, judged by trader personas against order-flow heuristics: does this cost attention, clicks or trust at a moment the market is moving? |
+| `ui-harness` | The contract that makes visual work possible — every user-visible surface reachable from a fresh launch by environment hooks alone, zero clicks — and the autonomous QA pass built on it: it drives every affected surface, **asks the live control plane what the application believes is on screen**, captures a state matrix and reads the images against a defect checklist. It absorbed `visual-qa`. |
+| `issue` | Turns an idea into a well-formed issue with scope, acceptance criteria, labels and board placement — or redirects it to Discussions when there is no concrete deliverable yet. `/issue start <N>` picks one up: reads it, names the branch from its labels, moves the board card, and hands the worktree to `mission`. It absorbed `new-task`. |
 | `ship` | The delivery: the four-check loop, the commit, the push, the PR with `Closes #N`, and CI watched until green. |
 
 `ui-harness` deserves the emphasis. It is the same rule as the product's
 fourth design principle — *operable without a hand* — applied to the
-development loop. The control plane exists so an agent can operate the
+development loop. A campaign is the exception to missions
+([`docs/campaign/workflow.md`](campaign/workflow.md) states when) because every
+intermediate integration branch postpones the review that counts: the one
+against `main`. The control plane exists so an agent can operate the
 application; the harness hooks exist so an agent can *test* it. A capability
 reachable only by mouse fails both.
 
@@ -119,7 +120,7 @@ own way around itself.
 
 **The review gates the work actually earns.** `mission` decides which apply:
 a change a trader touches mid-session gets `trader-ux-review`; anything
-visual gets `visual-qa`; a docs-only change gets neither, but never skips the
+visual gets `ui-harness`'s QA pass; a docs-only change gets neither, but never skips the
 English check or the correctness pass. The tier decides how hard the ones that
 do apply look. Local checks now follow the changed inputs under
 [the delivery contract](workflow/delivery.md); full final-head CI and the bug
@@ -326,3 +327,48 @@ routing everything else down. Stated wider than its use, a rule drifts before
 anyone notices, so the count is worth being exact about: `delivery-review`'s
 criteria pass is the only routed call site in the repository today, and the
 `haiku` tier describes no existing dispatch at all.
+
+## Reasons moved out of the always-loaded files
+
+The instruction diet that halved `CLAUDE.md`, `AGENTS.md` and the skills kept
+every operative rule where it was and moved the arguments here.
+
+**Why `AGENTS.md` is only the map.** It used to repeat `CLAUDE.md`'s design
+rules and verification loop "so an agent reading only this file does not
+violate one", and to carry a full guide to driving the app over MCP. A second
+copy of a rule drifts, and the MCP guide belongs to the adapter it describes:
+it now lives in [`crates/mcp/README.md`](../crates/mcp/README.md). The control
+plane exists because of *operable without a hand*; the `trader` profile exists
+in the contract so the day fills stop being simulated, nothing about authority
+has to be re-decided in a hurry. The map names `replay::test_support` because a
+published module the map does not mention cannot be told from a leak.
+
+**Why human-friendliness is last in `arch-review`'s order.** It must yield in a
+collision, which it almost never has to: naming and comments compile away.
+
+**Why reviews diff against `origin/main`.** On the branch that added the rule,
+`main...HEAD` credited 26 files from someone else's PR to the branch under
+review, because `git fetch` moves `origin/main` and leaves the local ref behind.
+
+**Why a surface docks through the `Surface` port.** The old shape — a field, a
+constructor line, a `draw_frame` call and a menu hotkey on `QuantickApp` — took
+it to 130 fields and a 1,022-line constructor before the size guard stopped it.
+
+**Why the hook registry is grepped, not read.** At 69 KB, loading it whole to
+answer "what turns the heatmap on" was the single largest token cost in the
+agentic flow, paid on every capture. No one file owns the hooks — `harness.rs`
+held 24 of 126 when this was written — so the registry's *Declared in* column
+is the answer. The agent target dir lived on `F:` until that drive disappeared;
+`C:` runs into single-digit gigabytes with a few worktrees, hence the free-space
+check.
+
+**Where the QA pass's precedents come from.** The drawing inspector is opaque to
+the pointer and placed so it never covers the action — the occlusion rule's
+model. The live-tail-compact proposal was rejected because it froze the live
+region, which is why the motion check insists it keeps moving.
+
+**Why `visual-qa` and `new-task` were folded in.** Both overlapped a sibling's
+trigger: `visual-qa` launched and captured the app exactly as `ui-harness`
+taught, and `new-task` duplicated the worktree recipe `CLAUDE.md` and `mission`
+own while sharing the board with `issue`. One skill per trigger means one place
+a rule can drift.

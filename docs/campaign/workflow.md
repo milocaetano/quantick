@@ -1,13 +1,14 @@
 # Campaign coordinator
 
 `campaign` turns a broad objective into bounded, reviewable tasks and keeps
-advancing while work is authorized and unblocked. Read the [state contract](state.md)
-before any operation. Read [GitHub operations](github.md) before remote writes.
-For implementation campaigns, also read [integration branches](integration.md)
-before creating worktrees, reviewing or merging. It owns campaign bases and
-the exclusively human main merge. The canonical entrypoint is in
-`.claude/skills/campaign/`; Codex only adapts it.
-Astra or another agent resumes from the same GitHub record and repository rules.
+advancing while work is authorized and unblocked. Missions are the default;
+use a campaign only when the pieces cannot land on `main` separately.
+
+Read the [state contract](state.md) before any operation, [GitHub
+operations](github.md) before remote writes, and, for implementation, the
+[integration branches](integration.md) — owner of campaign bases and the
+human-only main merge — before worktrees, reviews or merges. Any agent resumes
+from the same GitHub record and repository rules.
 
 ## Operations
 
@@ -86,7 +87,7 @@ For each cycle:
    An unresolved human task blocks only its dependents. If no implementation
    is ready, monitor active CI/reviews or perform other authorized reconciliation.
 3. Claim the task, [route it](#routing) and persist the intended action
-   before mutating. `new-task` owns duplicate checks and the isolated
+   before mutating. `mission` step 6 owns duplicate checks and the isolated
    worktree from the integration base. `mission` owns the task ledger and
    gates: one child mission per implementation/PR, never one giant
    mission/worktree for the campaign. Reuse an existing branch

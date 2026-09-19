@@ -123,7 +123,7 @@ impl QuantickApp {
         // The scope is checked before anything is armed, not after. Arming is
         // what eventually raises the screenshot notice, and telling the trader
         // their window was captured on the way to refusing the capture would
-        // make the one indicator `visual-qa` asserts on say something untrue.
+        // make the one indicator the QA pass asserts on say something untrue.
         if wants_screenshot && !access.grants_screenshot() {
             tracing::warn!(
                 target: "quantick::control",

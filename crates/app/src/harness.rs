@@ -4,7 +4,7 @@
 //! puts the window into a state a hand would otherwise have to click it into:
 //! a menu open, a pointer parked over the candles, a drawing half-placed
 //! between two clicks, a page of older history asked for. It is how
-//! `ui-harness` — and through it `visual-qa` and `trader-ux-review` — sees the
+//! `ui-harness` — and through it its QA pass and `trader-ux-review` — sees the
 //! application at all. None of it is state the chart trades on.
 //!
 //! Before this port each hook was wired into `QuantickApp` by hand in three

@@ -54,13 +54,13 @@ replace illustrative values with real URLs/SHAs. Required keys:
   "lease": {"owner": "codex/session-id", "expires_at": "2026-09-06T18:15:00Z"},
   "project": {"url": null, "id": null, "states": {}, "pending": ["create campaign Project"]},
   "tasks": [
-    {"key": "T1", "issue": "https://github.com/owner/repo/issues/124", "class": "autonomous", "priority": 1, "state": "ready", "depends_on": [], "owner": null, "branch": null, "worktree": null, "pr": null, "head": null, "attempts": {"operation": 0, "repair": 0}, "evidence": [], "next_action": "Read child acceptance criteria and start new-task"}
+    {"key": "T1", "issue": "https://github.com/owner/repo/issues/124", "class": "autonomous", "priority": 1, "state": "ready", "depends_on": [], "owner": null, "branch": null, "worktree": null, "pr": null, "head": null, "attempts": {"operation": 0, "repair": 0}, "evidence": [], "next_action": "Read child acceptance criteria and run issue start"}
   ],
   "inflight": null,
   "decisions": [],
   "metrics": {"baseline": "charter metric/evidence link", "target": "charter criterion IDs", "latest": null},
   "retry_policy": {"operation_attempts": 3, "repair_attempts": 3, "lease_minutes": 15, "ci_stall_minutes": 30, "review_stall_hours": 24},
-  "next_action": {"task": "T1", "operation": "new-task", "reason": "No prerequisites"},
+  "next_action": {"task": "T1", "operation": "issue start", "reason": "No prerequisites"},
   "stop_reason": null
 }
 ```

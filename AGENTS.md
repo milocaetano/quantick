@@ -1,253 +1,41 @@
 # AGENTS.md — quantick for AI agents
 
-Quantick is a real-time alternative-bar charting engine for order flow trading
-(tick / volume / dollar / imbalance bars), written in Rust. One deterministic
-engine feeds the chart, the backtest and the bot.
+The crate map. [`CLAUDE.md`](CLAUDE.md) owns the rules and verification loop,
+[`docs/agentic-development.md`](docs/agentic-development.md) their reasons,
+[`docs/README.md`](docs/README.md) the docs index.
 
-An agent meets this repository in one of two ways, and they are different jobs:
-
-| | You are… | Start here |
-| --- | --- | --- |
-| **1. Change the code** | editing a Rust workspace | [The map](#the-map) → [Verification loop](#verification-loop-mandatory) → [`CLAUDE.md`](CLAUDE.md) |
-| **2. Drive the application** | an MCP client talking to a running Quantick window | [Driving Quantick over MCP](#driving-quantick-over-mcp) |
-
-The second one is the unusual part: **Quantick ships its own MCP server.** The
-desktop app is not only a program you can modify — it is a program you can
-*operate*, through a versioned capability contract with a consent model, over
-a local authenticated transport. The contract, the ADR behind the transport
-choice and the threat model are in [`docs/control-plane/`](docs/control-plane/).
-
----
-
-## Driving Quantick over MCP
-
-`quantick-mcp` is a local STDIO MCP server. It attaches to a Quantick window
-that is **already running** with local agent access enabled, authenticates
-against that instance's private descriptor, and exposes a tool set whose
-ceiling is the profile the trader granted.
-
-```sh
-cargo build --release -p quantick-mcp
-target/release/quantick-mcp setup --client claude   # or: --client codex
-```
-
-`setup` only prints your client's registration command with the binary's
-absolute path; it reads nothing else, writes no config and embeds no token, so
-it works before Quantick runs. Register what it prints, then enable the
-connection under **Tools → Local agent access** and pick its scopes.
-
-Then call `quantick_describe` first: with no argument it lists the reachable
-instances; with an `instance_id` it reports the protocol, the effective
-profile and scopes, the registered modules, every capability with its
-availability, the snapshot scopes and the limits. Everything else is
-discoverable from that answer: the adapter hardcodes no vocabulary the running
-instance might not implement.
-
-### Profiles
-
-The contract declares four, chained so each inherits the one before it —
-`observer` → `annotator` → `cockpit` → `trader`. Only the first three are
-reachable today, and the adapter only ever asks for those.
-
-| Profile | The connection may… |
-| --- | --- |
-| `observer` | read: instances, snapshots, closed bars, diagnostics, the semantic scene, the event journal, evidence bundles |
-| `annotator` | …and answer on the chart: labels, arrows, zones, toasts and popups, attach and detach a Pine script |
-| `cockpit` | …and rearrange the canvas (panes, layout tabs, presets, focus) **and reconnect the market feed** |
-| `trader` | place, bracket and cancel orders. Its `trade` permission is marked sensitive with `default_grant: Denied`, the access panel filters it out, and `quantick-mcp` never requests it — so no connection reaches it today. It exists so the day fills are not simulated, nothing has to be re-decided in a hurry. |
-
-Two boundaries inside `cockpit` are worth stating precisely, because "cockpit
-just moves panes" is the comfortable reading and it is wrong:
-
-- The `cockpit` permission alone unlocks `feed.reconnect`, which respawns the
-  live market transport. The layout capabilities need `cockpit.layout` on top.
-- `feed.reload` needs the additional, separately-marked-sensitive
-  `cockpit.recover`. It declares `reversible: false` and the risk flag
-  `timeline_rebuilt`, and it closes any open paper position and disarms every
-  strategy. `quantick-mcp` requests only `cockpit` and `cockpit.layout`, so an
-  MCP connection cannot reach it — but the capability is in the registry, and
-  a client that asked for the scope by hand would be a different question.
-
-A capability the trader did not grant is refused at the gate with
-`control.permission_denied`, whatever the connection asked for and whichever
-tool it came through — `quantick_invoke` is checked exactly like a named tool.
-
-The generated [capability inventory](docs/control-plane/capability-inventory.md)
-lists capability IDs, versions, modules and required permissions. The
-generated [capability catalog](schemas/control/observer-capability-catalog-v1.json)
-also records profiles, selectable permissions and snapshot scopes. Both are
-checked against the code that generates them; use `quantick_describe` for the
-live effective surface.
-
-### Two things worth knowing before writing a client
-
-- **`quantick_wait_for_change` parks instead of polling.** It blocks up to 30 s
-  until the event journal moves past your cursor. A trader pressing the mark
-  hotkey puts the fully resolved thing under their pointer into that journal —
-  so the intended loop is *wait, read the mark, answer about that bar and no
-  other*, not "screenshot the window every second and guess".
-- **`quantick_get_scene` names what is on screen.** Every control gets an ID
-  stable across frames, its owner, whether it is selected, and a coded reason
-  when it cannot be operated. The cursor scope answers with the same IDs, so a
-  pointer position and the control list refer to the same button. Chart
-  canvases report their rectangle in logical points — apply the display scale
-  factor yourself before composing them with a screenshot.
-
-The tool-by-tool reference, including how evidence bundles are hashed and what
-they admit they do not carry, is in [`crates/mcp/README.md`](crates/mcp/README.md).
-
----
+**Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
+--client claude` (or `codex`), enable **Tools → Local agent access**, and call
+`quantick_describe` first. Tools and authority:
+[`crates/mcp/README.md`](crates/mcp/README.md); capabilities: the generated
+[capability inventory](docs/control-plane/capability-inventory.md) and
+[capability catalog](schemas/control/observer-capability-catalog-v1.json).
 
 ## The map
 
-A Cargo workspace under `crates/`. The dependency direction is one-way,
-enforced by `crates/guards/src/graph.rs`; never add a reverse edge.
-An arrow reads *depends on*.
+A Cargo workspace under `crates/`. *Depends on* is one-way, enforced by
+`crates/guards/src/graph.rs`; never add a reverse edge. `app`, `backtest`,
+`mcp` and `guards` are leaves; `guards` has no edges either way.
 
-```mermaid
-graph TD
-  subgraph leaves["Leaves — nothing depends on these"]
-    app["app<br/>desktop chart"]
-    backtest["backtest<br/>headless runner"]
-    mcp["mcp<br/>MCP adapter"]
-    guards["guards<br/>repository guards<br/>no edges either way"]
-  end
-
-  app --> pine
-  app --> indicators
-  app --> strategy
-  app --> sim
-  app --> paper
-  app --> civil
-  app --> replay
-  app --> orderbook
-  app --> orderflow
-  app --> feed
-  app --> control
-  app --> controllocal
-  app --> controlhost
-  app --> engine
-  backtest --> strategy
-  backtest --> pine
-  backtest --> indicators
-  backtest --> replay
-  backtest --> sim
-  backtest -.-> paper
-  backtest --> engine
-  mcp --> controllocal
-  mcp --> control
-
-  pine["pine<br/>Quantick Pine frontend"] --> indicators
-  strategy["strategy<br/>armed regions, alarms"] --> sim
-  strategy --> engine
-  controllocal["control-local<br/>local transport"] --> control
-  controlhost["control-host<br/>host machinery"] --> control
-  indicators["indicators<br/>bars → plot series"] --> engine
-  replay["replay<br/>recorded sessions"] --> engine
-  paper["paper<br/>paper account"] --> sim
-  paper --> engine
-  paper --> civil
-  sim["sim<br/>paper-trading fills"] --> trading
-  sim --> engine
-  trading["trading<br/>TradingVenue port"] --> engine
-  feed["feed<br/>feed host"] --> feeds
-  feed --> replay
-  feed --> orderbook
-  feed --> engine
-  feeds["feed-binance<br/>feed-hyperliquid<br/>feed-mt5"] --> engine
-  feeds --> orderbook
-  orderflow["orderflow<br/>book → heatmap"] --> engine
-  orderflow --> orderbook
-
-  subgraph pure["Pure domain — no workspace dependencies"]
-    engine["engine<br/>trades → bars"]
-    orderbook["orderbook<br/>L2 book core"]
-    control["control<br/>control-plane contracts"]
-    civil["civil<br/>civil dates"]
-  end
-```
-
-| Crate | What it owns |
-| --- | --- |
-| `engine` | Raw trades in, alternative bars out. Headless, deterministic, no clock. Everything depends on it; it depends on nothing. |
-| `orderbook` | Deterministic local order-book core: validated snapshots, absolute level updates, update-id continuity. |
-| `orderflow` | The order-flow engine: liquidity history, grouping, timeline and the settled/live heatmap projections. Headless; its caller passes it the clock. The chart draws it today, `backtest` may consume it next. |
-| `indicators` | The indicator runtime: the `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects, headless host. |
-| `pine` | "Quantick Pine" — a Pine v5 subset. Hand-rolled lexer, parser, compile passes and interpreter; zero external dependencies. |
-| `replay` | Recorded market-replay sessions: the CSV format, the folder scan, the playback clock. It is *told* how much time passed. |
-| `feed` | The feed host: the `FeedEvent`/`FeedCommand` port every source implements, the Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters that run one, the feed-shaped config, the by-time history reach and its campaign, and the session exporter. The one crate below `app` owns runtimes, threads and the clock. |
-| `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements, so a broker adapter docks where the paper simulator sits. |
-| `sim` | Deterministic paper trading: one implementation of `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
-| `paper` | The paper account: orders, risk sizing, the journal and the report numbers over a `sim` venue. Headless; the chart drives it; the backtest proves it in a test. |
-| `civil` | Civil dates and the display offset: the date law the journal, the report and the chart axis share. |
-| `strategy` | The strategy kernel: armed price regions, projected brackets, the armed-instance state machine, and the `SignalAlarm` beside it. |
-| `control` | Transport-neutral control-plane contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, and the `fake` host/client ports, published on purpose rather than test-only. |
-| `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client. One implementation of the ownership checks serves publisher and client. |
-| `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
-| `mcp` | The MCP adapter. A leaf: it depends on `control` and `control-local` only, never on `app`, and its stdout carries MCP frames only. |
-| `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources. They produce trades and never link the script language. |
-| `backtest` | The headless harness: recorded sessions in, performance out, over the exact engine and indicator path the chart draws. |
-| `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. No dependencies, so asking them costs a second. |
-| `app` | The desktop chart (egui). A consumer of the engine, never the other way around. |
-
-## The non-negotiable design rules
-
-Named here so an agent reading only this file does not violate one.
-[`CLAUDE.md`](CLAUDE.md) states them and is authoritative; where this summary
-and that file differ, that file wins.
-
-1. **Determinism.** Same trades in → same bars out, always. Inside the engine:
-   no wall clock, no randomness, no iteration-order-dependent output.
-2. **One engine, three consumers.** Chart, backtest and bot share the
-   aggregator. Never fork bar-building logic per consumer.
-3. **Data honesty.** Inferred or incomplete data is labelled, never silently
-   patched. A depth reduction is an "unattributed L2 reduction", not a
-   cancellation: the tape cannot tell which it was.
-4. **English is the repository's language.** `CLAUDE.md` is the rule's single
-   owner — it defines the scope and the four exemptions where the foreign text
-   *is* the data. Read it there; `crates/guards/src/language.rs` enforces the
-   mechanical half.
-5. **Small and focused.** This is not a trading platform. Build bars, show
-   bars, expose bars to code. It refuses scope creep, in the control plane as
-   much as in the chart.
-6. **Operable without a hand.** A capability never ships reachable by mouse
-   alone: it gets a named call, a readable result and a registry entry. This
-   is why the control plane exists.
-
-## Verification loop (mandatory)
-
-Code: all four. Prose/reuse: `CLAUDE.md`'s delivery contract.
-Final-head CI: all four.
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets
-cargo build --workspace
-cargo test --workspace
-```
-
-CI runs five more steps that `cargo` cannot see. Run the ones your change
-touches — the Python is never compiled by the workspace, so an undefined name
-there ships silently:
-
-```sh
-sh .claude/hooks/guardrails_test.sh          # the agent guardrails' own tests
-ruff check --select F tools/mt5/ bridge/mt5/ # when you touch either folder
-python3 tools/mt5/test_export_session.py     # the session exporter
-python3 bridge/mt5/tests/test_paging.py      # the MT5 bridge's candle paging
-cargo deny check bans licenses               # when Cargo.lock moves
-```
-
-## Where the documentation is
-
-[`docs/README.md`](docs/README.md) indexes the tree. The entries an agent
-reaches for most often:
-
-- [`docs/control-plane/`](docs/control-plane/) — the control contract, ADR
-  0001, the observer threat model, the capability inventory
-- [`docs/pine-dialect.md`](docs/pine-dialect.md) — the Quantick Pine reference
-- [`docs/agentic-development.md`](docs/agentic-development.md) — how this
-  repository is built *by* agents: the skills, the review gates, and the hooks
-  that enforce them
-- [`CLAUDE.md`](CLAUDE.md) — the working rules, authoritative
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — the human contribution workflow
+| Crate | Depends on | What it owns |
+| --- | --- | --- |
+| `app` | every crate but the other leaves and `trading` | The desktop chart (egui). |
+| `backtest` | strategy, pine, indicators, replay, sim, paper (dev), engine | Recorded sessions in, performance out, over the chart's engine and indicator path. |
+| `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
+| `guards` | — | The size, context, cycle and UI-free ratchets, the English and encoding scans. |
+| `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |
+| `strategy` | sim, engine | Armed price regions, projected brackets, the armed-instance state machine, `SignalAlarm`. |
+| `control-local` | control | Instance-descriptor directory and blocking loopback client; one ownership check serves both. |
+| `control-host` | control | Projection registry, admission, idempotency store, event journal. Told the time. |
+| `indicators` | engine | The `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects. |
+| `replay` | engine | Recorded sessions: CSV format, folder scan, playback clock. Told the time. Test support: `replay::test_support`, not a feature. |
+| `paper` | sim, engine, civil | One paper account — orders, risk sizing, journal, report — three drivers. |
+| `sim` | trading, engine | `TradingVenue` implementation; fills only on what the tape proves, never on quotes. |
+| `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
+| `feed` | feed-*, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, feed config, history reach, session export. Owns runtimes, threads, clock. |
+| `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook | Venue sources; produce trades. |
+| `orderflow` | engine, orderbook | Liquidity history, grouping, timeline, settled/live heatmap projections. Told the time. |
+| `engine` | — | Trades in, bars out. Deterministic, no clock. |
+| `orderbook` | — | L2 book core: validated snapshots, absolute level updates, update-id continuity. |
+| `control` | — | Control-plane contracts, and the `fake` host/client ports, published on purpose. |
+| `civil` | — | Civil dates and the display offset the journal, report and axis share. |
