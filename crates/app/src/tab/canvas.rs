@@ -13,6 +13,7 @@ use smallvec::SmallVec;
 use super::{FOCUS_RULE_PX, RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX, SharedPicks, Tab};
 use crate::canvas_layout::{self, MAX_CANVAS_PANES, MAX_CONTEXT_PANES, PaneKind};
 use crate::config::FeedCapabilities;
+use crate::pane::canvas_split::PaneAreas;
 use crate::pane::{
     CANVAS_DIVIDER_HANDLE_PX, PaneChrome, PaneIndex, PaneSide, SharedEdit, SharedInteraction,
     SharedPick, clamp_pane_fraction, split_pane_layout_strip, split_time_pane,
@@ -84,6 +85,32 @@ pub(super) fn trading_pane(
         .unwrap_or(focused)
 }
 
+/// How one frame of the canvas is carved up: which columns show, where the
+/// divider and the collapsed rail sit. Measured once, before any pane draws,
+/// and read by every stage after it.
+struct CanvasFrame {
+    area: egui::Rect,
+    /// How many context charts are drawn this frame: the lower of what the
+    /// layout asks for and what the tab has actually built.
+    context_shown: usize,
+    show_flow: bool,
+    split: bool,
+    /// The context column's rect, `None` when it is hidden or collapsed.
+    time_area: Option<egui::Rect>,
+    divider: Option<egui::Rect>,
+    flow_band: egui::Rect,
+    collapsed_rail: Option<egui::Rect>,
+}
+
+/// Where each visible pane draws this frame, after the context column has
+/// spent its header strips.
+struct PaneRects {
+    /// Per context chart, top to bottom: the chart rect and its layout strip.
+    context_charts: SmallVec<[(egui::Rect, egui::Rect); MAX_CONTEXT_PANES]>,
+    context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
+    flow_areas: Option<PaneAreas>,
+}
+
 impl Tab {
     /// Lay the canvas out and run every visible pane through it (§11).
     ///
@@ -97,6 +124,37 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        let frame = self.canvas_frame(area);
+        let rects = self.draw_context_column(ui, &frame);
+
+        // Which shared mark the pointer is over, on each pane, against the
+        // other pane's store. Answered here because answering it needs both
+        // panes at once, and the pane pass holds them one at a time.
+        let picks = self.shared_picks(ui);
+        let edits = self.draw_panes(tab_id, ui, chrome, &rects, &picks);
+        self.apply_shared_interactions(&edits);
+
+        // Drawings marked "show on all charts" cross here, after both panes
+        // have drawn and cached their projections. It happens outside the
+        // pane pass because each pane paints the *other* pane's marks, and
+        // that needs both panes borrowed at once — immutably, which is also
+        // the guarantee that a foreign mark can only be looked at.
+        self.paint_shared_drawings(ui.painter());
+
+        // The position HUD rides the pane that owns order entry (the focused
+        // one). It draws here, after the pane pass, because its buttons need
+        // the paper host mutably — inside the pass that borrow is pinned
+        // behind the shared chrome.
+        if let Some((rect, scale)) = self.focused_pane().paper_hud_anchor() {
+            crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
+        }
+
+        self.draw_canvas_chrome(tab_id, ui, &frame, &rects);
+    }
+
+    /// Measure this frame's [`CanvasFrame`], clamping the split fraction so
+    /// neither column is narrower than a pane.
+    fn canvas_frame(&mut self, area: egui::Rect) -> CanvasFrame {
         // How many context charts this layout asks for, and how many the tab
         // has actually built. The lower of the two is what gets drawn: a
         // layout may name a pane the tab is still building, and half a canvas
@@ -148,25 +206,43 @@ impl Tab {
         } else {
             time_area
         };
+        CanvasFrame {
+            area,
+            context_shown,
+            show_flow,
+            split,
+            time_area,
+            divider,
+            flow_band,
+            collapsed_rail,
+        }
+    }
 
-        // The context column, carved into one band per chart it shows, top to
-        // bottom. Each band spends its own header strip and hands back the
-        // chart rect below it.
-        let mut context_charts: SmallVec<[(egui::Rect, egui::Rect); MAX_CONTEXT_PANES]> =
-            SmallVec::new();
-        let mut context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]> = SmallVec::new();
+    /// The context column, carved into one band per chart it shows, top to
+    /// bottom. Each band spends its own header strip and hands back the
+    /// chart rect below it.
+    fn draw_context_column(&mut self, ui: &mut egui::Ui, frame: &CanvasFrame) -> PaneRects {
+        let context_shown = frame.context_shown;
+        let mut rects = PaneRects {
+            context_charts: SmallVec::new(),
+            context_dividers: SmallVec::new(),
+            flow_areas: None,
+        };
         #[cfg(test)]
         self.context_dividers.clear();
-        self.context_stack.frame = time_area.map(|column| super::context_resize::StackFrame {
-            column,
-            pane_ids: self
-                .time_panes
-                .iter()
-                .take(context_shown)
-                .map(|pane| pane.id)
-                .collect(),
-        });
-        if let Some(column) = time_area {
+        self.context_stack.frame =
+            frame
+                .time_area
+                .map(|column| super::context_resize::StackFrame {
+                    column,
+                    pane_ids: self
+                        .time_panes
+                        .iter()
+                        .take(context_shown)
+                        .map(|pane| pane.id)
+                        .collect(),
+                });
+        if let Some(column) = frame.time_area {
             // Focus before input, so the click that focuses a pane is also the
             // click that pane goes on to handle. Only a split has focus to
             // move: a single visible pane is the focused one by definition.
@@ -177,213 +253,223 @@ impl Tab {
             }
             let bands =
                 canvas_layout::split_column(column, &self.context_stack.heights[..context_shown]);
-            context_dividers.extend(bands.dividers.iter().copied());
-            if split {
-                self.focus_from_pointer(ui, &bands.panes[..context_shown], flow_band);
+            rects
+                .context_dividers
+                .extend(bands.dividers.iter().copied());
+            if frame.split {
+                self.focus_from_pointer(ui, &bands.panes[..context_shown], frame.flow_band);
             }
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_time_pane(pane_areas.body);
-                // Each context chart carries its own timeframe selector (§11):
-                // its BARS group, beside the toolbar's, which keeps governing
-                // the flow pane.
-                let mut interval_ms = self.time_panes[slot]
-                    .spec
-                    .retained(BarKind::Time)
-                    .time_interval_ms()
-                    .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
-                let header_layout = crate::time_header::draw(
-                    ui,
-                    areas.header,
-                    &mut interval_ms,
-                    self.time_panes[slot].id,
-                    &self.time_panes[slot].layout_label,
-                );
-                #[cfg(test)]
-                if slot == 0 {
-                    self.time_header_chips = header_layout.chips();
-                }
-                if header_layout.changed {
-                    let pane = &mut self.time_panes[slot];
-                    pane.spec
-                        .update(
-                            quantick_engine::bar_selection::SelectionCommand::Replace(
-                                crate::state::BarSpec::Time(interval_ms).into(),
-                            ),
-                            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
-                        )
-                        .expect("time control stays in the interval domain");
-                }
-                context_charts.push((areas.chart, pane_areas.layout_strip));
+                self.draw_time_header(ui, slot, areas.header);
+                rects
+                    .context_charts
+                    .push((areas.chart, pane_areas.layout_strip));
             }
         }
-        let flow_areas = show_flow.then(|| split_pane_layout_strip(flow_band));
+        rects.flow_areas = frame
+            .show_flow
+            .then(|| split_pane_layout_strip(frame.flow_band));
+        rects
+    }
 
-        // Which shared mark the pointer is over, on each pane, against the
-        // other pane's store. Answered here because answering it needs both
-        // panes at once, and the loop below holds them one at a time.
-        let picks = self.shared_picks(ui);
+    /// Each context chart carries its own timeframe selector (§11): its BARS
+    /// group, beside the toolbar's, which keeps governing the flow pane.
+    fn draw_time_header(&mut self, ui: &mut egui::Ui, slot: usize, header: egui::Rect) {
+        let mut interval_ms = self.time_panes[slot]
+            .spec
+            .retained(BarKind::Time)
+            .time_interval_ms()
+            .unwrap_or(crate::time_header::DEFAULT_INTERVAL_MS);
+        let header_layout = crate::time_header::draw(
+            ui,
+            header,
+            &mut interval_ms,
+            self.time_panes[slot].id,
+            &self.time_panes[slot].layout_label,
+        );
+        #[cfg(test)]
+        if slot == 0 {
+            self.time_header_chips = header_layout.chips();
+        }
+        if header_layout.changed {
+            let pane = &mut self.time_panes[slot];
+            pane.spec
+                .update(
+                    quantick_engine::bar_selection::SelectionCommand::Replace(
+                        crate::state::BarSpec::Time(interval_ms).into(),
+                    ),
+                    quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+                )
+                .expect("time control stays in the interval domain");
+        }
+    }
 
+    /// The pane pass: every visible pane handles its input and draws, time
+    /// panes first, then flow. Returns what each pane did to the *other*
+    /// panes' shared marks, for the caller to apply once nothing is borrowed.
+    fn draw_panes(
+        &mut self,
+        tab_id: u64,
+        ui: &mut egui::Ui,
+        chrome: &mut CanvasChrome<'_>,
+        rects: &PaneRects,
+        picks: &SharedPicks,
+    ) -> SmallVec<[(PaneIndex, SharedInteraction); MAX_CANVAS_PANES]> {
         let mut edits: SmallVec<[(PaneIndex, SharedInteraction); MAX_CANVAS_PANES]> =
             SmallVec::new();
-        {
-            // Focus as an address, so the loop below compares like with
-            // like however many panes it walks.
-            let focused = self.focused_side().index();
-            let Self {
-                flow_pane,
-                time_panes,
-                symbol,
-                paper,
-                feed_gaps,
-                paper_drag_pane,
-                ..
-            } = self;
-            // Cleared before the loop, set by whichever panes it actually
-            // walks. A collapsed context column draws nothing and would
-            // otherwise keep the rect it had when it was last open, which
-            // `starved_pane` would then offer as somewhere to paint the
-            // offline note — off the visible canvas, on a chart that is not
-            // there.
-            flow_pane.frame.area = None;
-            flow_pane.frame.layout_strip = None;
-            for pane in time_panes.iter_mut() {
-                pane.frame.area = None;
-                pane.frame.layout_strip = None;
-            }
-            // The time pane has no tape of its own (§11), so its footprint
-            // rows adopt the flow pane's capture bucket — the instrument's
-            // grid is a fact about the market, not about which pane shows it.
-            //
-            // Which is why there is no longer a gate here. This used to run
-            // only while the time pane's *footprint layer* was visible, and
-            // that contradicted the sentence above it: the ladders have a
-            // second consumer now, and a fixed-range volume profile folds them
-            // with the layer hidden. So the same profile, on the same market,
-            // read at the flow pane's bucket on one chart and at the default
-            // on the other — a hundredfold difference in row height on WDO,
-            // which paints as a slab beside a wash. Two surfaces that are the
-            // same thing have to behave the same way.
-            //
-            // Unconditional is also cheap: `set_footprint_group` returns
-            // immediately when the bucket has not changed, which is every
-            // frame but the one after a market switch.
-            if let (Some(time), Some(base)) = (
-                time_panes.first_mut(),
-                flow_pane
-                    .orderflow
-                    .as_ref()
-                    .map(|tape| tape.base_capture_grouping()),
-            ) {
-                time.state.set_footprint_group(base);
-            }
-            // Context panes carry addresses `1..`, the flow pane `0` — the
-            // order `Tab::pane_at` uses, never the order they sit in.
-            let addressed: SmallVec<[(PaneIndex, egui::Rect); MAX_CANVAS_PANES]> = context_charts
-                .iter()
-                .enumerate()
-                .map(|(slot, (chart, _))| (slot + 1, *chart))
-                .chain(flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
-                .collect();
-            let trading_pane = trading_pane(
-                ui.ctx().pointer_latest_pos(),
-                &addressed,
-                paper.gesture_active(),
-                *paper_drag_pane,
-                focused,
-            );
-            let mut chrome = PaneChrome {
-                tab: tab_id,
-                side: PaneSide::Flow,
-                toolrail: chrome.toolrail,
-                presets: chrome.presets,
-                drawing_chrome: chrome.drawing_chrome,
-                begin_text_edit: chrome.begin_text_edit,
-                style: chrome.style,
-                tz: chrome.tz,
-                symbol,
-                paper,
-                paper_takes_input: false,
-                paper_hud_here: false,
-                shared_pick: None,
-                shared: SharedInteraction::default(),
-                feed_gaps: &feed_gaps[..],
-                capabilities: chrome.capabilities,
-                side_inferred: chrome.side_inferred,
-                footprint: chrome.footprint,
-                layers: chrome.layers,
-            };
-            // Time pane first, then flow. Both take the same two steps in the
-            // same order — which is what keeps the split honest: the second
-            // pane cannot drift from the first, and one pane is this same
-            // loop with one entry in it.
-            // Context panes carry addresses `1..`, the flow pane `0` — the
-            // order `Tab::pane_at` uses, never the order they sit in.
-            let context = time_panes
-                .iter_mut()
-                .zip(context_charts.iter().copied())
-                .enumerate()
-                .map(|(slot, (pane, (chart, strip)))| (pane, chart, strip, slot + 1));
-            let flow = flow_areas.map(|areas| {
-                (
-                    &mut *flow_pane,
-                    areas.body,
-                    areas.layout_strip,
-                    0 as PaneIndex,
-                )
-            });
-            for (pane, rect, strip, side) in context.chain(flow) {
-                pane.frame.layout_strip = Some(strip);
-                chrome.side = PaneSide::from_index(side);
-                chrome.paper_takes_input = side == trading_pane;
-                // The HUD is one card and follows focus, so it does not
-                // flicker from pane to pane as the hand crosses them.
-                chrome.paper_hud_here = side == focused;
-                chrome.shared_pick = picks.for_pane(side);
-                chrome.shared = SharedInteraction::default();
-                pane.handle_navigation(ui, rect, &mut chrome);
-                pane.draw_chart(ui.painter(), rect, &mut chrome);
-                // Whatever this pane did to the other's marks travels out of
-                // the loop: the store it belongs to is the pane that is not
-                // borrowed right now.
-                if chrome.shared != SharedInteraction::default() {
-                    edits.push((side, chrome.shared));
-                }
-            }
-            // Written *after* the loop, not before it. The drag begins
-            // inside `handle_chart_input`, so on the frame of the press
-            // `gesture_active()` is still false up there and the pin would
-            // be stored as `None` — leaving the very next frame, the first
-            // one that actually drags, to fall through to the pointer. A
-            // flick across a divider in one frame then repriced the order
-            // against the neighbour's scale, which is the whole thing the
-            // pin exists to stop.
-            *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        // Focus as an address, so the loop below compares like with like
+        // however many panes it walks.
+        let focused = self.focused_side().index();
+        let Self {
+            flow_pane,
+            time_panes,
+            symbol,
+            paper,
+            feed_gaps,
+            paper_drag_pane,
+            ..
+        } = self;
+        // Cleared before the loop, set by whichever panes it actually walks.
+        // A collapsed context column draws nothing and would otherwise keep
+        // the rect it had when it was last open, which `starved_pane` would
+        // then offer as somewhere to paint the offline note — off the visible
+        // canvas, on a chart that is not there.
+        flow_pane.frame.area = None;
+        flow_pane.frame.layout_strip = None;
+        for pane in time_panes.iter_mut() {
+            pane.frame.area = None;
+            pane.frame.layout_strip = None;
         }
-        self.apply_shared_interactions(&edits);
-
-        // Drawings marked "show on all charts" cross here, after both panes
-        // have drawn and cached their projections. It happens outside the
-        // loop above because each pane paints the *other* pane's marks, and
-        // that needs both panes borrowed at once — immutably, which is also
-        // the guarantee that a foreign mark can only be looked at.
-        self.paint_shared_drawings(ui.painter());
-
-        // The position HUD rides the pane that owns order entry (the focused
-        // one). It draws here, after the pane loop, because its buttons need
-        // the paper host mutably — inside the loop that borrow is pinned
-        // behind the shared chrome.
-        if let Some((rect, scale)) = self.focused_pane().paper_hud_anchor() {
-            crate::paper_hud::draw(ui.ctx(), rect, &mut self.paper, &scale);
+        // The time pane has no tape of its own (§11), so its footprint rows
+        // adopt the flow pane's capture bucket — the instrument's grid is a
+        // fact about the market, not about which pane shows it.
+        //
+        // Which is why there is no longer a gate here. This used to run only
+        // while the time pane's *footprint layer* was visible, and that
+        // contradicted the sentence above it: the ladders have a second
+        // consumer now, and a fixed-range volume profile folds them with the
+        // layer hidden. So the same profile, on the same market, read at the
+        // flow pane's bucket on one chart and at the default on the other — a
+        // hundredfold difference in row height on WDO, which paints as a slab
+        // beside a wash. Two surfaces that are the same thing have to behave
+        // the same way.
+        //
+        // Unconditional is also cheap: `set_footprint_group` returns
+        // immediately when the bucket has not changed, which is every frame
+        // but the one after a market switch.
+        if let (Some(time), Some(base)) = (
+            time_panes.first_mut(),
+            flow_pane
+                .orderflow
+                .as_ref()
+                .map(|tape| tape.base_capture_grouping()),
+        ) {
+            time.state.set_footprint_group(base);
         }
+        // Context panes carry addresses `1..`, the flow pane `0` — the order
+        // `Tab::pane_at` uses, never the order they sit in.
+        let addressed: SmallVec<[(PaneIndex, egui::Rect); MAX_CANVAS_PANES]> = rects
+            .context_charts
+            .iter()
+            .enumerate()
+            .map(|(slot, (chart, _))| (slot + 1, *chart))
+            .chain(rects.flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
+            .collect();
+        let trading_pane = trading_pane(
+            ui.ctx().pointer_latest_pos(),
+            &addressed,
+            paper.gesture_active(),
+            *paper_drag_pane,
+            focused,
+        );
+        let mut chrome = PaneChrome {
+            tab: tab_id,
+            side: PaneSide::Flow,
+            toolrail: chrome.toolrail,
+            presets: chrome.presets,
+            drawing_chrome: chrome.drawing_chrome,
+            begin_text_edit: chrome.begin_text_edit,
+            style: chrome.style,
+            tz: chrome.tz,
+            symbol,
+            paper,
+            paper_takes_input: false,
+            paper_hud_here: false,
+            shared_pick: None,
+            shared: SharedInteraction::default(),
+            feed_gaps: &feed_gaps[..],
+            capabilities: chrome.capabilities,
+            side_inferred: chrome.side_inferred,
+            footprint: chrome.footprint,
+            layers: chrome.layers,
+        };
+        // Time pane first, then flow. Both take the same two steps in the
+        // same order — which is what keeps the split honest: the second pane
+        // cannot drift from the first, and one pane is this same loop with
+        // one entry in it.
+        // Context panes carry addresses `1..`, the flow pane `0` — the order
+        // `Tab::pane_at` uses, never the order they sit in.
+        let context = time_panes
+            .iter_mut()
+            .zip(rects.context_charts.iter().copied())
+            .enumerate()
+            .map(|(slot, (pane, (chart, strip)))| (pane, chart, strip, slot + 1));
+        let flow = rects.flow_areas.map(|areas| {
+            (
+                &mut *flow_pane,
+                areas.body,
+                areas.layout_strip,
+                0 as PaneIndex,
+            )
+        });
+        for (pane, rect, strip, side) in context.chain(flow) {
+            pane.frame.layout_strip = Some(strip);
+            chrome.side = PaneSide::from_index(side);
+            chrome.paper_takes_input = side == trading_pane;
+            // The HUD is one card and follows focus, so it does not flicker
+            // from pane to pane as the hand crosses them.
+            chrome.paper_hud_here = side == focused;
+            chrome.shared_pick = picks.for_pane(side);
+            chrome.shared = SharedInteraction::default();
+            pane.handle_navigation(ui, rect, &mut chrome);
+            pane.draw_chart(ui.painter(), rect, &mut chrome);
+            // Whatever this pane did to the other's marks travels out of the
+            // loop: the store it belongs to is the pane that is not borrowed
+            // right now.
+            if chrome.shared != SharedInteraction::default() {
+                edits.push((side, chrome.shared));
+            }
+        }
+        // Written *after* the loop, not before it. The drag begins inside
+        // `handle_chart_input`, so on the frame of the press
+        // `gesture_active()` is still false up there and the pin would be
+        // stored as `None` — leaving the very next frame, the first one that
+        // actually drags, to fall through to the pointer. A flick across a
+        // divider in one frame then repriced the order against the
+        // neighbour's scale, which is the whole thing the pin exists to stop.
+        *paper_drag_pane = paper.gesture_active().then_some(trading_pane);
+        edits
+    }
 
-        if let Some(rail) = collapsed_rail {
+    /// The canvas's own chrome, over the panes: the collapsed rail, the
+    /// dividers, and the focus rule.
+    fn draw_canvas_chrome(
+        &mut self,
+        tab_id: u64,
+        ui: &mut egui::Ui,
+        frame: &CanvasFrame,
+        rects: &PaneRects,
+    ) {
+        let area = frame.area;
+        if let Some(rail) = frame.collapsed_rail {
             self.draw_collapsed_rail(tab_id, ui, rail, area.width());
         }
-        if time_area.is_some() {
-            self.draw_context_dividers(tab_id, ui, &context_dividers);
+        if frame.time_area.is_some() {
+            self.draw_context_dividers(tab_id, ui, &rects.context_dividers);
         }
-        let (Some(time_area), Some(divider)) = (time_area, divider) else {
+        let (Some(time_area), Some(divider)) = (frame.time_area, frame.divider) else {
             return;
         };
         let drawn_width = divider.center().x - area.left();
@@ -391,11 +477,12 @@ impl Tab {
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
-            PaneSide::Time(slot) => context_charts
+            PaneSide::Time(slot) => rects
+                .context_charts
                 .get(slot)
                 .map(|(chart, _)| *chart)
                 .unwrap_or(time_area),
-            PaneSide::Flow => flow_areas.map_or(flow_band, |areas| areas.body),
+            PaneSide::Flow => rects.flow_areas.map_or(frame.flow_band, |areas| areas.body),
         };
         ui.painter().line_segment(
             [

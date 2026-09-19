@@ -63,6 +63,8 @@ mod draw_frame;
 mod drawing_projection;
 mod footprint;
 mod frame;
+mod frame_layout;
+mod frame_stages;
 mod gestures;
 mod layer_painters;
 mod layers;

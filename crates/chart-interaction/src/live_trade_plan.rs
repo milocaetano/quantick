@@ -3,35 +3,35 @@
 //! The caller performs the effects against its paper and pane owners. Resumed
 //! history must not use this plan: it seeds the mark without executing orders.
 
-use crate::stage_plan::Step;
+use crate::stage_registry::declare_stages;
+#[cfg(test)]
+use crate::stage_registry::{StageNode, nodes_in_valid_order};
 
 #[cfg(test)]
 mod tests;
 
-crate::stage_plan::stage_enum! {
+declare_stages! {
     pub enum LiveTradeStage {
-        PaperTrade,
-        PaneTrades,
-        StrategyEvaluation,
+        /// The simulator fills against the print before any bar moves.
+        PaperTrade after [],
+        /// Every pane folds the print into its bars.
+        PaneTrades after [PaperTrade],
+        /// Strategies judge the bars this print just built.
+        StrategyEvaluation after [PaneTrades],
     }
 }
 
-const STAGES: [Step<LiveTradeStage>; 3] = [
-    Step {
-        stage: LiveTradeStage::PaperTrade,
-        after: 0,
-    },
-    Step {
-        stage: LiveTradeStage::PaneTrades,
-        after: LiveTradeStage::PaperTrade.bit(),
-    },
-    Step {
-        stage: LiveTradeStage::StrategyEvaluation,
-        after: LiveTradeStage::PaneTrades.bit(),
-    },
-];
+#[cfg(test)]
+type StageDescriptor = StageNode<LiveTradeStage>;
 
-const _: () = assert!(valid(&STAGES));
+// The test-facing names the reorder proofs in `tests` are written against.
+#[cfg(test)]
+const STAGES: [StageDescriptor; LiveTradeStage::COUNT] = LiveTradeStage::NODES;
+
+#[cfg(test)]
+const fn valid(stages: &[StageDescriptor]) -> bool {
+    nodes_in_valid_order(stages, LiveTradeStage::COUNT)
+}
 
 /// The canonical synchronous traversal; no allocation, sort or payload copy.
 /// Consuming a stage is not proof that an effect succeeded: the caller keeps
@@ -40,6 +40,6 @@ pub struct LiveTradePlan;
 
 impl LiveTradePlan {
     pub fn stages() -> impl ExactSizeIterator<Item = LiveTradeStage> {
-        STAGES.iter().map(|descriptor| descriptor.stage)
+        LiveTradeStage::canonical()
     }
 }
