@@ -18,7 +18,7 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 12879
+.claude/skills/mission/SKILL.md 12866
 .claude/skills/arch-review/SKILL.md 12209
 .claude/skills/delivery-review/SKILL.md 8686
 
@@ -218,4 +218,4 @@ docs/workflow/delivery.md 11361
 # -> 11,527 bytes) and the SKILL.md files (105,235 -> 62,657): reasoning moved
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
-!budget 247217
+!budget 247204

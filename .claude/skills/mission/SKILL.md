@@ -124,21 +124,20 @@ the work — never shrink a diff to evade review.
 6. **Ground.** Check `git worktree list` for an existing worktree or branch for
    this goal and a live writer; reuse, never duplicate. Otherwise cut a fresh
    worktree from updated `main` per `CLAUDE.md` (from an issue, `/issue start
-   <N>` first). Before the first edit, arm it and record the tier — per-branch,
+   <N>` first). Before the first edit, record the tier and arm it — per-branch,
    in the worktree's git dir, never committed, rewritten whenever raised;
    `guardrails.sh` accepts only `<current-branch> <tier>` and `pr-gate` reads
-   this `mission-tier` file, not `GOAL.md`. One shell call, every placeholder
-   replaced:
+   this `mission-tier` file, not `GOAL.md`. Replace every placeholder:
 
    ```sh
    WT=/path/to/worktree
    CRATE=quantick-app          # the crate you are about to edit
    TIER=medium                 # small | medium | high | max
    cd "$WT" &&
-     cargo build -p quantick-guards &&
-     cargo check -p "$CRATE" --all-targets &&
      printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
-       > "$(git rev-parse --absolute-git-dir)/mission-tier"
+       > "$(git rev-parse --absolute-git-dir)/mission-tier" &&
+     cargo build -p quantick-guards
+   cd "$WT" && cargo check -p "$CRATE" --all-targets
    ```
 
 7. **Stay on track.** Refuse scope creep; state a necessary detour and tie it
