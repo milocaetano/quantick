@@ -323,15 +323,16 @@ impl OrderflowView {
     /// placement, the marks a consuming print leaves, labels, and colour.
     fn draw_bubble_controls(&mut self, ui: &mut egui::Ui) {
         let theme_rgb = theme_bubble_rgb(self.config.theme);
-        let inherited_cluster_ms = self.config.bubble_cluster_ms;
         let config = &mut self.config;
         ClusteringSection {
             config: &mut *config,
         }
         .show(ui);
+        // Read after the clustering section drew: a history window picked
+        // this frame is the one the live lane's "Same as history" inherits.
         LiveLaneSection {
+            inherited_cluster_ms: config.bubble_cluster_ms,
             lane: &mut config.live_lane,
-            inherited_cluster_ms,
         }
         .show(ui);
         let bubbles = &mut config.bubbles;

@@ -328,7 +328,7 @@ impl CurveFrame<'_> {
     }
 }
 
-// A small TAG_BG hover card with up to three lines, clamped into `rect`.
+/// A small TAG_BG hover card with up to three lines, clamped into `rect`.
 fn draw_hover_card(
     painter: &egui::Painter,
     rect: egui::Rect,

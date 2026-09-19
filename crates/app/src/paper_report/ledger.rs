@@ -460,7 +460,7 @@ fn draw_totals_strip(
     });
 }
 
-// Which saved history the ledger lists. Three cases, not two: following
+/// Which saved history the ledger lists. Three cases, not two: following
 /// the chart is what the panel opens on, but a trader reviewing yesterday
 /// wants to name an instrument without retuning the chart to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
