@@ -132,11 +132,12 @@ pub fn render(root: &Path) -> Rendered {
     // are measurements here and enforcement elsewhere -- `--report` describes
     // the tree, it does not judge it.
     row(&mut out, "graph.edges", graph::edges());
-    row(
-        &mut out,
-        "graph.single_consumer",
-        single_consumer::count(root),
-    );
+    // The count, then the list: which crates have one consumer, and who.
+    let single = single_consumer::single_consumers(root);
+    row(&mut out, "graph.single_consumer", single.len());
+    for (krate, consumer) in &single {
+        row(&mut out, format!("single_consumer.{krate}"), consumer);
+    }
     row(&mut out, "headless.findings", headless::findings(root));
     row(&mut out, "scan.unreadable", sizes.unreadable.len());
     row(&mut out, "scan.undecodable", sizes.undecodable.len());

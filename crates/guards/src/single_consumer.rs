@@ -52,6 +52,9 @@ fn exemptions(root: &Path) -> Result<(Vec<Exemption>, Vec<Finding>), String> {
 }
 
 /// Every crate with exactly one shipped consumer, with that consumer, sorted.
+/// [`crate::report`] prints it row by row: the list is the finding, and a
+/// crate signed for in the change that added it is named there, not only in
+/// the exemption file's diff.
 pub fn single_consumers(root: &Path) -> Vec<(String, String)> {
     graph::consumers(root)
         .into_iter()
@@ -60,13 +63,6 @@ pub fn single_consumers(root: &Path) -> Vec<(String, String)> {
             _ => None,
         })
         .collect()
-}
-
-/// How many crates have exactly one consumer, exempt or not, for
-/// [`crate::report`]: the list is the finding, and its length is the number
-/// a merge moves.
-pub fn count(root: &Path) -> usize {
-    single_consumers(root).len()
 }
 
 /// Every single-consumer crate without an exemption, and every exemption
@@ -174,7 +170,10 @@ mod tests {
             found, "  crates/feed: its only consumer is `app`, and it is not exempt",
             "leaves and multi-consumer crates are not findings"
         );
-        assert_eq!(count(root.path()), 1);
+        assert_eq!(
+            single_consumers(root.path()),
+            vec![("feed".to_owned(), "app".to_owned())]
+        );
     }
 
     #[test]

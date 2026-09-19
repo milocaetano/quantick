@@ -381,6 +381,26 @@ fn the_report_row_is_the_number_the_app_lines_ratchet_rations() {
     );
 }
 
+/// The single-consumer list is printed, not only counted: every crate the
+/// exemption file signs for appears as a row naming its one consumer.
+#[test]
+fn the_report_names_every_single_consumer_crate() {
+    let report = run_report();
+    let listed: Vec<&str> = report
+        .lines()
+        .filter(|line| line.starts_with("single_consumer."))
+        .collect();
+    let counted = report
+        .lines()
+        .find_map(|line| line.strip_prefix("graph.single_consumer	"))
+        .expect("the count row is printed");
+    assert_eq!(listed.len().to_string(), counted, "{listed:?}");
+    assert!(
+        listed.contains(&"single_consumer.trading	sim"),
+        "{listed:?}"
+    );
+}
+
 /// The modes are alternatives. `--report` with anything beside it is refused
 /// rather than ignored, because a mistyped invocation that exits 0 having
 /// done half of what was asked is the failure the usage string was rewritten
