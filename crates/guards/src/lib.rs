@@ -55,6 +55,7 @@ pub mod context;
 pub mod cycle;
 pub mod encoding;
 pub mod evidence;
+pub mod exemption;
 pub mod extension_boundary;
 pub mod generated;
 pub mod graph;

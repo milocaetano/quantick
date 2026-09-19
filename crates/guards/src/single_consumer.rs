@@ -23,9 +23,9 @@
 //! There is no recorded count. Like the headless allowlist, every entry is an
 //! argument somebody has to make again to add the next one.
 
-use std::fs;
 use std::path::Path;
 
+use crate::exemption::{self, Exemption};
 use crate::{Finding, graph};
 
 /// The signed exemptions: `<crate> <reason>` per line.
@@ -44,49 +44,11 @@ pub const EXEMPTION_REMEDY: &str = "Every line in crates/guards/single-consumer-
     shipped consumer, and why. An exemption for a crate that is gone, or no longer has exactly \
     one consumer, permits nothing — delete the line.";
 
-/// One signed exemption.
-struct Exemption {
-    krate: String,
-    /// One-based line in [`EXEMPTIONS_FILE`].
-    line: usize,
-}
-
 /// Read the exemptions. A malformed line is a finding and no exemption, so a
-/// typo can never widen the list.
+/// typo can never widen the list. Any key is accepted here; one that names no
+/// single-consumer crate is reported stale by [`check`].
 fn exemptions(root: &Path) -> Result<(Vec<Exemption>, Vec<Finding>), String> {
-    let text = fs::read_to_string(root.join(EXEMPTIONS_FILE))
-        .map_err(|e| format!("  {EXEMPTIONS_FILE} is unreadable: {e}"))?;
-    let mut found: Vec<Exemption> = Vec::new();
-    let mut findings = Vec::new();
-    for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
-        let content = raw.trim();
-        if content.is_empty() || content.starts_with('#') {
-            continue;
-        }
-        let (krate, reason) = content
-            .split_once(char::is_whitespace)
-            .unwrap_or((content, ""));
-        let problem = if reason.trim().is_empty() {
-            Some(format!("exempts {krate} with no reason"))
-        } else {
-            found
-                .iter()
-                .find(|known| known.krate == krate)
-                .map(|first| format!("{krate} is already exempt on line {}", first.line))
-        };
-        match problem {
-            Some(problem) => findings.push(Finding::new(
-                format!("  {EXEMPTIONS_FILE}:{line}: {problem}"),
-                EXEMPTION_REMEDY,
-            )),
-            None => found.push(Exemption {
-                krate: krate.to_owned(),
-                line,
-            }),
-        }
-    }
-    Ok((found, findings))
+    exemption::read(root, EXEMPTIONS_FILE, EXEMPTION_REMEDY, &|_| None)
 }
 
 /// Every crate with exactly one shipped consumer, with that consumer, sorted.
@@ -117,7 +79,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
     let consumers = graph::consumers(root);
     for (krate, by) in &consumers {
         if let [only] = by.as_slice()
-            && !exempt.iter().any(|e| &e.krate == krate)
+            && !exempt.iter().any(|e| &e.key == krate)
         {
             findings.push(Finding::new(
                 format!("  crates/{krate}: its only consumer is `{only}`, and it is not exempt"),
@@ -126,10 +88,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
         }
     }
     for exemption in &exempt {
-        let stale = match consumers
-            .iter()
-            .find(|(krate, _)| krate == &exemption.krate)
-        {
+        let stale = match consumers.iter().find(|(krate, _)| krate == &exemption.key) {
             None => Some("is not a crate under crates/".to_owned()),
             Some((_, by)) if by.len() != 1 => Some(format!("has {} consumers", by.len())),
             Some(_) => None,
@@ -138,7 +97,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
             findings.push(Finding::new(
                 format!(
                     "  {EXEMPTIONS_FILE}:{}: {} {stale} — delete the line",
-                    exemption.line, exemption.krate
+                    exemption.line, exemption.key
                 ),
                 EXEMPTION_REMEDY,
             ));
@@ -159,6 +118,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
 mod tests {
     use super::*;
     use crate::scratch_dir::ScratchDir;
+    use std::fs;
 
     /// A scratch workspace: one manifest per `(crate, manifest body)`, and
     /// the exemption file.
