@@ -38,8 +38,12 @@ REFERENCES = {
 }
 
 
-def referrers(needle):
-    return REFERENCES.get(needle, [])
+SEARCHES = []
+
+
+def referrers(wanted):
+    SEARCHES.append(list(wanted))
+    return [(path, needle) for needle in wanted for path in REFERENCES.get(needle, [])]
 
 
 def names(changed):
@@ -73,7 +77,17 @@ class Selection(unittest.TestCase):
     def test_a_workspace_input_runs_everything(self):
         for path in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"):
             with self.subTest(path=path):
-                self.assertEqual(names([path]), sorted(PACKAGES))
+                self.assertEqual(names([path, "docs/quality/envelope.md"]), sorted(PACKAGES))
+
+    def test_a_large_diff_searches_the_tree_once(self):
+        SEARCHES.clear()
+        names([f"docs/sweep/file_{i}.md" for i in range(1000)] + ["docs/quality/envelope.md"])
+        self.assertEqual(len(SEARCHES), 1)
+
+    def test_a_workspace_input_skips_the_search(self):
+        SEARCHES.clear()
+        names(["Cargo.lock", "docs/quality/envelope.md"])
+        self.assertEqual(SEARCHES, [])
 
     def test_a_crate_manifest_is_not_the_workspace_manifest(self):
         self.assertEqual(names(["crates/feed/Cargo.toml"]), ["quantick-feed", "quantick-feed-mt5", "quantick-guards"])
@@ -112,7 +126,7 @@ class Workspace(unittest.TestCase):
         return {line.split()[0] for line in out.splitlines() if line.split() and line.split()[0] in self.packages}
 
     def test_an_engine_change_runs_every_crate_cargo_tree_says_depends_on_engine(self):
-        selected = affected_crates.affected(["crates/engine/src/lib.rs"], self.packages, lambda needle: [])
+        selected = affected_crates.affected(["crates/engine/src/lib.rs"], self.packages, lambda wanted: [])
         expected = self.inverted_tree("quantick-engine") | set(affected_crates.ALWAYS)
         self.assertEqual(set(selected), expected)
         # Not a vacuous equality: engine has dependents, and they are not all.
@@ -123,7 +137,7 @@ class Workspace(unittest.TestCase):
         for package in sorted(self.packages):
             with self.subTest(package=package):
                 directory = self.packages[package]["dir"]
-                selected = affected_crates.affected([f"{directory}/src/lib.rs"], self.packages, lambda needle: [])
+                selected = affected_crates.affected([f"{directory}/src/lib.rs"], self.packages, lambda wanted: [])
                 self.assertEqual(set(selected), self.inverted_tree(package) | set(affected_crates.ALWAYS))
 
 

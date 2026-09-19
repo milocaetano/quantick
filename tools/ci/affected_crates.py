@@ -100,23 +100,24 @@ def needles(path):
 def select(changed, packages, referrers):
     """{crate: reason} for the crates `changed` reaches directly.
 
-    `referrers(needle)` returns the repository paths of tracked files, under a
-    crate, that contain `needle` literally.
+    `referrers(needles)` searches the tracked crate files once for all needles
+    and yields `(path, needle)` for each literal occurrence. One search per run,
+    not per needle: a sweep over a thousand files costs one pass over the tree.
     """
-    reasons = {}
     for path in changed:
         if path in WORKSPACE_INPUTS or path.startswith(WORKSPACE_INPUT_DIRS):
-            for name in packages:
-                reasons.setdefault(name, f"workspace input {path} changed")
-            continue
+            # Everything is selected; no search can add to it.
+            return {name: f"workspace input {path} changed" for name in packages}
+    reasons = {}
+    for path in changed:
         name = owner(path, packages)
         if name:
             reasons.setdefault(name, f"{path} changed")
-        for needle in needles(path):
-            for referrer in referrers(needle):
-                name = owner(referrer, packages)
-                if name:
-                    reasons.setdefault(name, f"{referrer} names {needle}")
+    wanted = sorted({needle for path in changed for needle in needles(path)}, key=lambda s: (-len(s), s))
+    for referrer, needle in referrers(wanted):
+        name = owner(referrer, packages)
+        if name:
+            reasons.setdefault(name, f"{referrer} names {needle}")
     return reasons
 
 
@@ -171,15 +172,22 @@ def main(argv=None):
         "diff", "--name-only", "-z", "--no-renames", f"{args.base}...{args.head}", cwd=root
     ).split("\0") if p]
 
-    def referrers(needle):
+    def referrers(wanted):
+        if not wanted:
+            return []
+        # One pass for every needle. -o prints each match, -z ends the path
+        # with NUL, and `git grep <rev>` prefixes it with `<rev>:`.
         result = subprocess.run(
-            ("git", "grep", "-l", "-F", "-e", needle, args.head, "--", "crates/"),
-            cwd=root, capture_output=True, text=True,
+            ("git", "grep", "-o", "-F", "-z", "-f", "-", args.head, "--", "crates/"),
+            cwd=root, input="\n".join(wanted) + "\n", capture_output=True, text=True,
         )
         if result.returncode not in (0, 1):
             raise SystemExit(f"git grep failed: {result.stderr.strip()}")
-        # `git grep <rev>` prefixes each path with `<rev>:`.
-        return [line.split(":", 1)[1] for line in result.stdout.splitlines()]
+        found = set()
+        for line in result.stdout.splitlines():
+            location, _, needle = line.partition("\0")
+            found.add((location.split(":", 1)[1], needle))
+        return sorted(found)
 
     selected = affected(changed, packages, referrers)
     for name in sorted(selected):

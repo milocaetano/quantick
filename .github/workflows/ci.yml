@@ -53,9 +53,10 @@ jobs:
         run: |
           python3 tools/ci/affected_crates.py --base "$BASE_SHA" --head "$HEAD_SHA" > affected.txt
           echo "packages=$(sed 's/^/-p /' affected.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-          if grep -qx quantick-app affected.txt; then echo "gui=true" >> "$GITHUB_OUTPUT"; fi
       - name: Install desktop GUI dependencies
-        if: steps.affected.outputs.gui == 'true'
+        # Unconditional, as in `ci`: which crates link a window system is a
+        # fact of the dependency graph, and naming them here would be the one
+        # hand list in a job that otherwise derives everything. About 25 s.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
