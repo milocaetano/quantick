@@ -16,16 +16,16 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::symbols_file::AddedSymbols;
-use quantick_feed::history_reach;
+use quantick_sources::history_reach;
 
-// The feed-shaped half of this file lives with the adapters it describes, in
-// `quantick-feed`: which backend streams a feed, what that backend can report,
+// The feed-shaped half of this file lives below the adapters it describes, in
+// `quantick-sources`: which backend streams a feed, what that backend can report,
 // and how the MetaTrader listener is addressed. Re-exported here so every
 // caller of `crate::config` still reaches them by the name it always used.
 // `Mt5Endpoint` is deliberately absent: nothing in this crate names it — it is
 // produced and consumed entirely inside the feed host — and a re-export no
 // caller reads is a dead import the workspace lints reject.
-pub use quantick_feed::config::{
+pub use quantick_sources::config::{
     FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind, split_host_port,
 };
 

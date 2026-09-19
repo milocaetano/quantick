@@ -38,18 +38,6 @@ pub struct ReplayPosition {
     pub rewind_target_elapsed_ms: i64,
 }
 
-impl ReplayPosition {
-    /// The position a replay link publishes.
-    #[must_use]
-    pub fn of(status: &quantick_feed::replay::ReplayStatus) -> Self {
-        Self {
-            elapsed_ms: status.elapsed_ms(),
-            rewinds: status.rewinds(),
-            rewind_target_elapsed_ms: status.rewind_target_elapsed_ms(),
-        }
-    }
-}
-
 impl TraceReinjection {
     /// Move the entries due at the position into `due`, exactly once per
     /// pass over the session. A rewind — the worker counted a restart or a

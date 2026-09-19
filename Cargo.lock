@@ -3049,7 +3049,6 @@ dependencies = [
  "quantick-control",
  "quantick-control-host",
  "quantick-engine",
- "quantick-feed",
  "quantick-indicators",
  "quantick-layers",
  "quantick-orderbook",
@@ -3083,6 +3082,7 @@ dependencies = [
  "quantick-feed-mt5",
  "quantick-orderbook",
  "quantick-replay",
+ "quantick-sources",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -3242,14 +3242,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-sources"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "rust_decimal",
+ "serde",
+]
+
+[[package]]
 name = "quantick-stores"
 version = "0.1.0"
 dependencies = [
  "quantick-chart",
  "quantick-engine",
- "quantick-feed",
  "quantick-indicators",
  "quantick-orderflow",
+ "quantick-sources",
  "quantick-workspace",
  "rust_decimal",
  "serde",

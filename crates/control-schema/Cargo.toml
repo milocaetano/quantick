@@ -10,7 +10,6 @@ publish.workspace = true
 quantick-control = { path = "../control" }
 quantick-control-host = { path = "../control-host" }
 quantick-engine = { path = "../engine" }
-quantick-feed = { path = "../feed" }
 quantick-indicators = { path = "../indicators" }
 quantick-layers = { path = "../layers" }
 quantick-orderbook = { path = "../orderbook" }

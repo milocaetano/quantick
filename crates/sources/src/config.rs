@@ -2,9 +2,9 @@
 //!
 //! Which backend streams a feed, what that backend can and cannot report, and
 //! how the MetaTrader listener is addressed. These types describe the adapters
-//! beside them, so they are declared here rather than in the application;
-//! `quantick-app`'s `config` module re-exports every one of them, and owns the
-//! `AppConfig` that holds them and the file it is loaded from.
+//! in `quantick-feed`, which re-exports them; they are declared here, below
+//! it, so the cockpit's config document (`quantick-stores`) reads them without
+//! linking the runtimes and venues the feed host owns.
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 /// Which backend streams a feed. This is the one place a config string is mapped
 /// to a code path; adding a provider means adding a variant here and a matching
-/// arm in [`crate::spawn`].
+/// arm in the feed host's `spawn`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
@@ -57,7 +57,7 @@ impl ProviderKind {
     ///
     /// This is the answer for the provider as such; a running feed may narrow
     /// it once it learns what its symbol actually offers (see
-    /// [`crate::FeedHandle::capabilities`]).
+    /// `FeedHandle::capabilities` in the feed host).
     #[must_use]
     pub fn capabilities(self) -> FeedCapabilities {
         match self {
@@ -120,7 +120,7 @@ impl ProviderKind {
     ///
     /// One sentence, capitalized, ending in a full stop: it is shown on its own
     /// under a headline, and also embedded after a clause (see
-    /// [`crate::stall`]).
+    /// the feed host's `stall`).
     #[must_use]
     pub fn recovery_hint(self) -> &'static str {
         match self {

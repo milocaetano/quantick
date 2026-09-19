@@ -23,9 +23,9 @@
 pub mod binance;
 pub mod candles;
 pub mod clock;
-pub mod config;
+pub use quantick_sources::config;
 pub mod continuity;
-pub mod history_reach;
+pub use quantick_sources::history_reach;
 pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;

@@ -29,6 +29,20 @@ use serde_json::Value;
 
 use super::{actions::ActionRegistry, gateway::ControlAccess};
 
+/// The capability a recovery control calls.
+///
+/// `control::scene` names it beside the button, so an operator reading the
+/// screen can invoke exactly what a click invokes. One mapping, beside the
+/// registrations it names — a second copy in the projection would be a string
+/// that goes stale the day either ID changes.
+pub(crate) const fn capability_id(recovery: quantick_feed::stall::Recovery) -> &'static str {
+    use quantick_feed::stall::Recovery;
+    match recovery {
+        Recovery::Reconnect => RECONNECT_CAPABILITY_ID,
+        Recovery::Reload => RELOAD_CAPABILITY_ID,
+    }
+}
+
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         descriptor(

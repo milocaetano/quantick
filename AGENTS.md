@@ -136,7 +136,8 @@ graph TD
   mcp --> control
 
   chart["chart<br/>headless chart model"] --> engine & indicators & orderflow
-  stores["stores<br/>cockpit documents"] --> chart & feed & workspace
+  stores["stores<br/>cockpit documents"] --> chart & sources & workspace
+  sources --> engine
   anchoredstudies["anchored-studies"] --> engine
   anchoredstudies --> indicators
   pine["pine<br/>Quantick Pine frontend"] --> indicators
@@ -154,6 +155,7 @@ graph TD
   sim --> engine
   trading["trading<br/>TradingVenue port"] --> engine
   feed["feed<br/>feed host"] --> feeds
+  feed --> sources
   feed --> replay
   feed --> orderbook
   feed --> engine
@@ -176,9 +178,9 @@ graph TD
 
 | Crate | What it owns |
 | --- | --- |
-| `backpressure` | Bounded owner-to-worker admission — park, fold, count, never drop — progress counts, live envelope; told the time. |
-| `chart` | Headless chart model: `ChartState` over the engine, price geometry, viewport, candle style, live strip. |
-| `stores` | Cockpit documents: feed catalogue, symbols, footprint, bubble and indicator presets, scripts, arrangement, home, bundle; the window locates each. |
+| `backpressure` | Owner-to-worker admission (park, fold, never drop), progress, live envelope; told the time. |
+| `chart` | Chart model: `ChartState`, price geometry, viewport, styles, live strip. |
+| `stores` | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
 | `chart-interaction` | Headless quick-range owner, scoped commands/events/effects and exact anchors. |
 | `layers` | Headless layer catalog, requested visibility, availability, inheritance and persistence policy; typed effects keep feature owners. |
 | `anchored-studies` | Resumable profile and anchored-average state; the caller schedules and paints. |
@@ -190,7 +192,7 @@ graph TD
 | `indicators` | Headless host, `Indicator` commit/preview rollback, incremental `ta.*`, draw objects. |
 | `pine` | Pine v5 subset: hand-rolled lexer, parser, compile passes, interpreter; no dependencies. |
 | `replay` | Recorded sessions: the CSV format, the folder scan, the deal recorder, the playback clock; *told* the time. |
-| `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; feed config, history reach, session export. Owns runtimes, threads and clock below `app`. |
+| `feed` | `FeedEvent`/`FeedCommand` port; Binance, Hyperliquid, MetaTrader, bridge, replay and stall adapters; session export. Owns runtimes, threads and clock below `app`. |
 | `trading` | The venue-neutral order vocabulary and the `TradingVenue` port every execution backend implements; a broker adapter docks where the simulator sits. |
 | `sim` | Deterministic paper trading: one `TradingVenue`. Conservative tape-based fills — never on quotes the tape cannot prove. |
 | `paper` | The paper account: orders, risk sizing, the journal, its home and sidecar, report numbers over a `sim` venue. |
@@ -199,8 +201,9 @@ graph TD
 | `control` | Transport-neutral contracts: validated IDs, versioned envelopes, schemas, capability policy, bounded framing, cursors, `fake` host/client ports. |
 | `control-local` | The local transport: the private instance-descriptor directory and the blocking loopback client; one ownership check serves publisher and client. |
 | `control-host` | Host machinery under `app`: projection registry, admission, idempotency store, event journal. Told the time. |
-| `operability` | Every supported UI behaviour, the capability reaching it or its recorded exclusion; the matrix and the drift check. |
+| `operability` | Each UI behaviour, the capability reaching it or its exclusion; matrix and drift check. |
 | `mcp` | The MCP adapter. A leaf over `control` and `control-local`, never `app`; stdout carries MCP frames only. |
+| `sources` | Feed config vocabulary and the history reach, below `feed`. |
 | `feed-*` | Binance, Hyperliquid and MetaTrader 5 sources: trades out, never the script language. |
 | `backtest` | The headless harness: recorded sessions in, performance out, over the chart's exact engine and indicator path. |
 | `guards` | Guards the compiler cannot see: the size, context, cycle and UI-free ratchets, the English and encoding scans. |

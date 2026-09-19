@@ -38,27 +38,12 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::Value;
 
-use quantick_feed::stall::Recovery;
-
 /// The module both recovery capabilities belong to.
 pub const RECOVERY_MODULE_ID: &str = "feed";
 
 pub const RECONNECT_CAPABILITY_ID: &str = "feed.reconnect";
 
 pub const RELOAD_CAPABILITY_ID: &str = "feed.reload";
-
-/// The capability a recovery control calls.
-///
-/// `control::scene` names it beside the button, so an operator reading the
-/// screen can invoke exactly what a click invokes. One mapping, and it lives
-/// beside the registrations it names — a second copy in the projection would
-/// be a string that goes stale the day either ID changes.
-pub const fn capability_id(recovery: Recovery) -> &'static str {
-    match recovery {
-        Recovery::Reconnect => RECONNECT_CAPABILITY_ID,
-        Recovery::Reload => RELOAD_CAPABILITY_ID,
-    }
-}
 
 /// Which tab to recover. Omitted means the one the trader is looking at — the
 /// same default every other cockpit call takes.

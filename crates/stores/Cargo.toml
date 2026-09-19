@@ -9,10 +9,10 @@ publish.workspace = true
 [dependencies]
 quantick-chart = { path = "../chart" }
 quantick-engine = { path = "../engine" }
-# The feed-shaped config types and the history reach the catalogue speaks.
-quantick-feed = { path = "../feed" }
 quantick-indicators = { path = "../indicators" }
 quantick-orderflow = { path = "../orderflow" }
+# The feed-shaped config types and the history reach the catalogue speaks.
+quantick-sources = { path = "../sources" }
 quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }

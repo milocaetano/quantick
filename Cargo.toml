@@ -19,6 +19,7 @@ members = [
     "crates/pine",
     "crates/replay",
     "crates/sim",
+    "crates/sources",
     "crates/stores",
     "crates/paper",
     "crates/civil",

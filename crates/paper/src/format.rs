@@ -61,9 +61,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn symbols_sanitize_without_losing_venue_spellings() {}
-
-    #[test]
     fn signed_points_always_carry_their_sign() {
         assert_eq!(fmt_signed_points(Decimal::from(12)), "+12");
         assert_eq!(fmt_signed_points(Decimal::from(-3)), "-3");

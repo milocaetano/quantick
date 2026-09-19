@@ -84,7 +84,6 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "control",
             "control-host",
             "engine",
-            "feed",
             "indicators",
             "layers",
             "orderbook",
@@ -105,6 +104,9 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `indicators`: something the chart draws and `backtest` may consume.
     ("orderflow", &["engine", "orderbook"]),
     ("replay", &["civil", "engine"]),
+    // What a source is, below the host that runs one: the provider settings
+    // the config document reads and the history reach the feed host spends.
+    ("sources", &["engine"]),
     // The feed host: the port every venue implements, and the adapters that
     // run one. It sits above the three `feed-*` venue crates and `replay` —
     // a recorded session is a source like any other — and below `app`. It is
@@ -116,6 +118,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "orderbook",
             "replay",
+            "sources",
             "feed-binance",
             "feed-hyperliquid",
             "feed-mt5",
@@ -132,9 +135,9 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         &[
             "chart",
             "engine",
-            "feed",
             "indicators",
             "orderflow",
+            "sources",
             "workspace",
         ],
     ),

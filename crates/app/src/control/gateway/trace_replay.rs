@@ -73,7 +73,11 @@ impl ControlAccess {
                 let Some(link) = tab.replay.as_ref() else {
                     continue;
                 };
-                let position = ReplayPosition::of(&link.status);
+                let position = ReplayPosition {
+                    elapsed_ms: link.status.elapsed_ms(),
+                    rewinds: link.status.rewinds(),
+                    rewind_target_elapsed_ms: link.status.rewind_target_elapsed_ms(),
+                };
                 let path = &link.session.path;
                 match self.trace_reinjection.get_mut(path) {
                     Some(state) if state.owner_tab_id == tab_id => {

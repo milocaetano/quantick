@@ -13,6 +13,16 @@ use crate::feed::FeedNotice;
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
+/// The wire word for a feed's connection state.
+pub(crate) fn connection_state(state: quantick_feed::FeedConnectionState) -> &'static str {
+    use quantick_feed::FeedConnectionState;
+    match state {
+        FeedConnectionState::Connecting => "connecting",
+        FeedConnectionState::Reconnecting => "reconnecting",
+        FeedConnectionState::Connected => "connected",
+    }
+}
+
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
     registry.register_module(

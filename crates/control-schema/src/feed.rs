@@ -1,7 +1,5 @@
 //! Feed, market-data capability, status, and provenance snapshot.
 
-use quantick_feed::FeedConnectionState;
-
 use quantick_control::wire::WireU64;
 
 use schemars::JsonSchema;
@@ -171,12 +169,4 @@ pub struct FeedNoticeSnapshot {
 /// session counted, which is what a build without the field was reporting.
 pub fn no_feed_generation() -> WireU64 {
     WireU64::new(0)
-}
-
-pub fn connection_state(state: FeedConnectionState) -> &'static str {
-    match state {
-        FeedConnectionState::Connecting => "connecting",
-        FeedConnectionState::Reconnecting => "reconnecting",
-        FeedConnectionState::Connected => "connected",
-    }
 }
