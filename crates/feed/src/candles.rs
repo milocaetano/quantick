@@ -198,7 +198,7 @@ pub fn trim_borrowed_to_seam(
 ///
 /// One owner for the rule, so the two trims above cannot drift apart about
 /// where the seam is.
-pub fn seam_bucket_ms(
+fn seam_bucket_ms(
     first_engine_bar: Option<&Bar>,
     partial: Option<&Bar>,
     interval_ms: i64,

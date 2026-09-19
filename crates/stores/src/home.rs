@@ -219,7 +219,7 @@ pub fn rescue_toast(summary: &RescueSummary, home: &Path) -> Option<String> {
 /// Stamp the home as consolidated. A failed write only means the rescue
 /// re-runs next launch — it copies nothing it already copied, so that is
 /// safe.
-pub fn write_marker(marker: &Path) {
+fn write_marker(marker: &Path) {
     if let Err(error) = std::fs::write(
         marker,
         "quantick wrote this after bringing the cockpit stores it found in a launch \

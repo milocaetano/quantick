@@ -130,6 +130,11 @@ pub fn apply<'stores>(
     })
 }
 
+/// [`apply`] with the final rename injected and without the saves-off
+/// check, so a test can fail the Nth rename and prove what an interrupted
+/// install leaves behind. Public for the window's recovery tests
+/// (`workspace_bundle/recovery_tests.rs`), which drive it over the real
+/// store table; every production caller goes through [`apply`].
 pub fn apply_with_rename<'stores>(
     bundle: &Bundle,
     stores: &'stores [CockpitStore],
@@ -192,7 +197,7 @@ fn version_refused(found: u32) -> String {
     format!("workspace file version {found} (this build reads {FORMAT_VERSION})")
 }
 
-pub fn import_error(
+fn import_error(
     error: ImportFailure,
     stores: &[CockpitStore],
     paths: &[Option<PathBuf>],
@@ -260,7 +265,7 @@ pub fn write(path: &Path, bundle: &Bundle) -> Result<(), String> {
 /// truncates first, so a crash mid-write would leave a half file that the
 /// next read reports unreadable — the whole cockpit gone rather than a
 /// stale one.
-pub fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     quantick_workspace::write_refusal::guard_write(path).map_err(std::io::Error::other)?;
     let temp = path.with_extension("tmp");
     match std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path)) {
