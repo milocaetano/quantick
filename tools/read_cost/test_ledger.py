@@ -104,24 +104,6 @@ class Rows(unittest.TestCase):
 
 
 class Derivation(unittest.TestCase):
-    def test_a_touched_file_is_never_offered_as_detachable(self):
-        measured = report(
-            [
-                ("crates/core/src/lib.rs", 10, ["touched"]),
-                ("crates/core/src/both.rs", 500, ["referenced", "touched"]),
-                ("crates/core/src/big.rs", 400, ["referenced"]),
-                ("crates/core/src/small.rs", 20, ["referenced"]),
-            ]
-        )
-
-        top = ledger.top_referenced(measured)
-
-        self.assertEqual(
-            [entry["path"] for entry in top],
-            ["crates/core/src/big.rs", "crates/core/src/small.rs"],
-        )
-        self.assertEqual(len(ledger.touched_files(measured)), 2)
-
     def test_the_row_carries_the_measured_number_and_the_largest_reference(self):
         measured = report(
             [
@@ -208,6 +190,27 @@ class RowsOnTheRecord(unittest.TestCase):
             self.assertFalse(ledger.verify(path, "unrecorded"))
         finally:
             ledger.merged_pull_for_commit = held
+
+
+class RecordOutcome(unittest.TestCase):
+    """The one command here that acts rather than advises says what it did."""
+
+    def run_with(self, outcome):
+        held = ledger.record
+        ledger.record = lambda repo, path, number: outcome
+        try:
+            return ledger.main(["--ledger", "unused.md", "record", "--repo", ".", "--pr", "1"])
+        finally:
+            ledger.record = held
+
+    def test_a_recorded_row_and_an_already_recorded_one_both_succeed(self):
+        # Idempotent on the pull-request number, so a second run is not a
+        # failure - the row it would have written is already there.
+        self.assertEqual(self.run_with(ledger.APPENDED), 0)
+        self.assertEqual(self.run_with(ledger.ALREADY_RECORDED), 0)
+
+    def test_a_row_that_could_not_be_written_exits_non_zero(self):
+        self.assertEqual(self.run_with(ledger.FAILED), 1)
 
 
 class Ceiling(unittest.TestCase):

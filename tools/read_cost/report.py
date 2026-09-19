@@ -47,6 +47,9 @@ def load(name, filename):
 
 
 LEDGER = load("quantick_read_cost_ledger", "ledger.py")
+# The measurement's shape, through the ledger's own load: one module, so the
+# "referenced but not touched" rule cannot exist twice.
+SHAPE = LEDGER.SHAPE
 # The calculator, through the ledger: one load, so the hook and the comment
 # cannot end up measuring with two copies of the same module.
 MEASURE = LEDGER.MEASURE
@@ -54,9 +57,9 @@ MEASURE = LEDGER.MEASURE
 
 def comment(report, ceiling=None, row_missing_for=None):
     """The sticky comment body, marker first."""
-    touched = LEDGER.touched_files(report)
-    referenced = LEDGER.referenced_files(report)
-    top = referenced[: LEDGER.TOP_REFERENCED]
+    touched = SHAPE.touched_files(report)
+    referenced = SHAPE.referenced_files(report)
+    top = referenced[: SHAPE.TOP_REFERENCED]
     lines = [
         MARKER,
         f"### Read cost: {report['production_lines']} production lines",
@@ -113,7 +116,7 @@ def ceiling_warning(report, ceiling, branch):
         return None
     if ceiling is None or report["production_lines"] <= ceiling:
         return None
-    top = LEDGER.top_referenced(report)
+    top = SHAPE.top_referenced(report)
     detail = "".join(
         f"\n  {entry['lines']:>6}  {entry['path']}" for entry in top
     ) or "\n  (nothing is pulled in by reference alone)"

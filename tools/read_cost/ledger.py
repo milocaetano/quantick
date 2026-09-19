@@ -44,8 +44,12 @@ CEILING_MARKER = re.compile(r"^<!-- read-cost-ceiling:v1 (\d+) -->$", re.MULTILI
 ROW = re.compile(r"^\|\s*(\d+)\s*\|")
 COLUMNS = ("pr", "date", "branch", "base", "read_cost", "changed", "top")
 FEATURE_PREFIXES = ("feat/", "fix/")
-TOP_REFERENCED = 5
 HEADING = "| PR | Date | Branch | Base | Read cost | Changed | Top referenced |"
+# What `record` did. "Already recorded" is a success: the command is
+# idempotent on the pull-request number, so a second run is not a failure.
+APPENDED = "appended"
+ALREADY_RECORDED = "already recorded"
+FAILED = "failed"
 RULE = "| ---: | --- | --- | --- | ---: | ---: | --- |"
 
 
@@ -61,28 +65,7 @@ def load(name, filename):
 
 
 MEASURE = load("quantick_read_cost_measure_for_ledger", "measure.py")
-
-
-def touched_files(report):
-    return [entry for entry in report["files"] if "touched" in entry["roles"]]
-
-
-def referenced_files(report):
-    """The files pulled in by reference alone, largest first.
-
-    A file that is both touched and referenced is excluded: it is already in
-    the diff, so detaching the reference saves the reader nothing.
-    """
-    rows = [
-        entry
-        for entry in report["files"]
-        if "referenced" in entry["roles"] and "touched" not in entry["roles"]
-    ]
-    return sorted(rows, key=lambda entry: (-entry["lines"], entry["path"]))
-
-
-def top_referenced(report, limit=TOP_REFERENCED):
-    return referenced_files(report)[:limit]
+SHAPE = load("quantick_read_cost_shape", "shape.py")
 
 
 def is_feature_branch(branch):
@@ -124,22 +107,24 @@ def parse_rows(text):
 
 
 def format_row(row):
-    top = row["top"] or "—"
-    return (
-        f"| {row['pr']} | {row['date']} | {row['branch']} | {row['base']} "
-        f"| {row['read_cost']} | {row['changed']} | {top} |"
-    )
+    # Rendered from COLUMNS, in COLUMNS order, so the order is written
+    # once: `parse_rows` only checks how many cells a line has, so a row
+    # written in a different order than it is read parses into shifted
+    # fields rather than failing.
+    cells = [str(row[column]) for column in COLUMNS]
+    cells[COLUMNS.index("top")] = row["top"] or "—"
+    return "| " + " | ".join(cells) + " |"
 
 
 def row_from_report(report, pr, branch, base_ref, date):
-    top = top_referenced(report, 1)
+    top = SHAPE.top_referenced(report, 1)
     return {
         "pr": int(pr),
         "date": date,
         "branch": branch,
         "base": base_ref,
         "read_cost": report["production_lines"],
-        "changed": len(touched_files(report)),
+        "changed": len(SHAPE.touched_files(report)),
         "top": f"`{top[0]['path']}` ({top[0]['lines']})" if top else "",
     }
 
@@ -285,21 +270,24 @@ def today():
 def record(repo, path, number):
     """Append the row for pull request `number`, measured as GitHub sees it.
 
-    Works before the merge as well as after it, and measures the same two
-    objects either way: the base the pull request was opened against and its
-    current head. A row added on the branch and a row added from the merge
+    Answers which of the three things happened, because this is the one call
+    here that is an action rather than advice, and a caller that cannot tell
+    "recorded" from "could not record" commits nothing and finds out at the
+    merge. Works before the merge as well as after it, and measures the same
+    two objects either way: the base the pull request was opened against and
+    its current head. A row added on the branch and a row added from the merge
     commit are therefore the same row.
     """
     facts = pull_facts(number)
     for key in ("base_sha", "head_sha"):
         if not fetch_pull(repo, number, facts[key]):
             print(f"#{number}: objects unreachable, no row", file=sys.stderr)
-            return False
+            return FAILED
     try:
         report = MEASURE.measure(repo, facts["base_sha"], facts["head_sha"])
     except MEASURE.ReadCostError as problem:
         print(f"#{number}: {problem}", file=sys.stderr)
-        return False
+        return FAILED
     row = row_from_report(
         report,
         number,
@@ -307,13 +295,9 @@ def record(repo, path, number):
         facts["base"],
         facts["merged"] or today(),
     )
-    added = append_row(path, row)
-    print(
-        f"#{number}: {row['read_cost']} lines, "
-        f"{'appended' if added else 'already recorded'}",
-        file=sys.stderr,
-    )
-    return added
+    outcome = APPENDED if append_row(path, row) else ALREADY_RECORDED
+    print(f"#{number}: {row['read_cost']} lines, {outcome}", file=sys.stderr)
+    return outcome
 
 
 def verify(path, sha):
@@ -383,11 +367,10 @@ def main(argv=None):
         print(f"{backfill(args.repo, args.ledger, args.limit)} row(s) appended")
         return 0
     if args.mode == "record":
-        # Always 0. A pull request whose objects GitHub no longer serves is
-        # not a failure of the caller; the ledger gains no row and the reason
-        # is on stderr.
-        record(args.repo, args.ledger, args.pr)
-        return 0
+        # The one non-zero exit here. A caller that is told nothing happened
+        # can stop and look; a caller told nothing at all commits an empty
+        # change and finds out at the merge.
+        return 0 if record(args.repo, args.ledger, args.pr) != FAILED else 1
     if args.mode == "verify":
         # Also always 0. This runs on `main`, after the merge, where the row
         # can no longer be added by the pull request that owed it: reddening
