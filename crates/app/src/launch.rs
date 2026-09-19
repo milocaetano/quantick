@@ -171,8 +171,9 @@ impl LaunchConfig {
 
 /// Why this session must write no store: `Some` when the environment's
 /// variable names (`environment`) include a `QUANTICK_*` not `registered`, all
-/// of them logged in one line and carried by name. `main` asks before any store is read or
-/// written and, on `Some`, refuses every store write for the session.
+/// of them logged in one line and carried by name. `main` asks before any
+/// store is read or written and, on `Some`, refuses every store write for the
+/// session.
 ///
 /// A capture run points each store at scratch through a harness hook; against
 /// a build without that hook, the run would otherwise save over the trader's
