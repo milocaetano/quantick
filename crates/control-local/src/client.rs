@@ -107,6 +107,7 @@ pub struct LocalClient {
     codec: BoundedCodec,
     request_prefix: String,
     next_request: u64,
+    retry: crate::retry::RetryState,
 }
 
 impl LocalClient {
@@ -196,6 +197,7 @@ impl LocalClient {
             codec: BoundedCodec::default(),
             request_prefix,
             next_request: 1,
+            retry: crate::retry::RetryState::default(),
         })
     }
 
@@ -215,6 +217,12 @@ impl LocalClient {
         &self.handshake.effective_scopes
     }
 
+    /// Whether an authenticated describe response supplied this version's
+    /// retry classification. Unknown calls get conservative transport advice.
+    pub fn knows_retry_policy(&self, capability_id: &str, version: u32) -> bool {
+        self.retry.knows(capability_id, version)
+    }
+
     /// Send one request without waiting for its reply. Returns the request ID
     /// to correlate the reply with; a connection multiplexes bounded in-flight
     /// work, so replies may arrive in any order.
@@ -229,12 +237,29 @@ impl LocalClient {
         capability_version: u32,
         payload: Value,
     ) -> Result<RequestId, ControlError> {
+        self.send_versioned_with_key(capability_id, capability_version, payload, None)
+    }
+
+    /// Send with an optional key and an automatically allocated request ID.
+    pub fn send_versioned_with_key(
+        &mut self,
+        capability_id: &str,
+        capability_version: u32,
+        payload: Value,
+        idempotency_key: Option<IdempotencyKey>,
+    ) -> Result<RequestId, ControlError> {
         let mut raw = format!("{}{}", self.request_prefix, self.next_request);
         raw.truncate(CONTROL_REQUEST_ID_MAX_BYTES);
         let request_id = RequestId::new(raw)
             .map_err(|error| ControlError::invalid_request(error.to_string()))?;
         self.next_request = self.next_request.saturating_add(1);
-        self.send_with_request_id(request_id, capability_id, capability_version, payload)
+        self.dispatch(
+            request_id,
+            capability_id,
+            capability_version,
+            payload,
+            idempotency_key,
+        )
     }
 
     /// Send one request under a correlation ID the caller chose. The ID is
@@ -253,11 +278,14 @@ impl LocalClient {
 
     /// Send under the idempotency key the capability's descriptor allows.
     ///
-    /// A capability declaring `IdempotencyPolicy::Optional` promises that a
-    /// dropped call may be retried under the same key without acting twice.
-    /// Every other send here writes `idempotency_key: None`, so without this
-    /// the client half could not exercise the promise the contract publishes
-    /// — and a guarantee no client can reach is not one.
+    /// A capability declaring `IdempotencyPolicy::Optional` deduplicates the
+    /// same key on this connection while its bounded record is retained.
+    /// Records can expire or be evicted, so a missing mutation result needs
+    /// readback even with a key.
+    /// Transport loss ends that guarantee: reconcile instead of reconnecting
+    /// and repeating the mutation, even with the same key.
+    /// Use `send_versioned_with_key` when the caller does not need to choose
+    /// its own correlation ID.
     pub fn send_with_idempotency_key(
         &mut self,
         request_id: RequestId,
@@ -304,9 +332,12 @@ impl LocalClient {
             .codec
             .encode(FrameRole::Request, &request)
             .map_err(|_| ControlError::invalid_request("request encoding failed"))?;
+        // A failed write may have dispatched a whole request before reporting
+        // failure. Track it before the first byte leaves.
+        self.retry.begin(&request)?;
         self.stream
             .write_all(&frame)
-            .map_err(|_| instance_gone_error())?;
+            .map_err(|_| self.retry.transport_error())?;
         Ok(request_id)
     }
 
@@ -334,9 +365,17 @@ impl LocalClient {
 
     /// Read the next reply on the connection, whichever request it answers.
     pub fn read(&mut self) -> Result<ResponseEnvelope, ControlError> {
-        self.codec
+        let response = self
+            .codec
             .read_response(&mut self.stream)
-            .map_err(|_| instance_gone_error())
+            .map_err(|_| self.retry.transport_error())?;
+        if response.instance_id != self.descriptor.instance_id
+            || response.protocol_version != self.handshake.protocol_version
+        {
+            return Err(self.retry.transport_error());
+        }
+        self.retry.answered(&response);
+        Ok(response)
     }
 
     /// [`Self::read`] for a reply the gateway may legitimately take longer to

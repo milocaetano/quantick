@@ -3,7 +3,8 @@
 //! The registry itself — scope validation, revision tracking, the capture
 //! budget — is headless and lives in `quantick_control_host::projection`. What
 //! stays here is what only the application can supply: the host state its
-//! projectors read ([`QuantickApp`]) and the clock ([`SystemClock`]).
+//! projectors read (the window's [`ControlWindow`] port) and the clock
+//! ([`SystemClock`]).
 
 use std::{
     sync::{Arc, OnceLock},
@@ -22,21 +23,18 @@ use quantick_control_host::{
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
-#[cfg(test)]
-pub(crate) use quantick_control_host::projection::SerializedScope;
 pub(crate) use quantick_control_host::projection::{
     CaptureContext, ProjectionRegistryError, SerializedSnapshotCapture, SnapshotCapture,
 };
 
 /// The projection registry over the running application.
 ///
-/// A newtype that forwards, rather than a type alias: the extension-boundary
-/// guard refuses any alias that names `QuantickApp`, because an alias of the
-/// root itself would let an `impl` escape its measurement. Every method is
-/// the generic registry's own, specialised to this host.
-pub(crate) struct ProjectionRegistry(projection::ProjectionRegistry<QuantickApp>);
+/// A newtype that forwards, rather than a type alias, so the registry keeps
+/// one named type the rest of the control plane can hold. Every method is
+/// the generic registry's own, specialised to the window's port.
+pub(crate) struct ProjectionRegistry(projection::ProjectionRegistry<ControlWindow>);
 
 impl ProjectionRegistry {
     /// An empty registry that stamps and times its captures by `clock`.
@@ -46,7 +44,7 @@ impl ProjectionRegistry {
 
     /// The generic registry this one specialises, for code that is generic
     /// over the host.
-    pub fn inner(&self) -> &projection::ProjectionRegistry<QuantickApp> {
+    pub fn inner(&self) -> &projection::ProjectionRegistry<ControlWindow> {
         &self.0
     }
 
@@ -54,7 +52,7 @@ impl ProjectionRegistry {
     pub fn register_module<K>(
         &mut self,
         descriptor: ModuleDescriptor,
-        revision: fn(&QuantickApp) -> K,
+        revision: fn(&ControlWindow) -> K,
     ) -> Result<(), ProjectionRegistryError>
     where
         K: Eq + Send + 'static,
@@ -72,7 +70,7 @@ impl ProjectionRegistry {
         title: impl Into<String>,
         description: impl Into<String>,
         required_permission_ids: &[&str],
-        project: fn(&QuantickApp, CaptureContext) -> T,
+        project: fn(&ControlWindow, CaptureContext) -> T,
     ) -> Result<(), ProjectionRegistryError>
     where
         T: JsonSchema + Serialize + Send + 'static,
@@ -92,7 +90,7 @@ impl ProjectionRegistry {
     #[cfg(test)]
     pub fn descriptors(
         &self,
-    ) -> impl Iterator<Item = &projection::ProjectionDescriptor<QuantickApp>> {
+    ) -> impl Iterator<Item = &projection::ProjectionDescriptor<ControlWindow>> {
         self.0.descriptors()
     }
 
@@ -107,7 +105,7 @@ impl ProjectionRegistry {
     /// Capture exactly the requested scopes in one bounded, immutable pass.
     pub fn capture(
         &mut self,
-        app: &QuantickApp,
+        app: &ControlWindow,
         instance_id: &InstanceId,
         requested_scopes: &[SnapshotScopeId],
     ) -> Result<SnapshotCapture, ControlError> {

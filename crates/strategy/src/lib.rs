@@ -58,9 +58,14 @@
 //! come to disagree about the same bar.
 
 mod alarm;
+pub mod anchors;
 mod armed;
 mod force;
+pub mod presets;
 mod region;
+#[cfg(test)]
+mod scratch;
+pub mod sound;
 mod trigger;
 
 pub use alarm::{AlarmEvent, AlarmParams, AlarmWhen, RepeatPolicy, SignalAlarm};

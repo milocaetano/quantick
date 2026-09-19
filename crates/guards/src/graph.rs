@@ -56,17 +56,57 @@ use crate::Finding;
 /// same shape in prose and in a diagram, for a reader; this is the copy a
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
+    ("anchored-studies", &["engine", "indicators"]),
+    // Queue discipline and progress counts between an owner and a worker;
+    // told the time, and whether the worker unwound.
+    ("backpressure", &[]),
+    // The headless chart model: bar state over the engine, plus the
+    // geometry, style and strip the window paints from.
+    (
+        "chart",
+        &[
+            "chart-interaction",
+            "engine",
+            "indicators",
+            "orderbook",
+            "orderflow",
+        ],
+    ),
+    ("chart-interaction", &[]),
     ("control", &[]),
     ("control-local", &["control"]),
-    ("control-host", &["control"]),
+    ("control-host", &["control", "engine"]),
+    // The wire shapes of every projection and action, over the vocabularies
+    // they describe. The window binds the handlers; this crate binds none.
+    (
+        "control-schema",
+        &[
+            "control",
+            "control-host",
+            "engine",
+            "indicators",
+            "layers",
+            "orderbook",
+            "orderflow",
+            "pine",
+            "sim",
+            "stores",
+        ],
+    ),
     ("mcp", &["control", "control-local"]),
+    // The operability contract is a table and a comparison over it; the
+    // interface walks its own registries and hands them in.
+    ("operability", &[]),
     ("engine", &[]),
     ("orderbook", &[]),
     // The order-flow engine reads bars from `engine` and depth events from
     // `orderbook`, and is told the time by its caller. It sits beside
     // `indicators`: something the chart draws and `backtest` may consume.
     ("orderflow", &["engine", "orderbook"]),
-    ("replay", &["engine"]),
+    ("replay", &["civil", "engine"]),
+    // What a source is, below the host that runs one: the provider settings
+    // the config document reads and the history reach the feed host spends.
+    ("sources", &["engine"]),
     // The feed host: the port every venue implements, and the adapters that
     // run one. It sits above the three `feed-*` venue crates and `replay` —
     // a recorded session is a source like any other — and below `app`. It is
@@ -78,6 +118,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "orderbook",
             "replay",
+            "sources",
             "feed-binance",
             "feed-hyperliquid",
             "feed-mt5",
@@ -87,13 +128,31 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // it: it is what `sim` and any future broker adapter both speak.
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
+    // The cockpit stores: documents over the vocabularies they persist. The
+    // window resolves every path; the store never reads the environment.
+    (
+        "stores",
+        &[
+            "chart",
+            "engine",
+            "indicators",
+            "orderflow",
+            "sources",
+            "workspace",
+        ],
+    ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
-    ("paper", &["civil", "engine", "sim"]),
+    // `workspace` for the one store-write gate every sidecar asks (DS7).
+    ("paper", &["civil", "engine", "replay", "sim", "workspace"]),
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account below `app` and by the chart above it.
     ("civil", &[]),
-    ("strategy", &["engine", "sim"]),
+    ("layers", &[]),
+    ("workspace", &[]),
+    // `workspace` for the one store-write gate the preset bank asks (DS7).
+    ("strategy", &["engine", "sim", "workspace"]),
     ("indicators", &["engine"]),
+    ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),
     (
         "backtest",
@@ -437,6 +496,15 @@ fn is_dependency_section(header: &str) -> bool {
     header.ends_with("dependencies]")
 }
 
+/// Whether a section header opens a table of dependencies the crate *ships*
+/// with — plain or target-specific, never dev or build. A crate a test links
+/// is not a crate the production code consumes.
+fn is_production_section(header: &str) -> bool {
+    is_dependency_section(header)
+        && !header.ends_with("dev-dependencies]")
+        && !header.ends_with("build-dependencies]")
+}
+
 /// Whether every bracket a value opened has been closed.
 ///
 /// Counting characters is enough here and would not be in general: it would
@@ -461,6 +529,11 @@ fn brackets_balance(value: &str) -> bool {
 /// the first `=` wherever it falls and keeps taking lines until the brackets
 /// close.
 fn dependency_entries(text: &str) -> Vec<(String, String)> {
+    dependency_entries_in(text, is_dependency_section)
+}
+
+/// [`dependency_entries`], over only the sections `section` accepts.
+fn dependency_entries_in(text: &str, section: fn(&str) -> bool) -> Vec<(String, String)> {
     let mut entries = Vec::new();
     let mut in_dependencies = false;
     let mut unclosed: Option<(String, String)> = None;
@@ -481,7 +554,7 @@ fn dependency_entries(text: &str) -> Vec<(String, String)> {
         }
 
         if trimmed.starts_with('[') {
-            in_dependencies = is_dependency_section(trimmed);
+            in_dependencies = section(trimmed);
             continue;
         }
         if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
@@ -501,6 +574,34 @@ fn dependency_entries(text: &str) -> Vec<(String, String)> {
     // read rather than dropping it, so the check above can say so.
     entries.extend(unclosed);
     entries
+}
+
+/// Every crate under `crates/`, by directory name, with the other crates
+/// whose shipped dependencies name it by path — sorted both ways.
+///
+/// Read from the manifests rather than from [`ALLOWED`]: the table says what a
+/// crate *may* reach, and a crate with one consumer is a fact about what the
+/// workspace actually links. Dev and build dependencies are not consumers
+/// (see [`is_production_section`]), and a crate never consumes itself.
+pub fn consumers(root: &Path) -> Vec<(String, Vec<String>)> {
+    let manifests = crate_manifests(root);
+    manifests
+        .iter()
+        .map(|target| {
+            let by: Vec<String> = manifests
+                .iter()
+                .filter(|consumer| consumer.name != target.name)
+                .filter(|consumer| {
+                    dependency_entries_in(&consumer.text, is_production_section)
+                        .iter()
+                        .filter_map(|(_, value)| path_target(value))
+                        .any(|sibling| sibling == target.name)
+                })
+                .map(|consumer| consumer.name.clone())
+                .collect();
+            (target.name.clone(), by)
+        })
+        .collect()
 }
 
 /// Every edge the graph permits, counted. [`crate::report`] prints it, so a

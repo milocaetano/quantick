@@ -10,6 +10,7 @@ use egui_phosphor::regular as icons;
 pub(crate) use quantick_paper::report::{ReportPeriod, load_history, parse_period};
 
 use super::curve::draw_equity_curve;
+#[cfg(any(feature = "scenario-harness", test))]
 use super::ledger::LedgerScope;
 use super::tables::{
     draw_exit_reason_grid, draw_report_grid, draw_report_tiles, draw_side_grid, draw_trade_list,
@@ -33,6 +34,7 @@ impl ReportState {
     /// The `QUANTICK_PAPER_REPORT_AUTOSTART` hook: the report, scoped to
     /// every symbol — an autostart runs before the first feed settles, so
     /// "the current symbol" would be the wrong one anyway.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_report(&mut self, env: &ReportEnv<'_>) {
         self.report_symbol = None;
         self.open_report(env);
@@ -50,6 +52,7 @@ impl ReportState {
     /// Page the month grid to the month holding `date`. Separate from the
     /// pick on purpose: clicking a cell must not yank the grid to another
     /// month, while a hook naming a date must land where that date is.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn show_report_month(&mut self, date: CivilDate) {
         self.calendar.month = Some(date.month_start());
     }
@@ -76,6 +79,7 @@ impl ReportState {
     /// The `QUANTICK_PAPER_CALENDAR` hook: the report open with the month
     /// grid expanded and `selection` picked — the report's own path, so a
     /// scripted run reaches exactly the state a click would.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_calendar(&mut self, selection: DaySelection, env: &ReportEnv<'_>) {
         self.autostart_report(env);
         self.calendar.open = true;
@@ -89,6 +93,7 @@ impl ReportState {
     /// The `QUANTICK_LEDGER_SCOPE` hook: the ledger listing that
     /// instrument's saved history — the picker's own path, so a scripted
     /// run lands where a click would.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
         self.ledger_scope = scope;
         self.history_cache = None;
@@ -97,6 +102,7 @@ impl ReportState {
     /// The `QUANTICK_LEDGER_FOLD` hook: every day in the ledger folded
     /// shut, the one-line-per-day read. Folding is otherwise a click on
     /// each header, which a capture cannot perform.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_folded_days(&mut self, tz: TzOffset, env: &ReportEnv<'_>) {
         if self.history_cache.is_none() {
             self.reload_ledger(env);
@@ -108,6 +114,7 @@ impl ReportState {
     /// The `QUANTICK_LEDGER_PAGES` hook: the ledger already scrolled past
     /// its first page of saved history, which no screenshot could reach
     /// otherwise — the control that gets there is a click.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_ledger_pages(&mut self, pages: usize) {
         self.ledger_pages = pages.max(1);
     }
@@ -115,6 +122,7 @@ impl ReportState {
     /// The `QUANTICK_PAPER_REPORT_LIST` hook: whether the report lists the
     /// trades behind its curve. Open by default, so the hook exists to
     /// reach the collapsed state.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn set_report_list_open(&mut self, open: bool) {
         self.report_list_open = open;
     }

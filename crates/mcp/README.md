@@ -29,7 +29,7 @@ one, the routed ones name a fixed set and let a property pick which, and
 | `quantick_read_events` | `events.read` | A page of the semantic event journal after a cursor or from `oldest`/`latest`, with `dropped_before` when retention passed the cursor. |
 | `quantick_wait_for_change` | `events.wait` | Parks (≤ 30 s) until the journal moves past the cursor, then the page that completes the call. |
 | `quantick_search_capabilities` | `control.describe`, filtered | Capabilities and scopes by substring or module, with availability and the reason when one is unavailable. |
-| `quantick_invoke` | any registered capability | The long tail, under the same authority checks as the named tools. Omit `capability_version` and it calls the newest version the instance registers for that ID, read from `control.describe`; the result's `capability_version` says which one answered, and a refused describe is returned as the answer, retryable as given. An explicit version is sent as given. |
+| `quantick_invoke` | any registered capability | The long tail, under the same authority checks as the named tools. Omit `capability_version` and it calls the newest version the instance registers for that ID, read from `control.describe`; the result's `capability_version` says which one answered, and a refused describe is returned as the answer, retryable as given. An explicit version is sent as given. Optional `idempotency_key` is validated and passed unchanged in the request envelope, never inside the capability payload. |
 
 With the **annotator** profile the trader granted, the tool set also carries
 the half of the loop that answers on the chart:
@@ -98,7 +98,7 @@ path. It writes no configuration file, embeds no token and launches nothing.
 From the task checkout, build both executables. In PowerShell:
 
 ```powershell
-cargo build -p quantick-app -p quantick-mcp
+cargo build -p quantick-app -p quantick-mcp --features quantick-app/harness
 & .\target\debug\quantick-mcp.exe setup --client codex --profile observer
 ```
 
@@ -114,7 +114,9 @@ Local agent access**, choose observer and enable only the required permissions:
 `observe.evidence`, and `observe.screenshot`. The `observe` floor is automatic,
 not a selectable checkbox or a token accepted by the scope hook.
 Capture does not require paper, user-text, annotate,
-cockpit or trade grants. For an isolated harness launch, the equivalent is:
+cockpit or trade grants. For an isolated harness launch (an app built with
+`--features harness`; the default binary logs these names as `UNKNOWN_HOOK`
+and runs with saving off), the equivalent is:
 
 ```powershell
 $env:QUANTICK_CONTROL_ACCESS = "1"

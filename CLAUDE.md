@@ -21,23 +21,23 @@ CI also runs — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` 
 
 ## Architecture
 
-Invariants (`AGENTS.md` maps the crates):
+`AGENTS.md` maps crate ownership and dependencies:
 
-- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`, and `guards/src/cycle.rs` fails a new module cycle inside a crate.
-- **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
-- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `indicators`, `pine`, `replay`, `sim`, `paper`, `civil` and `strategy`, and it binds third-party crates too; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` are *told* the time. `backtest` and `mcp` are headless too; `backtest`'s one clock read is its `main.rs` stopwatch, to stderr only.
-- **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
-- **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, nor on the script language. A feed produces trades.
-- **`guards` has no dependencies at all.**
-- **Replay is a source, not a chart mode** — the live `FeedEvent` channel; UI gates on `FeedCapabilities`, never on "is this a replay?".
-- Feeds and symbols come from config (`crates/app/config/feeds.toml`, `QUANTICK_CONFIG` or `./quantick.toml`), never hardcoded.
+- **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`. Inside a crate too: `guards/src/cycle.rs` fails a module cycle.
+- **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp`, `guards`.
+- **Everything below `app` is headless** — no UI, no network, no async, no wall clock. That is `anchored-studies`, `backpressure`, `chart`, `chart-interaction`, `engine`, `orderbook`, `orderflow`, `trading`, `control`, `control-local`, `control-host`, `control-schema`, `operability`, `indicators`, `indicator-session`, `pine`, `replay`, `sim`, `sources`, `stores`, `paper`, `civil`, `layers`, `workspace` and `strategy`, and it binds third-party crates; `guards/src/headless.rs` scans all but the network. `replay` and `strategy` are told the time, never read it. `backtest` and `mcp` are headless too; `backtest`'s one wall-clock read is its `main.rs` stopwatch, to stderr only.
+- **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses `FeedEvent`.
+- **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, and never on the script language. A feed produces trades.
+- **`guards` has no dependencies at all** — its `dependencies` tables stay empty.
+- **Replay is a source, not a chart mode** — same `FeedEvent` channel a live venue uses. UI gates on `FeedCapabilities`, never on "is it a replay?".
+- Feeds and symbols come from config (`crates/app/config/feeds.toml`, `QUANTICK_CONFIG` or `./quantick.toml`), never code.
 
 ## Non-negotiable design rules
 
 - **Determinism** — same trades in, same bars out. In the engine: no wall clock, no randomness, no iteration-order-dependent output (`BTreeMap`/`Vec` over `HashMap`). Golden tests over fixed fixtures.
 - **One engine, three consumers** — chart, backtest and bot share the aggregator. Never fork bar-building per consumer.
 - **Data honesty** — inferred or incomplete data is labelled, never silently patched: a depth reduction is an "unattributed L2 reduction", never a cancellation.
-- **Small and focused** — not a trading platform. Build bars, show bars, expose bars to code.
+- **Small and focused** — not a trading platform. Build, show and expose bars.
 - **Operable without a hand** — no capability ships reachable by mouse alone: a named call, a readable result, a registry entry. Gate: `arch-review`'s *The second operator*.
 - **English is the repository's language** — identifiers, comments, doc comments, log/error/panic messages, UI strings, test names, assertion text, `.pine` scripts, config comments, everything under `docs/`, and branch names, commit messages and PR titles and bodies. Sessions with the trader happen in any language; the rule starts where something lands in the repo. Four exemptions, each where the foreign text *is* the data or the name: proper names of real people and products (`López de Prado`; B3's *mini índice* / *mini dólar*); localisation resources and language-detector word lists; a fixture reproducing text a real system emits; a marked, attributed quotation. The code, comment and test name around one stay English. Pre-existing lines are grandfathered — the finding is a line a diff *authors*. This bullet is the rule's single owner: `arch-review` dimension 8 grades it, `crates/guards/src/language.rs` enforces the mechanical half.
 

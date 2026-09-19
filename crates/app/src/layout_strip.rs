@@ -44,6 +44,8 @@ const HOVER_TAB_BRIGHTNESS: f32 = 1.3;
 const TAB_INSET_Y_PX: f32 = 2.0;
 /// Horizontal inset of the active rule inside its tab.
 const RULE_INSET_X_PX: f32 = 2.0;
+/// Thin floating scrollbar fits below the footer labels without shrinking them.
+const SCROLLBAR_WIDTH_PX: f32 = 3.0;
 
 /// What the app hands the strip each frame.
 pub struct StripModel<'a> {
@@ -94,7 +96,7 @@ pub fn draw(
     );
     let scroll = &mut content.spacing_mut().scroll;
     scroll.floating = true;
-    scroll.bar_width = 3.0;
+    scroll.bar_width = SCROLLBAR_WIDTH_PX;
     scroll.floating_allocated_width = 0.0;
     let active_memory = egui::Id::new(("layout_strip_active", salt));
     let reveal_active = ui.ctx().data_mut(|data| {

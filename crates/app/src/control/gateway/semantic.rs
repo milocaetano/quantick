@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use quantick_control::id::{EventKind, ModuleId};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 use crate::metrics;
 
 use super::super::feed::connection_state;
@@ -136,9 +136,9 @@ fn author_payload(drawing: &crate::drawings::Drawing) -> Value {
     })
 }
 
-fn tab_key(tab: &crate::tab::Tab) -> TabKey {
+fn tab_key(tab_id: u64, tab: &crate::tab::Tab) -> TabKey {
     TabKey {
-        tab_id: tab.id,
+        tab_id,
         feed_id: tab.active.0.clone(),
         symbol: tab.active.1.clone(),
         connection: connection_state(tab.feed_connection),
@@ -217,12 +217,13 @@ impl ControlAccess {
     /// nothing; with access disabled nothing runs at all, the journal starts
     /// when the human opens the door and records changes, not the state it
     /// found.
-    pub(super) fn emit_semantic_changes(&mut self, app: &QuantickApp) {
-        let tabs = app.control_tabs();
+    pub(super) fn emit_semantic_changes(&mut self, app: &ControlWindow) {
+        let tabs = app.tab_reads().tabs();
         let active = &tabs[app
-            .control_active_tab_index()
+            .tab_reads()
+            .active_tab_index()
             .min(tabs.len().saturating_sub(1))];
-        let active_tab_id = active.id;
+        let active_tab_id = tabs.active_id();
         let focused_pane_id = active.pane(active.focused_side()).id;
         let selection = selection_identity(app);
         let Some(mut baseline) = self.semantic_baseline.take() else {
@@ -230,7 +231,10 @@ impl ControlAccess {
                 active_tab_id,
                 focused_pane_id,
                 selection,
-                tabs: tabs.iter().map(tab_key).collect(),
+                tabs: tabs
+                    .iter_with_ids()
+                    .map(|(id, tab)| tab_key(id, tab))
+                    .collect(),
             });
             return;
         };
@@ -268,10 +272,10 @@ impl ControlAccess {
                 now,
             );
         }
-        for tab in tabs {
-            match baseline.tabs.iter_mut().find(|old| old.tab_id == tab.id) {
+        for (tab_id, tab) in tabs.iter_with_ids() {
+            match baseline.tabs.iter_mut().find(|old| old.tab_id == tab_id) {
                 None => {
-                    let key = tab_key(tab);
+                    let key = tab_key(tab_id, tab);
                     self.record_observed(
                         "workspace",
                         "workspace.tab.opened",
@@ -287,7 +291,7 @@ impl ControlAccess {
                         self.record_observed(
                             "feed",
                             "feed.market.changed",
-                            json!({ "tab_id": tab.id.to_string(), "feed_id": old.feed_id, "symbol": old.symbol }),
+                            json!({ "tab_id": tab_id.to_string(), "feed_id": old.feed_id, "symbol": old.symbol }),
                             now,
                         );
                     }
@@ -297,7 +301,7 @@ impl ControlAccess {
                         self.record_observed(
                             "feed",
                             "feed.connection.changed",
-                            json!({ "tab_id": tab.id.to_string(), "state": connection }),
+                            json!({ "tab_id": tab_id.to_string(), "state": connection }),
                             now,
                         );
                     }
@@ -308,7 +312,7 @@ impl ControlAccess {
                             "replay",
                             "replay.state.changed",
                             json!({
-                                "tab_id": tab.id.to_string(),
+                                "tab_id": tab_id.to_string(),
                                 "active": replay.is_some(),
                                 "playing": replay.map(|(playing, _)| playing),
                                 "finished": replay.map(|(_, finished)| finished),
@@ -320,7 +324,7 @@ impl ControlAccess {
                     // slices per pane and allocates only once it has something
                     // to say.
                     if !analysis_matches(tab, &old.panes) {
-                        self.record_analysis_changes(tab, &old.panes, now);
+                        self.record_analysis_changes(tab_id, tab, &old.panes, now);
                         old.panes = pane_analysis_keys(tab);
                     }
                 }
@@ -330,10 +334,10 @@ impl ControlAccess {
             || baseline
                 .tabs
                 .iter()
-                .any(|old| !tabs.iter().any(|tab| tab.id == old.tab_id))
+                .any(|old| !tabs.iter_with_ids().any(|(tab_id, _)| tab_id == old.tab_id))
         {
             baseline.tabs.retain(|old| {
-                let open = tabs.iter().any(|tab| tab.id == old.tab_id);
+                let open = tabs.iter_with_ids().any(|(tab_id, _)| tab_id == old.tab_id);
                 if !open {
                     self.record_observed(
                         "workspace",
@@ -360,11 +364,12 @@ impl ControlAccess {
     /// detach and the attach it really is, never as one instance mutating.
     fn record_analysis_changes(
         &mut self,
+        tab_id: u64,
         tab: &crate::tab::Tab,
         stored: &[PaneAnalysisKey],
         now: i64,
     ) {
-        let tab_id = tab.id.to_string();
+        let tab_id = tab_id.to_string();
         for (pane, side) in analysis_panes(tab) {
             let was = stored.iter().find(|key| key.pane_id == pane.id);
             let previous_indicators = was.map(|key| key.indicators.as_slice()).unwrap_or(&[]);

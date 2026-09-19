@@ -21,6 +21,7 @@ mod interaction;
 pub(crate) mod inventory;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
+mod layers;
 mod layout;
 mod notify;
 mod orderflow;
@@ -31,7 +32,7 @@ pub(crate) mod retry_matrix;
 mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
-mod script;
+pub(crate) mod script;
 mod session;
 mod system;
 mod trace;
@@ -42,7 +43,7 @@ mod workspace;
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
 pub(crate) use annotate::{
     FIB_CAPABILITY_VERSION, FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID,
-    PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, fibonacci_input, fixed_range_profile_input,
+    PROFILE_CAPABILITY_ID, PROFILE_CAPABILITY_VERSION, quick_range_input,
 };
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
@@ -106,5 +107,6 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     orderflow::register(&mut registry)?;
     session::register(&mut registry)?;
     scene::register(&mut registry)?;
+    layers::register(&mut registry)?;
     Ok(registry)
 }

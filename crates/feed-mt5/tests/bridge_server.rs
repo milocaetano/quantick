@@ -106,6 +106,128 @@ fn tick(seq: u64, last: &str, volume: u64) -> String {
     )
 }
 
+#[tokio::test]
+async fn sequence_loss_precedes_live_data_and_survives_quote_only_ticks() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut socket = TcpStream::connect(&addr).await.unwrap();
+    let script = hello("WIN$N")
+        + &tick(500, "100", 1)
+        + &tick(501, "101", 1)
+        + &tick(505, "0", 0)
+        + &tick(506, "102", 1);
+    socket.write_all(script.as_bytes()).await.unwrap();
+    assert!(matches!(
+        next_event(&mut rx).await,
+        Mt5Event::Status(Mt5Status::Connected { .. })
+    ));
+    assert!(matches!(next_event(&mut rx).await, Mt5Event::Live(trade) if trade.agg_id == 501));
+    match next_event(&mut rx).await {
+        Mt5Event::SequenceAnomaly {
+            anomaly,
+            from_ms,
+            to_ms,
+        } => {
+            assert_eq!(
+                anomaly,
+                quantick_feed_mt5::SeqAnomaly::Gap {
+                    expected: 502,
+                    got: 505,
+                    missing: 3
+                }
+            );
+            assert_eq!(from_ms, 1_784_824_300_501 + 10_800_000);
+            assert_eq!(to_ms, 1_784_824_300_505 + 10_800_000);
+        }
+        _ => panic!("quote-only gap must be reported before the next print"),
+    }
+    assert!(matches!(next_event(&mut rx).await, Mt5Event::Live(trade) if trade.agg_id == 506));
+}
+
+#[tokio::test]
+async fn sequence_duplicates_and_backwards_ids_are_not_claimed_as_missing() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut socket = TcpStream::connect(&addr).await.unwrap();
+    socket
+        .write_all(
+            (hello("WIN$N")
+                + &tick(10, "100", 1)
+                + &tick(10, "0", 0)
+                + &tick(7, "0", 0)
+                + &tick(11, "101", 1))
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_event(&mut rx).await,
+        Mt5Event::Status(Mt5Status::Connected { .. })
+    ));
+    for got in [10, 7] {
+        assert!(
+            matches!(next_event(&mut rx).await, Mt5Event::SequenceAnomaly {
+            anomaly: quantick_feed_mt5::SeqAnomaly::NotMonotonic { last: 10, got: observed }, ..
+        } if observed == got)
+        );
+    }
+    assert!(matches!(next_event(&mut rx).await, Mt5Event::Live(trade) if trade.agg_id == 11));
+    drop(socket);
+    while !matches!(
+        next_event(&mut rx).await,
+        Mt5Event::Status(Mt5Status::Lost { .. })
+    ) {}
+    let mut socket = TcpStream::connect(&addr).await.unwrap();
+    socket
+        .write_all((hello("WIN$N") + &tick(1, "100", 1) + &tick(2, "101", 1)).as_bytes())
+        .await
+        .unwrap();
+    loop {
+        match next_event(&mut rx).await {
+            Mt5Event::Status(_) => {}
+            Mt5Event::Live(trade) => {
+                assert_eq!(trade.agg_id, 2);
+                break;
+            }
+            _ => panic!("fresh session IDs must not fabricate a sequence anomaly"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn late_mt5_reorder_cannot_move_the_next_gap_backwards() {
+    let (addr, mut rx) = start_server("WIN$N").await;
+    let mut socket = TcpStream::connect(&addr).await.unwrap();
+    socket
+        .write_all(
+            (hello("WIN$N")
+                + &tick_at(100, 1000, "100", 1)
+                + &tick_at(90, 500, "0", 0)
+                + &tick_at(102, 1020, "101", 1))
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        next_event(&mut rx).await,
+        Mt5Event::Status(Mt5Status::Connected { .. })
+    ));
+    assert!(matches!(
+        next_event(&mut rx).await,
+        Mt5Event::SequenceAnomaly {
+            anomaly: quantick_feed_mt5::SeqAnomaly::NotMonotonic { .. },
+            ..
+        }
+    ));
+    assert!(matches!(
+        next_event(&mut rx).await,
+        Mt5Event::SequenceAnomaly {
+            anomaly: quantick_feed_mt5::SeqAnomaly::Gap { missing: 1, .. },
+            from_ms: 10_801_000,
+            to_ms: 10_801_020,
+        }
+    ));
+    assert!(matches!(next_event(&mut rx).await, Mt5Event::Live(trade) if trade.agg_id == 102));
+}
+
 /// A hello from a bridge that reads its socket and answers `load_older`.
 fn hello_that_pages(symbol: &str) -> String {
     format!(
@@ -569,13 +691,21 @@ async fn one_request_at_a_time_and_a_page_nobody_asked_for_is_dropped() {
     script.push_str(&tick_at(10, 1_784_824_201_000, "177710", 5));
     script.push_str("{\"type\":\"history_end\",\"exhausted\":false}\n");
     // Followed by a live print, so the test has something to wait for that
-    // proves the unsolicited block produced nothing of its own.
+    // proves the unsolicited block produced no chart data of its own. These
+    // live IDs go backwards from the page's 10, so diagnostics remain due.
     script.push_str(&tick(1, "177795", 3));
     script.push_str(&tick(2, "177800", 1));
     sock.write_all(script.as_bytes()).await.unwrap();
 
+    for got in [1, 2] {
+        assert!(
+            matches!(next_event(&mut rx).await, Mt5Event::SequenceAnomaly {
+            anomaly: quantick_feed_mt5::SeqAnomaly::NotMonotonic { last: 10, got: observed }, ..
+        } if observed == got)
+        );
+    }
     let Mt5Event::Live(trade) = next_event(&mut rx).await else {
-        panic!("the unsolicited page must produce no event at all");
+        panic!("the unsolicited page must produce no trade or history event");
     };
     assert_eq!(trade.side, Side::Buy);
 }

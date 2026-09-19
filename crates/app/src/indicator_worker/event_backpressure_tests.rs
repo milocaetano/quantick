@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 #[test]
 fn a_ui_that_stops_reading_pauses_the_worker_and_loses_no_row() {
     // Two slots of output, so the first batch's events already fill it.
-    let worker = IndicatorWorker::spawn_bounded(WorkerProgress::new(), 2);
+    let worker = IndicatorWorker::spawn_bounded(crate::worker_progress::monotonic(), 2);
     worker.send(IndicatorCommand::Add {
         slot: SlotId(1),
         source: IndicatorSource::Native {

@@ -64,7 +64,7 @@
 # fails on and which is the drift this whole tree exists to prevent.
 # PR #345 review repair (Codex): +24 bytes declares the expanded
 # normative-contract scope and its mission-evidence exclusion.
-CLAUDE.md 8330
+CLAUDE.md 8539
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -91,7 +91,7 @@ CLAUDE.md 8330
 # Raised by 305 bytes for the three hooks that make deal recording and the
 # unavailable trades-bar state reachable without a hand.
 .claude/skills/ui-harness/references/hook-registry.md 71122
-.claude/skills/ui-harness/SKILL.md 7485
+.claude/skills/ui-harness/SKILL.md 7976
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
 # than a list that costs 54 bytes — an agent reading it would find the step in
@@ -134,7 +134,7 @@ CLAUDE.md 8330
 # the paper account, so it got a crate below all three rather than an edge
 # into the paper account for anyone who needs a timezone. One node in the
 # pure-domain group, the two edges that reach it, one row.
-AGENTS.md 3197
+AGENTS.md 4523
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
@@ -218,4 +218,4 @@ docs/workflow/delivery.md 11361
 # -> 11,527 bytes) and the SKILL.md files (105,235 -> 62,657): reasoning moved
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
-!budget 247204
+!budget 250150

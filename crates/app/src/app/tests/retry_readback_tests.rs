@@ -51,6 +51,11 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "layer_control_tests.rs"]
+mod layer_control;
+#[path = "mutation_uncertainty_tests.rs"]
+mod uncertainty;
+
 /// Scopes a client asks for: the safe reads plus `extra`.
 fn options(profile: &str, extra: &[&str]) -> ConnectOptions {
     let mut scopes = gateway_test_scopes();
@@ -569,6 +574,7 @@ const LAYOUT_V2: u32 = 2;
 /// store this test is about.
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
+        ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         (
             "layout.preset.apply",
             LAYOUT_V2,
@@ -606,6 +612,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("layout.pane.expand", LAYOUT_V2, json!({}), Readback::Moves),
+        ("layout.pane.resize_pair", 1, Value::Null, Readback::Moves),
         // Seven places cannot come back as they were sent, so v2 refuses
         // them — and the readback stays where it was.
         (
@@ -649,6 +656,45 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
     ]
+}
+
+#[test]
+fn context_pair_resize_requires_the_granted_layout_scope() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("resize-pair-scopes");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let input = json!({
+        "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
+        "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
+        "fraction": "0.4"
+    });
+    let before = app.active_tab().context_divider_rect(0).unwrap();
+    for options in [options("observer", &[]), options("cockpit", &["cockpit"])] {
+        let mut client = connect(&directory, &options);
+        let (response, served) = keyed_call(
+            &mut app,
+            &mut client,
+            "denied",
+            "layout.pane.resize_pair",
+            input.clone(),
+            "denied-pair",
+        );
+        assert!(matches!(
+            error_code(&response),
+            Some(codes::SCOPE_DENIED | codes::PERMISSION_DENIED)
+        ));
+        assert!(served.iter().all(|request| !request.began));
+        run_frame(&mut app, &ctx);
+        assert_eq!(app.active_tab().context_divider_rect(0).unwrap(), before);
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every reachable `optional` row, not one per family: a keyed call, its
@@ -701,12 +747,23 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "layers.visibility.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "layer_id": "grid", "visible": !app.style.canvas.grid_enabled,
+            }),
             "layout.tab.switch" => json!({ "name": first_layout }),
+            "layout.pane.resize_pair" => json!({
+                "upper_pane_id": app.active_tab().pane_at(1).unwrap().id.to_string(),
+                "lower_pane_id": app.active_tab().pane_at(2).unwrap().id.to_string(),
+                "fraction": "0.4"
+            }),
             "indicator.mouse_vertical_line.set" => {
+                let tab_id = app.tabs.active_id();
                 let tab = app.active_tab();
                 let view = &tab.flow_pane.indicators.all()[0];
                 json!({
-                    "tab_id": tab.id.to_string(),
+                    "tab_id": tab_id.to_string(),
                     "pane_id": tab.flow_pane.id.to_string(),
                     "slot_id": view.slot.0.to_string(),
                     "enabled": true,
@@ -1156,13 +1213,13 @@ fn a_keyed_action_held_past_its_deadline_is_refused_as_unknown_and_reconciled_by
     let first = client.read().expect("the deadline answers");
     assert_eq!(error_code(&first), Some(codes::TIMEOUT));
     assert!(
-        response_error(&first).retryable,
-        "a timeout invites a retry"
+        !response_error(&first).retryable,
+        "even a keyed timeout cannot promise retention before a future retry"
     );
 
-    // The invited retry. While the worker is still waiting out the settle
-    // window the key is in flight, and the contract's answer to that is "ask
-    // again" — so this asks again, slower than the connection's rate limit.
+    // Deliberately probe despite the refusal to prove the reservation keeps
+    // deduplicating and settles into readback advice. A compliant caller
+    // reconciles without these probes; they never execute a second action.
     let mut attempts = 0;
     let (refused, served) = loop {
         attempts += 1;

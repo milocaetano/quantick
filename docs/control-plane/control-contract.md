@@ -214,6 +214,17 @@ pointer, token, secret, timestamp, or client-owned mutable state.
 
 ### 5.2 Retries and dry runs
 
+A missing reply never proves that an action did not run. The gateway arbitrates
+deadline cancellation atomically against application dispatch. Cancellation
+that wins returns `details.outcome: "not_started"` and permits retry; a
+mutation that may have started returns `retryable: false` and
+`details.outcome: "unknown"`, with readback instructions. Read-only calls can
+be retried. A keyed deadline is also non-retryable: a bounded terminal record
+may be evicted by another principal before a future retry. A lost transport after
+possible dispatch is non-retryable for mutations even with a key: the next
+connection has a different authenticated principal. Transport clients use the
+running registry's read-only metadata and treat unknown capabilities conservatively.
+
 `request_id` correlates one attempt and is never a retry key. A capability
 descriptor declares idempotency as `forbidden`, `optional`, or `required`, and
 separately declares whether it supports `dry_run`. Financial actions and any
@@ -228,8 +239,14 @@ mutate state. Request ID, key, reason, and actor metadata are excluded; the
 trusted principal is already part of the store key. A retry with the same
 digest returns the original terminal result. Reusing the key with a different
 digest returns `control.idempotency_conflict`; retrying while the first attempt
-is still executing returns retryable `control.request_in_progress`. Raw keys
+is still executing returns non-retryable `control.request_in_progress` with
+readback advice; a future retry cannot assume the record survived. Raw keys
 are never logged.
+
+When a terminal result exceeds the retention byte limit, the real gateway
+retains a compact non-retryable `control.payload_too_large` uncertainty refusal
+under the key. It still attempts to send the original result; a retry receives
+the refusal and reconciles by readback, never by executing the action again.
 
 Records are scoped to the connection's authenticated principal, which the local
 gateway mints per handshake. They remain for the configured retention period,
@@ -241,8 +258,10 @@ let one client replay another's recorded result. Widening it needs a durable
 client identity the handshake proves.
 
 At capacity the store evicts, taking the oldest record of whichever principal
-holds the most, so one busy connection cannot spend the shared cap and withdraw
-the guarantee published to every other. The rule that a capability whose
+holds the most, limiting how much one busy connection can displace another.
+This does not prevent cross-principal eviction before TTL, so an unanswered
+mutation never receives optimistic retry advice on the strength of its key.
+The rule that a capability whose
 descriptor *requires* idempotency receives backpressure rather than costing an
 unexpired record its place is **not implemented**: no capability declares
 `Required`, and the first that does owes it. Such capabilities return compact

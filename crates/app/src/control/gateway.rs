@@ -25,14 +25,16 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, RequestEnvelope},
 };
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
+#[cfg(any(feature = "control-harness", test))]
+use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
     contract::{COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
-        DeferredActionResult, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, ObserverContract,
-        PreparedDispatch, PreparedRequest, UiReadContext, UiReadExecution,
+        DeferredActionResult, OBSERVER_PROFILE_ID, ObserverContract, PreparedDispatch,
+        PreparedRequest, UiReadContext, UiReadExecution,
     },
     evidence,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
@@ -44,6 +46,7 @@ use super::{
 
 mod encode_refusal;
 // Moved to `quantick-control-host`; named here so `super::idempotency` resolves.
+use quantick_control_host::dispatch::DispatchState;
 use quantick_control_host::idempotency;
 mod local_action;
 mod panel;
@@ -72,6 +75,7 @@ const WAITER_POLL_MS: u64 = 250;
 /// window. Self-declared like every client name, and honest.
 /// What the annotate launch hooks call themselves. A name, never a
 /// disguise: the object they place says an assistant put it there.
+#[cfg(any(feature = "control-harness", test))]
 const HOOK_ACTOR_CLIENT_NAME: &str = "launch hook (agent)";
 const UI_ACTOR_CLIENT_NAME: &str = "quantick-ui";
 /// Take a mark of what is under the pointer (`attention.mark.create`).
@@ -194,6 +198,8 @@ struct GatewayOptions {
     /// Test build only: see [`server::AnswerWritten`].
     #[cfg(test)]
     answer_written: Option<server::AnswerWritten>,
+    #[cfg(test)]
+    answer_before_write: Option<server::AnswerBeforeWrite>,
 }
 
 impl Default for GatewayOptions {
@@ -208,6 +214,8 @@ impl Default for GatewayOptions {
             descriptor_directory: None,
             #[cfg(test)]
             answer_written: None,
+            #[cfg(test)]
+            answer_before_write: None,
         }
     }
 }
@@ -377,11 +385,8 @@ impl ClientRateLimiter {
 /// matrix reads this list to say which capabilities an agent can reach at all,
 /// and a gateway test pins `configured_profile` to it, so a branch that starts
 /// handing out another ceiling fails there before the matrix can go stale.
-pub(crate) const GRANTABLE_PROFILE_IDS: [&str; 3] = [
-    OBSERVER_PROFILE_ID,
-    ANNOTATOR_PROFILE_ID,
-    COCKPIT_PROFILE_ID,
-];
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::GRANTABLE_PROFILE_IDS;
 
 /// Whether a permission belongs to the trade tier — see the access
 /// panel's read-scope filter for why it is excluded from every section.
@@ -446,7 +451,7 @@ struct UiRequest {
     /// Set once this request is past every pre-dispatch refusal, so the
     /// response worker can tell "never ran" from "may have run" when it stops
     /// hearing back. `gateway/idempotency.rs` is what needs the difference.
-    started: Arc<AtomicBool>,
+    started: Arc<DispatchState>,
     response: Sender<Result<UiReadExecution, ControlError>>,
 }
 
@@ -462,7 +467,7 @@ struct DrainObservation {
     queue_has_more: bool,
 }
 
-/// UI-owned access state. It never exposes `QuantickApp` to worker threads.
+/// UI-owned access state. It never exposes the window's port to worker threads.
 pub(crate) struct ControlAccess {
     identity: Option<ProcessIdentity>,
     initialization_error: Option<String>,
@@ -479,6 +484,8 @@ pub(crate) struct ControlAccess {
     show_panel: bool,
     notice: Option<String>,
     last_drain: DrainObservation,
+    #[cfg(test)]
+    observed_completion: Option<retry_seams::ObservedCompletion>,
     /// The semantic event journal. Written only on the application thread;
     /// read through the UI queue; signalled to parked waiters without a lock.
     journal: EventJournal,
@@ -554,6 +561,8 @@ impl ControlAccess {
             show_panel: false,
             notice: None,
             last_drain: DrainObservation::default(),
+            #[cfg(test)]
+            observed_completion: None,
             journal,
             journal_ticks,
             actions,
@@ -610,16 +619,12 @@ impl ControlAccess {
     /// the read or the action itself.
     fn execute_on_ui(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         current_generation: u64,
         request: &UiRequest,
     ) -> Result<UiReadExecution, ControlError> {
         if request.deadline <= Instant::now() {
-            return Err(known_error(
-                codes::TIMEOUT,
-                "request expired before application-thread dispatch",
-                true,
-            ));
+            return Err(request.started.interrupted(codes::TIMEOUT, false));
         }
         if request.grant_generation != current_generation
             || self.revoked_connections.contains(&request.connection_id)
@@ -640,9 +645,6 @@ impl ControlAccess {
                 ));
             }
         };
-        // Past every refusal that can happen without touching the
-        // application: from here the request may really act.
-        request.started.store(true, Ordering::Release);
         if request.prepared.envelope.instance_id != instance_id {
             return Err(known_error(
                 codes::INSTANCE_GONE,
@@ -662,6 +664,11 @@ impl ControlAccess {
             ));
         }
 
+        // The response worker can cancel queued work even after our deadline
+        // check. Both sides arbitrate the same transition before any action.
+        if !request.started.try_start() {
+            return Err(request.started.interrupted(codes::TIMEOUT, false));
+        }
         if let PreparedDispatch::Action(action) = &request.prepared.dispatch {
             let Some(actor) = request.actor.clone() else {
                 return Err(known_error(
@@ -697,7 +704,7 @@ impl ControlAccess {
         })
     }
 
-    pub fn begin_frame(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
+    pub fn begin_frame(&mut self, app: &mut ControlWindow, ctx: &eframe::egui::Context) {
         self.begin_frame_since(app, ctx, Instant::now());
     }
 
@@ -707,7 +714,7 @@ impl ControlAccess {
     /// which is what a loaded machine's frame prelude does.
     fn begin_frame_since(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
         frame_started: Instant,
     ) {
@@ -749,6 +756,8 @@ impl ControlAccess {
             }
             let result = self.execute_on_ui(app, generation, &request);
             let _ = request.response.try_send(result);
+            #[cfg(test)]
+            self.observe_completion_for_test(&request.prepared.envelope.request_id);
         });
         self.last_drain = drain;
         // A rasterised frame is worth exactly one frame. Whatever is still
@@ -789,6 +798,7 @@ impl ControlAccess {
     /// the tier's floor and opens nothing on its own. An unknown ID is refused
     /// loudly rather than silently dropped: a typo that quietly grants less is
     /// a debugging afternoon.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn configure_scopes(&mut self, scopes: &str) -> Result<(), String> {
         if !matches!(self.state, AccessState::Disabled) {
             return Err("scopes change only while access is off".to_owned());
@@ -1214,7 +1224,7 @@ impl ControlAccess {
     #[cfg(test)]
     pub(crate) fn begin_frame_over_budget_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         let spent = Duration::from_micros(CONTROL_UI_BUDGET_US + 1);

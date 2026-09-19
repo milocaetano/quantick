@@ -21,6 +21,9 @@ use super::ConnectionSlots;
 #[cfg(test)]
 pub(crate) type AnswerWritten = Arc<dyn Fn(&RequestId, bool) + Send + Sync>;
 
+#[cfg(test)]
+pub(crate) use test_gate::AnswerBeforeWrite;
+
 /// A request ID this connection holds in flight (contract §5.2): a duplicate
 /// is refused for as long as this lives. The one way to release it with an
 /// answer is [`answer_and_release`]; dropped unanswered (a wait whose
@@ -74,6 +77,8 @@ pub(super) fn answer_and_release(
         .map(|held| (Arc::clone(&held.slots), held.request_id.clone()));
     #[cfg(test)]
     let mut in_flight_when_written = false;
+    #[cfg(test)]
+    test_gate::before_write(in_flight.as_ref());
     write_answer(
         writer,
         codec,
@@ -139,5 +144,21 @@ fn write_answer(
         && stream.write_all(&frame).is_err()
     {
         let _ = stream.shutdown(Shutdown::Both);
+    }
+}
+
+#[cfg(test)]
+mod test_gate {
+    use super::{Arc, InFlightId, RequestId};
+
+    /// A bounded per-instance gate before the writer lock or response bytes.
+    pub(crate) type AnswerBeforeWrite = Arc<dyn Fn(&RequestId) + Send + Sync>;
+
+    pub(super) fn before_write(in_flight: Option<&InFlightId>) {
+        if let Some(held) = in_flight
+            && let Some(before_write) = &held.slots.answer_before_write
+        {
+            before_write(&held.request_id);
+        }
     }
 }

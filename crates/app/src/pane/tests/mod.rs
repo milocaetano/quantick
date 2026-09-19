@@ -8,7 +8,6 @@
 use rust_decimal::Decimal;
 
 use super::*;
-use crate::indicator_worker::IndicatorEvent;
 
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without
@@ -23,18 +22,24 @@ fn a_right_click_is_the_tapes_only_on_the_tapes_side_of_the_divider() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
 
     // No lane drawn yet: there is one pane, and every click is its.
-    assert!(!pane.click_on_tape(0.0));
-    assert!(!pane.click_on_tape(999.0));
+    assert!(!pane.frame.click_on_tape(0.0));
+    assert!(!pane.frame.click_on_tape(999.0));
 
     pane.frame.lane_divider_x = Some(700.0);
-    assert!(!pane.click_on_tape(699.9), "the candles' last pixel");
-    assert!(pane.click_on_tape(700.0), "the divider belongs to the tape");
-    assert!(pane.click_on_tape(880.0), "and so does everything past it");
+    assert!(!pane.frame.click_on_tape(699.9), "the candles' last pixel");
+    assert!(
+        pane.frame.click_on_tape(700.0),
+        "the divider belongs to the tape"
+    );
+    assert!(
+        pane.frame.click_on_tape(880.0),
+        "and so does everything past it"
+    );
 
     // A lane that goes away takes its side of the question with it: no
     // click may configure a tape that is no longer drawn.
     pane.frame.lane_divider_x = None;
-    assert!(!pane.click_on_tape(880.0));
+    assert!(!pane.frame.click_on_tape(880.0));
 }
 
 #[test]
@@ -156,7 +161,7 @@ fn a_range_profile_wants_the_ladders_without_asking_for_the_layer() {
     pane.set_layer_visible(
         ChartLayer::Footprint,
         true,
-        &mut crate::chart_layers::LayerActions::default(),
+        &mut quantick_layers::LayerActions::default(),
     );
     assert!(
         pane.layer_visible(ChartLayer::Footprint, &style),
@@ -272,7 +277,6 @@ fn painted_positions(painted: &str) -> Vec<f32> {
 /// for flow is a cost the reading pays.
 #[test]
 fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
-    let pane = ChartPane::flow(1, BarSpec::Tick(100), "WINV26".to_owned());
     // Wide enough for the longest pair, derived rather than guessed: the
     // fit rule reserves the warning twice over plus two gaps on each side,
     // so a strip picked by eye lands inside the yield band and the test
@@ -284,7 +288,15 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
         egui::pos2(600.0 + roomy_px + 1.0, 1000.0),
     );
     let axis = |age: Option<quantick_orderflow::TapeAge>| {
-        painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, age))
+        painted(|painter| {
+            crate::pane::render_registry::LaneTimeAxisPass {
+                painter,
+                lane_strip: Some(strip),
+                window_ms: 30_000,
+                tape_age: age,
+            }
+            .paint()
+        })
     };
 
     let late_by = |ms| Some(quantick_orderflow::TapeAge::Behind(ms));
@@ -339,7 +351,15 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
     let axis_at = |width: f32| {
         let strip =
             egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(600.0 + width, 1000.0));
-        painted(|painter| pane.draw_lane_time_axis(painter, Some(strip), 30_000, late_by(41_000)))
+        painted(|painter| {
+            crate::pane::render_registry::LaneTimeAxisPass {
+                painter,
+                lane_strip: Some(strip),
+                window_ms: 30_000,
+                tape_age: late_by(41_000),
+            }
+            .paint()
+        })
     };
     for (width, what) in [
         (
@@ -381,12 +401,13 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
     // "30 s" in warn colour — ninety seconds of silence read as three.
     let hair = egui::Rect::from_min_max(egui::pos2(600.0, 980.0), egui::pos2(640.0, 1000.0));
     let squeezed = painted(|painter| {
-        pane.draw_lane_time_axis(
+        crate::pane::render_registry::LaneTimeAxisPass {
             painter,
-            Some(hair),
-            30_000,
-            Some(quantick_orderflow::TapeAge::NothingYet(90_000)),
-        )
+            lane_strip: Some(hair),
+            window_ms: 30_000,
+            tape_age: Some(quantick_orderflow::TapeAge::NothingYet(90_000)),
+        }
+        .paint()
     });
     for x in painted_positions(&squeezed) {
         assert!(
@@ -407,7 +428,13 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
 
     // No lane, no axis.
     assert_eq!(
-        painted(|painter| pane.draw_lane_time_axis(painter, None, 30_000, late_by(41_000))),
+        painted(|painter| crate::pane::render_registry::LaneTimeAxisPass {
+            painter,
+            lane_strip: None,
+            window_ms: 30_000,
+            tape_age: late_by(41_000)
+        }
+        .paint()),
         painted(|_| {}),
         "a chart with no tape drew a tape axis"
     );
@@ -444,13 +471,13 @@ fn the_drawing_band_stops_at_the_live_lane() {
 
     pane.frame.lane_divider_x = None;
     assert_eq!(
-        pane.drawing_area(chart),
+        crate::bands::drawing_area(chart, pane.frame.lane_divider_x),
         chart,
         "no lane, no carve — the whole chart is the canvas"
     );
 
     pane.frame.lane_divider_x = Some(880.0);
-    let band = pane.drawing_area(chart);
+    let band = crate::bands::drawing_area(chart, pane.frame.lane_divider_x);
     assert_eq!(band.right(), 880.0, "the band ends where the lane begins");
     assert_eq!(band.left(), chart.left());
     assert_eq!(band.y_range(), chart.y_range());
@@ -458,9 +485,12 @@ fn the_drawing_band_stops_at_the_live_lane() {
     // A divider reported outside the chart cannot make the band bigger
     // than the chart or invert it.
     pane.frame.lane_divider_x = Some(5_000.0);
-    assert_eq!(pane.drawing_area(chart).right(), chart.right());
+    assert_eq!(
+        crate::bands::drawing_area(chart, pane.frame.lane_divider_x).right(),
+        chart.right()
+    );
     pane.frame.lane_divider_x = Some(-40.0);
-    let degenerate = pane.drawing_area(chart);
+    let degenerate = crate::bands::drawing_area(chart, pane.frame.lane_divider_x);
     assert!(degenerate.right() >= degenerate.left());
 }
 
@@ -677,7 +707,7 @@ fn an_edit_from_the_other_pane_lands_on_this_panes_own_bars() {
     // The other chart reports where it put the handle in market time; this
     // pane is the one that knows which of *its* bars that is.
     let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
-    pane.apply_shared_edit(SharedEdit::MoveAnchor {
+    pane.shared_marks_mut().apply_edit(SharedEdit::MoveAnchor {
         index: 0,
         anchor: 0,
         time_ms: moved_to,
@@ -696,7 +726,7 @@ fn a_body_drag_from_the_other_pane_moves_every_anchor_by_the_same_time() {
     shared_mark_at(&mut pane, 4, 100.0);
     let before = pane.drawings.items()[0].points[0];
 
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: 3_000,
         delta_price: 2.0,
@@ -726,13 +756,13 @@ fn a_locked_mark_refuses_an_edit_from_the_other_pane_too() {
         .locked = true;
     let before = pane.drawings.items()[0].points.clone();
 
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: 3_000,
         delta_price: 2.0,
     });
     let moved_to = pane.slot_open_time(11).expect("the slot holds a bar");
-    pane.apply_shared_edit(SharedEdit::MoveAnchor {
+    pane.shared_marks_mut().apply_edit(SharedEdit::MoveAnchor {
         index: 0,
         anchor: 0,
         time_ms: moved_to,
@@ -754,7 +784,7 @@ fn a_drag_this_pane_cannot_place_moves_nothing_at_all() {
 
     // Back past the first bar this pane holds: there is no slot for it,
     // and half a shape on a bar and half on an instant is not an option.
-    pane.apply_shared_edit(SharedEdit::Translate {
+    pane.shared_marks_mut().apply_edit(SharedEdit::Translate {
         index: 0,
         delta_ms: -600_000,
         delta_price: 0.0,
@@ -891,7 +921,9 @@ fn add_indicator_view(pane: &mut ChartPane, kind: &str, columns: Vec<Vec<f64>>) 
         inputs: Vec::new(),
     };
     pane.indicators
-        .apply(IndicatorEvent::rebuilt(slot, descriptor, columns));
+        .apply(crate::indicator_worker::event_fixture::rebuilt(
+            slot, descriptor, columns,
+        ));
     slot
 }
 
@@ -927,7 +959,14 @@ fn a_band_scale_is_the_range_its_curve_was_drawn_with() {
         view.scale.pan(25.0, auto);
     }
     let areas = test_areas(&pane, TEST_PLOT);
-    let bands = pane.bands(&areas);
+    let bands = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     let band = bands
         .iter()
         .find(|band| matches!(band.key, DrawingBand::Indicator(_)))
@@ -985,7 +1024,11 @@ fn pane_with_overlay(values: Vec<f64>) -> ChartPane {
         inputs: Vec::new(),
     };
     pane.indicators
-        .apply(IndicatorEvent::rebuilt(slot, descriptor, vec![values]));
+        .apply(crate::indicator_worker::event_fixture::rebuilt(
+            slot,
+            descriptor,
+            vec![values],
+        ));
     pane.frame.chart_area = Some(TEST_PLOT);
     pane.frame.chart_top = TEST_PLOT.top();
     pane.frame.chart_height = TEST_PLOT.height();
@@ -1052,7 +1095,8 @@ fn the_compass_names_the_candle_under_the_pointer() {
             centre + width / 2.0 - 0.01,
         ] {
             assert_eq!(
-                pane.pointer_bar(x, right, total),
+                pane.series_read()
+                    .pointer_bar(&pane.viewport, x, right, total),
                 Some(pointer_compass::PointerBar {
                     slot,
                     open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
@@ -1071,22 +1115,31 @@ fn the_compass_names_no_time_where_there_is_no_bar() {
     let pane = pane_with_timed_bars(200);
     let (right, total) = (TEST_PLOT.right(), pane.slots());
     assert_eq!(
-        pane.pointer_bar(right + 60.0, right, total),
+        pane.series_read()
+            .pointer_bar(&pane.viewport, right + 60.0, right, total),
         None,
         "the projection margin is future the tape has not written"
     );
     let oldest = pane.viewport.x_center(0, right, total);
     assert_eq!(
-        pane.pointer_bar(oldest - 60.0, right, total),
+        pane.series_read()
+            .pointer_bar(&pane.viewport, oldest - 60.0, right, total),
         None,
         "and before the first bar there is nothing either"
     );
     // The lane is a rolling window of market time, not bar slots: a bar
     // time written under it would be the wrong axis's answer.
     let divider = right - 150.0;
-    assert_eq!(pane.pointer_bar(right - 40.0, divider, total), None);
     assert_eq!(
-        pane_with_timed_bars(0).pointer_bar(500.0, right, 0),
+        pane.series_read()
+            .pointer_bar(&pane.viewport, right - 40.0, divider, total),
+        None
+    );
+    let empty = pane_with_timed_bars(0);
+    assert_eq!(
+        empty
+            .series_read()
+            .pointer_bar(&empty.viewport, 500.0, right, 0),
         None,
         "and a chart with no bars at all names none"
     );
@@ -1102,7 +1155,14 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
     let ctx = egui::Context::default();
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let areas = test_areas(&pane, TEST_PLOT);
-    pane.frame.bands = pane.bands(&areas);
+    pane.frame.bands = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     let right = pane.frame.lane_divider_x.unwrap_or(areas.chart.right());
     let total = pane.slots();
     // Deliberately in the left half of a candle, the half that used to
@@ -1111,9 +1171,11 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
     let x = pane.viewport.x_center(slot, right, total) - pane.viewport.candle_width() / 2.0 + 0.5;
     pane.hover_pos = Some(egui::pos2(x, areas.chart.center().y));
     let compass = pane
-        .pointer_bar(x, right, total)
+        .series_read()
+        .pointer_bar(&pane.viewport, x, right, total)
         .expect("the pointer is on a candle");
     let cursor = pane
+        .hit_test()
         .control_pointer_hit()
         .expect("and the control plane can see the same pointer");
     assert_eq!(compass.slot, slot);
@@ -1148,7 +1210,7 @@ fn drive_navigation(
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
-    let mut layers = crate::chart_layers::LayerActions::default();
+    let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -1204,7 +1266,7 @@ fn with_chrome<R>(tool: Tool, body: impl FnOnce(&mut PaneChrome<'_>) -> R) -> R 
     let style = crate::style::ChartStyle::default();
     let mut paper = crate::paper_trading::PaperTrading::new();
     let footprint = crate::footprint_config::FootprintConfig::default();
-    let mut layers = crate::chart_layers::LayerActions::default();
+    let mut layers = quantick_layers::LayerActions::default();
     let mut drawing_chrome = crate::surfaces::DrawingChromeSurface::default();
     body(&mut PaneChrome {
         tab: 1,
@@ -1250,25 +1312,47 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
     let mut pane = pane_with_timed_bars(200);
     let areas = test_areas(&pane, TEST_PLOT);
     let scale = test_scale();
-    let mut discarded = crate::chart_layers::LayerActions::default();
+    let mut discarded = quantick_layers::LayerActions::default();
     // The time half off, so this measures the price half alone.
     pane.set_layer_visible(ChartLayer::PointerTime, false, &mut discarded);
     pane.hover_pos = Some(areas.chart.center());
     let compass = |pane: &ChartPane, painter: &egui::Painter, chrome: &PaneChrome<'_>| {
-        if let Some(decided) = pane.pointer_compass(
-            areas.chart,
-            areas.chart.right(),
-            pane.slots(),
-            &scale,
-            chrome,
-        ) {
-            pane.draw_pointer_compass(
-                painter,
-                &decided,
-                areas.chart.right(),
-                areas.time_strip,
-                chrome,
-            );
+        if let Some(decided) = {
+            let price_on =
+                pane.layer_visible(quantick_layers::ChartLayer::PointerPrice, chrome.style);
+            let time_on =
+                pane.layer_visible(quantick_layers::ChartLayer::PointerTime, chrome.style);
+            let bar = if price_on || time_on {
+                pane.hover_pos.and_then(|pointer| {
+                    pane.series_read().pointer_bar(
+                        &pane.viewport,
+                        pointer.x,
+                        areas.chart.right(),
+                        pane.slots(),
+                    )
+                })
+            } else {
+                None
+            };
+            crate::pointer_compass::PointerCompass::resolve(
+                pane.hover_pos,
+                areas.chart,
+                &scale,
+                bar,
+                price_on,
+                time_on,
+                chrome.toolrail.tool() == crate::toolrail::Tool::Crosshair || chrome.paper.aiming(),
+            )
+        } {
+            pane.layer_renderers
+                .pointer(&mut crate::pane::render_registry::PointerPass {
+                    painter,
+                    compass: &decided,
+                    axis_x: areas.chart.right(),
+                    time_strip: areas.time_strip,
+                    divider_x: pane.frame.lane_divider_x,
+                    tz: chrome.tz,
+                });
         }
     };
     let alone = painted_with_tool(&pane, Tool::Pointer, compass);
@@ -1304,7 +1388,8 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
 /// Every level the pane would write on the price axis this frame.
 fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
     let mut levels = Vec::new();
-    pane.price_axis_levels(
+    pane.drawing_projection().price_axis_levels(
+        &pane.drawings,
         TEST_PLOT,
         TEST_PLOT.right(),
         pane.slots(),
@@ -1387,7 +1472,7 @@ fn an_axis_tag_follows_its_object_and_leaves_with_it() {
     // The layer that hides the objects hides what the axis says about
     // them: a gutter still marked at a level whose line is gone would be
     // the chart claiming something it is not drawing.
-    let mut discarded = crate::chart_layers::LayerActions::default();
+    let mut discarded = quantick_layers::LayerActions::default();
     pane.set_layer_visible(ChartLayer::Drawings, false, &mut discarded);
     assert!(
         axis_levels_of(&pane, &scale).is_empty(),
@@ -1427,15 +1512,18 @@ fn the_live_price_is_painted_over_a_level_and_not_under_it() {
     assert_eq!(levels.len(), 1, "one level to be covered or not");
 
     let painted = painted_with_tool(&pane, Tool::Pointer, |pane, painter, chrome| {
-        pane.draw_axis_marks(
+        crate::pane::render_registry::AxisMarksPass {
             painter,
-            TEST_PLOT,
-            TEST_PLOT.right(),
-            &scale,
-            &levels,
-            Some(&bar),
-            chrome,
-        );
+            chart_rect: TEST_PLOT,
+            axis_x: TEST_PLOT.right(),
+            scale: &scale,
+            levels: &levels,
+            newest: Some(&bar),
+            last_price_visible: pane
+                .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            style: chrome.style,
+        }
+        .paint(pane.layer_renderers);
     });
     let level = painted
         .find(&format!("{level_colour:?}"))
@@ -1473,7 +1561,7 @@ fn a_tag_wears_the_same_honesty_fade_its_stroke_does() {
     );
     assert_eq!(
         faded,
-        ChartPane::painted_color(&pane.drawings.items()[0]),
+        crate::drawings::painted_color(&pane.drawings.items()[0]),
         "through the same call the stroke goes through"
     );
 }
@@ -1802,7 +1890,10 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
     let mut pane = pane_with_overlay(vec![50.0; 8]);
     let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
     let expected = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     let on_the_line = egui::pos2(
         pane.viewport.x_center(start + 1, right, total),
@@ -1834,17 +1925,21 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
 fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
     let mut pane = pane_with_overlay(vec![50.0; 6]);
     let slot = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     let on_the_line = egui::pos2(pane.viewport.x_center(start, right, total), scale.y(50.0));
 
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         Some(slot),
         "the pointer is on the curve"
     );
     assert_eq!(
-        pane.overlay_plot_at(on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 8.0)),
+        pane.hit_test()
+            .overlay_plot_at(on_the_line + egui::vec2(0.0, PLOT_PICK_TOLERANCE_PX * 8.0)),
         None,
         "open chart still means the viewport, not the indicator"
     );
@@ -1859,7 +1954,7 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
         },
     );
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         None,
         "a line nobody is drawing cannot be grabbed"
     );
@@ -1871,14 +1966,18 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
 fn the_pick_honours_hidden_indicators_and_nan_gaps() {
     let mut pane = pane_with_overlay(vec![50.0, f64::NAN, 50.0, 50.0]);
     let slot = pane.indicators.all()[0].slot;
-    let (chart, right, total, scale) = pane.last_projection().expect("a drawn projection");
+    let (chart, right, total, scale) = pane
+        .hit_test()
+        .last_projection()
+        .expect("a drawn projection");
     let (start, _) = pane.viewport.visible_range(chart.width(), total);
     // Midway across the NaN cell: the renderer draws no segment here.
     let gap_x = (pane.viewport.x_center(start, right, total)
         + pane.viewport.x_center(start + 1, right, total))
         / 2.0;
     assert_eq!(
-        pane.overlay_plot_at(egui::pos2(gap_x, scale.y(50.0))),
+        pane.hit_test()
+            .overlay_plot_at(egui::pos2(gap_x, scale.y(50.0))),
         None,
         "a gap in the data is a gap in what can be picked"
     );
@@ -1887,11 +1986,11 @@ fn the_pick_honours_hidden_indicators_and_nan_gaps() {
         + pane.viewport.x_center(start + 3, right, total))
         / 2.0;
     let on_the_line = egui::pos2(joined_x, scale.y(50.0));
-    assert_eq!(pane.overlay_plot_at(on_the_line), Some(slot));
+    assert_eq!(pane.hit_test().overlay_plot_at(on_the_line), Some(slot));
 
     pane.indicators.toggle_hidden(slot);
     assert_eq!(
-        pane.overlay_plot_at(on_the_line),
+        pane.hit_test().overlay_plot_at(on_the_line),
         None,
         "the legend's eye takes the line off the chart, pick included"
     );
@@ -1918,7 +2017,10 @@ fn the_pane_header_is_chrome_and_never_overlaps_the_chevron() {
         slot.rect.contains(header.center()),
         "the header is inside its own pane"
     );
-    assert!(ChartPane::pane_chrome_hit(&areas, header.center()));
+    assert!(super::primary_button::pane_chrome_hit(
+        &areas,
+        header.center()
+    ));
 
     // A collapsed strip has no header of its own: the strip *is* the
     // disclosure, and reads its double click from there.
@@ -1937,7 +2039,14 @@ fn hit_testing_never_crosses_bands() {
         .last_auto = Some((-10.0, 10.0));
     pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
-    let bands = pane.bands(&areas);
+    let bands = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     let (price, indicator) = (&bands[0], &bands[1]);
 
     let key = indicator.key.clone();
@@ -1952,7 +2061,13 @@ fn hit_testing_never_crosses_bands() {
     let scale = indicator.scale.expect("a drawable band");
     let on_the_level = egui::pos2(indicator.rect.center().x, scale.y(0.0));
     assert_eq!(
-        pane.drawing_at(on_the_level, indicator, indicator.rect.right(), 3),
+        pane.drawing_projection().drawing_at(
+            &pane.drawings,
+            on_the_level,
+            indicator,
+            indicator.rect.right(),
+            3
+        ),
         Some(0),
         "found on its own band"
     );
@@ -1960,7 +2075,13 @@ fn hit_testing_never_crosses_bands() {
     // spans the whole width, so only the band rule can rule it out.
     let in_price_band = egui::pos2(price.rect.center().x, price.rect.center().y);
     assert_eq!(
-        pane.drawing_at(in_price_band, price, price.rect.right(), 3),
+        pane.drawing_projection().drawing_at(
+            &pane.drawings,
+            in_price_band,
+            price,
+            price.rect.right(),
+            3
+        ),
         None,
         "a CVD level is not a price level"
     );
@@ -1979,7 +2100,14 @@ fn a_time_only_object_is_one_item_that_every_band_paints() {
         .last_auto = Some((-10.0, 10.0));
     pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
-    let bands = pane.bands(&areas);
+    let bands = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     let vertical = drawings::DRAWING_TOOLS
         .into_iter()
         .find(|tool| tool.id() == "vertical-line")
@@ -2012,13 +2140,16 @@ fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
     let areas = test_areas(&pane, TEST_PLOT);
     let slot = areas.indicator_panes.first().expect("one indicator pane");
     let chevron = indicator_render::pane_disclosure_rect(slot.rect, slot.collapsed);
-    assert!(ChartPane::pane_chrome_hit(&areas, chevron.center()));
-    assert!(ChartPane::pane_chrome_hit(
+    assert!(super::primary_button::pane_chrome_hit(
+        &areas,
+        chevron.center()
+    ));
+    assert!(super::primary_button::pane_chrome_hit(
         &areas,
         egui::pos2(slot.rect.center().x, slot.rect.top())
     ));
     assert!(
-        !ChartPane::pane_chrome_hit(&areas, slot.rect.center()),
+        !super::primary_button::pane_chrome_hit(&areas, slot.rect.center()),
         "the middle of the pane is canvas"
     );
 }
@@ -2094,7 +2225,14 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
         .last_auto = Some((-10.0, 10.0));
     pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
-    let carved = pane.bands(&areas);
+    let carved = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     let key = carved[1].key.clone();
     pane.drawings.place_on(
         drawings::DRAWING_TOOLS
@@ -2109,7 +2247,14 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
     let slot = pane.indicators.all().first().expect("one view").slot;
     pane.indicators.remove(slot);
     let areas = test_areas(&pane, TEST_PLOT);
-    let carved = pane.bands(&areas);
+    let carved = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
     assert_eq!(carved.len(), 1, "only the price band is left");
     assert_eq!(pane.drawings.items().len(), 1, "the object is kept");
     assert!(
@@ -2121,7 +2266,7 @@ fn a_parked_drawing_belongs_to_no_band_on_screen() {
         "and it certainly does not fall back onto the price band"
     );
     assert!(matches!(
-        pane.band_label(&pane.drawings.items()[0]),
+        crate::bands::label_for(&pane.indicators, &pane.drawings.items()[0]),
         BandLabel::Parked(_)
     ));
 }
@@ -2134,11 +2279,29 @@ fn the_price_band_scale_turns_over_with_the_chart() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     pane.frame.auto_range = Some((100.0, 110.0));
     let areas = test_areas(&pane, TEST_PLOT);
-    let upright = pane.bands(&areas)[0].scale.expect("a range is set");
+    let upright = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas)[0]
+        .scale
+        .expect("a range is set");
     assert!(!upright.is_inverted());
 
     pane.price_view.set_inverted(true);
-    let scale = pane.bands(&areas)[0].scale.expect("a range is set");
+    let scale = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas)[0]
+        .scale
+        .expect("a range is set");
     assert!(scale.is_inverted(), "the band mirrors the candles");
     assert!(
         scale.y(100.0) < scale.y(110.0),
@@ -2541,7 +2704,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
     let id = pane.drawings.items()[0].id;
     assert!(
-        pane.strategy_region(id, 5).is_some(),
+        pane.strategies.region(&pane.drawings, id, 5).is_some(),
         "nothing wrong: the region is testable"
     );
     for break_it in [
@@ -2556,7 +2719,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         pane.drawings.items_mut()[index] = drawing;
         assert!(word.is_some(), "this fault owes the badge a word");
         assert!(
-            pane.strategy_region(id, 5).is_none(),
+            pane.strategies.region(&pane.drawings, id, 5).is_none(),
             "and shuts the gate: {word:?}"
         );
         // Put it back for the next fault.
@@ -2613,7 +2776,12 @@ fn a_paused_regions_badge_says_the_specific_thing_and_not_the_general_one() {
     // whose resting order would need sweeping.
     assert!(pane.strategies.anchors.arm(instance).is_empty());
 
-    let badge = pane.strategy_badge_text(id);
+    let badge = strategy_badge_text(
+        &pane.strategies.anchors,
+        &pane.drawings,
+        id,
+        pane.closed_slots(),
+    );
     assert!(
         badge.contains("region hidden — paused"),
         "the specific fault, with the fix in it: {badge}"
@@ -2733,7 +2901,12 @@ fn the_badge_names_the_rulers_own_refusal_and_not_only_an_older_bars() {
     );
 
     assert!(pane.strategies.anchors.arm(instance).is_empty());
-    let badge = pane.strategy_badge_text(id);
+    let badge = strategy_badge_text(
+        &pane.strategies.anchors,
+        &pane.drawings,
+        id,
+        pane.closed_slots(),
+    );
 
     let ruler = badge
         .find("quiet")
@@ -2774,4 +2947,248 @@ fn a_reset_drops_the_readings_unless_the_market_is_the_same() {
         pane.state.deal_samples().is_empty(),
         "a new market starts clean"
     );
+}
+
+fn g6_badge_pane() -> ChartPane {
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+        .unwrap();
+    pane.drawings.place(rectangle, ChartPoint::at(90.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(95.0, 110.0));
+    pane.drawings.items_mut()[0].style.color = egui::Color32::from_rgb(11, 77, 143);
+    pane.drawings.select(None);
+    let id = pane.drawings.items()[0].id;
+    let instance = crate::strategy_anchors::AnchoredInstance {
+        drawing: id,
+        preset: "G6-anchored".to_owned(),
+        spec: crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell),
+        armed: quantick_strategy::ArmedStrategy::new(
+            quantick_strategy::StrategyParams {
+                side: quantick_engine::Side::Sell,
+                quantity: rust_decimal::Decimal::ONE,
+                tp_mult: rust_decimal::Decimal::ONE,
+                sl_mult: rust_decimal::Decimal::ONE,
+                rearm: quantick_strategy::Rearm::OneShot,
+                on_break: quantick_strategy::BreakPolicy::Ignore,
+                execution: quantick_strategy::Execution::Paper,
+            },
+            Box::new(quantick_strategy::ForceTrigger::new(
+                quantick_strategy::ForceParams::default_band(),
+            )),
+        ),
+        alarm: None,
+        cue: crate::audio::Cue::default(),
+        mark: crate::strategy_anchors::AlarmMark::Quiet,
+    };
+    assert!(pane.strategies.anchors.arm(instance).is_empty());
+    pane
+}
+fn g6_badge_band(top: f32) -> bands::Band {
+    let rect = egui::Rect::from_min_max(egui::pos2(10.0, top), egui::pos2(400.0, top + 200.0));
+    bands::Band {
+        key: DrawingBand::Price,
+        rect,
+        scale: Some(PriceScale::from_range(
+            90.0,
+            120.0,
+            rect.top(),
+            rect.bottom(),
+        )),
+        label: "price".into(),
+        refusal: None,
+    }
+}
+fn g6_badge_output(pane: &ChartPane, band: &bands::Band, pass: DrawPass) -> egui::FullOutput {
+    egui::Context::default().run(egui::RawInput::default(), |ctx| {
+        crate::pane::render_registry::DrawingPass {
+            painter: &ctx.layer_painter(egui::LayerId::background()),
+            band,
+            band_index: 0,
+            drawings: &pane.drawings,
+            viewport: &pane.viewport,
+            history_right: 400.0,
+            total: 100,
+            pass,
+            content_editing: pane.gestures.content_editing,
+            hover: pane.gestures.hover,
+        }
+        .paint(
+            pane.layer_renderers,
+            &pane.strategies.anchors,
+            &pane.drawing_projection(),
+            pane.closed_slots(),
+        );
+    })
+}
+#[test]
+fn g6_characterization_hidden_badges_and_actual_stage_order() {
+    let band = g6_badge_band(20.0);
+    for (hidden, all_hidden) in [(false, false), (true, false), (false, true)] {
+        let mut pane = g6_badge_pane();
+        pane.drawings.items_mut()[0].hidden = hidden;
+        let rectangle = drawings::DRAWING_TOOLS
+            .into_iter()
+            .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+            .unwrap();
+        pane.drawings.place(rectangle, ChartPoint::at(92.0, 102.0));
+        pane.drawings.draft_mut().unwrap().style.color = egui::Color32::from_rgb(227, 91, 17);
+        pane.gestures.hover = Some(ChartPoint::at(98.0, 107.0));
+        pane.drawings.set_all_hidden(all_hidden);
+        let under = g6_badge_output(&pane, &band, DrawPass::UnderCandles);
+        assert!(under.shapes.iter().all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))));
+        assert!(under.shapes.iter().all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(227, 91, 17))));
+        let output = g6_badge_output(&pane, &band, DrawPass::OverCandles);
+        let badges: Vec<_> = output.shapes.iter().enumerate().filter(|(_, shape)| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))).collect();
+        assert_eq!(
+            badges.len(),
+            1,
+            "a hidden geometry still reports its strategy"
+        );
+        assert_eq!(badges[0].1.clip_rect, band.rect);
+        let object = output.shapes.iter().position(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(11, 77, 143)));
+        let draft = output.shapes.iter().position(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(227, 91, 17)));
+        if hidden || all_hidden {
+            assert!(object.is_none());
+        } else {
+            assert!(object.unwrap() < badges[0].0);
+        }
+        if all_hidden {
+            assert!(draft.is_none());
+        } else {
+            assert!(badges[0].0 < draft.unwrap());
+        }
+    }
+}
+#[test]
+fn g6_characterization_all_bands_has_one_clipped_badge() {
+    let mut pane = g6_badge_pane();
+    // Retained object fixture, not a new strategy arming capability.
+    pane.drawings.items_mut()[0].band = DrawingBand::AllBands;
+    let bands = [g6_badge_band(20.0), g6_badge_band(250.0)];
+    let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+        for (index, band) in bands.iter().enumerate() {
+            crate::pane::render_registry::DrawingPass {
+                painter: &ctx.layer_painter(egui::LayerId::background()),
+                band,
+                band_index: index,
+                drawings: &pane.drawings,
+                viewport: &pane.viewport,
+                history_right: 400.0,
+                total: 100,
+                pass: DrawPass::OverCandles,
+                content_editing: pane.gestures.content_editing,
+                hover: pane.gestures.hover,
+            }
+            .paint(
+                pane.layer_renderers,
+                &pane.strategies.anchors,
+                &pane.drawing_projection(),
+                pane.closed_slots(),
+            );
+        }
+    });
+    let badges: Vec<_> = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))).collect();
+    assert_eq!(badges.len(), 1);
+    assert_eq!(badges[0].clip_rect, bands[0].rect);
+}
+#[test]
+fn g6_characterization_band_metadata_precedes_cached_geometry() {
+    let mut pane = pane_with_indicator("native.cvd", vec![vec![1.0]]);
+    let view = &pane.indicators.all()[0];
+    let slot = view.slot;
+    let key = pane.indicators.pane_key(view);
+    let mut drawing = g6_badge_pane().drawings.items()[0].clone();
+    drawing.band = DrawingBand::Indicator(key);
+    assert!(pane.frame.bands.is_empty());
+    assert!(matches!(
+        crate::bands::label_for(&pane.indicators, &drawing),
+        bands::BandLabel::Indicator(_)
+    ));
+    let view = pane.indicators.view_mut(slot).unwrap();
+    view.sizing = PaneSizing::Collapsed;
+    view.hidden = true;
+    view.error = Some(quantick_indicators::EvalError {
+        bar_index: 0,
+        message: "fixture".to_owned(),
+    });
+    assert!(
+        crate::bands::label_for(&pane.indicators, &drawing)
+            .hint()
+            .unwrap()
+            .contains("in error")
+    );
+    pane.indicators.view_mut(slot).unwrap().error = None;
+    assert!(
+        crate::bands::label_for(&pane.indicators, &drawing)
+            .hint()
+            .unwrap()
+            .contains("is hidden")
+    );
+    pane.indicators.view_mut(slot).unwrap().hidden = false;
+    assert!(
+        crate::bands::label_for(&pane.indicators, &drawing)
+            .hint()
+            .unwrap()
+            .contains("is collapsed")
+    );
+    pane.indicators.remove(slot);
+    assert!(matches!(
+        crate::bands::label_for(&pane.indicators, &drawing),
+        bands::BandLabel::Parked(_)
+    ));
+    assert!(pane.frame.bands.is_empty());
+}
+
+#[test]
+fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
+    use super::render_registry::{Contribution, Package, RenderRegistry};
+    static REGISTRY: std::sync::OnceLock<RenderRegistry> = std::sync::OnceLock::new();
+    const PACKAGE: Package = Package {
+        layers: &[],
+        contributions: &[
+            Contribution::Drawings(|pass| {
+                pass.pass = match pass.pass {
+                    DrawPass::UnderCandles => DrawPass::OverCandles,
+                    DrawPass::OverCandles => DrawPass::UnderCandles,
+                };
+            }),
+            Contribution::DrawingDraft(|pass| {
+                assert!(pass.pass == DrawPass::UnderCandles);
+                pass.painter.with_clip_rect(pass.band.rect).text(
+                    pass.band.rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "G6-draft-mutated-under",
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::WHITE,
+                );
+            }),
+        ],
+    };
+    let mut pane = g6_badge_pane();
+    pane.layer_renderers = REGISTRY.get_or_init(|| RenderRegistry::new(&[PACKAGE]).unwrap());
+    let band = g6_badge_band(20.0);
+    let under = g6_badge_output(&pane, &band, DrawPass::UnderCandles);
+    assert!(
+        under
+            .shapes
+            .iter()
+            .all(|shape| !matches!(&shape.shape, egui::epaint::Shape::Text(_)))
+    );
+    let over = g6_badge_output(&pane, &band, DrawPass::OverCandles);
+    let texts: Vec<_> = over
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) => {
+                Some((shape.clip_rect, text.galley.job.text.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts.len(), 2);
+    assert!(texts[0].1.contains("G6-anchored"));
+    assert_eq!(texts[1].1, "G6-draft-mutated-under");
+    assert!(texts.iter().all(|(clip, _)| *clip == band.rect));
 }

@@ -52,6 +52,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::Finding;
+use crate::exemption::{self, Exemption};
 use crate::ratchet::{Baseline, Policy, Unmeasured};
 use crate::{headless, size};
 
@@ -136,51 +137,13 @@ pub fn names_ui(production: &[&str]) -> bool {
     })
 }
 
-/// One signed exemption.
-struct Exemption {
-    path: String,
-    /// One-based line in [`EXEMPTIONS_FILE`].
-    line: usize,
-}
-
 /// Read the exemptions. A malformed line is a finding and no exemption, so a
 /// typo can never widen the list.
 fn exemptions(root: &Path) -> Result<(Vec<Exemption>, Vec<Finding>), String> {
-    let text = fs::read_to_string(root.join(EXEMPTIONS_FILE))
-        .map_err(|e| format!("  {EXEMPTIONS_FILE} is unreadable: {e}"))?;
-    let mut found: Vec<Exemption> = Vec::new();
-    let mut findings = Vec::new();
-    for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
-        let content = raw.trim();
-        if content.is_empty() || content.starts_with('#') {
-            continue;
-        }
-        let (path, reason) = content
-            .split_once(char::is_whitespace)
-            .unwrap_or((content, ""));
-        let problem = if reason.trim().is_empty() {
-            Some(format!("exempts {path} with no reason"))
-        } else if !path.starts_with(SOURCE) || !path.ends_with(".rs") {
-            Some(format!("exempts {path}, which is not under {SOURCE}"))
-        } else {
-            found
-                .iter()
-                .find(|known| known.path == path)
-                .map(|first| format!("{path} is already exempt on line {}", first.line))
-        };
-        match problem {
-            Some(problem) => findings.push(Finding::new(
-                format!("  {EXEMPTIONS_FILE}:{line}: {problem}"),
-                EXEMPTION_REMEDY,
-            )),
-            None => found.push(Exemption {
-                path: path.to_owned(),
-                line,
-            }),
-        }
-    }
-    Ok((found, findings))
+    exemption::read(root, EXEMPTIONS_FILE, EXEMPTION_REMEDY, &|path| {
+        (!path.starts_with(SOURCE) || !path.ends_with(".rs"))
+            .then(|| format!("exempts {path}, which is not under {SOURCE}"))
+    })
 }
 
 /// Every production file under [`SOURCE`], with whether it names the UI
@@ -191,47 +154,14 @@ fn exemptions(root: &Path) -> Result<(Vec<Exemption>, Vec<Finding>), String> {
 /// than a smaller list when anything under `crates/app` could not be read:
 /// a partial walk is the flattering number.
 fn files(root: &Path) -> Result<Vec<(String, bool, usize)>, Unmeasured> {
-    if !root.join(SOURCE).is_dir() {
-        return Err(Unmeasured {
-            missed: vec![format!("  {SOURCE}: not a readable directory")],
-        });
-    }
-    let walk = size::measure(root);
-    // A file or directory under the source tree, as the walk reported it.
-    // `size::measure` writes an unlistable directory to `unreadable` as well
-    // as to `blind`, so one inside the tree is caught here, not below.
-    let mut missed: Vec<String> = walk
-        .unreadable
-        .iter()
-        .filter(|line| line.trim_start().starts_with(SOURCE))
-        .cloned()
-        .collect();
-    // An ancestor the walk could not list hides the whole tree; its line in
-    // `unreadable` names the ancestor, which the filter above cannot match.
-    missed.extend(
-        walk.blind
-            .iter()
-            .filter(|dir| SOURCE.starts_with(dir.as_str()) && !dir.starts_with(SOURCE))
-            .map(|dir| format!("  {dir}: directory could not be listed")),
-    );
-    missed.extend(
-        walk.undecodable
-            .iter()
-            .filter(|path| path.starts_with(SOURCE))
-            .map(|path| format!("  {path}: does not decode as UTF-8")),
-    );
+    let mut missed = Vec::new();
     let mut files = Vec::new();
-    for (path, lines) in walk
-        .counts
-        .iter()
-        .filter(|(path, _)| path.starts_with(SOURCE))
-    {
-        match fs::read_to_string(root.join(path)) {
-            Ok(source) => files.push((
-                path.clone(),
-                names_ui(&size::production_source(&source)),
-                *lines,
-            )),
+    for (path, lines) in size::measure_under(root, SOURCE)? {
+        match fs::read_to_string(root.join(&path)) {
+            Ok(source) => {
+                let names_ui = names_ui(&size::production_source(&source));
+                files.push((path, names_ui, lines));
+            }
             Err(e) => missed.push(format!("  {path}: could not be read: {e}")),
         }
     }
@@ -247,7 +177,7 @@ fn files(root: &Path) -> Result<Vec<(String, bool, usize)>, Unmeasured> {
 fn total(files: &[(String, bool, usize)], exempt: &[Exemption]) -> usize {
     files
         .iter()
-        .filter(|(path, names_ui, _)| !names_ui && !exempt.iter().any(|e| &e.path == path))
+        .filter(|(path, names_ui, _)| !names_ui && !exempt.iter().any(|e| &e.key == path))
         .map(|(_, _, lines)| lines)
         .sum()
 }
@@ -281,7 +211,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
         }
     };
     for exemption in &exempt {
-        let stale = match files.iter().find(|(path, ..)| path == &exemption.path) {
+        let stale = match files.iter().find(|(path, ..)| path == &exemption.key) {
             None => Some("is not a production file under crates/app/src"),
             Some((_, true, _)) => Some("names the UI library"),
             Some(_) => None,
@@ -290,7 +220,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
             findings.push(Finding::new(
                 format!(
                     "  {EXEMPTIONS_FILE}:{}: {} {stale} — delete the line",
-                    exemption.line, exemption.path
+                    exemption.line, exemption.key
                 ),
                 EXEMPTION_REMEDY,
             ));

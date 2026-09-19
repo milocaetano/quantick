@@ -2,21 +2,35 @@
 //!
 //! Input resolves pixels into the pane's chart coordinates; paint projects
 //! those coordinates back through the registered ruler. The window-level
-//! state and its action bar stay in `surfaces::drawing_chrome`.
+//! state and its action bar stay in `surfaces::drawing_chrome`; the headless
+//! owner is `quantick_chart_interaction::quick_range`. What the pane lends
+//! both is a [`QuickRangeView`]: who it is, as the owner's key, and the
+//! projection its pixels are read through — never the pane itself.
 
 use eframe::egui;
 
 use crate::bands::Band;
 use crate::drawings::{self, DrawContext};
+use crate::surfaces::drawing_chrome::QuickRangeOwner;
 use crate::toolrail::Tool;
 
-use super::{ChartPane, DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
+use super::drawing_projection::DrawingProjection;
+use super::{DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
 
 /// Enough history for the demo's two anchors to span a real, visible range.
+#[cfg(any(feature = "quick-range-harness", test))]
 const DEMO_MIN_BARS: usize = 72;
 
-impl ChartPane {
-    pub(super) fn handle_quick_range(
+/// One pane's side of the quick range for one frame.
+pub(super) struct QuickRangeView<'a> {
+    /// The pane as the window-level owner keys it: tab, side, pane id, the
+    /// series revision and the layout it shows.
+    pub(super) owner: QuickRangeOwner,
+    pub(super) projection: DrawingProjection<'a>,
+}
+
+impl QuickRangeView<'_> {
+    pub(super) fn handle(
         &self,
         ui: &egui::Ui,
         price_band: &Band,
@@ -25,9 +39,14 @@ impl ChartPane {
         magnet: bool,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let owner = crate::surfaces::drawing_chrome::QuickRangeOwner {
-            tab: chrome.tab,
-            side: chrome.side,
+        let owner = self.owner;
+        chrome.drawing_chrome.quick_range.reconcile(Some(owner));
+        let area = quantick_chart_interaction::quick_range::GestureArea {
+            min: [price_band.rect.left(), price_band.rect.top()],
+            max: [
+                history_right.max(price_band.rect.left()),
+                price_band.rect.bottom(),
+            ],
         };
         let (pressed, down, released, pointer) = ui.input(|input| {
             (
@@ -40,17 +59,10 @@ impl ChartPane {
         // A held secondary button borrows the ruler's projection and saved
         // look without arming or placing the persistent ruler tool. A press
         // that never crosses the threshold remains the context-menu gesture.
-        if chrome.toolrail.tool() == Tool::Pointer
-            && let Some(measure) = drawings::DrawingTool::by_id("measure")
-        {
+        if let Some(measure) = drawings::DrawingTool::by_id("measure") {
             if pressed
                 && let Some(position) = pointer
-                && price_band.rect.contains(position)
-                && ui
-                    .ctx()
-                    .layer_id_at(position)
-                    .is_none_or(|layer| layer == ui.layer_id())
-                && let Some(anchor) = self.drawing_point_at(
+                && let Some(anchor) = self.projection.drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -59,9 +71,19 @@ impl ChartPane {
                     price_band,
                 )
             {
-                chrome
-                    .drawing_chrome
-                    .quick_range_press(owner, position, anchor);
+                chrome.drawing_chrome.quick_range.press(
+                    owner,
+                    position,
+                    anchor,
+                    quantick_chart_interaction::quick_range::GestureEligibility {
+                        pointer_tool: chrome.toolrail.tool() == Tool::Pointer,
+                        unoccluded: ui
+                            .ctx()
+                            .layer_id_at(position)
+                            .is_none_or(|layer| layer == ui.layer_id()),
+                        area,
+                    },
+                );
             }
             // Past egui's own click distance, not only the drawing drag's:
             // a right-press that slips less than that is still a click, which
@@ -75,14 +97,9 @@ impl ChartPane {
             {
                 // The divider is last frame's and can sit left of the band
                 // after a layout change; `clamp` panics on an inverted range.
-                let right = history_right.max(price_band.rect.left());
-                let position = egui::pos2(
-                    position.x.clamp(price_band.rect.left(), right),
-                    position
-                        .y
-                        .clamp(price_band.rect.top(), price_band.rect.bottom()),
-                );
-                if let Some(anchor) = self.drawing_point_at(
+                let [x, y] = area.clamp([position.x, position.y]);
+                let position = egui::pos2(x, y);
+                if let Some(anchor) = self.projection.drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -90,7 +107,7 @@ impl ChartPane {
                     measure.anchor_snap(),
                     price_band,
                 ) {
-                    chrome.drawing_chrome.quick_range_drag(
+                    chrome.drawing_chrome.quick_range.drag(
                         owner,
                         position,
                         anchor,
@@ -101,11 +118,11 @@ impl ChartPane {
             }
         }
         if released {
-            chrome.drawing_chrome.quick_range_release(owner);
+            chrome.drawing_chrome.quick_range.release(owner);
         }
     }
 
-    pub(super) fn draw_quick_range(
+    pub(super) fn draw(
         &self,
         painter: &egui::Painter,
         bands: &[Band],
@@ -113,14 +130,14 @@ impl ChartPane {
         total: usize,
         chrome: &mut PaneChrome<'_>,
     ) {
-        let owner = crate::surfaces::drawing_chrome::QuickRangeOwner {
-            tab: chrome.tab,
-            side: chrome.side,
-        };
+        let owner = self.owner;
+        chrome.drawing_chrome.quick_range.reconcile(Some(owner));
+        #[cfg(any(feature = "quick-range-harness", test))]
         if chrome.side == super::PaneSide::Flow {
             chrome
                 .drawing_chrome
-                .stage_quick_range_demo(owner, |future| {
+                .quick_range
+                .stage_demo(owner, |future| {
                     let band = bands.first()?;
                     let scale = band.scale.as_ref()?;
                     let measure = drawings::DrawingTool::by_id("measure")?;
@@ -134,7 +151,7 @@ impl ChartPane {
                             drawings::ChartPoint::at_time(
                                 slot as f32 + 0.5,
                                 scale.price_at(y),
-                                self.anchor_time(slot as f32 + 0.5),
+                                self.projection.series.anchor_time(slot as f32 + 0.5),
                             )
                         };
                         (
@@ -149,19 +166,21 @@ impl ChartPane {
         }
         let geometry = chrome
             .drawing_chrome
-            .quick_range_paint(owner)
+            .quick_range
+            .paint(owner)
             .and_then(|quick| {
                 let band = bands.first()?;
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
-                let points = quick
-                    .anchors
-                    .map(|anchor| self.drawing_screen_point(anchor, history_right, total, scale));
+                let points = quick.anchors.map(|anchor| {
+                    self.projection
+                        .drawing_screen_point(anchor, history_right, total, scale)
+                });
                 let ctxt = DrawContext {
                     payload: quick.payload,
                     anchors: &quick.anchors,
                     scale,
-                    px_per_bar: self.viewport.px_per_bar(),
+                    px_per_bar: self.projection.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: true,
                     style: quick.style,
@@ -180,9 +199,23 @@ impl ChartPane {
                 let mut bounds = egui::Rect::from_min_max(points[0], points[0]);
                 bounds.extend_with(points[1]);
                 Some((band.rect, tool.painted_bounds(bounds, band.rect)))
+            })
+            .or_else(|| {
+                chrome
+                    .drawing_chrome
+                    .quick_range
+                    .stale(owner)
+                    .then(|| {
+                        let chart = bands.first()?.rect;
+                        Some((
+                            chart,
+                            egui::Rect::from_center_size(chart.center(), egui::Vec2::ZERO),
+                        ))
+                    })
+                    .flatten()
             });
         if let Some((chart, bounds)) = geometry {
-            chrome.drawing_chrome.remember_quick_range_geometry(
+            chrome.drawing_chrome.quick_range.remember_geometry(
                 owner,
                 chart,
                 bounds,

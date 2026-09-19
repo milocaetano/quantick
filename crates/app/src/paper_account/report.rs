@@ -7,8 +7,11 @@
 //! where its callers already look.
 
 use super::PaperAccount;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::paper_calendar::DaySelection;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::paper_report::LedgerScope;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::timezone::TzOffset;
 
 impl PaperAccount {
@@ -89,34 +92,40 @@ impl PaperAccount {
     }
 
     /// Open the report window (`QUANTICK_PAPER_REPORT_AUTOSTART`).
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_report(&mut self) {
         let (report, env) = self.report_parts();
         report.autostart_report(&env);
     }
 
     /// Open the report with its month grid expanded (`QUANTICK_PAPER_CALENDAR`).
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_calendar(&mut self, selection: DaySelection) {
         let (report, env) = self.report_parts();
         report.autostart_calendar(selection, &env);
     }
 
     /// Point the ledger at one instrument's saved history, or all of them.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn set_ledger_scope(&mut self, scope: LedgerScope) {
         self.report.set_ledger_scope(scope);
     }
 
     /// Fold every day in the ledger shut (`QUANTICK_LEDGER_FOLD`).
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_folded_days(&mut self, tz: TzOffset) {
         let (report, env) = self.report_parts();
         report.autostart_folded_days(tz, &env);
     }
 
     /// Reveal `pages` pages of saved history (`QUANTICK_LEDGER_PAGES`).
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn autostart_ledger_pages(&mut self, pages: usize) {
         self.report.autostart_ledger_pages(pages);
     }
 
     /// Open or collapse the report's trade list (`QUANTICK_PAPER_REPORT_LIST`).
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn set_report_list_open(&mut self, open: bool) {
         self.report.set_report_list_open(open);
     }

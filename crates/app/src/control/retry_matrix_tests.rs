@@ -30,7 +30,7 @@ fn with_row(capability: &str, edit: impl Fn(&mut Readback)) -> Vec<Readback> {
 }
 
 fn assert_finds(rows: &[Readback], expected: &Drift) {
-    let findings = drift(rows, &contract());
+    let findings = drift(rows, contract().capabilities());
     assert!(
         findings.contains(expected),
         "expected {expected:?} among {findings:?}"
@@ -61,7 +61,7 @@ fn the_committed_retry_matrix_is_what_the_generator_emits() {
 #[test]
 fn every_mutable_capability_has_one_row_and_no_row_has_drifted() {
     let contract = contract();
-    let findings = drift(READBACKS, &contract);
+    let findings = drift(READBACKS, contract.capabilities());
     assert!(
         findings.is_empty(),
         "the retry matrix disagrees with the registry:\n{}",

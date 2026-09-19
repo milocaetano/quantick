@@ -24,10 +24,16 @@ grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 The registry is generated: rows come from the `declare_hooks!` line beside each
 read plus `docs/ui-harness/hook-prose.md`, and a hook read but not described, or
 described but not read, fails `cargo test -p quantick-guards`. Edit the prose,
-then `cargo run -p quantick-app -- --dump-hook-registry`; never hand-edit the
-registry. Its *Declared in* column says where each hook lives. Every launch
-hook is applied in `crates/app/src/app/launch_hooks.rs`, in the order its doc
-comment fixes. A `QUANTICK_*` nothing reads logs `UNKNOWN_HOOK` at startup.
+then `cargo run -p quantick-app --features harness -- --dump-hook-registry`;
+never hand-edit the registry. Its *Declared in* column says where each hook
+lives; launch-phase hooks apply in `crates/app/src/app/launch_hooks.rs`, in
+the order its doc comment fixes.
+
+**Hooks compile only with a harness feature.** `--features harness` enables
+all four families (`scenario-`, `control-`, `drawing-`, `quick-range-harness`);
+a default build reads only the operator configuration `crates/app/src/launch.rs`
+captures. An unregistered `QUANTICK_*` logs `UNKNOWN_HOOK` and turns saving
+off for the session (`SAVES OFF` in the status line).
 
 **Adding one** — a new surface gets its hook in the same commit: read the var,
 call the manual toggle's function, default off; add the name to that module's
@@ -36,13 +42,16 @@ Where the read lives:
 
 - a hook the window owns (menu opened, pointer parked, demo staged, history
   page asked, a frame budget) → `crates/app/src/harness.rs`: one `Harness`
-  field, one `Harness::from_env` line, one accessor named for its purpose;
+  field, one `Harness::capture` line, one accessor named for its purpose;
 - a floating surface's hook → that surface's module under
   `crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls
   (`size.rs` fails one added to the trunk);
 - stateless launch setters and the control/tab/replay/workspace clusters stay
   in `app/launch_hooks.rs`; a hook that keeps a field and needs only its own
   parsed value belongs in its owner.
+
+None calls `std::env::var`: `main` captures every declared name once and an
+owner asks `crate::hooks::captured::var`.
 
 A second dimension on an existing hook is a defaulting field on its struct
 (`DrawingsDemo`, `FrvpDemo`, `DrawingDraft`), never a new enum variant.
@@ -54,7 +63,8 @@ Raw captures stay outside Git; results and artifact links go in the PR.
 1. **Own target dir with free space**: `CARGO_TARGET_DIR=D:\quantick-agent-target`,
    so the user's exe is never locked. Check `Get-PSDrive -PSProvider
    FileSystem` first; ENOSPC reads like a compile error.
-2. **Fresh exe, proven**: `cargo build -p quantick-app` right before capturing,
+2. **Fresh exe, proven**: `cargo build -p quantick-app --features harness`
+   right before capturing,
    then compare the exe `LastWriteTime` with your last edit — green tests do
    not rebuild it.
 3. **Launch with PowerShell `Start-Process`**, hooks set, `RUST_LOG=quantick=info`,
@@ -77,7 +87,8 @@ Raw captures stay outside Git; results and artifact links go in the PR.
 
 A structured answer beats a pixel answer whenever both exist — it survives
 colour, font and layout nudges; keep screenshots for clipping, font,
-composition and "does this read". Launch with `QUANTICK_CONTROL_ACCESS=1` and
+composition and "does this read". Launch a `--features harness` build with
+`QUANTICK_CONTROL_ACCESS=1` and
 the scopes, then use `quantick_get_scene` (controls by name, `selected`, the
 coded reason one cannot be operated), `quantick_get_diagnostics` (frame and
 tape numbers), and `quantick_capture_evidence` with `screenshot` (scene,

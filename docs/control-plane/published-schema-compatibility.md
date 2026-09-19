@@ -26,9 +26,9 @@ and the complete released directory inventory. Removing a manifest entry, losing
 a released file or editing its bytes fails before compatibility is evaluated.
 Repository LF normalization keeps raw-byte checks portable across Windows and CI.
 
-Treat this directory as immutable release evidence. Existing
-`QUANTICK_UPDATE_SCHEMAS` and `QUANTICK_UPDATE_CONTROL_SCHEMAS` regeneration paths
-write only their existing files directly under `schemas/control`; neither writes
+Treat this directory as immutable release evidence. The existing
+`regenerate_public_contracts` and `regenerate_observer_schemas` regeneration
+tests (ignored; run by name) write only their existing files directly under `schemas/control`; neither writes
 the release directory or manifest. A future release needs its own explicitly
 reviewed baseline and provenance. Updating current snapshots is not permission
 to replace this baseline. Hash pins detect accidental drift; repository review

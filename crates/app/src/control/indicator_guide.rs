@@ -1,5 +1,8 @@
 //! Durable per-indicator price-hover guide, shared by UI and automation.
 
+pub(crate) use quantick_control_schema::indicator_guide::*;
+
+use crate::app::LayoutPort;
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -13,13 +16,12 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
-    wire::{ActorContext, WireU64},
+    wire::ActorContext,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use serde_json::Value;
 
-use crate::{app::QuantickApp, indicator_worker::SlotId};
+use crate::indicator_worker::SlotId;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -28,26 +30,6 @@ use super::{
     journal::{EventActor, NewEvent},
     script::SCRIPT_MODULE_ID,
 };
-
-pub(crate) const INDICATOR_GUIDE_CAPABILITY_ID: &str = "indicator.mouse_vertical_line.set";
-pub(crate) const INDICATOR_GUIDE_EVENT_KIND: &str = "indicator.mouse_vertical_line.changed";
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct IndicatorGuideInput {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub slot_id: WireU64,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct IndicatorGuideResult {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub slot_id: WireU64,
-    pub enabled: bool,
-}
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
@@ -89,8 +71,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set(
-    app: &mut QuantickApp,
+fn set<P: LayoutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -98,7 +80,7 @@ fn set(
     let input: IndicatorGuideInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let changed = crate::app::set_indicator_mouse_vertical_line(
-        app,
+        &mut app.layout_adapter(),
         input.tab_id.get(),
         input.pane_id.get(),
         SlotId(input.slot_id.get()),

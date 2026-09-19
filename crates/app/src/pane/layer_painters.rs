@@ -11,41 +11,23 @@
 //! are borrowed across the frame and a `&mut self` method cannot run under
 //! them.
 
-use std::sync::Arc;
-
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::bands::Bands;
-use crate::candle_view::draw_candle;
-use crate::chart;
-use crate::chart_layers::ChartLayer;
-use crate::indicator_render::{self, PlotX};
-use crate::orderflow_view::OrderflowView;
 use crate::plot_area::split_time_strip;
 use crate::pointer_compass;
-use crate::style::CandleStyle;
 use crate::theme;
 use crate::toolrail::Tool;
-use quantick_orderflow::engine::VisibleOrderflow;
+use quantick_layers::ChartLayer;
 
 use super::draw_frame::{AxisChips, DrawFrame};
-use super::tape_switch::TAPE_SWITCH_RESERVED_PX;
 use super::{
-    ChartPane, DrawPass, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
+    ChartPane, PaneChrome, PointerCompass, PriceAxisLevel, draw_live_chip, live_chip_rect,
 };
 
 /// Font size, in points, of the "nothing in view" line drawn where the candles
 /// would be. Matches the "connecting…" line: same voice, same weight.
 const EMPTY_VIEW_FONT_SIZE: f32 = 16.0;
-
-/// How much of a sidebar candle's lane its *body* takes, as a fraction of the
-/// half-lane.
-///
-/// Seven tenths, so the body reads as a body and the wick still shows either
-/// side of it. Derived from the lane rather than fixed, so widening the lane
-/// widens the candle instead of leaving a wider gap around the same sliver.
-const SIDEBAR_BODY_FRAC: f32 = 0.35;
 
 impl ChartPane {
     /// What the axes stand aside for this frame: the pointer compass, the
@@ -68,7 +50,29 @@ impl ChartPane {
         // What the compass will say, decided before either axis labels itself:
         // both axes stand aside where a chip is going to land, and a decision
         // made twice is a decision two surfaces can disagree about.
-        let compass = self.pointer_compass(chart_rect, right, total, &scale, chrome);
+        let compass = {
+            let price_on =
+                self.layer_visible(quantick_layers::ChartLayer::PointerPrice, chrome.style);
+            let time_on =
+                self.layer_visible(quantick_layers::ChartLayer::PointerTime, chrome.style);
+            let bar = if price_on || time_on {
+                self.hover_pos.and_then(|pointer| {
+                    self.series_read()
+                        .pointer_bar(&self.viewport, pointer.x, right, total)
+                })
+            } else {
+                None
+            };
+            crate::pointer_compass::PointerCompass::resolve(
+                self.hover_pos,
+                chart_rect,
+                &scale,
+                bar,
+                price_on,
+                time_on,
+                chrome.toolrail.tool() == crate::toolrail::Tool::Crosshair || chrome.paper.aiming(),
+            )
+        };
         // The candles' own segment of the time axis: past the lane divider the
         // strip is the tape's rolling window, which labels itself.
         let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
@@ -117,193 +121,6 @@ impl ChartPane {
         }
     }
 
-    /// The candles' own pass: the heat cleared behind each body, the
-    /// under-candles drawings on the price band, then one candle per visible
-    /// bar, dressed for the footprint style that will paint over them.
-    ///
-    /// `carved` is the pane's band buffer, taken by the caller and carved
-    /// here on the price band only — see the comment inside for why that is a
-    /// correctness bound and not an optimisation.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn paint_candles(
-        &self,
-        frame: &DrawFrame<'_>,
-        clip: &egui::Painter,
-        carved: &mut Bands,
-        orderflow_frame: Option<&Arc<VisibleOrderflow>>,
-        half: f32,
-        candle_lane: f32,
-        content_half: f32,
-        candles: &CandleStyle,
-    ) {
-        let &DrawFrame {
-            painter,
-            areas,
-            right,
-            total,
-            scale,
-            closed_start,
-            closed_total,
-            partial_visible,
-            visible_prefix,
-            visible_state,
-            canvas_background,
-            ..
-        } = frame;
-        let viewport = &self.viewport;
-        let visible_closed = || visible_prefix.iter().chain(visible_state);
-        // Every candle this frame draws, in order: its bar index, the bar
-        // itself, and whether it is still forming. One bar, one candle — the
-        // law `Viewport::candle_width` states — so this is simply the visible
-        // bars, borrowed.
-        let visible_candles = |paint: &mut dyn FnMut(usize, &quantick_engine::Bar, bool)| {
-            for (offset, bar) in visible_closed().enumerate() {
-                paint(closed_start + offset, bar, false);
-            }
-            if let Some(partial) = partial_visible {
-                paint(closed_total, partial, true);
-            }
-        };
-        // Clear the heat behind each candle's high–low span so a translucent
-        // candle stays a clean divider — no liquidity band shows through it.
-        // Where the price swept, the wall reads as consumed; bands survive only
-        // in the gaps between candles and above/below each bar.
-        if orderflow_frame.is_some()
-            && self
-                .orderflow
-                .as_ref()
-                .is_some_and(OrderflowView::depth_visible)
-        {
-            let clear_bar = |xc: f32, bar: &quantick_engine::Bar| {
-                let (top, bottom) = scale.band(
-                    bar.high.to_f64().unwrap_or(0.0),
-                    bar.low.to_f64().unwrap_or(0.0),
-                );
-                clip.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(xc - half, top),
-                        egui::pos2(xc + half, bottom),
-                    ),
-                    egui::Rounding::ZERO,
-                    canvas_background,
-                );
-            };
-            visible_candles(&mut |index, bar, _forming| {
-                clear_bar(viewport.x_center(index, right, total), bar);
-            });
-        }
-        // Objects that are *context* rather than annotation go down here,
-        // between the liquidity map and the candles: a volume profile is read
-        // the way the heatmap is, and drawn over the price it tints every body
-        // it covers.
-        //
-        // The **price band only**, and that is a correctness bound rather than
-        // an optimisation. An indicator band's scale is written when its own
-        // curve draws, further down this function, so a band carved here would
-        // be a frame behind the plot it belongs to — which is exactly the
-        // invariant the over-candles carve says it exists to keep. The price
-        // band has no such dependency, so it is the one band that can be
-        // carved this early and still be right. A tool wanting a background
-        // pass on an indicator band would need its own carve after that pane
-        // draws; there is none, and inventing a stale one for it would be
-        // worse than not offering it.
-        self.carve_bands(areas, carved);
-        if let Some(price_band) = carved.iter().next() {
-            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
-        }
-        // Asked once for the whole frame: on a chart where no indicator paints
-        // — every chart until a script calls `barcolor` — the per-bar lookup
-        // below never runs at all.
-        let painted = self.indicators.paints_any();
-        visible_candles(&mut |index, bar, forming| {
-            let xc = viewport.x_center(index, right, total);
-            // Plot rows map 1:1 onto bars (see `PlotX`), and one bar is one
-            // candle at every zoom, so a drawn candle covers exactly its own
-            // row.
-            let paint = painted
-                .then(|| self.indicators.slot_paint(index..index + 1, forming))
-                .flatten();
-            // A sidebar candle moves into the lane the footprint left it at
-            // the slot's left edge; every other case draws where it always
-            // did, at full body width. One call, two geometries — never a
-            // second candle path, which would drift from this one.
-            let slot = if candle_lane > 0.0 {
-                // A third of the lane each side, so the body is a body and the
-                // wick still has room to show either side of it.
-                let sliver = (candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
-                crate::candle_view::BarSlot {
-                    xc: xc - content_half + sliver + 1.0,
-                    half_width: sliver,
-                }
-            } else {
-                crate::candle_view::BarSlot {
-                    xc,
-                    half_width: half,
-                }
-            };
-            draw_candle(clip, slot, &scale, bar, forming, candles, paint);
-        });
-    }
-
-    /// Overlay indicator plots and their draw objects, on the candles' own
-    /// clip, scale and x-mapping — after the candles, before the bubbles.
-    pub(super) fn paint_overlays(
-        &self,
-        frame: &DrawFrame<'_>,
-        clip: &egui::Painter,
-        plot_x: &PlotX<'_>,
-    ) {
-        let &DrawFrame {
-            scale,
-            start,
-            end,
-            closed_total,
-            prefix,
-            closed,
-            partial,
-            partial_visible,
-            ..
-        } = frame;
-        // Slot -> (high_y, low_y) in pixels, for above/below-bar markers.
-        let bar_extents = |slot: usize| -> Option<(f32, f32)> {
-            let bar = if slot < prefix.len() {
-                prefix.get(slot)
-            } else if slot < closed_total {
-                closed.get(slot - prefix.len())
-            } else if slot == closed_total {
-                partial
-            } else {
-                None
-            }?;
-            Some((
-                scale.y(chart::to_f64(bar.high)),
-                scale.y(chart::to_f64(bar.low)),
-            ))
-        };
-        indicator_render::draw_overlays(
-            clip,
-            self.indicators.visible_overlays(),
-            plot_x,
-            &scale,
-            start,
-            end,
-            partial_visible.map(|_| closed_total),
-            &bar_extents,
-        );
-        // Draw objects (lines/boxes/labels) share the overlays' paint slot:
-        // after candles, before aggression bubbles.
-        for view in self.indicators.visible_overlays() {
-            indicator_render::draw_objects(
-                clip,
-                view.render_objects(),
-                plot_x,
-                |v| scale.y(v),
-                start,
-                end,
-            );
-        }
-    }
-
     /// The session's closed-trade marks, between the drawings and the live
     /// paper lines, on the bars this pane's tape actually reaches.
     pub(super) fn paint_trade_marks(&self, frame: &DrawFrame<'_>, chrome: &PaneChrome<'_>) {
@@ -337,17 +154,18 @@ impl ChartPane {
             // The window once, not once per fill: `draw` asks about every
             // closed round trip of the session, twice each, every frame.
             let covered = self.covered_window();
-            crate::trade_paint::draw(
-                &frame,
-                chrome.paper.session_trades(),
-                chrome.paper.account().selected_trade_index(),
-                |ms| {
-                    covered
-                        .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
-                        .and_then(|_| self.slot_at_time(ms))
-                },
-                |slot| self.viewport.x_center(slot, right, total),
-            );
+            self.layer_renderers
+                .trades(&mut super::render_registry::TradesPass {
+                    frame: &frame,
+                    trades: chrome.paper.session_trades(),
+                    selected: chrome.paper.account().selected_trade_index(),
+                    slot: &|ms| {
+                        covered
+                            .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
+                            .and_then(|_| self.slot_at_time(ms))
+                    },
+                    x: &|slot| self.viewport.x_center(slot, right, total),
+                });
         }
     }
 
@@ -384,39 +202,80 @@ impl ChartPane {
         // price is live market data, and the moment the two coincide — price
         // arriving at the level — is exactly the moment the live number must
         // not be the one that gets covered.
-        self.draw_axis_marks(
+        crate::pane::render_registry::AxisMarksPass {
             painter,
             chart_rect,
             axis_x,
-            &scale,
+            scale: &scale,
             levels,
-            partial.or_else(|| closed.last()),
-            chrome,
-        );
+            newest: partial.or_else(|| closed.last()),
+            last_price_visible: self
+                .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            style: chrome.style,
+        }
+        .paint(self.layer_renderers);
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
         if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
-            self.draw_seam_divider(painter, history_rect, total, cw);
+            self.layer_renderers
+                .seam(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: &[],
+                });
         }
         if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
-            self.draw_backfill_divider(painter, history_rect, total, cw);
+            self.layer_renderers
+                .backfill(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: &[],
+                });
         }
         // Under the same switch as the venue seam: both answer "what is the
         // provenance of the bars either side of this line?", and a trader who
         // turned that class of mark off meant this one too.
         if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
-            self.draw_feed_gaps(painter, history_rect, total, cw, chrome.feed_gaps);
+            self.layer_renderers
+                .feed_gaps(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: chrome.feed_gaps,
+                });
         }
-        self.draw_time_strip(
+        crate::pane::render_registry::TimeStripPass {
             painter,
-            areas.time_strip,
+            strip: areas.time_strip,
             start,
             end,
             total,
-            time_claims,
-            chrome,
-        );
+            claims: time_claims,
+            style: chrome.style,
+            tz: chrome.tz,
+            divider_x: self.frame.lane_divider_x,
+            viewport: &self.viewport,
+            series: self.series_read(),
+        }
+        .paint();
     }
 
     /// The last marks on the canvas: the jump-to-live chip, the empty-view
@@ -457,21 +316,50 @@ impl ChartPane {
             );
         }
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
-            self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
+            self.layer_renderers
+                .crosshair(&mut crate::pane::render_registry::CrosshairPass {
+                    painter,
+                    chart_rect,
+                    axis_x,
+                    scale: &scale,
+                    pointer: self.hover_pos,
+                    armed: chrome.toolrail.tool() == crate::toolrail::Tool::Crosshair,
+                });
         }
         // Last of the canvas marks, so the answer the trader is asking for by
         // holding the mouse where they are holding it is on top of the ones
         // the chart volunteers. Decided in `axis_claims`, where the axes read it too.
         if let Some(compass) = compass.as_ref() {
-            self.draw_pointer_compass(painter, compass, axis_x, areas.time_strip, chrome);
+            self.layer_renderers
+                .pointer(&mut crate::pane::render_registry::PointerPass {
+                    painter,
+                    compass,
+                    axis_x,
+                    time_strip: areas.time_strip,
+                    divider_x: self.frame.lane_divider_x,
+                    tz: chrome.tz,
+                });
         }
         // The status badge is not a layer: it reports whether the source is
         // healthy, and a chart with every layer off must still say that. It
         // shares the top-right corner with the tape switch, which is drawn last
         // and holds the corner itself.
         if let Some(orderflow) = self.orderflow.as_ref() {
-            orderflow.draw_status_badge(painter, chart_rect, TAPE_SWITCH_RESERVED_PX);
+            self.layer_renderers
+                .status(&mut super::render_registry::StatusPass {
+                    owner: orderflow,
+                    painter,
+                    rect: chart_rect,
+                });
         }
-        self.draw_tape_switch(painter, chart_rect);
+        self.layer_renderers
+            .canvas(&mut crate::pane::render_registry::CanvasPass {
+                painter,
+                rect: chart_rect,
+                tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
+                tape_hovered: self.tape_switch.hovered(),
+                state: &self.layers,
+                facts: self.layer_facts(Some(chrome.capabilities)),
+            });
     }
 }

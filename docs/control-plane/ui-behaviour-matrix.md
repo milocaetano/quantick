@@ -15,7 +15,7 @@ cargo run -p quantick-app -- --dump-ui-behaviour-matrix \
   > docs/control-plane/ui-behaviour-matrix.md
 ```
 
-The table lives in `crates/app/src/operability/registry.rs`; the guard
+The table lives in `crates/operability/src/registry.rs`; the guard
 that compares it against the interface and against the capability
 registry lives beside it, and runs as
 `cargo test -p quantick-app operability`.
@@ -41,10 +41,10 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 36 |
+| Reachable by capability | 40 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 59 |
+| Excluded: `pending_capability` | 55 |
 | **Total** | **103** |
 
 81 of the 103 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 22 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
@@ -71,15 +71,15 @@ The three exclusion classes are closed:
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
-| `layout.pane.resize` | Resize a chart by its splitter | drag the divider between two charts | `layout.pane.resize` | — |
+| `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
 | `layout.preset.apply` | Switch the canvas to another arrangement | toolbar layout picker, View → Layout, Ctrl+1 … Ctrl+9 | `layout.preset.apply` | — |
 | `dock.tab.open` | Open a panel — L2, bubbles, session, trading or trades | View menu, the dock's own strip, a layer button's right-click | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu | — | `pending_capability` — no capability switches a chart layer; the scene reports the toggle's state but nothing can press it. Tracked in issue 401 |
+| `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu | — | `pending_capability` — no capability switches a chart layer; the scene reports the toggle's state but nothing can press it. Tracked in issue 401 |
-| `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | — | `pending_capability` — no capability switches a chart layer; the scene reports the toggle's state but nothing can press it. Tracked in issue 401 |
-| `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | — | `pending_capability` — no capability switches a chart layer; the scene reports the toggle's state but nothing can press it. Tracked in issue 401 |
+| `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.reach.set` | Choose how far back the chart reaches, and the page size | toolbar history caret menu, reachable by the `history` scripted-menu hook | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |

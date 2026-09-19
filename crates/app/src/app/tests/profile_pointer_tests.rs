@@ -3,7 +3,11 @@ use super::*;
 fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     let (mut app, events, commands, _book) = test_app();
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.live_strip_visible = false;
+    pane.set_layer_visible(
+        crate::chart_layers::ChartLayer::LiveStrip,
+        false,
+        &mut Default::default(),
+    );
     pane.spec.retain(crate::state::BarSpec::Tick(1));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
@@ -19,7 +23,8 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 200);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
@@ -134,6 +139,7 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
             .cache
             .as_ref()
             .unwrap()
+            .output()
             .profile
             .as_ref()
             .unwrap()

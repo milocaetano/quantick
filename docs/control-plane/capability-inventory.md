@@ -46,6 +46,7 @@ capability that cannot change application state.
 | `indicator.mouse_vertical_line.set` | 1 | `indicator` | no | `cockpit`, `cockpit.layout` |
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
+| `layers.visibility.set` | 1 | `layers` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -56,6 +57,7 @@ capability that cannot change application state.
 | `layout.pane.move` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.resize` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.pane.resize_pair` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_bar_spec` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.set_interval` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -78,4 +80,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-53 capabilities registered.
+55 capabilities registered.

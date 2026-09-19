@@ -13,9 +13,10 @@
 
 use eframe::egui;
 
-use crate::chart_layers::{ChartLayer, LayerBlock};
 use crate::drawings::{self, DrawingBand};
 use crate::theme;
+use crate::toolrail::Tool;
+use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
     lane_window_label, same_lane_window,
@@ -65,7 +66,15 @@ impl ChartPane {
     /// each layer belongs to, so neither menu can offer a switch for the canvas
     /// beside it.
     fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| !layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| !layer.on_tape())
+        {
             let blocked = self.layer_checkbox(ui, layer, chrome);
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
@@ -109,7 +118,15 @@ impl ChartPane {
         // checkbox reads and writes the lane's own field through
         // `layer_visible` / `set_layer_visible`, which is also what puts these
         // three in the layer state file.
-        for layer in ChartLayer::ALL.into_iter().filter(|layer| layer.on_tape()) {
+        for layer in self
+            .layers
+            .registry()
+            .clone()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.on_tape())
+        {
             let _ = self.layer_checkbox(ui, layer, chrome);
         }
 
@@ -212,7 +229,22 @@ impl ChartPane {
                     .context_menu_label()
                     .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    self.place_drawing_point(tool, &DrawingBand::Price, point, chrome);
+                    let completion = self.gestures.place_point(
+                        &mut self.drawings,
+                        tool,
+                        &DrawingBand::Price,
+                        point,
+                        super::placement_gestures::PlacementDefaults {
+                            presets: chrome.presets,
+                            repeat: chrome.toolrail.repeat(),
+                        },
+                    );
+                    if completion.arm_pointer {
+                        chrome.toolrail.arm(Tool::Pointer);
+                    }
+                    if completion.begin_text_edit {
+                        *chrome.begin_text_edit = true;
+                    }
                     ui.close_menu();
                 }
             }
@@ -301,7 +333,17 @@ impl ChartPane {
             self.drawings.rename_at(index, &name);
             self.context_menu.rename = name;
         }
-        self.draw_strategy_menu_entries(ui, index);
+        self.strategies.draw_menu_entries(
+            ui,
+            &self.drawings,
+            index,
+            super::drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            &mut self.context_menu,
+        );
         let locked = self.drawings.items()[index].locked;
         let hidden = self.drawings.items()[index].hidden;
         let lock = ui
@@ -336,7 +378,7 @@ impl ChartPane {
                     // The instance dies with its drawing, immediately — not
                     // on the next closed bar, which a quiet tape may never
                     // bring.
-                    self.remove_strategy_for_drawing(doomed);
+                    self.strategies.remove_for_drawing(doomed);
                 }
                 self.context_menu.drawing = None;
                 ui.close_menu();
