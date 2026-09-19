@@ -8,197 +8,113 @@ Campaign children override the main-based examples via the
 
 # Mission
 
-Argument: an optional tier, then the session objective — `/mission small the
-axis labels overlap at low zoom`. If the objective is missing, ask for it
-before doing anything else.
+Argument: an optional tier, then the objective — `/mission small the axis
+labels overlap at low zoom`. No objective: ask for it before anything else. The
+first word selects `small`, `medium`, `high` or `max`, bare or flagged
+(`--small`); otherwise keep the whole objective and default to `small`. Use a
+flagged tier when the objective itself starts with a tier word. Step 1 echoes
+the parse.
 
-The first word selects `small`, `medium`, `high` or `max`, bare or flagged
-(`--small`). Otherwise retain the whole objective and default to `small`.
-Use an explicit flagged tier when the objective itself starts with a tier word;
-step 1 echoes the parse.
-
-The mission selects the skills required for done. Each mission owns one
-branch, worktree and PR.
-
-[The delivery contract](../../../docs/workflow/delivery.md) owns requirement
-reconciliation, operational gate mapping and proportional validation. Apply its
-source-preserving preflight before implementation; campaign child completion
-returns to the coordinator without a new user-pasted goal.
-
-**This skill defines done; `/goal` supplies continuation.** Claude's built-in
-`/goal` repeats turns until its evaluator accepts the condition, without
-repository knowledge. Step 9 provides that condition.
-
-Read `references/why.md` when changing a rule; it explains the rationale.
+A mission owns one branch, worktree and PR, and selects the skills required
+for done. [The delivery contract](../../../docs/workflow/delivery.md) owns
+requirement reconciliation, gate mapping and proportional validation; apply its
+source-preserving preflight before implementation. A campaign child returns
+completion to its coordinator. This skill defines done; the built-in `/goal`
+supplies continuation (step 9). Rationale: `references/why.md`.
 
 ## Tiers
 
-A tier buys less ceremony **on the record**, with a gate that knows it did.
-
 | | `small` (default) | `medium` | `high` | `max` |
 | --- | --- | --- | --- | --- |
-| **2** — request ledger | required, terse | required | required | required |
-| **3** — interrogation | skipped; every doubt becomes an `S` assumption, bar the one exception below | at most two questions, and only where a wrong guess throws work away | the full round, at most four | the full round, re-checked against the plan before code is written |
-| **4** — injected gates | English, and *Any code change* whole. Every other row applies only where the diff actually reaches that territory | the full table | the full table | the full table, and the UI rows apply to a surface touched even indirectly |
-| **5** — local `GOAL.md` | short form: objective, **the `**Tier:**` line**, ledger, `S`, criteria, verbatim request | full | full | full |
-| **8** — bug pass (`arch-review` step 0) | `code-review` at `low` | at `low` | at `medium` | at `high`, and the trader is told `/code-review ultra` exists |
-| **8** — shape pass | only the dimensions the diff touches; **8 always** | full | full | full |
-| **8** — `delivery-review` | **not run** | **completeness pass only**, inline | runs in full | runs in full |
-| **9** — the `/goal` line | skipped | printed | printed | printed |
+| **2** ledger | required, terse | required | required | required |
+| **3** questions | none; doubts become `S`, bar the exception below | ≤ 2, only where a wrong guess throws work away | ≤ 4 | ≤ 4, re-checked against the plan before code |
+| **4** gates | English and *Any code change* whole; other rows only where the diff reaches that territory | full table | full table | full table; UI rows apply to a surface touched even indirectly |
+| **5** `GOAL.md` | short: objective, `**Tier:**` line, ledger, `S`, criteria, verbatim request | full | full | full |
+| **8** bug pass (`arch-review` step 0) | `code-review` at `low` | `low` | `medium` | `high`; tell the trader `/code-review ultra` exists |
+| **8** shape pass | dimensions the diff touches; **8 always** | full | full | full |
+| **8** `delivery-review` | **not run** | **completeness pass only**, inline | full | full |
+| **9** `/goal` line | skipped | printed | printed | printed |
 
-**What no tier buys.** `arch-review`, applicable validation and the worktree
-rule hold at every tier. A tier never removes the bug pass or final-head CI.
-
-**The one question `small` still asks.** Step 3's *a call that is the
-trader's* — money, safety, irreversibility, autonomy. If it is being asked, the
-work was never `small`: raise the tier in the same breath.
-
-**A tier goes up, never down.** Raise it the moment the work turns out bigger
-than it looked, and rewrite the tier file from step 6 when you do. Lowering one
-mid-mission cannot be told apart from dodging a review that was about to fail,
-so it is not available.
-
-`pr-gate` exempts `small` from `delivery-review` only while insertions plus
-deletions against `origin/main` stay within `SMALL_TIER_MAX_CHANGED_LINES`.
-Past it, raise the tier or split the work; never shrink a diff to evade review.
-`.claude/hooks/README.md` owns the mechanism.
+No tier removes `arch-review`, the bug pass, applicable validation, final-head
+CI or the worktree rule. *A call that is the trader's* (step 3) is asked at
+every tier; at `small` it means the tier was wrong — raise it in the same
+breath. **A tier goes up, never down**: raise it the moment the work proves
+bigger and rewrite the tier file (step 6). `pr-gate` exempts `small` from
+`delivery-review` only while insertions plus deletions against `origin/main`
+stay within `SMALL_TIER_MAX_CHANGED_LINES`; past it, raise the tier or split
+the work — never shrink a diff to evade review.
 
 ## Steps
 
-1. **Capture the mission**: restate the objective in one sentence **in
-   English** — that sentence becomes `.claude/GOAL.md`, the branch name and the
-   first line of the PR body. Saying it back in the trader's own language too
-   is welcome; the version written down is the English one.
+1. **Capture.** Restate the objective in one English sentence — it becomes
+   `GOAL.md`, the branch name and the PR body's first line. Echo
+   `tier: <tier> | objective: <sentence>`; at `small` add
+   `(no interrogation, no delivery-review)`.
 
-   Echo `tier: <tier> | objective: <sentence>`. At `small`, explicitly add
-   `(no interrogation, no delivery-review)` so the exemption is visible.
+2. **Ledger.** Before any criterion, decompose the request into distinct
+   outcomes/constraints `R1`…`Rn` under the delivery contract's reconciliation
+   and source-span mapping. Distinct = independently verifiable; equivalent
+   clauses may share an ID. The closing statement of purpose is an ask too, and
+   judges the others. Keep a **verbatim fragment** where the wording carries the
+   ambiguity; the operative statement is English. Every `R` maps to ≥ 1 `A`
+   and every `A` cites ≥ 1 `R` — an `R` without one is a hole, an `A` without
+   one is invented scope (take it to the trader or drop it). Operational
+   instructions become `G`/`C` lines citing source and evidence, not duplicate
+   `R/A`; an explicitly requested workflow change still gets `R/A`. IDs never
+   renumber; a withdrawn ask stays, struck through, with the reason.
 
-2. **Build the request ledger.** Before deriving a single criterion, decompose
-   the request into distinct outcomes/constraints, numbered `R1`…`Rn`, using
-   the delivery contract's reconciliation and source-span mapping.
+3. **Interrogate once, before work** — one `AskUserQuestion`, recommended
+   option first, in the trader's language, within the tier's budget. Ask only
+   for: an **ambiguous reference** (one word, two things, different code); a
+   **double meaning** producing different software; a **contradiction** (asks
+   that cannot both hold, or one against shipped behaviour); **a number nobody
+   chose** where the wrong one is expensive to reverse; **a call that is the
+   trader's** (autonomy, money, safety — anything that can place, cancel or
+   lose an order — taste, irreversibility); **a narrowing** you are about to
+   perform. Never ask what has a repo default (naming, placement, test style,
+   prefix, crate), what the code answers in a minute, "should I proceed?", or a
+   preference reversible in one edit — decide and record an `S`. Over budget, ask
+   the costliest; the rest become `S` lines marked *wanted to ask*, with the
+   reading taken; if none qualify, say so. Answers are `D1`…; reopening
+   one is a scope change. Later doubts become `S` unless unsafe or likely to
+   waste completed work.
 
-   - An ask is distinct when it has an independently verifiable outcome or
-     constraint. Equivalent source clauses may share an ID. Operational
-     instructions map to applicable `G`/`C` obligations, not duplicate `R/A`.
-   - The closing statement of purpose ("so that we can…") is an ask too, and
-     the one that judges the others.
-   - Keep the trader's own words as a **verbatim fragment** where the wording
-     carries the ambiguity — the words that carry it, not three sentences where
-     three words would do. The operative statement on each line is English.
-   - Map every `R` to at least one **`A` criterion**, and cite at least one `R`
-     from every `A`. **An `R` with no criterion is a hole. An `A` with no `R`
-     is scope you invented** — take it to the trader or drop it.
-   - Gates `G1`…`Gn` and closing steps `C1`…`Cn` cite their authoritative
-     source and evidence. An explicitly requested workflow change still gets
-     `R/A` coverage; classification cannot hide a requested outcome.
-   - Numbers are stable for the life of the mission. Never renumber. A
-     withdrawn ask stays on the ledger, struck through, with the reason.
+4. **Criteria and gates.** Derive criteria from the ledger, then inject by
+   kind (at `small`: *Any mission* and *Any code change* whole, other rows only
+   where genuinely reached — a row that keeps applying means not `small`):
 
-3. **Interrogate — once, before any work starts.** Raise everything that
-   qualifies in a single `AskUserQuestion` call (at most four questions,
-   recommended option first, in whatever language the trader speaks).
-
-   **The tier sets the budget**: four questions at `high` and `max`, two at
-   `medium`, none at `small` — where every doubt becomes an `S` assumption
-   instead, except *a call that is the trader's*, which is asked at every tier
-   and means the tier was wrong. Under a reduced budget, everything that
-   qualified and went unasked is an `S` line marked *wanted to ask*, carrying
-   the reading you went with. A tier lowers what you ask; never what you
-   record.
-
-   **Ask only for:**
-
-   - **Ambiguous reference** — a word naming two different things in this repo,
-     where the two lead to different code.
-   - **Double meaning** — a phrase that reads two ways, and the two readings
-     produce different software.
-   - **Contradiction** — two asks that cannot both be satisfied, or an ask that
-     contradicts something already shipped.
-   - **A number nobody chose** — "fast", "a few", "most", where the code needs
-     an exact value and the wrong one is expensive to reverse.
-   - **A call that is the trader's** — autonomy, money and safety (anything
-     that can place, cancel or lose an order), taste, and irreversibility.
-   - **A narrowing you are about to perform** — delivering less than what was
-     said is never a private decision.
-
-   **What does not earn a question** — decide it, and record it as an `S`:
-   anything with a conventional default in this repo (naming, file placement,
-   test style, branch prefix, which crate); anything the code answers in under
-   a minute of reading; "should I proceed?"; a preference reversible in one
-   edit.
-
-   Record answers as `D1`…`Dn` in `GOAL.md`. Reopening a settled user decision
-   is a scope change.
-
-   Over four qualifying questions: ask the costliest four and record the rest
-   as `S` marked *wanted to ask*. If none qualify, say so. Later doubts become
-   assumptions unless unsafe or likely to waste completed work.
-
-4. **Classify it and inject the standard gates.** Derive the mission-specific
-   criteria from the ledger — every `R` discharged — then add the gates for its
-   kind.
-
-   At `small`, two rows are injected outright: *Any mission at all*, and the
-   whole of *Any code change* — the four checks, **the declared performance
-   impact**, and `arch-review` resolved. Every remaining row applies solely
-   where the diff genuinely reaches that territory. A narrower reading of the
-   same table, never a different one: if a row keeps applying anyway, the
-   mission is not `small`.
-
-   | The mission… | Injected acceptance criteria |
+   | The mission… | Injected criteria |
    | --- | --- |
-   | Any mission at all | **every artifact in English** under `CLAUDE.md`, graded by `arch-review` dimension 8 and the language guard. At every tier copy the four reserved `G-AI` lines below verbatim into the local goal. Declare their PR/CI evidence destinations before review; do not claim they already ran. |
-   | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** — classify every touched path by rate (per-trade / per-depth / per-frame / rare) as part of the plan, not the review; `arch-review` run with every Blocker/Should-fix resolved or deferred in the PR body |
-   | Touches a hot path | evidence that performance is flat or better, not a belief: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a bench over a fixture — measured before the PR, numbers in its body |
-   | Touches anything user-visible | follow `ui-harness`: every new/changed surface reachable by env hook, added in the same change; `visual-qa` pass with all surfaces PASS or defects explicitly accepted; `trader-ux-review` with no unresolved Blocker |
-   | Adds a capability (feed, bar type, indicator, layer, panel, crate) | follow `new-extension`: port named, registration-only edits, defaults preserve today's behaviour, fake second implementation tested, blast radius stated in the PR body |
-   | Adds something a trader *does* (an action, a tool, a trade, a lock) | drivable without a mouse — take the act/read/discover criteria from `arch-review`'s *The second operator*, not from a summary that drifts. Where the capability class has no registry yet, carving one is part of the work per `new-extension` — name it in the plan or say why the capability stays local |
-   | Engine / determinism territory | test-first: fixture + expected output written before the code; golden test guards determinism |
-   | Docs/skills only | proportional local proof under the delivery contract and full final-head CI; `arch-review`'s shape dimensions 1–7 and 9 waived for prose — **dimension 8 and step 0 always apply**. Operational instruction changes require behavioral proof; scripts/config/tests take the full shape pass. Tier-based review gates remain unchanged |
+   | Any mission at all | **every artifact in English** (`arch-review` dimension 8, the language guard). At every tier copy the four reserved `G-AI` lines below verbatim into the local goal, declaring their PR/CI evidence destinations; never claim they already ran. |
+   | Any code change | four checks green after rebasing on latest `main`; **performance impact declared** in the plan — every touched path classified per-trade / per-depth / per-frame / rare; `arch-review` Blockers/Should-fixes resolved or deferred in the PR body |
+   | Touches a hot path | measured, not believed: `APP_HEALTH_SUMMARY` fps/frame_avg under a dense tape vs. a `main` control run, or a fixture bench — numbers in the PR body |
+   | Touches anything user-visible | `ui-harness`: every new/changed surface reachable by env hook in the same change; its QA pass with every cell PASS or explicitly accepted; `trader-ux-review` with no unresolved Blocker |
+   | Adds a capability (feed, bar type, indicator, layer, panel, crate) | `new-extension`: port named, registration-only edits, defaults preserve today, fake second implementation tested, blast radius in the PR body |
+   | Adds something a trader *does* (action, tool, trade, lock) | drivable without a mouse — act/read/discover from `arch-review`'s *The second operator*; where the class has no registry, carving one is part of the work or the plan says why it stays local |
+   | Engine / determinism territory | test-first: fixture + expected output before the code; golden test |
+   | Docs/skills only | proportional local proof and full final-head CI; shape dimensions 1–7 and 9 waived — **dimension 8 and step 0 always apply**; operational instruction changes need behavioral proof; scripts/config/tests take the full shape pass |
 
-   Write down every non-applicable gate and why it does not apply.
+   Write down each non-applicable gate and why. List delivery-review PASS, the
+   open PR and final-verifier PASS as closing steps `C1`…, not `A`/`G`; at
+   `small` omit the delivery-review step. Show the checklist; no approval
+   needed.
 
-   ### Closing steps are not criteria
-
-   List delivery-review PASS, the open PR and final-verifier PASS as `C1`…`Cn`,
-   not `A`/`G`,
-   under **Closing steps**. **At `small` the first is not listed at all** — a
-   closing step the mission is exempt from is not one it owes, and writing it
-   down leaves the archive recording an obligation nothing will discharge.
-   Step 8 puts the concise mission summary in the PR before review.
-
-   Show the checklist before work; no routine approval is required.
-
-5. **Persist it — in the worktree, which means step 6 happens first.** Cut the
-   branch and worktree before writing anything, then write the mission to
-   `<worktree>/.claude/GOAL.md`, in English, so it survives compaction.
-   Overwrite any previous one. A `GOAL.md` written into the main checkout is
-   not on the branch, and `delivery-review` — which looks for the checklist
-   *on the branch* — returns NOT GRADEABLE.
-
-   In order, record: objective and why; a `**Tier:**` line and justification;
-   request ledger; decisions `D1`…; assumptions `S1`…; acceptance criteria;
-   N/A with reasons; then **the full verbatim request** as an attributed
-   quotation. At `small`, justify the exemption. Empty decisions/N/A may go.
-   Missing verbatim request is NOT GRADEABLE; every other line is English.
-
-   ### The checklist format
+5. **Persist — in the worktree, so step 6 runs first.** Write
+   `<worktree>/.claude/GOAL.md` in English, overwriting any previous one (one
+   in the main checkout is off-branch and `delivery-review` returns NOT
+   GRADEABLE). Order: objective and why; `**Tier:**` line with justification
+   (at `small`, justify the exemption); ledger; `D…`; `S…` (each saying why
+   assuming was safe); criteria; N/A with reasons; then **the full verbatim
+   request** as an attributed quotation — without it, NOT GRADEABLE. Items:
 
    ```markdown
-   - [ ] **A3** — <one observable outcome, stated so two readers would agree
-         whether it happened>.
-         *Evidence:* <what proves it — a named test, a command's exit code, a
-         screenshot, a review verdict, a quoted section of a file>.
+   - [ ] **A3** — <one observable outcome two readers would agree on>.
+         *Evidence:* <named test, exit code, screenshot, verdict, quoted file>.
          → <PR/issue section or CI artifact URL>. *(R3, R4)*
    ```
 
-   Each item has a stable ID (`A` mission-specific, `G` injected), one outcome,
-   evidence and destination, plus an `(R…)` tail on `A` only. Never renumber;
-   transcript-only claims are UNPROVEN.
-
-   Every tier includes this exact block under its acceptance criteria. The
-   delivery review compares it with the local goal; the final verifier checks
-   the PR summary and review reports.
+   Stable IDs (`A` mission-specific, `G` injected), one outcome each, `(R…)`
+   on `A` only; transcript-only claims are UNPROVEN. Every tier includes:
 
    <!-- required-ai-review-goal-gates:v1 -->
    - [ ] **G-AI1** — AI review is executed for the current PR review.
@@ -207,52 +123,33 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
    - [ ] **G-AI4** — `ai-review-complete` is valid for the current review key.
    <!-- end required-ai-review-goal-gates:v1 -->
 
-   Each `S` states why assuming was safe. Delivery review rejects a design-driving
-   assumption that step 3 should have asked.
-
-6. **Set up the ground — before step 5 writes anything.** Fresh worktree from
-   updated `main` under `../quantick-worktrees/` per `CLAUDE.md`; never the
-   main checkout, and check the worktree for a live writer before the first
-   write. The `worktree-guard` hook denies the write if this step is skipped.
-
-   **Arm the worktree before the first edit** with both commands. Keep the
-   assignments inside the same shell call and replace every placeholder.
+6. **Ground.** Check `git worktree list` for an existing worktree or branch for
+   this goal and a live writer; reuse, never duplicate. Otherwise cut a fresh
+   worktree from updated `main` per `CLAUDE.md` (from an issue, `/issue start
+   <N>` first). Before the first edit, arm it and record the tier — per-branch,
+   in the worktree's git dir, never committed, rewritten whenever raised;
+   `guardrails.sh` accepts only `<current-branch> <tier>` and `pr-gate` reads
+   this `mission-tier` file, not `GOAL.md`:
 
    ```sh
    WT=/path/to/worktree
    CRATE=quantick-app          # the crate you are about to edit
-   cd "$WT" &&
-     cargo build -p quantick-guards &&   # arms guard-watch; no dependencies
-     cargo check -p "$CRATE" --all-targets
-   ```
-
-   Both commands run **before the first edit**.
-
-   **Record the tier here**, before the first line of work, beside the review
-   projections in that worktree's own git dir — per-branch, never committed:
-
-   ```sh
-   WT=/path/to/worktree
    TIER=medium                 # small | medium | high | max
    cd "$WT" &&
+     cargo build -p quantick-guards &&
+     cargo check -p "$CRATE" --all-targets &&
      printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
        > "$(git rev-parse --absolute-git-dir)/mission-tier"
    ```
 
-   `guardrails.sh` accepts only `<current-branch> <tier>`; `pr-gate` reads that
-   file, not `GOAL.md`. Rewrite it whenever the tier is raised.
+7. **Stay on track.** Refuse scope creep; state a necessary detour and tie it
+   to the mission, or take it to the user. Narrowing stated scope is a step 3
+   question whenever it surfaces. Keep the checklist in the todo list.
 
-7. **Stay on track**: refuse scope creep. A necessary detour is stated
-   explicitly and tied back to the mission, or taken to the user. Keep the
-   checklist in the todo list so progress is visible. Narrowing the user's
-   stated scope is a step 3 question, whenever it surfaces.
-
-8. **Verify, then be graded.** Check off each criterion with its own evidence.
-   Put results and links in the PR; keep raw evidence outside Git under the
-   delivery contract. A criterion without evidence is unmet.
-
-   1. **Publish the draft PR** if `ship` has not; reports and threads need it.
-      Add this block, every field filled (the verifier refuses gaps):
+8. **Verify, then be graded.** Each criterion checked off with its own
+   evidence; none without. Results and links go in the PR; raw evidence stays
+   outside Git per the delivery contract.
+   1. **Draft PR** (if `ship` has not), carrying every field filled:
 
       ```text
       <!-- quantick-mission-summary:v1 -->
@@ -264,39 +161,33 @@ Past it, raise the tier or split the work; never shrink a diff to evade review.
       <!-- end quantick-mission-summary:v1 -->
       ```
 
-      Below it, the whole `GOAL.md` in `<details>`, kept current: fresh
-      contexts read the ledger there. Never track `GOAL*` or evidence.
-   2. **`Skill(arch-review)`** — every tier; its producer publishes PASS and
-      records `arch-review-ok`. Never write the marker directly.
-   3. **`Skill(ai-review)`** — every tier, same PR/key; its producer publishes
-      and records `ai-review-complete`. Close every thread returned by `list`.
-   4. **`Skill(delivery-review)`** — last; its producer publishes PASS and
-      records `delivery-review-ok`. **Skipped only at `small`.**
-   5. **Final completion** — after exact-head CI and any needed ready transition:
-      `sh .claude/hooks/mission_ship_gate.sh mission <pr>` from the task
-      worktree. Run it for already-ready PRs too. It reuses `pr-gate`, lists AI
-      threads, checks reports/PR/head/CI and publishes the literal reconciliation.
-      No mission is complete without PASS.
-   6. After that PASS, delete the ignored local `.claude/GOAL.md`. The PR/issue
-      and published review reports are the durable record.
+      and below it the whole `GOAL.md` in `<details>`, kept current. Never
+      track `GOAL*` or evidence.
+   2. **`Skill(arch-review)`** — every tier; its producer records
+      `arch-review-ok`. Never write a marker directly.
+   3. **`Skill(ai-review)`** — every tier, same PR/key; its producer records
+      `ai-review-complete`. Close every thread `list` returns.
+   4. **`Skill(delivery-review)`** — last; its producer records
+      `delivery-review-ok`. Skipped only at `small`.
+   5. **Final completion** — after exact-head CI and any ready transition, from
+      the task worktree, even for an already-ready PR:
+      `sh .claude/hooks/mission_ship_gate.sh mission <pr>`. No PASS, no
+      completion.
+   6. After PASS, delete the local `.claude/GOAL.md`; the PR and reports are
+      the record.
 
-   After repairs, obtain current verdicts under the delivery contract's delta
+   After repairs, get current verdicts under the delivery contract's delta
    follow-up rules before replacing stale markers. Reviewers never edit.
 
-9. **Hand over the `/goal` condition.** Skipped at `small`. At every other
-   tier, right after step 4, print the built-in command for the user to paste:
-
-   Campaign children instead return their completion condition to the
-   coordinator, which owns available host continuation; no per-child prompt.
+9. **`/goal`** (not at `small`; campaign children return their condition to
+   the coordinator instead). Right after step 4, print for the user to paste,
+   in English, under 4,000 characters, every criterion kept as an observable
+   outcome, with a finite turn bound — the evaluator reads session output
+   only and changes no permission:
 
    ```text
    /goal <the criteria from step 4, as one measurable end state, plus "or stop after N turns">
    ```
-
-   Keep it English and under 4,000 characters. Compress outcomes criteria to
-   observable outcomes without dropping any. The evaluator reads session
-   output, not files or commands, and changes no permission; include a finite
-   `or stop after N turns` bound.
 
 ## What done means
 
@@ -313,6 +204,6 @@ The final verifier reads these stable clauses literally and refuses ID drift.
 - **D8** — Only the user merges to `main`.
 <!-- end what-done-means:v1 -->
 
-Intermediate campaign merges still require their explicit grant and integration
-contract. Do not ask routine permission to push, publish the draft, run reviews,
-complete readiness or run the final verifier.
+Campaign merges still need their explicit grant. Never ask routine permission
+to push, publish the draft, run reviews, complete readiness or run the final
+verifier.

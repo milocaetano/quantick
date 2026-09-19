@@ -1,234 +1,127 @@
 ---
 name: ui-harness
-description: How an agent drives and observes the quantick desktop app without a human clicking — env-var hooks to reach every UI surface, the screenshot capture workflow, and the rule that every new surface must register a hook. Use when launching the app for validation, capturing screenshots, adding a new UI surface, or when another skill (visual-qa, trader-ux-review) needs to see the app.
+description: Drive, observe and visually QA the quantick desktop app without a human clicking — env-var hooks that reach every UI surface, the launch and screenshot workflow, reading the live control plane, and the QA pass (state matrix, defect checklist, PASS/FAIL with evidence). Use when launching the app for validation, capturing screenshots, adding a new UI surface, when a change touches UI, when the user asks "how does it look", or when trader-ux-review needs to see the app.
 ---
 
-# UI harness — drive the app without a mouse
+# UI harness — drive, observe and QA the app without a mouse
 
-The contract that makes autonomous visual work possible:
+> **Every user-visible surface (panel, layer, tab, popup, demo flow) is
+> reachable from a fresh launch by environment hooks alone — zero clicks.**
 
-> **Every user-visible surface (panel, layer, tab, popup, demo flow) must be
-> reachable from a fresh launch via environment hooks alone — zero clicks.**
+A surface shipped without a hook is a Should-fix. `QUANTICK_<SURFACE>_AUTOSTART=1`
+reuses the manual toggle's exact code path — never a parallel activation — and
+defaults off.
 
-A PR that adds a surface without a hook leaves that surface untestable by
-agents; that is a Should-fix in review. Hooks follow the existing family:
-`QUANTICK_<SURFACE>_AUTOSTART=1` reuses the exact code path of the manual
-toggle — never a parallel activation path — and defaults to off, so a hook
-never changes behaviour for a user who did not set it.
+## Hooks
 
-## Hook registry
-
-The registry lives in `references/hook-registry.md`, beside this file. It is
-one row per hook — `| QUANTICK_… | what it reaches |` — so **grep it for the
-surface you need** rather than reading it whole:
+**Grep** `references/hook-registry.md` (one row per hook) for the surface you
+need; read it whole only for an inventory or coverage audit:
 
 ```sh
 grep -i 'heatmap\|book' .claude/skills/ui-harness/references/hook-registry.md
 ```
 
-The 69KB table is *data*,
-looked up one row at a time by a run that drives one or two surfaces. Loading it whole to
-answer "what turns the heatmap on" was the single largest token cost in this
-repository's whole agentic flow, paid on every capture. A grep answers the same
-question from the same rows.
+The registry is generated: rows come from the `declare_hooks!` line beside each
+read plus `docs/ui-harness/hook-prose.md`, and a hook read but not described, or
+described but not read, fails `cargo test -p quantick-guards`. Edit the prose,
+then `cargo run -p quantick-app -- --dump-hook-registry`; never hand-edit the
+registry. Its *Declared in* column says where each hook lives. Every launch
+hook is applied in `crates/app/src/app/launch_hooks.rs`, in the order its doc
+comment fixes. A `QUANTICK_*` nothing reads logs `UNKNOWN_HOOK` at startup.
 
-Read it whole when you genuinely need the whole thing: taking inventory of what
-is reachable, or auditing coverage before a release. That is the rare case, and
-it now costs the same as it always did instead of being charged to every run.
+**Adding one** — a new surface gets its hook in the same commit: read the var,
+call the manual toggle's function, default off; add the name to that module's
+`crate::hooks::declare_hooks![…]` and a row to `hook-prose.md`; regenerate.
+Where the read lives:
 
-**The registry is generated and cannot lie about what exists.** Rows come from
-the `declare_hooks!` line beside each read, fused with the prose in
-`docs/ui-harness/hook-prose.md`; a hook read but not described, or described
-but not read, fails `cargo test -p quantick-guards`. Edit the prose, never the
-registry, then `cargo run -p quantick-app -- --dump-hook-registry` over it.
+- a hook the window owns (menu opened, pointer parked, demo staged, history
+  page asked, a frame budget) → `crates/app/src/harness.rs`: one `Harness`
+  field, one `Harness::from_env` line, one accessor named for its purpose;
+- a floating surface's hook → that surface's module under
+  `crates/app/src/surfaces/`, as an `apply_env_hook` the registry calls
+  (`size.rs` fails one added to the trunk);
+- stateless launch setters and the control/tab/replay/workspace clusters stay
+  in `app/launch_hooks.rs`; a hook that keeps a field and needs only its own
+  parsed value belongs in its owner.
 
-**No one file owns the hooks.** `harness.rs` holds 24 of the 126; the rest are declared where they are read, across 37 files (50 in
-`app/launch_hooks.rs`, 8 in `paper_trading.rs`, 6 in
-`surfaces/drawing_chrome/mod.rs`). The registry's *Declared in* column is the
-answer. **Every launch hook is applied in `crates/app/src/app/launch_hooks.rs`,
-in the order its doc comment fixes** — that module is the application point.
+A second dimension on an existing hook is a defaulting field on its struct
+(`DrawingsDemo`, `FrvpDemo`, `DrawingDraft`), never a new enum variant.
 
-**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`.
+## Launch and capture
 
-## Launch and capture workflow
+Raw captures stay outside Git; results and artifact links go in the PR.
 
-Keep raw captures outside Git; put results and artifact links in the PR.
+1. **Own target dir with free space**: `CARGO_TARGET_DIR=D:\quantick-agent-target`,
+   so the user's exe is never locked. Check `Get-PSDrive -PSProvider
+   FileSystem` first; ENOSPC reads like a compile error.
+2. **Fresh exe, proven**: `cargo build -p quantick-app` right before capturing,
+   then compare the exe `LastWriteTime` with your last edit — green tests do
+   not rebuild it.
+3. **Launch with PowerShell `Start-Process`**, hooks set, `RUST_LOG=quantick=info`,
+   stderr to a log. A bash background job never presents (white captures).
+4. **Capture by PID**, never window title: `tools/capture_window.ps1`
+   (PrintWindow, PW_RENDERFULLCONTENT) filtered to your PID.
+5. **Gate on health**: `APP_HEALTH_SUMMARY` every 2 s. `fps≈59 /
+   frame_avg≈16.7` is real; `fps≈19 / frame_avg≈52 / frame_cpu≈3` is an
+   occluded or idle desktop — wait for fps ≥ 50 and recapture. A blank capture
+   is environment; run a `main` control build before blaming the change.
+6. **Verify by pixel** where the eye is fooled (counting marks, dash
+   signatures, colours, frame diffs) — e.g. `System.Drawing`;
+   `readable_min_radius` in `config/bubbles.toml` is the "too small" reference.
+7. **Be a guest**: minimized window or an active mouse (`GetLastInputInfo`
+   idle ≈ 0) means stop and keep your evidence. No `SendInput`. Never bind a
+   second MT5 listener on port 9100 — `QUANTICK_CONFIG` with another
+   `listen_addr`. Close every instance you opened.
 
-1. **Own target dir, on a drive with room**: build with
-   `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is
-   never locked and rust-analyzer never poisons fingerprints. It was `F:` until
-   that drive stopped existing — check `Get-PSDrive -PSProvider FileSystem`
-   before trusting this line, and pick the drive with free space: `C:` runs
-   into single-digit gigabytes with a few worktrees on it, and a build that
-   dies of ENOSPC looks like a compile error until you read the message.
-2. **Fresh exe, proven fresh**: `cargo build -p quantick-app` immediately
-   before capturing, then compare the exe `LastWriteTime` against your last
-   edit. `cargo test` green does **not** imply the exe was rebuilt.
-3. **Launch via PowerShell `Start-Process`** with hooks set and
-   `RUST_LOG=quantick=info`, stderr to a log file. A bash background job
-   produces a window whose GL surface never presents (pure-white captures).
-4. **Capture by PID, never by window title**: use
-   `tools/capture_window.ps1` (PrintWindow with
-   PW_RENDERFULLCONTENT) adapted to filter by the PID you launched — title
-   matching grabs the wrong window when other instances or editors are open.
-5. **Gate on health before trusting a capture**: `APP_HEALTH_SUMMARY` prints
-   every 2 s. `fps≈59 / frame_avg≈16.7` → surface presents, capture is real.
-   `fps≈19 / frame_avg≈52 / frame_cpu≈3` → occluded or idle desktop, capture
-   will be blank; wait for fps ≥ 50 in the log and recapture. Blank capture
-   is an environment state, not a render regression — run a `main` control
-   build before blaming the change.
-6. **Verify by pixel when the eye can be fooled**: read the PNG (e.g.
-   `System.Drawing`) to count/locate marks, match dash signatures, or compare
-   two frames; use `readable_min_radius` from `config/bubbles.toml` as the
-   "too small to read" reference.
-7. **Be a guest on the desktop**: never fight the user — if the window gets
-   minimized or the mouse is active (`GetLastInputInfo` idle ≈ 0), stop
-   driving, keep the evidence you have. Do not inject input with `SendInput`.
-   Never bind a second MT5 listener on the user's port (9100) — use
-   `QUANTICK_CONFIG` with an alternate `listen_addr`. Close every instance
-   you opened when done.
+## Ask the app, then look
 
-## Reading the running app through the control plane
+A structured answer beats a pixel answer whenever both exist — it survives
+colour, font and layout nudges; keep screenshots for clipping, font,
+composition and "does this read". Launch with `QUANTICK_CONTROL_ACCESS=1` and
+the scopes, then use `quantick_get_scene` (controls by name, `selected`, the
+coded reason one cannot be operated), `quantick_get_diagnostics` (frame and
+tape numbers), and `quantick_capture_evidence` with `screenshot` (scene,
+health, market and image at one revision, with `control_regions` per control).
+The hand-driven client, its PowerShell stdin trap and the bundle fields:
+`references/control-plane.md`.
 
-A screenshot shows what a window looks like. It does not say what the
-application *believes* — which market, which revision, how late the tape is,
-whether a control is disabled and why. The control plane answers that in
-structured data, and an assertion against it is worth more than an assertion
-against pixels: it does not move when a colour does.
+## The QA pass
 
-Prefer this over reading a capture whenever the question has a structured
-answer. Keep the screenshot for the questions only pixels can answer — clipping,
-font, composition, "does this read".
-
-**The fixture.** Launch with local access enabled and the scopes the read
-needs. The scope IDs, and what each one reaches, are the
-`QUANTICK_CONTROL_ACCESS` / `QUANTICK_CONTROL_SCOPES` /
-`QUANTICK_CONTROL_EVIDENCE` rows of `references/hook-registry.md` — named
-rather than pointed at, because "the table above" stopped being true the day
-the registry moved out of this file:
-
-```powershell
-$env:QUANTICK_CONTROL_ACCESS = "1"
-$env:QUANTICK_CONTROL_SCOPES = "all-reads,observe.evidence,observe.screenshot"
-```
-
-**The client.** `quantick-mcp` is a STDIO MCP server; feeding it JSON-RPC lines
-is a complete client, no extra tooling. It discovers the running instance
-itself and never starts one.
-
-Build it first — step 1 of the launch workflow builds `quantick-app` only, and
-the adapter is a separate binary in the same target directory:
-
-```powershell
-$target = "D:\quantick-agent-target"     # the same one the launch used
-cargo build -p quantick-mcp
-$mcp = Join-Path $target "debug\quantick-mcp.exe"
-```
-
-```powershell
-$lines = @(
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ui-harness","version":"1"}}}',
-  '{"jsonrpc":"2.0","method":"notifications/initialized"}',
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"quantick_get_scene","arguments":{}}}'
-) -join "`n"
-$lines | & $mcp --profile observer
-```
-
-**Send a blank line first.** Windows PowerShell 5.1 writes a UTF-8 preamble to
-a child's stdin the moment `Process.StandardInput` is touched, and it lands on
-line 1 — so the `initialize` frame comes back `-32700 parse error: expected
-value at line 1 column 1` while every line after it parses, which reads as "the
-adapter is broken" and is not. A leading newline takes the preamble:
-
-```powershell
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $mcp; $psi.Arguments = "--profile observer"
-$psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true
-$psi.UseShellExecute = $false
-$m = [System.Diagnostics.Process]::Start($psi)
-$nl = [char]10
-$bytes = [System.Text.Encoding]::ASCII.GetBytes($nl + ($lines -join $nl) + $nl)
-$m.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-$m.StandardInput.BaseStream.Flush(); $m.StandardInput.Close()
-$m.StandardOutput.ReadToEnd()
-```
-
-**One instance at a time**, or discovery answers `control.instance_ambiguous`
-and names the ids rather than choosing. Clear strays by **path**, never by
-process name: `Get-Process quantick-app | Stop-Process` takes the trader's own
-window down with yours, which is the *be a guest on the desktop* rule above,
-broken by a one-liner.
-
-Every answer is one JSON line on stdout; `result.structuredContent` is the
-capability's own result, and `result.isError` with a `control.*` code is a
-refusal you can branch on. Useful calls:
-
-| Ask | Call |
-| --- | --- |
-| What is on screen, by name | `quantick_get_scene` |
-| Which market, which bars, which layout | `quantick_get_snapshot` with the scopes |
-| Is the frame healthy, is the tape late | `quantick_get_diagnostics` |
-| What changed since I looked | `quantick_read_events` / `quantick_wait_for_change` |
-| Everything at one instant, hashed | `quantick_capture_evidence` |
-
-**Evidence bundles.** `quantick_capture_evidence` freezes the named scopes, the
-events around them and the effective configuration into one hashed bundle and
-answers with a manifest. Read it back with `quantick_invoke` on
-`evidence.read`, page by page, and concatenate the base64 chunks: the bytes are
-the bundle's canonical JSON and their SHA-256 is the manifest's
-`content_digest`. Two fields decide whether an assertion is sound:
-
-- `coverage` — what the capture left out, and why, as codes. A scope you did
-  not name is in `omitted_scopes`; a field the application could not fill is in
-  `unavailable_fields` with the JSON Pointer that finds it. `complete` is never
-  true, and a capture never pretends to be the whole session.
-- `screenshot.capture_revision` — equal to the bundle's own `capture_revision`,
-  which is what makes `screenshot.control_regions` trustworthy: each named
-  control's rectangle in the image, in physical pixels, with `within_image`
-  saying whether the window was clipping it. That is the pair a visual defect
-  is diagnosed from — the picture plus the names.
-
-Without a client on the socket, `QUANTICK_CONTROL_EVIDENCE` takes the same
-capture from a launch and logs the manifest as `CONTROL_EVIDENCE_CAPTURED`.
-Bundles live in memory for fifteen minutes, are cleared when access is turned
-off, and are never written to disk.
-
-## Adding a new hook
-
-New surface → new `QUANTICK_*` env hook in the same commit: read the var, call
-the same function the manual toggle calls, default off. Then **two more edits,
-both enforced**: add the name to that module's `crate::hooks::declare_hooks![…]`,
-and a row to `docs/ui-harness/hook-prose.md`. Regenerate the registry; do not
-hand-edit it. Miss either and `cargo test -p quantick-guards` fails — a hook
-nobody can find is a surface nobody can reach.
-
-**Where the var is read depends on what it reaches**, and getting this wrong is
-now a build failure rather than a style note. There are exactly two homes, and
-neither of them is the trunk:
-
-- **A hook the window owns** — a menu pressed open, a pointer parked, a demo
-  staged, a page of history asked for, a budget counted down over frames —
-  lives in **`crates/app/src/harness.rs`**. One field on `Harness`, one line in
-  `Harness::from_env`, one accessor named for what the hook is *for*. The
-  trunk's own line is then the single call that asks for it. That module's
-  header carries the argument.
-- **A hook a floating surface owns** — its hook lives **in that surface's own
-  module** under `crates/app/src/surfaces/`, as an `apply_env_hook` the
-  registry calls. Not another line in the window's own file;
-  `crates/guards/src/size.rs` fails a branch that adds it to the trunk instead.
-
-So: **a surface's hook goes beside the surface; every other hook goes in
-`harness.rs`.** If you are about to add a `std::env::var` call to the window,
-the answer is almost always one of those two files instead.
-
-*Almost*: about fifty launch reads stay in `app/launch_hooks.rs`, applied to
-the built window and not debt in the same sense — see
-`docs/agentic-development.md`. A hook that keeps a field and needs nothing but
-its own parsed value belongs in the owner.
-
-**Prefer a defaulting field to a new variant.** A hook that already exists and
-needs a second dimension — "the same demo, but shared across the split", "the
-same profile, but left selected" — becomes a field on that hook's struct
-(`DrawingsDemo`, `FrvpDemo`, `DrawingDraft`), defaulting to "did not ask". It
-does not become a new arm of an enum, which reopens every call site that
-matches on it.
+1. **Scope** — every surface the diff can affect, not only the target (a dock
+   tab moves a splitter; a popup covers the tape). In doubt, in scope.
+2. **State matrix** — each in-scope surface in: default open (BTC dense tape
+   preset); feature on via its hook; popup/menu open over live data; empty
+   data (no session, fills or depth); dense data (fast replay, deep book);
+   narrow window (~1000 px) and the user's normal size; disabled state (e.g.
+   replay has no depth — is the *why* visible?). Prefer replay
+   (`QUANTICK_REPLAY_*`, WINJ26 sessions) for reproducibility; presets from
+   `config/bubbles.toml`, never bare defaults.
+3. **Read the scene first, then each capture** — answer explicitly; "it
+   renders" is no verdict:
+   - **Integrity** — nothing clipped, overlapping or off-window; splitters and
+     neighbours intact.
+   - **Readability** — text at the app's own readable size; contrast on the
+     dark canvas; no truncated numbers (`1234…` on a price fails).
+   - **Occlusion** — nothing covers live price, tape or forming bar.
+   - **State honesty** — disabled controls explain themselves; inferred data
+     labelled; an empty panel says why.
+   - **Motion** — two captures ~1.2 s apart in one PowerShell call: flow
+     advanced, no layout jump, the live region never frozen.
+   - **Consistency** — the existing chip/button language; no one-off widget.
+   - **Performance** — under dense data fps ≥ ~59 and no `APP_SLOW_FRAMES`
+     bursts from the change; fps in the 50s with the feature against ~59 on a
+     `main` control run (same hooks, same tape) is a FAIL once occlusion is
+     ruled out.
+   - A scene/image disagreement is a FAIL whichever half is wrong; say which
+     you believe.
+4. **Report** one verdict per surface × state, most severe first. **FAIL**:
+   screenshot path, one-sentence defect, crop/coordinates, the control ID where
+   the scene names it. **PASS**: the screenshot path and any structured
+   reading (scene entry, diagnostics figure, evidence ID) — a PASS without
+   evidence counts as not run. **BLOCKED**: what could not be observed and what
+   was validated otherwise — never reported as PASS. PR gets verdicts,
+   surfaces, IDs and measurements, optionally an artifact link; raw evidence
+   never under `.claude/evidence/` or `docs/workflow/evidence/`. Fix FAILs,
+   re-run only failed cells (a before/after pair, outside Git, only when
+   another reviewer needs it); done when every cell is PASS or an accepted
+   defect noted in the PR body.

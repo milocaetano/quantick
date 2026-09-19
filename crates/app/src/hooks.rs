@@ -2,7 +2,7 @@
 //!
 //! A *hook* is a `QUANTICK_*` environment variable the application reads to
 //! put itself into a state a hand would otherwise have to click it into.
-//! `ui-harness` documents them, `visual-qa` and `trader-ux-review` drive the
+//! `ui-harness` documents them, its QA pass and `trader-ux-review` drive the
 //! application through them, and until this module existed the documentation
 //! was the only record that a hook was real.
 //!

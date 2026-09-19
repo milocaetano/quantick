@@ -1,34 +1,53 @@
 ---
 name: issue
-description: Turn an idea into a well-formed GitHub issue with context, scope and acceptance criteria, correct labels, milestone and board placement. Use when the user types /issue <idea> or asks to create or file an issue.
+description: File or start a GitHub issue. `/issue <idea>` turns an idea into a well-formed issue with context, scope, acceptance criteria, labels, milestone and board placement; `/issue start <N>` picks one up — reads it, names the branch, moves the board card to In Progress, and hands over to mission. Use when the user types /issue or /new-task, or asks to create, file, start or pick up an issue.
 ---
 
-# Create a well-formed issue
+Campaign children override the main-based examples via the
+[integration contract](../../../docs/campaign/integration.md), including review keys.
 
-## Steps
+# Issues
 
-1. **Vague-idea check**: if there is no concrete deliverable yet, suggest opening a GitHub Discussion instead and stop. Issues are actionable work items only.
+Board: project 1, ID `PVT_kwHOA0fkv84BeK9c`, status field
+`PVTSSF_lAHOA0fkv84BeK9czhYnKUg`, options Todo `f75ad846` · In Progress
+`47fc9ee4` · Done `98236657`. Labels: one `area:*` (`area:engine`,
+`area:feed`, `area:app`) and one `type:*` (`type:feat`, `type:fix`,
+`type:docs`, `type:test`, `type:ci`) or `bug`. Milestone: `v0.1 - Engine core`
+unless told otherwise.
 
-2. **Gather** — ask at most 2–3 questions, and only for what cannot be inferred:
-   - **Context** — what problem this solves, why it matters
-   - **Scope** — what is in, and what is explicitly out
-   - **Acceptance criteria** — checkboxes answering "how do we know it's done"
+```sh
+# ITEM for an issue already on the board, else add it:
+ITEM=$(gh project item-list 1 --owner milocaetano --format json \
+  --jq '.items[] | select(.content.number==<N>) | .id')
+ITEM=$(gh project item-add 1 --owner milocaetano --url <issue-url> --format json --jq '.id')
+gh project item-edit --id "$ITEM" --project-id PVT_kwHOA0fkv84BeK9c \
+  --field-id PVTSSF_lAHOA0fkv84BeK9czhYnKUg --single-select-option-id <option>
+```
 
-3. **Title**: `type(area): imperative description`, matching existing issues (e.g. `feat(engine): tick bars (close after N trades)`). Everything in English.
+## `/issue <idea>` — file one
 
-4. **Create** with `gh issue create --body-file -` using body sections `## Context`, `## Scope`, `## Acceptance criteria`. Apply one `area:*` label plus one `type:*` label (or `bug`), and the current milestone (`v0.1 - Engine core`) unless told otherwise.
+1. No concrete deliverable yet: suggest a GitHub Discussion and stop; issues
+   are actionable work only.
+2. Ask at most 2–3 questions, only for what cannot be inferred: context (the
+   problem, why it matters), scope (in and explicitly out), acceptance
+   criteria (checkboxes for "done").
+3. Title `type(area): imperative description`, like existing issues
+   (`feat(engine): tick bars (close after N trades)`); all English.
+4. `gh issue create --body-file -` with `## Context`, `## Scope`,
+   `## Acceptance criteria`, the labels and the milestone.
+5. Add it to the board in Todo; report number and URL.
 
-5. **Add to the board** in Todo:
+## `/issue start <N>` — pick one up (was `/new-task`)
 
-   ```sh
-   ITEM=$(gh project item-add 1 --owner milocaetano --url <issue-url> --format json --jq '.id')
-   gh project item-edit --id "$ITEM" --project-id PVT_kwHOA0fkv84BeK9c \
-     --field-id PVTSSF_lAHOA0fkv84BeK9czhYnKUg --single-select-option-id f75ad846
-   ```
+No number: list open issues in the milestone (`gh issue list --milestone
+"v0.1 - Engine core"`) and ask which.
 
-6. **Report** the issue number and URL.
-
-## Label reference
-
-- Areas: `area:engine`, `area:feed`, `area:app`
-- Types: `type:feat`, `type:fix`, `type:docs`, `type:test`, `type:ci`, `bug`
+1. `gh issue view <N>`; missing or closed → stop and report. Summarize scope
+   and acceptance criteria back — they are the work checklist.
+2. Branch `<prefix>/<short-kebab-slug-from-title>`, prefix from labels: `bug`
+   or `type:fix` → `fix/`, `type:docs` → `docs/`, else `feat/`.
+3. `mission` step 6 cuts or reuses the worktree (never a second one for the
+   same issue) and arms the guards.
+4. Move the card to In Progress; report branch, worktree, card and the
+   criteria as a checklist. For `area:engine`: test-first — fixture trades and
+   expected bars before the implementation.

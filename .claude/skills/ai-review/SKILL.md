@@ -8,9 +8,9 @@ Campaign children override the main-based examples via the
 
 # AI engineer review
 
-Target: `git diff origin/main...HEAD` by default, or the path, branch or PR
-number given as argument. Read the code, not its description. Never edit source
-or build. Only PR findings/report and the private completion record may be written.
+Target: `git diff origin/main...HEAD`, or the path, branch or PR given. Read
+the code, not its description. Never edit or build; write only PR findings, the
+report and the private completion record.
 
 Answer six questions. Each gets one verdict and `file:line` evidence, PASS
 included. FAIL: the diff breaks the rule. WEAK: it holds today but the next
@@ -71,38 +71,31 @@ contract. Otherwise a later run takes its subject from `... list <pr>` and
 verifies those open threads plus a narrow check that fixes introduced no new
 FAIL; it may not open a new WEAK against code it already passed.
 
-**A thread closes by the fix -
-`... resolve <thread-id>` - or by an acceptance the trader records on it**; a
-WEAK whose breaking variant you cannot name is a PASS. When to stop follows
-[the delivery contract](../../../docs/workflow/delivery.md), for which an open
-thread id is a finding's durable identity; the reasoning is
-`docs/agentic-development.md`.
+**A thread closes by the fix - `... resolve <thread-id>` - or by an
+acceptance the trader records on it**; a WEAK whose breaking variant you cannot
+name is a PASS. When to stop follows [the delivery
+contract](../../../docs/workflow/delivery.md); an open thread id is a finding's
+durable identity.
 
 ## Record completion
 
-Readiness/merge require `ai-review-complete` at every tier. Completed reviews
-with published findings may record it; unresolved threads still block.
-Without a PR, print the report and record nothing.
-
-Before review, capture the clean worktree, branch, HEAD, base ref/tip, review
-key and matching PR identity in the dossier. Review that exact diff. After all
-six dimensions and required finding publications complete, repeat those reads;
-any changed or unavailable value invalidates the review.
-
-Write the complete report to `REPORT_PATH`, including every required identity
-field and a final line exactly equal to `AI-REVIEW: COMPLETE`. Then publish
-and record from the clean reviewed worktree:
+Readiness and merge need `ai-review-complete` at every tier; a completed review
+with published findings may record it, and open threads still block. No PR:
+print the report, record nothing. Capture the clean worktree, branch, HEAD,
+base ref/tip, review key and PR identity before reviewing, and again after all
+six questions and publications; any change or unreadable value voids the
+review. Write the report, every identity field included, to `REPORT_PATH` with
+a last line exactly `AI-REVIEW: COMPLETE`, then from the clean worktree:
 
 ```sh
 cd "$WT" &&
   sh .claude/hooks/review_report.sh publish ai-review "$PR" "$REPORT_PATH"
 ```
 
-The shared producer repeats the identity checks before and after publication,
-reads the durable report back, and only then records `ai-review-complete` as
-`<branch> <shared-review-key>`. A manual file, a copied worktree record, or a
-stale marker has no matching current receipt and cannot pass readiness.
-Branch/diff or campaign ref/tip changes require a current review; same-branch
-rewords retain the key. This completion remains separate from finding
-disposition, so final readiness and mission/ship completion still require
-`ai_review_threads.sh list` to return no open thread.
+The producer repeats the identity checks, reads the report back, and only
+then records `ai-review-complete` as `<branch> <shared-review-key>`; a manual,
+copied or stale record has no receipt and fails readiness. A branch/diff or
+campaign ref/tip change needs a current review; a same-branch reword keeps the
+key. Completion is separate from finding disposition: readiness and
+mission/ship completion still need `ai_review_threads.sh list` to return no
+open thread.
