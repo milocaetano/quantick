@@ -424,6 +424,56 @@ pub fn measured(root: &Path) -> Result<usize, ratchet::Unmeasured> {
     ratchet::complete_total(&found.counts, &missed)
 }
 
+/// Production-line counts for every file under one workspace-relative
+/// prefix, or everything under it the walk could not measure.
+///
+/// The ratchets that ration a slice of the tree — the UI-free code in `app`,
+/// all of `app`, the width of every struct — share this rather than each
+/// filtering [`measure`] its own way: an error rather than a smaller list
+/// when anything inside the prefix, or an ancestor hiding it, could not be
+/// listed, read or decoded, because a partial walk is the flattering number.
+pub fn measure_under(
+    root: &Path,
+    prefix: &str,
+) -> Result<Vec<(String, usize)>, ratchet::Unmeasured> {
+    if !root.join(prefix).is_dir() {
+        return Err(ratchet::Unmeasured {
+            missed: vec![format!("  {prefix}: not a readable directory")],
+        });
+    }
+    let walk = measure(root);
+    // `scan` writes an unlistable directory to `unreadable` as well as to
+    // `blind`, so one inside the prefix is caught here, not below.
+    let mut missed: Vec<String> = walk
+        .unreadable
+        .iter()
+        .filter(|line| line.trim_start().starts_with(prefix))
+        .cloned()
+        .collect();
+    // An ancestor the walk could not list hides the whole prefix; its line in
+    // `unreadable` names the ancestor, which the filter above cannot match.
+    missed.extend(
+        walk.blind
+            .iter()
+            .filter(|dir| prefix.starts_with(dir.as_str()) && !dir.starts_with(prefix))
+            .map(|dir| format!("  {dir}: directory could not be listed")),
+    );
+    missed.extend(
+        walk.undecodable
+            .iter()
+            .filter(|path| path.starts_with(prefix))
+            .map(|path| format!("  {path}: does not decode as UTF-8")),
+    );
+    if !missed.is_empty() {
+        return Err(ratchet::Unmeasured { missed });
+    }
+    Ok(walk
+        .counts
+        .into_iter()
+        .filter(|(path, _)| path.starts_with(prefix))
+        .collect())
+}
+
 /// Production-line counts for every scanned file, sorted by path.
 pub fn measure(root: &Path) -> Measured {
     let mut found = Measured {

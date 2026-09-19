@@ -1,0 +1,23 @@
+# The struct-width ratchet's recorded field counts
+# (`crates/guards/src/struct_width.rs`): one `<crate>::<Struct> <fields>` entry
+# for every struct of 30 or more fields in production source, at any
+# visibility, and the `!budget` capping their sum. `#` starts a comment.
+#
+# A struct over its count fails. The slack is zero, so a struct that lost a
+# field fails too until `cargo run -p quantick-guards -- --tighten` writes the
+# new count, and the field cannot quietly come back. A raise is the entry and
+# the budget, both raised in the same change with a comment saying why.
+#
+# Recorded at main bcfb5f19 when the guard landed. `app::OrderflowHealthSnapshot`
+# is private, and was invisible to the report's old `pub struct`-only rule.
+!budget 361
+app::ChartPane 35
+app::OrderflowHealthSnapshot 31
+app::PaperTrading 31
+app::Tab 67
+app::ToolRail 32
+orderflow::BookEngine 31
+orderflow::BubbleStyle 30
+orderflow::HeatmapConfig 34
+orderflow::OrderflowHealth 34
+sim::PerformanceReport 36

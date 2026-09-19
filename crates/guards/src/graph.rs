@@ -496,6 +496,15 @@ fn is_dependency_section(header: &str) -> bool {
     header.ends_with("dependencies]")
 }
 
+/// Whether a section header opens a table of dependencies the crate *ships*
+/// with — plain or target-specific, never dev or build. A crate a test links
+/// is not a crate the production code consumes.
+fn is_production_section(header: &str) -> bool {
+    is_dependency_section(header)
+        && !header.ends_with("dev-dependencies]")
+        && !header.ends_with("build-dependencies]")
+}
+
 /// Whether every bracket a value opened has been closed.
 ///
 /// Counting characters is enough here and would not be in general: it would
@@ -520,6 +529,11 @@ fn brackets_balance(value: &str) -> bool {
 /// the first `=` wherever it falls and keeps taking lines until the brackets
 /// close.
 fn dependency_entries(text: &str) -> Vec<(String, String)> {
+    dependency_entries_in(text, is_dependency_section)
+}
+
+/// [`dependency_entries`], over only the sections `section` accepts.
+fn dependency_entries_in(text: &str, section: fn(&str) -> bool) -> Vec<(String, String)> {
     let mut entries = Vec::new();
     let mut in_dependencies = false;
     let mut unclosed: Option<(String, String)> = None;
@@ -540,7 +554,7 @@ fn dependency_entries(text: &str) -> Vec<(String, String)> {
         }
 
         if trimmed.starts_with('[') {
-            in_dependencies = is_dependency_section(trimmed);
+            in_dependencies = section(trimmed);
             continue;
         }
         if !in_dependencies || trimmed.starts_with('#') || trimmed.is_empty() {
@@ -560,6 +574,34 @@ fn dependency_entries(text: &str) -> Vec<(String, String)> {
     // read rather than dropping it, so the check above can say so.
     entries.extend(unclosed);
     entries
+}
+
+/// Every crate under `crates/`, by directory name, with the other crates
+/// whose shipped dependencies name it by path — sorted both ways.
+///
+/// Read from the manifests rather than from [`ALLOWED`]: the table says what a
+/// crate *may* reach, and a crate with one consumer is a fact about what the
+/// workspace actually links. Dev and build dependencies are not consumers
+/// (see [`is_production_section`]), and a crate never consumes itself.
+pub fn consumers(root: &Path) -> Vec<(String, Vec<String>)> {
+    let manifests = crate_manifests(root);
+    manifests
+        .iter()
+        .map(|target| {
+            let by: Vec<String> = manifests
+                .iter()
+                .filter(|consumer| consumer.name != target.name)
+                .filter(|consumer| {
+                    dependency_entries_in(&consumer.text, is_production_section)
+                        .iter()
+                        .filter_map(|(_, value)| path_target(value))
+                        .any(|sibling| sibling == target.name)
+                })
+                .map(|consumer| consumer.name.clone())
+                .collect();
+            (target.name.clone(), by)
+        })
+        .collect()
 }
 
 /// Every edge the graph permits, counted. [`crate::report`] prints it, so a

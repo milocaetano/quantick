@@ -6,7 +6,9 @@ mod scratch_dir;
 use std::fs;
 use std::process::Command;
 
-use quantick_guards::{GUARDS, extension_boundary as boundary, ui_free};
+use quantick_guards::{
+    GUARDS, app_lines, extension_boundary as boundary, single_consumer, struct_width, ui_free,
+};
 use scratch_dir::ScratchDir;
 
 const SOURCE: &str = "\
@@ -71,6 +73,24 @@ fn fixture() -> ScratchDir {
     )
     .unwrap();
     fs::write(root.join(ui_free::EXEMPTIONS_FILE), "").unwrap();
+    // The absolute app-lines ratchet: the same ceiling-equals-slack trick.
+    let ceiling = app_lines::SLACK;
+    fs::write(
+        root.join(app_lines::BASELINE_FILE),
+        format!(
+            "!budget {ceiling}
+crates/app {ceiling}
+"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join(struct_width::BASELINE_FILE),
+        "!budget 0
+",
+    )
+    .unwrap();
+    fs::write(root.join(single_consumer::EXEMPTIONS_FILE), "").unwrap();
     fs::write(root.join("crates/app/src/app.rs"), SOURCE).unwrap();
     // Lexical tokens deliberately keep & and the lifetime separate.
     fs::write(
