@@ -5,6 +5,8 @@
 //! flow to the UI as [`FeedEvent`]s; the UI's [`FeedCommand`]s (e.g. "load older
 //! history") are serviced between live trades.
 
+use std::ops::ControlFlow;
+
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -25,6 +27,7 @@ use super::{
     FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice, initial_backfill_target,
 };
 use crate::config::ProviderKind;
+use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
 
 /// Default number of REST depth levels requested per side.
 const DEFAULT_BOOK_DEPTH: u16 = 1_000;
@@ -89,30 +92,11 @@ pub(crate) async fn feed_task(
     source: BinanceSource,
 ) {
     let BinanceSource { http, url, backoff } = source;
-    // Candles come off a different endpoint with a different paging rule, so
-    // they get their own client rather than overloading the aggTrade one.
-    let klines = BinanceKlineHttp::new();
-    let target = initial_backfill_target();
-
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
-    let mut earliest_id: Option<u64> = None;
-    match backfill(&http, &symbol, target).await {
-        Ok(trades) => {
-            earliest_id = trades.first().map(|t| t.agg_id);
-            info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
-            if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
-                return; // UI gone
-            }
-        }
-        Err(e) => {
-            error!(target: "quantick::app", symbol, %e, "backfill failed; continuing to live only");
-            // Still mark an empty boundary so the UI knows backfill is done.
-            if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
-                return;
-            }
-        }
-    }
+    let ControlFlow::Continue(earliest_id) = initial_backfill(&http, &symbol, &tx).await else {
+        return; // UI gone
+    };
 
     // 2. Stream live trades on top, reconnecting as needed. run_with_reconnect
     //    speaks Trade; the loop below tags each as a live FeedEvent and, in the
@@ -122,10 +106,6 @@ pub(crate) async fn feed_task(
     let reconnect = tokio::spawn(async move {
         run_with_reconnect(&url, &live_tx, &connected_tx, backoff).await;
     });
-    let snapshot_limit = initial_book_depth();
-    let mut book_capture: Option<BookCaptureTask> = None;
-    let mut ever_connected = false;
-    let mut continuity = crate::continuity::BinanceContinuity::default();
     // Candle history runs off this loop, not inside it. A week is ~11
     // sequential pages and a trader paging back through a quarter asks for
     // thirteen such runs — seconds on a good day, far longer against a venue
@@ -133,180 +113,221 @@ pub(crate) async fn feed_task(
     // from being polled for the duration: the trade channel fills, the
     // websocket read loop behind it stalls, and pongs stop going out. The task
     // sends its result back here and the loop keeps turning meanwhile.
-    let (ohlcv_tx, mut ohlcv_rx) =
-        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>(1);
-    let mut ohlcv_task: Option<JoinHandle<()>> = None;
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<OhlcvReply>(1);
+    let mut feed = BinanceLoop {
+        // Candles come off a different endpoint with a different paging rule,
+        // so they get their own client rather than overloading the aggTrade one.
+        klines: BinanceKlineHttp::new(),
+        http,
+        symbol,
+        tx,
+        book_tx,
+        notice_tx,
+        earliest_id,
+        snapshot_limit: initial_book_depth(),
+        book_capture: None,
+        ohlcv_tx,
+        ohlcv_task: None,
+        continuity: crate::continuity::BinanceContinuity::default(),
+        ever_connected: false,
+    };
 
     loop {
-        tokio::select! {
-            Some((bars, slice)) = ohlcv_rx.recv() => {
-                // Only the closing slice frees the slot. A run still walking
-                // backwards through the span is one fetch, however many
-                // replies it makes, and letting a second one start beside it
-                // would spend the same rate budget twice.
-                if slice.is_last() {
-                    ohlcv_task = None;
+        let flow = tokio::select! {
+            Some((bars, slice)) = ohlcv_rx.recv() => feed.on_ohlcv_reply(bars, slice).await,
+            maybe_trade = live_rx.recv() => match maybe_trade {
+                Some(trade) => feed.on_trade(trade).await,
+                None => ControlFlow::Break(()), // stream ended
+            },
+            changed = connected_rx.changed() => match changed {
+                Ok(()) => {
+                    // Copied out first: the watch guard is not `Send` and must
+                    // not be held across the notice send.
+                    let connected = *connected_rx.borrow_and_update();
+                    feed.on_link(connected).await
                 }
-                if tx
-                    .send(FeedEvent::OhlcvHistory {
-                        interval_ms: ONE_MINUTE_MS,
-                        bars,
-                        slice,
-                    })
-                    .await
-                    .is_err()
-                {
-                    break; // UI gone
-                }
-            }
-            maybe_trade = live_rx.recv() => {
-                match maybe_trade {
-                    Some(trade) => {
-                        if let Some(event) = continuity.observe(&trade)
-                            && tx.send(FeedEvent::Continuity(event)).await.is_err()
-                        {
-                            break;
-                        }
-                        if tx.send(FeedEvent::Live(trade)).await.is_err() {
-                            break; // UI gone
-                        }
-                    }
-                    None => break, // stream ended
-                }
-            }
-            changed = connected_rx.changed() => {
-                if changed.is_err() {
-                    break;
-                }
-                let notice = connection_notice(
-                    *connected_rx.borrow_and_update(),
-                    &mut ever_connected,
-                    "Binance",
-                );
-                if notice_tx.send(notice).await.is_err() {
-                    break;
-                }
-            }
-            maybe_cmd = cmd_rx.recv() => {
-                match maybe_cmd {
-                    Some(FeedCommand::LoadOlder { count }) => {
-                        earliest_id = load_older(&http, &symbol, earliest_id, count, &tx).await;
-                        if tx.is_closed() {
-                            break; // UI gone
-                        }
-                    }
-                    Some(FeedCommand::FetchOhlcv {
-                        span_ms,
-                        slice_ms,
-                        before_ms,
-                    }) => {
-                        if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
-                            // One fetch at a time: the venue's rate budget is
-                            // shared, and the in-flight one already answers.
-                            warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "BINANCE_OHLCV_ALREADY_RUNNING",
-                                symbol,
-                                requested_span_ms = span_ms,
-                                requested_before_ms = before_ms.unwrap_or(0),
-                                action = "answer_empty_and_let_the_running_one_finish",
-                                "a candle fetch is already in flight; this one is refused, not queued"
-                            );
-                            // Refused, but *answered*. The caller marked itself
-                            // pending and put its spinner up before this command
-                            // left, so a silent drop leaves that spinner turning
-                            // for the rest of the session and the reach-back
-                            // button disabled behind it — the same reason
-                            // `load_older` never returns silence either.
-                            // `Refused` rather than a short answer: nothing was
-                            // fetched because nobody looked, which is not a
-                            // statement about the venue's record.
-                            if ohlcv_tx
-                                .send((Vec::new(), crate::OhlcvSlice::Refused))
-                                .await
-                                .is_err()
-                            {
-                                break; // UI gone
-                            }
-                        } else {
-                            ohlcv_task = Some(spawn_ohlcv(
-                                klines.clone(),
-                                symbol.clone(),
-                                span_ms,
-                                slice_ms,
-                                before_ms,
-                                ohlcv_tx.clone(),
-                            ));
-                        }
-                    }
-                    Some(FeedCommand::SetBookCapture {
-                        enabled,
-                        initial_generation,
-                    }) => {
-                        if enabled {
-                            if book_capture
-                                .as_ref()
-                                .is_some_and(|task| !task.handle.is_finished())
-                            {
-                                info!(
-                                    target: "quantick::app",
-                                    schema_version = 1_u8,
-                                    event_code = "book_capture_enable_ignored",
-                                    provider = "binance",
-                                    symbol = symbol.as_str(),
-                                    initial_generation,
-                                    snapshot_limit,
-                                    action = "keep_running",
-                                    "book capture is already running"
-                                );
-                            } else {
-                                // Reap a task that ended by itself before
-                                // replacing it.
-                                stop_book_capture(
-                                    &mut book_capture,
-                                    &symbol,
-                                    "finished_before_enable",
-                                )
-                                .await;
-                                book_capture = Some(start_book_capture(
-                                    &symbol,
-                                    initial_generation,
-                                    snapshot_limit,
-                                    &book_tx,
-                                ));
-                            }
-                        } else {
-                            stop_book_capture(&mut book_capture, &symbol, "disabled").await;
-                        }
-                    }
-                    Some(FeedCommand::RestartBookCapture { initial_generation }) => {
-                        stop_book_capture(&mut book_capture, &symbol, "restart").await;
-                        book_capture = Some(start_book_capture(
-                            &symbol,
-                            initial_generation,
-                            snapshot_limit,
-                            &book_tx,
-                        ));
-                    }
-                    // Transport commands belong to a recorded session; a live
-                    // venue has no playhead to move. Ignored rather than
-                    // refused — the UI only shows the transport while a replay
-                    // is the source.
-                    Some(FeedCommand::Replay(_)) => {}
-                    None => break, // UI dropped the command sender: it's gone
-                }
-            }
+                Err(_) => ControlFlow::Break(()),
+            },
+            maybe_cmd = cmd_rx.recv() => feed.on_command(maybe_cmd).await,
+        };
+        if flow.is_break() {
+            break;
         }
     }
     reconnect.abort();
     let _ = reconnect.await;
-    // A candle fetch can be 130 requests deep when the feed goes away; nobody
-    // is left to read its answer.
-    if let Some(task) = ohlcv_task {
-        task.abort();
+    feed.shutdown().await;
+}
+
+/// One reply from a candle fetch: the bars of one window and where it sits.
+type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
+
+/// Send the opening history, returning the earliest agg_id to page back from,
+/// or `Break` when the UI is gone.
+async fn initial_backfill(
+    http: &BinanceHttp,
+    symbol: &str,
+    tx: &mpsc::Sender<FeedEvent>,
+) -> ControlFlow<(), Option<u64>> {
+    let target = initial_backfill_target();
+    match backfill(http, symbol, target).await {
+        Ok(trades) => {
+            let earliest_id = trades.first().map(|t| t.agg_id);
+            info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
+            if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
+                return ControlFlow::Break(()); // UI gone
+            }
+            ControlFlow::Continue(earliest_id)
+        }
+        Err(e) => {
+            error!(target: "quantick::app", symbol, %e, "backfill failed; continuing to live only");
+            // Still mark an empty boundary so the UI knows backfill is done.
+            if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(None)
+        }
     }
-    stop_book_capture(&mut book_capture, &symbol, "feed_dropped").await;
+}
+
+/// The streaming loop's driver: the side-task handles, the history cursor and
+/// the channels the plan's effects go out on. What each command *means* is
+/// [`plan_command`]'s decision; this only carries it out.
+struct BinanceLoop {
+    symbol: String,
+    tx: mpsc::Sender<FeedEvent>,
+    book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
+    http: BinanceHttp,
+    klines: BinanceKlineHttp,
+    /// Earliest agg_id held, the cursor *load older* pages back from.
+    earliest_id: Option<u64>,
+    snapshot_limit: u16,
+    book_capture: Option<BookCaptureTask>,
+    ohlcv_tx: mpsc::Sender<OhlcvReply>,
+    ohlcv_task: Option<JoinHandle<()>>,
+    continuity: crate::continuity::BinanceContinuity,
+    ever_connected: bool,
+}
+
+impl BinanceLoop {
+    async fn on_ohlcv_reply(
+        &mut self,
+        bars: Vec<quantick_engine::Bar>,
+        slice: crate::OhlcvSlice,
+    ) -> ControlFlow<()> {
+        if ohlcv_reply_frees_slot(slice) {
+            self.ohlcv_task = None;
+        }
+        let event = FeedEvent::OhlcvHistory {
+            interval_ms: ONE_MINUTE_MS,
+            bars,
+            slice,
+        };
+        send_or_break(&self.tx, event).await // UI gone
+    }
+
+    async fn on_trade(&mut self, trade: Trade) -> ControlFlow<()> {
+        if let Some(event) = self.continuity.observe(&trade) {
+            send_or_break(&self.tx, FeedEvent::Continuity(event)).await?;
+        }
+        send_or_break(&self.tx, FeedEvent::Live(trade)).await // UI gone
+    }
+
+    async fn on_link(&mut self, connected: bool) -> ControlFlow<()> {
+        let notice = connection_notice(connected, &mut self.ever_connected, "Binance");
+        send_or_break(&self.notice_tx, notice).await
+    }
+
+    async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
+        let book = Slot::observe(self.book_capture.as_ref().map(|t| t.handle.is_finished()));
+        let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
+        match plan_command(cmd, book, ohlcv) {
+            CommandPlan::LoadOlder { count } => {
+                self.earliest_id =
+                    load_older(&self.http, &self.symbol, self.earliest_id, count, &self.tx).await;
+                if self.tx.is_closed() {
+                    return ControlFlow::Break(()); // UI gone
+                }
+            }
+            CommandPlan::RefuseOhlcv { span_ms, before_ms } => {
+                // One fetch at a time: the venue's rate budget is shared, and
+                // the in-flight one already answers.
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "BINANCE_OHLCV_ALREADY_RUNNING",
+                    symbol = self.symbol,
+                    requested_span_ms = span_ms,
+                    requested_before_ms = before_ms.unwrap_or(0),
+                    action = "answer_empty_and_let_the_running_one_finish",
+                    "a candle fetch is already in flight; this one is refused, not queued"
+                );
+                // Refused, but *answered*. The caller marked itself pending and
+                // put its spinner up before this command left, so a silent drop
+                // leaves that spinner turning for the rest of the session and
+                // the reach-back button disabled behind it — the same reason
+                // `load_older` never returns silence either. `Refused` rather
+                // than a short answer: nothing was fetched because nobody
+                // looked, which is not a statement about the venue's record.
+                let refused = (Vec::new(), crate::OhlcvSlice::Refused);
+                send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
+            }
+            CommandPlan::StartOhlcv {
+                span_ms,
+                slice_ms,
+                before_ms,
+            } => {
+                self.ohlcv_task = Some(spawn_ohlcv(
+                    self.klines.clone(),
+                    self.symbol.clone(),
+                    span_ms,
+                    slice_ms,
+                    before_ms,
+                    self.ohlcv_tx.clone(),
+                ));
+            }
+            CommandPlan::KeepBook { initial_generation } => info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "book_capture_enable_ignored",
+                provider = "binance",
+                symbol = self.symbol.as_str(),
+                initial_generation,
+                snapshot_limit = self.snapshot_limit,
+                action = "keep_running",
+                "book capture is already running"
+            ),
+            CommandPlan::ReplaceBook {
+                initial_generation,
+                stop_reason,
+            } => {
+                stop_book_capture(&mut self.book_capture, &self.symbol, stop_reason).await;
+                self.book_capture = Some(start_book_capture(
+                    &self.symbol,
+                    initial_generation,
+                    self.snapshot_limit,
+                    &self.book_tx,
+                ));
+            }
+            CommandPlan::StopBook { reason } => {
+                stop_book_capture(&mut self.book_capture, &self.symbol, reason).await;
+            }
+            CommandPlan::Ignore => {}
+            // UI dropped the command sender: it's gone.
+            CommandPlan::Shutdown => return ControlFlow::Break(()),
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn shutdown(mut self) {
+        // A candle fetch can be 130 requests deep when the feed goes away;
+        // nobody is left to read its answer.
+        if let Some(task) = self.ohlcv_task.take() {
+            task.abort();
+        }
+        stop_book_capture(&mut self.book_capture, &self.symbol, "feed_dropped").await;
+    }
 }
 
 /// A running depth capture plus the epoch assigned by its controller.
@@ -406,10 +427,23 @@ async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, rea
     );
 }
 
-/// Initial REST depth level count, configurable through
-/// `QUANTICK_BOOK_DEPTH`.
+/// The initial REST depth the application's launch composition configured.
+static INITIAL_BOOK_DEPTH: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Set the initial REST depth level count, once, from the operator's
+/// `QUANTICK_BOOK_DEPTH`. The application's composition root reads the
+/// variable and hands the raw value in; this crate reads no environment.
+/// Unset, or never configured, means [`DEFAULT_BOOK_DEPTH`].
+pub fn configure_initial_book_depth(raw: Option<&str>) {
+    let _ = INITIAL_BOOK_DEPTH.set(parse_book_depth(raw));
+}
+
+/// Initial REST depth level count; see [`configure_initial_book_depth`].
 fn initial_book_depth() -> u16 {
-    parse_book_depth(std::env::var("QUANTICK_BOOK_DEPTH").ok().as_deref())
+    INITIAL_BOOK_DEPTH
+        .get()
+        .copied()
+        .unwrap_or(DEFAULT_BOOK_DEPTH)
 }
 
 fn parse_book_depth(raw: Option<&str>) -> u16 {
@@ -546,8 +580,6 @@ async fn load_older(
         }
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_BOOK_DEPTH"];
 
 #[cfg(test)]
 mod tests {

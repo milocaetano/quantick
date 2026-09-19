@@ -54,18 +54,18 @@
 //! actually open, which is what the trunk paid before.
 
 pub(crate) mod context_bar;
-#[cfg(any(feature = "drawing-harness", test))]
+// `demo` and `launch` are drawing-harness scenarios, gated inside their own
+// files (`#![cfg]`) so each file says what it is.
 pub(crate) mod demo;
 pub(crate) mod inline_editor;
 pub(crate) mod inspector;
-#[cfg(any(feature = "drawing-harness", test))]
 pub(crate) mod launch;
 pub(crate) mod manager;
 mod quick_range;
 #[cfg(any(feature = "drawing-harness", test))]
 pub(crate) use launch::DrawingChromeLaunch;
-#[cfg(feature = "quick-range-harness")]
-pub(crate) use quick_range::QuickRangeLaunch;
+#[cfg(any(feature = "quick-range-harness", test))]
+pub(crate) use quick_range::{QUICK_RANGE_HOOKS, QuickRangeLaunch};
 
 pub(crate) use quick_range::{
     Action as QuickRangeAction, ActionUi as QuickRangeActionUi, Control as QuickRangeControl,
@@ -625,14 +625,14 @@ impl DrawingChromeAsk {
     /// pieces cannot both be right about one row, and dropping the later ask
     /// deterministically beats letting draw order decide in silence.
     /// Conversion is linear: its sole producer must never contribute twice.
+    /// A debug build says so loudly; a release frame keeps the first like
+    /// every other valued ask rather than aborting on the UI thread.
     pub(super) fn merge(&mut self, other: Self) {
-        if let Some(placement) = other.place_quick_range {
-            assert!(
-                self.place_quick_range.is_none(),
-                "one quick-range conversion producer"
-            );
-            self.place_quick_range = Some(placement);
-        }
+        debug_assert!(
+            self.place_quick_range.is_none() || other.place_quick_range.is_none(),
+            "one quick-range conversion producer"
+        );
+        self.place_quick_range = self.place_quick_range.take().or(other.place_quick_range);
         self.dismiss_quick_range |= other.dismiss_quick_range;
         self.edited = self.edited.take().or(other.edited);
         self.commit_edit_gesture = self
@@ -807,6 +807,7 @@ impl DrawingChromeSurface {
     /// omission is silent: the demo that forgets it produces a screenshot
     /// that looks merely uninteresting, and that is how three of these hooks
     /// came to disagree about it.
+    #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
     pub fn carry_across_selection(&mut self) {
         self.pending_open_settings |= self.shared.open;
     }
@@ -1184,7 +1185,7 @@ fn apply_actions(
 /// stops matching its field stops compiling.
 #[cfg(any(feature = "quick-range-harness", feature = "drawing-harness", test))]
 pub(crate) fn apply_launch_hooks(chrome: &mut DrawingChromeSurface) {
-    #[cfg(feature = "quick-range-harness")]
+    #[cfg(any(feature = "quick-range-harness", test))]
     chrome.quick_range.apply_launch();
     #[cfg(any(feature = "drawing-harness", test))]
     chrome.apply_launch();
@@ -1205,6 +1206,7 @@ pub(crate) fn clamp_into_chart(
     )
 }
 
+#[cfg(any(feature = "drawing-harness", test))]
 crate::hooks::declare_hooks![
     "QUANTICK_AVWAP_DEMO",
     "QUANTICK_DRAWINGS_DEMO",
@@ -1220,7 +1222,6 @@ crate::hooks::declare_hooks![
     "QUANTICK_DRAWING_INSPECTOR",
     "QUANTICK_DRAWING_INSPECTOR_POS",
     "QUANTICK_DRAWING_INSPECTOR_TAB",
-    "QUANTICK_QUICK_RANGE_DEMO",
     "QUANTICK_TEXT_NOTE"
 ];
 

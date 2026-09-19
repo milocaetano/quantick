@@ -3,60 +3,35 @@
 //! The caller performs the effects against its paper and pane owners. Resumed
 //! history must not use this plan: it seeds the mark without executing orders.
 
+use crate::stage_registry::declare_stages;
+#[cfg(test)]
+use crate::stage_registry::{StageNode, nodes_in_valid_order};
+
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LiveTradeStage {
-    PaperTrade,
-    PaneTrades,
-    StrategyEvaluation,
-}
-
-impl LiveTradeStage {
-    const fn bit(self) -> u8 {
-        1 << self as u8
+declare_stages! {
+    pub enum LiveTradeStage {
+        /// The simulator fills against the print before any bar moves.
+        PaperTrade after [],
+        /// Every pane folds the print into its bars.
+        PaneTrades after [PaperTrade],
+        /// Strategies judge the bars this print just built.
+        StrategyEvaluation after [PaneTrades],
     }
 }
 
-#[derive(Clone, Copy)]
-struct StageDescriptor {
-    stage: LiveTradeStage,
-    after: u8,
-}
+#[cfg(test)]
+type StageDescriptor = StageNode<LiveTradeStage>;
 
-const STAGES: [StageDescriptor; 3] = [
-    StageDescriptor {
-        stage: LiveTradeStage::PaperTrade,
-        after: 0,
-    },
-    StageDescriptor {
-        stage: LiveTradeStage::PaneTrades,
-        after: LiveTradeStage::PaperTrade.bit(),
-    },
-    StageDescriptor {
-        stage: LiveTradeStage::StrategyEvaluation,
-        after: LiveTradeStage::PaneTrades.bit(),
-    },
-];
+// The test-facing names the reorder proofs in `tests` are written against.
+#[cfg(test)]
+const STAGES: [StageDescriptor; LiveTradeStage::COUNT] = LiveTradeStage::NODES;
 
-// Requiring every prerequisite to have been visited rejects forward edges,
-// self edges, cycles and unknown prerequisite bits as well as bad coverage.
+#[cfg(test)]
 const fn valid(stages: &[StageDescriptor]) -> bool {
-    let mut seen = 0;
-    let mut index = 0;
-    while index < stages.len() {
-        let descriptor = stages[index];
-        if seen & descriptor.stage.bit() != 0 || descriptor.after & seen != descriptor.after {
-            return false;
-        }
-        seen |= descriptor.stage.bit();
-        index += 1;
-    }
-    seen == 7
+    nodes_in_valid_order(stages, LiveTradeStage::COUNT)
 }
-
-const _: () = assert!(valid(&STAGES));
 
 /// The canonical synchronous traversal; no allocation, sort or payload copy.
 /// Consuming a stage is not proof that an effect succeeded: the caller keeps
@@ -65,6 +40,6 @@ pub struct LiveTradePlan;
 
 impl LiveTradePlan {
     pub fn stages() -> impl ExactSizeIterator<Item = LiveTradeStage> {
-        STAGES.iter().map(|descriptor| descriptor.stage)
+        LiveTradeStage::canonical()
     }
 }

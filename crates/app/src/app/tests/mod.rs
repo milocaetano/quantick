@@ -49,8 +49,10 @@ mod feeds_sources_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
+mod launch_phase_tests;
 mod layers_tests;
 mod live_trade_tests;
+mod menu_bar_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
@@ -257,6 +259,20 @@ fn test_config() -> AppConfig {
         paper: Default::default(),
         deals: Default::default(),
         history: Default::default(),
+    }
+}
+
+/// A launch-hook lookup over a fixed table instead of the process
+/// environment, so a hook exported in the developer's shell cannot flip a
+/// fixture's assertions and every case runs in one `cargo test`.
+fn fixed_env(
+    table: &'static [(&'static str, &'static str)],
+) -> impl FnMut(&str) -> Option<std::ffi::OsString> {
+    move |name| {
+        table
+            .iter()
+            .find(|(hook, _)| *hook == name)
+            .map(|(_, value)| (*value).into())
     }
 }
 
@@ -2644,6 +2660,8 @@ mod frame_tail_tests;
 mod worker_summary_bench_tests;
 
 mod source_drain_tests;
+mod stage_order_tests;
+
 fn attach_script_for_test(
     app: &mut QuantickApp,
     name: String,

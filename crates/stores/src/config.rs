@@ -35,21 +35,6 @@ pub use quantick_feed::config::{
 /// file stays under `crates/app/config/`, where every document names it.
 pub const EMBEDDED_DEFAULT: &str = include_str!("../../app/config/feeds.toml");
 
-/// Environment variable naming an explicit config file path.
-pub const CONFIG_ENV: &str = "QUANTICK_CONFIG";
-
-/// Optional startup-only override for [`AppConfig::default_feed`].
-///
-/// Unlike [`CONFIG_ENV`], this changes only the initial selection; it never
-/// replaces the configured feed catalog.
-pub const DEFAULT_FEED_ENV: &str = "QUANTICK_DEFAULT_FEED";
-
-/// Optional startup-only override for [`AppConfig::default_symbol`].
-///
-/// The value is validated against the selected feed before either default is
-/// changed, so a bad pair cannot leave the config half-mutated.
-pub const DEFAULT_SYMBOL_ENV: &str = "QUANTICK_DEFAULT_SYMBOL";
-
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
 
@@ -610,7 +595,7 @@ impl AppConfig {
 /// Where a loaded [`AppConfig`] came from, for honest logging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigSource {
-    /// An explicit path from the [`CONFIG_ENV`] environment variable.
+    /// An explicit path from the `QUANTICK_CONFIG` environment variable.
     EnvPath(PathBuf),
     /// The conventional [`CONFIG_FILENAME`] in the working directory.
     WorkingDir(PathBuf),
@@ -621,7 +606,7 @@ pub enum ConfigSource {
 impl std::fmt::Display for ConfigSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigSource::EnvPath(p) => write!(f, "{} ({CONFIG_ENV})", p.display()),
+            ConfigSource::EnvPath(p) => write!(f, "{} (QUANTICK_CONFIG)", p.display()),
             ConfigSource::WorkingDir(p) => write!(f, "{}", p.display()),
             ConfigSource::Embedded => write!(f, "<built-in default>"),
         }
@@ -690,7 +675,7 @@ impl std::fmt::Display for StartupSelectionError {
             }
             StartupSelectionError::FeedNotConfigured { feed, available } => write!(
                 f,
-                "{DEFAULT_FEED_ENV}='{feed}' is not a configured feed; available feeds: {}",
+                "QUANTICK_DEFAULT_FEED='{feed}' is not a configured feed; available feeds: {}",
                 available.join(", ")
             ),
             StartupSelectionError::SymbolNotOffered {
@@ -699,7 +684,7 @@ impl std::fmt::Display for StartupSelectionError {
                 available,
             } => write!(
                 f,
-                "{DEFAULT_SYMBOL_ENV}='{symbol}' is not offered by feed '{feed}'; available symbols: {}",
+                "QUANTICK_DEFAULT_SYMBOL='{symbol}' is not offered by feed '{feed}'; available symbols: {}",
                 available.join(", ")
             ),
         }

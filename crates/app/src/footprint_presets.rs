@@ -12,7 +12,5 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(PRESETS_FILE);
     }
-    crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
+    crate::store_home::resolve(PRESETS_FILE)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_PRESETS"];

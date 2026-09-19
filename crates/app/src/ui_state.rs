@@ -119,7 +119,5 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(UI_STATE_FILE);
     }
-    crate::store_home::resolve(UI_STATE_ENV, UI_STATE_FILE)
+    crate::store_home::resolve(UI_STATE_FILE)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_UI_STATE"];

@@ -10,10 +10,11 @@ use quantick_feed::{self as feed, FeedHandle, history_reach};
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
     pub(super) config: &'a AppConfig,
-    pub(super) style: &'a crate::style::ChartStyle,
+    pub(super) style: &'a mut crate::style::ChartStyle,
     pub(super) pane_ids: &'a mut crate::canvas_layout::PaneIdAllocator,
     pub(super) workspace: &'a mut crate::workspace_store::WorkspaceStore,
     pub(super) indicators: &'a mut super::indicator_manager::IndicatorState,
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) harness: &'a crate::harness::Harness,
     pub(super) toolrail: &'a mut crate::toolrail::ToolRail,
     pub(super) tz: &'a mut TzOffset,
@@ -225,11 +226,14 @@ impl ArrangementAdapter<'_> {
         // The scripted footprint/zoom hooks reach tabs opened later too: the
         // replay tab a validation run autostarts is the tab the run means,
         // and it does not exist yet when the boot hooks fire.
-        if self.harness.footprint() {
-            self.active_tab_mut().flow_pane.footprint.visible = true;
-        }
-        if let Some(px) = self.harness.candle_width() {
-            self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+        #[cfg(any(feature = "scenario-harness", test))]
+        {
+            if self.harness.footprint() {
+                self.active_tab_mut().flow_pane.footprint.visible = true;
+            }
+            if let Some(px) = self.harness.candle_width() {
+                self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+            }
         }
         // After the declared layout ran: that is what decides whether the
         // new tab has a time pane to orient at all.
@@ -247,11 +251,22 @@ impl ArrangementAdapter<'_> {
     /// the indicator worker and book worker handles, whose run loops end when
     /// their command channels disconnect. No joins, no shutdown protocol.
     pub(super) fn close_tab(&mut self, index: usize) {
-        self.tabs.close(
-            index,
-            self.indicators,
-            self.workspace.layouts_mut().session_mut(),
-        );
+        if let Ok(plan) = self.tabs.plan_close(index) {
+            self.close_planned(plan).expect("fresh closing plan");
+        }
+    }
+    /// Land a closing plan; owners beside the host forget the tab before it drops.
+    pub(super) fn close_planned(
+        &mut self,
+        plan: quantick_workspace::arrangement::Transition,
+    ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
+        let closed = self.tabs.close_planned(plan)?;
+        self.indicators.forget_tab(closed.id);
+        let layouts = self.workspace.layouts_mut().session_mut();
+        for (pane, _) in closed.runtime.panes() {
+            layouts.remove_pane(pane.id);
+        }
+        Ok(())
     }
     /// Move tabs along the strip with the core's existing positional wrap.
     pub(super) fn cycle_tab(&mut self, delta: isize) {

@@ -139,13 +139,15 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
-    ("paper", &["civil", "engine", "replay", "sim"]),
+    // `workspace` for the one store-write gate every sidecar asks (DS7).
+    ("paper", &["civil", "engine", "replay", "sim", "workspace"]),
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account below `app` and by the chart above it.
     ("civil", &[]),
     ("layers", &[]),
     ("workspace", &[]),
-    ("strategy", &["engine", "sim"]),
+    // `workspace` for the one store-write gate the preset bank asks (DS7).
+    ("strategy", &["engine", "sim", "workspace"]),
     ("indicators", &["engine"]),
     ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),

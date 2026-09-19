@@ -187,3 +187,30 @@ fn removed_target_cannot_be_committed_and_seed_invalidates_earlier_plan() {
         Err(LayoutError::Unknown)
     );
 }
+
+#[test]
+fn a_gesture_alone_refuses_selection_and_delete() {
+    let gesture = PaneFacts {
+        strategy_armed: false,
+        gesture_in_flight: true,
+    };
+    let mut session = LayoutSession::new(LayoutBook::default());
+    let second = session.create(Some("second")).unwrap();
+    let view = session.register(10, Some(LayoutId(1)));
+    session.register(20, Some(second));
+    assert_eq!(
+        session.select(10, second, gesture).map(|_| ()),
+        Err(LayoutError::GestureInFlight)
+    );
+    assert_eq!(view.layout(), Some(LayoutId(1)));
+    assert_eq!(
+        session
+            .plan_delete(
+                second,
+                [(10, PaneFacts::default()), (20, gesture)].into_iter()
+            )
+            .map(|_| ()),
+        Err(LayoutError::GestureInFlight)
+    );
+    assert!(session.book().get(second).is_some());
+}

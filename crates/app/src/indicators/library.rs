@@ -2,8 +2,8 @@
 //!
 //! The library itself — the embedded starter scripts and the folder scan —
 //! lives in `quantick-stores`. The window resolves the folder: from
-//! `QUANTICK_INDICATORS_DIR`, falling back to `./indicators` beside the
-//! working directory — the same precedence spirit as `QUANTICK_CONFIG`.
+//! `QUANTICK_INDICATORS_DIR` (read by the launch root), falling back to
+//! `./indicators` beside the working directory.
 
 use std::path::PathBuf;
 
@@ -11,20 +11,17 @@ use std::path::PathBuf;
 pub(crate) use quantick_stores::script_library::EMBEDDED_SCRIPTS;
 pub(crate) use quantick_stores::script_library::ScriptLibrary;
 
-/// Environment override for the scripts folder.
-pub(crate) const INDICATORS_DIR_ENV: &str = "QUANTICK_INDICATORS_DIR";
 /// Default scripts folder, relative to the working directory.
 const DEFAULT_DIR: &str = "indicators";
 
 /// The library over the folder this launch resolves.
 pub(crate) fn scan() -> ScriptLibrary {
-    let dir = std::env::var(INDICATORS_DIR_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_DIR));
+    let dir = crate::launch::operator_paths()
+        .indicators_dir
+        .as_deref()
+        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from);
     ScriptLibrary::open(&dir)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_INDICATORS_DIR"];
 
 #[cfg(test)]
 mod tests {

@@ -73,6 +73,7 @@ impl Surface for FootprintSettingsSurface {
         "footprint-settings"
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         if std::env::var("QUANTICK_FOOTPRINT_PANEL").is_ok_and(|value| value == "1") {
             self.open();
@@ -111,6 +112,7 @@ impl Surface for FootprintSettingsSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_PANEL"];
 
 #[cfg(test)]

@@ -99,3 +99,30 @@ fn names_are_cleaned_unique_and_bounded() {
     assert_eq!(book.rename(id, &long), Ok(true));
     assert_eq!(book.get(id).unwrap().name.chars().count(), MAX_LAYOUT_NAME);
 }
+
+#[test]
+fn parse_names_why_a_layouts_file_is_refused() {
+    let good = toml::to_string_pretty(&LayoutBook::starter(vec![ema()])).unwrap();
+    assert!(parse(&good).is_ok());
+    let refusal = |text: String| parse(&text).unwrap_err();
+    assert_eq!(
+        refusal(good.replace("version = 1", "version = 9")),
+        ParseError::Version(9)
+    );
+    assert_eq!(
+        refusal(good.replace("active = 1", "active = 5")),
+        ParseError::MissingActive
+    );
+    assert_eq!(
+        refusal(good.replace("next_id = 2", "next_id = 1")),
+        ParseError::IdPastCounter
+    );
+    assert!(matches!(
+        refusal("not toml [".to_owned()),
+        ParseError::Malformed(_)
+    ));
+    assert_eq!(
+        ParseError::Version(9).to_string(),
+        "layouts format version 9 (this build reads 1)"
+    );
+}

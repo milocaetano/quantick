@@ -12,7 +12,5 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(SYMBOLS_FILE);
     }
-    crate::store_home::resolve(SYMBOLS_ENV, SYMBOLS_FILE)
+    crate::store_home::resolve(SYMBOLS_FILE)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_SYMBOLS"];

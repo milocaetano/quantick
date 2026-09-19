@@ -20,12 +20,8 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use serde::{Deserialize, Serialize};
 
-/// Environment override for the footprint config location.
-pub const FOOTPRINT_ENV: &str = "QUANTICK_FOOTPRINT";
 /// Default file, next to the working directory's config.
 pub const FOOTPRINT_FILE: &str = "config/footprint.toml";
-/// Environment override for where the in-app edits persist.
-pub const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
 /// Where the in-app edits persist, next to the chart-layers file. Separate
 /// from `config/footprint.toml` on purpose: that file is a hand-written,
 /// commented preset the app must never rewrite; this one is app state.
@@ -531,6 +527,9 @@ pub fn load(settings: &Path, preset: &Path) -> FootprintConfig {
 /// Persist the in-app edits. Temp sibling + rename, the store discipline
 /// every state file here follows.
 pub fn save(settings: &Path, config: &FootprintConfig) {
+    if quantick_workspace::write_refusal::guard_write(settings).is_err() {
+        return;
+    }
     let file = SettingsFile {
         version: SETTINGS_VERSION,
         config: to_file(config),

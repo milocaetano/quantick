@@ -1,5 +1,5 @@
 //! Aggression-bubble presets: the document is `quantick_stores::bubble_presets`;
-//! this is where the environment reaches it.
+//! this is where the launch root's `QUANTICK_BUBBLES` reaches it.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,10 @@ pub use quantick_stores::bubble_presets::*;
 /// Path the panel reads from and writes to.
 #[must_use]
 pub fn presets_path() -> PathBuf {
-    std::env::var_os(PRESETS_ENV).map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
+    crate::launch::operator_paths()
+        .bubbles
+        .clone()
+        .map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
 }
 
 /// Load presets, falling back to the embedded file.
@@ -18,11 +21,11 @@ pub fn presets_path() -> PathBuf {
 /// the returned presets are the embedded ones, and the source says so.
 #[must_use]
 pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
-    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) = match std::env::var_os(PRESETS_ENV)
-    {
-        Some(raw) => (PathBuf::from(raw), PresetSource::EnvPath),
-        None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
-    };
+    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) =
+        match crate::launch::operator_paths().bubbles.clone() {
+            Some(raw) => (PathBuf::from(raw), PresetSource::EnvPath),
+            None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
+        };
     if !Path::new(&path).is_file() {
         return (embedded(), PresetSource::Embedded, None);
     }
@@ -55,5 +58,3 @@ pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
 pub fn save(file: &BubblePresetFile) -> Result<PathBuf, String> {
     save_to(presets_path(), file)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_BUBBLES"];

@@ -20,8 +20,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::indicator_state::{SavedInput, SavedKind};
 
-/// Environment override for the presets file location.
-pub const PRESETS_ENV: &str = "QUANTICK_INDICATOR_PRESETS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const PRESETS_FILE: &str = "indicator-presets.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
@@ -159,6 +157,9 @@ impl PresetStore {
 
     /// Write the store. See the [module docs](self) for the discipline.
     pub fn save(&self, path: &Path) {
+        if quantick_workspace::write_refusal::guard_write(path).is_err() {
+            return;
+        }
         let file = PresetsFile {
             version: FORMAT_VERSION,
             presets: self.presets.clone(),

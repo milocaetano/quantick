@@ -17,7 +17,7 @@ pub(crate) use quantick_control_host::system::{SCOPE_ID, SystemSnapshot};
 /// stamped commit are turned into data.
 pub(crate) const BUILD: BuildIdentity = BuildIdentity {
     application_version: env!("CARGO_PKG_VERSION"),
-    git_commit: option_env!("QUANTICK_GIT_COMMIT"),
+    git_commit: crate::launch::GIT_COMMIT,
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {

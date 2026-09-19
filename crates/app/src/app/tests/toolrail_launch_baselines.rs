@@ -1,13 +1,60 @@
-//! Literal child-process fixtures against the original launch consumers.
+//! Literal launch fixtures against the original rail consumers: each row is
+//! a hook table, fed through `fixed_env` rather than the process environment.
 use super::*;
+
+type Env = &'static [(&'static str, &'static str)];
+
+const CASES: &[(&str, Env)] = &[
+    ("absent", &[]),
+    (
+        "valid",
+        &[
+            ("QUANTICK_DRAWING_TOOL", " horizontal-line "),
+            ("QUANTICK_DRAWING_MAGNET", "1"),
+            ("QUANTICK_TOOL_FAVORITES", "measure, horizontal-line"),
+            ("QUANTICK_TOOLBOX_DOCK", "top"),
+            ("QUANTICK_TOOLBAR_SCROLL", "42.5"),
+            ("QUANTICK_TOOLBOX_FLYOUT", "lines"),
+        ],
+    ),
+    ("tool-unknown", &[("QUANTICK_DRAWING_TOOL", "no-such-tool")]),
+    ("magnet-whitespace", &[("QUANTICK_DRAWING_MAGNET", " 1 ")]),
+    ("magnet-zero", &[("QUANTICK_DRAWING_MAGNET", "0")]),
+    ("favorites-empty", &[("QUANTICK_TOOL_FAVORITES", " , ")]),
+    (
+        "favorites-unknown",
+        &[("QUANTICK_TOOL_FAVORITES", "no-such-tool")],
+    ),
+    (
+        "favorites-duplicates",
+        &[(
+            "QUANTICK_TOOL_FAVORITES",
+            "horizontal-line,measure,horizontal-line",
+        )],
+    ),
+    ("dock-left", &[("QUANTICK_TOOLBOX_DOCK", "left")]),
+    ("dock-top", &[("QUANTICK_TOOLBOX_DOCK", " top ")]),
+    ("dock-bottom", &[("QUANTICK_TOOLBOX_DOCK", "bottom")]),
+    ("dock-right", &[("QUANTICK_TOOLBOX_DOCK", "right")]),
+    ("dock-uppercase", &[("QUANTICK_TOOLBOX_DOCK", "TOP")]),
+    ("scroll-negative", &[("QUANTICK_TOOLBAR_SCROLL", "-40")]),
+    ("scroll-end", &[("QUANTICK_TOOLBAR_SCROLL", " end ")]),
+    ("scroll-nan", &[("QUANTICK_TOOLBAR_SCROLL", "NaN")]),
+    ("scroll-infinity", &[("QUANTICK_TOOLBAR_SCROLL", "inf")]),
+    ("scroll-invalid", &[("QUANTICK_TOOLBAR_SCROLL", "far")]),
+    ("flyout-empty", &[("QUANTICK_TOOLBOX_FLYOUT", " ")]),
+    ("flyout-unknown", &[("QUANTICK_TOOLBOX_FLYOUT", "unknown")]),
+];
 
 #[test]
 fn six_hook_consumer_baseline() {
-    let case = std::env::var("H3_BASELINE_CASE").unwrap_or_else(|_| "absent".into());
-    if case == "draft-phase" {
-        draft_uses_the_tool_selected_during_construction();
-        return;
+    for &(case, env) in CASES {
+        six_hook_case(case, env);
     }
+}
+
+fn six_hook_case(case: &str, env: Env) {
+    eprintln!("toolrail launch case {case}");
     let (seed, _, _, _) = test_app();
     let mut workspace = seed.workspace_state().capture_workspace();
     workspace.tabs.clear();
@@ -16,7 +63,7 @@ fn six_hook_consumer_baseline() {
     let (mut app, _, _, _) = test_app_with_workspace_and_launch(
         workspace,
         AppLaunch {
-            toolrail: crate::toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name)),
+            toolrail: crate::toolrail::ToolRailLaunch::capture(fixed_env(env)),
             ..Default::default()
         },
     );
@@ -28,7 +75,7 @@ fn six_hook_consumer_baseline() {
     let mut target = None;
     let mut flyout = None;
     let mut staged = false;
-    match case.as_str() {
+    match case {
         "valid" => {
             tool = "horizontal-line";
             magnet = true;
@@ -97,7 +144,7 @@ fn six_hook_consumer_baseline() {
             assert_eq!(app.toolrail.launch_pending_for_test().1, flyout);
         }
     }
-    let path = scratch_ui_state("literal-launch-favorites");
+    let path = scratch_ui_state(&format!("literal-launch-favorites-{case}"));
     app.workspace.set_ui_state_path(path.clone());
     app.toolrail.toggle_favorite(starrable_tool());
     run_frame(&mut app, &ctx);
@@ -111,12 +158,17 @@ fn six_hook_consumer_baseline() {
     }
 }
 
+#[test]
 fn draft_uses_the_tool_selected_during_construction() {
+    const ENV: Env = &[
+        ("QUANTICK_DRAWING_TOOL", "parallel-channel"),
+        ("QUANTICK_DRAWING_DRAFT", "2"),
+    ];
     let launch = AppLaunch {
-        toolrail: crate::toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name)),
-        drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| {
-            std::env::var_os(name)
-        }),
+        toolrail: crate::toolrail::ToolRailLaunch::capture(fixed_env(ENV)),
+        drawing_chrome: crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(fixed_env(
+            ENV,
+        )),
         ..Default::default()
     };
     let (mut app, _commands) = app_with_history_and_launch(200, launch);
@@ -126,7 +178,7 @@ fn draft_uses_the_tool_selected_during_construction() {
         egui::vec2(800.0, 400.0),
     ));
     app.active_tab_mut().flow_pane.frame.auto_range = Some((90.0, 110.0));
-    app.apply_drawing_draft();
+    crate::app::demo_hooks::apply_drawing_draft(&mut app);
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.drawings.draft_len(), 2);
     let points = &pane.drawings.draft().unwrap().points;

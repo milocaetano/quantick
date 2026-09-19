@@ -247,6 +247,7 @@ impl IndicatorState {
     }
 
     /// Resolve the indexed launch request on the focused pane, then the flow pane.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn open_autostart(
         &mut self,
         tab: u64,
@@ -278,6 +279,7 @@ impl IndicatorState {
     }
 
     /// A deferred launch opens only when the worker has produced editable inputs.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn open_first_editable(
         &mut self,
         tab: u64,
@@ -477,6 +479,7 @@ impl IndicatorState {
     }
 
     /// Legacy launch indicators remain live but do not join the saved set.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn forget_last_indicator_state_change(&mut self) {
         self.slot_kinds.pop();
     }

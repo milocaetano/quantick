@@ -396,7 +396,6 @@ mod tests {
 
     const FAKE_REGISTRY: &[CockpitStore] = &[CockpitStore {
         key: "fake_store",
-        env: "QUANTICK_FAKE_STORE",
         file: "fake-store.toml",
         path: fake_path,
         validate: validate_fake,

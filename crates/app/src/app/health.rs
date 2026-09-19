@@ -15,6 +15,7 @@ use crate::metrics::FrameStats;
 use crate::statusbar;
 use crate::style::CandlePreset;
 use crate::window_scale;
+use quantick_orderflow::engine::OrderflowHealth;
 
 use super::{QuantickApp, fmt_progress};
 
@@ -59,251 +60,20 @@ impl HealthCounters {
 
 impl QuantickApp {
     /// Periodically log a perf summary and warn on threshold breaches.
+    ///
+    /// The clock and the context are read here; what the line says is
+    /// [`HealthSummary`]'s, built from those readings and the counters.
     pub(super) fn maybe_emit_summary(&mut self, now: Instant, ctx: &egui::Context) {
         let elapsed = now - self.health.last_summary;
         if !worker_diagnostics::emit_if_due(&self.tabs, elapsed) {
             return;
         }
-        // The window's own geometry, because a chart that lays out wider than
-        // the surface it is painted on loses its right edge — the toolbar's
-        // layer group, the price axis, the live strip and the dock all live
-        // there — and nothing else in this line would say so.
-        //
-        // `client_px` is the platform's *own* answer, not `screen * scale`:
-        // that product is algebraically the same number as `screen_pt` beside
-        // it and could never contradict anything, which would make the whole
-        // block decoration. Two independent readings, so the line can be read
-        // for whether they agree — and by the time it is written a correction
-        // may already have restored that agreement, which `WINDOW_SCALE_CORRECTED`
-        // is the record of.
-        // Read outside the `input` closure: egui holds one lock for the whole
-        // of it, and reaching back into the context from inside deadlocks.
-        let zoom = ctx.zoom_factor();
-        let client = self
-            .chrome
-            .surface
-            .as_ref()
-            .and_then(window_scale::SurfaceProbe::client_size_px);
-        let (screen, scale, native_scale) = ctx.input(|input| {
-            (
-                input.screen_rect.size(),
-                input.pixels_per_point(),
-                input.viewport().native_pixels_per_point,
-            )
-        });
-        let rate = self.health.trades_since_summary as f64 / elapsed.as_secs_f64();
-        let lag = self.active_tab().trade_arrival_ms();
-        let avg = self.health.frames.avg_ms().unwrap_or(0.0);
+        let geometry = WindowGeometry::read(ctx, self.chrome.surface.as_ref());
         let book = self.active_tab_mut().tape_mut().health();
-        let book_lag = book.arrival_latency_ms;
-        let book_rate = book.depth_updates_since_summary as f64 / elapsed.as_secs_f64();
-        let candle_preset =
-            CandlePreset::detect(&self.style.candles).map_or("custom", CandlePreset::log_value);
-        let envelope = envelope::observe(&self.tabs, rate, book_rate);
-
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "APP_HEALTH_SUMMARY",
-            // Frames and the trade rate are the window's; every market figure
-            // below is the *active* tab's, which is what is on screen.
-            tabs = self.tabs.len(),
-            tab = self.tabs.active_id(),
-            fps = self.health.frames.fps().unwrap_or(0.0) as i64,
-            frame_avg_ms = avg,
-            frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),
-            frame_worst_ms = self.health.frames.worst_ms().unwrap_or(0.0),
-            feed_arrival_ms = lag,
-            trades_per_s = rate,
-            live_trades = self.active_tab().live_trades,
-            worker_backlog = envelope.backlog,
-            worker_parked = envelope.parked,
-            worker_deferred = envelope.deferred,
-            worker_coalesced = envelope.coalesced,
-            worker_output_blocked = envelope.output_blocked,
-            retained_trades = envelope.retained_trades,
-            live_rate = envelope.live_rate,
-            bar_spec = self.active_tab().flow_pane.state.spec().summary(),
-            // Both facts the tape states about its own prices — the grid they
-            // land on and the magnitude they land at — and the row width the
-            // ladder ended up drawing from them. A validation run reads all
-            // three: the first two are the sizing rule's whole input, so
-            // without them a run can see that rows are 1.00 and not why, and
-            // cannot tell "the chart has not been told a tick yet" from "the
-            // chart is drawing rows finer than the instrument can trade at".
-            tape_price_step = self
-                .active_tab()
-                .flow_pane
-                .state
-                .tape_price_step()
-                .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
-            tape_reference_price = self
-                .active_tab()
-                .flow_pane
-                .state
-                .tape_reference_price()
-                .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
-            footprint_rows = %self.active_tab().flow_pane.state.footprint_group(),
-            canvas_layout = ?self.active_tab().layout,
-            screen_pt_w = screen.x,
-            screen_pt_h = screen.y,
-            client_px_w = client.map(|size| size.x),
-            client_px_h = client.map(|size| size.y),
-            scale = scale,
-            native_scale = native_scale,
-            zoom_factor = zoom,
-            time_pane_spec = self.active_tab().time_pane().map(|pane| pane.state.spec().summary()),
-            time_pane_count = self.active_tab().time_panes.len(),
-            // Drawings are a per-frame, O(objects) paint cost, and the shared
-            // ones are additionally reprojected on every other pane of the
-            // tab. Counting them here is what lets a frame-cost reading be
-            // attributed instead of guessed — and it is the only way a
-            // headless run can prove the drawing overlay is populated at all.
-            drawings = self
-                .active_tab()
-                .panes()
-                .map(|(pane, _)| pane.drawings.items().len())
-                .sum::<usize>(),
-            shared_drawings = self
-                .active_tab()
-                .panes()
-                .map(|(pane, _)| pane.drawings.shared_count())
-                .sum::<usize>(),
-            book_enabled = book.enabled,
-            book_status = book.status,
-            book_generation = book.generation,
-            book_last_update_id = book.last_update_id,
-            book_last_event_ms = book.last_event_ms,
-            book_snapshot_observed_ms = book.last_snapshot_observed_ms,
-            book_arrival_ms = book_lag,
-            // How far the newest print sits behind the instant the lane calls
-            // now. It is the pixel gap between the last bubble and the tape's
-            // right edge, in milliseconds: a number, so "the bubbles are
-            // trailing" can be measured rather than argued about.
-            //
-            // A distance between two *venue* clocks, not staleness against
-            // this machine's. A dead session stops both, so this figure
-            // freezes rather than growing — `feed_arrival_ms` above is the one
-            // that answers "is anything still arriving".
-            tape_age_ms = book.tape_age.map(|age| match age {
-                quantick_orderflow::TapeAge::Behind(ms) | quantick_orderflow::TapeAge::NothingYet(ms) => ms,
-            }),
-            tape_age_kind = book.tape_age.map(|age| match age {
-                quantick_orderflow::TapeAge::Behind(_) => "behind",
-                quantick_orderflow::TapeAge::NothingYet(_) => "nothing_yet",
-            }),
-            book_updates_per_s = book_rate,
-            book_updates_total = book.depth_updates,
-            book_queue_len = self.active_tab().book_events.len(),
-            book_channel_closed = self.active_tab().book_channel_closed_reported,
-            book_bid_levels = book.bid_levels,
-            book_ask_levels = book.ask_levels,
-            heatmap_active_levels = book.active_levels,
-            heatmap_archived_runs = book.archived_runs,
-            aggression_count = book.aggression_count,
-            heatmap_history_bytes = book.history_bytes,
-            heatmap_cells = book.projection_cells,
-            heatmap_aggressions = book.projection_aggressions,
-            heatmap_liquidity_events = book.projection_liquidity_events,
-            heatmap_effective_grouping = %book.effective_grouping,
-            heatmap_effective_grouping_multiple = book.effective_grouping_multiple,
-            heatmap_dropped_cells = book.dropped_cells,
-            heatmap_folded_aggressions = book.folded_aggressions,
-            heatmap_dropped_liquidity_events = book.dropped_liquidity_events,
-            heatmap_projection_ms = book.projection_ms,
-            heatmap_live_ms = book.live_ms,
-            heatmap_projection_builds = book.projection_builds,
-            heatmap_projection_cache_hits = book.projection_cache_hits,
-            heatmap_config_revision = book.config_revision,
-            heatmap_snapshots = book.snapshots,
-            heatmap_gaps = book.gaps,
-            heatmap_aggressions_evicted = book.aggressions_evicted,
-            heatmap_runs_evicted = book.runs_evicted,
-            candle_style_revision = self.style_revision,
-            candle_preset,
-            candle_body_mode = ?self.style.candles.body_mode,
-            candle_fill_opacity = self.style.candles.fill_opacity,
-            candle_outline_opacity = self.style.candles.outline_opacity,
-            candle_outline_width_px = self.style.candles.outline_width,
-            chart_background_enabled = self.style.canvas.background_enabled,
-            chart_grid_enabled = self.style.canvas.grid_enabled,
-            replay_active = self.active_tab().replay.is_some(),
-            replay_speed = self.active_tab().replay.as_ref().map(|r| r.status.speed()),
-            replay_playing = self.active_tab().replay.as_ref().map(|r| r.status.is_playing()),
-            replay_progress = self.active_tab().replay.as_ref().map(|r| r.status.progress()),
-            replay_played = self.active_tab().replay.as_ref().map(|r| r.status.played()),
-            replay_total = self.active_tab().replay.as_ref().map(|r| r.status.total()),
-            action = "observe",
-            "application health summary"
-        );
-        if avg > metrics::SLOW_FRAME_MS {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "APP_SLOW_FRAMES",
-                frame_avg_ms = avg,
-                threshold_ms = metrics::SLOW_FRAME_MS,
-                heatmap_enabled = book.enabled,
-                heatmap_projection_ms = book.projection_ms,
-                heatmap_cells = book.projection_cells,
-                action = "inspect_render_budget",
-                "slow frames: the chart is not keeping up"
-            );
-        }
-        if let Some(l) = lag
-            && l > metrics::HIGH_LAG_MS
-        {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "APP_HIGH_TRADE_LAG",
-                feed_lag_ms = l,
-                threshold_ms = metrics::HIGH_LAG_MS,
-                action = "inspect_trade_connection",
-                "high feed lag: trades are arriving well behind their timestamps"
-            );
-        }
-        if let Some(l) = book_lag
-            && book.enabled
-            && l > metrics::HIGH_LAG_MS
-        {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_HIGH_ARRIVAL",
-                symbol = self.active_tab().symbol.as_str(),
-                book_arrival_ms = l,
-                threshold_ms = metrics::HIGH_LAG_MS,
-                book_status = book.status,
-                action = "inspect_depth_connection",
-                // Arrival, not age: this is how late the newest accepted
-                // depth event was when it reached us, an observation frozen
-                // at that moment. A book that stops updating keeps its last
-                // figure — the tape-age readout is what catches that.
-                "order-book events are arriving late"
-            );
-        }
-        // Losses only. Folding is the expected steady state on a busy tape and
-        // loses nothing — warning about it would tell an operator (and the
-        // planned assistant reading these events) to go fix something that is
-        // not broken. The fold count still rides in the info summary above.
-        if book.dropped_cells > 0 || book.dropped_liquidity_events > 0 {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HEATMAP_PROJECTION_CAPPED",
-                symbol = self.active_tab().symbol.as_str(),
-                dropped_cells = book.dropped_cells,
-                dropped_liquidity_events = book.dropped_liquidity_events,
-                // Not "group harder". Grouping is exactly what the trader is
-                // complaining about when marks read as one blob, and the
-                // aggression budget no longer discards anything to begin with —
-                // it folds, and says how much it folded. What is worth widening
-                // is the budget or the pane, so that is what this names.
-                action = "increase_grouping_or_reduce_retention",
-                "heatmap depth primitive cap dropped items"
-            );
-        }
+        let summary = HealthSummary::build(self, elapsed.as_secs_f64(), geometry, book);
+        summary.log();
+        summary.warn_breaches();
+        let envelope = summary.envelope;
 
         self.health.envelope.warn(&envelope);
         self.health.trades_since_summary = 0;
@@ -324,7 +94,6 @@ impl QuantickApp {
             Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
             None => (0, bars.len()),
         };
-        let venue_bars = pane.history_prefix.len();
         let note = self.active_tab().side_note(&self.config);
         statusbar::StatusModel {
             venue: if self.active_tab().replay.is_some() {
@@ -351,7 +120,7 @@ impl QuantickApp {
                 .progress()
                 .map(|(progress, unit)| fmt_progress(&progress, unit)),
             deal_recording: self.active_tab().deal_status_cell(),
-            venue_bars,
+            venue_bars: pane.history_prefix.len(),
             backfilled_bars: backfilled,
             live_bars: live,
             side_note: note.clone().map(|(label, _)| label),
@@ -367,6 +136,315 @@ impl QuantickApp {
             frame_avg_ms: self.health.frames.avg_ms(),
             frame_cpu_ms: self.health.cpu_frames.avg_ms(),
             show_perf: self.health.show_perf,
+            saves_off: crate::store_home::writes_refused().map(|refused| refused.to_string()),
+        }
+    }
+}
+
+/// The window's own geometry, because a chart that lays out wider than the
+/// surface it is painted on loses its right edge — the toolbar's layer
+/// group, the price axis, the live strip and the dock all live there — and
+/// nothing else in the summary would say so.
+///
+/// `client` is the platform's *own* answer, not `screen * scale`: that
+/// product is algebraically the same number as `screen` beside it and could
+/// never contradict anything, which would make the whole block decoration.
+/// Two independent readings, so the line can be read for whether they agree
+/// — and by the time it is written a correction may already have restored
+/// that agreement, which `WINDOW_SCALE_CORRECTED` is the record of.
+struct WindowGeometry {
+    screen: egui::Vec2,
+    client: Option<egui::Vec2>,
+    scale: f32,
+    native_scale: Option<f32>,
+    zoom: f32,
+}
+
+impl WindowGeometry {
+    fn read(ctx: &egui::Context, surface: Option<&window_scale::SurfaceProbe>) -> Self {
+        // Read outside the `input` closure: egui holds one lock for the whole
+        // of it, and reaching back into the context from inside deadlocks.
+        let zoom = ctx.zoom_factor();
+        let client = surface.and_then(window_scale::SurfaceProbe::client_size_px);
+        let (screen, scale, native_scale) = ctx.input(|input| {
+            (
+                input.screen_rect.size(),
+                input.pixels_per_point(),
+                input.viewport().native_pixels_per_point,
+            )
+        });
+        Self {
+            screen,
+            client,
+            scale,
+            native_scale,
+            zoom,
+        }
+    }
+}
+
+/// One `APP_HEALTH_SUMMARY`, and the warnings its figures call for.
+///
+/// Frames and the trade rate are the window's; every market figure is the
+/// *active* tab's, which is what is on screen.
+struct HealthSummary<'a> {
+    tab_count: usize,
+    tab_id: u64,
+    tab: &'a crate::tab::Tab,
+    health: &'a HealthCounters,
+    style: &'a crate::style::ChartStyle,
+    style_revision: u64,
+    candle_preset: &'static str,
+    geometry: WindowGeometry,
+    book: OrderflowHealth,
+    envelope: envelope::EnvelopeReading,
+    /// Live trades per second across every tab since the last summary.
+    trades_per_s: f64,
+    /// Depth updates per second on the active tab since the last summary.
+    book_updates_per_s: f64,
+    frame_avg_ms: f32,
+    feed_arrival_ms: Option<i64>,
+}
+
+impl<'a> HealthSummary<'a> {
+    /// Everything the line reports, read off the window over the `seconds`
+    /// since the last summary.
+    fn build(
+        app: &'a QuantickApp,
+        seconds: f64,
+        geometry: WindowGeometry,
+        book: OrderflowHealth,
+    ) -> Self {
+        let trades_per_s = app.health.trades_since_summary as f64 / seconds;
+        let book_updates_per_s = book.depth_updates_since_summary as f64 / seconds;
+        let tab = app.active_tab();
+        Self {
+            tab_count: app.tabs.len(),
+            tab_id: app.tabs.active_id(),
+            tab,
+            health: &app.health,
+            style: &app.style,
+            style_revision: app.style_revision,
+            candle_preset: CandlePreset::detect(&app.style.candles)
+                .map_or("custom", CandlePreset::log_value),
+            geometry,
+            envelope: envelope::observe(&app.tabs, trades_per_s, book_updates_per_s),
+            book,
+            trades_per_s,
+            book_updates_per_s,
+            frame_avg_ms: app.health.frames.avg_ms().unwrap_or(0.0),
+            feed_arrival_ms: tab.trade_arrival_ms(),
+        }
+    }
+
+    /// The `APP_HEALTH_SUMMARY` line itself.
+    fn log(&self) {
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "APP_HEALTH_SUMMARY",
+            // Frames and the trade rate are the window's; every market figure
+            // below is the *active* tab's, which is what is on screen.
+            tabs = self.tab_count,
+            tab = self.tab_id,
+            fps = self.health.frames.fps().unwrap_or(0.0) as i64,
+            frame_avg_ms = self.frame_avg_ms,
+            frame_cpu_ms = self.health.cpu_frames.avg_ms().unwrap_or(0.0),
+            frame_worst_ms = self.health.frames.worst_ms().unwrap_or(0.0),
+            feed_arrival_ms = self.feed_arrival_ms,
+            trades_per_s = self.trades_per_s,
+            live_trades = self.tab.live_trades,
+            worker_backlog = self.envelope.backlog,
+            worker_parked = self.envelope.parked,
+            worker_deferred = self.envelope.deferred,
+            worker_coalesced = self.envelope.coalesced,
+            worker_output_blocked = self.envelope.output_blocked,
+            retained_trades = self.envelope.retained_trades,
+            live_rate = self.envelope.live_rate,
+            bar_spec = self.tab.flow_pane.state.spec().summary(),
+            // Both facts the tape states about its own prices — the grid they
+            // land on and the magnitude they land at — and the row width the
+            // ladder ended up drawing from them. A validation run reads all
+            // three: the first two are the sizing rule's whole input, so
+            // without them a run can see that rows are 1.00 and not why, and
+            // cannot tell "the chart has not been told a tick yet" from "the
+            // chart is drawing rows finer than the instrument can trade at".
+            tape_price_step = self
+                .tab
+                .flow_pane
+                .state
+                .tape_price_step()
+                .map_or_else(|| "unknown".to_owned(), |step| step.to_string()),
+            tape_reference_price = self
+                .tab
+                .flow_pane
+                .state
+                .tape_reference_price()
+                .map_or_else(|| "unknown".to_owned(), |price| price.to_string()),
+            footprint_rows = %self.tab.flow_pane.state.footprint_group(),
+            canvas_layout = ?self.tab.layout,
+            screen_pt_w = self.geometry.screen.x,
+            screen_pt_h = self.geometry.screen.y,
+            client_px_w = self.geometry.client.map(|size| size.x),
+            client_px_h = self.geometry.client.map(|size| size.y),
+            scale = self.geometry.scale,
+            native_scale = self.geometry.native_scale,
+            zoom_factor = self.geometry.zoom,
+            time_pane_spec = self.tab.time_pane().map(|pane| pane.state.spec().summary()),
+            time_pane_count = self.tab.time_panes.len(),
+            // Drawings are a per-frame, O(objects) paint cost, and the shared
+            // ones are additionally reprojected on every other pane of the
+            // tab. Counting them here is what lets a frame-cost reading be
+            // attributed instead of guessed — and it is the only way a
+            // headless run can prove the drawing overlay is populated at all.
+            drawings = self
+                .tab
+                .panes()
+                .map(|(pane, _)| pane.drawings.items().len())
+                .sum::<usize>(),
+            shared_drawings = self
+                .tab
+                .panes()
+                .map(|(pane, _)| pane.drawings.shared_count())
+                .sum::<usize>(),
+            book_enabled = self.book.enabled,
+            book_status = self.book.status,
+            book_generation = self.book.generation,
+            book_last_update_id = self.book.last_update_id,
+            book_last_event_ms = self.book.last_event_ms,
+            book_snapshot_observed_ms = self.book.last_snapshot_observed_ms,
+            book_arrival_ms = self.book.arrival_latency_ms,
+            // How far the newest print sits behind the instant the lane calls
+            // now. It is the pixel gap between the last bubble and the tape's
+            // right edge, in milliseconds: a number, so "the bubbles are
+            // trailing" can be measured rather than argued about.
+            //
+            // A distance between two *venue* clocks, not staleness against
+            // this machine's. A dead session stops both, so this figure
+            // freezes rather than growing — `feed_arrival_ms` above is the one
+            // that answers "is anything still arriving".
+            tape_age_ms = self.book.tape_age.map(|age| match age {
+                quantick_orderflow::TapeAge::Behind(ms) | quantick_orderflow::TapeAge::NothingYet(ms) => ms,
+            }),
+            tape_age_kind = self.book.tape_age.map(|age| match age {
+                quantick_orderflow::TapeAge::Behind(_) => "behind",
+                quantick_orderflow::TapeAge::NothingYet(_) => "nothing_yet",
+            }),
+            book_updates_per_s = self.book_updates_per_s,
+            book_updates_total = self.book.depth_updates,
+            book_queue_len = self.tab.book_events.len(),
+            book_channel_closed = self.tab.book_channel_closed_reported,
+            book_bid_levels = self.book.bid_levels,
+            book_ask_levels = self.book.ask_levels,
+            heatmap_active_levels = self.book.active_levels,
+            heatmap_archived_runs = self.book.archived_runs,
+            aggression_count = self.book.aggression_count,
+            heatmap_history_bytes = self.book.history_bytes,
+            heatmap_cells = self.book.projection_cells,
+            heatmap_aggressions = self.book.projection_aggressions,
+            heatmap_liquidity_events = self.book.projection_liquidity_events,
+            heatmap_effective_grouping = %self.book.effective_grouping,
+            heatmap_effective_grouping_multiple = self.book.effective_grouping_multiple,
+            heatmap_dropped_cells = self.book.dropped_cells,
+            heatmap_folded_aggressions = self.book.folded_aggressions,
+            heatmap_dropped_liquidity_events = self.book.dropped_liquidity_events,
+            heatmap_projection_ms = self.book.projection_ms,
+            heatmap_live_ms = self.book.live_ms,
+            heatmap_projection_builds = self.book.projection_builds,
+            heatmap_projection_cache_hits = self.book.projection_cache_hits,
+            heatmap_config_revision = self.book.config_revision,
+            heatmap_snapshots = self.book.snapshots,
+            heatmap_gaps = self.book.gaps,
+            heatmap_aggressions_evicted = self.book.aggressions_evicted,
+            heatmap_runs_evicted = self.book.runs_evicted,
+            candle_style_revision = self.style_revision,
+            candle_preset = self.candle_preset,
+            candle_body_mode = ?self.style.candles.body_mode,
+            candle_fill_opacity = self.style.candles.fill_opacity,
+            candle_outline_opacity = self.style.candles.outline_opacity,
+            candle_outline_width_px = self.style.candles.outline_width,
+            chart_background_enabled = self.style.canvas.background_enabled,
+            chart_grid_enabled = self.style.canvas.grid_enabled,
+            replay_active = self.tab.replay.is_some(),
+            replay_speed = self.tab.replay.as_ref().map(|r| r.status.speed()),
+            replay_playing = self.tab.replay.as_ref().map(|r| r.status.is_playing()),
+            replay_progress = self.tab.replay.as_ref().map(|r| r.status.progress()),
+            replay_played = self.tab.replay.as_ref().map(|r| r.status.played()),
+            replay_total = self.tab.replay.as_ref().map(|r| r.status.total()),
+            action = "observe",
+            "application health summary"
+        );
+    }
+
+    /// The warnings the figures call for, each only past its threshold.
+    fn warn_breaches(&self) {
+        if self.frame_avg_ms > metrics::SLOW_FRAME_MS {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_SLOW_FRAMES",
+                frame_avg_ms = self.frame_avg_ms,
+                threshold_ms = metrics::SLOW_FRAME_MS,
+                heatmap_enabled = self.book.enabled,
+                heatmap_projection_ms = self.book.projection_ms,
+                heatmap_cells = self.book.projection_cells,
+                action = "inspect_render_budget",
+                "slow frames: the chart is not keeping up"
+            );
+        }
+        if let Some(l) = self.feed_arrival_ms
+            && l > metrics::HIGH_LAG_MS
+        {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "APP_HIGH_TRADE_LAG",
+                feed_lag_ms = l,
+                threshold_ms = metrics::HIGH_LAG_MS,
+                action = "inspect_trade_connection",
+                "high feed lag: trades are arriving well behind their timestamps"
+            );
+        }
+        if let Some(l) = self.book.arrival_latency_ms
+            && self.book.enabled
+            && l > metrics::HIGH_LAG_MS
+        {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_HIGH_ARRIVAL",
+                symbol = self.tab.symbol.as_str(),
+                book_arrival_ms = l,
+                threshold_ms = metrics::HIGH_LAG_MS,
+                book_status = self.book.status,
+                action = "inspect_depth_connection",
+                // Arrival, not age: this is how late the newest accepted
+                // depth event was when it reached us, an observation frozen
+                // at that moment. A book that stops updating keeps its last
+                // figure — the tape-age readout is what catches that.
+                "order-book events are arriving late"
+            );
+        }
+        // Losses only. Folding is the expected steady state on a busy tape and
+        // loses nothing — warning about it would tell an operator (and the
+        // planned assistant reading these events) to go fix something that is
+        // not broken. The fold count still rides in the info summary above.
+        if self.book.dropped_cells > 0 || self.book.dropped_liquidity_events > 0 {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HEATMAP_PROJECTION_CAPPED",
+                symbol = self.tab.symbol.as_str(),
+                dropped_cells = self.book.dropped_cells,
+                dropped_liquidity_events = self.book.dropped_liquidity_events,
+                // Not "group harder". Grouping is exactly what the trader is
+                // complaining about when marks read as one blob, and the
+                // aggression budget no longer discards anything to begin with —
+                // it folds, and says how much it folded. What is worth widening
+                // is the budget or the pane, so that is what this names.
+                action = "increase_grouping_or_reduce_retention",
+                "heatmap depth primitive cap dropped items"
+            );
         }
     }
 }

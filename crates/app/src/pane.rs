@@ -61,6 +61,8 @@ mod draw_frame;
 mod drawing_projection;
 mod footprint;
 mod frame;
+mod frame_layout;
+mod frame_stages;
 mod gestures;
 mod layer_painters;
 mod layers;
@@ -905,6 +907,7 @@ impl ChartPane {
         self.pending_indicator_guide.take()
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn first_indicator_pane_center(&self) -> Option<egui::Pos2> {
         self.frame.bands.get(1).map(|band| band.rect.center())
     }

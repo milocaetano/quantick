@@ -16,8 +16,6 @@ use quantick_indicators::{InputValue, Rgba8, SourceId};
 
 use quantick_chart::indicator_style::PlotOverride;
 
-/// Environment override for the state file location.
-pub const STATE_ENV: &str = "QUANTICK_INDICATORS_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const STATE_FILE: &str = "indicators-state.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
@@ -150,6 +148,9 @@ pub fn load(path: &std::path::Path) -> Vec<SavedIndicator> {
 /// never writes it again; the migration tests, here and in the window, write
 /// it to prove the migration.
 pub fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
+    if quantick_workspace::write_refusal::guard_write(path).is_err() {
+        return;
+    }
     let file = StateFile {
         version: FORMAT_VERSION,
         indicators: indicators.to_vec(),

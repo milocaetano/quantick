@@ -15,6 +15,8 @@ quantick-engine = { path = "../engine" }
 # The folder a symbol names, shared with the deal recorder.
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+# The one store-write gate (DS7) the sidecar asks before it writes.
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 # The sidecar is a versioned TOML document.

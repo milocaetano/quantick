@@ -1,58 +1,13 @@
-//! The registry half of the launch hooks: the declared slices joined into
-//! one catalogue, the names an environment sets that nothing declares, and
-//! the generated registry document fused from the declarations and the
-//! authored prose.
+//! The pure half of the hook registry: fuse declared hooks with the authored
+//! prose into the generated markdown.
 //!
-//! Everything here is a function of what it is handed — the owners table
-//! the application keeps, the not-a-hook table beside it, the prose text —
-//! so the application's `hooks` module is the table and the startup
-//! warning, and this is the mechanism.
-
-use std::collections::BTreeSet;
+//! Beside [`super::HookSpec`] for the reason that type is here — the lowest
+//! crate that declares a hook — and because nothing in it needs the
+//! application: it is string work over a declaration table and a document,
+//! testable without a window. `quantick-app`'s `hooks` module owns the table,
+//! the file reads and the refusal to render from a partial build.
 
 use super::HookSpec;
-
-/// Every declared hook, with the file that owns it, in name order.
-pub fn all(
-    owners: &[(&'static str, &'static [HookSpec])],
-) -> Vec<(&'static str, &'static HookSpec)> {
-    let mut out: Vec<(&'static str, &'static HookSpec)> = owners
-        .iter()
-        .flat_map(|(path, specs)| specs.iter().map(move |spec| (*path, spec)))
-        .collect();
-    out.sort_by_key(|(_, spec)| spec.name);
-    out
-}
-
-/// Every declared hook name.
-pub fn declared_names(owners: &[(&'static str, &'static [HookSpec])]) -> BTreeSet<&'static str> {
-    owners
-        .iter()
-        .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
-        .collect()
-}
-
-/// The `QUANTICK_*` variables set in this environment that no slice declares.
-///
-/// Takes the environment as an iterator rather than reading it, so the test
-/// can exercise the real comparison without touching process state — setting
-/// an environment variable is `unsafe` in this edition and racy under a
-/// threaded test runner.
-pub fn unknown_hooks<'a>(
-    environment: impl Iterator<Item = &'a str>,
-    declared: &BTreeSet<&'static str>,
-    not_hooks: &[(&str, &str)],
-) -> Vec<String> {
-    let mut out: Vec<String> = environment
-        .filter(|name| name.starts_with("QUANTICK_"))
-        .filter(|name| !declared.contains(name))
-        .filter(|name| !not_hooks.iter().any(|(known, _)| known == name))
-        .map(str::to_owned)
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
 
 /// The marker the generated registry opens with.
 pub const GENERATED_MARKER: &str =
@@ -64,7 +19,7 @@ pub const GENERATED_MARKER: &str =
 /// kilobytes of the context budget spent saying the same eleven words, in a
 /// file whose whole argument is that a targeted run should cost less to
 /// answer, not more.
-pub const OWNER_PREFIX: &str = "crates/app/src/";
+const OWNER_PREFIX: &str = "crates/app/src/";
 
 /// Fuse the declared hooks into the authored prose.
 ///
@@ -74,8 +29,9 @@ pub const OWNER_PREFIX: &str = "crates/app/src/";
 /// contains owner paths only, so it never duplicates the hook inventory.
 ///
 /// Prose lines that are not table rows pass through untouched, and a row's
-/// `Reaches` cell is never rewritten — the authored prose file is the authored half and
+/// `Reaches` cell is never rewritten — the authored prose (`docs/ui-harness/hook-prose.md`) is the authored half and
 /// this function is not allowed an opinion about it.
+#[must_use]
 pub fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> String {
     let owners: std::collections::BTreeMap<&str, &'static str> = hooks
         .iter()
@@ -89,21 +45,21 @@ pub fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str)
     out.push_str(concat!(
         "Declared `QUANTICK_*` inputs: behavior, feature requirements and owners.
 ",
-        "Paths relative to `crates/app/src/`; declaration does not enable a hook.
+        "Paths relative to `crates/app/src/`. Harness hooks need `--features
+",
+        "harness`; a default build reads configuration only.
 ",
         "
 ",
-        "Generated: owner `declare_hooks!` slices include disabled hooks,
+        "Generated from `declare_hooks!` slices and the prose in
 ",
-        "prose from `docs/ui-harness/hook-prose.md` — edit there, then
+        "`docs/ui-harness/hook-prose.md` — edit there, then `cargo run -p
 ",
-        "`cargo run -p quantick-app -- --dump-hook-registry > <this file>`.
+        "quantick-app --features harness -- --dump-hook-registry > <this file>`.
 ",
-        "`cargo test -p quantick-guards` checks source/declaration/prose parity;
+        "`cargo test -p quantick-guards` checks source/declaration/prose parity.
 ",
-        "disabled hooks remain cataloged. Undeclared, non-exempt names in the
-",
-        "environment are logged at startup as `UNKNOWN_HOOK`.
+        "Unregistered names set at startup are logged as `UNKNOWN_HOOK`.
 ",
         "
 ",
@@ -146,7 +102,7 @@ pub fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str)
 }
 
 /// Readable presentation keys; full paths remain canonical in the legend.
-pub fn owner_keys(
+fn owner_keys(
     owners: &std::collections::BTreeMap<&str, &'static str>,
     body: &str,
 ) -> std::collections::BTreeMap<&'static str, String> {
@@ -177,7 +133,7 @@ pub fn owner_keys(
     assigned
 }
 
-pub fn owner_key_candidates(path: &str) -> Vec<String> {
+fn owner_key_candidates(path: &str) -> Vec<String> {
     let stem = path
         .strip_suffix("/mod.rs")
         .or_else(|| path.strip_suffix("/src/lib.rs"))
@@ -197,7 +153,7 @@ pub fn owner_key_candidates(path: &str) -> Vec<String> {
 }
 
 /// Keep complete cells and the order of distinct owners within each row.
-pub fn row_paths<'a>(
+fn row_paths<'a>(
     line: &'a str,
     owners: &std::collections::BTreeMap<&str, &'static str>,
 ) -> Option<(&'a str, &'a str, Vec<&'static str>)> {
@@ -214,7 +170,7 @@ pub fn row_paths<'a>(
     Some((hook_cell, reaches, paths))
 }
 
-pub fn fuse_row(
+fn fuse_row(
     line: &str,
     owners: &std::collections::BTreeMap<&str, &'static str>,
     keys: &std::collections::BTreeMap<&str, String>,
@@ -237,6 +193,7 @@ pub fn fuse_row(
 }
 
 /// Every `QUANTICK_*` named in a cell, in order of appearance.
+#[must_use]
 pub fn hook_names(cell: &str) -> Vec<String> {
     let bytes = cell.as_bytes();
     let mut out = Vec::new();

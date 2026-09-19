@@ -5,64 +5,31 @@ use super::{
 };
 
 #[cfg(test)]
+use crate::stage_registry::nodes_in_valid_order;
+use crate::stage_registry::{StageNode, declare_stages};
+
+#[cfg(test)]
 mod tests;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Stage {
-    Update,
-    YieldEffect,
-    DeliverResult,
-    Readback,
-}
-
-impl Stage {
-    const fn bit(self) -> u8 {
-        1 << self as u8
+declare_stages! {
+    enum Stage {
+        Update after [],
+        YieldEffect after [Update],
+        DeliverResult after [YieldEffect],
+        Readback after [DeliverResult],
     }
 }
 
-#[derive(Clone, Copy)]
-struct Step {
-    stage: Stage,
-    after: u8,
-}
+type Step = StageNode<Stage>;
 
-const STEPS: [Step; 4] = [
-    Step {
-        stage: Stage::Update,
-        after: 0,
-    },
-    Step {
-        stage: Stage::YieldEffect,
-        after: Stage::Update.bit(),
-    },
-    Step {
-        stage: Stage::DeliverResult,
-        after: Stage::YieldEffect.bit(),
-    },
-    Step {
-        stage: Stage::Readback,
-        after: Stage::DeliverResult.bit(),
-    },
-];
+const STEPS: [Step; Stage::COUNT] = Stage::NODES;
 
-// Fixed-size validation also rejects cycles: no member of a cycle can have
-// all its prerequisites among the stages already visited.
+// Validation also rejects cycles: no member of a cycle can have all its
+// prerequisites among the stages already visited.
+#[cfg(test)]
 const fn valid(steps: &[Step]) -> bool {
-    let mut seen = 0;
-    let mut index = 0;
-    while index < steps.len() {
-        let step = steps[index];
-        if seen & step.stage.bit() != 0 || step.after & seen != step.after {
-            return false;
-        }
-        seen |= step.stage.bit();
-        index += 1;
-    }
-    seen == 15
+    nodes_in_valid_order(steps, Stage::COUNT)
 }
-
-const _: () = assert!(valid(&STEPS));
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ConversionInput {

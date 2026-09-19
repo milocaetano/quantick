@@ -10,9 +10,11 @@ fn recorder_for(
     symbol: &str,
     day_cache: deal_recording::DayCache,
 ) -> DealRecorder {
-    let default_on = app
-        .harness
-        .deal_recording_default()
+    #[cfg(any(feature = "scenario-harness", test))]
+    let scripted = app.chrome.harness.deal_recording_default();
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    let scripted = None;
+    let default_on = scripted
         .or(app.chrome.record_deals)
         .unwrap_or_else(|| app.config.records_deals(feed_id));
     let mut recorder = DealRecorder::with_cache(

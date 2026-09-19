@@ -19,9 +19,6 @@ pub struct CockpitStore {
     /// The section this store occupies in a workspace bundle, and the label
     /// a log line uses. Stable across renames of the file itself.
     pub key: &'static str,
-    /// Environment override for this store's location — an explicit ask,
-    /// honoured for one run and never consolidated under.
-    pub env: &'static str,
     /// The file's name, in the durable home and in the legacy launch
     /// directory alike. One name, so the rescue is a copy and not a mapping.
     pub file: &'static str,
@@ -67,8 +64,8 @@ impl quantick_workspace::bundle::BundleStore for CockpitStore {
     fn local_keys(&self) -> &[&str] {
         self.local_keys
     }
-    fn validate_text(&self, text: &str) -> Result<(), String> {
-        (self.validate)(text)
+    fn validate_text(&self, text: &str) -> Result<(), quantick_workspace::bundle::SectionError> {
+        (self.validate)(text).map_err(quantick_workspace::bundle::SectionError::Malformed)
     }
 }
 
@@ -152,7 +149,7 @@ pub fn rescue_into(
         // A store pointed somewhere by its own environment variable is not
         // part of this installation's cockpit — a QA or autostart run must
         // not have its scratch file copied into the trader's home.
-        if overridden(store.env) {
+        if overridden(store.file) {
             continue;
         }
         let source = legacy.join(store.file);
@@ -261,7 +258,6 @@ mod tests {
     const STORES: &[CockpitStore] = &[
         CockpitStore {
             key: "ui_state",
-            env: "QUANTICK_UI_STATE",
             file: "ui-state.toml",
             path: no_path,
             validate: any_text,
@@ -270,7 +266,6 @@ mod tests {
         },
         CockpitStore {
             key: "chart_layers",
-            env: "QUANTICK_CHART_LAYERS",
             file: "chart-layers.toml",
             path: no_path,
             validate: any_text,
@@ -442,7 +437,7 @@ mod tests {
         let home = scratch("rescue-env-home");
         let legacy = scratch("rescue-env-legacy");
         std::fs::write(legacy.join("ui-state.toml"), "version = 1\ntabs = []\n").unwrap();
-        let summary = rescue_into(&home, &legacy, STORES, &|env| env == "QUANTICK_UI_STATE")
+        let summary = rescue_into(&home, &legacy, STORES, &|file| file == "ui-state.toml")
             .expect("the rescue runs");
         assert_eq!(summary.copied, 0, "the overridden store is skipped");
         assert!(!home.join("ui-state.toml").exists());

@@ -283,6 +283,7 @@ impl WorkspaceSaveAdapter<'_> {
         // replay folder gets applies: a validation run must not write a QA
         // list into the trader's workspace. The hook stages a screen; it does
         // not make choices on their behalf.
+        #[cfg(any(feature = "drawing-harness", test))]
         if self.session.favorites_are_staged() {
             tracing::info!(
                 target: "quantick::app",
@@ -499,5 +500,34 @@ impl WorkspaceSaveAdapter<'_> {
     }
     fn note_workspace(&mut self, message: String) {
         self.toast.note(message, Instant::now());
+    }
+}
+
+impl<'a> super::arrangement_adapter::ArrangementAdapter<'a> {
+    /// The workspace save port over these borrows: the arrangement's read
+    /// half, the commit session and the notice sink. The one place the read
+    /// half is assembled for production.
+    pub(super) fn into_save(
+        self,
+        replay_view: &'a crate::replay_view::ReplayView,
+    ) -> WorkspaceSaveAdapter<'a> {
+        let (session, path) = self.workspace.commit_parts();
+        WorkspaceSaveAdapter {
+            arrangement: super::arrangement_adapter::ArrangementRead {
+                tabs: self.tabs,
+                config: self.config,
+                toolrail: self.toolrail,
+                tz: self.tz,
+                dock: self.dock,
+                show_perf: *self.show_perf,
+                record_deals: *self.record_deals,
+                history: self.history,
+                drawing_chrome: self.drawing_chrome,
+            },
+            session,
+            path,
+            replay_view,
+            toast: self.toast,
+        }
     }
 }

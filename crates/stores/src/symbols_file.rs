@@ -20,8 +20,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Environment override for the file location.
-pub const SYMBOLS_ENV: &str = "QUANTICK_SYMBOLS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const SYMBOLS_FILE: &str = "quantick-symbols.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
@@ -178,6 +176,7 @@ pub fn load(path: &std::path::Path) -> AddedSymbols {
 /// like it stuck but did not is the kind of quiet loss the user only finds
 /// out about at the next launch.
 pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> {
+    quantick_workspace::write_refusal::guard_write(path)?;
     let file = AddedSymbols {
         version: FORMAT_VERSION,
         feeds: added.feeds.clone(),

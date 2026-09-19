@@ -182,6 +182,9 @@ pub fn load(path: &Path) -> PaperState {
 /// Write the whole state back. Callers read-modify-write, so one changed
 /// choice never erases another.
 pub fn save(path: &Path, state: &PaperState) {
+    if quantick_workspace::write_refusal::guard_write(path).is_err() {
+        return;
+    }
     let file = PaperStateFile {
         version: FORMAT_VERSION,
         state: state.clone(),

@@ -1,0 +1,375 @@
+//! Venue candles on the chart's side of the port: folding them up to a
+//! coarser interval, putting an older slice in front of the ones held, and
+//! trimming them to the seam where the chart's own bars begin.
+//!
+//! [`fold`] groups **by time**: every provider delivers candle history at one
+//! interval ([`quantick_feed::OHLCV_BASE_INTERVAL_MS`], a minute) and the time
+//! pane shows whatever its header asks for, so folding locally is what makes
+//! changing that free — a chip click is a different fold over bars already
+//! held, not a round trip to a venue. The row merge lives in [`merge_into`],
+//! for the reason `Bar::extend` is public in the engine: the summary of a run
+//! of bars is a fact about those bars, and a second implementation of it is a
+//! second answer waiting to drift.
+//!
+//! What this module deliberately does **not** offer: folding bars by count
+//! for display. One bar is one candle at every zoom (`crate::viewport`) —
+//! a trader must be able to trust that every candle on screen is exactly one
+//! bar of the rule they configured, and a fold on the way to the screen would
+//! break that somewhere.
+//!
+//! Pure and deterministic — same bars in, same bars out, no clock and no
+//! iteration-order dependence. That is what lets a chip click be tested
+//! without a feed and re-run without drift.
+
+use quantick_engine::Bar;
+
+use crate::OHLCV_BASE_INTERVAL_MS;
+
+/// Whether `interval_ms` can be folded to from the base interval at all.
+///
+/// A whole number of base candles or nothing: 5m and 1h are exact unions of
+/// minutes, 90s and 100ms are not, and a bucket built from a fraction of a
+/// candle would be inventing where the missing part went. The sub-minute range
+/// simply gets no prefix — an honest absence rather than an approximation.
+#[must_use]
+pub fn is_foldable(interval_ms: i64) -> bool {
+    interval_ms >= OHLCV_BASE_INTERVAL_MS && interval_ms % OHLCV_BASE_INTERVAL_MS == 0
+}
+
+/// Fold `base` candles up to `interval_ms`, or return nothing when the
+/// interval is not a whole number of base candles.
+///
+/// Bars are bucketed by the epoch-aligned window their `open_time` falls in,
+/// which is the same alignment a venue uses for its own coarser candles. Each
+/// bucket takes the first bar's open, the highest high, the lowest low and the
+/// last bar's close; volumes and trade counts add up.
+///
+/// `base` is expected ascending by `open_time`, as every provider delivers it.
+/// Buckets with nothing in them are skipped rather than emitted flat — the
+/// engine's empty-interval rule, kept across the fold: a gap is the honest
+/// record that nothing traded.
+#[must_use]
+pub fn fold(base: &[Bar], interval_ms: i64) -> Vec<Bar> {
+    if !is_foldable(interval_ms) || base.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<Bar> = Vec::with_capacity(
+        base.len()
+            / usize::try_from(interval_ms / OHLCV_BASE_INTERVAL_MS)
+                .unwrap_or(1)
+                .max(1)
+            + 1,
+    );
+    let mut open_bucket: Option<i64> = None;
+    for bar in base {
+        let bucket = bucket_start(bar.open_time, interval_ms);
+        match (open_bucket, out.last_mut()) {
+            // Same bucket as the bar before it: merge in.
+            (Some(current), Some(folded)) if current == bucket => merge_into(folded, bar),
+            // A new bucket starts a new bar, keeping the base candle's own
+            // `open_time` rather than the window's start: the first minute
+            // that traded is when this bar opened, and rounding it down to the
+            // bucket would claim a price at a moment nothing printed. The
+            // bucket is what groups; the stamp stays the market's.
+            _ => {
+                open_bucket = Some(bucket);
+                out.push(bar.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Merge `bar` into the bar it is being folded with.
+///
+/// The summary of a run of bars, and the only one: the run keeps the first
+/// bar's open and stamp, takes the extremes, ends on the last bar's close and
+/// stamp, and adds the volumes and trade counts up. Exact arithmetic on the
+/// numbers already held — a folded bar states nothing the bars in it did not.
+///
+/// `bar` must come after `folded` in time, which both callers guarantee by
+/// walking an ascending series.
+pub fn merge_into(folded: &mut Bar, bar: &Bar) {
+    folded.high = folded.high.max(bar.high);
+    folded.low = folded.low.min(bar.low);
+    folded.close = bar.close;
+    folded.close_time = bar.close_time;
+    folded.buy_volume = folded.buy_volume.saturating_add(bar.buy_volume);
+    folded.sell_volume = folded.sell_volume.saturating_add(bar.sell_volume);
+    folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
+}
+
+/// The start of the `interval_ms` window containing `time_ms`.
+///
+/// Epoch-aligned and floor-divided, so a negative timestamp (a fixture before
+/// 1970, never a real market) lands in the window below it rather than
+/// rounding toward zero into the wrong bucket.
+#[must_use]
+pub fn bucket_start(time_ms: i64, interval_ms: i64) -> i64 {
+    if interval_ms <= 0 {
+        return time_ms;
+    }
+    time_ms.div_euclid(interval_ms) * interval_ms
+}
+
+/// Put an older slice of venue candles in front of the ones already held,
+/// keeping the base ascending by `open_time` and free of duplicates.
+///
+/// The fast path is the one progressive loading actually produces: the slice
+/// is strictly older than everything held, so it is spliced in front and the
+/// order is already right. The merge below exists for the case the port
+/// permits but no provider aims for — a window that overlaps what is held,
+/// through a venue re-reporting a bucket at a boundary. There the candle
+/// already on screen wins: it is the one the trader has been reading, and a
+/// bar that redraws itself for no visible reason is worse than a bar fetched
+/// a second apart from an identical twin.
+pub fn merge_older_candles(base: &mut Vec<Bar>, older: Vec<Bar>) {
+    let disjoint = match (older.last(), base.first()) {
+        (Some(newest_incoming), Some(oldest_held)) => {
+            newest_incoming.open_time < oldest_held.open_time
+        }
+        _ => true,
+    };
+    if disjoint {
+        base.splice(0..0, older);
+        return;
+    }
+    let mut merged: std::collections::BTreeMap<i64, Bar> =
+        older.into_iter().map(|bar| (bar.open_time, bar)).collect();
+    for bar in base.drain(..) {
+        merged.insert(bar.open_time, bar);
+    }
+    *base = merged.into_values().collect();
+}
+
+/// Drop venue bars that overlap the trade-derived series.
+///
+/// The two series meet at a seam, and the composed chart is only searchable if
+/// `open_time` never decreases across it. A venue candle covering the same
+/// window as the first engine bar would sit *after* it in time while sitting
+/// before it in slot order, so every venue bucket from that one on is dropped:
+/// what the app cut from prints is the better record of that window anyway.
+///
+/// With no engine bars yet the whole prefix stands — there is nothing to
+/// overlap.
+pub fn trim_to_seam(
+    mut folded: Vec<Bar>,
+    first_engine_bar: Option<&Bar>,
+    partial: Option<&Bar>,
+    interval_ms: i64,
+) -> Vec<Bar> {
+    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
+        return folded;
+    };
+    folded.retain(|bar| bar.open_time < seam);
+    folded
+}
+
+/// The same trim over a block the caller only has on loan.
+///
+/// Two functions rather than one taking a `Cow`, because they pay for
+/// different things and both paths are on the diet. The owning one above trims
+/// a vector [`fold`] just built and is about to drop — a `retain` there
+/// copies nothing at all. This one is handed the venue's whole base, which the
+/// tab keeps, so it copies out only the bars that survive rather than cloning a
+/// week of minutes in order to throw most of them away.
+pub fn trim_borrowed_to_seam(
+    base: &[Bar],
+    first_engine_bar: Option<&Bar>,
+    partial: Option<&Bar>,
+    interval_ms: i64,
+) -> Vec<Bar> {
+    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
+        return base.to_vec();
+    };
+    base.iter()
+        .filter(|bar| bar.open_time < seam)
+        .cloned()
+        .collect()
+}
+
+/// Where the venue's candles have to stop for the pane's own bars to begin, or
+/// `None` when there are no bars yet and the whole block stands.
+///
+/// Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
+/// engine bar's is its *first trade*, which sits strictly inside the bucket.
+/// Comparing the two raw would keep the venue candle covering the same window
+/// and put a later-closing bar in an earlier slot.
+///
+/// One owner for the rule, so the two trims above cannot drift apart about
+/// where the seam is.
+pub fn seam_bucket_ms(
+    first_engine_bar: Option<&Bar>,
+    partial: Option<&Bar>,
+    interval_ms: i64,
+) -> Option<i64> {
+    let first = first_engine_bar.or(partial)?;
+    Some(bucket_start(first.open_time, interval_ms))
+}
+
+/// Whether the chart can reach further back for venue candles, and when it
+/// cannot, why — the tab answers it from what it holds and asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OlderCandles {
+    /// Another span can be asked for.
+    Available,
+    /// This feed publishes no candle history at all.
+    FeedServesNone,
+    /// Nothing on this chart is cut by time, so no venue candle was ever
+    /// wanted — the prefix follows what a pane *shows*, not which pane it is.
+    NoChartCutByTime,
+    /// A request is out; the answer is what to wait for.
+    Fetching,
+    /// The opening span has not landed yet. There is nothing to reach back
+    /// *from* until it does.
+    NotArrivedYet,
+    /// A reach-back came back complete with nothing older in it. That is the
+    /// venue's record, or the provider's, and it is the one reason here that
+    /// had to be learned by asking.
+    RecordStartsHere,
+}
+
+impl OlderCandles {
+    /// Whether the control is live.
+    #[must_use]
+    pub const fn is_available(self) -> bool {
+        matches!(self, Self::Available)
+    }
+
+    /// What to tell the trader hovering a control this state disabled.
+    /// `None` when it is not disabled.
+    #[must_use]
+    pub const fn why_not(self) -> Option<&'static str> {
+        match self {
+            Self::Available => None,
+            Self::FeedServesNone => Some("this feed publishes no candle history"),
+            Self::NoChartCutByTime => Some(
+                "no chart here is cut by time, so there are no venue candles \
+                 to extend — switch on the venue lead-in to put them in front \
+                 of a chart cut by trades",
+            ),
+            Self::Fetching => Some("a request is already out; this is what it is fetching"),
+            Self::NotArrivedYet => Some("the first span has not arrived yet"),
+            Self::RecordStartsHere => Some("this is as far back as the venue's record goes"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    /// One base candle: minute `minute`, prices derived from `seed` so a merge
+    /// is visible in the result.
+    fn candle(minute: i64, seed: i64) -> Bar {
+        let open_time = minute * OHLCV_BASE_INTERVAL_MS;
+        Bar {
+            open_time,
+            close_time: open_time + OHLCV_BASE_INTERVAL_MS - 1,
+            open: Decimal::from(100 + seed),
+            high: Decimal::from(110 + seed),
+            low: Decimal::from(90 + seed),
+            close: Decimal::from(105 + seed),
+            buy_volume: Decimal::from(2),
+            sell_volume: Decimal::from(3),
+            trade_count: 7,
+        }
+    }
+
+    #[test]
+    fn only_whole_multiples_of_the_base_interval_fold() {
+        assert!(is_foldable(60_000), "the base interval folds to itself");
+        assert!(is_foldable(300_000), "5m");
+        assert!(is_foldable(3_600_000), "1h");
+        assert!(!is_foldable(90_000), "90s is not a whole number of minutes");
+        assert!(!is_foldable(1_000), "and nothing below the base folds");
+        assert!(!is_foldable(0));
+        assert!(!is_foldable(-60_000));
+
+        assert!(
+            fold(&[candle(0, 0)], 90_000).is_empty(),
+            "an interval that cannot be folded to gets no bars, not approximate ones"
+        );
+    }
+
+    #[test]
+    fn five_minutes_takes_first_open_last_close_and_the_extremes() {
+        // Minutes 0..5 into one bucket, with the extremes in the middle.
+        let base: Vec<Bar> = (0..5).map(|m| candle(m, m)).collect();
+
+        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+
+        assert_eq!(folded.len(), 1);
+        let bar = &folded[0];
+        assert_eq!(bar.open_time, 0, "the bucket opens where its first bar did");
+        assert_eq!(
+            bar.close_time, base[4].close_time,
+            "and closes where the last did"
+        );
+        assert_eq!(bar.open, base[0].open);
+        assert_eq!(bar.close, base[4].close);
+        assert_eq!(
+            bar.high,
+            base.iter().map(|b| b.high).max().expect("bars"),
+            "the highest high survives the fold"
+        );
+        assert_eq!(
+            bar.low,
+            base.iter().map(|b| b.low).min().expect("bars"),
+            "and the lowest low"
+        );
+        assert_eq!(bar.buy_volume, Decimal::from(10), "volumes add up");
+        assert_eq!(bar.sell_volume, Decimal::from(15));
+        assert_eq!(bar.trade_count, 35);
+    }
+
+    #[test]
+    fn buckets_are_epoch_aligned_not_first_bar_aligned() {
+        // Starting at minute 7: the 5m windows are [5,10) and [10,15), so the
+        // first bucket holds three bars, not five.
+        let base: Vec<Bar> = (7..13).map(|m| candle(m, 0)).collect();
+
+        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+
+        assert_eq!(folded.len(), 2);
+        assert_eq!(folded[0].open_time, 7 * OHLCV_BASE_INTERVAL_MS);
+        assert_eq!(
+            bucket_start(folded[0].open_time, 5 * OHLCV_BASE_INTERVAL_MS),
+            5 * OHLCV_BASE_INTERVAL_MS,
+            "the first bucket is the venue's own [5m,10m) window"
+        );
+        assert_eq!(folded[1].open_time, 10 * OHLCV_BASE_INTERVAL_MS);
+    }
+
+    #[test]
+    fn an_empty_window_is_skipped_rather_than_carried_forward() {
+        // Nothing traded between minute 1 and minute 20.
+        let base = vec![candle(0, 0), candle(1, 1), candle(20, 2)];
+
+        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+
+        assert_eq!(
+            folded.len(),
+            2,
+            "two buckets held bars; the three between them are gaps, not flat candles"
+        );
+        assert_eq!(folded[0].open_time, 0);
+        assert_eq!(folded[1].open_time, 20 * OHLCV_BASE_INTERVAL_MS);
+    }
+
+    #[test]
+    fn folding_to_the_base_interval_returns_what_it_was_given() {
+        let base: Vec<Bar> = (0..4).map(|m| candle(m, m)).collect();
+        assert_eq!(fold(&base, OHLCV_BASE_INTERVAL_MS), base);
+        assert!(fold(&[], 5 * OHLCV_BASE_INTERVAL_MS).is_empty());
+    }
+
+    #[test]
+    fn the_fold_is_deterministic() {
+        let base: Vec<Bar> = (0..37).map(|m| candle(m, m % 7)).collect();
+        let once = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
+        let twice = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
+        assert_eq!(once, twice, "same bars in, same bars out");
+    }
+}

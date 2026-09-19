@@ -8,9 +8,16 @@ publish.workspace = true
 
 [features]
 default = []
+# Every capture, demo, automation and fault hook compiles only under one of
+# these (or `cfg(test)`); a default build reads no harness `QUANTICK_*` at all.
+# `harness` is the whole set, which is what capture workflows build with.
+harness = ["quick-range-harness", "drawing-harness", "control-harness", "scenario-harness"]
 quick-range-harness = []
 drawing-harness = []
 control-harness = []
+# Launch scenarios, scripted menus and pointers, demo stagers, store isolation
+# for captures, and the feed's fault injection.
+scenario-harness = ["quantick-feed/harness"]
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }
@@ -111,6 +118,11 @@ quantick-backpressure = { path = "../backpressure", features = ["test-support"] 
 # else — while the tests get a third one to prove the app never learned their
 # names. See `crates/indicators/src/native/fake.rs`.
 quantick-indicators = { path = "../indicators", features = ["fake-native"] }
+# The feed's harness hooks, for the same reason: the app's own `cfg(test)`
+# compiles its scenario owners, and their registry names the feed's slices.
+quantick-feed = { path = "../feed", features = ["harness"] }
+# The per-thread store-write refusal the saves-off tests hold (DS7).
+quantick-workspace = { path = "../workspace", features = ["test-support"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }

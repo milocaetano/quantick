@@ -19,9 +19,6 @@ use std::path::PathBuf;
 
 pub(crate) use quantick_paper::state::*;
 
-/// Environment override for the paper-state file location.
-pub(crate) const STATE_ENV: &str = "QUANTICK_PAPER_STATE";
-
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const STATE_FILE: &str = "paper-state.toml";
 
@@ -34,7 +31,7 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return scratch_path();
     }
-    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+    crate::store_home::resolve(STATE_FILE)
 }
 
 /// A store of its own, for tests. See [`default_path`].
@@ -47,5 +44,3 @@ fn scratch_path() -> PathBuf {
     crate::scratch::thread_dir("paper-state")
         .join(format!("{}.toml", NEXT.fetch_add(1, Ordering::Relaxed)))
 }
-
-crate::hooks::declare_hooks!["QUANTICK_PAPER_STATE"];

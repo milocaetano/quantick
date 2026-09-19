@@ -142,6 +142,7 @@ impl StrategyPopupSurface {
     }
 
     /// Drop the sound list open on the next frame the dialog draws it.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn stage_sound_picker(&mut self) {
         self.pending_sound_picker = true;
     }
@@ -180,7 +181,7 @@ impl StrategyPopupSurface {
     /// Its own function because it is the one part of the form that is
     /// about hearing rather than trading, and because the fields under the
     /// checkbox are only meaningful while it is ticked — a shape the rest
-    /// of the dialog does not have.
+    /// of the dialog does not have. The rows are drawn by [`AlarmSection`].
     fn draw_alarm_controls(
         &mut self,
         ui: &mut egui::Ui,
@@ -221,7 +222,40 @@ impl StrategyPopupSurface {
         // the time pane's bar rule. Reading the focused pane would disable
         // the share gate because the *other* pane runs an adaptive rule.
         let shares_available = env.counted_bar_sides.contains(&side);
+        let mut section = AlarmSection { form };
+        section.when_rows(ui, shares_available);
+        section.repeat_row(ui);
+        // Read once for both rows: the cut row's note speaks about the sound
+        // the frame started with, even on the frame a new one is picked.
+        let current = AlertSound::from_token(&section.form.alarm_sound).unwrap_or_default();
+        if let Some(cue) = section.sound_row(ui, current, drop_sound_list_open) {
+            *test_alert = Some(cue);
+        }
+        section.cut_row(ui, current);
 
+        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
+            .on_hover_text(
+                "the instance watches, judges and alarms, and places nothing. For a \
+                 trader who executes elsewhere: a simulated position they never meant \
+                 to take would occupy the account and silence the next signal.",
+            );
+        if let Some(reason) = env.alert_failure {
+            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
+        }
+    }
+}
+
+/// The alarm rows under a ticked "alarm on signal bar": when it speaks, how
+/// often, with which sound, and for how long. Each row owns its slice of
+/// the form.
+struct AlarmSection<'a> {
+    form: &'a mut presets::StoredPreset,
+}
+
+impl AlarmSection<'_> {
+    /// When the alarm judges: at the close, or from a share of the bar on.
+    fn when_rows(&mut self, ui: &mut egui::Ui, shares_available: bool) {
+        let form = &mut *self.form;
         ui.horizontal(|ui| {
             ui.label("when:");
             let on_close = form.alarm_when != "share";
@@ -260,7 +294,11 @@ impl StrategyPopupSurface {
                 );
             });
         }
+    }
 
+    /// How often it repeats: once per bar, or on a cooldown.
+    fn repeat_row(&mut self, ui: &mut egui::Ui) {
+        let form = &mut *self.form;
         ui.horizontal(|ui| {
             ui.label("repeat:");
             let once = form.alarm_repeat != "cooldown";
@@ -285,8 +323,18 @@ impl StrategyPopupSurface {
                 );
             }
         });
+    }
 
-        let current = AlertSound::from_token(&form.alarm_sound).unwrap_or_default();
+    /// The sound picker and its audition. Returns the cue a Test press
+    /// asks the host to play.
+    fn sound_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        current: AlertSound,
+        drop_sound_list_open: bool,
+    ) -> Option<Cue> {
+        let form = &mut *self.form;
+        let mut audition = None;
         ui.horizontal(|ui| {
             ui.label("sound");
             const SOUND_PICKER_ID: &str = "strategy_alarm_sound";
@@ -357,10 +405,15 @@ impl StrategyPopupSurface {
                 // armed instance — so the audition is asked for rather than
                 // played here. Same door, same cue, and the same report of a
                 // sound that could not be heard.
-                *test_alert = Some(Cue::new(current, form.alarm_play_secs));
+                audition = Some(Cue::new(current, form.alarm_play_secs));
             }
         });
+        audition
+    }
 
+    /// Whether and where the sound is cut short.
+    fn cut_row(&mut self, ui: &mut egui::Ui, current: AlertSound) {
+        let form = &mut *self.form;
         ui.horizontal(|ui| {
             let mut cut = form.alarm_play_secs.is_some();
             if ui
@@ -388,16 +441,6 @@ impl StrategyPopupSurface {
                 }
             }
         });
-
-        ui.checkbox(&mut form.alarm_only, "alarm only — never place an order")
-            .on_hover_text(
-                "the instance watches, judges and alarms, and places nothing. For a \
-                 trader who executes elsewhere: a simulated position they never meant \
-                 to take would occupy the account and silence the next signal.",
-            );
-        if let Some(reason) = env.alert_failure {
-            ui.colored_label(theme::SELL, format!("no sound was played: {reason}"));
-        }
     }
 }
 
@@ -412,6 +455,7 @@ impl Surface for StrategyPopupSurface {
     /// Arm on. `QUANTICK_STRATEGY_DEMO` therefore stages both, from the host
     /// that owns the drawing, and reaches this surface through [`Self::open`]
     /// and [`Self::stage_sound_picker`]: the same door a right-click uses.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
 
     /// The arming dialog. Drains the panes' menu requests first, so the
@@ -427,8 +471,7 @@ impl Surface for StrategyPopupSurface {
             return SurfaceResponse::default();
         }
         let mut open = true;
-        let mut done = false;
-        let mut arm = None;
+        let mut footer = None;
         let mut test_alert = None;
         // The form grew past a 900 pt window once the alarm section unfolds,
         // and an anchored, non-resizable window simply clipped the rows past
@@ -448,114 +491,8 @@ impl Surface for StrategyPopupSurface {
                     .auto_shrink([false, true])
                     .max_height(max_body)
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("preset");
-                            let current = popup.preset_choice.as_deref().unwrap_or("custom");
-                            egui::ComboBox::from_id_salt("strategy_preset_pick")
-                                .selected_text(current.to_owned())
-                                .show_ui(ui, |ui| {
-                                    let names: Vec<String> =
-                                        self.bank.names().map(str::to_owned).collect();
-                                    for name in names {
-                                        let picked =
-                                            popup.preset_choice.as_deref() == Some(name.as_str());
-                                        if ui.selectable_label(picked, &name).clicked()
-                                            && let Some(stored) = self.bank.get(&name)
-                                        {
-                                            popup.form = stored.clone();
-                                            popup.preset_choice = Some(name.clone());
-                                        }
-                                    }
-                                });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("side");
-                            let buy = popup.form.side == "buy";
-                            if ui.selectable_label(buy, "BUY").clicked() {
-                                popup.form.side = "buy".to_owned();
-                            }
-                            if ui.selectable_label(!buy, "SELL").clicked() {
-                                popup.form.side = "sell".to_owned();
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("quantity");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.quantity)
-                                    .desired_width(60.0),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("force band: body between");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× and");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.max_factor)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× the average of");
-                            ui.add(
-                                egui::DragValue::new(&mut popup.form.window)
-                                    .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
-                            );
-                            ui.label("bodies");
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("and candle ≥");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.min_range)
-                                    .desired_width(50.0),
-                            );
-                            ui.label("pts (0 = off)").on_hover_text(
-                                "the elephant floor, measured across the whole candle (high − low, \
-                                 wicks included): the relative band alone marks dozens of small bars \
-                                 as force on activity-cut bars; an elephant has a size",
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("projection: TP");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.tp_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range ahead, SL");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.form.sl_mult)
-                                    .desired_width(40.0),
-                            );
-                            ui.label("× range behind (0 = no leg)");
-                        });
-                        let mut auto = popup.form.rearm == "auto";
-                        if ui
-                            .checkbox(&mut auto, "re-arm automatically after the operation closes")
-                            .on_hover_text("off = one shot per arming, the over-fire guard")
-                            .changed()
-                        {
-                            popup.form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
-                        }
-                        let mut retest = popup.form.on_break == "retest_limit";
-                        if ui
-                            .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
-                            .on_hover_text(
-                                "a trigger bar whose body cuts the region in the trade's direction \
-                         — it opened on the region's side of that edge and closed beyond it, \
-                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
-                         bracketed off the bar. The order removes itself if the bar's \
-                         projected target trades first; with the TP multiplier at 0 there is \
-                         no such level, so it rests until it fills or you disarm it — the \
-                         badge says which. A bar that closed past an edge its body never \
-                         crossed, one that closed away on the far side, and a cut whose legs \
-                         would not clear the edge all rest nothing. Off = a cut holds fire, \
-                         as before.",
-                            )
-                            .changed()
-                        {
-                            popup.form.on_break =
-                                if retest { "retest_limit" } else { "ignore" }.to_owned();
-                        }
+                        popup.preset_row(ui, &self.bank);
+                        trade_fields(ui, &mut popup.form);
                         ui.separator();
                         self.draw_alarm_controls(
                             ui,
@@ -565,70 +502,17 @@ impl Surface for StrategyPopupSurface {
                             &mut test_alert,
                         );
                         ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut popup.save_name)
-                                    .hint_text("preset name")
-                                    .desired_width(140.0),
-                            );
-                            let name = popup.save_name.trim().to_owned();
-                            if ui
-                                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
-                                .clicked()
-                            {
-                                self.bank.save(&name, popup.form.clone());
-                                popup.preset_choice = Some(name);
-                            }
-                            if let Some(chosen) = popup.preset_choice.clone()
-                                && ui
-                                    .button("Delete preset")
-                                    .on_hover_text(
-                                        "remove it from the bank; the form keeps its values",
-                                    )
-                                    .clicked()
-                            {
-                                self.bank.remove(&chosen);
-                                popup.preset_choice = None;
-                            }
-                        });
+                        popup.bank_row(ui, &mut self.bank);
                     });
-                // Outside the scroll: **Arm** is the one control the dialog
-                // exists for, and a form that grows must never be able to
-                // push it off the bottom. Body scrolls, footer stays. The
-                // error goes with it — a refusal the trader has to scroll to
-                // find reads as a dialog that did nothing.
-                if let Some(error) = &popup.error {
-                    ui.colored_label(theme::SELL, error);
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Arm").clicked() {
-                        let label = popup
-                            .preset_choice
-                            .clone()
-                            .or_else(|| {
-                                let name = popup.save_name.trim();
-                                (!name.is_empty()).then(|| name.to_owned())
-                            })
-                            .unwrap_or_else(|| "custom".to_owned());
-                        // Asked for, not performed: arming reaches into the
-                        // pane, the simulator and the alarm scheduler, none of
-                        // which a surface may touch. The dialog therefore
-                        // stays open until the host answers through
-                        // [`Self::settle_arm`] — which closes it on success
-                        // and writes the refusal into the footer otherwise.
-                        arm = Some(ArmRequest {
-                            side: popup.side,
-                            drawing: popup.drawing,
-                            form: Box::new(popup.form.clone()),
-                            label,
-                        });
-                    }
-                    if ui.button("Cancel").clicked() {
-                        done = true;
-                    }
-                });
+                footer = popup.footer(ui);
             });
+        let mut arm = None;
+        let mut done = false;
+        match footer {
+            None => {}
+            Some(Footer::Arm(request)) => arm = Some(request),
+            Some(Footer::Cancel) => done = true,
+        }
         if !done && open {
             self.popup = Some(popup);
         }
@@ -637,6 +521,182 @@ impl Surface for StrategyPopupSurface {
             test_alert,
             ..SurfaceResponse::default()
         }
+    }
+}
+
+/// What the dialog's footer was pressed for.
+enum Footer {
+    /// Ask the host to arm the form; the dialog stays open for the answer.
+    Arm(ArmRequest),
+    /// Close the dialog, arming nothing.
+    Cancel,
+}
+
+impl StrategyPopup {
+    /// The bank preset the form starts from; picking one replaces the form.
+    fn preset_row(&mut self, ui: &mut egui::Ui, bank: &StrategyBank) {
+        ui.horizontal(|ui| {
+            ui.label("preset");
+            let current = self.preset_choice.as_deref().unwrap_or("custom");
+            egui::ComboBox::from_id_salt("strategy_preset_pick")
+                .selected_text(current.to_owned())
+                .show_ui(ui, |ui| {
+                    let names: Vec<String> = bank.names().map(str::to_owned).collect();
+                    for name in names {
+                        let picked = self.preset_choice.as_deref() == Some(name.as_str());
+                        if ui.selectable_label(picked, &name).clicked()
+                            && let Some(stored) = bank.get(&name)
+                        {
+                            self.form = stored.clone();
+                            self.preset_choice = Some(name.clone());
+                        }
+                    }
+                });
+        });
+    }
+
+    /// Save the form into the bank under a typed name, or delete the preset
+    /// it was seeded from.
+    fn bank_row(&mut self, ui: &mut egui::Ui, bank: &mut StrategyBank) {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.save_name)
+                    .hint_text("preset name")
+                    .desired_width(140.0),
+            );
+            let name = self.save_name.trim().to_owned();
+            if ui
+                .add_enabled(!name.is_empty(), egui::Button::new("Save preset"))
+                .clicked()
+            {
+                bank.save(&name, self.form.clone());
+                self.preset_choice = Some(name);
+            }
+            if let Some(chosen) = self.preset_choice.clone()
+                && ui
+                    .button("Delete preset")
+                    .on_hover_text("remove it from the bank; the form keeps its values")
+                    .clicked()
+            {
+                bank.remove(&chosen);
+                self.preset_choice = None;
+            }
+        });
+    }
+
+    /// Outside the scroll: **Arm** is the one control the dialog exists
+    /// for, and a form that grows must never be able to push it off the
+    /// bottom. Body scrolls, footer stays. The error goes with it — a
+    /// refusal the trader has to scroll to find reads as a dialog that did
+    /// nothing.
+    fn footer(&self, ui: &mut egui::Ui) -> Option<Footer> {
+        if let Some(error) = &self.error {
+            ui.colored_label(theme::SELL, error);
+        }
+        ui.separator();
+        let mut pressed = None;
+        ui.horizontal(|ui| {
+            if ui.button("Arm").clicked() {
+                let label = self
+                    .preset_choice
+                    .clone()
+                    .or_else(|| {
+                        let name = self.save_name.trim();
+                        (!name.is_empty()).then(|| name.to_owned())
+                    })
+                    .unwrap_or_else(|| "custom".to_owned());
+                // Asked for, not performed: arming reaches into the pane,
+                // the simulator and the alarm scheduler, none of which a
+                // surface may touch. The dialog therefore stays open until
+                // the host answers through
+                // [`StrategyPopupSurface::settle_arm`] — which closes it on
+                // success and writes the refusal into the footer otherwise.
+                pressed = Some(Footer::Arm(ArmRequest {
+                    side: self.side,
+                    drawing: self.drawing,
+                    form: Box::new(self.form.clone()),
+                    label,
+                }));
+            }
+            if ui.button("Cancel").clicked() {
+                pressed = Some(Footer::Cancel);
+            }
+        });
+        pressed
+    }
+}
+
+/// The trading half of the form: side, size, the force band, the projected
+/// brackets and what happens after a fill or a cut.
+fn trade_fields(ui: &mut egui::Ui, form: &mut presets::StoredPreset) {
+    ui.horizontal(|ui| {
+        ui.label("side");
+        let buy = form.side == "buy";
+        if ui.selectable_label(buy, "BUY").clicked() {
+            form.side = "buy".to_owned();
+        }
+        if ui.selectable_label(!buy, "SELL").clicked() {
+            form.side = "sell".to_owned();
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("quantity");
+        ui.add(egui::TextEdit::singleline(&mut form.quantity).desired_width(60.0));
+    });
+    ui.horizontal(|ui| {
+        ui.label("force band: body between");
+        ui.add(egui::TextEdit::singleline(&mut form.min_factor).desired_width(40.0));
+        ui.label("× and");
+        ui.add(egui::TextEdit::singleline(&mut form.max_factor).desired_width(40.0));
+        ui.label("× the average of");
+        ui.add(
+            egui::DragValue::new(&mut form.window)
+                .range(1..=crate::strategy_presets::MAX_FORCE_WINDOW),
+        );
+        ui.label("bodies");
+    });
+    ui.horizontal(|ui| {
+        ui.label("and candle ≥");
+        ui.add(egui::TextEdit::singleline(&mut form.min_range).desired_width(50.0));
+        ui.label("pts (0 = off)").on_hover_text(
+            "the elephant floor, measured across the whole candle (high − low, \
+             wicks included): the relative band alone marks dozens of small bars \
+             as force on activity-cut bars; an elephant has a size",
+        );
+    });
+    ui.horizontal(|ui| {
+        ui.label("projection: TP");
+        ui.add(egui::TextEdit::singleline(&mut form.tp_mult).desired_width(40.0));
+        ui.label("× range ahead, SL");
+        ui.add(egui::TextEdit::singleline(&mut form.sl_mult).desired_width(40.0));
+        ui.label("× range behind (0 = no leg)");
+    });
+    let mut auto = form.rearm == "auto";
+    if ui
+        .checkbox(&mut auto, "re-arm automatically after the operation closes")
+        .on_hover_text("off = one shot per arming, the over-fire guard")
+        .changed()
+    {
+        form.rearm = if auto { "auto" } else { "one_shot" }.to_owned();
+    }
+    let mut retest = form.on_break == "retest_limit";
+    if ui
+        .checkbox(&mut retest, "on a cut: rest a limit at the region edge")
+        .on_hover_text(
+            "a trigger bar whose body cuts the region in the trade's direction \
+                         — it opened on the region's side of that edge and closed beyond it, \
+                         wicks ignored — rests a limit at the edge it cut, the retest entry, \
+                         bracketed off the bar. The order removes itself if the bar's \
+                         projected target trades first; with the TP multiplier at 0 there is \
+                         no such level, so it rests until it fills or you disarm it — the \
+                         badge says which. A bar that closed past an edge its body never \
+                         crossed, one that closed away on the far side, and a cut whose legs \
+                         would not clear the edge all rest nothing. Off = a cut holds fire, \
+                         as before.",
+        )
+        .changed()
+    {
+        form.on_break = if retest { "retest_limit" } else { "ignore" }.to_owned();
     }
 }
 

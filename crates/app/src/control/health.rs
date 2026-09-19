@@ -157,6 +157,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 }
             })
             .collect(),
+        saves_off_unread_hooks: crate::store_home::writes_refused().map(|refused| refused.hooks),
     }
 }
 

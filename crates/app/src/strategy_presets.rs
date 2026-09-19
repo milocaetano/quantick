@@ -12,7 +12,5 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(STRATEGIES_FILE);
     }
-    crate::store_home::resolve(STRATEGIES_ENV, STRATEGIES_FILE)
+    crate::store_home::resolve(STRATEGIES_FILE)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_STRATEGY_PRESETS"];

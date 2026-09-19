@@ -6,6 +6,8 @@
 //! `l2Book` connection publishes the visible 20-level book through the same
 //! neutral [`DepthEvent`] channel Binance and MetaTrader use.
 
+use std::ops::ControlFlow;
+
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -21,6 +23,7 @@ use quantick_feed_hyperliquid::{
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
 use crate::config::ProviderKind;
+use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
 
 const BOOK_EVENT_CHANNEL_CAPACITY: usize = 8_192;
 const FEED_EVENT_CHANNEL_CAPACITY: usize = 4_096;
@@ -89,202 +92,211 @@ async fn feed_task(
         )
         .await;
     });
-    let mut book_capture: Option<BookCaptureTask> = None;
     // Candle history runs off this loop: see `spawn_ohlcv` for what awaiting it
     // in a command arm used to cost the live trade stream.
-    let (ohlcv_tx, mut ohlcv_rx) =
-        mpsc::channel::<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>(1);
-    let mut ohlcv_task: Option<JoinHandle<()>> = None;
-    let mut ever_connected = false;
-    let mut recovery_pending = true;
+    let (ohlcv_tx, mut ohlcv_rx) = mpsc::channel::<OhlcvReply>(1);
+    let mut feed = HyperliquidLoop {
+        symbol,
+        tx,
+        book_tx,
+        notice_tx,
+        book_capture: None,
+        ohlcv_tx,
+        ohlcv_task: None,
+        ever_connected: false,
+        recovery_pending: true,
+    };
     let recovery_timeout = tokio::time::sleep(STARTUP_RECOVERY_TIMEOUT);
     tokio::pin!(recovery_timeout);
 
     loop {
-        tokio::select! {
-            Some((bars, slice)) = ohlcv_rx.recv() => {
-                // Only the closing slice frees the slot: a run still walking
-                // backwards through the span is one fetch, however many
-                // replies it makes.
-                if slice.is_last() {
-                    ohlcv_task = None;
+        let flow = tokio::select! {
+            Some((bars, slice)) = ohlcv_rx.recv() => feed.on_ohlcv_reply(bars, slice).await,
+            maybe_batch = live_rx.recv() => match maybe_batch {
+                Some(trades) => feed.on_batch(trades).await,
+                None => ControlFlow::Break(()),
+            },
+            changed = connected_rx.changed() => match changed {
+                Ok(()) => {
+                    // Copied out first: the watch guard is not `Send` and must
+                    // not be held across the notice send.
+                    let connected = *connected_rx.borrow_and_update();
+                    feed.on_link(connected).await
                 }
-                if tx
-                    .send(FeedEvent::OhlcvHistory {
-                        interval_ms: ONE_MINUTE_MS,
-                        bars,
-                        slice,
-                    })
-                    .await
-                    .is_err()
-                {
-                    break; // UI gone
-                }
-            }
-            maybe_batch = live_rx.recv() => {
-                match maybe_batch {
-                    Some(trades) => {
-                        let is_recovery = recovery_pending;
-                        let count = trades.len();
-                        let event = classify_trade_batch(trades, &mut recovery_pending);
-                        if is_recovery {
-                            info!(
-                                target: "quantick::app",
-                                provider = "hyperliquid",
-                                symbol,
-                                count,
-                                "initial Hyperliquid websocket recovery ready"
-                            );
-                        }
-                        if tx.send(event).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => break,
-                }
-            }
-            changed = connected_rx.changed() => {
-                if changed.is_err() {
-                    break;
-                }
-                let notice = connection_notice(
-                    *connected_rx.borrow_and_update(),
-                    &mut ever_connected,
-                    "Hyperliquid",
-                );
-                if notice_tx.send(notice).await.is_err() {
-                    break;
-                }
-            }
-            () = &mut recovery_timeout, if recovery_pending => {
-                recovery_pending = false;
-                warn!(
-                    target: "quantick::app",
-                    provider = "hyperliquid",
-                    symbol,
-                    timeout_ms = STARTUP_RECOVERY_TIMEOUT.as_millis() as u64,
-                    action = "continue_live",
-                    "initial Hyperliquid websocket recovery timed out"
-                );
-                if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
-                    break;
-                }
-            }
-            maybe_cmd = cmd_rx.recv() => {
-                match maybe_cmd {
-                    Some(FeedCommand::FetchOhlcv {
-                        span_ms,
-                        slice_ms,
-                        before_ms,
-                    }) => {
-                        if ohlcv_task.as_ref().is_some_and(|task| !task.is_finished()) {
-                            // One fetch at a time; the in-flight one answers.
-                            warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "HYPERLIQUID_OHLCV_ALREADY_RUNNING",
-                                symbol,
-                                requested_span_ms = span_ms,
-                                requested_before_ms = before_ms.unwrap_or(0),
-                                action = "answer_empty_and_let_the_running_one_finish",
-                                "a candle fetch is already in flight; this one is refused, not queued"
-                            );
-                            // Refused, but *answered*. The caller marked itself
-                            // pending and put its spinner up before this command
-                            // left, so a silent drop leaves that spinner turning
-                            // for the rest of the session and the reach-back
-                            // button disabled behind it — the same reason
-                            // `load_older` never returns silence either.
-                            // `Refused` rather than a short answer: nothing was
-                            // fetched because nobody looked, which is not a
-                            // statement about the venue's record.
-                            if ohlcv_tx
-                                .send((Vec::new(), crate::OhlcvSlice::Refused))
-                                .await
-                                .is_err()
-                            {
-                                break; // UI gone
-                            }
-                        } else {
-                            ohlcv_task = Some(spawn_ohlcv(
-                                symbol.clone(),
-                                span_ms,
-                                slice_ms,
-                                before_ms,
-                                ohlcv_tx.clone(),
-                            ));
-                        }
-                    }
-                    Some(FeedCommand::LoadOlder { .. }) => {
-                        // `recentTrades` is not pageable. Always acknowledge the
-                        // request so a stale UI command cannot leave a spinner.
-                        warn!(
-                            target: "quantick::app",
-                            provider = "hyperliquid",
-                            symbol,
-                            action = "report_no_history_paging",
-                            "older Hyperliquid public trades are unavailable"
-                        );
-                        if tx.send(FeedEvent::HistoryPrepended(Vec::new())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(FeedCommand::SetBookCapture {
-                        enabled,
-                        initial_generation,
-                    }) => {
-                        if enabled {
-                            if book_capture
-                                .as_ref()
-                                .is_some_and(|task| !task.handle.is_finished())
-                            {
-                                info!(
-                                    target: "quantick::app",
-                                    provider = "hyperliquid",
-                                    symbol,
-                                    initial_generation,
-                                    action = "keep_running",
-                                    "book capture is already running"
-                                );
-                            } else {
-                                stop_book_capture(
-                                    &mut book_capture,
-                                    &symbol,
-                                    "finished_before_enable",
-                                )
-                                .await;
-                                book_capture = Some(start_book_capture(
-                                    &symbol,
-                                    initial_generation,
-                                    &book_tx,
-                                ));
-                            }
-                        } else {
-                            stop_book_capture(&mut book_capture, &symbol, "disabled").await;
-                        }
-                    }
-                    Some(FeedCommand::RestartBookCapture { initial_generation }) => {
-                        stop_book_capture(&mut book_capture, &symbol, "restart").await;
-                        book_capture = Some(start_book_capture(
-                            &symbol,
-                            initial_generation,
-                            &book_tx,
-                        ));
-                    }
-                    Some(FeedCommand::Replay(_)) => {}
-                    None => break,
-                }
-            }
+                Err(_) => ControlFlow::Break(()),
+            },
+            () = &mut recovery_timeout, if feed.recovery_pending => feed.on_recovery_timeout().await,
+            maybe_cmd = cmd_rx.recv() => feed.on_command(maybe_cmd).await,
+        };
+        if flow.is_break() {
+            break;
         }
     }
     reconnect.abort();
     let _ = reconnect.await;
-    // The candle socket is its own connection; close it with the feed rather
-    // than leaving it to time out against a consumer that is gone.
-    if let Some(task) = ohlcv_task {
-        task.abort();
+    feed.shutdown().await;
+}
+
+/// One reply from a candle fetch: the bars of one window and where it sits.
+type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
+
+/// The streaming loop's driver: the side-task handles, whether the startup
+/// recovery batch is still owed, and the channels the plan's effects go out
+/// on. What each command *means* is [`plan_command`]'s decision.
+struct HyperliquidLoop {
+    symbol: String,
+    tx: mpsc::Sender<FeedEvent>,
+    book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
+    book_capture: Option<BookCaptureTask>,
+    ohlcv_tx: mpsc::Sender<OhlcvReply>,
+    ohlcv_task: Option<JoinHandle<()>>,
+    ever_connected: bool,
+    /// The first batch is the venue's recovery batch and resolves the UI's
+    /// backfill; cleared by that batch or by the startup timeout.
+    recovery_pending: bool,
+}
+
+impl HyperliquidLoop {
+    async fn on_ohlcv_reply(
+        &mut self,
+        bars: Vec<quantick_engine::Bar>,
+        slice: crate::OhlcvSlice,
+    ) -> ControlFlow<()> {
+        // Only the closing slice frees the slot: a run still walking backwards
+        // through the span is one fetch, however many replies it makes.
+        if ohlcv_reply_frees_slot(slice) {
+            self.ohlcv_task = None;
+        }
+        let event = FeedEvent::OhlcvHistory {
+            interval_ms: ONE_MINUTE_MS,
+            bars,
+            slice,
+        };
+        send_or_break(&self.tx, event).await // UI gone
     }
-    stop_book_capture(&mut book_capture, &symbol, "feed_dropped").await;
+
+    async fn on_batch(&mut self, trades: Vec<Trade>) -> ControlFlow<()> {
+        let is_recovery = self.recovery_pending;
+        let count = trades.len();
+        let event = classify_trade_batch(trades, &mut self.recovery_pending);
+        if is_recovery {
+            info!(
+                target: "quantick::app",
+                provider = "hyperliquid",
+                symbol = self.symbol,
+                count,
+                "initial Hyperliquid websocket recovery ready"
+            );
+        }
+        send_or_break(&self.tx, event).await
+    }
+
+    async fn on_link(&mut self, connected: bool) -> ControlFlow<()> {
+        let notice = connection_notice(connected, &mut self.ever_connected, "Hyperliquid");
+        send_or_break(&self.notice_tx, notice).await
+    }
+
+    async fn on_recovery_timeout(&mut self) -> ControlFlow<()> {
+        self.recovery_pending = false;
+        warn!(
+            target: "quantick::app",
+            provider = "hyperliquid",
+            symbol = self.symbol,
+            timeout_ms = STARTUP_RECOVERY_TIMEOUT.as_millis() as u64,
+            action = "continue_live",
+            "initial Hyperliquid websocket recovery timed out"
+        );
+        send_or_break(&self.tx, FeedEvent::Backfilled(Vec::new())).await
+    }
+
+    async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
+        let book = Slot::observe(self.book_capture.as_ref().map(|t| t.handle.is_finished()));
+        let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
+        match plan_command(cmd, book, ohlcv) {
+            CommandPlan::RefuseOhlcv { span_ms, before_ms } => {
+                // One fetch at a time; the in-flight one answers.
+                warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "HYPERLIQUID_OHLCV_ALREADY_RUNNING",
+                    symbol = self.symbol,
+                    requested_span_ms = span_ms,
+                    requested_before_ms = before_ms.unwrap_or(0),
+                    action = "answer_empty_and_let_the_running_one_finish",
+                    "a candle fetch is already in flight; this one is refused, not queued"
+                );
+                // Refused, but *answered*. The caller marked itself pending and
+                // put its spinner up before this command left, so a silent drop
+                // leaves that spinner turning for the rest of the session and
+                // the reach-back button disabled behind it — the same reason
+                // `load_older` never returns silence either. `Refused` rather
+                // than a short answer: nothing was fetched because nobody
+                // looked, which is not a statement about the venue's record.
+                let refused = (Vec::new(), crate::OhlcvSlice::Refused);
+                send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
+            }
+            CommandPlan::StartOhlcv {
+                span_ms,
+                slice_ms,
+                before_ms,
+            } => {
+                self.ohlcv_task = Some(spawn_ohlcv(
+                    self.symbol.clone(),
+                    span_ms,
+                    slice_ms,
+                    before_ms,
+                    self.ohlcv_tx.clone(),
+                ));
+            }
+            CommandPlan::LoadOlder { .. } => {
+                // `recentTrades` is not pageable. Always acknowledge the
+                // request so a stale UI command cannot leave a spinner.
+                warn!(
+                    target: "quantick::app",
+                    provider = "hyperliquid",
+                    symbol = self.symbol,
+                    action = "report_no_history_paging",
+                    "older Hyperliquid public trades are unavailable"
+                );
+                send_or_break(&self.tx, FeedEvent::HistoryPrepended(Vec::new())).await?;
+            }
+            CommandPlan::KeepBook { initial_generation } => info!(
+                target: "quantick::app",
+                provider = "hyperliquid",
+                symbol = self.symbol,
+                initial_generation,
+                action = "keep_running",
+                "book capture is already running"
+            ),
+            CommandPlan::ReplaceBook {
+                initial_generation,
+                stop_reason,
+            } => {
+                stop_book_capture(&mut self.book_capture, &self.symbol, stop_reason).await;
+                self.book_capture = Some(start_book_capture(
+                    &self.symbol,
+                    initial_generation,
+                    &self.book_tx,
+                ));
+            }
+            CommandPlan::StopBook { reason } => {
+                stop_book_capture(&mut self.book_capture, &self.symbol, reason).await;
+            }
+            CommandPlan::Ignore => {}
+            CommandPlan::Shutdown => return ControlFlow::Break(()),
+        }
+        ControlFlow::Continue(())
+    }
+
+    async fn shutdown(mut self) {
+        // The candle socket is its own connection; close it with the feed
+        // rather than leaving it to time out against a consumer that is gone.
+        if let Some(task) = self.ohlcv_task.take() {
+            task.abort();
+        }
+        stop_book_capture(&mut self.book_capture, &self.symbol, "feed_dropped").await;
+    }
 }
 
 fn classify_trade_batch(trades: Vec<Trade>, recovery_pending: &mut bool) -> FeedEvent {

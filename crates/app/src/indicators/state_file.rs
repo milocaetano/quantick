@@ -14,7 +14,5 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(STATE_FILE);
     }
-    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+    crate::store_home::resolve(STATE_FILE)
 }
-
-crate::hooks::declare_hooks!["QUANTICK_INDICATORS_STATE"];

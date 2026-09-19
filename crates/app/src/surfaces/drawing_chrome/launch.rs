@@ -1,5 +1,6 @@
 //! Opt-in drawing-chrome launch scenarios and the note placement policy.
 //! Normal editing stays on the ordinary owner; only scripted requests live here.
+#![cfg(any(feature = "drawing-harness", test))]
 
 use std::ffi::OsString;
 

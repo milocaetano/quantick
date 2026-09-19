@@ -64,6 +64,22 @@ mod strip;
 /// symbol, nor on another tab streaming it.
 const REPLAY_FEED_KEY: &str = "replay";
 
+/// Whether a pane can be swapped under the trader right now.
+///
+/// A strategy armed on a region names that drawing; putting the drawing
+/// away would orphan the instance and drop it with no reason given. A
+/// gesture in flight — a drag, a half-placed object — addresses the
+/// store by index, and a swap under it would land on another layout's
+/// object. Both are the trader's to finish first, and the refusal says so.
+fn facts_of(pane: &ChartPane) -> PaneFacts {
+    PaneFacts {
+        strategy_armed: !pane.strategies.anchors.is_empty(),
+        gesture_in_flight: pane.drawings.in_gesture()
+            || pane.drawings.draft().is_some()
+            || !matches!(pane.gestures.drag, DrawingDrag::None),
+    }
+}
+
 /// Read-only layout projection over the actual session and current pane topology.
 pub(crate) struct LayoutRead<'a> {
     pub(super) tabs: &'a crate::app::arrangement_host::ArrangementHost,
@@ -312,21 +328,10 @@ impl LayoutAdapter<'_> {
     // Layout operations
     // ------------------------------------------------------------------
 
-    /// Whether a pane can be swapped under the trader right now.
-    ///
-    /// A strategy armed on a region names that drawing; putting the drawing
-    /// away would orphan the instance and drop it with no reason given. A
-    /// gesture in flight — a drag, a half-placed object — addresses the
-    /// store by index, and a swap under it would land on another layout's
-    /// object. Both are the trader's to finish first, and the refusal says so.
+    /// Whether a pane can be swapped under the trader right now; see [`facts_of`].
     fn pane_facts(&self, tab: u64, side: PaneSide) -> PaneFacts {
         self.pane_at(tab, side)
-            .map_or(PaneFacts::default(), |pane| PaneFacts {
-                strategy_armed: !pane.strategies.anchors.is_empty(),
-                gesture_in_flight: pane.drawings.in_gesture()
-                    || pane.drawings.draft().is_some()
-                    || !matches!(pane.gestures.drag, DrawingDrag::None),
-            })
+            .map_or(PaneFacts::default(), facts_of)
     }
 
     /// Make `id` the layout one pane shows.
@@ -443,19 +448,10 @@ impl LayoutAdapter<'_> {
         for (tab, side) in self.layout_pane_targets() {
             self.register_layout_pane(tab, side)?;
         }
-        let facts = self.tabs.iter().flat_map(|tab| {
-            tab.panes().map(|(pane, _)| {
-                (
-                    pane.id,
-                    PaneFacts {
-                        strategy_armed: !pane.strategies.anchors.is_empty(),
-                        gesture_in_flight: pane.drawings.in_gesture()
-                            || pane.drawings.draft().is_some()
-                            || !matches!(pane.gestures.drag, DrawingDrag::None),
-                    },
-                )
-            })
-        });
+        let facts = self
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes().map(|(pane, _)| (pane.id, facts_of(pane))));
         let selections = self.store.session().plan_delete(id, facts)?;
         for selection in selections {
             let (tab, side) = self
@@ -481,10 +477,12 @@ impl LayoutAdapter<'_> {
     /// pane, then the context stack up to [`crate::canvas_layout::MAX_CONTEXT_PANES`].
     /// Distinct from `pane_is_real`, which asks whether the pane is standing
     /// *now* — a stack lands a frame after the layout that asked for it.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn pane_address_exists(index: usize) -> bool {
         index <= crate::canvas_layout::MAX_CONTEXT_PANES
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_pane_layouts_hook(&mut self, names: &str) {
         let tab_id = self.tabs.active_id();
         for (index, name) in names.split(',').enumerate() {

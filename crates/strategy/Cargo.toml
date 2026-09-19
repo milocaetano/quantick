@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 quantick-engine = { path = "../engine" }
 quantick-sim = { path = "../sim" }
+# The one store-write gate (DS7) the bank asks before it writes.
+quantick-workspace = { path = "../workspace" }
 rust_decimal = { workspace = true }
 # The preset bank is a versioned TOML document.
 serde = { workspace = true }

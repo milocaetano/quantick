@@ -43,8 +43,6 @@ use crate::drawings::{
 #[cfg(test)]
 use crate::indicators::state_file::SavedIndicator;
 
-/// Environment override for the layouts file location.
-pub(crate) const LAYOUTS_ENV: &str = "QUANTICK_LAYOUTS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const LAYOUTS_FILE: &str = "layouts.toml";
 use quantick_workspace::layout_document::parse;
@@ -179,13 +177,13 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(LAYOUTS_FILE);
     }
-    crate::store_home::resolve(LAYOUTS_ENV, LAYOUTS_FILE)
+    crate::store_home::resolve(LAYOUTS_FILE)
 }
 
 /// Parse a layouts file, reporting why it is not one. The gate a bundle
 /// section goes through — see [`crate::workspace_bundle`].
 pub(crate) fn validate(text: &str) -> Result<(), String> {
-    parse(text).map(|_| ())
+    parse(text).map(|_| ()).map_err(|error| error.to_string())
 }
 
 /// What [`load`] found on disk.
@@ -210,7 +208,10 @@ pub(crate) enum Loaded {
 pub(crate) fn load(path: &Path) -> Loaded {
     let refused = |reason: String| {
         let aside = path.with_extension("toml.broken");
-        let set_aside = std::fs::rename(path, &aside).is_ok();
+        // A session that writes no store moves no file either; `false` then
+        // keeps the caller from saving over the trader's only copy.
+        let set_aside =
+            crate::store_home::guard_write(path).is_ok() && std::fs::rename(path, &aside).is_ok();
         tracing::warn!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -239,13 +240,16 @@ pub(crate) fn load(path: &Path) -> Loaded {
     };
     match parse(&text) {
         Ok(book) => Loaded::Book(book),
-        Err(reason) => refused(reason),
+        Err(reason) => refused(reason.to_string()),
     }
 }
 
 /// Write the book. Temp sibling + rename, like every other store: a crash
 /// mid-write leaves the previous file, never half of the new one.
 pub(crate) fn save(path: &Path, book: &LayoutBook) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     match toml::to_string_pretty(book) {
         Ok(text) => {
             let temp = path.with_extension("toml.tmp");
@@ -273,8 +277,6 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
         ),
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_LAYOUTS"];
 
 #[cfg(test)]
 mod tests {

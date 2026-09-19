@@ -6,7 +6,7 @@
 //! the project's configuration — so a look that works on the mini index is
 //! shared, reviewed and rolled back like code. See `config/README.md`.
 //!
-//! Resolution order mirrors [`crate::config`]: the [`PRESETS_ENV`] path, then
+//! Resolution order mirrors [`crate::config`]: the `QUANTICK_BUBBLES` path, then
 //! [`PRESETS_PATH`] relative to the working directory, then the built-in file
 //! embedded at compile time.
 //!
@@ -24,9 +24,6 @@ use quantick_orderflow::{
     BubbleStyle, HeatmapConfig, LiveLaneStyle,
     config::{DEFAULT_BUBBLE_CLUSTER_MS, DEFAULT_BUBBLE_DUST_MERGE_MS, DEFAULT_BUBBLE_REGION_MS},
 };
-
-/// Environment variable naming an explicit presets file.
-pub const PRESETS_ENV: &str = "QUANTICK_BUBBLES";
 
 /// Tracked presets file, read and written relative to the working directory.
 ///
@@ -227,7 +224,7 @@ impl BubblePresetFile {
 /// Where a loaded presets file came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PresetSource {
-    /// An explicit path from [`PRESETS_ENV`].
+    /// An explicit path from `QUANTICK_BUBBLES`, read by the launch root.
     EnvPath(PathBuf),
     /// [`PRESETS_PATH`] relative to the working directory.
     WorkingDir(PathBuf),
@@ -323,6 +320,7 @@ pub fn report_retired_keys(text: &str, path: &Path) {
 /// Returns a human-readable message when the file cannot be serialized or
 /// written.
 pub fn save_to(path: PathBuf, file: &BubblePresetFile) -> Result<PathBuf, String> {
+    quantick_workspace::write_refusal::guard_write(&path)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

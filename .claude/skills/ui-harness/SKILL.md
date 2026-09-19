@@ -40,15 +40,16 @@ it now costs the same as it always did instead of being charged to every run.
 the `declare_hooks!` line beside each read, fused with the prose in
 `docs/ui-harness/hook-prose.md`; a hook read but not described, or described
 but not read, fails `cargo test -p quantick-guards`. Edit the prose, never the
-registry, then `cargo run -p quantick-app -- --dump-hook-registry` over it.
+registry, then `cargo run -p quantick-app --features harness -- --dump-hook-registry`.
 
-**No one file owns the hooks.** `harness.rs` holds 24 of the 126; the rest are declared where they are read, across 37 files (50 in
-`app/launch_hooks.rs`, 8 in `paper_trading.rs`, 6 in
-`surfaces/drawing_chrome/mod.rs`). The registry's *Declared in* column is the
-answer. **Every launch hook is applied in `crates/app/src/app/launch_hooks.rs`,
-in the order its doc comment fixes** — that module is the application point.
+**Hooks compile only with a harness feature.** `--features harness` enables
+all four families (`scenario-`, `control-`, `drawing-`, `quick-range-harness`);
+a default build reads only the operator configuration `crates/app/src/launch.rs`
+captures. The *Declared in* column names each owner; launch-phase hooks apply
+in `app/launch_hooks.rs`, in the order its doc comment fixes.
 
-**A `QUANTICK_*` nothing reads is logged at startup** as `UNKNOWN_HOOK`.
+**An unregistered `QUANTICK_*`** logs `UNKNOWN_HOOK` and turns saving off
+for the session (`SAVES OFF` in the status line).
 
 ## Launch and capture workflow
 
@@ -58,10 +59,10 @@ Keep raw captures outside Git; put results and artifact links in the PR.
    `CARGO_TARGET_DIR=D:\quantick-agent-target` so the user's running exe is
    never locked and rust-analyzer never poisons fingerprints. It was `F:` until
    that drive stopped existing — check `Get-PSDrive -PSProvider FileSystem`
-   before trusting this line, and pick the drive with free space: `C:` runs
-   into single-digit gigabytes with a few worktrees on it, and a build that
-   dies of ENOSPC looks like a compile error until you read the message.
-2. **Fresh exe, proven fresh**: `cargo build -p quantick-app` immediately
+   before trusting this line, and pick the drive with free space: `C:` fills
+   with a few worktrees on it, and a build that dies of ENOSPC looks like a
+   compile error until you read the message.
+2. **Fresh exe, proven fresh**: `cargo build -p quantick-app --features harness` immediately
    before capturing, then compare the exe `LastWriteTime` against your last
    edit. `cargo test` green does **not** imply the exe was rebuilt.
 3. **Launch via PowerShell `Start-Process`** with hooks set and
