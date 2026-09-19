@@ -15,8 +15,7 @@ first word selects `small`, `medium`, `high` or `max`, bare or flagged
 flagged tier when the objective itself starts with a tier word. Step 1 echoes
 the parse.
 
-A mission owns one branch, worktree and PR, and selects the skills required
-for done. [The delivery contract](../../../docs/workflow/delivery.md) owns
+A mission owns one branch, worktree and PR, and picks the skills done needs. [The delivery contract](../../../docs/workflow/delivery.md) owns
 requirement reconciliation, gate mapping and proportional validation; apply its
 source-preserving preflight before implementation. A campaign child returns
 completion to its coordinator. This skill defines done; the built-in `/goal`
@@ -101,8 +100,7 @@ the work — never shrink a diff to evade review.
 
 5. **Persist — in the worktree, so step 6 runs first.** Write
    `<worktree>/.claude/GOAL.md` in English, overwriting any previous one (one
-   in the main checkout is off-branch and `delivery-review` returns NOT
-   GRADEABLE). Order: objective and why; `**Tier:**` line with justification
+   in the main checkout is off-branch: NOT GRADEABLE). Order: objective and why; `**Tier:**` line with justification
    (at `small`, justify the exemption); ledger; `D…`; `S…` (each saying why
    assuming was safe); criteria; N/A with reasons; then **the full verbatim
    request** as an attributed quotation — without it, NOT GRADEABLE. Items:
@@ -129,7 +127,8 @@ the work — never shrink a diff to evade review.
    <N>` first). Before the first edit, arm it and record the tier — per-branch,
    in the worktree's git dir, never committed, rewritten whenever raised;
    `guardrails.sh` accepts only `<current-branch> <tier>` and `pr-gate` reads
-   this `mission-tier` file, not `GOAL.md`:
+   this `mission-tier` file, not `GOAL.md`. One shell call, every placeholder
+   replaced:
 
    ```sh
    WT=/path/to/worktree
@@ -144,7 +143,7 @@ the work — never shrink a diff to evade review.
 
 7. **Stay on track.** Refuse scope creep; state a necessary detour and tie it
    to the mission, or take it to the user. Narrowing stated scope is a step 3
-   question whenever it surfaces. Keep the checklist in the todo list.
+   question whenever it surfaces. Keep the checklist in the todos.
 
 8. **Verify, then be graded.** Each criterion checked off with its own
    evidence; none without. Results and links go in the PR; raw evidence stays
