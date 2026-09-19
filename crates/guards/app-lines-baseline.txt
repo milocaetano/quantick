@@ -12,6 +12,7 @@
 # why.
 #
 # Recorded at main bcfb5f19 when the guard landed: 121,743 lines, the same
-# number `--report` prints as `crate.lines.app`.
+# number `--report` prints as `crate.lines.app`. Tightened to 103,598 after
+# campaign #542 moved five crates out of `app`.
 !budget 103598
 crates/app 103598
