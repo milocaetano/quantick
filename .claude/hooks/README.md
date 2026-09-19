@@ -15,7 +15,7 @@ its `/hooks` screen, as required by the
 | Mode | Event | Acts on | Effect |
 | --- | --- | --- | --- |
 | `worktree-guard` | `PreToolUse` | `Edit`, `Write`, `NotebookEdit`, `apply_patch` | Denies the write when it lands in the main checkout while that checkout is on `main`. |
-| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok`, applicable `delivery-review-ok`, and `ai-review-complete` match the exact change. Ready/merge also require each marker's durable current-review PR report and zero open AI threads. Only delivery has a bounded `small` exemption; draft creation is ungated. |
+| `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok`, applicable `delivery-review-ok`, and `ai-review-complete` match the exact change. Ready/merge also require each marker's durable current-review PR report and zero open AI threads. Only delivery has a bounded `small` exemption; draft creation is ungated. Alongside the gate, and never as part of it, it prints the read-cost advisory described below. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
 
@@ -401,6 +401,47 @@ every Add, Update, Delete, or Move destination header from
 `tool_input.command`. A write driven from a shell — `Set-Content`, `sed -i`, a
 script, or a redirect — remains unguarded because reliably deriving its targets
 requires parsing the shell.
+
+## The read-cost advisory
+
+`pr-gate` carries one thing that is not a gate. Before it decides anything —
+including on a draft, where it decides nothing at all — it asks
+`tools/read_cost/report.py` how many production lines this branch asks a
+reader to hold: the files it changed, plus the files those directly
+reference. If the branch is a `feat/` or `fix/` branch and the number is over
+the ceiling recorded in `docs/quality/read-cost/ledger.md`, the hook prints
+that number and the largest files the branch pulls in *by reference alone* —
+the ones it never edits and a reader still has to open, which is the only part
+of the number detaching something would lower.
+
+It carries the ledger's other half as well. Each pull request records its own
+row — `main` takes pull requests only, so no workflow can push one there — and
+a `gh pr ready` or `gh pr merge` that names a pull request with no row is told
+the command that writes it. That half is not about the ceiling, costs no
+measurement, and so reaches every branch prefix.
+
+Both are printed as `systemMessage` and `additionalContext`, never as a
+permission decision, so neither can deny, ask or delay anything. A draft
+`gh pr create` is deliberately included: that is the last point where moving a
+reference is cheap. When the gate denies, the denial is what the caller sees;
+the advice returns on the attempt that passes.
+
+Silence covers everything it cannot determine — no `python3` or `python` that
+runs, no calculator in the worktree, no recorded ceiling, a measurement that
+fails, a review base it cannot resolve, or a branch whose prefix the ceiling
+was never about. The ceiling is the median of the feature rows in the ledger,
+and a warning on a `docs/` branch would cite a number that came from somewhere
+else. On Windows the interpreter matters: `python3` is on PATH as the
+Microsoft Store alias, which resolves, prints "Python was not found" and exits
+49, so the hook takes the first name that actually runs rather than the first
+it finds.
+
+CI does the rest: `.github/workflows/ci.yml` posts the same measurement as one
+sticky comment on every pull request — asking for the row while it is missing
+— and, after a merge, annotates the run when the merged pull request left
+none. The ceiling moves only when a person moves it, in its own pull request;
+`python tools/read_cost/ledger.py median` prints what the rows currently
+suggest.
 
 ## Fail-open by design
 

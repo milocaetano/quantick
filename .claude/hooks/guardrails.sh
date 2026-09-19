@@ -659,6 +659,72 @@ open_ai_review_threads() {
     printf '%s' "$threads_count"
 }
 
+# --- the read-cost advisory -------------------------------------------------
+
+# Not a gate, and it lives inside `pr-gate` only because this is the moment a
+# branch is finished enough for the number to mean something.
+#
+# `docs/quality/read-cost/ledger.md` records what each merged pull request
+# asked a reader to hold, and carries the ceiling those rows produced: the
+# median of the feature branches, rounded to the thousand. A feature branch
+# over it hears about it once, here, while detaching a reference is still
+# cheap, and hears it as news. Nothing on this path can refuse anything.
+#
+# It carries the ledger's other half too. A pull request records its own row,
+# because `main` takes pull requests only and no bot can push to it, so a
+# `gh pr ready` or `gh pr merge` naming a pull request with no row is told
+# which command writes it. That half is not about the ceiling and needs no
+# measurement, so it reaches every branch prefix.
+#
+# Silence answers everything it cannot determine - no interpreter, no
+# calculator in the worktree, no recorded ceiling, a measurement that fails, a
+# branch the ceiling was never about. That is not the file's fail-open rule
+# being stretched: advice that reports its own plumbing teaches its reader to
+# skip the line that matters.
+#
+# Each interpreter is tried until one *runs*, rather than until one exists.
+# On the Windows checkout this hook runs on, `python3` is on PATH as the
+# Microsoft Store alias: it resolves, prints "Python was not found" and exits
+# 49. Stopping at the first name found meant the trader's own machine — the
+# one machine this advice is for — silently never saw it.
+read_cost_advisory() {
+    advisory_script="$1/tools/read_cost/report.py"
+    [ -f "$advisory_script" ] || return 0
+    advisory_branch=$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
+        return 0
+    # The pull request, when the command named exactly one. A creation names
+    # none, which is the point: there is no row to ask for before the pull
+    # request exists.
+    advisory_pr=${3:-}
+    for advisory_python in python3 python; do
+        command -v "$advisory_python" >/dev/null 2>&1 || continue
+        if [ -n "$advisory_pr" ]; then
+            advisory_out=$("$advisory_python" "$advisory_script" warn \
+                --repo "$1" --base "$2" --head HEAD \
+                --branch "$advisory_branch" --pr "$advisory_pr" \
+                2>/dev/null) || continue
+        else
+            advisory_out=$("$advisory_python" "$advisory_script" warn \
+                --repo "$1" --base "$2" --head HEAD \
+                --branch "$advisory_branch" 2>/dev/null) || continue
+        fi
+        printf '%s' "$advisory_out"
+        return 0
+    done
+}
+
+# Leave the gate without a decision, carrying whatever the advisory had to
+# say. `systemMessage` is what a person sees and `additionalContext` is what
+# the session reads; both hold the same sentence, and neither is a permission
+# decision, so the normal flow continues exactly as it did before.
+pass_pr_gate() {
+    if [ -n "${read_cost_note:-}" ]; then
+        printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":%s}}\n' \
+            "$read_cost_note" "$read_cost_note"
+    fi
+    exit 0
+}
+
 pr_gate() {
     command=$(json_string_field command)
 
@@ -689,15 +755,25 @@ pr_gate() {
     # `--draft=false` is spelled out rather than left to the match. It is the
     # one spelling that contains the flag and means the opposite of it, and a
     # gate that reads it as a draft opens an ungated real PR.
+    dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
+    [ -d "$dir" ] || exit 0
+
+    # Read before the draft exemption below, because a draft is where an
+    # author can still act on it. An invalid review base is the gate's
+    # business further down, not the advisory's: it simply has nothing to
+    # measure against and says nothing.
+    read_cost_note=
+    if read_cost_base=$(review_base "$dir" 2>/dev/null); then
+        read_cost_note=$(read_cost_advisory "$dir" "$read_cost_base" \
+            "$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")")
+    fi
+
     if [ "$gate_action" = create ]; then
         gate_statement=$(gh_statement "$command" "gh pr create")
         if draft_flag "$gate_statement"; then
-            exit 0
+            pass_pr_gate
         fi
     fi
-
-    dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
-    [ -d "$dir" ] || exit 0
 
     gate_base=$(review_base "$dir") || deny '"Campaign review base is invalid or unavailable; reconcile the branch-bound mission-base record."'
     key=$(review_key "$dir")
@@ -756,7 +832,7 @@ pr_gate() {
     # and only the two commands that actually ship work are held on them: a PR
     # may be created, draft or not, while findings are still open — the PR is
     # where they live.
-    [ "$gate_action" = create ] && exit 0
+    [ "$gate_action" = create ] && pass_pr_gate
 
     # Every tier owes a completed AI review, even when there were no findings.
     # Keep this separate from the unchanged unresolved-thread gate below.
@@ -849,7 +925,7 @@ pr_gate() {
         fi
     fi
 
-    exit 0
+    pass_pr_gate
 }
 
 # --- commit-reminder --------------------------------------------------------
