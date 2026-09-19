@@ -74,11 +74,17 @@ pub const DEFAULT_FOLD_BUDGET: usize = 1_500;
 pub fn fold_budget() -> usize {
     static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *BUDGET.get_or_init(|| {
-        std::env::var("QUANTICK_FRVP_FOLD_BUDGET")
+        // A capture hook: compiled only with the scenario harness (or under
+        // test); a default build folds at the default budget.
+        #[cfg(any(feature = "scenario-harness", test))]
+        if let Some(budget) = std::env::var("QUANTICK_FRVP_FOLD_BUDGET")
             .ok()
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|budget| *budget > 0)
-            .unwrap_or(DEFAULT_FOLD_BUDGET)
+        {
+            return budget;
+        }
+        DEFAULT_FOLD_BUDGET
     })
 }
 
@@ -203,6 +209,7 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) -> bool {
     folding
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_FRVP_FOLD_BUDGET"];
 
 #[cfg(test)]

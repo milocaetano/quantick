@@ -14,8 +14,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// Environment override for the scripts folder.
-pub(crate) const INDICATORS_DIR_ENV: &str = "QUANTICK_INDICATORS_DIR";
 /// Default scripts folder, relative to the working directory.
 const DEFAULT_DIR: &str = "indicators";
 
@@ -77,9 +75,11 @@ impl ScriptLibrary {
     /// first run). File-system problems degrade to embedded-only — an
     /// unreadable folder must not take the feature down.
     pub(crate) fn scan() -> Self {
-        let dir = std::env::var(INDICATORS_DIR_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_DIR));
+        // `QUANTICK_INDICATORS_DIR`, read by the launch root, else the default.
+        let dir = crate::launch::operator_paths()
+            .indicators_dir
+            .as_deref()
+            .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from);
         if let Err(error) = std::fs::create_dir_all(&dir) {
             tracing::warn!(
                 target: "quantick::app",
@@ -196,8 +196,6 @@ impl ScriptLibrary {
         })
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_INDICATORS_DIR"];
 
 #[cfg(test)]
 mod tests {

@@ -633,7 +633,8 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
         "the fixture has to actually focus the pane without indicators"
     );
 
-    app.harness
+    app.chrome
+        .harness
         .arm_settings_autostart(0, crate::indicator_panel::SettingsTab::Style);
     app.service_indicator_requests();
 
@@ -650,7 +651,7 @@ fn the_settings_hook_finds_indicators_on_the_flow_pane_while_the_time_pane_has_f
     );
     assert_eq!(dialog.tab, crate::indicator_panel::SettingsTab::Style);
     assert!(
-        app.harness.settings_autostart().is_none(),
+        app.chrome.harness.settings_autostart().is_none(),
         "spent by the first open, so closing the dialog leaves it closed"
     );
 }

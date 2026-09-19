@@ -26,9 +26,6 @@ use std::path::{Path, PathBuf};
 
 use quantick_sim::history;
 
-/// Overrides the history folder for one run — the autostart family's
-/// explicit ask; nothing is consolidated or cleared under it.
-pub(crate) const TRADES_DIR_ENV: &str = "QUANTICK_TRADES_DIR";
 /// The cwd-relative folder of the legacy era: still the final fallback
 /// when the platform reports no documents folder, and always a
 /// consolidation source when it exists.
@@ -82,7 +79,7 @@ fn chosen(configured: Option<&str>, stored: Option<&str>, documents: Option<Path
 /// The journal folder for this run, without consolidation — the resolution
 /// order from the module doc, for hosts that only need an answer.
 pub(crate) fn resolve(configured: Option<&str>, stored: Option<&str>) -> PathBuf {
-    std::env::var_os(TRADES_DIR_ENV).map_or_else(
+    trades_dir_override().map_or_else(
         || chosen(configured, stored, documents_dir()),
         PathBuf::from,
     )
@@ -107,10 +104,14 @@ pub(crate) fn startup_home(
         // thread ends instead of accumulating one per run for ever.
         return (crate::scratch::thread_dir("paper-home"), None);
     }
-    if let Some(env) = std::env::var_os(TRADES_DIR_ENV) {
+    if let Some(env) = trades_dir_override() {
         // An explicit per-run ask — a QA or autostart run must never
         // touch, or even scan, the real home.
         return (PathBuf::from(env), None);
+    }
+    if crate::store_home::writes_refused().is_some() {
+        // A session that writes no store consolidates nothing either.
+        return (chosen(configured, stored, documents_dir()), None);
     }
     resolve_startup_home(
         configured,
@@ -468,7 +469,11 @@ fn import_name(name: &OsStr, suffix: usize) -> PathBuf {
     PathBuf::from(format!("{stem}.imported-{suffix}.{extension}"))
 }
 
-crate::hooks::declare_hooks!["QUANTICK_TRADES_DIR"];
+/// `QUANTICK_TRADES_DIR`, read by the launch root: overrides the history
+/// folder for one run; nothing is consolidated or cleared under it.
+fn trades_dir_override() -> Option<std::ffi::OsString> {
+    crate::launch::operator_paths().trades_dir.clone()
+}
 
 #[cfg(test)]
 mod tests {

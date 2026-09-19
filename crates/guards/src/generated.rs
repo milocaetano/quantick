@@ -389,7 +389,7 @@ const REMEDY_HOOKS: &str = "Every `QUANTICK_*` the application reads owes a \
      `declare_hooks!` entry beside the read and a row in \
      docs/ui-harness/hook-prose.md, and nothing else may claim to be a hook. \
      Fix whichever half is wrong, then regenerate: `cargo run -p quantick-app \
-     -- --dump-hook-registry > \
+     --features harness -- --dump-hook-registry > \
      .claude/skills/ui-harness/references/hook-registry.md`. A variable under \
      the prefix that is genuinely not a launch hook goes on ALLOWLIST in \
      crates/guards/src/generated.rs, with the reason.";

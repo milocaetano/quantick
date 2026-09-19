@@ -104,6 +104,9 @@ pub struct ReplayFigures {
     pub progress: f32,
 }
 
+/// The status cell a session that writes no store wears for its whole run.
+pub const SAVES_OFF_LABEL: &str = "SAVES OFF";
+
 /// Everything the bar shows this frame, precomputed by the app.
 pub struct StatusModel {
     /// Display name of the venue (or the session, while replaying).
@@ -180,6 +183,9 @@ pub struct StatusModel {
     /// Whether the perf readings (fps, frame time, trades) are shown
     /// (View → perf readings).
     pub show_perf: bool,
+    /// Why nothing is saved this session, when nothing is (decision DS7): a
+    /// cell that stays on the line for as long as the session runs.
+    pub saves_off: Option<String>,
 }
 
 /// The recording cell, with the state that colours it — red while the
@@ -466,6 +472,14 @@ fn draw_provenance(ui: &mut egui::Ui, model: &StatusModel, offline: Option<egui:
 /// Returns whether the SIM cell was clicked.
 fn draw_content(ui: &mut egui::Ui, model: &StatusModel) -> bool {
     let mut sim_clicked = false;
+    if let Some(reason) = &model.saves_off {
+        ui.label(
+            egui::RichText::new(SAVES_OFF_LABEL)
+                .monospace()
+                .color(theme::AMBER),
+        )
+        .on_hover_text(reason);
+    }
     ui.label(
         egui::RichText::new(&model.spec_summary)
             .monospace()
@@ -865,6 +879,7 @@ mod tests {
                 frame_avg_ms: Some(16.7),
                 frame_cpu_ms: Some(4.2),
                 show_perf: true,
+                saves_off: None,
             };
             for width in [650.0, 1000.0, 1500.0] {
                 for frame in 0..2 {
@@ -966,6 +981,7 @@ mod tests {
             frame_avg_ms: Some(16.7),
             frame_cpu_ms: Some(4.2),
             show_perf: false,
+            saves_off: None,
         };
         // Two passes: egui settles its layout on the second.
         let mut painted = String::new();

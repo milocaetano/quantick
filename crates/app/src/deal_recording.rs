@@ -50,13 +50,12 @@ use quantick_engine::DealSample;
 #[cfg(test)]
 use quantick_replay::deals::HEADER;
 
-/// One-run override of the recording directory.
-pub const DEALS_DIR_ENV: &str = "QUANTICK_DEALS_DIR";
 /// The directory under the cockpit home when nothing overrides it.
 pub const DEALS_DIR: &str = "deals";
 /// Scripted REC state: `QUANTICK_DEAL_RECORDING=on|off|menu`. `on`/`off`
 /// override the default the tab would otherwise open with; `menu` opens the
 /// REC popover on the first frame, for a capture.
+#[cfg(any(feature = "scenario-harness", test))]
 pub const RECORDING_HOOK_ENV: &str = "QUANTICK_DEAL_RECORDING";
 /// How long the counter may stand still while prints keep coming before
 /// REC calls it stale: three of the terminal's readings, which refresh about
@@ -72,7 +71,8 @@ pub const FROM_OPEN_MAX_DEALS: u64 = 1_000;
 
 /// Where recordings go this run.
 ///
-/// The one-run override first, then the config, then the cockpit home the
+/// The one-run override (`QUANTICK_DEALS_DIR`, read by the launch root)
+/// first, then the config, then the cockpit home the
 /// other stores live in, then the cwd-relative name for a run with no home.
 #[must_use]
 pub fn resolve_dir(configured: Option<&str>) -> PathBuf {
@@ -80,8 +80,9 @@ pub fn resolve_dir(configured: Option<&str>) -> PathBuf {
         // Never the trader's documents from a test, like every other store.
         return crate::store_home::test_path(DEALS_DIR);
     }
-    if let Some(explicit) = std::env::var(DEALS_DIR_ENV)
-        .ok()
+    if let Some(explicit) = crate::launch::operator_paths()
+        .deals_dir
+        .as_deref()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
     {
@@ -95,6 +96,7 @@ pub fn resolve_dir(configured: Option<&str>) -> PathBuf {
 
 /// The scripted REC state, if the launch asked for one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(feature = "scenario-harness", test))]
 pub enum RecordingHook {
     /// Start recording as soon as the feed can count, whatever the default.
     On,
@@ -104,6 +106,7 @@ pub enum RecordingHook {
     Menu,
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 impl RecordingHook {
     /// The three words the hook accepts.
     #[must_use]
@@ -868,7 +871,8 @@ pub fn fmt_count(n: u64) -> String {
     crate::replay_view::thousands(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
-crate::hooks::declare_hooks!["QUANTICK_DEALS_DIR", "QUANTICK_DEAL_RECORDING"];
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_DEAL_RECORDING"];
 
 #[cfg(test)]
 mod tests {

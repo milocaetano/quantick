@@ -149,7 +149,10 @@ impl QuantickApp {
                     tab.expire_history_note(now);
                 }
             }
-            FrameStage::HistoryNoteHook => self.apply_history_note_hook(),
+            FrameStage::HistoryNoteHook => {
+                #[cfg(any(feature = "scenario-harness", test))]
+                self.apply_history_note_hook();
+            }
             FrameStage::EnableControlAccess => {
                 #[cfg(any(feature = "control-harness", test))]
                 self.enable_scenario_control(ctx);
@@ -172,7 +175,7 @@ impl QuantickApp {
             }
             FrameStage::EvidenceHook => {
                 #[cfg(any(feature = "control-harness", test))]
-                self.apply_control_evidence_hook(ctx);
+                super::demo_hooks::apply_control_evidence_hook(self, ctx);
             }
             FrameStage::GatewayService => {
                 if self
@@ -188,6 +191,7 @@ impl QuantickApp {
             }
             FrameStage::ScenarioHooks => self.apply_scenario_hooks(),
             FrameStage::WindowHousekeeping => {
+                #[cfg(any(feature = "scenario-harness", test))]
                 self.chrome.window_startup.apply(ctx);
                 self.maybe_emit_summary(now, ctx);
                 self.workspace_save_adapter().maintain_workspace(ctx);
@@ -287,19 +291,25 @@ impl QuantickApp {
     /// Scripted views, the drawing demos and pending history requests, in
     /// the order a launch composes them.
     fn apply_scenario_hooks(&mut self) {
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_scripted_view();
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_drawing_demo();
+        super::demo_hooks::apply_drawing_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_load_older();
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_load_older_candles();
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_drawing_draft();
-        self.apply_venue_history_demo();
+        super::demo_hooks::apply_drawing_draft(self);
+        #[cfg(any(feature = "scenario-harness", test))]
+        super::demo_hooks::apply_venue_history_demo(self);
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_frvp_demo();
+        super::demo_hooks::apply_frvp_demo(self);
         #[cfg(any(feature = "drawing-harness", test))]
-        self.apply_avwap_demo();
-        self.apply_strategy_demo();
+        super::demo_hooks::apply_avwap_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
+        super::demo_hooks::apply_strategy_demo(self);
+        #[cfg(any(feature = "scenario-harness", test))]
         self.apply_replay_restart();
     }
 

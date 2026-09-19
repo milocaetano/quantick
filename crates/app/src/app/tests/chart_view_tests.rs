@@ -12,7 +12,7 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     // the trunk's half — where a fraction lands on the pane that drew.
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
-    app.harness.arm_pointer(egui::vec2(0.5, 0.5));
+    app.chrome.harness.arm_pointer(egui::vec2(0.5, 0.5));
     assert_eq!(
         app.scripted_pointer_pos(),
         None,
@@ -58,7 +58,8 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
 fn the_context_menu_hook_expands_chart_layers_without_a_mouse() {
     let (mut app, _commands) = app_with_history(40);
     let ctx = egui::Context::default();
-    app.harness
+    app.chrome
+        .harness
         .arm_context_menu(crate::harness::ContextMenuPane::Chart, true);
     run_frame(&mut app, &ctx);
 

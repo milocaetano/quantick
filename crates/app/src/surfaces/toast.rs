@@ -178,6 +178,7 @@ impl Surface for ToastSurface {
     /// through the simulator's own `show_toast`, so what it photographs is
     /// the whole route into this lane — the panel's outbox, the drain, and
     /// the naming a background market gets — rather than this surface alone.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
         match std::env::var("QUANTICK_TOAST").as_deref() {
             Ok("plain") => self.note("Workspace saved.", env.now),
@@ -252,6 +253,7 @@ impl Surface for ToastSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_TOAST"];
 
 #[cfg(test)]

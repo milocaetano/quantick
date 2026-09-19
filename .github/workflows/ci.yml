@@ -160,6 +160,33 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Build
         run: cargo build --workspace
+      - name: Default binary names no harness hook
+        # The shipped bytes, not the source: `Build` just made the default
+        # binary, and nothing has rebuilt it with a feature yet. The composition root's declared configuration must be
+        # present — the control that proves the scan can see a name at all;
+        # every other registry name is a harness hook and must be absent.
+        run: |
+          python3 - <<'PY'
+          import pathlib, re
+          root = pathlib.Path("crates/app/src/launch.rs").read_text(encoding="utf-8")
+          declared = root[root.index("declare_hooks!["):]
+          config = set(re.findall(r"QUANTICK_[A-Z0-9_]+", declared[:declared.index("];")]))
+          rows = pathlib.Path(".claude/skills/ui-harness/references/hook-registry.md").read_text(encoding="utf-8")
+          hooks = {n for line in rows.splitlines() if line.startswith("| `QUANTICK_")
+                   for n in re.findall(r"QUANTICK_[A-Z0-9_]+", line.split(" | ")[0])} - config
+          binary = pathlib.Path("target/debug/quantick-app").read_bytes()
+          missing = sorted(n for n in config if n.encode() not in binary)
+          # Prose, not a read: a published control-schema description names the
+          # hook a capture drives the button with.
+          prose = {"QUANTICK_LOAD_OLDER"}
+          # Compiled strings sit packed end to end, so a name is bounded only
+          # by what cannot continue it, not by a word boundary.
+          present = sorted(n for n in hooks - prose
+                           if re.search(rb"(?<![A-Z0-9_])" + n.encode() + rb"(?![A-Z0-9_])", binary))
+          assert config and not missing, f"configuration missing from the binary: {missing}"
+          assert not present, f"harness hooks in the default binary: {present}"
+          print(f"{len(config)} configuration names present, {len(hooks)} harness hooks absent")
+          PY
       - name: Test
         run: cargo test --workspace
       - name: Test opt-in quick-range harness
@@ -174,8 +201,19 @@ jobs:
         run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
       - name: Test opt-in control harness
         run: cargo test -p quantick-app --features control-harness
+      - name: Test opt-in scenario harness
+        run: cargo test -p quantick-app --features scenario-harness
+      - name: Check scenario and control harnesses
+        run: cargo check -p quantick-app --all-targets --features scenario-harness,control-harness
+      - name: Check scenario and drawing harnesses
+        run: cargo check -p quantick-app --all-targets --features scenario-harness,drawing-harness
+      - name: Check scenario and quick-range harnesses
+        run: cargo check -p quantick-app --all-targets --features scenario-harness,quick-range-harness
       - name: Test all app harness families
-        run: cargo test -p quantick-app --features drawing-harness,quick-range-harness,control-harness
+        run: cargo test -p quantick-app --features harness
+      - name: Build the capture binary
+        # What `ui-harness` launches: every family, outside `cfg(test)`.
+        run: cargo build -p quantick-app --features harness
 
   # The second operating system the README is allowed to claim. It exists so
   # that sentence is backed by a workflow file rather than by memory: the

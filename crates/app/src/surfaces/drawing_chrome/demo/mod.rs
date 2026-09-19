@@ -1,4 +1,5 @@
 //! Default-off drawing scenarios, consumed at their original frame phases.
+#![cfg(any(feature = "drawing-harness", test))]
 mod gallery;
 #[cfg(test)]
 mod tests;

@@ -5,7 +5,8 @@
 //! symbols they offer, and what to open on. Nothing about the exchange or the
 //! asset lives in code as a constant.
 //!
-//! Resolution order (see [`load`]): the `QUANTICK_CONFIG` env path, then
+//! Resolution order (see [`load`]): the `QUANTICK_CONFIG` path the launch
+//! composition hands in ([`crate::launch::LaunchConfig`]), then
 //! `quantick.toml` in the working directory, then the built-in default embedded
 //! at compile time. An external file that is present but malformed is a hard
 //! error — a bad config is surfaced, never silently ignored (data-honesty rule).
@@ -32,21 +33,6 @@ pub use quantick_feed::config::{
 /// The built-in default configuration, compiled into the binary so the app runs
 /// with no external file present.
 const EMBEDDED_DEFAULT: &str = include_str!("../config/feeds.toml");
-
-/// Environment variable naming an explicit config file path.
-pub const CONFIG_ENV: &str = "QUANTICK_CONFIG";
-
-/// Optional startup-only override for [`AppConfig::default_feed`].
-///
-/// Unlike [`CONFIG_ENV`], this changes only the initial selection; it never
-/// replaces the configured feed catalog.
-pub const DEFAULT_FEED_ENV: &str = "QUANTICK_DEFAULT_FEED";
-
-/// Optional startup-only override for [`AppConfig::default_symbol`].
-///
-/// The value is validated against the selected feed before either default is
-/// changed, so a bad pair cannot leave the config half-mutated.
-pub const DEFAULT_SYMBOL_ENV: &str = "QUANTICK_DEFAULT_SYMBOL";
 
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
@@ -608,7 +594,7 @@ impl AppConfig {
 /// Where a loaded [`AppConfig`] came from, for honest logging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigSource {
-    /// An explicit path from the [`CONFIG_ENV`] environment variable.
+    /// An explicit path from the `QUANTICK_CONFIG` environment variable.
     EnvPath(PathBuf),
     /// The conventional [`CONFIG_FILENAME`] in the working directory.
     WorkingDir(PathBuf),
@@ -619,7 +605,7 @@ pub enum ConfigSource {
 impl std::fmt::Display for ConfigSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigSource::EnvPath(p) => write!(f, "{} ({CONFIG_ENV})", p.display()),
+            ConfigSource::EnvPath(p) => write!(f, "{} (QUANTICK_CONFIG)", p.display()),
             ConfigSource::WorkingDir(p) => write!(f, "{}", p.display()),
             ConfigSource::Embedded => write!(f, "<built-in default>"),
         }
@@ -688,7 +674,7 @@ impl std::fmt::Display for StartupSelectionError {
             }
             StartupSelectionError::FeedNotConfigured { feed, available } => write!(
                 f,
-                "{DEFAULT_FEED_ENV}='{feed}' is not a configured feed; available feeds: {}",
+                "QUANTICK_DEFAULT_FEED='{feed}' is not a configured feed; available feeds: {}",
                 available.join(", ")
             ),
             StartupSelectionError::SymbolNotOffered {
@@ -697,7 +683,7 @@ impl std::fmt::Display for StartupSelectionError {
                 available,
             } => write!(
                 f,
-                "{DEFAULT_SYMBOL_ENV}='{symbol}' is not offered by feed '{feed}'; available symbols: {}",
+                "QUANTICK_DEFAULT_SYMBOL='{symbol}' is not offered by feed '{feed}'; available symbols: {}",
                 available.join(", ")
             ),
         }
@@ -743,46 +729,6 @@ pub fn apply_startup_selection(
     config.default_feed = feed;
     config.default_symbol = symbol;
     Ok(())
-}
-
-fn optional_env(variable: &'static str) -> Result<Option<String>, StartupSelectionError> {
-    match std::env::var(variable) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(StartupSelectionError::NonUnicode { variable })
-        }
-    }
-}
-
-/// Apply [`DEFAULT_FEED_ENV`] and [`DEFAULT_SYMBOL_ENV`] to a loaded config.
-///
-/// This thin environment adapter delegates all selection behavior to
-/// [`apply_startup_selection`], which stays deterministic and can be tested
-/// without mutating process-global environment variables.
-///
-/// # Errors
-///
-/// Returns [`StartupSelectionError`] for non-Unicode environment values or a
-/// feed/symbol pair that does not resolve against `config`.
-pub fn apply_startup_selection_from_env(
-    config: &mut AppConfig,
-) -> Result<(), StartupSelectionError> {
-    let feed = optional_env(DEFAULT_FEED_ENV)?;
-    let symbol = optional_env(DEFAULT_SYMBOL_ENV)?;
-    apply_startup_selection(config, feed.as_deref(), symbol.as_deref())
-}
-
-/// Whether either startup-selection env var named the market this run opens
-/// on.
-///
-/// The saved workspace ([`crate::ui_state`]) otherwise decides it, and this is
-/// how the two are ordered: an env var is an explicit request for this one
-/// run, so a validation run pinned to `QUANTICK_DEFAULT_SYMBOL` must not find
-/// itself on yesterday's cockpit instead.
-#[must_use]
-pub fn startup_selection_came_from_env() -> bool {
-    std::env::var_os(DEFAULT_FEED_ENV).is_some() || std::env::var_os(DEFAULT_SYMBOL_ENV).is_some()
 }
 
 /// Parse a config from a TOML string tagged with its `source`, fold in the
@@ -848,15 +794,18 @@ fn parse_with_additions(
 /// or invalid is a hard error; the embedded default is only used when no external
 /// file exists.
 ///
+/// `explicit` is the operator's `QUANTICK_CONFIG`, read once by the launch
+/// composition; this module reads no environment.
+///
 /// # Errors
 ///
 /// Returns [`ConfigError`] when a present external file cannot be read, parsed,
 /// or validated. The embedded default is validated in tests, so it never errors.
-pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
+pub fn load(explicit: Option<&Path>) -> Result<(AppConfig, ConfigSource), ConfigError> {
     let added_path = crate::symbols_file::default_path();
     let added = crate::symbols_file::load(&added_path);
-    if let Some(path) = std::env::var_os(CONFIG_ENV) {
-        let path = PathBuf::from(path);
+    if let Some(path) = explicit {
+        let path = path.to_path_buf();
         let source = ConfigSource::EnvPath(path.clone());
         let text = std::fs::read_to_string(&path).map_err(|e| ConfigError::Read {
             path,
@@ -889,12 +838,6 @@ pub fn load() -> Result<(AppConfig, ConfigSource), ConfigError> {
     )?;
     Ok((config, ConfigSource::Embedded))
 }
-
-crate::hooks::declare_hooks![
-    "QUANTICK_CONFIG",
-    "QUANTICK_DEFAULT_FEED",
-    "QUANTICK_DEFAULT_SYMBOL"
-];
 
 #[cfg(test)]
 mod tests {

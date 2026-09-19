@@ -283,6 +283,7 @@ impl WorkspaceSaveAdapter<'_> {
         // replay folder gets applies: a validation run must not write a QA
         // list into the trader's workspace. The hook stages a screen; it does
         // not make choices on their behalf.
+        #[cfg(any(feature = "drawing-harness", test))]
         if self.session.favorites_are_staged() {
             tracing::info!(
                 target: "quantick::app",

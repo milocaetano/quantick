@@ -35,9 +35,6 @@
 
 use std::path::PathBuf;
 
-/// Overrides the replay folder for one run — the autostart family's explicit
-/// ask, and the hook the validation harness drives.
-pub(crate) const REPLAY_DIR_ENV: &str = "QUANTICK_REPLAY_DIR";
 /// The environment variable OneDrive sets to its own root on Windows. Present
 /// only when the sync client is actually set up for this account, which is the
 /// question being asked — the folder's *name* is not evidence of anything.
@@ -113,7 +110,8 @@ fn resolve_with(from_env: Option<&str>, stored: Option<&str>, shelf: Option<Path
 #[must_use]
 pub(crate) fn resolve(stored: Option<&str>) -> String {
     resolve_with(
-        std::env::var(REPLAY_DIR_ENV).ok().as_deref(),
+        // `QUANTICK_REPLAY_DIR`, read by the launch root.
+        crate::launch::operator_paths().replay_dir.as_deref(),
         stored,
         tape_shelf(
             crate::paper_home::documents_dir(),
@@ -125,8 +123,6 @@ pub(crate) fn resolve(stored: Option<&str>) -> String {
         ),
     )
 }
-
-crate::hooks::declare_hooks!["QUANTICK_REPLAY_DIR"];
 
 #[cfg(test)]
 mod tests {

@@ -334,6 +334,7 @@ impl super::arrangement_adapter::ArrangementAdapter<'_> {
             pane_ids: self.pane_ids,
             workspace: self.workspace,
             indicators: self.indicators,
+            #[cfg(any(feature = "scenario-harness", test))]
             harness: self.harness,
             toolrail: self.toolrail,
             tz: self.tz,

@@ -178,7 +178,7 @@ fn draft_uses_the_tool_selected_during_construction() {
         egui::vec2(800.0, 400.0),
     ));
     app.active_tab_mut().flow_pane.frame.auto_range = Some((90.0, 110.0));
-    app.apply_drawing_draft();
+    crate::app::demo_hooks::apply_drawing_draft(&mut app);
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.drawings.draft_len(), 2);
     let points = &pane.drawings.draft().unwrap().points;

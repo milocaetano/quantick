@@ -506,6 +506,7 @@ impl Tab {
     /// The pending flags are set first because that is what a request having
     /// gone out looks like, and an unclosed run is precisely the frame the
     /// `partial` variant exists to reach.
+    #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
     pub fn deliver_ohlcv_slice(
         &mut self,
         tab_id: u64,

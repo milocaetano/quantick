@@ -22,8 +22,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::footprint_config::{self, FootprintConfig};
 
-/// Environment override for the presets file location.
-pub(crate) const PRESETS_ENV: &str = "QUANTICK_FOOTPRINT_PRESETS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const PRESETS_FILE: &str = "footprint-presets.toml";
 /// Bumped on breaking layout changes; unknown versions are ignored.
@@ -135,6 +133,9 @@ impl PresetStore {
 
     /// Write the store. See the [module docs](self) for the discipline.
     pub fn save(&self, path: &Path) {
+        if crate::store_home::guard_write(path).is_err() {
+            return;
+        }
         let file = PresetsFile {
             version: FORMAT_VERSION,
             presets: self
@@ -170,7 +171,7 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(PRESETS_FILE);
     }
-    crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
+    crate::store_home::resolve(PRESETS_FILE)
 }
 
 /// Parse a footprint-presets file, reporting why it is not one. The gate a
@@ -186,8 +187,6 @@ pub(crate) fn validate(text: &str) -> Result<(), String> {
         ))
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_PRESETS"];
 
 #[cfg(test)]
 mod tests {

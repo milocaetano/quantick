@@ -119,6 +119,11 @@ pub(crate) fn apply<'stores>(
     stores: &'stores [CockpitStore],
     path_of: StorePath<'_>,
 ) -> Result<InstalledStores<'stores>, String> {
+    // A session that writes no store (DS7) opens no workspace file either:
+    // an import is every store written at once. Asked before the transaction
+    // starts, so no store path is resolved first.
+    crate::store_home::guard_writes(&"workspace import")
+        .map_err(|reason| format!("nothing was opened: {reason}"))?;
     apply_with_rename(bundle, stores, path_of, |temp, live| {
         std::fs::rename(temp, live)
     })
@@ -255,6 +260,7 @@ pub(crate) fn write(path: &Path, bundle: &Bundle) -> Result<(), String> {
 /// next read reports unreadable — the whole cockpit gone rather than a
 /// stale one.
 fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+    crate::store_home::guard_write(path).map_err(std::io::Error::other)?;
     let temp = path.with_extension("tmp");
     match std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path)) {
         Ok(()) => Ok(()),
@@ -660,7 +666,6 @@ mod tests {
 
     const FAKE_REGISTRY: &[CockpitStore] = &[CockpitStore {
         key: "fake_store",
-        env: "QUANTICK_FAKE_STORE",
         file: "fake-store.toml",
         path: fake_path,
         validate: validate_fake,

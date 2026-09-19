@@ -17,6 +17,8 @@
 //! hook, and `quantick-app` re-exports both; the registry stays whole and there
 //! is still exactly one definition of each.
 
+pub mod registry;
+
 /// One hook, declared where it is read.
 ///
 /// A named struct rather than a bare `&str` so a later field — a surface, a
@@ -68,37 +70,6 @@ macro_rules! declare_hooks {
 
 pub use declare_hooks;
 
-/// A family of declared hooks the binary reads only under one Cargo feature,
-/// and whether this build carries that feature.
-#[derive(Debug, Clone, Copy)]
-pub struct FeatureGate {
-    /// The feature to build with.
-    pub feature: &'static str,
-    /// Whether the executable was built with it.
-    pub compiled: bool,
-    /// The declarations the feature gates.
-    pub hooks: &'static [HookSpec],
-}
-
-/// The set names whose family this build compiled out, with the feature each
-/// needs, sorted and unique; the environment is injected as in [`undeclared`].
-pub fn compiled_out<'a>(
-    environment: impl Iterator<Item = &'a str>,
-    gates: &[FeatureGate],
-) -> Vec<(String, &'static str)> {
-    let mut out: Vec<(String, &'static str)> = environment
-        .filter_map(|name| {
-            let gate = gates
-                .iter()
-                .find(|gate| !gate.compiled && gate.hooks.iter().any(|spec| spec.name == name))?;
-            Some((name.to_owned(), gate.feature))
-        })
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
-
 /// The `QUANTICK_*` names in `environment` that nothing declares and no
 /// `exempt` row excuses, sorted and unique. The environment is an iterator
 /// rather than a read, so a test exercises the real comparison without
@@ -118,4 +89,33 @@ pub fn undeclared<'a>(
     out.sort();
     out.dedup();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The comparison a default build's saves-off decision rests on: only
+    /// the exact `QUANTICK_` prefix counts, declared names and exempt rows
+    /// are excused, and the answer is sorted and unique.
+    #[test]
+    fn undeclared_keeps_only_unexcused_prefixed_names_sorted_and_unique() {
+        let declared = std::collections::BTreeSet::from(["QUANTICK_CONFIG"]);
+        let exempt = [("QUANTICK_GIT_COMMIT", "build metadata")];
+        let environment = [
+            "PATH",
+            "QUANTICK_UI_STATE",
+            "QUANTICK_CONFIG",
+            "QUANTICK_GIT_COMMIT",
+            "quantick_ui_state",
+            "XQUANTICK_LAYOUTS",
+            "QUANTICK_LAYOUTS",
+            "QUANTICK_UI_STATE",
+        ];
+        assert_eq!(
+            undeclared(environment.into_iter(), &declared, &exempt),
+            ["QUANTICK_LAYOUTS", "QUANTICK_UI_STATE"]
+        );
+        assert!(undeclared(["PATH", "QUANTICK_CONFIG"].into_iter(), &declared, &exempt).is_empty());
+    }
 }

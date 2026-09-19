@@ -21,8 +21,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Environment override for the file location.
-pub(crate) const SYMBOLS_ENV: &str = "QUANTICK_SYMBOLS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const SYMBOLS_FILE: &str = "quantick-symbols.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
@@ -109,7 +107,7 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(SYMBOLS_FILE);
     }
-    crate::store_home::resolve(SYMBOLS_ENV, SYMBOLS_FILE)
+    crate::store_home::resolve(SYMBOLS_FILE)
 }
 
 /// Parse an added-symbols file, reporting why it is not one. The gate a
@@ -189,6 +187,7 @@ pub fn load(path: &std::path::Path) -> AddedSymbols {
 /// like it stuck but did not is the kind of quiet loss the user only finds
 /// out about at the next launch.
 pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> {
+    crate::store_home::guard_write(path)?;
     let file = AddedSymbols {
         version: FORMAT_VERSION,
         feeds: added.feeds.clone(),
@@ -206,8 +205,6 @@ pub fn save(path: &std::path::Path, added: &AddedSymbols) -> Result<(), String> 
             error.to_string()
         })
 }
-
-crate::hooks::declare_hooks!["QUANTICK_SYMBOLS"];
 
 #[cfg(test)]
 mod tests {

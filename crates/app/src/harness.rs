@@ -5,7 +5,9 @@
 //! a menu open, a pointer parked over the candles, a drawing half-placed
 //! between two clicks, a page of older history asked for. It is how
 //! `ui-harness` — and through it `visual-qa` and `trader-ux-review` — sees the
-//! application at all. None of it is state the chart trades on.
+//! application at all. None of it is state the chart trades on, so the whole
+//! module compiles only with `scenario-harness` (or under test): a default
+//! build has no harness, no hook value and no scripted frame stage.
 //!
 //! Before this port each hook was wired into `QuantickApp` by hand in three
 //! places: a field, a line in the constructor's struct literal, and a
@@ -57,12 +59,15 @@
 //! # Adding a hook
 //!
 //! One field on [`Harness`] (or one defaulting field on the response struct
-//! of a hook that already exists), one line in [`Harness::from_env`], one
+//! of a hook that already exists), one line in [`Harness::capture`], one
 //! accessor, and a row in `.claude/skills/ui-harness/references/hook-registry.md`.
 //! A hook that belongs to a surface rather than to the window parses itself
 //! beside that surface instead — `surfaces::drawing_chrome::apply_launch_hooks`
 //! is the pattern — and the registry row is owed either way.
 
+#![cfg(any(feature = "scenario-harness", test))]
+
+use crate::hooks::ScenarioInputs;
 use eframe::egui;
 
 use crate::indicator_panel::SettingsTab;
@@ -296,12 +301,12 @@ impl<T> Budgeted<T> {
 ///
 /// [`Default`] is derived rather than written, and that is what keeps this
 /// module's promise honest: adding a hook is **one field and one line in
-/// [`Harness::from_env`]**, with nothing else in the file to keep in step. A
+/// [`Harness::capture`]**, with nothing else in the file to keep in step. A
 /// hand-written "every hook unset" constructor was a third list saying the
 /// same thing, and a third list is where the next hook gets forgotten.
 /// It is **gated to test builds**, though. `Harness::default()` is every hook
 /// unset — a harness that read no environment — and in production that is
-/// indistinguishable at the call site from `from_env`, so a future edit
+/// indistinguishable at the call site from `capture`, so a future edit
 /// reaching for the shorter name would disarm every hook with no compile
 /// error. Tests get it; the trunk has exactly one way to build a harness.
 #[cfg_attr(test, derive(Default))]
@@ -413,7 +418,8 @@ pub(crate) struct Harness {
 }
 
 impl Harness {
-    /// Read every hook this module owns, once.
+    /// Parse every hook this module owns, once, from the inputs the
+    /// composition root captured at launch.
     ///
     /// One read at one moment, rather than a `std::env::var` wherever a value
     /// happens to be wanted: a hook re-read halfway through a frame is a hook
@@ -426,12 +432,13 @@ impl Harness {
     /// that photographed nothing. The two hooks that name something from a
     /// registry — `QUANTICK_HISTORY_NOTE` here, `QUANTICK_HISTORY_REACH` on
     /// the trunk — say so out loud in the log instead of failing silently.
-    pub(crate) fn from_env() -> Self {
+    pub(crate) fn capture(env: &ScenarioInputs) -> Self {
+        let read = |name: &str| env.var(name);
+        let flag = |name: &str| flag(env, name);
         Self {
             layout_picker_autostart: flag("QUANTICK_LAYOUT_PICKER"),
             deal_recording: crate::deal_recording::RecordingHook::parse(
-                std::env::var(crate::deal_recording::RECORDING_HOOK_ENV)
-                    .ok()
+                env.var(crate::deal_recording::RECORDING_HOOK_ENV)
                     .as_deref(),
             ),
             bars_menu: flag("QUANTICK_BARS_MENU"),
@@ -805,11 +812,6 @@ fn spend<T: Copy>(hook: &mut Option<Budgeted<T>>) -> HookFrame {
     }
 }
 
-/// One environment variable, or `None` when it is unset or not valid Unicode.
-fn read(name: &str) -> Option<String> {
-    std::env::var(name).ok()
-}
-
 fn context_menu_expands_chart_layers(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case("chart-layers")
 }
@@ -844,8 +846,8 @@ pub(crate) fn context_menu_canvas_position(
 /// introduced. It is visible here for the first time, in one place, which is
 /// the point; making the eight agree is a change to what the hooks accept and
 /// belongs to a mission that says so.
-fn flag(name: &str) -> bool {
-    std::env::var(name).is_ok_and(|value| value == "1")
+fn flag(env: &ScenarioInputs, name: &str) -> bool {
+    env.var(name).is_some_and(|value| value == "1")
 }
 
 /// Read a scripted pointer position off `QUANTICK_POINTER`.

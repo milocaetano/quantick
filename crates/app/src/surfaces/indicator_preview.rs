@@ -50,6 +50,7 @@ impl Surface for IndicatorPreviewSurface {
         "indicator-preview-watermark"
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
         self.forced = std::env::var("QUANTICK_INDICATOR_PREVIEW").is_ok_and(|value| value == "1");
     }
@@ -82,6 +83,7 @@ impl Surface for IndicatorPreviewSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_INDICATOR_PREVIEW"];
 
 #[cfg(test)]

@@ -13,12 +13,12 @@ use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
 use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
 
-#[cfg(feature = "quick-range-harness")]
+// Gated inside the file (`#![cfg]`), so the file itself says it is harness.
 mod launch;
-#[cfg(feature = "quick-range-harness")]
+#[cfg(any(feature = "quick-range-harness", test))]
+pub(crate) use launch::HOOKS as QUICK_RANGE_HOOKS;
+#[cfg(any(feature = "quick-range-harness", test))]
 pub(crate) use launch::QuickRangeLaunch;
-
-crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
@@ -136,9 +136,9 @@ pub(crate) struct QuickRange {
     look: Option<NewDrawing>,
     geometry: Option<Geometry>,
     action_rects: [Option<egui::Rect>; 3],
-    #[cfg(feature = "quick-range-harness")]
+    #[cfg(any(feature = "quick-range-harness", test))]
     demo_requested: Option<(bool, bool)>,
-    #[cfg(feature = "quick-range-harness")]
+    #[cfg(any(feature = "quick-range-harness", test))]
     pending_launch: Option<QuickRangeLaunch>,
 }
 
