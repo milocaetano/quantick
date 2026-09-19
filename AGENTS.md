@@ -1,17 +1,13 @@
 # AGENTS.md — quantick for AI agents
 
-Real-time alternative-bar charts (tick / volume / dollar / imbalance) for order
-flow trading, in Rust. [`CLAUDE.md`](CLAUDE.md) owns the working rules and the
-verification loop; [`docs/README.md`](docs/README.md) indexes the docs,
-[`docs/agentic-development.md`](docs/agentic-development.md) the reasons behind
-the rules. This file is the crate map.
+The crate map. [`CLAUDE.md`](CLAUDE.md) owns the rules and verification loop,
+[`docs/agentic-development.md`](docs/agentic-development.md) their reasons,
+[`docs/README.md`](docs/README.md) the docs index.
 
-**Driving the running app instead of changing the code?** Quantick ships its
-own MCP server: build `quantick-mcp`, run `quantick-mcp setup --client claude`
-(or `codex`), enable **Tools → Local agent access**, then call
-`quantick_describe` first; the rest is discoverable from its answer.
-Tools, profiles and authority: [`crates/mcp/README.md`](crates/mcp/README.md).
-Capability IDs, versions and permissions: the generated
+**Driving the running app?** Build `quantick-mcp`, run `quantick-mcp setup
+--client claude` (or `codex`), enable **Tools → Local agent access**, and call
+`quantick_describe` first. Tools and authority:
+[`crates/mcp/README.md`](crates/mcp/README.md); capabilities: the generated
 [capability inventory](docs/control-plane/capability-inventory.md) and
 [capability catalog](schemas/control/observer-capability-catalog-v1.json).
 
@@ -32,11 +28,11 @@ A Cargo workspace under `crates/`. *Depends on* is one-way, enforced by
 | `control-local` | control | Instance-descriptor directory and blocking loopback client; one ownership check serves both. |
 | `control-host` | control | Projection registry, admission, idempotency store, event journal. Told the time. |
 | `indicators` | engine | The `Indicator` trait (commit/preview with rollback), incremental `ta.*` kernels, draw objects. |
-| `replay` | engine | Recorded sessions: CSV format, folder scan, playback clock. Told the time. Test support is the documented `replay::test_support` module, not a feature. |
+| `replay` | engine | Recorded sessions: CSV format, folder scan, playback clock. Told the time. Test support: `replay::test_support`, not a feature. |
 | `paper` | sim, engine, civil | One paper account — orders, risk sizing, journal, report — three drivers. |
 | `sim` | trading, engine | `TradingVenue` implementation; fills only on what the tape proves, never on quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
-| `feed` | feed-*, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port and its adapters, feed config, history reach, session exporter. Owns runtimes, threads and the clock. |
+| `feed` | feed-*, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, feed config, history reach, session export. Owns runtimes, threads, clock. |
 | `feed-binance`, `feed-hyperliquid`, `feed-mt5` | engine, orderbook | Venue sources; produce trades. |
 | `orderflow` | engine, orderbook | Liquidity history, grouping, timeline, settled/live heatmap projections. Told the time. |
 | `engine` | — | Trades in, bars out. Deterministic, no clock. |

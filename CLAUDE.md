@@ -17,11 +17,11 @@ cargo test --workspace
 
 `PostToolUse` is silent until guards are built in that worktree; silence is not a pass. `cargo run -p quantick-guards -- --report` prints metrics.
 
-CI also runs what cargo cannot see — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 tools/outside_score/test_measure.py`, `python3 bridge/mt5/tests/test_*.py`, and `cargo deny check bans licenses` when `Cargo.lock` moves. Run the ones your change touches; watch with `gh pr checks <n> --watch`; red CI never merges.
+CI also runs — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 tools/outside_score/test_measure.py`, `python3 bridge/mt5/tests/test_*.py`, and `cargo deny check bans licenses` when `Cargo.lock` moves. Run what your change touches; watch `gh pr checks <n> --watch`; red CI never merges.
 
 ## Architecture
 
-Crates under `crates/`; `AGENTS.md` maps them. The invariants:
+Invariants (`AGENTS.md` maps the crates):
 
 - **Dependency direction is one-way; never add a reverse edge.** `app` → `pine` → `indicators` → `engine`; `sim` → `trading` → `engine`; `control-local`, `control-host` → `control`; the table is `guards/src/graph.rs`, and `guards/src/cycle.rs` fails a new module cycle inside a crate.
 - **Leaves stay leaves** — nothing depends on `app`, `backtest`, `mcp` or `guards`.
@@ -29,7 +29,7 @@ Crates under `crates/`; `AGENTS.md` maps them. The invariants:
 - **`feed` and the `feed-*` crates are the exception** — `feed` owns the runtimes, threads and clock, the venues stamp arrival; neither crosses the `FeedEvent` channel.
 - **`feed-binance`, `feed-hyperliquid` and `feed-mt5` never depend on each other**, nor on the script language. A feed produces trades.
 - **`guards` has no dependencies at all.**
-- **Replay is a source, not a chart mode** — same `FeedEvent` channel as a live venue. UI gates on `FeedCapabilities`, never on "is this a replay?".
+- **Replay is a source, not a chart mode** — the live `FeedEvent` channel; UI gates on `FeedCapabilities`, never on "is this a replay?".
 - Feeds and symbols come from config (`crates/app/config/feeds.toml`, `QUANTICK_CONFIG` or `./quantick.toml`), never hardcoded.
 
 ## Non-negotiable design rules
