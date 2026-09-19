@@ -1,4 +1,5 @@
 //! The indicator owner's worker, layout and control recipients at the frame boundary.
+use super::ControlPort;
 use super::QuantickApp;
 use super::indicator_manager::{IndicatorEdit, SettingsChange};
 use crate::canvas_layout::MAX_CANVAS_PANES;

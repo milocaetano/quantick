@@ -31,7 +31,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 use super::{
     gateway::ControlAccess,
@@ -61,8 +61,12 @@ pub(crate) const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 /// it lives in (the journal, the trace), the trusted actor, and the resolved
 /// input; it returns the structured result the registry's output schema
 /// describes.
-pub(crate) type ActionHandler =
-    fn(&mut QuantickApp, &mut ControlAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
+pub(crate) type ActionHandler = fn(
+    &mut ControlWindow,
+    &mut ControlAccess,
+    &ActorContext,
+    &Value,
+) -> Result<Value, ControlError>;
 
 /// The step that turns what a caller wrote into what actually happened, before
 /// anything happens.
@@ -75,11 +79,11 @@ pub(crate) type ActionHandler =
 /// than what was asked (contract §11), and an action with nothing to resolve
 /// uses [`identity_resolution`] and pays nothing.
 pub(crate) type ActionResolver =
-    fn(&QuantickApp, &ActorContext, Value) -> Result<Value, ControlError>;
+    fn(&ControlWindow, &ActorContext, Value) -> Result<Value, ControlError>;
 
 /// The resolver of an action whose input is already exactly what it will do.
 fn identity_resolution(
-    _app: &QuantickApp,
+    _app: &ControlWindow,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -331,7 +335,7 @@ fn mark_descriptor() -> CapabilityDescriptor {
 /// A mark's resolver: what is under the pointer *now* becomes part of the
 /// input, so the trace line and a replay of it name the same bar.
 fn resolve_mark(
-    app: &QuantickApp,
+    app: &ControlWindow,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -353,7 +357,7 @@ fn resolve_mark(
 /// the hotkey, the hook, the tests, a replayed trace entry and any authorized
 /// agent.
 fn create_mark(
-    _app: &mut QuantickApp,
+    _app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

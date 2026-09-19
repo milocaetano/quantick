@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::QuantickApp,
+    app::ControlWindow,
     feed::{FeedConnectionState, FeedNotice},
 };
 
@@ -199,11 +199,11 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> FeedSnapshot {
+fn revision(app: &ControlWindow) -> FeedSnapshot {
     snapshot(app, None)
 }
 
-fn project(app: &QuantickApp, context: CaptureContext) -> FeedSnapshot {
+fn project(app: &ControlWindow, context: CaptureContext) -> FeedSnapshot {
     snapshot(app, Some(context.captured_at_unix_ms))
 }
 
@@ -243,11 +243,11 @@ pub(crate) fn market_data_provenance(
     }
 }
 
-fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
-    let config = app.control_reads().config();
+fn snapshot(app: &ControlWindow, now_ms: Option<i64>) -> FeedSnapshot {
+    let config = app.tab_reads().config();
     FeedSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {

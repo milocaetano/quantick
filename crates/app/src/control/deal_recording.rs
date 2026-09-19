@@ -24,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
@@ -209,7 +209,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
 }
 
 fn set(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -217,7 +217,7 @@ fn set(
     let input: DealRecordingInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_reads().tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, _config) = app
         .control_actions()
         .tab_with_config(index)
@@ -274,7 +274,7 @@ fn set(
     }
     let _ = tab;
     if let Some(on) = input.record_by_default {
-        crate::app::deal_recording_wiring::set_default(app, on);
+        app.set_deal_recording_default(on);
     }
     let (tab, _config) = app
         .control_actions()

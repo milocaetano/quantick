@@ -47,7 +47,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics, paper_trading::PaperTrading};
+use crate::{app::ControlWindow, metrics, paper_trading::PaperTrading};
 
 use super::{
     actions::{ActionRegistry, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -241,7 +241,7 @@ pub(crate) struct WorkingOrderView {
 }
 
 /// Turn the venue's answer into the result, whatever the call was.
-fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
+fn answer(app: &ControlWindow, events: &[VenueEvent]) -> TradeResult {
     let rejected_because = events.iter().find_map(|event| match event {
         VenueEvent::Rejected(reason) => Some(reason.to_string()),
         _ => None,
@@ -253,24 +253,24 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
     });
     TradeResult {
         selected_strategy: app
-            .control_reads()
+            .tab_reads()
             .active_paper()
             .and_then(|paper| paper.account().selected_order_strategy())
             .map(|strategy| strategy.name.clone()),
         ruler_ticks: app
-            .control_reads()
+            .tab_reads()
             .active_paper()
             .map_or(0, crate::paper_trading::PaperTrading::ruler_ticks),
         accepted: rejected_because.is_none(),
         rejected_because,
         order_id,
         mark_price: app
-            .control_reads()
+            .tab_reads()
             .active_paper()
             .and_then(PaperTrading::mark_price)
             .map(|price| price.to_string()),
         working_orders: app
-            .control_reads()
+            .tab_reads()
             .active_paper()
             .map(PaperTrading::working_orders)
             .unwrap_or_default()
@@ -347,7 +347,7 @@ fn to_value(result: TradeResult) -> Result<Value, ControlError> {
 }
 
 fn place_order(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -396,10 +396,7 @@ fn place_order(
     // that ladder would be the two-surfaces bug this rule exists to
     // prevent.
     let bracket = if named.is_empty() {
-        let paper = app
-            .control_reads()
-            .active_paper()
-            .ok_or_else(no_chart_open)?;
+        let paper = app.tab_reads().active_paper().ok_or_else(no_chart_open)?;
         let reference = intent
             .price
             .or_else(|| paper.account().mark_price())
@@ -427,7 +424,7 @@ fn place_order(
 }
 
 fn bracket_order(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -459,7 +456,7 @@ fn bracket_order(
 }
 
 fn cancel_order(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -680,7 +677,7 @@ fn set_ruler_descriptor() -> CapabilityDescriptor {
 }
 
 fn select_strategy(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -711,7 +708,7 @@ fn select_strategy(
 }
 
 fn set_ruler(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -751,7 +748,7 @@ fn set_instrument_money_descriptor() -> CapabilityDescriptor {
 }
 
 fn set_risk(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -840,7 +837,7 @@ fn set_risk(
 }
 
 fn set_instrument_money(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

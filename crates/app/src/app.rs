@@ -27,6 +27,7 @@ pub(crate) mod control_host;
 #[cfg(test)]
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::control_quick_range_actions;
+pub(crate) use control_host::{ControlPort, ControlWindow};
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 pub(crate) mod drawing_controller;
@@ -414,39 +415,6 @@ impl QuantickApp {
         }
     }
 
-    /// What the control plane may read of the window: every root an
-    /// on-demand projection reads, borrowed once. See
-    /// [`control_host::ControlReads`].
-    pub(crate) fn control_reads(&self) -> control_host::ControlReads<'_> {
-        control_host::ControlReads {
-            tabs: &self.tabs,
-            config: &self.config,
-            footprint_config: &self.footprint_config,
-            style: &self.style,
-            toolrail: &self.toolrail,
-            chrome: &self.chrome,
-            dock: &self.dock,
-            tz: self.tz,
-            presets: &self.drawings.presets,
-            workspace: &self.workspace,
-            health: &self.health,
-            history: &self.history,
-            replay_view: &self.replay_view,
-        }
-    }
-
-    /// What the cockpit tier may change: the tabs an action targets and the
-    /// lanes the assistant answers on. See [`control_host::ControlActions`].
-    pub(crate) fn control_actions(&mut self) -> control_host::ControlActions<'_> {
-        control_host::ControlActions {
-            tabs: &mut self.tabs,
-            config: &self.config,
-            agent_popup: &mut self.surfaces.agent_popup,
-            toast: &mut self.surfaces.toast,
-            audio: &mut self.audio,
-        }
-    }
-
     /// The active tab beside the config it reads.
     ///
     /// Split here, once, because almost every tab operation needs both and
@@ -489,81 +457,6 @@ impl QuantickApp {
         self.active_tab_mut().drawing_pane_mut()
     }
 
-    /// Invoke one registered control action from inside the application,
-    /// attributed to the human at this window (or to automation when a
-    /// control trace replays it). The hotkey, the `QUANTICK_CONTROL_MARK`
-    /// hook and the tests all arrive here; there is no second path.
-    ///
-    /// On the root because the gateway operates on the root: it takes the
-    /// whole window and reads it through [`Self::control_reads`] and
-    /// [`Self::control_actions`].
-    pub(crate) fn control_action(
-        &mut self,
-        capability_id: &str,
-        capability_version: u32,
-        origin: crate::control::ActionOrigin,
-        input: serde_json::Value,
-    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control.control_access.take() else {
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "control access is not installed",
-            ));
-        };
-        let outcome =
-            access.invoke_local_action(self, capability_id, capability_version, input, origin);
-        self.control.control_access = Some(access);
-        outcome
-    }
-
-    /// Invoke one registered action as an *agent* would, from inside this
-    /// window. The hooks use it so a screenshot shows a real assistant's
-    /// object, attribution and all, without a client on the socket.
-    #[cfg(any(feature = "control-harness", test))]
-    pub(super) fn run_agent_action(
-        &mut self,
-        capability_id: &str,
-        input: serde_json::Value,
-    ) -> Result<serde_json::Value, quantick_control::error::ControlError> {
-        let Some(mut access) = self.control.control_access.take() else {
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "control access is not installed",
-            ));
-        };
-        // No identity, no actor to sign with: the same structured refusal an
-        // action gets, rather than a panic on the first frame.
-        let Some(actor) = access.hook_agent_actor() else {
-            self.control.control_access = Some(access);
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "this window has no control identity to act with",
-            ));
-        };
-        let outcome = access.invoke_local_action(
-            self,
-            capability_id,
-            1,
-            input,
-            crate::control::ActionOrigin::Remote(Box::new(actor)),
-        );
-        self.control.control_access = Some(access);
-        outcome
-    }
-
-    /// A launch hook's action, with its failure reported where a scripted run
-    /// will see it: the hook is fire-and-forget, so nothing else would.
-    #[cfg(any(feature = "control-harness", test))]
-    fn run_hook_action(&mut self, capability_id: &str, input: serde_json::Value) {
-        if let Err(error) = self.run_agent_action(capability_id, input) {
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_HOOK_ACTION_FAILED",
-                capability = capability_id,
-                error_code = %error.code,
-                error = %error.message,
-                "an annotate hook could not run its action"
-            );
-        }
-    }
-
     /// Launch scenarios invoke the registered label and notification handlers
     /// through trusted local actions with an agent actor. Unlike remote calls,
     /// these local actions do not pass through configured remote-grant admission.
@@ -594,37 +487,6 @@ impl QuantickApp {
                 "QUANTICK_CONTROL_NOTIFY names no notification channel"
             ),
             None => {}
-        }
-    }
-
-    /// The mark hotkey's body: `attention.mark.create` with the resolved
-    /// cursor target, attributed to the human.
-    pub(crate) fn take_mark(&mut self, note: Option<String>) {
-        let mut input = serde_json::Map::new();
-        if let Some(note) = note {
-            input.insert("note".to_owned(), serde_json::Value::String(note));
-        }
-        // No target: the action port resolves the pointer at the moment of
-        // the gesture and records the resolved input, so the trace line
-        // determines the mark on its own and a rerun marks the same bar.
-        match self.control_action(
-            crate::control::MARK_CAPABILITY_ID,
-            crate::control::MARK_CAPABILITY_VERSION,
-            crate::control::ActionOrigin::Human,
-            serde_json::Value::Object(input),
-        ) {
-            Ok(result) => tracing::info!(
-                target: "quantick::control",
-                event_code = "CONTROL_MARK_TAKEN",
-                sequence = %result["sequence"],
-                "mark taken"
-            ),
-            Err(error) => tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_MARK_REFUSED",
-                code = %error.code,
-                "mark refused"
-            ),
         }
     }
 

@@ -8,7 +8,7 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{app::QuantickApp, pane::PaneSide};
+use crate::{app::ControlWindow, pane::PaneSide};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -141,21 +141,21 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> WorkspaceSnapshot {
+fn revision(app: &ControlWindow) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> WorkspaceSnapshot {
+fn project(app: &ControlWindow, _context: CaptureContext) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
-    let active_index = app.control_reads().active_tab_index();
-    let tabs = app.control_reads().tabs();
-    let timezone = app.control_reads().timezone();
+fn snapshot(app: &ControlWindow) -> WorkspaceSnapshot {
+    let active_index = app.tab_reads().active_tab_index();
+    let tabs = app.tab_reads().tabs();
+    let timezone = app.chrome_reads().timezone();
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
-        app.control_reads().workspace_flags();
-    let (history_reach, venue_lead_in) = app.control_reads().history_settings();
+        app.health_reads().workspace_flags();
+    let (history_reach, venue_lead_in) = app.health_reads().history_settings();
     let history_reach_running = tabs
         .get(active_index)
         .is_some_and(|tab| tab.history_reach_running());
@@ -173,11 +173,11 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
         history_reach_span_minutes: WireU64::new(
-            app.control_reads().history_reach_span_minutes().into(),
+            app.health_reads().history_reach_span_minutes().into(),
         ),
         history_reach_running,
         venue_lead_in,
-        replay_day_before: app.control_reads().replay_day_before(),
+        replay_day_before: app.chrome_reads().replay_day_before(),
         tabs: tabs
             .iter()
             .enumerate()

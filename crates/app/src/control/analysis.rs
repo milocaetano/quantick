@@ -39,7 +39,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::QuantickApp,
+    app::ControlWindow,
     drawings::{Drawing, DrawingScope},
     indicators::IndicatorView,
     pane::{ChartPane, PaneSide},
@@ -304,8 +304,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// Everything either scope publishes and the readings do not carry belongs
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
-fn revision(app: &QuantickApp) -> Vec<AnalysisRevisionKey> {
-    app.control_reads()
+fn revision(app: &ControlWindow) -> Vec<AnalysisRevisionKey> {
+    app.tab_reads()
         .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| AnalysisRevisionKey {
@@ -394,18 +394,18 @@ struct IndicatorAnalysisRevisionKey {
     declaration: String,
 }
 
-fn project_indicators(app: &QuantickApp, _context: CaptureContext) -> IndicatorsSnapshot {
+fn project_indicators(app: &ControlWindow, _context: CaptureContext) -> IndicatorsSnapshot {
     indicators_snapshot(app)
 }
 
-fn project_drawings(app: &QuantickApp, _context: CaptureContext) -> DrawingsSnapshot {
+fn project_drawings(app: &ControlWindow, _context: CaptureContext) -> DrawingsSnapshot {
     drawings_snapshot(app)
 }
 
-fn indicators_snapshot(app: &QuantickApp) -> IndicatorsSnapshot {
+fn indicators_snapshot(app: &ControlWindow) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabIndicatorsSnapshot {
@@ -538,10 +538,10 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
     })
 }
 
-fn drawings_snapshot(app: &QuantickApp) -> DrawingsSnapshot {
+fn drawings_snapshot(app: &ControlWindow) -> DrawingsSnapshot {
     DrawingsSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabDrawingsSnapshot {

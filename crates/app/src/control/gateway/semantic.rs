@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use quantick_control::id::{EventKind, ModuleId};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 use crate::metrics;
 
 use super::super::feed::connection_state;
@@ -217,10 +217,10 @@ impl ControlAccess {
     /// nothing; with access disabled nothing runs at all, the journal starts
     /// when the human opens the door and records changes, not the state it
     /// found.
-    pub(super) fn emit_semantic_changes(&mut self, app: &QuantickApp) {
-        let tabs = app.control_reads().tabs();
+    pub(super) fn emit_semantic_changes(&mut self, app: &ControlWindow) {
+        let tabs = app.tab_reads().tabs();
         let active = &tabs[app
-            .control_reads()
+            .tab_reads()
             .active_tab_index()
             .min(tabs.len().saturating_sub(1))];
         let active_tab_id = tabs.active_id();

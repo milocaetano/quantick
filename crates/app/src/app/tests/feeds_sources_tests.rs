@@ -386,11 +386,11 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_reads().feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     // Where the popup landed, derived rather than assumed: the corner is
     // measured against the canvas, and on a flow-only layout the pane *is*
@@ -428,7 +428,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     click_chart(&mut app, &ctx, on_the_sentence);
 
     assert!(
-        app.control_reads().feed_popup_open(),
+        app.chrome_reads().feed_popup_open(),
         "a click on the popup is not a click somewhere else"
     );
     let after = {
@@ -450,16 +450,16 @@ fn a_recovered_feed_puts_the_popup_away() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_reads().feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
-    assert!(!app.control_reads().feed_popup_open());
-    assert!(app.control_reads().feed_chip_rect().is_none());
+    assert!(!app.chrome_reads().feed_popup_open());
+    assert!(app.chrome_reads().feed_chip_rect().is_none());
 }
 
 /// The floor lives for one event. Left standing it swallowed the next
@@ -563,7 +563,7 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
         app.active_tab_mut().drain_notices_at(step * 3_000);
     }
 
-    let config = app.control_reads().config().clone();
+    let config = app.tab_reads().config().clone();
     assert!(
         app.active_tab()
             .stall_at(&config, RECONNECT_BUDGET_MS)

@@ -78,13 +78,13 @@ where
 type Projector<H> = Box<dyn Fn(&H, CaptureContext) -> Box<dyn ProjectionPayload> + Send>;
 type RevisionProjector<H> = Box<dyn Fn(&H) -> Box<dyn RevisionKey> + Send>;
 
-struct RegisteredModule<H> {
+struct RegisteredModule<H: ?Sized> {
     descriptor: ModuleDescriptor,
     revision: RevisionProjector<H>,
 }
 
 /// One registered semantic snapshot scope.
-pub struct ProjectionDescriptor<H> {
+pub struct ProjectionDescriptor<H: ?Sized> {
     pub scope_id: SnapshotScopeId,
     pub module_id: ModuleId,
     pub schema_version: u32,
@@ -111,7 +111,7 @@ pub struct ProjectionPerformance {
 }
 
 /// The extensible projection port hosted by the application.
-pub struct ProjectionRegistry<H> {
+pub struct ProjectionRegistry<H: ?Sized> {
     modules: BTreeMap<ModuleId, RegisteredModule<H>>,
     scopes: BTreeMap<SnapshotScopeId, ProjectionDescriptor<H>>,
     observed_revisions: BTreeMap<ModuleId, ObservedRevision>,
@@ -120,7 +120,7 @@ pub struct ProjectionRegistry<H> {
     clock: Arc<dyn HostClock>,
 }
 
-impl<H: 'static> ProjectionRegistry<H> {
+impl<H: ?Sized + 'static> ProjectionRegistry<H> {
     /// An empty registry that stamps and times its captures by `clock`.
     pub fn new(clock: Arc<dyn HostClock>) -> Self {
         Self {

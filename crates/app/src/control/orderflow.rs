@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use quantick_orderflow::{DisplayGrouping, LaneWindow};
 
 use crate::{
-    app::QuantickApp, footprint_config::FootprintStyle, orderflow_view::OrderflowView,
+    app::ControlWindow, footprint_config::FootprintStyle, orderflow_view::OrderflowView,
     pane::ChartPane, tab::Tab,
 };
 
@@ -356,8 +356,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// averages. What this tracks is a change a person made or a connection
 /// underwent: a layer switched, a grouping changed, a setup edited, the
 /// capture state moving between disabled, syncing and live.
-fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
-    app.control_reads()
+fn revision(app: &ControlWindow) -> Vec<OrderflowRevisionKey> {
+    app.tab_reads()
         .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| OrderflowRevisionKey {
@@ -370,7 +370,7 @@ fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
                     footprint_overridden: pane.footprint.config.is_some(),
                     footprint_setup: format!(
                         "{:?}",
-                        pane.footprint_config(app.control_reads().footprint_config())
+                        pane.footprint_config(app.tab_reads().footprint_config())
                     ),
                     engine: pane.orderflow.as_ref().map(|view| {
                         let (status, _ladder, grouping) = view.cached_book();
@@ -424,10 +424,10 @@ struct EngineRevisionKey {
     config: String,
 }
 
-fn project_tape(app: &QuantickApp, context: CaptureContext) -> TapeSnapshot {
+fn project_tape(app: &ControlWindow, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabTapeSnapshot {
@@ -465,11 +465,11 @@ fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeS
     }
 }
 
-fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSnapshot {
-    let window = app.control_reads().footprint_config();
+fn project_footprint(app: &ControlWindow, _context: CaptureContext) -> FootprintSnapshot {
+    let window = app.tab_reads().footprint_config();
     FootprintSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabFootprintSnapshot {
@@ -505,10 +505,10 @@ fn footprint_setup(
     }
 }
 
-fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapshot {
+fn project_bubbles(app: &ControlWindow, _context: CaptureContext) -> BubblesSnapshot {
     BubblesSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabBubblesSnapshot {
@@ -534,10 +534,10 @@ fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapsh
     }
 }
 
-fn project_heatmap(app: &QuantickApp, _context: CaptureContext) -> HeatmapSnapshot {
+fn project_heatmap(app: &ControlWindow, _context: CaptureContext) -> HeatmapSnapshot {
     HeatmapSnapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabHeatmapSnapshot {
@@ -571,10 +571,10 @@ fn heatmap_state(view: &OrderflowView) -> HeatmapStateSnapshot {
     }
 }
 
-fn project_l2(app: &QuantickApp, _context: CaptureContext) -> L2Snapshot {
+fn project_l2(app: &ControlWindow, _context: CaptureContext) -> L2Snapshot {
     L2Snapshot {
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabL2Snapshot {

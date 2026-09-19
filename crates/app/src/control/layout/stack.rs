@@ -47,7 +47,7 @@ pub(super) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
 }
 
 fn resize(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -71,7 +71,7 @@ fn resize(
         .to_f32()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;
     let index = super::tab_index(app, input.target)?;
-    let tab_id = app.control_reads().tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let tab = app
         .control_actions()
         .tab_at_mut(index)

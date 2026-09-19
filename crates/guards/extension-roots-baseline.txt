@@ -9,7 +9,7 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-!budget 3996
+!budget 3958
 ChartState 571
-QuantickApp 3425
+QuantickApp 3387
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.

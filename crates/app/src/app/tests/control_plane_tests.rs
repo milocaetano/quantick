@@ -132,7 +132,7 @@ fn the_scene_names_the_corner_and_what_operates_it() {
     );
 
     let chip_rect = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip_rect.center());
@@ -3200,12 +3200,12 @@ plot(close)
     );
 
     let traders_index = app
-        .control_reads()
+        .tab_reads()
         .tabs()
         .position(traders_tab)
         .expect("the trader's chart is still open");
     assert_eq!(
-        app.control_reads().tabs()[traders_index]
+        app.tab_reads().tabs()[traders_index]
             .focused_pane()
             .indicators
             .all()
@@ -3251,7 +3251,7 @@ fn an_annotation_refuses_to_land_in_a_drawing_the_trader_is_still_making() {
         drawings::ChartPoint::at_time(slot as f32 + 0.5, 1.0, pane.slot_open_time(slot))
     };
     let rectangle = drawings::DrawingTool::by_id("rectangle").unwrap();
-    let fresh = app.control_reads().new_drawing(rectangle);
+    let fresh = app.tab_reads().new_drawing(rectangle);
     app.active_tab_mut().drawing_pane_mut().drawings.place_with(
         rectangle,
         &drawings::DrawingBand::Price,

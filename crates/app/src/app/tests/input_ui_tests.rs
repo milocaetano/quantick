@@ -9,24 +9,24 @@ fn the_chip_is_the_popups_only_door() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     assert!(
-        !app.control_reads().feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "a stall alone must not open anything"
     );
 
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_reads().feed_popup_open(), "the chip opens it");
+    assert!(app.chrome_reads().feed_popup_open(), "the chip opens it");
 
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());
     assert!(
-        !app.control_reads().feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "and the chip closes it"
     );
 }
@@ -47,7 +47,7 @@ fn the_corner_answers_a_hover_without_being_opened() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     let headline = app
@@ -64,7 +64,7 @@ fn the_corner_answers_a_hover_without_being_opened() {
         "the hover has to carry the reason: {headline}"
     );
     assert!(
-        !app.control_reads().feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "and it must not open anything"
     );
 }

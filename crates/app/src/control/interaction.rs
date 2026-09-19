@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::QuantickApp,
+    app::ControlWindow,
     drawings::{Drawing, DrawingBand, DrawingScope},
     orderflow_view::FlowCellHit,
     pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
@@ -182,22 +182,22 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> InteractionRevision {
+fn revision(app: &ControlWindow) -> InteractionRevision {
     InteractionRevision {
         cursor: cursor_snapshot(app),
         selection: selection_snapshot(app),
     }
 }
 
-fn project_cursor(app: &QuantickApp, _context: CaptureContext) -> CursorSnapshot {
+fn project_cursor(app: &ControlWindow, _context: CaptureContext) -> CursorSnapshot {
     cursor_snapshot(app)
 }
 
-fn project_selection(app: &QuantickApp, _context: CaptureContext) -> SelectionSnapshot {
+fn project_selection(app: &ControlWindow, _context: CaptureContext) -> SelectionSnapshot {
     selection_snapshot(app)
 }
 
-pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
+pub(crate) fn cursor_snapshot(app: &ControlWindow) -> CursorSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -205,7 +205,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
         pane.hit_test().control_pointer_hit().map(|hit| {
             pointer_snapshot(
                 app,
-                app.control_reads().tabs().active_id(),
+                app.tab_reads().tabs().active_id(),
                 tab,
                 pane,
                 side,
@@ -219,7 +219,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
         unavailable("pointer_is_not_over_a_painted_chart")
     };
     CursorSnapshot {
-        active_tab_id: WireU64::new(app.control_reads().tabs().active_id()),
+        active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: focused_side.into(),
         pointer,
@@ -229,7 +229,7 @@ pub(crate) fn cursor_snapshot(app: &QuantickApp) -> CursorSnapshot {
 }
 
 fn pointer_snapshot(
-    app: &QuantickApp,
+    app: &ControlWindow,
     tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
@@ -242,7 +242,7 @@ fn pointer_snapshot(
         } else {
             BarStateDto::InProgress
         };
-        chart::bar_snapshot(tab, pane, slot, bar, state, app.control_reads().config())
+        chart::bar_snapshot(tab, pane, slot, bar, state, app.tab_reads().config())
     });
     let axis_value = hit
         .axis_value
@@ -294,12 +294,12 @@ pub(crate) struct SelectionIdentity {
     pub paper_trade_row: Option<usize>,
 }
 
-pub(crate) fn selection_identity(app: &QuantickApp) -> SelectionIdentity {
+pub(crate) fn selection_identity(app: &ControlWindow) -> SelectionIdentity {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let drawing_pane = tab.pane(tab.drawing_side());
     SelectionIdentity {
-        active_tab_id: app.control_reads().tabs().active_id(),
+        active_tab_id: app.tab_reads().tabs().active_id(),
         focused_pane_id: tab.pane(focused_side).id,
         focused_pane_side: focused_side,
         drawing: drawing_pane
@@ -311,7 +311,7 @@ pub(crate) fn selection_identity(app: &QuantickApp) -> SelectionIdentity {
     }
 }
 
-pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
+pub(crate) fn selection_snapshot(app: &ControlWindow) -> SelectionSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -329,7 +329,7 @@ pub(crate) fn selection_snapshot(app: &QuantickApp) -> SelectionSnapshot {
         })
         .map(|(index, drawing)| drawing_selection(drawing_pane, drawing_side, index, drawing));
     SelectionSnapshot {
-        active_tab_id: WireU64::new(app.control_reads().tabs().active_id()),
+        active_tab_id: WireU64::new(app.tab_reads().tabs().active_id()),
         focused_pane_id: WireU64::new(focused_pane.id),
         focused_pane_side: focused_side.into(),
         drawing,
@@ -416,8 +416,8 @@ fn drawing_band(band: &DrawingBand) -> String {
     drawing_band_name(band).to_owned()
 }
 
-fn active_tab(app: &QuantickApp) -> &Tab {
-    &app.control_reads().tabs()[app.control_reads().active_tab_index()]
+fn active_tab(app: &ControlWindow) -> &Tab {
+    &app.tab_reads().tabs()[app.tab_reads().active_tab_index()]
 }
 
 fn shared_drawing_hit(

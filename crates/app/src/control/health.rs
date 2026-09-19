@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use quantick_orderflow::engine::OrderflowHealth;
 
 use crate::{
-    app::QuantickApp,
+    app::ControlWindow,
     loading::LoadingTask,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -225,7 +225,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// hear is that the tape *became* late, or that the hop changed, so that is
 /// what the key holds. The milliseconds stay in the projection, where a reader
 /// that asked for them gets them.
-fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
+fn revision(app: &ControlWindow) -> Vec<TabRevisionKey> {
     snapshot(app)
         .tabs
         .into_iter()
@@ -265,12 +265,12 @@ fn tape_revision_key(tape: &TapeHealthSnapshot) -> TapeRevisionKey {
     }
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
+fn project(app: &ControlWindow, _context: CaptureContext) -> HealthSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> HealthSnapshot {
-    let frame = app.control_reads().frame_metrics();
+fn snapshot(app: &ControlWindow) -> HealthSnapshot {
+    let frame = app.health_reads().frame_metrics();
     HealthSnapshot {
         frame: FrameHealthSnapshot {
             wall_average_ms: frame
@@ -290,7 +290,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
         },
         tabs: app
-            .control_reads()
+            .tab_reads()
             .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {

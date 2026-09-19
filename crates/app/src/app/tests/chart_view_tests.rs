@@ -221,14 +221,14 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_reads().feed_chip_rect().is_none(),
+        app.chrome_reads().feed_chip_rect().is_none(),
         "a chart with nothing wrong with it says nothing"
     );
 
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("a stalled feed shows the corner");
     assert!(
@@ -241,7 +241,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         .active_tab()
         .stall_at(&app.config, metrics::wall_clock_ms());
     assert!(
-        app.control_reads()
+        app.chrome_reads()
             .feed_offline_accent(stall.as_ref())
             .is_some(),
         "the line has to know what the corner knows"
@@ -250,7 +250,7 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_reads().feed_chip_rect().is_none(),
+        app.chrome_reads().feed_chip_rect().is_none(),
         "a feed that came back takes its corner with it"
     );
 }
@@ -283,12 +283,12 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
     );
 
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let output = run_frame(&mut app, &ctx);
-    assert!(app.control_reads().feed_popup_open(), "the popup is up");
+    assert!(app.chrome_reads().feed_popup_open(), "the popup is up");
     assert_eq!(
         says_it(&output),
         1,
@@ -306,11 +306,11 @@ fn a_click_on_the_chart_puts_the_popup_away() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_reads().feed_popup_open(), "the chip opened it");
+    assert!(app.chrome_reads().feed_popup_open(), "the chip opened it");
 
     // Far from both rectangles: the popup grows up and left of the chip,
     // and this is the other side of the canvas.
@@ -320,11 +320,11 @@ fn a_click_on_the_chart_puts_the_popup_away() {
         egui::pos2(chip.left() - 600.0, chip.top() - 500.0),
     );
     assert!(
-        !app.control_reads().feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "a click on the chart is a click somewhere else"
     );
     assert!(
-        app.control_reads().feed_chip_rect().is_some(),
+        app.chrome_reads().feed_chip_rect().is_some(),
         "and the corner itself stays, because the feed is still stalled"
     );
 }
@@ -346,12 +346,12 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let chip = app
-        .control_reads()
+        .chrome_reads()
         .feed_chip_rect()
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());

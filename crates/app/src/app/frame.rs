@@ -13,6 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
+use super::ControlPort;
 use quantick_chart_interaction::frame_plan::{FramePlan, FrameStage};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
@@ -412,7 +413,7 @@ impl QuantickApp {
             .active_tab()
             .stall_at(&self.config, crate::metrics::wall_clock_ms());
         let offline_accent = self
-            .control_reads()
+            .chrome_reads()
             .feed_offline_accent(scratch.stall.as_ref());
         let status = self.status_model();
         let status_response = statusbar::draw(ctx, &status, &mut self.tz, offline_accent);

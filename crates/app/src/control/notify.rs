@@ -34,7 +34,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ActionRegistry},
@@ -307,7 +307,7 @@ fn notify_descriptor(
 }
 
 fn raise_popup(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -316,7 +316,7 @@ fn raise_popup(
 }
 
 fn raise_toast(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -325,7 +325,7 @@ fn raise_toast(
 }
 
 fn sound_alert(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -335,7 +335,7 @@ fn sound_alert(
 
 /// One notification path: budget first, then the surface, then the journal.
 fn raise(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

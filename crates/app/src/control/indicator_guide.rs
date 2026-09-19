@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{app::QuantickApp, indicator_worker::SlotId};
+use crate::{app::ControlWindow, indicator_worker::SlotId};
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -90,7 +90,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
 }
 
 fn set(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

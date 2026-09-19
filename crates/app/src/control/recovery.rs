@@ -31,7 +31,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 use quantick_feed::stall::Recovery;
 
 use super::{
@@ -111,7 +111,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
 }
 
 fn reconnect(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -120,7 +120,7 @@ fn reconnect(
 }
 
 fn reload(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -132,14 +132,14 @@ fn reload(
 /// nothing else differs, so the two capabilities can never drift apart in
 /// anything but the act they name.
 fn recover(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     input: &Value,
     keep_timeline: bool,
 ) -> Result<Value, ControlError> {
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_reads().tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, config) = app
         .control_actions()
         .tab_with_config(index)
@@ -167,11 +167,14 @@ fn recover(
 }
 
 /// Which tab a call named, or the one the trader is looking at.
-pub(crate) fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<usize, ControlError> {
+pub(crate) fn tab_index(
+    app: &ControlWindow,
+    tab_id: Option<WireU64>,
+) -> Result<usize, ControlError> {
     let Some(id) = tab_id else {
-        return Ok(app.control_reads().active_tab_index());
+        return Ok(app.tab_reads().active_tab_index());
     };
-    app.control_reads()
+    app.tab_reads()
         .tabs()
         .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))

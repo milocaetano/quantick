@@ -1,6 +1,5 @@
 //! Existing registered script actions: authority and shell composition.
-use super::QuantickApp;
-use super::indicator_manager::IndicatorEdit;
+use super::ControlWindow;
 use crate::control::{ControlAccess, script::*};
 use quantick_control::{
     error::{ControlError, codes},
@@ -9,7 +8,7 @@ use quantick_control::{
 use serde_json::Value;
 
 pub(crate) fn attach_script(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -35,19 +34,9 @@ pub(crate) fn attach_script(
         .recorded_author()
         .map_or(actor.actor_kind, |recorded| recorded.actor_kind);
     let by_operator = attached_by != quantick_control::wire::ActorKind::HumanUi;
-    let target = (app.tabs.active_id(), app.active_tab().focused_side());
-    let attached = app.indicators.attach_script(
-        app.tabs
-            .runtime_mut(app.tabs.active_index())
-            .pane_mut(target.1),
-        target,
-        input.name.clone(),
-        input.source,
-        by_operator,
-    );
-    let owner = attached.target;
-    app.apply_indicator_edit(IndicatorEdit::Attached(attached));
-    let (tab_id, pane_side, slot) = (owner.tab, owner.side.into(), owner.slot);
+    let (tab_id, pane_side, slot) =
+        app.attach_script(input.name.clone(), input.source, by_operator);
+    let pane_side = pane_side.into();
     let result = AttachResult {
         slot_id: WireU64::new(slot.0),
         tab_id: WireU64::new(tab_id),
@@ -61,28 +50,20 @@ pub(crate) fn attach_script(
 }
 
 pub(crate) fn detach_script(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: DetachInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let target = app.indicators.operator_target(input.slot_id.get())
-        .map_err(|()| {
-            known_error(
-                codes::PERMISSION_DENIED,
-                "that indicator is the trader's own; this tier detaches only what an operator attached",
-                false,
-            )
-        })?;
-    let detached = if let Some(target) = target {
-        app.apply_indicator_edit(IndicatorEdit::Remove(target));
-        app.indicators.operator_slots.remove(&target);
-        true
-    } else {
-        false
-    };
+    let detached = app.detach_operator_script(input.slot_id.get()).map_err(|()| {
+        known_error(
+            codes::PERMISSION_DENIED,
+            "that indicator is the trader's own; this tier detaches only what an operator attached",
+            false,
+        )
+    })?;
     let result = DetachResult {
         slot_id: input.slot_id,
         detached,

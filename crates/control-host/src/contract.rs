@@ -64,7 +64,7 @@ impl ContractBuilder {
     }
 
     /// Validate the scope catalogue once, against this same authority.
-    pub fn build<P, H: 'static>(
+    pub fn build<P, H: ?Sized + 'static>(
         self,
         projections: &ProjectionRegistry<H>,
     ) -> Result<CapabilityContract<P>, RegistryError> {

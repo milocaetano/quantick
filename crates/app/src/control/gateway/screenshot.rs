@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use quantick_control::error::codes;
 use quantick_control::limits::{CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::{
     CONTROL_MAX_SCREENSHOT_WAITERS, CONTROL_SCREENSHOT_GRACE_MS, ControlAccess, RawScreenshot,
@@ -34,7 +34,7 @@ impl ControlAccess {
     #[cfg(test)]
     pub(crate) fn publish_screenshot_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         raw: RawScreenshot,
     ) {
         self.accept_screenshot(app, raw);
@@ -95,7 +95,7 @@ impl ControlAccess {
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn service_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         self.harvest_screenshot(app, ctx);
@@ -112,7 +112,7 @@ impl ControlAccess {
     /// something that should happen quietly (threat model O-18).
     pub(super) fn harvest_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         if !self.screenshot_armed {
@@ -158,7 +158,7 @@ impl ControlAccess {
     /// The single door for pixels entering the control plane, so the notice
     /// cannot be bypassed by whatever hands them over — the window's own
     /// screenshot event today, a test's fixture in the same breath.
-    pub(super) fn accept_screenshot(&mut self, app: &mut QuantickApp, raw: RawScreenshot) {
+    pub(super) fn accept_screenshot(&mut self, app: &mut ControlWindow, raw: RawScreenshot) {
         self.screenshot_armed = false;
         self.screenshot = Some(raw);
         app.control_actions()
@@ -172,7 +172,7 @@ impl ControlAccess {
     /// frame of every session where no client asked for a picture.
     pub(super) fn serve_awaiting_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         generation: u64,
         ctx: &eframe::egui::Context,
         frame_started: Instant,

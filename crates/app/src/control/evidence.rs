@@ -471,8 +471,7 @@ pub(crate) fn capture_prevalidated(
         .projections
         .capture(context.app, context.instance_id, &input.scopes)?;
     let events = recent_events(context.journal, context.instance_id, input.event_limit)?;
-    let (configuration, mut pending_gaps) =
-        redact_configuration(context.app.control_reads().config());
+    let (configuration, mut pending_gaps) = redact_configuration(context.app.tab_reads().config());
     let screenshot = if input.screenshot {
         let taken = context.screenshot.take();
         if taken.is_none() {

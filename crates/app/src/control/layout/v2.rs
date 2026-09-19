@@ -43,7 +43,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::super::{actions::ActionRegistry, gateway::ControlAccess, types::canonical_f64};
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
@@ -152,7 +152,7 @@ fn exact(answer: Value) -> Result<Value, ControlError> {
 }
 
 fn apply_preset(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -161,7 +161,7 @@ fn apply_preset(
 }
 
 fn move_pane(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -170,7 +170,7 @@ fn move_pane(
 }
 
 fn collapse(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -179,7 +179,7 @@ fn collapse(
 }
 
 fn expand(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -188,7 +188,7 @@ fn expand(
 }
 
 fn focus(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -197,7 +197,7 @@ fn focus(
 }
 
 fn set_interval(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -206,7 +206,7 @@ fn set_interval(
 }
 
 fn set_bar_spec(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -217,7 +217,7 @@ fn set_bar_spec(
 /// Resize, with the share read as an exact decimal and handed to the v1 body
 /// as the number it has always taken — in process, where no wire is crossed.
 fn resize(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -252,7 +252,7 @@ fn resize(
     // been shown.
     let index = super::tab_index(app, input.target)?;
     let drawn = app
-        .control_reads()
+        .tab_reads()
         .tab_at(index)
         .is_some_and(|tab| tab.last_canvas_width() > 0.0);
     if !drawn {

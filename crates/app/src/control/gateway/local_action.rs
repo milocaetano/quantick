@@ -19,7 +19,7 @@ use quantick_control::{
 };
 use serde_json::Value;
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 #[cfg(any(feature = "control-harness", test))]
 use super::super::contract::{PreparedDispatch, UiReadContext};
@@ -44,7 +44,7 @@ impl ControlAccess {
     /// control trace before and after the handler runs (contract §11).
     pub(crate) fn invoke_local_action(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         capability_id: &str,
         capability_version: u32,
         input: Value,
@@ -109,9 +109,9 @@ impl ControlAccess {
         // a live tab has nothing to record. Opening the sidecar is rare and
         // off the hot path (an action is a human gesture).
         let replaying = {
-            let tabs = app.control_reads().tabs();
+            let tabs = app.tab_reads().tabs();
             let active = &tabs[app
-                .control_reads()
+                .tab_reads()
                 .active_tab_index()
                 .min(tabs.len().saturating_sub(1))];
             active
@@ -227,7 +227,7 @@ impl ControlAccess {
     #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn invoke_local_read(
         &mut self,
-        app: &QuantickApp,
+        app: &ControlWindow,
         capability_id: &str,
         input: Value,
     ) -> Result<Value, ControlError> {

@@ -107,7 +107,7 @@ fn the_tail_before_the_canvas_never_publishes_the_offline_corner() {
         app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
         staged_frame(&mut app, &ctx, order);
         staged_frame(&mut app, &ctx, order);
-        app.control_reads().feed_chip_rect()
+        app.chrome_reads().feed_chip_rect()
     };
     assert!(
         corner(&FrameStage::ORDER).is_some(),

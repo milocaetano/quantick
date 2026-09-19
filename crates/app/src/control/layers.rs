@@ -6,7 +6,7 @@ use super::{
     layout::{self, TabTarget},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
-use crate::{app::QuantickApp, pane::ChartPane};
+use crate::{app::ControlWindow, pane::ChartPane};
 use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, EventKind, ModuleId, SnapshotScopeId},
@@ -67,12 +67,12 @@ pub(crate) struct VisibilityResult {
     pub changed: bool,
 }
 fn read_layer(
-    app: &QuantickApp,
+    app: &ControlWindow,
     tab: &crate::tab::Tab,
     pane: &ChartPane,
     layer: ChartLayer,
 ) -> LayerSnapshot {
-    let blocked = pane.layer_blocked(layer, tab.capabilities(app.control_reads().config()));
+    let blocked = pane.layer_blocked(layer, tab.capabilities(app.tab_reads().config()));
     LayerSnapshot {
         id: layer.id().to_owned(),
         label: layer.label().to_owned(),
@@ -87,19 +87,19 @@ fn read_layer(
             Persistence::OrderflowPreset => "orderflow_preset",
         }
         .to_owned(),
-        requested: pane.layer_switched_on(layer, app.control_reads().style()),
+        requested: pane.layer_switched_on(layer, app.chrome_reads().style()),
         effective: pane.layer_effective(
             layer,
-            pane.layer_switched_on(layer, app.control_reads().style()),
-            tab.capabilities(app.control_reads().config()),
+            pane.layer_switched_on(layer, app.chrome_reads().style()),
+            tab.capabilities(app.tab_reads().config()),
         ),
         blocked_reason: blocked.map(|block| block.code.to_owned()),
     }
 }
-pub(crate) fn snapshot(app: &QuantickApp) -> LayersSnapshot {
+pub(crate) fn snapshot(app: &ControlWindow) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
-    for (tab_id, tab) in app.control_reads().tabs().iter_with_ids() {
+    for (tab_id, tab) in app.tab_reads().tabs().iter_with_ids() {
         for (pane, _) in tab.panes() {
             if panes.len() == MAX_SNAPSHOT_PANES {
                 omitted += 1;
@@ -124,7 +124,7 @@ pub(crate) fn snapshot(app: &QuantickApp) -> LayersSnapshot {
         omitted_panes: WireU64::new(omitted),
     }
 }
-fn project(app: &QuantickApp, _: CaptureContext) -> LayersSnapshot {
+fn project(app: &ControlWindow, _: CaptureContext) -> LayersSnapshot {
     snapshot(app)
 }
 
@@ -156,7 +156,7 @@ pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), Regis
     registry.register(descriptor, set_visibility)
 }
 fn set_visibility(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     access: &mut ControlAccess,
     actor: &ActorContext,
     value: &Value,
@@ -170,7 +170,7 @@ fn set_visibility(
         },
     )?;
     let tab = app
-        .control_reads()
+        .tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed"))?;
     let (pane, side) = tab
@@ -188,8 +188,7 @@ fn set_visibility(
         .ok_or_else(|| {
             ControlError::invalid_request("layer visibility names an unknown registered layer")
         })?;
-    if let Some(blocked) = pane.layer_blocked(layer, tab.capabilities(app.control_reads().config()))
-    {
+    if let Some(blocked) = pane.layer_blocked(layer, tab.capabilities(app.tab_reads().config())) {
         let mut error = ControlError::new(
             ErrorCode::new(codes::CAPABILITY_UNAVAILABLE).expect("static error code"),
             blocked.explanation,
@@ -198,11 +197,11 @@ fn set_visibility(
         error.context.details = Some(serde_json::json!({ "reason": blocked.code }));
         return Err(error);
     }
-    let before = pane.layer_switched_on(layer, app.control_reads().style());
+    let before = pane.layer_switched_on(layer, app.chrome_reads().style());
     app.layer_wiring()
         .set_visible(index, side, layer, input.visible);
     let tab = app
-        .control_reads()
+        .tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed"))?;
     let pane = tab.pane(side);
@@ -210,7 +209,7 @@ fn set_visibility(
         tab_id: input.tab_id,
         pane_id: input.pane_id,
         layer: read_layer(app, tab, pane, layer),
-        changed: before != pane.layer_switched_on(layer, app.control_reads().style()),
+        changed: before != pane.layer_switched_on(layer, app.chrome_reads().style()),
     })
     .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     // Every admitted application, including a no-op, has a bounded readback.

@@ -28,7 +28,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{app::QuantickApp, canvas_layout, tab::CanvasLayout};
+use crate::{app::ControlWindow, canvas_layout, tab::CanvasLayout};
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -194,7 +194,7 @@ pub(crate) struct LayoutTabResult {
 
 /// The strip as the control plane reports it — one reading for the layout
 /// calls and `observe.workspace` alike.
-pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
+pub(crate) fn layout_tabs(app: &ControlWindow) -> Vec<LayoutTabSnapshot> {
     // "Active" on the wire is what the strip lights: the focused pane's
     // layout. Every pane's own is in `workspace.summary`.
     layout_tabs_marking(app, app.layout_state().focused_pane_layout())
@@ -206,7 +206,7 @@ pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
 /// the focused pane's layout to a client that just switched a background one
 /// tells it its call did not land, when it did.
 fn layout_tabs_marking(
-    app: &QuantickApp,
+    app: &ControlWindow,
     active: crate::layouts::LayoutId,
 ) -> Vec<LayoutTabSnapshot> {
     app.layout_state()
@@ -374,7 +374,7 @@ fn tab_descriptor(
 /// answers about the focused pane, which is what a rename or a delete moved
 /// nothing away from.
 fn tab_result(
-    app: &QuantickApp,
+    app: &ControlWindow,
     changed: bool,
     subject: Option<crate::layouts::LayoutId>,
 ) -> Result<Value, ControlError> {
@@ -398,7 +398,7 @@ fn tab_result(
 }
 
 fn resolve_layout_tab(
-    app: &QuantickApp,
+    app: &ControlWindow,
     target: &LayoutTabTarget,
 ) -> Result<crate::layouts::LayoutId, ControlError> {
     let by_id = target
@@ -441,7 +441,7 @@ fn layout_error(error: crate::layouts::LayoutError) -> ControlError {
 }
 
 fn tab_switch(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -456,7 +456,7 @@ fn tab_switch(
         },
     )?;
     let tab = app
-        .control_reads()
+        .tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let side = match input.pane {
@@ -471,7 +471,7 @@ fn tab_switch(
         }
         None => tab.focused_side(),
     };
-    let tab_id = app.control_reads().tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let changed = app
         .layout_adapter()
         .switch_pane_layout(tab_id, side, id)
@@ -480,7 +480,7 @@ fn tab_switch(
 }
 
 fn tab_create(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -495,7 +495,7 @@ fn tab_create(
 }
 
 fn tab_rename(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -573,24 +573,24 @@ pub(super) fn descriptor(
 /// A tab id that no longer exists is refused rather than resolved to the
 /// active one: a caller that named a tab meant that tab, and quietly acting on
 /// a different market is the worst answer available.
-pub(super) fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
+pub(super) fn tab_index(app: &ControlWindow, target: TabTarget) -> Result<usize, ControlError> {
     let Some(id) = target.tab_id else {
-        return Ok(app.control_reads().active_tab_index());
+        return Ok(app.tab_reads().active_tab_index());
     };
-    app.control_reads()
+    app.tab_reads()
         .tabs()
         .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 
-fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, ControlError> {
+fn result(app: &ControlWindow, index: usize, changed: bool) -> Result<Value, ControlError> {
     let tab = app
-        .control_reads()
+        .tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
-        tab_id: WireU64::new(app.control_reads().tabs().id_at(index)),
+        tab_id: WireU64::new(app.tab_reads().tabs().id_at(index)),
         preset_id: tab.layout.preset().id.to_owned(),
         pane_count: WireU64::new(tab.pane_count() as u64),
         focused_pane: WireU64::new(focused),
@@ -604,7 +604,7 @@ fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, Contr
 }
 
 fn apply_preset(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -634,7 +634,7 @@ fn apply_preset(
 }
 
 fn move_pane(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -643,10 +643,10 @@ fn move_pane(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    app.control_reads()
+    app.tab_reads()
         .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let tab_id = app.control_reads().tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     // The one reposition path — the same call the View menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
     let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
@@ -654,7 +654,7 @@ fn move_pane(
 }
 
 fn resize(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -695,7 +695,7 @@ fn resize(
 }
 
 fn collapse(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -704,7 +704,7 @@ fn collapse(
 }
 
 fn expand(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -713,7 +713,7 @@ fn expand(
 }
 
 fn set_collapsed(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     input: &Value,
     collapsed: bool,
 ) -> Result<Value, ControlError> {
@@ -730,7 +730,7 @@ fn set_collapsed(
 }
 
 fn focus(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -755,7 +755,7 @@ fn focus(
 }
 
 fn set_interval(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -801,7 +801,7 @@ fn set_interval(
 }
 
 fn set_bar_spec(
-    app: &mut QuantickApp,
+    app: &mut ControlWindow,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
