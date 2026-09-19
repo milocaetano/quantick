@@ -428,8 +428,12 @@ the advice returns on the attempt that passes.
 
 Silence covers everything it cannot determine — no `python3` or `python` that
 runs, no calculator in the worktree, no recorded ceiling, a measurement that
-fails, a review base it cannot resolve, or a branch whose prefix the ceiling
-was never about. The ceiling is the median of the feature rows in the ledger,
+fails or outlives its 20-second budget, a review base it cannot resolve, or a
+branch whose prefix the ceiling was never about. The budget matters: the
+calculator takes a third of a second on an ordinary branch and 24 seconds on
+the largest branch in the ledger, and a stall in front of `gh pr create` costs
+more than the line it would have printed, which the pull request comment
+prints anyway. The ceiling is the median of the feature rows in the ledger,
 and a warning on a `docs/` branch would cite a number that came from somewhere
 else. On Windows the interpreter matters: `python3` is on PATH as the
 Microsoft Store alias, which resolves, prints "Python was not found" and exits

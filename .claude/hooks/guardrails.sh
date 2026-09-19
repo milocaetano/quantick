@@ -696,15 +696,28 @@ read_cost_advisory() {
     # none, which is the point: there is no row to ask for before the pull
     # request exists.
     advisory_pr=${3:-}
+
+    # A bound on how long advice may delay a command. The calculator is fast
+    # on an ordinary branch - a third of a second here - but it walks every
+    # changed file's references, and the largest branch in the ledger, 408
+    # changed files, takes 24 seconds. That is a stall in front of `gh pr
+    # create`, for a line the pull request comment will print anyway. Past the
+    # budget the advisory is dropped, like every other thing it cannot
+    # determine in time.
+    advisory_limit=
+    command -v timeout >/dev/null 2>&1 && advisory_limit="timeout 20"
+
     for advisory_python in python3 python; do
         command -v "$advisory_python" >/dev/null 2>&1 || continue
         if [ -n "$advisory_pr" ]; then
-            advisory_out=$("$advisory_python" "$advisory_script" warn \
+            advisory_out=$($advisory_limit "$advisory_python" \
+                "$advisory_script" warn \
                 --repo "$1" --base "$2" --head HEAD \
                 --branch "$advisory_branch" --pr "$advisory_pr" \
                 2>/dev/null) || continue
         else
-            advisory_out=$("$advisory_python" "$advisory_script" warn \
+            advisory_out=$($advisory_limit "$advisory_python" \
+                "$advisory_script" warn \
                 --repo "$1" --base "$2" --head HEAD \
                 --branch "$advisory_branch" 2>/dev/null) || continue
         fi
