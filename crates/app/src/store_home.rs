@@ -66,6 +66,12 @@ pub(crate) fn writes_refused() -> Option<String> {
 /// Ask before writing `path`: `Err` with the reason, logged, when this
 /// session writes no store.
 pub(crate) fn guard_write(path: &Path) -> Result<(), String> {
+    guard_writes(&path.display())
+}
+
+/// [`guard_write`] for a write that touches several stores, named by
+/// `target` rather than by one path.
+pub(crate) fn guard_writes(target: &dyn std::fmt::Display) -> Result<(), String> {
     match writes_refused() {
         None => Ok(()),
         Some(reason) => {
@@ -73,7 +79,7 @@ pub(crate) fn guard_write(path: &Path) -> Result<(), String> {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "STORE_WRITE_REFUSED",
-                path = %path.display(),
+                path = %target,
                 reason = %reason,
                 action = "nothing_written",
                 "this session writes no store"
