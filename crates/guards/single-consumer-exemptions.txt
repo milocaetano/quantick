@@ -8,16 +8,19 @@
 # crate that is gone, or no longer has exactly one consumer, is itself a
 # finding: delete the line.
 #
-# The five below were recorded when the guard landed, at main bcfb5f19, so the
-# change could land green. They are the finding, not a verdict that each is
-# fine: every one is a crate that left `app`'s line count without yet giving a
-# second consumer anything to link. A line leaves when its crate gains a
-# consumer or folds back into the one it has.
+# The three below are what remains of the five recorded when the guard landed,
+# at main bcfb5f19, so that change could land green. They are the finding, not
+# a verdict that each is fine: every one is a crate that left `app`'s line
+# count without yet giving a second consumer anything to link. A line leaves
+# when its crate gains a consumer or folds back into the one it has.
 #
 # The five after them were recorded when campaign #542 (outside-eight) and the
 # guard (#544) met on main at 712180fb: each crate left `app` in the campaign
 # and the guard had not seen it. `control-host` and `orderflow` left the list
-# the same day, having gained a second consumer.
+# the same day, having gained a second consumer: `control-schema` in both
+# cases. What their lines said was still open stays open — neither `mcp` nor
+# `backtest` consumes them yet, and that, not a sibling of `app`, is what the
+# split is for.
 
 feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
 paper consumed by `app` only in shipped code; `backtest` links it as a dev-dependency to prove the paper account in a test, which the rule does not count. Open: a backtest report built on the paper account would make it a second consumer.
