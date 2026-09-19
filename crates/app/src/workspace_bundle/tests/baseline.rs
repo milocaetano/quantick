@@ -53,6 +53,10 @@ fn baseline_unknown_notices_precede_validation_error_but_not_version_error() {
         let bundle: Bundle = toml::from_str(&text).unwrap();
         let stores = [store("known")];
         let error = tracing::subscriber::with_default(subscriber, || {
+            // A parallel test that reached the notice's callsite while no
+            // scoped subscriber was alive cached it as never-enabled; the
+            // cache is rebuilt with this one in place before it is read.
+            tracing::callsite::rebuild_interest_cache();
             apply(&bundle, &stores, &|_| {
                 panic!("validation must prevent all path resolution")
             })
