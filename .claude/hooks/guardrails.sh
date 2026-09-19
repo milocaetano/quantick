@@ -30,7 +30,10 @@
 #                     `ai-review` threads and recorded AI-review completion.
 #                     Threads are counted by the sibling script
 #                     that posts them — so the reviewer and the gate share
-#                     one definition of an open finding.
+#                     one definition of an open finding. Both also want
+#                     full CI (`ci` and `windows`) green at the exact HEAD,
+#                     read by the sibling `full_ci.sh`: draft pushes run
+#                     only the fast job, so readiness is where it is owed.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
 #                     already landed); says the gate is coming and how to
 #                     satisfy it.
@@ -805,6 +808,20 @@ pr_gate() {
 
     if [ "$gate_open" -gt 0 ]; then
         deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
+    fi
+
+    # Draft pushes run only the fast job, so readiness is where full CI is
+    # owed: the `ci` and `windows` verdicts at the exact reviewed HEAD. The
+    # sibling script is the one definition the final verifier reads too.
+    full_ci_script="$(dirname "$0")/full_ci.sh"
+    [ -f "$full_ci_script" ] ||
+        ask '"Full CI at the exact head cannot be verified because full_ci.sh is not beside the gate; the fast draft job is not readiness evidence."'
+    full_ci_reason=$(sh "$full_ci_script" verify "$dir" 2>&1 >/dev/null)
+    full_ci_status=$?
+    if [ "$full_ci_status" -eq 2 ]; then
+        ask "\"Full CI at the exact head could not be read from GitHub; unknown is not green. $full_ci_reason\""
+    elif [ "$full_ci_status" -ne 0 ]; then
+        deny "\"Full final-head CI gates \`gh pr $gate_action\`: $full_ci_reason The draft's fast job is a signal, not the verdict. Run full CI on this head with \`gh pr edit $gate_pr --add-label full-ci\`, wait for \`ci\` and \`windows\` to pass, then retry.\""
     fi
 
     if [ "$gate_action" = merge ]; then

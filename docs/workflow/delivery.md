@@ -54,7 +54,7 @@ evidence validity and new regressions; it explicitly carries forward unaffected
 conclusions and issues a new verdict for the current key. Missing prior report,
 changed base, changed scope or uncertain impact requires the applicable full
 review. A full final campaign review remains mandatory. A follow-up is a real
-review, not permission to bless old evidence without reading the change.
+review, never a blessing of old evidence over unread change.
 
 Batch compatible corrections before freezing the branch for review. A report
 on a moving head is not final evidence. Do not repeatedly rebuild dossiers or
@@ -112,7 +112,9 @@ authorization URL; delegated renewals link it. A changed URL alone grants nothin
 ## Validation follows changed inputs
 
 Full required CI at the final PR head is mandatory in every path. A missing,
-pending or failed check never counts as green. Local verification is:
+pending, failed or skipped check never counts as green. Draft fast CI is a
+signal; ready needs `ci` and `windows` at the exact head
+(`.claude/hooks/README.md`). Local verification is:
 
 | Changes since the last verified tree | Required local work |
 | --- | --- |
@@ -120,12 +122,12 @@ pending or failed check never counts as green. Local verification is:
 | Only prose, skill instructions or instruction-budget metadata, with no executable/runtime-config/contract/test-input changes | Repository guards, diff hygiene, changed relative links and skill validation when applicable. Workflow/authority/validation changes additionally require the shared hook suite and independent behavioral exercises. |
 | Only an evidence/mission-record correction after successful code verification | Inspect the entire delta and referenced artifacts; run guards, diff hygiene and affected links/record checks. Reuse runtime evidence only under the proof below. |
 
-A Markdown extension alone proves nothing: a changed contract, executable
-snippet used by tests, fixture, generated input or build-consumed document uses
-the first row. Instruction changes with operational consequences use the
-second row's behavioral proof, never the evidence-only row. Tier and line count
-do not independently require repeating runtime checks for a verified prose
-delta; existing tier-based review obligations are unchanged.
+A Markdown extension alone proves nothing: a changed contract, test-used
+snippet, fixture, generated input or build-consumed document uses the first row.
+Instruction changes with operational consequences use the second row's
+behavioral proof, never the evidence-only row. Tier or line count alone never
+requires rerunning runtime checks on a verified prose delta; tier review
+obligations stand.
 
 For evidence reuse record: successful command outputs and their source tree,
 the exact verified commit/tree and current tree, unchanged base, the full
@@ -155,8 +157,8 @@ journal before mutations and full checkpoints at recovery boundaries; do not
 publish a full snapshot for an unchanged status or every individual mutation.
 After integration reassess the campaign target and schedule remaining verified
 gaps. Exhausting the original backlog below target requires replanning, not a
-claim of completion. Child completion returns control to the coordinator;
-do not ask the user to paste a new goal for every mission.
+claim of completion. Child completion returns control to the coordinator,
+never a new user-pasted goal per mission.
 
 ## Adopt changes in an existing campaign
 

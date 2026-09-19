@@ -16,12 +16,19 @@ list_threads() {
     (cd "$worktree" && sh "$script_dir/ai_review_threads.sh" list "$pr")
 }
 
+# Two rules, both required. Every registered check that ran passed; a skipped
+# one carries no verdict, and the draft-only fast job is skipped on every ready
+# head. And full CI, the named `ci` and `windows` runs, passed at the exact
+# head: without that second rule a PR whose full jobs never ran would pass on
+# the fast job alone.
 require_green_checks() {
     observed_checks=$(cd "$worktree" && gh pr checks "$pr" --json bucket --jq '.[].bucket') ||
         fail 'GitHub could not read the exact-head PR checks.'
     [ -n "$observed_checks" ] || fail 'No CI checks are registered for the current PR head.'
-    observed_nonpassing=$(printf '%s\n' "$observed_checks" | grep -v '^pass$')
+    observed_nonpassing=$(printf '%s\n' "$observed_checks" | grep -v -e '^pass$' -e '^skipping$')
     [ -z "$observed_nonpassing" ] || fail 'At least one exact-head CI check is not green.'
+    full_ci_reason=$(sh "$script_dir/full_ci.sh" verify "$worktree" 2>&1 >/dev/null) ||
+        fail "Full CI is not green at the exact head: $full_ci_reason"
 }
 
 mode=${1:-}
@@ -156,7 +163,7 @@ Review key: $key
 Architecture report: $arch_url
 Delivery report: $delivery_url
 AI report: $ai_url
-CI: all registered exact-head checks passed
+CI: full ci and windows passed at the exact head; every other check that ran passed
 AI review threads: zero returned by ai_review_threads.sh list
 <!-- end quantick-delivery-evidence:v1 -->
 EOF
@@ -173,7 +180,7 @@ seen=
 while IFS= read -r clause; do
     case "$clause" in
         '- **D1**'*) clause_id=D1; evidence="open non-draft PR $pr_url matches branch $branch at $head and base $base" ;;
-        '- **D2**'*) clause_id=D2; evidence='all registered exact-head CI buckets are pass' ;;
+        '- **D2**'*) clause_id=D2; evidence='full ci and windows passed at the exact head; every other registered check that ran is pass' ;;
         '- **D3**'*) clause_id=D3; evidence="$arch_url" ;;
         '- **D4**'*) clause_id=D4; evidence="$delivery_url" ;;
         '- **D5**'*) clause_id=D5; evidence="$ai_url; ai_review_threads.sh list returned zero" ;;

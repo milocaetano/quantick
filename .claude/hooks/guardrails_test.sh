@@ -539,6 +539,20 @@ chmod +x "$root/hooks/review_report.sh"
 
 set_threads() { printf '%s\n' "$1" > "$root/hooks/threads"; }
 
+# The full-CI verdict, stubbed the same way: `fullci` in the fixture directory
+# is the answer (`green` when absent), and the real script's own cases run
+# further down against a fake `gh`.
+cat > "$root/hooks/full_ci.sh" <<'STUB'
+#!/bin/sh
+case "$(cat "$(dirname "$0")/fullci" 2>/dev/null || printf 'green\n')" in
+    green) exit 0 ;;
+    unavailable) echo 'GitHub could not list the ci check runs.' >&2; exit 2 ;;
+    *) echo 'No ci run has a verdict at the fixture head.' >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$root/hooks/full_ci.sh"
+set_full_ci() { printf '%s\n' "$1" > "$root/hooks/fullci"; }
+
 GUARDRAILS_UNDER_TEST="$root/hooks/guardrails.sh"
 
 # A draft PR is where phase one ends and where the findings get posted, so it
@@ -688,6 +702,24 @@ done
 
 run "all required reviews and no open thread makes the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
+
+# Draft pushes run only the fast job, so readiness is where full CI is owed.
+# Every review is recorded here; only the full-CI verdict moves.
+set_full_ci missing
+run "gh pr ready is denied without full CI at the exact head" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "Full final-head CI gates"
+run "the full-CI denial names the label that runs it" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" deny "gh pr edit 42 --add-label full-ci"
+run "gh pr merge is denied without full CI at the exact head" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 42 --squash")" deny "Full final-head CI gates"
+set_full_ci unavailable
+run "an unreadable full-CI verdict asks rather than passes" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" ask "unknown is not green"
+mv "$root/hooks/full_ci.sh" "$root/hooks/full_ci.sh.away"
+run "a gate with no full_ci.sh beside it asks rather than passes" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" ask "full_ci.sh is not beside the gate"
+mv "$root/hooks/full_ci.sh.away" "$root/hooks/full_ci.sh"
+set_full_ci green
 
 printf 'missing-arch-review\n' > "$root/hooks/reports"
 run "a hand-written architecture marker cannot replace its durable report" \
@@ -1127,6 +1159,21 @@ for completion_mode in mission ship; do
     run_completion "a fully evidenced already-ready PR completes through $completion_mode" \
         "$completion_mode" pass
 done
+
+# The draft-only fast job is skipped on every ready head. Skipped is no verdict,
+# so it neither passes nor blocks; full CI is what completion requires.
+printf 'pass\nskipping\n' > "$root/completion/checks"
+run_completion "a skipped fast job does not block completion" mission pass
+set_full_ci missing
+for completion_mode in mission ship; do
+    run_completion "$completion_mode refuses a green PR whose full CI never ran at the head" \
+        "$completion_mode" fail 'Full final-head CI gates'
+done
+set_full_ci green
+printf 'pass\nfail\n' > "$root/completion/checks"
+run_completion "a failed check still blocks completion beside green full CI" \
+    mission fail 'not green'
+printf 'pass\n' > "$root/completion/checks"
 
 rm -f "$root/completion/listed-once" "$root/completion/published-report"
 set_threads late5
@@ -1889,6 +1936,56 @@ for campaign_suite in "$repo_root/tools/campaign/test-architecture-a-coordinator
         failed=$((failed + 1))
     fi
 done
+
+# --- full_ci.sh: the verdict itself ------------------------------------------
+#
+# The gates above stub this script; these cases run the real one against a
+# fake `gh` that answers the check-runs query with what the script's own jq
+# filter would print for the check named in the URL. The filter itself was
+# checked against GitHub when it was written: it keeps GitHub Actions runs,
+# drops skipped ones and takes the newest.
+full_ci_root="$root/full-ci"
+mkdir -p "$full_ci_root/bin"
+cat > "$full_ci_root/bin/gh" <<'STUB'
+#!/bin/sh
+fixture=${QUANTICK_FULL_CI_FIXTURE:?}
+[ "${1:-}" = api ] || exit 64
+case "$2" in
+    *check_name=ci\&*) answer=$(cat "$fixture/ci") ;;
+    *check_name=windows\&*) answer=$(cat "$fixture/windows") ;;
+    *) exit 64 ;;
+esac
+case "$answer" in
+    unknown-commit) echo 'gh: No commit found for SHA: 0 (HTTP 422)' >&2; exit 1 ;;
+    offline) echo 'gh: connection refused' >&2; exit 1 ;;
+esac
+printf '%s\n' "$answer"
+STUB
+chmod +x "$full_ci_root/bin/gh"
+
+full_ci_case() {
+    printf '%s\n' "$2" > "$full_ci_root/ci"
+    printf '%s\n' "$3" > "$full_ci_root/windows"
+    full_ci_out=$(QUANTICK_FULL_CI_FIXTURE="$full_ci_root" PATH="$full_ci_root/bin:$PATH" \
+        sh "$script_dir/full_ci.sh" verify "$root/wt" 2>&1)
+    full_ci_status=$?
+    if [ "$full_ci_status" -eq "$4" ]; then
+        case "$full_ci_out" in
+            *"$5"*) passed=$((passed + 1)); return ;;
+        esac
+    fi
+    printf 'FAIL full_ci.sh %s: expected exit %s with "%s", got %s: %s\n' \
+        "$1" "$4" "$5" "$full_ci_status" "$full_ci_out"
+    failed=$((failed + 1))
+}
+
+full_ci_case "both green" completed:success completed:success 0 ""
+full_ci_case "only skipped runs are no full CI" missing completed:success 1 "No ci run has a verdict"
+full_ci_case "a red windows fails" completed:success completed:failure 1 "windows run at"
+full_ci_case "a running ci is not green" in_progress:none completed:success 1 "still in_progress"
+full_ci_case "an unpushed head has no CI" unknown-commit completed:success 1 "is not on GitHub"
+full_ci_case "an unreachable GitHub is unknown, not red" offline completed:success 2 "could not list"
+full_ci_case "an unreadable answer is unknown" "" completed:success 2 "unreadable"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
