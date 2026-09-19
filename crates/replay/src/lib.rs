@@ -59,6 +59,7 @@ pub mod context;
 pub mod deals;
 pub mod format;
 pub mod library;
+pub mod recorder;
 #[cfg(test)]
 mod scratch;
 pub mod session;

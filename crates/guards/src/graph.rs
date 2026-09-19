@@ -57,18 +57,56 @@ use crate::Finding;
 /// review cites, because it is the copy that can fail.
 pub const ALLOWED: &[(&str, &[&str])] = &[
     ("anchored-studies", &["engine", "indicators"]),
+    // Queue discipline and progress counts between an owner and a worker;
+    // told the time, and whether the worker unwound.
+    ("backpressure", &[]),
+    // The headless chart model: bar state over the engine, plus the
+    // geometry, style and strip the window paints from.
+    (
+        "chart",
+        &[
+            "chart-interaction",
+            "engine",
+            "indicators",
+            "orderbook",
+            "orderflow",
+        ],
+    ),
     ("chart-interaction", &[]),
     ("control", &[]),
     ("control-local", &["control"]),
-    ("control-host", &["control"]),
+    ("control-host", &["control", "engine"]),
+    // The wire shapes of every projection and action, over the vocabularies
+    // they describe. The window binds the handlers; this crate binds none.
+    (
+        "control-schema",
+        &[
+            "control",
+            "control-host",
+            "engine",
+            "indicators",
+            "layers",
+            "orderbook",
+            "orderflow",
+            "pine",
+            "sim",
+            "stores",
+        ],
+    ),
     ("mcp", &["control", "control-local"]),
+    // The operability contract is a table and a comparison over it; the
+    // interface walks its own registries and hands them in.
+    ("operability", &[]),
     ("engine", &[]),
     ("orderbook", &[]),
     // The order-flow engine reads bars from `engine` and depth events from
     // `orderbook`, and is told the time by its caller. It sits beside
     // `indicators`: something the chart draws and `backtest` may consume.
     ("orderflow", &["engine", "orderbook"]),
-    ("replay", &["engine"]),
+    ("replay", &["civil", "engine"]),
+    // What a source is, below the host that runs one: the provider settings
+    // the config document reads and the history reach the feed host spends.
+    ("sources", &["engine"]),
     // The feed host: the port every venue implements, and the adapters that
     // run one. It sits above the three `feed-*` venue crates and `replay` —
     // a recorded session is a source like any other — and below `app`. It is
@@ -80,6 +118,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "engine",
             "orderbook",
             "replay",
+            "sources",
             "feed-binance",
             "feed-hyperliquid",
             "feed-mt5",
@@ -89,14 +128,29 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // it: it is what `sim` and any future broker adapter both speak.
     ("trading", &["engine"]),
     ("sim", &["engine", "trading"]),
+    // The cockpit stores: documents over the vocabularies they persist. The
+    // window resolves every path; the store never reads the environment.
+    (
+        "stores",
+        &[
+            "chart",
+            "engine",
+            "indicators",
+            "orderflow",
+            "sources",
+            "workspace",
+        ],
+    ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
-    ("paper", &["civil", "engine", "sim"]),
+    // `workspace` for the one store-write gate every sidecar asks (DS7).
+    ("paper", &["civil", "engine", "replay", "sim", "workspace"]),
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account below `app` and by the chart above it.
     ("civil", &[]),
     ("layers", &[]),
     ("workspace", &[]),
-    ("strategy", &["engine", "sim"]),
+    // `workspace` for the one store-write gate the preset bank asks (DS7).
+    ("strategy", &["engine", "sim", "workspace"]),
     ("indicators", &["engine"]),
     ("indicator-session", &["engine", "indicators", "pine"]),
     ("pine", &["indicators"]),

@@ -1212,22 +1212,7 @@ fn clock_text(position_ms: i64, timezone: UtcOffset) -> String {
     format!("{:02}:{:02}:{:02}", civil.hour, civil.minute, civil.second)
 }
 
-/// Group a count so 231190 reads as 231 190.
-///
-/// A plain space, not a narrow no-break one: egui's bundled fonts have no glyph
-/// for U+202F and draw the missing-character box instead, which turns a count
-/// into `231□190`.
-pub(crate) fn thousands(value: usize) -> String {
-    let digits = value.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(' ');
-        }
-        out.push(ch);
-    }
-    out
-}
+pub(crate) use quantick_replay::deals::thousands;
 
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];

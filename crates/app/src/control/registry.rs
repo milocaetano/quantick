@@ -25,8 +25,6 @@ use serde::Serialize;
 
 use crate::{app::ControlWindow, metrics};
 
-#[cfg(test)]
-pub(crate) use quantick_control_host::projection::SerializedScope;
 pub(crate) use quantick_control_host::projection::{
     CaptureContext, ProjectionRegistryError, SerializedSnapshotCapture, SnapshotCapture,
 };

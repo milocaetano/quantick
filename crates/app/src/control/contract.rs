@@ -5,25 +5,14 @@ use std::{collections::BTreeSet, fmt, sync::Arc};
 use quantick_control::{
     error::{ControlError, codes},
     handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
-    id::{
-        CapabilityId, ConfirmationClassId, EffectId, InstanceId, ModuleId, PermissionId, ProfileId,
-        RiskFlagId, SnapshotScopeId,
-    },
-    limits::{
-        CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
-        CONTROL_MAX_SNAPSHOT_SCOPES,
-    },
-    registry::{
-        CapabilityDescriptor, ControlRegistry, DefaultGrant, EffectConstraints, EffectPolicy,
-        McpHintFloor, ModuleDescriptor, PermissionDescriptor, ProfileDescriptor, RegistryError,
-    },
+    id::{CapabilityId, InstanceId, PermissionId, ProfileId},
+    registry::{ControlRegistry, PermissionDescriptor, RegistryError},
     wire::{ModuleRevision, RequestEnvelope, WireU64},
 };
 use quantick_control_host::{
     admission::TierPolicy,
-    contract::{
-        AdmittedRoute, CapabilityContract, ContractBuilder, ReadPreparation, ScopeCatalogue,
-    },
+    authority,
+    contract::{AdmittedRoute, CapabilityContract, ReadPreparation, ScopeCatalogue},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,29 +24,13 @@ use serde_json::json;
 
 use crate::app::ControlWindow;
 
-use super::trade::{TRADE_EFFECT_ID, TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 use super::{
-    actions::{
-        ANNOTATE_ATTENTION_PERMISSION_ID, ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID,
-        ANNOTATOR_PROFILE_ID, ATTENTION_MODULE_ID, ActionRegistry,
-    },
-    annotate::{ANNOTATE_CHART_PERMISSION_ID, ANNOTATE_MODULE_ID},
-    chart::{ChartWindowPage, ChartWindowQuery},
-    events::{
-        EVENTS_MODULE_ID, EVENTS_PERMISSION_ID, EventsReadInput, EventsWaitInput,
-        READ_CAPABILITY_ID as EVENTS_READ_CAPABILITY_ID,
-        WAIT_CAPABILITY_ID as EVENTS_WAIT_CAPABILITY_ID,
-    },
-    evidence::{
-        CAPTURE_CAPABILITY_ID as EVIDENCE_CAPTURE_CAPABILITY_ID, EVIDENCE_MODULE_ID,
-        EVIDENCE_PERMISSION_ID, EvidenceCaptureInput, EvidenceChunkPage, EvidenceManifest,
-        EvidenceReadInput, EvidenceStore, READ_CAPABILITY_ID as EVIDENCE_READ_CAPABILITY_ID,
-        RawScreenshot, SessionIdentity,
-    },
-    journal::{EventJournal, EventPage},
-    notify::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
-    registry::{ProjectionRegistry, SerializedSnapshotCapture},
-    script::{SCRIPT_MODULE_ID, SCRIPT_PERMISSION_ID},
+    actions::ActionRegistry,
+    chart::ChartWindowQuery,
+    events::EventsWaitInput,
+    evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
+    journal::EventJournal,
+    registry::ProjectionRegistry,
     types::known_error,
 };
 
@@ -69,151 +42,15 @@ mod preparation;
 // `EventsReadInvocation` is re-exported: the gateway completes a parked wait
 // with it and reaches it by the path it always had.
 pub(crate) use reads::EventsReadInvocation;
-use reads::{
-    prepare_chart_window, prepare_describe, prepare_diagnostics, prepare_events_read,
-    prepare_events_wait, prepare_evidence_capture, prepare_evidence_read, prepare_scene,
-    prepare_snapshot, read_capability,
+
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::DESCRIBE_CAPABILITY_ID;
+pub(crate) use quantick_control_host::authority::{
+    COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID,
+    DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, SnapshotReadInput,
 };
-
-pub(crate) const OBSERVER_PROFILE_ID: &str = "observer";
-/// The tier that may rearrange the trader's window.
-///
-/// Its own profile rather than a permission inside `annotator`, because the
-/// annotate tier's consent text makes a promise it would otherwise break: it
-/// tells the trader that nothing they grant there can change their layout.
-/// A capability that arrives under a grant whose own words deny it is a trust
-/// bug, and the trader has no way to find it.
-pub(crate) const COCKPIT_PROFILE_ID: &str = "cockpit";
-/// Rearranging the window: which charts are shown, where, and how wide.
-pub(crate) const COCKPIT_PERMISSION_ID: &str = "cockpit";
-/// The permission for the canvas layout specifically.
-pub(crate) const COCKPIT_LAYOUT_PERMISSION_ID: &str = "cockpit.layout";
-/// The effect every cockpit capability declares.
-pub(crate) const COCKPIT_EFFECT_ID: &str = "cockpit";
-/// Permission for the one cockpit act that can remove the trader's work.
-///
-/// Separate from `cockpit.layout` on purpose, and marked sensitive: a grant
-/// that lets an assistant rearrange panes must not silently also let it close
-/// an open position. The layout tier's own doc comment names that class of
-/// trust bug; this is the same rule applied to the tier that destroys.
-pub(crate) const COCKPIT_RECOVER_PERMISSION_ID: &str = "cockpit.recover";
-/// The effect for recovering a feed by rebuilding what it fed.
-pub(crate) const RECOVER_EFFECT_ID: &str = "cockpit.recover";
-/// What a capability under [`RECOVER_EFFECT_ID`] declares it may cost: the
-/// chart's timeline, and with it the paper position and every armed strategy.
-pub(crate) const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
-/// The ceiling the `trade.*` family sits under.
-///
-/// It exists because the registry requires every permission to name one, and
-/// because naming it is better than the alternatives: a trade cannot borrow
-/// the annotate tier (whose own description promises it never affects a
-/// position), and a permission with no ceiling at all is not representable.
-///
-/// **Nothing hands this profile out.** The access panel does not offer it,
-/// `default_grant` is `Denied`, and the handshake can only reach a profile
-/// the trader has granted — so today the only caller that gets past the
-/// gateway to a `trade.*` capability is the in-process operator: a hotkey,
-/// a harness hook, a deterministic test. Deciding that some connection may
-/// trade is a decision about a real account, and it is not this change's to
-/// make. The carve-out is here so that decision has somewhere to land.
-pub(crate) const TRADER_PROFILE_ID: &str = "trader";
-pub(crate) const DESCRIBE_CAPABILITY_ID: &str = "control.describe";
-pub(crate) const SNAPSHOT_CAPABILITY_ID: &str = "snapshot.read";
-pub(crate) const CHART_WINDOW_CAPABILITY_ID: &str = "chart.window.read";
-pub(crate) const DIAGNOSTICS_CAPABILITY_ID: &str = "health.diagnostics.read";
-pub(crate) const SCENE_CAPABILITY_ID: &str = "scene.read";
-
-pub(crate) const OBSERVE_PERMISSION_ID: &str = "observe";
-const OBSERVE_EFFECT_ID: &str = "observe";
-const NO_CONFIRMATION_ID: &str = "none";
-
-pub(crate) const SAFE_DEFAULT_SCOPE_IDS: &[&str] = &[
-    "observe.system",
-    "observe.workspace",
-    "observe.market",
-    "observe.chart",
-    "observe.indicators",
-    "observe.drawings",
-    "observe.orderflow",
-    "observe.replay",
-    "observe.health",
-    "observe.attention",
-    "observe.events",
-];
-
-const OBSERVER_SCOPE_IDS: &[(&str, &str, bool)] = &[
-    (
-        "observe.system",
-        "Application build and runtime identity",
-        false,
-    ),
-    ("observe.workspace", "Open tabs, layout, and focus", false),
-    (
-        "observe.market",
-        "Feed, symbol, and visible market data",
-        false,
-    ),
-    ("observe.chart", "Chart framing, viewport, and bars", false),
-    (
-        "observe.indicators",
-        "Indicator state and diagnostics",
-        false,
-    ),
-    ("observe.drawings", "Drawing state and references", false),
-    (
-        "observe.orderflow",
-        "Order-flow and local depth state",
-        false,
-    ),
-    ("observe.replay", "Replay state", false),
-    (
-        "observe.paper",
-        "Paper positions, orders, and performance",
-        true,
-    ),
-    (
-        "observe.health",
-        "Bounded structured health diagnostics",
-        false,
-    ),
-    (
-        "observe.attention",
-        "Semantic cursor and current selection",
-        false,
-    ),
-    ("observe.events", "Bounded semantic event stream", false),
-    (
-        "observe.evidence",
-        "Correlated in-memory evidence bundles",
-        true,
-    ),
-    (
-        "observe.user_text",
-        "User-authored labels, notes, and scripts",
-        true,
-    ),
-    (
-        "observe.diagnostic_logs",
-        "Redacted diagnostic log records",
-        true,
-    ),
-    (
-        "observe.screenshot",
-        "Explicit raster evidence capture",
-        true,
-    ),
-];
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EmptyInput {}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SnapshotReadInput {
-    #[schemars(length(min = 1, max = CONTROL_MAX_SNAPSHOT_SCOPES))]
-    pub scopes: Vec<SnapshotScopeId>,
-}
+#[cfg(test)]
+pub(crate) use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -222,24 +59,6 @@ pub(crate) struct ChartWindowInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<quantick_control::cursor::PageCursor>,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct DescribeResult {
-    pub instance_id: InstanceId,
-    pub application_version: String,
-    pub application_commit: String,
-    pub protocol_version: u32,
-    pub effective_profile: ProfileId,
-    pub effective_scopes: BTreeSet<PermissionId>,
-    pub effective_limits: ProtocolLimits,
-    pub modules: Vec<ModuleDescriptor>,
-    pub profiles: Vec<ProfileDescriptor>,
-    pub permissions: Vec<PermissionDescriptor>,
-    pub capabilities: Vec<CapabilityDescriptor>,
-    pub snapshot_scopes: Vec<SnapshotScopeDescriptor>,
-}
-
-pub(crate) use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 
 pub(crate) enum PreparedDispatch {
     Worker(Box<dyn PreparedWorkerRead>),
@@ -411,12 +230,13 @@ impl PreparedDispatch {
     }
 }
 
-struct PreparedCapability {
+pub(crate) struct PreparedCapability {
     dispatch: PreparedDispatch,
     dynamic_permissions: BTreeSet<PermissionId>,
 }
 
-type PrepareHandler = fn(ScopeCatalogue<'_>, &Value) -> Result<PreparedCapability, ControlError>;
+pub(crate) type PrepareHandler =
+    fn(ScopeCatalogue<'_>, &Value) -> Result<PreparedCapability, ControlError>;
 
 pub(crate) struct ObserverContract {
     contract: CapabilityContract<PrepareHandler>,
@@ -432,532 +252,40 @@ pub(crate) struct ObserverContract {
 }
 
 impl ObserverContract {
+    /// The contract this instance serves: the published authority, the
+    /// snapshot modules `projections` registers, the read capabilities bound
+    /// to this application's handlers, and the actions as external
+    /// capabilities.
     pub fn new(
         projections: &ProjectionRegistry,
         actions: Arc<ActionRegistry>,
         evidence: EvidenceStore,
     ) -> Result<Self, RegistryError> {
-        let observer = profile(OBSERVER_PROFILE_ID);
-        let annotator = profile(ANNOTATOR_PROFILE_ID);
-        let cockpit = profile(COCKPIT_PROFILE_ID);
-        let trader = profile(TRADER_PROFILE_ID);
-        let mut permissions = vec![
-            PermissionDescriptor {
-                id: permission(OBSERVE_PERMISSION_ID),
-                label: "Observe".to_owned(),
-                description: "Invoke read-only observer capabilities.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Granted,
-                profile_ceilings: BTreeSet::from([observer.clone()]),
-            },
-            // The annotate tier's floor. Every scope below it is off by
-            // default and reaches a client only when the trader ticks it in
-            // the access panel, which is also what raises the connection's
-            // ceiling to the `annotator` profile (contract §7.1).
-            PermissionDescriptor {
-                id: permission(ANNOTATE_PERMISSION_ID),
-                label: "Annotate".to_owned(),
-                description: "Add reversible state or bounded notifications; never remove existing work or affect a position.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-            // The trade tier, ceilinged at the `trader` profile — which
-            // nothing hands out. A permission with no ceiling at all is not
-            // representable (`register_permission` refuses it), so the gate
-            // is not the ceiling: it is that `configured_profile` never
-            // returns `trader` and the access panel never offers the scope.
-            // Say that here rather than something tidier, because the next
-            // person hardening this tier will read this comment and go
-            // looking for the gate it names. `annotate` promises it never
-            // affects a position, so a trade cannot borrow it, and deciding
-            // which profile *may* trade is a decision about a real account
-            // rather than a detail of the change that carved this out.
-            PermissionDescriptor {
-                id: permission(TRADE_PERMISSION_ID),
-                label: "Trade".to_owned(),
-                description: "Place, bracket and cancel orders on the charted symbol. Fills are simulated today; the permission exists so that the day they are not, nothing has to be re-decided in a hurry.".to_owned(),
-                sensitive: true,
-                default_grant: DefaultGrant::Denied,
-                profile_ceilings: BTreeSet::from([trader.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(COCKPIT_PERMISSION_ID),
-                label: "Rearrange the window".to_owned(),
-                description: "Change which charts are on screen, where they sit and how wide they are. Never places or removes an object, and never touches a position.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([cockpit.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(COCKPIT_LAYOUT_PERMISSION_ID),
-                label: "Change the chart layout".to_owned(),
-                description: "Apply a layout preset, move a chart within the stack, resize a column, collapse it to its rail or expand it again, and move focus between charts.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([cockpit.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(COCKPIT_RECOVER_PERMISSION_ID),
-                label: "Rebuild a stalled chart".to_owned(),
-                description: "Throw a stalled feed's timeline away and rebuild it, which closes any open paper position (journaled, with its reason) and disarms every strategy.".to_owned(),
-                // Marked, and off until ticked: this is the one cockpit act
-                // that ends something the trader started. Reconnecting — which
-                // keeps the timeline, the position and the strategies — needs
-                // none of this and stays under plain `cockpit`.
-                sensitive: true,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([cockpit.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(ANNOTATE_ATTENTION_PERMISSION_ID),
-                label: "Create marks".to_owned(),
-                description: "Append marks carrying the resolved cursor target to the event journal.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(ANNOTATE_CHART_PERMISSION_ID),
-                label: "Answer on the chart".to_owned(),
-                description: "Place labels, arrows and zones, attributed and removable in one action.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(NOTIFY_PERMISSION_ID),
-                label: "Interrupt with a message".to_owned(),
-                description: "Raise a popup or a toast the trader has to read and dismiss.".to_owned(),
-                sensitive: false,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(NOTIFY_SOUND_PERMISSION_ID),
-                label: "Make a sound".to_owned(),
-                description: "Play the platform's alert sound, which reaches the trader even when they are not looking at the window.".to_owned(),
-                // Off by default and marked: a sound cannot be taken back and
-                // arrives whether or not anyone is at the screen.
-                sensitive: true,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-            PermissionDescriptor {
-                id: permission(SCRIPT_PERMISSION_ID),
-                label: "Attach an indicator script".to_owned(),
-                description: "Compile a Quantick Pine script and attach the indicator it produces to a pane, with a detach that restores the pane exactly.".to_owned(),
-                sensitive: true,
-                default_grant: DefaultGrant::Prompt,
-                profile_ceilings: BTreeSet::from([annotator.clone()]),
-            },
-        ];
-        permissions.extend(
-            OBSERVER_SCOPE_IDS
-                .iter()
-                .map(|(id, description, sensitive)| PermissionDescriptor {
-                    id: permission(id),
-                    label: id.replace('.', " "),
-                    description: (*description).to_owned(),
-                    sensitive: *sensitive,
-                    default_grant: if *sensitive {
-                        DefaultGrant::Prompt
-                    } else {
-                        DefaultGrant::Granted
-                    },
-                    profile_ceilings: BTreeSet::from([observer.clone()]),
-                }),
-        );
-        permissions.sort_by(|left, right| left.id.cmp(&right.id));
-
-        let profiles = vec![
-            ProfileDescriptor {
-                id: observer.clone(),
-                label: "Observer".to_owned(),
-                inherits: BTreeSet::new(),
-                permissions: BTreeSet::new(),
-            },
-            ProfileDescriptor {
-                id: annotator.clone(),
-                label: "Annotator".to_owned(),
-                inherits: BTreeSet::from([observer.clone()]),
-                permissions: BTreeSet::new(),
-            },
-            ProfileDescriptor {
-                id: trader.clone(),
-                label: "Trader".to_owned(),
-                // Above the cockpit, so the chain stays a chain and any two
-                // profiles remain comparable — the property the handshake
-                // depends on. Inheriting is not granting: what a connection
-                // may call is its ceiling intersected with what the trader
-                // ticked, and nothing ticks this one.
-                inherits: BTreeSet::from([cockpit.clone()]),
-                permissions: BTreeSet::new(),
-            },
-            ProfileDescriptor {
-                id: cockpit.clone(),
-                label: "Cockpit".to_owned(),
-                // Inherits the annotator, and through it the observer's reads
-                // — rearranging a window you cannot see is not a coherent
-                // grant. A *ceiling* is not a grant: what a connection may
-                // actually call is the ceiling intersected with the scopes the
-                // trader ticked, so nesting cockpit above annotator hands
-                // nobody a capability they did not tick. What it does buy is
-                // the property the handshake depends on: the profiles are a
-                // chain, so any two of them are comparable.
-                //
-                // Left as a sibling of the annotator, the two ceilings
-                // overlapped without nesting, and `handshake::authorize`
-                // refuses an incomparable pair outright. A trader who ticked
-                // both tiers got the cockpit ceiling on the panel, which drops
-                // every `annotate.*` scope on the way out — and a client asking
-                // for `--profile annotator` against that grant could not
-                // connect at all.
-                inherits: BTreeSet::from([annotator.clone()]),
-                permissions: BTreeSet::new(),
-            },
-        ];
-
-        let mut registry = ContractBuilder::new(profiles, permissions)?;
-
-        registry.register_module(ModuleDescriptor {
-            id: module("control"),
-            title: "Control".to_owned(),
-            description: "Running-instance contract and authority metadata.".to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module("snapshot"),
-            title: "Snapshot".to_owned(),
-            description: "Coherent multi-module semantic captures.".to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(TRADE_MODULE_ID),
-            title: "Trade".to_owned(),
-            description:
-                "Placing, bracketing and cancelling orders on the charted symbol. Fills are simulated."
-                    .to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(EVENTS_MODULE_ID),
-            title: "Events".to_owned(),
-            description: "The bounded semantic event journal and its cursor.".to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(EVIDENCE_MODULE_ID),
-            title: "Evidence".to_owned(),
-            description:
-                "Coherent in-memory investigation bundles, read back as a paginated resource."
-                    .to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(ANNOTATE_MODULE_ID),
-            title: "Annotate".to_owned(),
-            description: "Objects an operator places on the chart, attributed and removable."
-                .to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(super::layout::LAYOUT_MODULE_ID),
-            title: "Layout".to_owned(),
-            description: "The canvas: which charts are on screen, where they sit, and how wide."
-                .to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(NOTIFY_MODULE_ID),
-            title: "Notify".to_owned(),
-            description: "Interruptions: a popup, a toast, a sound.".to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(SCRIPT_MODULE_ID),
-            title: "Indicators".to_owned(),
-            description: "Indicator slots, and the Quantick Pine scripts attached to them."
-                .to_owned(),
-        })?;
-        registry.register_module(ModuleDescriptor {
-            id: module(ATTENTION_MODULE_ID),
-            title: "Attention".to_owned(),
-            description: "Human marks: what the user pointed at, as a durable referent.".to_owned(),
-        })?;
+        let mut registry = authority::builder()?;
         for descriptor in projections.module_descriptors() {
             registry.register_module(descriptor.clone())?;
         }
-
-        registry.register_effect(EffectPolicy {
-            id: effect(ANNOTATE_EFFECT_ID),
-            permission_floor: permission(ANNOTATE_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([annotator.clone()]),
-            confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            risk_reducing_confirmation_class: None,
-            mcp_hint_floor: McpHintFloor {
-                read_only: false,
-                destructive: false,
-                idempotent: false,
-                open_world: false,
-            },
-            required_risk_flags: BTreeSet::new(),
-            constraints: EffectConstraints {
-                required_read_only: Some(false),
-                allows_destructive: false,
-                durable_requires_reversible: true,
-                irreversible_transient_risk: None,
-                allows_risk_reducing: false,
-            },
-        })?;
-        registry.register_effect(EffectPolicy {
-            id: effect(COCKPIT_EFFECT_ID),
-            permission_floor: permission(COCKPIT_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([cockpit.clone()]),
-            confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            risk_reducing_confirmation_class: None,
-            mcp_hint_floor: McpHintFloor {
-                read_only: false,
-                destructive: false,
-                // Applying the same layout twice leaves the same layout, which
-                // is what lets a client retry a dropped call without wondering
-                // what it did the first time.
-                idempotent: true,
-                open_world: false,
-            },
-            required_risk_flags: BTreeSet::new(),
-            constraints: EffectConstraints {
-                required_read_only: Some(false),
-                // Nothing here removes the trader's work. A layout that hides
-                // a pane keeps its drawings and its indicators, which is why
-                // rearranging is not destructive even when it takes a chart
-                // off the screen.
-                allows_destructive: false,
-                durable_requires_reversible: true,
-                irreversible_transient_risk: None,
-                allows_risk_reducing: false,
-            },
-        })?;
-        registry.register_effect(EffectPolicy {
-            id: effect(RECOVER_EFFECT_ID),
-            permission_floor: permission(COCKPIT_RECOVER_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([cockpit.clone()]),
-            confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            risk_reducing_confirmation_class: None,
-            mcp_hint_floor: McpHintFloor {
-                read_only: false,
-                // Follows the capabilities under it, which cannot claim
-                // `destructive` while this host refuses the expected-revision
-                // check the registry couples to it — see the note on the
-                // descriptor in `super::recovery`. The irreversibility is
-                // declared through the required risk flag below and through
-                // each capability's `reversible: false`.
-                destructive: false,
-                // Rebuilding twice rebuilds twice. Each call really does throw
-                // a timeline away, so a client must not be told a retry is
-                // free.
-                idempotent: false,
-                open_world: false,
-            },
-            // Every capability here says, in its own descriptor, that it can
-            // cost the trader their timeline.
-            required_risk_flags: BTreeSet::from([
-                RiskFlagId::new(TIMELINE_REBUILT_RISK_FLAG).expect("static risk flag is valid")
-            ]),
-            constraints: EffectConstraints {
-                required_read_only: Some(false),
-                // The one effect in this contract that may. It exists because
-                // the honest alternative was worse: a capability that destroys
-                // while declaring it does not, so that it could sit under the
-                // `cockpit` effect whose own words are "nothing here removes
-                // the trader's work".
-                allows_destructive: true,
-                // A rebuilt chart is durable and cannot be put back. Saying so
-                // here is what lets the descriptor say `reversible: false`
-                // instead of claiming a reversal it cannot perform.
-                durable_requires_reversible: false,
-                irreversible_transient_risk: None,
-                allows_risk_reducing: false,
-            },
-        })?;
-        registry.register_effect(EffectPolicy {
-            id: effect(TRADE_EFFECT_ID),
-            permission_floor: permission(TRADE_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([trader.clone()]),
-            confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            // Cancelling is risk-reducing and crosses no extra gate: taking
-            // an order off the book is the direction a trader must never be
-            // slowed down in — the same reason flatten is instant.
-            risk_reducing_confirmation_class: Some(confirmation(NO_CONFIRMATION_ID)),
-            mcp_hint_floor: McpHintFloor {
-                read_only: false,
-                destructive: false,
-                // Placing the same order twice places two orders; there is
-                // no key that could make a retry safe.
-                idempotent: false,
-                open_world: false,
-            },
-            required_risk_flags: BTreeSet::new(),
-            constraints: EffectConstraints {
-                required_read_only: Some(false),
-                allows_destructive: false,
-                durable_requires_reversible: true,
-                irreversible_transient_risk: None,
-                allows_risk_reducing: true,
-            },
-        })?;
-        registry.register_effect(super::notify::effect_policy(&annotator))?;
-        registry.register_effect(EffectPolicy {
-            id: effect(OBSERVE_EFFECT_ID),
-            permission_floor: permission(OBSERVE_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([observer]),
-            confirmation_class: confirmation(NO_CONFIRMATION_ID),
-            risk_reducing_confirmation_class: None,
-            mcp_hint_floor: McpHintFloor {
-                read_only: true,
-                destructive: false,
-                idempotent: false,
-                open_world: false,
-            },
-            required_risk_flags: BTreeSet::new(),
-            constraints: EffectConstraints {
-                required_read_only: Some(true),
-                allows_destructive: false,
-                durable_requires_reversible: false,
-                irreversible_transient_risk: None,
-                allows_risk_reducing: false,
-            },
-        })?;
-
         let mut contract: CapabilityContract<PrepareHandler> =
             registry.build(projections.inner())?;
-        contract.register_read(
-            read_capability::<EmptyInput, DescribeResult, _>(
-                DESCRIBE_CAPABILITY_ID,
-                "control",
-                "Describe observer access",
-                "Reports this instance, protocol, modules, scopes, profiles, permissions, and registered read capabilities.",
-                [OBSERVE_PERMISSION_ID],
-                None,
-            ),
-            prepare_describe,
-        )?;
-        contract.register_read(
-            read_capability::<SnapshotReadInput, SerializedSnapshotCapture, _>(
-                SNAPSHOT_CAPABILITY_ID,
-                "snapshot",
-                "Read semantic snapshot",
-                "Captures the requested registered scopes coherently on the application thread.",
-                [OBSERVE_PERMISSION_ID],
-                None,
-            ),
-            prepare_snapshot,
-        )?;
-        contract.register_read(
-            read_capability::<ChartWindowInput, ChartWindowPage, _>(
-                CHART_WINDOW_CAPABILITY_ID,
-                "chart",
-                "Read chart window",
-                "Reads a bounded append-only page of chart bars with an optional continuation cursor.",
-                [OBSERVE_PERMISSION_ID, "observe.market", "observe.chart"],
-                Some((
-                    quantick_control::cursor::PaginationConsistency::AppendOnly,
-                    CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
-                )),
-            ),
-            prepare_chart_window,
-        )?;
-        contract.register_read(
-            read_capability::<EmptyInput, SerializedSnapshotCapture, _>(
-                DIAGNOSTICS_CAPABILITY_ID,
-                "health",
-                "Read diagnostics",
-                "Captures bounded structured application, indicator, and order-flow health.",
-                [
-                    OBSERVE_PERMISSION_ID,
-                    "observe.health",
-                    "observe.indicators",
-                    "observe.orderflow",
-                ],
-                None,
-            ),
-            prepare_diagnostics,
-        )?;
-        contract.register_read(
-            read_capability::<EmptyInput, SerializedSnapshotCapture, _>(
-                SCENE_CAPABILITY_ID,
-                "scene",
-                "Read semantic scene",
-                "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
-                // The scope's own list, and for its reasons: the labels name
-                // the markets the trader has open.
-                [
-                    OBSERVE_PERMISSION_ID,
-                    "observe.attention",
-                    "observe.workspace",
-                    "observe.market",
-                ],
-                None,
-            ),
-            prepare_scene,
-        )?;
-        contract.register_read(
-            read_capability::<EventsReadInput, EventPage, _>(
-                EVENTS_READ_CAPABILITY_ID,
-                EVENTS_MODULE_ID,
-                "Read events",
-                "Reads a bounded page of the semantic event journal after a cursor or from an explicit start, and says when older events were dropped.",
-                [OBSERVE_PERMISSION_ID, EVENTS_PERMISSION_ID],
-                None,
-            ),
-            prepare_events_read,
-        )?;
-        contract.register_read(
-            read_capability::<EventsWaitInput, EventPage, _>(
-                EVENTS_WAIT_CAPABILITY_ID,
-                EVENTS_MODULE_ID,
-                "Wait for change",
-                "Parks off the application thread until the journal moves past the cursor or the timeout elapses, then reads the bounded page that completes the call.",
-                [OBSERVE_PERMISSION_ID, EVENTS_PERMISSION_ID],
-                None,
-            ),
-            prepare_events_wait,
-        )?;
-        // Read-only in the sense the effect policy means: a bundle changes no
-        // application state, touches no position and takes nothing away from
-        // the trader. What it creates is the answer itself — bounded by its
-        // own named limits, expiring on its own, and gone the moment access
-        // is withdrawn.
-        contract.register_read(
-            read_capability::<EvidenceCaptureInput, EvidenceManifest, _>(
-                EVIDENCE_CAPTURE_CAPABILITY_ID,
-                EVIDENCE_MODULE_ID,
-                "Capture evidence",
-                "Freezes the named scopes, the events around them and the effective configuration into one hashed, redacted in-memory bundle, and answers with its manifest.",
-                // The floor. Every scope the bundle actually aggregates is
-                // added per request, so a capture can never reach further
-                // than a snapshot of the same scopes would.
-                [OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
-                None,
-            ),
-            prepare_evidence_capture,
-        )?;
-        contract.register_read(
-            read_capability::<EvidenceReadInput, EvidenceChunkPage, _>(
-                EVIDENCE_READ_CAPABILITY_ID,
-                EVIDENCE_MODULE_ID,
-                "Read evidence bundle",
-                "Reads a retained bundle in chunks of its canonical text, rechecking the grant the bundle aggregated on every page.",
-                [OBSERVE_PERMISSION_ID, EVIDENCE_PERMISSION_ID],
-                Some((
-                    quantick_control::cursor::PaginationConsistency::RetainedResource,
-                    CONTROL_EVIDENCE_MAX_CHUNKS_PER_PAGE,
-                )),
-            ),
-            prepare_evidence_read,
-        )?;
+        for (descriptor, handler) in reads::bindings() {
+            contract.register_read(descriptor, handler)?;
+        }
         // Actions bind explicitly; missing read handlers never become actions.
         for descriptor in actions.descriptors() {
             contract.register_external(descriptor.clone())?;
         }
-
         Ok(Self {
             contract,
             actions,
             evidence,
         })
+    }
+
+    /// The host contract this one composes: the registry, the profiles, the
+    /// permissions and the snapshot catalogue, for a generator or a check
+    /// that reads them without the handlers.
+    pub fn capabilities(&self) -> &CapabilityContract<PrepareHandler> {
+        &self.contract
     }
 
     pub fn registry(&self) -> &ControlRegistry {
@@ -977,9 +305,7 @@ impl ObserverContract {
     }
 
     pub fn default_grant(&self) -> BTreeSet<PermissionId> {
-        std::iter::once(permission(OBSERVE_PERMISSION_ID))
-            .chain(SAFE_DEFAULT_SCOPE_IDS.iter().map(|id| permission(id)))
-            .collect()
+        authority::default_grant()
     }
 
     /// Every registered snapshot scope this grant already reaches, sorted by
@@ -989,17 +315,11 @@ impl ObserverContract {
     /// registers a scope tomorrow is in a bundle tomorrow, without an edit
     /// here or in whatever asked.
     #[cfg(any(feature = "control-harness", test))]
-    pub fn readable_scopes(&self, grant: &BTreeSet<PermissionId>) -> Vec<SnapshotScopeId> {
+    pub fn readable_scopes(
+        &self,
+        grant: &BTreeSet<PermissionId>,
+    ) -> Vec<quantick_control::id::SnapshotScopeId> {
         self.contract.readable_scopes(grant)
-    }
-
-    /// One registered snapshot scope, by id — what the retry matrix checks a
-    /// named readback against.
-    pub fn snapshot_scope(&self, id: &str) -> Option<&SnapshotScopeDescriptor> {
-        self.contract
-            .snapshot_scopes()
-            .iter()
-            .find(|descriptor| descriptor.id.as_str() == id)
     }
 
     pub fn selectable_permissions(&self) -> impl Iterator<Item = &PermissionDescriptor> {
@@ -1018,8 +338,11 @@ impl ObserverContract {
     ) -> DescribeResult {
         DescribeResult {
             instance_id,
-            application_version: env!("CARGO_PKG_VERSION").to_owned(),
-            application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
+            application_version: super::system::BUILD.application_version.to_owned(),
+            application_commit: super::system::BUILD
+                .git_commit
+                .unwrap_or("unknown")
+                .to_owned(),
             protocol_version: CURRENT_PROTOCOL_VERSION,
             effective_profile,
             effective_scopes,
@@ -1066,25 +389,8 @@ impl ObserverContract {
     }
 }
 
-fn module(id: &str) -> ModuleId {
-    ModuleId::new(id).expect("static module ID is valid")
-}
-
-fn permission(id: &str) -> PermissionId {
-    PermissionId::new(id).expect("static permission ID is valid")
-}
-
-fn profile(id: &str) -> ProfileId {
-    ProfileId::new(id).expect("static profile ID is valid")
-}
-
-fn effect(id: &str) -> EffectId {
-    EffectId::new(id).expect("static effect ID is valid")
-}
-
-fn confirmation(id: &str) -> ConfirmationClassId {
-    ConfirmationClassId::new(id).expect("static confirmation ID is valid")
-}
+#[cfg(test)]
+use quantick_control_host::authority::{module, permission, profile};
 
 #[cfg(test)]
 mod tests {
@@ -1268,15 +574,15 @@ mod tests {
         contract
             .contract
             .register_read(
-                read_capability::<EmptyInput, DescribeResult, _>(
-                    "control.second",
-                    "control",
-                    "Second observer handler",
-                    "Exercises the registered capability handler port.",
-                    [OBSERVE_PERMISSION_ID],
-                    None,
-                ),
-                prepare_describe,
+                authority::read_descriptor::<EmptyInput, DescribeResult>(&authority::ReadSpec {
+                    id: "control.second",
+                    module: "control",
+                    title: "Second observer handler",
+                    description: "Exercises the registered capability handler port.",
+                    permissions: &[OBSERVE_PERMISSION_ID],
+                    pagination: None,
+                }),
+                reads::prepare_describe,
             )
             .unwrap();
 

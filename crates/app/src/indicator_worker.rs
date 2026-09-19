@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, sync_channel};
 #[cfg(test)]
+#[path = "indicator_worker/tests/event_fixture.rs"]
 pub(crate) mod event_fixture;
 /// Transport markers stay outside the domain command vocabulary.
 pub(crate) enum WorkerCommand {
@@ -138,7 +139,7 @@ impl IndicatorWorker {
     /// Spawn the indicator thread.
     #[must_use]
     pub(crate) fn spawn() -> Self {
-        Self::spawn_with_progress(WorkerProgress::new())
+        Self::spawn_with_progress(crate::worker_progress::monotonic())
     }
 
     pub(crate) fn spawn_with_progress(progress: WorkerProgress) -> Self {
@@ -263,7 +264,7 @@ fn run_observed(
     sender: &SyncSender<IndicatorEvent>,
     progress: Arc<SharedProgress>,
 ) {
-    let _lifecycle = progress.lifecycle();
+    let _lifecycle = progress.lifecycle(std::thread::panicking);
     let mut effects = RuntimeEffects {
         output: ObservedOutput {
             sender,
@@ -1326,7 +1327,7 @@ mod incremental_lane_tests {
     fn one_batch(commands: Vec<IndicatorCommand>) -> (IndicatorViews, Vec<LaneSample>) {
         let (tx, rx) = sync_channel(INDICATOR_COMMAND_QUEUE);
         let (events, output) = sync_channel(INDICATOR_EVENT_QUEUE);
-        let progress = WorkerProgress::new();
+        let progress = crate::worker_progress::monotonic();
         let observed = progress.consumer();
         let tx = progress.bind_merging(tx, fold_commands);
         for command in commands {

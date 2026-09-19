@@ -16,99 +16,7 @@ use crate::app::ControlWindow;
 
 use super::super::trace::{TraceEntry, TraceReplay};
 use super::{ActionOrigin, ControlAccess, RecordedActor};
-
-/// A replay session whose control trace is being re-injected: the entries
-/// still due, in replay-time order.
-/// One recording's control trace, loaded once and walked by logical replay
-/// time. Keyed by the session path: two tabs on the same recording share one
-/// walk, driven by the tab that loaded it.
-pub(super) struct TraceReinjection {
-    /// The tab whose playhead drives the walk.
-    owner_tab_id: u64,
-    /// Completed entries in `(replay_elapsed_ms, sequence)` order — the
-    /// sidecar's at load time plus the actions this run recorded since, so
-    /// an in-session restart replays exactly what a fresh process would.
-    entries: Vec<TraceEntry>,
-    /// The first entry not yet injected on this pass over the session.
-    next_index: usize,
-    /// Where the playhead was last frame; a smaller value now means it moved
-    /// backwards and the walk rewinds.
-    last_elapsed_ms: i64,
-    /// The worker's rewind count last frame; a different value now means a
-    /// restart or seek happened, even if the rerun already advanced past
-    /// `last_elapsed_ms`.
-    last_rewinds: u64,
-    /// Sequences of the actions this run took during the current pass: they
-    /// joined `entries` for the next rerun and are not injected back on the
-    /// spot. Cleared by a rewind.
-    executed_this_pass: Vec<u64>,
-}
-
-/// What the replay link publishes that the walk reads once per frame.
-#[derive(Clone, Copy)]
-struct ReplayPosition {
-    elapsed_ms: i64,
-    rewinds: u64,
-    rewind_target_elapsed_ms: i64,
-}
-
-impl ReplayPosition {
-    fn of(status: &quantick_feed::replay::ReplayStatus) -> Self {
-        Self {
-            elapsed_ms: status.elapsed_ms(),
-            rewinds: status.rewinds(),
-            rewind_target_elapsed_ms: status.rewind_target_elapsed_ms(),
-        }
-    }
-}
-
-impl TraceReinjection {
-    /// Move the entries due at the position into `due`, exactly once per
-    /// pass over the session. A rewind — the worker counted a restart or a
-    /// seek, or the playhead is behind last frame's sample — moves the walk
-    /// back to the first entry at or after where the rerun began, so the
-    /// rerun injects the same actions again.
-    fn collect_due(&mut self, position: ReplayPosition, due: &mut Vec<TraceEntry>) {
-        let rewound_to = if position.rewinds != self.last_rewinds {
-            Some(position.rewind_target_elapsed_ms)
-        } else if position.elapsed_ms < self.last_elapsed_ms {
-            Some(position.elapsed_ms)
-        } else {
-            None
-        };
-        if let Some(start_elapsed_ms) = rewound_to {
-            self.next_index = self
-                .entries
-                .partition_point(|entry| entry.replay_elapsed_ms < start_elapsed_ms);
-            self.executed_this_pass.clear();
-        }
-        self.last_rewinds = position.rewinds;
-        self.last_elapsed_ms = position.elapsed_ms;
-        while let Some(entry) = self.entries.get(self.next_index)
-            && entry.replay_elapsed_ms <= position.elapsed_ms
-        {
-            if !self.executed_this_pass.contains(&entry.sequence.get()) {
-                due.push(entry.clone());
-            }
-            self.next_index += 1;
-        }
-    }
-
-    /// An action this run just recorded to the sidecar joins the walk in
-    /// replay-time order, marked as executed on this pass: the next rerun
-    /// replays it, this one does not inject it back.
-    pub(super) fn record_this_pass(&mut self, entry: TraceEntry) {
-        let key = (entry.replay_elapsed_ms, entry.sequence.get());
-        let position = self
-            .entries
-            .partition_point(|other| (other.replay_elapsed_ms, other.sequence.get()) < key);
-        if position < self.next_index {
-            self.next_index += 1;
-        }
-        self.executed_this_pass.push(entry.sequence.get());
-        self.entries.insert(position, entry);
-    }
-}
+pub(super) use quantick_control_schema::trace_replay::{ReplayPosition, TraceReinjection};
 
 /// Read a session's sidecar for re-injection, naming an unreadable or an
 /// unfinished trace in the log: either way that run is not a fixture.
@@ -165,7 +73,11 @@ impl ControlAccess {
                 let Some(link) = tab.replay.as_ref() else {
                     continue;
                 };
-                let position = ReplayPosition::of(&link.status);
+                let position = ReplayPosition {
+                    elapsed_ms: link.status.elapsed_ms(),
+                    rewinds: link.status.rewinds(),
+                    rewind_target_elapsed_ms: link.status.rewind_target_elapsed_ms(),
+                };
                 let path = &link.session.path;
                 match self.trace_reinjection.get_mut(path) {
                     Some(state) if state.owner_tab_id == tab_id => {

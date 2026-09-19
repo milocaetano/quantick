@@ -1,7 +1,7 @@
 use super::*;
 use crate::worker_progress::{
     Age, Phase,
-    tests::{Gate, TEST_QUEUE},
+    test_support::{Gate, TEST_QUEUE},
 };
 use quantick_engine::{Bar, Side};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
@@ -49,7 +49,7 @@ fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
             observed,
         );
     });
-    crate::worker_progress::tests::protocol::delayed_bookkeeping(&clock, &tx, BookCommand::Flush);
+    crate::worker_progress::test_support::delayed_bookkeeping(&clock, &tx, BookCommand::Flush);
     drop(tx);
     worker
         .join()

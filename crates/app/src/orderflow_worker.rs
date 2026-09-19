@@ -77,7 +77,7 @@ impl BookWorker {
     /// Spawn the book thread for `symbol`.
     #[must_use]
     pub(crate) fn spawn(symbol: &str) -> Self {
-        Self::spawn_with_progress(symbol, WorkerProgress::new())
+        Self::spawn_with_progress(symbol, crate::worker_progress::monotonic())
     }
 
     pub(crate) fn spawn_with_progress(symbol: &str, progress: WorkerProgress) -> Self {
@@ -187,7 +187,7 @@ fn run(
     shared: &Arc<Mutex<BookPublished>>,
     progress: Arc<SharedProgress>,
 ) {
-    let _lifecycle = progress.lifecycle();
+    let _lifecycle = progress.lifecycle(std::thread::panicking);
     // Kept across batches so the worker can re-project after data changes
     // without waiting for the UI to ask again.
     let mut last_request: Option<ProjectionRequest> = None;

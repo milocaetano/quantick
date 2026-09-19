@@ -17,6 +17,8 @@ harness = []
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }
+# The provider vocabulary and the history reach, declared headless below this host.
+quantick-sources = { path = "../sources" }
 quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }

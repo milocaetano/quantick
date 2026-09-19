@@ -21,6 +21,10 @@ scenario-harness = ["quantick-feed/harness"]
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }
+# Bounded admission between the window and its workers, and their progress.
+quantick-backpressure = { path = "../backpressure" }
+# The headless chart model: bar state, geometry, viewport, style.
+quantick-chart = { path = "../chart" }
 quantick-workspace = { path = "../workspace" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
@@ -31,6 +35,10 @@ quantick-control = { path = "../control" }
 quantick-control-local = { path = "../control-local" }
 # The headless host machinery: projection registry, admission, idempotency, journal.
 quantick-control-host = { path = "../control-host" }
+# What the control plane says: every projection and action shape.
+quantick-control-schema = { path = "../control-schema" }
+# The operability contract: the behaviour table, the matrix, the drift comparison.
+quantick-operability = { path = "../operability" }
 quantick-engine = { path = "../engine" }
 quantick-indicator-session = { path = "../indicator-session" }
 # The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
@@ -48,6 +56,8 @@ quantick-orderflow = { path = "../orderflow" }
 quantick-paper = { path = "../paper" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+# The cockpit stores: every document the chart remembers between launches.
+quantick-stores = { path = "../stores" }
 quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
@@ -98,6 +108,9 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
+# The gate clock the worker tests park a real worker on, and the ledger
+# schedules; the same fixture the crate proves itself with.
+quantick-backpressure = { path = "../backpressure", features = ["test-support"] }
 # The same crate the `[dependencies]` table already carries, asking for the
 # throwaway native the docking port is tested through. Feature resolution
 # keeps a dev-dependency's features out of the normal build, so the binary
@@ -108,6 +121,8 @@ quantick-indicators = { path = "../indicators", features = ["fake-native"] }
 # The feed's harness hooks, for the same reason: the app's own `cfg(test)`
 # compiles its scenario owners, and their registry names the feed's slices.
 quantick-feed = { path = "../feed", features = ["harness"] }
+# The per-thread store-write refusal the saves-off tests hold (DS7).
+quantick-workspace = { path = "../workspace", features = ["test-support"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }

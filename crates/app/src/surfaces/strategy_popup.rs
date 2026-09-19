@@ -106,7 +106,7 @@ impl Default for StrategyPopupSurface {
     fn default() -> Self {
         Self {
             popup: None,
-            bank: StrategyBank::load_from(StrategyBank::default_path()),
+            bank: StrategyBank::load_from(crate::strategy_presets::default_path()),
             pending_sound_picker: false,
         }
     }

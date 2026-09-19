@@ -22,13 +22,18 @@ use crate::state::BarSpec;
 mod bar_extension_fixture;
 
 mod app;
+// The headless chart model, under its old module names so every path in
+// this crate keeps its address.
+use quantick_chart::geometry as chart;
+#[cfg(test)]
+use quantick_chart::work_meter;
+use quantick_chart::{indicator_style, live_strip, price_view, state, style, viewport};
 mod audio;
 mod avwap;
 mod bands;
 mod bubble_presets;
 mod candle_view;
 mod canvas_layout;
-mod chart;
 mod chart_layers;
 mod config;
 mod control;
@@ -42,7 +47,6 @@ mod footprint_config;
 mod footprint_panel;
 mod footprint_presets;
 mod footprint_render;
-mod footprint_series;
 mod frvp;
 mod harness;
 mod hooks;
@@ -50,7 +54,6 @@ mod indicator_guide;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
-mod indicator_style;
 mod indicator_worker;
 mod indicators;
 mod launch;
@@ -60,7 +63,6 @@ mod layouts;
 mod live_envelope;
 #[cfg(test)]
 mod live_envelope_tests;
-mod live_strip;
 mod loading;
 mod metrics;
 mod operability;
@@ -79,19 +81,16 @@ mod paper_trading;
 mod plot_area;
 mod pointer_compass;
 mod popup;
-mod price_view;
 mod replay_get_data;
 mod replay_home;
 mod replay_view;
 mod resample;
 mod risk_sizing;
 mod scratch;
-mod state;
 mod statusbar;
 mod store_home;
 mod strategy_anchors;
 mod strategy_presets;
-mod style;
 mod surfaces;
 mod symbols_file;
 mod tab;
@@ -103,10 +102,8 @@ mod toolbar;
 mod toolrail;
 mod trade_paint;
 mod ui_state;
-mod viewport;
 mod widgets;
 mod window_scale;
-mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
 mod workspace_picker;
@@ -114,8 +111,6 @@ mod workspace_store;
 
 // The test binary counts heap work per thread (`work_meter`); production
 // builds keep the system allocator.
-#[cfg(test)]
-mod work_meter;
 #[cfg(test)]
 #[global_allocator]
 static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
@@ -411,7 +406,11 @@ fn main() -> eframe::Result {
     )
 }
 
+// Test-only, and filed as tests so the sidecar rule can see they are:
+// benchmarks the ordinary suite runs, never the binary.
 #[cfg(test)]
+#[path = "worker_progress/tests/bench.rs"]
 mod worker_progress_bench;
 #[cfg(test)]
+#[path = "worker_progress/tests/bench_observer.rs"]
 mod worker_progress_bench_observer;

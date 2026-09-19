@@ -39,6 +39,26 @@ impl Write for Buffer {
 
 #[test]
 fn baseline_unknown_notices_precede_validation_error_but_not_version_error() {
+    // Register the notice and validator callsites before this test's
+    // subscriber exists. tracing caches a callsite's interest when it is
+    // first hit; while this test's subscriber is the only live one, a
+    // parallel test hitting a fresh callsite computes that interest against
+    // its own thread's (empty) dispatcher and caches "never", which would
+    // leave this oracle reading an empty log. Registered first, the
+    // callsites are recomputed against every live subscriber when this one
+    // is installed.
+    let warm: Bundle = toml::from_str(
+        "version = 1
+[sections.a_future]
+x = 1
+[sections.known]
+reject = true
+",
+    )
+    .unwrap();
+    let _ = apply(&warm, &[store("known")], &|_| {
+        panic!("validation must prevent all path resolution")
+    });
     for version in [1, 99] {
         let buffer = Buffer::default();
         let writer = buffer.clone();

@@ -1,4 +1,7 @@
 //! Layer discovery and visibility actions over the same catalog used by pane menus.
+
+pub(crate) use quantick_control_schema::layers::*;
+
 use super::{
     actions::ActionRegistry,
     gateway::ControlAccess,
@@ -6,8 +9,10 @@ use super::{
     layout::{self, TabTarget},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
+
 use crate::app::{ChromePort, LayersPort, TabsPort};
 use crate::pane::ChartPane;
+
 use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, EventKind, ModuleId, SnapshotScopeId},
@@ -15,58 +20,11 @@ use quantick_control::{
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
-use quantick_layers::{ChartLayer, LayerScope, Persistence};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-pub(crate) const SCOPE_ID: &str = "layers.visibility";
-pub(crate) const SET_VISIBILITY_CAPABILITY_ID: &str = "layers.visibility.set";
-pub(crate) const EVENT_KIND: &str = "layers.visibility.set";
-const MODULE_ID: &str = "layers";
-/// A bounded snapshot; omitted panes are explicit and can still be targeted by ID.
-const MAX_SNAPSHOT_PANES: usize = 64;
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SetVisibilityInput {
-    pub tab_id: WireU64,
-    /// Stable identity from chart.summary, never a position that a pane move can change.
-    pub pane_id: WireU64,
-    #[schemars(length(min = 1, max = quantick_layers::MAX_LAYER_ID_BYTES))]
-    pub layer_id: String,
-    pub visible: bool,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub(crate) struct LayerSnapshot {
-    pub id: String,
-    pub label: String,
-    pub scope: String,
-    pub persistence: String,
-    pub requested: bool,
-    /// Visibility eligible under current layer policy; no pixel geometry is claimed.
-    pub effective: bool,
-    pub blocked_reason: Option<String>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub(crate) struct PaneLayersSnapshot {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    #[schemars(length(max = quantick_layers::MAX_LAYERS))]
-    pub layers: Vec<LayerSnapshot>,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub(crate) struct LayersSnapshot {
-    #[schemars(length(max = MAX_SNAPSHOT_PANES))]
-    pub panes: Vec<PaneLayersSnapshot>,
-    pub omitted_panes: WireU64,
-}
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct VisibilityResult {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub layer: LayerSnapshot,
-    pub changed: bool,
-}
+use quantick_layers::{ChartLayer, LayerScope, Persistence};
+
+use serde_json::Value;
+
 fn read_layer<P: TabsPort + ChromePort + ?Sized>(
     app: &P,
     tab: &crate::tab::Tab,
@@ -97,6 +55,7 @@ fn read_layer<P: TabsPort + ChromePort + ?Sized>(
         blocked_reason: blocked.map(|block| block.code.to_owned()),
     }
 }
+
 pub(crate) fn snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
@@ -125,6 +84,7 @@ pub(crate) fn snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> LayersSnap
         omitted_panes: WireU64::new(omitted),
     }
 }
+
 fn project<P: TabsPort + ChromePort + ?Sized>(app: &P, _: CaptureContext) -> LayersSnapshot {
     snapshot(app)
 }
@@ -144,6 +104,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         "Layer visibility", "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid is window-wide.",
         &["observe", "observe.workspace", "observe.market"], project)
 }
+
 pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     let mut descriptor = layout::descriptor(
         SET_VISIBILITY_CAPABILITY_ID,
@@ -156,6 +117,7 @@ pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), Regis
     descriptor.stale_input_safety = Some("Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.".to_owned());
     registry.register(descriptor, set_visibility)
 }
+
 fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(
     app: &mut P,
     access: &mut ControlAccess,

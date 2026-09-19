@@ -9,6 +9,12 @@ publish.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
+# A refused store write is logged where the window's log reads it.
+tracing.workspace = true
+
+[features]
+# The per-thread refusal a dependent crate's tests hold for one test.
+test-support = []
 
 [lints]
 workspace = true

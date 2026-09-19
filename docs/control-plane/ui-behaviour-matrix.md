@@ -15,7 +15,7 @@ cargo run -p quantick-app -- --dump-ui-behaviour-matrix \
   > docs/control-plane/ui-behaviour-matrix.md
 ```
 
-The table lives in `crates/app/src/operability/registry.rs`; the guard
+The table lives in `crates/operability/src/registry.rs`; the guard
 that compares it against the interface and against the capability
 registry lives beside it, and runs as
 `cargo test -p quantick-app operability`.

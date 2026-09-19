@@ -1,7 +1,7 @@
 use super::*;
 use crate::indicator_worker::IndicatorWorker;
 use crate::orderflow_worker::{BookCommand, BookWorker};
-use crate::worker_progress::{Phase, WorkerProgress, tests::Gate};
+use crate::worker_progress::{Phase, WorkerProgress, test_support::Gate};
 use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};

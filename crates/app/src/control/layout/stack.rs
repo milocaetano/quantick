@@ -2,16 +2,14 @@
 
 use crate::app::{TabsMutPort, TabsPort};
 use eframe::egui;
-use quantick_control::{registry::IdempotencyPolicy, wire::CanonicalDecimal};
+use quantick_control::wire::CanonicalDecimal;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 
-use super::super::{
-    retry_matrix::Readback, types::canonical_f32, workspace::SPLIT_FRACTION_DECIMAL_PLACES,
-};
+use super::super::{types::canonical_f32, workspace::SPLIT_FRACTION_DECIMAL_PLACES};
 use super::*;
 use crate::tab::context_resize::ResizeContextPair;
 
-pub(crate) const RESIZE_PAIR_CAPABILITY_ID: &str = "layout.pane.resize_pair";
+pub(crate) use quantick_control_schema::layout::RESIZE_PAIR_CAPABILITY_ID;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 struct ResizePairInput {
@@ -103,15 +101,3 @@ fn resize<P: TabsPort + TabsMutPort + ?Sized>(
     };
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
-
-/// The scene reports the same splitter's current bounds after an uncertain call.
-pub(crate) const READBACK: Readback = Readback {
-    capability: RESIZE_PAIR_CAPABILITY_ID,
-    policy: IdempotencyPolicy::Optional,
-    read: super::super::contract::SNAPSHOT_CAPABILITY_ID,
-    scope: Some(super::super::scene::CONTROLS_SCOPE_ID),
-    event: None,
-    field: "controls[].bounds",
-    applied_when: "the addressed context divider's bounds reflect the applied vertical position",
-    proven_by: &["every_reachable_optional_row_replays_a_dropped_answer_and_begins_once"],
-};

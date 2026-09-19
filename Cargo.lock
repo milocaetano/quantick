@@ -2916,11 +2916,14 @@ dependencies = [
  "getrandom 0.3.4",
  "png",
  "quantick-anchored-studies",
+ "quantick-backpressure",
+ "quantick-chart",
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
  "quantick-control-host",
  "quantick-control-local",
+ "quantick-control-schema",
  "quantick-engine",
  "quantick-feed",
  "quantick-feed-binance",
@@ -2929,12 +2932,14 @@ dependencies = [
  "quantick-indicator-session",
  "quantick-indicators",
  "quantick-layers",
+ "quantick-operability",
  "quantick-orderbook",
  "quantick-orderflow",
  "quantick-paper",
  "quantick-pine",
  "quantick-replay",
  "quantick-sim",
+ "quantick-stores",
  "quantick-strategy",
  "quantick-workspace",
  "raw-window-handle",
@@ -2954,6 +2959,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-backpressure"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "quantick-backtest"
 version = "0.1.0"
 dependencies = [
@@ -2964,6 +2979,18 @@ dependencies = [
  "quantick-replay",
  "quantick-sim",
  "quantick-strategy",
+ "rust_decimal",
+]
+
+[[package]]
+name = "quantick-chart"
+version = "0.1.0"
+dependencies = [
+ "quantick-chart-interaction",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-orderbook",
+ "quantick-orderflow",
  "rust_decimal",
 ]
 
@@ -2996,6 +3023,8 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "quantick-control",
+ "quantick-engine",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",
@@ -3010,6 +3039,27 @@ dependencies = [
  "quantick-control",
  "serde_json",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "quantick-control-schema"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "quantick-control",
+ "quantick-control-host",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-layers",
+ "quantick-orderbook",
+ "quantick-orderflow",
+ "quantick-pine",
+ "quantick-sim",
+ "quantick-stores",
+ "rust_decimal",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3032,6 +3082,7 @@ dependencies = [
  "quantick-feed-mt5",
  "quantick-orderbook",
  "quantick-replay",
+ "quantick-sources",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -3127,6 +3178,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-operability"
+version = "0.1.0"
+
+[[package]]
 name = "quantick-orderbook"
 version = "0.1.0"
 dependencies = [
@@ -3151,9 +3206,12 @@ version = "0.1.0"
 dependencies = [
  "quantick-civil",
  "quantick-engine",
+ "quantick-replay",
  "quantick-sim",
+ "quantick-workspace",
  "rust_decimal",
  "serde",
+ "toml 0.8.20",
  "tracing",
 ]
 
@@ -3168,6 +3226,7 @@ dependencies = [
 name = "quantick-replay"
 version = "0.1.0"
 dependencies = [
+ "quantick-civil",
  "quantick-engine",
  "rust_decimal",
  "serde_json",
@@ -3183,12 +3242,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "quantick-sources"
+version = "0.1.0"
+dependencies = [
+ "quantick-engine",
+ "rust_decimal",
+ "serde",
+]
+
+[[package]]
+name = "quantick-stores"
+version = "0.1.0"
+dependencies = [
+ "quantick-chart",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-orderflow",
+ "quantick-sources",
+ "quantick-workspace",
+ "rust_decimal",
+ "serde",
+ "toml 0.8.20",
+ "tracing",
+]
+
+[[package]]
 name = "quantick-strategy"
 version = "0.1.0"
 dependencies = [
  "quantick-engine",
  "quantick-sim",
+ "quantick-workspace",
  "rust_decimal",
+ "serde",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]
@@ -3205,6 +3293,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

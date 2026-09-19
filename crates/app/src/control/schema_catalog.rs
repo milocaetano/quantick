@@ -3,15 +3,14 @@
 use quantick_control::schema::generated_schema;
 use serde_json::{Value, json};
 
+use quantick_control_host::catalogue::SnapshotScopeDescriptor;
+
 use super::{
     actions::{MarkInput, MarkResult},
     analysis::{DrawingsSnapshot, IndicatorsSnapshot},
     annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
-    contract::{
-        ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput,
-        SnapshotScopeDescriptor,
-    },
+    contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},
     events::{EventsReadInput, EventsWaitInput},
     evidence::{
         EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest,
