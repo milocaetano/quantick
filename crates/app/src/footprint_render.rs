@@ -692,108 +692,199 @@ pub struct LayerFrame<'a> {
 }
 
 /// Paint the layer and its legend. `lod` is the pane's sticky level state.
+///
+/// One frame is three steps, each a value of its own: resolve what the zoom
+/// supports ([`LayerPlan`]), fix this frame's display grid and thresholds
+/// ([`LayerPass`]), then paint in order — the zone washes under the cells,
+/// the bars, the delta strip, and last the [`Legend`] saying what was drawn.
 pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
-    let group = frame
-        .footprints
-        .first()
-        .or(frame.partial)
-        .map_or(Decimal::ONE, |fp| fp.group());
-    let group_f = group.to_f64().unwrap_or(0.01).max(f64::EPSILON);
-    // From the scale's own f64 density — never y(0) - y(group), which is
-    // f32 rounding noise at index-future prices (see PriceScale::px_per_price).
-    let base_row_px = (frame.scale.px_per_price() * group_f) as f32;
-    // The zoom this layer answers to, in the units its floors are written in:
-    // the candle's own width, stretched by the trader's `detail_scale` (a
-    // scale below one asks for detail at narrower candles, which is the same
-    // statement as lowering every floor by it).
-    let scaled_width = if frame.config.detail_scale > 0.0 {
-        frame.candle_width / frame.config.detail_scale
-    } else {
-        frame.candle_width
-    };
-    // `auto` is answered before anything is measured: it is a question about
-    // the zoom, and every floor below is measured against a concrete style.
-    // The chain is walked richest-first and the first link the candle can pay
-    // for wins, so one wheel walks three columns → two → a shape.
-    let requested = frame
-        .config
-        .style
-        .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-    let level = lod.resolve(
-        scaled_width,
-        base_row_px,
-        frame.config.profile_row_px,
-        detailed_min_width(requested, frame.config),
-    );
-    // A style that cannot pay for itself at this zoom hands over to the one it
-    // names, rather than drawing a worse version of itself. The legend says
-    // both names — a chart that quietly became a different chart is the same
-    // defect as a layer that is on and invisible.
-    let style = match requested.fallback() {
-        Some(fallback) if level < DetailLevel::Detailed => fallback,
-        _ => requested,
-    };
-    // Published for the next frame's candle layout, which has to run before
-    // this one paints.
-    lod.drawn_style = Some(style);
-    // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
-    // the boundary bugs so far were all states the eye could not explain
-    // from the outside (wedged k, stale group), and the chart telling its
-    // own numbers beats a screenshot guessing game.
-    #[cfg(any(feature = "scenario-harness", test))]
-    let debug = {
-        static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        (*DEBUG.get_or_init(|| {
-            std::env::var("QUANTICK_FOOTPRINT_DEBUG").is_ok_and(|value| value == "1")
-        }))
-        .then(|| {
-            format!(
-                " · [w{:.0} row{:.3} g{} lvl{:?} n{}]",
-                frame.candle_width,
-                base_row_px,
-                group,
-                level,
-                frame.footprints.len(),
-            )
-        })
-    };
-    #[cfg(not(any(feature = "scenario-harness", test)))]
-    let debug: Option<String> = None;
-
-    if level == DetailLevel::Off {
+    let plan = LayerPlan::resolve(frame, lod);
+    if plan.level == DetailLevel::Off {
         // Nothing to compute and nothing to draw — but the legend still
         // explains the silence, or an enabled layer reads as broken.
-        draw_legend(
-            frame,
-            level,
-            style,
-            group,
-            1,
-            false,
-            false,
-            false,
-            Decimal::ZERO,
-            debug,
-        );
+        plan.into_legend(1, Decimal::ZERO).draw(frame);
         return;
     }
+    let pass = LayerPass::new(frame, &plan, lod);
+    let ladders = pass.regroup_visible();
+    let zones_dropped = pass.paint_zone_marks(ladders.zones);
+    let heat = pass.heat(lod, &ladders.rows);
+    let cells_left = pass.paint_bars(&ladders.rows, heat);
+    pass.paint_delta_totals();
 
-    let min_row = match level {
-        DetailLevel::Detailed => DETAILED_MIN_ROW,
-        DetailLevel::Compact => COMPACT_MIN_ROW,
-        // The configured band fineness: the boss's "more, thinner rows".
-        _ => frame.config.profile_row_px,
-    };
-    let k = lod
-        .resolve_multiple(base_row_px, min_row)
-        .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
-    let row_group_f = group_f * k as f64;
+    let mut legend = plan.into_legend(pass.k, pass.min_qty);
+    legend.aggregated_any = ladders.aggregated_any;
+    legend.capped = cells_left == 0;
+    legend.zones_dropped = zones_dropped;
+    legend.draw(frame);
+}
 
-    // The ladders on screen, each beside its global slot.
-    let (start, end) = frame.visible;
-    let visible_ladders = || {
+/// What the zoom supports this frame: the capture grid, the level and the
+/// style actually drawn after any handover. Resolved once, before anything
+/// is measured against a ladder.
+struct LayerPlan {
+    group: Decimal,
+    group_f: f64,
+    base_row_px: f32,
+    level: DetailLevel,
+    style: FootprintStyle,
+    /// The `QUANTICK_FOOTPRINT_DEBUG` suffix for the legend, when asked for.
+    debug: Option<String>,
+}
+
+impl LayerPlan {
+    fn resolve(frame: &LayerFrame<'_>, lod: &mut FootprintLod) -> Self {
+        let group = frame
+            .footprints
+            .first()
+            .or(frame.partial)
+            .map_or(Decimal::ONE, |fp| fp.group());
+        let group_f = group.to_f64().unwrap_or(0.01).max(f64::EPSILON);
+        // From the scale's own f64 density — never y(0) - y(group), which is
+        // f32 rounding noise at index-future prices (see PriceScale::px_per_price).
+        let base_row_px = (frame.scale.px_per_price() * group_f) as f32;
+        // The zoom this layer answers to, in the units its floors are written in:
+        // the candle's own width, stretched by the trader's `detail_scale` (a
+        // scale below one asks for detail at narrower candles, which is the same
+        // statement as lowering every floor by it).
+        let scaled_width = if frame.config.detail_scale > 0.0 {
+            frame.candle_width / frame.config.detail_scale
+        } else {
+            frame.candle_width
+        };
+        // `auto` is answered before anything is measured: it is a question about
+        // the zoom, and every floor below is measured against a concrete style.
+        // The chain is walked richest-first and the first link the candle can pay
+        // for wins, so one wheel walks three columns → two → a shape.
+        let requested = frame
+            .config
+            .style
+            .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
+        let level = lod.resolve(
+            scaled_width,
+            base_row_px,
+            frame.config.profile_row_px,
+            detailed_min_width(requested, frame.config),
+        );
+        // A style that cannot pay for itself at this zoom hands over to the one it
+        // names, rather than drawing a worse version of itself. The legend says
+        // both names — a chart that quietly became a different chart is the same
+        // defect as a layer that is on and invisible.
+        let style = match requested.fallback() {
+            Some(fallback) if level < DetailLevel::Detailed => fallback,
+            _ => requested,
+        };
+        // Published for the next frame's candle layout, which has to run before
+        // this one paints.
+        lod.drawn_style = Some(style);
+        // QUANTICK_FOOTPRINT_DEBUG=1 appends the level inputs to the legend —
+        // the boundary bugs so far were all states the eye could not explain
+        // from the outside (wedged k, stale group), and the chart telling its
+        // own numbers beats a screenshot guessing game.
+        #[cfg(any(feature = "scenario-harness", test))]
+        let debug = {
+            static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            (*DEBUG.get_or_init(|| {
+                std::env::var("QUANTICK_FOOTPRINT_DEBUG").is_ok_and(|value| value == "1")
+            }))
+            .then(|| {
+                format!(
+                    " · [w{:.0} row{:.3} g{} lvl{:?} n{}]",
+                    frame.candle_width,
+                    base_row_px,
+                    group,
+                    level,
+                    frame.footprints.len(),
+                )
+            })
+        };
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let debug: Option<String> = None;
+        Self {
+            group,
+            group_f,
+            base_row_px,
+            level,
+            style,
+            debug,
+        }
+    }
+
+    /// The legend for this plan at display multiple `k`, with no notes yet.
+    fn into_legend(self, k: i64, min_qty: Decimal) -> Legend {
+        Legend {
+            level: self.level,
+            style: self.style,
+            group: self.group,
+            k,
+            min_qty,
+            aggregated_any: false,
+            capped: false,
+            zones_dropped: false,
+            debug: self.debug,
+        }
+    }
+}
+
+/// The visible ladders on the display grid, carried between the passes.
+struct DisplayLadders {
+    /// Each drawable ladder's display rows beside its global slot.
+    rows: Vec<(usize, BTreeMap<i64, FootprintLevel>)>,
+    /// The stacked zones those rows hold, before coalescing.
+    zones: Vec<(usize, StackedZone)>,
+    /// Whether a cap-coarsened ladder was hidden.
+    aggregated_any: bool,
+}
+
+/// One painting frame of a layer that draws something: the display grid and
+/// the imbalance thresholds fixed for the frame, and the paint passes as
+/// methods in the order they land.
+struct LayerPass<'p, 'f> {
+    frame: &'p LayerFrame<'f>,
+    level: DetailLevel,
+    style: FootprintStyle,
+    /// The display multiple of the capture grid.
+    k: i64,
+    /// One display row's height in price.
+    row_group_f: f64,
+    ratio: Decimal,
+    min_qty: Decimal,
+}
+
+impl<'p, 'f> LayerPass<'p, 'f> {
+    fn new(frame: &'p LayerFrame<'f>, plan: &LayerPlan, lod: &mut FootprintLod) -> Self {
+        let min_row = match plan.level {
+            DetailLevel::Detailed => DETAILED_MIN_ROW,
+            DetailLevel::Compact => COMPACT_MIN_ROW,
+            // The configured band fineness: the boss's "more, thinner rows".
+            _ => frame.config.profile_row_px,
+        };
+        let k = lod
+            .resolve_multiple(plan.base_row_px, min_row)
+            .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
+        let min_qty = match frame.config.imbalance_min_qty {
+            Some(pinned) => pinned,
+            None => lod.adaptive_floor(frame.footprints.len(), plan.group, || {
+                adaptive_min_qty(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS))
+            }),
+        };
+        Self {
+            frame,
+            level: plan.level,
+            style: plan.style,
+            k,
+            row_group_f: plan.group_f * k as f64,
+            ratio: frame.config.imbalance_ratio,
+            min_qty,
+        }
+    }
+
+    /// The ladders on screen, each beside its global slot.
+    fn visible_ladders(&self) -> impl Iterator<Item = (usize, &'p BarFootprint)> + use<'p, 'f> {
+        let frame = self.frame;
+        let (start, end) = frame.visible;
         (start.max(frame.first_state_slot)..end)
-            .filter_map(|slot| {
+            .filter_map(move |slot| {
                 let fp = frame.footprints.get(slot - frame.first_state_slot)?;
                 Some((slot, fp))
             })
@@ -803,96 +894,128 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
                     .filter(|_| frame.partial_slot >= start && frame.partial_slot < end)
                     .map(|fp| (frame.partial_slot, fp)),
             )
-    };
+    }
 
-    let min_qty = match frame.config.imbalance_min_qty {
-        Some(pinned) => pinned,
-        None => lod.adaptive_floor(frame.footprints.len(), group, || {
-            adaptive_min_qty(frame.footprints.iter().rev().take(ADAPTIVE_FLOOR_BARS))
-        }),
-    };
-    let ratio = frame.config.imbalance_ratio;
-    let mut cells_left = CELL_BUDGET;
-    let mut aggregated_any = false;
-    let mut zones: Vec<(usize, StackedZone)> = Vec::new();
+    /// The first walk over the visible ladders: each regrouped onto the
+    /// display grid once, with its zones found on the same rows.
+    ///
+    /// Two passes over the visible ladders, and the split is not an
+    /// optimisation: a zone's wash has to land *under* the cells, not over
+    /// them. Painted last, it tinted the digits along with their background —
+    /// a row that was both POC and inside a zone read at ~3.9:1. The regrouped
+    /// rows are carried between the passes rather than folded twice, so the
+    /// second pass costs nothing but the walk.
+    fn regroup_visible(&self) -> DisplayLadders {
+        let (start, end) = self.frame.visible;
+        let mut ladders = DisplayLadders {
+            rows: Vec::with_capacity(end.saturating_sub(start)),
+            zones: Vec::new(),
+            aggregated_any: false,
+        };
+        if self.level >= DetailLevel::Marks {
+            for (slot, fp) in self.visible_ladders() {
+                if fp.is_aggregated() {
+                    // A cap-coarsened ladder lives on a doubled grid; drawing it
+                    // with the frame's row geometry would put its rows at the
+                    // wrong prices. Hiding it and saying so is the honest v1
+                    // (the cap only trips on pathological bars).
+                    ladders.aggregated_any = true;
+                    continue;
+                }
+                // Zones and the POC are computed on the display rows the eye
+                // compares — the same rows the cells draw.
+                let rows = regroup(fp, self.k);
+                for zone in zones_of(
+                    &rows,
+                    self.ratio,
+                    self.min_qty,
+                    self.frame.config.stacked_count,
+                ) {
+                    ladders.zones.push((slot, zone));
+                }
+                ladders.rows.push((slot, rows));
+            }
+        }
+        ladders
+    }
 
-    // Two passes over the visible ladders, and the split is not an
-    // optimisation: a zone's wash has to land *under* the cells, not over
-    // them. Painted last, it tinted the digits along with their background —
-    // a row that was both POC and inside a zone read at ~3.9:1. The regrouped
-    // rows are carried between the passes rather than folded twice, so the
-    // second pass costs nothing but the walk.
-    let mut regrouped: Vec<(usize, BTreeMap<i64, FootprintLevel>)> =
-        Vec::with_capacity(end.saturating_sub(start));
-    if level >= DetailLevel::Marks {
-        for (slot, fp) in visible_ladders() {
-            if fp.is_aggregated() {
-                // A cap-coarsened ladder lives on a doubled grid; drawing it
-                // with the frame's row geometry would put its rows at the
-                // wrong prices. Hiding it and saying so is the honest v1
-                // (the cap only trips on pathological bars).
-                aggregated_any = true;
-                continue;
-            }
-            // Zones and the POC are computed on the display rows the eye
-            // compares — the same rows the cells draw.
-            let rows = regroup(fp, k);
-            for zone in zones_of(&rows, ratio, min_qty, frame.config.stacked_count) {
-                zones.push((slot, zone));
-            }
-            regrouped.push((slot, rows));
+    /// The zone washes, under everything else; `true` when the cap dropped some.
+    fn paint_zone_marks(&self, zones: Vec<(usize, StackedZone)>) -> bool {
+        let (marks, zones_dropped) = coalesce_zones(zones, MAX_ZONE_MARKS);
+        for mark in &marks {
+            draw_zone_mark(self.frame, mark, self.row_group_f);
+        }
+        zones_dropped
+    }
+
+    /// The heat ramp's cuts: percentiles of the distribution the visible ladders
+    /// hold, on the display grid they are drawn on. Read from the maps the pass
+    /// above already built rather than folding them a second time — the cache
+    /// key moves with the visible window, so during a drag every frame is a
+    /// miss, and a second fold there was a full regroup of every visible bar at
+    /// frame rate.
+    fn heat(
+        &self,
+        lod: &mut FootprintLod,
+        rows: &[(usize, BTreeMap<i64, FootprintLevel>)],
+    ) -> Option<HeatScale> {
+        if self.style == crate::footprint_config::FootprintStyle::Cluster {
+            lod.heat_scale(
+                self.frame.visible,
+                self.frame.footprints.len(),
+                self.k,
+                || heat_scale(rows.iter().map(|(_, rows)| rows)),
+            )
+        } else {
+            None
         }
     }
 
-    let (marks, zones_dropped) = coalesce_zones(zones, MAX_ZONE_MARKS);
-    for mark in &marks {
-        draw_zone_mark(frame, mark, row_group_f);
-    }
-
-    // The heat ramp's cuts: percentiles of the distribution the visible ladders
-    // hold, on the display grid they are drawn on. Read from the maps the pass
-    // above already built rather than folding them a second time — the cache
-    // key moves with the visible window, so during a drag every frame is a
-    // miss, and a second fold there was a full regroup of every visible bar at
-    // frame rate.
-    let heat = if style == crate::footprint_config::FootprintStyle::Cluster {
-        lod.heat_scale((start, end), frame.footprints.len(), k, || {
-            heat_scale(regrouped.iter().map(|(_, rows)| rows))
-        })
-    } else {
-        None
-    };
-
-    let paint = BarPaint {
-        frame,
-        level,
-        style,
-        row_group: row_group_f,
-        ratio,
-        min_qty,
-        heat,
-    };
-    for (slot, rows) in &regrouped {
-        if level >= DetailLevel::Profile && cells_left > 0 {
-            draw_bar(&paint, rows, (frame.x_center)(*slot), &mut cells_left);
-        } else if frame.config.show_poc
-            && let Some(poc) = poc_of(rows)
-        {
-            draw_poc_dot(frame, (frame.x_center)(*slot), poc, row_group_f);
+    /// The second walk: every bar's rows, or its POC alone below Profile.
+    /// Returns the cell budget left, so the legend can say it ran out.
+    fn paint_bars(
+        &self,
+        rows: &[(usize, BTreeMap<i64, FootprintLevel>)],
+        heat: Option<HeatScale>,
+    ) -> usize {
+        let frame = self.frame;
+        let paint = BarPaint {
+            frame,
+            level: self.level,
+            style: self.style,
+            row_group: self.row_group_f,
+            ratio: self.ratio,
+            min_qty: self.min_qty,
+            heat,
+        };
+        let mut cells_left = CELL_BUDGET;
+        for (slot, rows) in rows {
+            if self.level >= DetailLevel::Profile && cells_left > 0 {
+                draw_bar(&paint, rows, (frame.x_center)(*slot), &mut cells_left);
+            } else if frame.config.show_poc
+                && let Some(poc) = poc_of(rows)
+            {
+                draw_poc_dot(frame, (frame.x_center)(*slot), poc, self.row_group_f);
+            }
         }
+        cells_left
     }
 
-    // The per-bar delta totals strip at the chart's bottom — the reference
-    // charts' footer chips: one signed, side-colored number per bar saying
-    // who won it overall. From Compact up: at Profile widths the chips
-    // would overlap into noise. `bar_delta` is the tested fold.
-    //
-    // Every style, not just the split. Who won the bar is a reading of the
-    // bar, orthogonal to how its rows are drawn; withholding it from the
-    // ladder made that style strictly poorer than its sibling rather than a
-    // different way of seeing the same thing.
-    if level >= DetailLevel::Compact && frame.config.show_delta_totals {
-        for (slot, fp) in visible_ladders() {
+    /// The per-bar delta totals strip at the chart's bottom — the reference
+    /// charts' footer chips: one signed, side-colored number per bar saying
+    /// who won it overall. From Compact up: at Profile widths the chips
+    /// would overlap into noise. `bar_delta` is the tested fold.
+    ///
+    /// Every style, not just the split. Who won the bar is a reading of the
+    /// bar, orthogonal to how its rows are drawn; withholding it from the
+    /// ladder made that style strictly poorer than its sibling rather than a
+    /// different way of seeing the same thing.
+    fn paint_delta_totals(&self) {
+        let frame = self.frame;
+        if self.level < DetailLevel::Compact || !frame.config.show_delta_totals {
+            return;
+        }
+        for (slot, fp) in self.visible_ladders() {
             let delta = bar_delta(fp);
             let Some(text) = fmt_delta(delta) else {
                 continue;
@@ -924,19 +1047,6 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
             );
         }
     }
-
-    draw_legend(
-        frame,
-        level,
-        style,
-        group,
-        k,
-        aggregated_any,
-        cells_left == 0,
-        zones_dropped,
-        min_qty,
-        debug,
-    );
 }
 
 /// POC of already-regrouped rows: highest volume, ties to the lowest row —
@@ -1031,104 +1141,128 @@ fn cluster_column_px(candle_width: f32) -> f32 {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_legend(
-    frame: &LayerFrame<'_>,
+/// What the legend line says about this frame: the level and style drawn,
+/// the effective row grouping, the imbalance floor, and each honesty note a
+/// pass raised along the way. Built by the frame, painted last.
+struct Legend {
     level: DetailLevel,
-    style: crate::footprint_config::FootprintStyle,
+    style: FootprintStyle,
     group: Decimal,
     k: i64,
-    aggregated_any: bool,
-    capped: bool,
-    zones_dropped: bool,
     min_qty: Decimal,
+    /// A cap-coarsened ladder was hidden.
+    aggregated_any: bool,
+    /// The cell budget ran out before every row was painted.
+    capped: bool,
+    /// The zone cap kept only the strongest zones.
+    zones_dropped: bool,
     debug: Option<String>,
-) {
-    let mut text = String::from("footprint");
-    // A style that handed over says so, naming both: the trader asked for one
-    // reading and is looking at another, and a chart that quietly became a
-    // different chart is the same defect as a layer that is on and invisible.
-    if style != frame.config.style {
-        text.push_str(" · ");
-        text.push_str(frame.config.style.id());
-        text.push_str(" → ");
-        text.push_str(style.id());
-    }
-    match level {
-        DetailLevel::Off => text.push_str(" · zoom in for detail"),
-        DetailLevel::Marks => text.push_str(" · marks"),
-        DetailLevel::Profile => text.push_str(" · profile"),
-        DetailLevel::Compact => text.push_str(" · delta"),
-        // The legend names what the columns actually are — "sell|buy" over
-        // a delta ladder would misread every number (data honesty).
-        DetailLevel::Detailed => {
+}
+
+impl Legend {
+    fn draw(self, frame: &LayerFrame<'_>) {
+        let Self {
+            level,
+            style,
+            group,
+            k,
+            min_qty,
+            aggregated_any,
+            capped,
+            zones_dropped,
+            debug,
+        } = self;
+        let mut text = String::from("footprint");
+        // A style that handed over says so, naming both: the trader asked for one
+        // reading and is looking at another, and a chart that quietly became a
+        // different chart is the same defect as a layer that is on and invisible.
+        if style != frame.config.style {
             text.push_str(" · ");
-            text.push_str(style.detailed_legend());
+            text.push_str(frame.config.style.id());
+            text.push_str(" → ");
+            text.push_str(style.id());
         }
-    }
-    // How much further to zoom, in the only unit the gesture has. "zoom in for
-    // numbers" with no number is why this layer read as slow to arrive: a
-    // trader could not tell a nudge from a different chart entirely.
-    if level < DetailLevel::Compact && frame.candle_width > 0.0 {
-        let further = COMPACT_MIN_WIDTH * frame.config.detail_scale / frame.candle_width;
-        if further > 1.05 {
-            text.push_str(&format!(" · numbers at {further:.1}× this zoom"));
+        match level {
+            DetailLevel::Off => text.push_str(" · zoom in for detail"),
+            DetailLevel::Marks => text.push_str(" · marks"),
+            DetailLevel::Profile => text.push_str(" · profile"),
+            DetailLevel::Compact => text.push_str(" · delta"),
+            // The legend names what the columns actually are — "sell|buy" over
+            // a delta ladder would misread every number (data honesty).
+            DetailLevel::Detailed => {
+                text.push_str(" · ");
+                text.push_str(style.detailed_legend());
+            }
         }
+        // How much further to zoom, in the only unit the gesture has. "zoom in for
+        // numbers" with no number is why this layer read as slow to arrive: a
+        // trader could not tell a nudge from a different chart entirely.
+        if level < DetailLevel::Compact && frame.candle_width > 0.0 {
+            let further = COMPACT_MIN_WIDTH * frame.config.detail_scale / frame.candle_width;
+            if further > 1.05 {
+                text.push_str(&format!(" · numbers at {further:.1}× this zoom"));
+            }
+        }
+        // The effective grouping is always spoken: the number a row stands for
+        // must never change meaning silently (data honesty).
+        let effective = group.saturating_mul(Decimal::from(k));
+        text.push_str(&format!(" · rows {effective}"));
+        // The imbalance floor in force, spoken like the rows are: a highlight
+        // whose threshold is secret reads as arbitrary.
+        if level > DetailLevel::Off && !min_qty.is_zero() {
+            text.push_str(&format!(" · min qty {}", fmt_qty(min_qty)));
+        }
+        // What the cell colours mean. A six-step scale with no key is a chart
+        // asking to be guessed at: bright could be "a lot" or "imbalanced", and
+        // the two lead to opposite trades. Same rule as the rows and the floor —
+        // a mark whose meaning is secret reads as arbitrary.
+        if style == crate::footprint_config::FootprintStyle::Cluster
+            && level >= DetailLevel::Detailed
+        {
+            text.push_str(" · heat: cell volume vs the screen");
+        }
+        if aggregated_any {
+            text.push_str(" · coarsened bars hidden");
+        }
+        if frame.side_inferred {
+            text.push_str(" · side inferred");
+        }
+        // The plate is opaque by design — that is what gives the digits a floor
+        // they control — so where the map used to show through, it no longer
+        // does. Said out loud for the same reason the effective row size is: a
+        // trader reading the liquidity map must never wonder whether the gaps are
+        // the market or the chart. And only where a plate is actually painted:
+        // claiming occlusion that is not there undercuts the same guarantee from
+        // the other side.
+        if frame.depth_visible
+            && style.plate() == StylePlate::Casing
+            && level >= DetailLevel::Profile
+        {
+            text.push_str(" · map hidden behind the bars");
+        }
+        if capped {
+            text.push_str(" · capped");
+        }
+        if zones_dropped {
+            text.push_str(&format!(" · strongest {MAX_ZONE_MARKS} zones"));
+        }
+        if let Some(debug) = debug {
+            text.push_str(&debug);
+        }
+        // Bottom-left: the top-left is the bubbles legend's home, and that panel
+        // paints an opaque background *after* this layer — a legend carrying the
+        // rows' meaning must not live under someone else's paint.
+        frame.painter.text(
+            egui::pos2(
+                frame.chart_rect.left() + 6.0,
+                frame.chart_rect.bottom() - 6.0,
+            ),
+            egui::Align2::LEFT_BOTTOM,
+            text,
+            egui::FontId::proportional(10.5),
+            theme::TEXT_MUTED,
+        );
     }
-    // The effective grouping is always spoken: the number a row stands for
-    // must never change meaning silently (data honesty).
-    let effective = group.saturating_mul(Decimal::from(k));
-    text.push_str(&format!(" · rows {effective}"));
-    // The imbalance floor in force, spoken like the rows are: a highlight
-    // whose threshold is secret reads as arbitrary.
-    if level > DetailLevel::Off && !min_qty.is_zero() {
-        text.push_str(&format!(" · min qty {}", fmt_qty(min_qty)));
-    }
-    // What the cell colours mean. A six-step scale with no key is a chart
-    // asking to be guessed at: bright could be "a lot" or "imbalanced", and
-    // the two lead to opposite trades. Same rule as the rows and the floor —
-    // a mark whose meaning is secret reads as arbitrary.
-    if style == crate::footprint_config::FootprintStyle::Cluster && level >= DetailLevel::Detailed {
-        text.push_str(" · heat: cell volume vs the screen");
-    }
-    if aggregated_any {
-        text.push_str(" · coarsened bars hidden");
-    }
-    if frame.side_inferred {
-        text.push_str(" · side inferred");
-    }
-    // The plate is opaque by design — that is what gives the digits a floor
-    // they control — so where the map used to show through, it no longer
-    // does. Said out loud for the same reason the effective row size is: a
-    // trader reading the liquidity map must never wonder whether the gaps are
-    // the market or the chart. And only where a plate is actually painted:
-    // claiming occlusion that is not there undercuts the same guarantee from
-    // the other side.
-    if frame.depth_visible && style.plate() == StylePlate::Casing && level >= DetailLevel::Profile {
-        text.push_str(" · map hidden behind the bars");
-    }
-    if capped {
-        text.push_str(" · capped");
-    }
-    if zones_dropped {
-        text.push_str(&format!(" · strongest {MAX_ZONE_MARKS} zones"));
-    }
-    if let Some(debug) = debug {
-        text.push_str(&debug);
-    }
-    // Bottom-left: the top-left is the bubbles legend's home, and that panel
-    // paints an opaque background *after* this layer — a legend carrying the
-    // rows' meaning must not live under someone else's paint.
-    frame.painter.text(
-        egui::pos2(
-            frame.chart_rect.left() + 6.0,
-            frame.chart_rect.bottom() - 6.0,
-        ),
-        egui::Align2::LEFT_BOTTOM,
-        text,
-        egui::FontId::proportional(10.5),
-        theme::TEXT_MUTED,
-    );
 }
 
 #[cfg(any(feature = "scenario-harness", test))]

@@ -795,6 +795,10 @@ impl Harness {
     pub(crate) fn arm_settings_autostart(&mut self, index: usize, tab: SettingsTab) {
         self.settings_autostart = Some((index, tab));
     }
+
+    pub(crate) fn arm_history_note(&mut self, owed: CampaignEnd, frames: u32) {
+        self.history_note = Some(Budgeted { owed, frames });
+    }
 }
 
 /// Spend one frame of a budgeted hook, disarming it when the budget runs out.

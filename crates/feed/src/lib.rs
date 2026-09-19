@@ -35,6 +35,7 @@ pub mod replay_download;
 #[cfg(test)]
 mod scratch;
 pub mod stall;
+mod venue_loop;
 
 use std::path::PathBuf;
 

@@ -52,6 +52,7 @@ mod input_ui_tests;
 mod launch_phase_tests;
 mod layers_tests;
 mod live_trade_tests;
+mod menu_bar_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
@@ -2659,6 +2660,8 @@ mod frame_tail_tests;
 mod worker_summary_bench_tests;
 
 mod source_drain_tests;
+mod stage_order_tests;
+
 fn attach_script_for_test(
     app: &mut QuantickApp,
     name: String,

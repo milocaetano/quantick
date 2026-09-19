@@ -49,6 +49,7 @@ mod panes;
 mod strategies;
 
 pub use canvas::CanvasChrome;
+pub use feed::HistoryPolicy;
 pub use history::OlderCandles;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
