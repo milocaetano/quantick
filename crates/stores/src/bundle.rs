@@ -248,8 +248,10 @@ pub fn read(path: &Path) -> Result<Bundle, String> {
     Ok(bundle)
 }
 
-/// Write a bundle to disk, creating its folder if need be.
+/// Write a bundle to disk, creating its folder if need be. A saves-off
+/// session (DS7) is refused before the folder is made.
 pub fn write(path: &Path, bundle: &Bundle) -> Result<(), String> {
+    quantick_workspace::write_refusal::guard_write(path)?;
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -326,4 +328,30 @@ pub fn file_name_for(name: &str) -> String {
         trimmed
     };
     format!("{stem}.{BUNDLE_EXTENSION}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quantick_workspace::write_refusal::{WritesRefused, refuse_writes_on_this_thread};
+
+    /// DS7: a saves-off session exporting a workspace leaves no trace on
+    /// disk, not even the folder it would have written into.
+    #[test]
+    fn a_refused_export_creates_no_folder() {
+        let scratch = crate::scratch::ScratchDir::new("refused-export");
+        let folder = scratch.path().join("exports");
+        let bundle = Bundle {
+            version: FORMAT_VERSION,
+            name: "refused".to_owned(),
+            sections: Default::default(),
+        };
+        refuse_writes_on_this_thread(Some(WritesRefused {
+            hooks: vec!["QUANTICK_UI_STATE".to_owned()],
+        }));
+        let refused = write(&folder.join("cockpit.qws"), &bundle);
+        refuse_writes_on_this_thread(None);
+        assert!(refused.is_err(), "a refused session writes nothing");
+        assert!(!folder.exists(), "and creates no folder either");
+    }
 }
