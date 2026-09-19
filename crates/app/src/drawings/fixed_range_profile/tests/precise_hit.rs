@@ -1,28 +1,12 @@
 use super::*;
 
 fn payload_with_rows(rows: &[(i64, i64)]) -> FrvpPayload {
-    let mut builder = quantick_engine::FootprintBuilder::new(Decimal::ONE, 4096);
-    for &(price, quantity) in rows {
-        builder.push(&quantick_engine::Trade {
-            agg_id: 1,
-            timestamp_ms: 0,
-            price: Decimal::from(price),
-            quantity: Decimal::from(quantity),
-            side: quantick_engine::Side::Buy,
-        });
-    }
-    let ladder = builder.close().unwrap();
-    let profile = VolumeProfile::merge([&ladder], 4096).unwrap();
-    let area = profile.value_area(Decimal::new(70, 2));
     FrvpPayload {
         width_frac: 0.5,
         show_labels: false,
         show_poc: false,
         show_value_area: false,
-        cache: Some(FrvpCache {
-            profile: Some((profile, area)),
-            ..cache_for(20, 20, 0)
-        }),
+        cache: Some(refreshed_cache(rows, 19)),
         ..FrvpPayload::default()
     }
 }
@@ -102,7 +86,7 @@ fn precise_profile_hit_tracks_visible_poc_and_value_area_lines() {
         .cache
         .as_ref()
         .unwrap()
-        .profile
+        .output().profile
         .as_ref()
         .unwrap()
         .1
@@ -126,7 +110,8 @@ fn precise_profile_hit_empty_cache_has_only_drawn_borders() {
 #[test]
 fn precise_profile_outline_interior_passes_through_but_its_staircase_hits() {
     let mut payload = payload_with_rows(&[(100, 10), (102, 2), (103, 6)]);
-    payload.cache.as_mut().unwrap().heat_first_slot = Some(15);
+    assert!(payload.cache.is_some());
+    payload.heat_first_slot = Some(15);
     let chart = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(800.0, 500.0));
     let anchors = [ChartPoint::at(10.0, 100.0), ChartPoint::at(30.0, 104.0)];
     let points = [egui::pos2(100.0, 0.0), egui::pos2(500.0, 400.0)];
@@ -178,7 +163,7 @@ fn precise_profile_wrapper_has_no_invisible_handle_targets() {
 fn precise_profile_reversed_anchors_developing_edge_and_clip_agree() {
     let mut payload = payload_with_rows(&[(100, 10), (104, 6)]);
     payload.extend_right = true;
-    payload.cache.as_mut().unwrap().key.end_slot = 40;
+    payload.cache = Some(refreshed_cache(&[(100, 10), (104, 6)], 40));
     let scale = PriceScale::from_range(99.0, 106.0, 0.0, 490.0);
     let anchors = [ChartPoint::at(30.0, 104.0), ChartPoint::at(10.0, 100.0)];
     let points = [egui::pos2(500.0, 0.0), egui::pos2(100.0, 400.0)];

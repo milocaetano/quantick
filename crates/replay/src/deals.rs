@@ -302,3 +302,61 @@ mod tests {
         assert!(error.to_string().contains("line 1"), "{error}");
     }
 }
+
+/// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
+/// recognizable); anything else becomes `_` so a symbol can never traverse
+/// paths. One rule for every folder a symbol names: the deal recorder's and
+/// the paper journal's.
+#[must_use]
+pub fn sanitize_symbol(symbol: &str) -> String {
+    let cleaned: String = symbol
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || "-_.$#".contains(character) {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "_".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// `2301455` as `2 301 455`: the grouping every count of prints or deals is
+/// shown with, readable at a glance where a bare seven-digit number is not.
+#[must_use]
+pub fn thousands(value: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
+mod naming_tests {
+    use super::*;
+
+    #[test]
+    fn a_symbol_names_a_folder_it_cannot_escape() {
+        assert_eq!(sanitize_symbol("WDO$"), "WDO$");
+        assert_eq!(sanitize_symbol("BTCUSDT"), "BTCUSDT");
+        assert_eq!(sanitize_symbol("../evil"), ".._evil");
+        assert_eq!(sanitize_symbol(""), "_");
+    }
+
+    #[test]
+    fn counts_group_their_thousands() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(2_301_455), "2 301 455");
+    }
+}

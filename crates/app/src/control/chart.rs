@@ -1,20 +1,20 @@
 //! Chart summary and append-only paginated bar-window projections.
 
+pub(crate) use quantick_control_schema::chart::*;
+
+use crate::app::TabsPort;
 use quantick_control::{
     cursor::{PageContext, PageCursor, PaginationConsistency},
     error::ControlError,
     id::{InstanceId, ModuleId, SnapshotScopeId},
     limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
     registry::ModuleDescriptor,
-    wire::{CanonicalDecimal, WireU64},
+    wire::WireU64,
 };
 
 use quantick_engine::Bar;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::QuantickApp,
     config::AppConfig,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -22,194 +22,8 @@ use crate::{
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{BarSpecDto, DecimalRange, PaneSideDto, canonical_decimal, canonical_f32, wire_usize},
+    types::{DecimalRange, canonical_decimal, canonical_f32, wire_usize},
 };
-
-pub(crate) const SCOPE_ID: &str = "chart.summary";
-pub(crate) const WINDOW_SCOPE_ID: &str = "chart.window";
-const MODULE_ID: &str = "chart";
-const SCHEMA_VERSION: u32 = 1;
-const VIEWPORT_DECIMAL_PLACES: u32 = 6;
-const PRICE_DECIMAL_PLACES: u32 = 10;
-const PIXEL_DECIMAL_PLACES: u32 = 3;
-const OMITTED_WINDOW_MODULE_IDS: [&str; 3] = ["drawings", "indicators", "orderflow"];
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartSnapshot {
-    pub panes: Vec<ChartPaneSnapshot>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartPaneSnapshot {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub side: PaneSideDto,
-    /// The pane's address within its tab — `0` the flow pane, `1..` the
-    /// context stack top to bottom — the number `layout.focus` takes.
-    pub pane_index: WireU64,
-    pub feed_id: String,
-    pub symbol: String,
-    pub visible: bool,
-    pub focused: bool,
-    pub bar_spec: BarSpecDto,
-    pub timeline_revision: WireU64,
-    pub pagination_revision: WireU64,
-    pub closed_bar_count: WireU64,
-    /// Prints the pane's rule could place in no bar — a deal bar's prints
-    /// before its first counter reading. Zero for every other rule. The
-    /// number the chart-corner chip shows, as data.
-    /// Optional on the wire so v1 readers remain compatible with snapshots
-    /// produced before deal bars existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uncounted_prints: Option<WireU64>,
-    pub venue_history_bar_count: WireU64,
-    pub backfill_boundary_slot: Option<WireU64>,
-    pub has_in_progress_bar: bool,
-    pub viewport: ViewportSnapshot,
-    pub coverage: ChartCoverage,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ViewportSnapshot {
-    pub geometry_available: bool,
-    /// The slots the viewport asks the renderer to paint: generous by one bar
-    /// at each edge, so a bar partly off screen is drawn rather than clipped.
-    /// This is the pane's own notion of "visible", not the exact pixel set.
-    pub visible_start_slot: WireU64,
-    pub visible_end_slot_exclusive: WireU64,
-    #[schemars(extend("x-unit" = "pixels_per_bar"))]
-    pub pixels_per_bar: CanonicalDecimal,
-    pub right_edge_bar: CanonicalDecimal,
-    pub follows_live: bool,
-    pub price_auto_fit: bool,
-    pub price_axis_inverted: bool,
-    pub price_range: Option<DecimalRange>,
-    #[schemars(extend("x-unit" = "pixels"))]
-    pub chart_width_px: Option<CanonicalDecimal>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartCoverage {
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub oldest_open_time_unix_ms: Option<i64>,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub newest_close_time_unix_ms: Option<i64>,
-    pub older_history_paging_supported: bool,
-    pub venue_prefix_present: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum BarStateDto {
-    Closed,
-    InProgress,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BarSnapshot {
-    pub slot: WireU64,
-    pub state: BarStateDto,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub open_time_unix_ms: i64,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub close_time_unix_ms: i64,
-    pub open: CanonicalDecimal,
-    pub high: CanonicalDecimal,
-    pub low: CanonicalDecimal,
-    pub close: CanonicalDecimal,
-    pub volume: CanonicalDecimal,
-    pub buy_volume: CanonicalDecimal,
-    pub sell_volume: CanonicalDecimal,
-    pub delta: CanonicalDecimal,
-    pub trade_count: WireU64,
-    pub provenance: BarProvenance,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct BarProvenance {
-    pub source: String,
-    pub completeness: String,
-    pub price: String,
-    pub volume: String,
-    pub aggressor_side: String,
-    pub trade_count: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartWindowQuery {
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub range: ChartWindowRange,
-    #[schemars(range(min = 1, max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
-    pub page_size: usize,
-}
-
-impl ChartWindowQuery {
-    #[cfg(test)]
-    pub fn visible(tab_id: u64, pane_id: u64) -> Self {
-        Self {
-            tab_id: WireU64::new(tab_id),
-            pane_id: WireU64::new(pane_id),
-            range: ChartWindowRange::Visible,
-            page_size: CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ChartWindowRange {
-    Visible,
-    Slots {
-        start_slot: WireU64,
-        end_slot_exclusive: WireU64,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartWindowPage {
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub captured_at_unix_ms: i64,
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub side: PaneSideDto,
-    pub feed_id: String,
-    pub symbol: String,
-    pub consistency_revision: WireU64,
-    pub high_water_slot_exclusive: WireU64,
-    pub viewport: ViewportSnapshot,
-    pub bars: ChartBarPage,
-    pub in_progress_bar: Option<BarSnapshot>,
-    pub omitted_modules: Vec<ModuleId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ChartBarPage {
-    #[schemars(length(max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
-    pub items: Vec<BarSnapshot>,
-    #[schemars(range(max = CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS))]
-    pub item_count: usize,
-    pub has_more: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<PageCursor>,
-}
-
-impl ChartBarPage {
-    fn new(items: Vec<BarSnapshot>, next_cursor: Option<PageCursor>) -> Result<Self, ControlError> {
-        if items.len() > CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS {
-            return Err(ControlError::invalid_request(
-                "chart page exceeds its application-thread item limit",
-            ));
-        }
-        let item_count = items.len();
-        Ok(Self {
-            items,
-            item_count,
-            has_more: next_cursor.is_some(),
-            next_cursor,
-        })
-    }
-}
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
@@ -232,19 +46,19 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> ChartSnapshot {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> ChartSnapshot {
+fn project<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> ChartSnapshot {
-    let active = app.control_active_tab_index();
-    let config = app.control_config();
+fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
+    let active = app.tab_reads().active_tab_index();
+    let config = app.tab_reads().config();
     let mut panes = Vec::new();
-    for (tab_index, tab) in app.control_tabs().iter().enumerate() {
+    for (tab_index, tab) in app.tab_reads().tabs().iter().enumerate() {
         let focused = tab.focused_side();
         let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
         for (pane, side) in tab.panes() {
@@ -253,6 +67,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
                 PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
             };
             panes.push(pane_snapshot(
+                app.tab_reads().tabs().id_at(tab_index),
                 tab,
                 pane,
                 side,
@@ -266,6 +81,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
 }
 
 fn pane_snapshot(
+    tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
     side: PaneSide,
@@ -275,7 +91,7 @@ fn pane_snapshot(
 ) -> ChartPaneSnapshot {
     let seam = pane.seam_slot();
     ChartPaneSnapshot {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(tab_id),
         pane_id: WireU64::new(pane.id),
         side: side.into(),
         pane_index: wire_usize(side.index()),
@@ -457,8 +273,8 @@ fn bar_snapshot_with(
 /// a prefix install, backfill, reset, or bar-spec rebuild advances the pane's
 /// pagination revision and returns `control.page_stale`.
 #[cfg(test)]
-pub(crate) fn chart_window(
-    app: &QuantickApp,
+pub(crate) fn chart_window<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&PageCursor>,
@@ -470,8 +286,8 @@ pub(crate) fn chart_window(
 
 /// Gateway path for a query parsed, schema-checked, and canonicalized away
 /// from the application thread.
-pub(crate) fn chart_window_prevalidated(
-    app: &QuantickApp,
+pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     canonical_query: &serde_json::Value,
@@ -483,9 +299,9 @@ pub(crate) fn chart_window_prevalidated(
         )));
     }
     let tab = app
-        .control_tabs()
-        .iter()
-        .find(|tab| tab.id == query.tab_id.get())
+        .tab_reads()
+        .tabs()
+        .by_id(query.tab_id.get())
         .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
     let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
         return Err(ControlError::invalid_request(
@@ -577,7 +393,7 @@ pub(crate) fn chart_window_prevalidated(
         ));
     }
     let end = start.saturating_add(query.page_size).min(stop);
-    let provenance = provenance_context(tab, app.control_config());
+    let provenance = provenance_context(tab, app.tab_reads().config());
     let items = (start..end)
         .filter_map(|slot| {
             pane.closed_bar(slot).map(|bar| {

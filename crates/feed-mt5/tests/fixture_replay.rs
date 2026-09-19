@@ -140,6 +140,9 @@ async fn tcp_replay_equals_the_pure_mapper() {
             // A recorded session carries no `sent_ms`, so the split is
             // reported unavailable; the fixture is about bars, not lag.
             Mt5Event::Latency(_) => {}
+            Mt5Event::SequenceAnomaly { anomaly, .. } => {
+                panic!("the contiguous fixture must not report loss: {anomaly:?}")
+            }
         }
     }
 

@@ -178,10 +178,11 @@ impl Surface for ToastSurface {
     /// through the simulator's own `show_toast`, so what it photographs is
     /// the whole route into this lane — the panel's outbox, the drain, and
     /// the naming a background market gets — rather than this surface alone.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
-        match std::env::var("QUANTICK_TOAST").as_deref() {
-            Ok("plain") => self.note("Workspace saved.", env.now),
-            Ok("undo") => self.note_with_undo("Trend line deleted.", env.now),
+        match crate::hooks::captured::var("QUANTICK_TOAST").as_deref() {
+            Some("plain") => self.note("Workspace saved.", env.now),
+            Some("undo") => self.note_with_undo("Trend line deleted.", env.now),
             // A typo must not photograph the wrong state and call it a pass.
             _ => {}
         }
@@ -252,6 +253,7 @@ impl Surface for ToastSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_TOAST"];
 
 #[cfg(test)]
@@ -260,6 +262,22 @@ mod tests {
 
     fn env(now: Instant) -> SurfaceEnv<'static> {
         SurfaceEnv::quiet(now)
+    }
+
+    /// The hook reads the value the composition root captured — here, the
+    /// one this test states — and never the shell that launched the tests.
+    #[test]
+    fn the_capture_hook_reads_the_stated_input_not_the_environment() {
+        let now = Instant::now();
+        crate::hooks::captured::set_on_this_thread(Some(&[("QUANTICK_TOAST", "undo")]));
+        let mut stated = ToastSurface::default();
+        stated.apply_env_hook(&env(now));
+        crate::hooks::captured::set_on_this_thread(Some(&[]));
+        let mut unstated = ToastSurface::default();
+        unstated.apply_env_hook(&env(now));
+        crate::hooks::captured::set_on_this_thread(None);
+        assert!(stated.offers_undo(), "the stated input reached the hook");
+        assert_eq!(unstated.message(), None, "an unstated input is unset");
     }
 
     /// A toast leaves on its own after the undo window, without anyone having

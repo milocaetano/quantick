@@ -120,11 +120,20 @@ impl QuantickApp {
         let mut layout_picker_open = self.chrome.layout_picker_open;
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
-        let layout_picker_autostart = self.harness.take_layout_picker_autostart();
+        #[cfg(any(feature = "scenario-harness", test))]
+        let layout_picker_autostart = self.chrome.harness.take_layout_picker_autostart();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let layout_picker_autostart = false;
         let deal_recording = self.active_tab().deal_recording_view();
+        #[cfg(any(feature = "scenario-harness", test))]
         let deal_recording_menu =
-            deal_recording.is_some() && self.harness.take_deal_recording_menu();
-        let mut bars_menu = self.harness.bars_menu_pending();
+            deal_recording.is_some() && self.chrome.harness.take_deal_recording_menu();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let deal_recording_menu = false;
+        #[cfg(any(feature = "scenario-harness", test))]
+        let mut bars_menu = self.chrome.harness.bars_menu_pending();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let mut bars_menu = false;
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -177,13 +186,14 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
+        #[cfg(any(feature = "scenario-harness", test))]
         if !bars_menu {
-            self.harness.clear_bars_menu();
+            self.chrome.harness.clear_bars_menu();
         }
-        self.set_history_reach(history_reach);
+        self.history.set_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span
         // cap is clamped in the one place that knows the cap.
-        self.set_history_reach_span_minutes(history_reach_span_minutes);
+        self.history.set_span_minutes(history_reach_span_minutes);
         self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
@@ -232,8 +242,9 @@ impl QuantickApp {
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadOlder => {
+                let tab_id = self.tabs.active_id();
                 let (tab, config) = self.active_with_config();
-                tab.request_older_history(config);
+                tab.request_older_history(tab_id, config);
             }
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
@@ -242,26 +253,41 @@ impl QuantickApp {
                 // Read before the tab is borrowed mutably — and the capability
                 // block rather than the whole config, because that is all the
                 // request needs to know.
+                let tab_id = self.tabs.active_id();
                 let capabilities = self.active_tab().capabilities(&self.config);
                 self.active_tab_mut()
-                    .request_older_ohlcv_history(capabilities);
+                    .request_older_ohlcv_history(tab_id, capabilities);
             }
             ToolbarAction::SetHeatmap(shown) => {
-                self.active_tab_mut().tape_mut().set_depth_visible(shown);
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::Heatmap,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::SetBubbles(enabled) => {
-                self.active_tab_mut()
-                    .tape_mut()
-                    .set_bubbles_enabled(enabled);
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::Bubbles,
+                    enabled,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::SetLiveStrip(shown) => {
-                self.active_tab_mut().flow_pane.live_strip_visible = shown;
+                self.active_tab_mut().flow_pane.set_layer_visible(
+                    crate::chart_layers::ChartLayer::LiveStrip,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             // The focused pane's own field, through the same setter the pane's
             // layer menu calls — so the button, the menu and the lamp can
             // never disagree about which chart the command described.
             ToolbarAction::SetFootprint(shown) => {
-                self.focused_pane_mut().footprint.visible = shown;
+                self.focused_pane_mut().set_layer_visible(
+                    crate::chart_layers::ChartLayer::Footprint,
+                    shown,
+                    &mut Default::default(),
+                );
             }
             ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
@@ -280,24 +306,62 @@ impl QuantickApp {
             // which the workspace restore and the harness hooks also travel —
             // there it would erase the fold on every launch.
             ToolbarAction::AddNative(id) => {
-                self.set_focused_legend_collapsed(false);
-                self.add_native_indicator(id);
+                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                    self.focused_pane_mut(),
+                    false,
+                );
+                let target = (self.tabs.active_id(), self.active_tab().focused_side());
+                let attached = self.indicators.attach_native(
+                    self.tabs
+                        .runtime_mut(self.tabs.active_index())
+                        .pane_mut(target.1),
+                    target,
+                    id,
+                );
+                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Attached(
+                    attached,
+                ));
             }
             ToolbarAction::ToggleIndicatorHidden(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.toggle_indicator_hidden_at(target);
+                self.apply_indicator_legend_action(
+                    target.tab,
+                    target.side,
+                    crate::indicator_legend::LegendAction::ToggleHidden(target.slot),
+                );
             }
             ToolbarAction::RemoveIndicator(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.remove_indicator_at(target);
+                self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Remove(target));
             }
             ToolbarAction::AddScriptIndicator(index) => {
-                self.set_focused_legend_collapsed(false);
-                self.add_script_indicator(index);
+                super::indicator_manager::IndicatorState::set_legend_collapsed(
+                    self.focused_pane_mut(),
+                    false,
+                );
+                let target = (self.tabs.active_id(), self.active_tab().focused_side());
+                if let Some((_, added)) = self.indicators.add_library(
+                    self.tabs
+                        .runtime_mut(self.tabs.active_index())
+                        .pane_mut(target.1),
+                    target,
+                    index,
+                ) {
+                    if let Some(attached) = added.attachment {
+                        self.apply_indicator_edit(
+                            super::indicator_manager::IndicatorEdit::Attached(attached),
+                        );
+                    }
+                    self.indicators.watch_attachment(added.watch);
+                }
             }
             ToolbarAction::OpenIndicatorSettings(slot) => {
                 let target = self.target_slot(SlotId(slot));
-                self.open_indicator_settings_at(target);
+                self.apply_indicator_legend_action(
+                    target.tab,
+                    target.side,
+                    crate::indicator_legend::LegendAction::OpenSettings(target.slot),
+                );
             }
             // The toolbar acts on the market it is showing: the active tab's
             // simulator, whose tape the buttons' price came from.

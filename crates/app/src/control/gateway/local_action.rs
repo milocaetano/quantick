@@ -14,20 +14,27 @@
 
 use quantick_control::{
     error::{ControlError, codes},
-    handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
     id::RequestId,
-    wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
+    wire::{ActorContext, ActorKind, WireU64},
 };
 use serde_json::Value;
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
+#[cfg(any(feature = "control-harness", test))]
+use super::super::contract::{PreparedDispatch, UiReadContext};
 use super::super::{
-    contract::{PreparedDispatch, UiReadContext},
     trace::{ControlTrace, NoTrace, ReplayTraceFile, TRACE_VERSION, TraceEntry, result_digest},
     types::known_error,
 };
-use super::{ActionOrigin, ControlAccess, HOOK_ACTOR_CLIENT_NAME, UI_ACTOR_CLIENT_NAME};
+#[cfg(any(feature = "control-harness", test))]
+use super::HOOK_ACTOR_CLIENT_NAME;
+use super::{ActionOrigin, ControlAccess, UI_ACTOR_CLIENT_NAME};
+#[cfg(any(feature = "control-harness", test))]
+use quantick_control::{
+    handshake::{CURRENT_PROTOCOL_VERSION, ProtocolLimits},
+    wire::RequestEnvelope,
+};
 
 impl ControlAccess {
     /// Invoke one registered action from inside the application — the hotkey,
@@ -37,7 +44,7 @@ impl ControlAccess {
     /// control trace before and after the handler runs (contract §11).
     pub(crate) fn invoke_local_action(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         capability_id: &str,
         capability_version: u32,
         input: Value,
@@ -102,9 +109,10 @@ impl ControlAccess {
         // a live tab has nothing to record. Opening the sidecar is rare and
         // off the hot path (an action is a human gesture).
         let replaying = {
-            let tabs = app.control_tabs();
+            let tabs = app.tab_reads().tabs();
             let active = &tabs[app
-                .control_active_tab_index()
+                .tab_reads()
+                .active_tab_index()
                 .min(tabs.len().saturating_sub(1))];
             active
                 .replay
@@ -216,9 +224,10 @@ impl ControlAccess {
     /// hook prove something other than what a client would see.
     ///
     /// [`ObserverContract::prepare`]: crate::control::contract::ObserverContract::prepare
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn invoke_local_read(
         &mut self,
-        app: &QuantickApp,
+        app: &ControlWindow,
         capability_id: &str,
         input: Value,
     ) -> Result<Value, ControlError> {
@@ -285,6 +294,7 @@ impl ControlAccess {
     /// The actor a launch hook acts as: an agent, named for what it is, so
     /// nothing it places can pass for the trader's own hand and a screenshot
     /// shows exactly what a connected assistant would have produced.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn hook_agent_actor(&mut self) -> Option<ActorContext> {
         self.identity.as_ref()?;
         let mut actor = self.local_actor(ActorKind::Agent, Some("launch hook".to_owned()));

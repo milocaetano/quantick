@@ -19,6 +19,8 @@ use crate::widgets::{IconButton, MarkerEdge, TOOLRAIL_ICON};
 mod band;
 mod flyout;
 mod state;
+#[cfg(any(feature = "drawing-harness", test))]
+pub(crate) use state::ToolRailLaunch;
 
 /// Rail cross axis, all four docks: `44 = 6 + 32 + 6`.
 const TOOLBOX_THICKNESS_PX: f32 = 44.0;
@@ -575,6 +577,7 @@ pub struct ToolRail {
     flyout: Option<(&'static str, egui::Rect)>,
     /// A family flyout a validation hook asked for before the first frame —
     /// honoured by the family slot once it knows its rect, then cleared.
+    #[cfg(any(feature = "drawing-harness", test))]
     hook_flyout: Option<String>,
     #[cfg(test)]
     button_rects: [Option<(Tool, egui::Rect)>; TOOLBOX_BUTTON_COUNT],
@@ -629,6 +632,7 @@ impl Default for ToolRail {
             dragging: false,
             drag_cancelled: false,
             flyout: None,
+            #[cfg(any(feature = "drawing-harness", test))]
             hook_flyout: None,
             #[cfg(test)]
             button_rects: [None; TOOLBOX_BUTTON_COUNT],
@@ -1212,3 +1216,13 @@ fn paint_badge(ui: &egui::Ui, button: egui::Rect, text: &str, color: egui::Color
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(any(feature = "drawing-harness", test))]
+crate::hooks::declare_hooks![
+    "QUANTICK_DRAWING_TOOL",
+    "QUANTICK_DRAWING_MAGNET",
+    "QUANTICK_TOOL_FAVORITES",
+    "QUANTICK_TOOLBOX_DOCK",
+    "QUANTICK_TOOLBAR_SCROLL",
+    "QUANTICK_TOOLBOX_FLYOUT",
+];

@@ -1,9 +1,12 @@
 //! The tab lifecycle: opening a market, closing one, moving between them.
 //!
 //! `adopt_tab` — the step that actually builds a `Tab` from a live feed
-//! handle — stays in `super`, beside the constructor it shares its
-//! inheritance rules with. What is here is everything that decides *which*
-//! tab, and what happens to the window when the set of them changes.
+//! handle — lives on the arrangement adapter, beside the constructor it
+//! shares its inheritance rules with. What is here is everything that
+//! decides *which* tab, and what happens to the window when the set of them
+//! changes — plus the two owners the window mirrors onto every tab: the
+//! history reach ([`HistorySettings`]) and the symbol catalog
+//! ([`SymbolCatalog`]).
 
 use eframe::egui;
 
@@ -12,12 +15,11 @@ use eframe::egui;
 #[cfg(test)]
 use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
-use crate::state::BarSpec;
 use crate::symbols_file;
 use crate::tabstrip::TabAction;
 use quantick_feed::history_reach;
 
-use quantick_feed as feed;
+use crate::config::AppConfig;
 
 use super::menu_bar::{
     CLOSE_TAB_SHORTCUT, NEW_TAB_SHORTCUT, NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT,
@@ -28,9 +30,11 @@ use super::{QuantickApp, TabSlot};
 /// workspace that recorded `tick:50` for a context chart is a file written by
 /// hand, and the chart opens on the default rather than on a guess.
 fn saved_time_interval(text: Option<&str>) -> Option<i64> {
-    text.and_then(|text| match BarSpec::parse(text) {
-        Ok(BarSpec::Time(ms)) => Some(ms),
-        _ => None,
+    text.and_then(|text| {
+        quantick_engine::bar_registry::BUILTIN_BARS
+            .parse(text)
+            .ok()?
+            .time_interval_ms()
     })
 }
 
@@ -107,108 +111,10 @@ impl QuantickApp {
     /// focused pane, that slot.
     pub(super) fn target_slot(&self, slot: SlotId) -> TabSlot {
         TabSlot {
-            tab: self.active_tab().id,
+            tab: self.tabs.active_id(),
             side: self.active_tab().focused_side(),
             slot,
         }
-    }
-
-    /// Open `feed_id`/`symbol` in a new tab and make it active.
-    ///
-    /// Opening a market a tab already holds is allowed — two views of one
-    /// book are a legitimate thing to want. For MetaTrader that means two
-    /// listeners on one port, and the second one loses the bind: that tab
-    /// shows the bridge's own bind-failure notice, which is the honest answer
-    /// and the reason `[metatrader.ports]` maps a port per symbol.
-    pub(super) fn open_tab(&mut self, feed_id: String, symbol: String, spec: Option<BarSpec>) {
-        let Some(provider) = self.config.provider_of(&feed_id) else {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "TAB_OPEN_UNKNOWN_FEED",
-                feed = %feed_id,
-                action = "ignore_request",
-                "asked to open a feed the config does not have"
-            );
-            return;
-        };
-        // One feed per tab, resolved per symbol: a MetaTrader tab binds the
-        // port `[metatrader.ports]` maps its symbol to (`endpoint_for`), so two
-        // MT5 tabs on different symbols listen on different ports and each
-        // finds its own bridge. Two tabs on the *same* MT5 symbol is allowed
-        // and means one port for two listeners: the second loses the bind and
-        // shows the feed's own MT5_BIND_FAILED notice, which is the honest
-        // answer rather than a silently dead chart.
-        let handle = feed::spawn_live(
-            provider,
-            &symbol,
-            &self.config.metatrader,
-            crate::paper_home::shelf_dir(),
-        );
-        self.adopt_tab(feed_id, symbol, handle, spec);
-    }
-
-    /// Close the tab at `index`, activating a neighbour.
-    ///
-    /// The last tab stays: a window with no market has nothing to draw. What
-    /// the closed tab owned goes with it — dropping its `FeedHandle` closes
-    /// the receivers its feed thread sends into, and dropping its panes drops
-    /// the indicator worker and book worker handles, whose run loops end when
-    /// their command channels disconnect. No joins, no shutdown protocol.
-    pub(super) fn close_tab(&mut self, index: usize) {
-        if self.tabs.len() <= 1 || index >= self.tabs.len() {
-            return;
-        }
-        let mut closed = self.tabs.remove(index);
-        // The tab's session ends here. Everything else it owns can simply be
-        // dropped — the feed thread and the workers stop when their channels
-        // go — but a simulated position is state the user created, and the
-        // paper-trading contract says it ends in a labeled, journaled flatten,
-        // never by vanishing with its window.
-        closed.close();
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "TAB_CLOSED",
-            tab = closed.id,
-            feed = %closed.feed_id,
-            symbol = %closed.symbol,
-            tabs = self.tabs.len(),
-            action = "drop_feed_and_workers",
-            "closing a market tab"
-        );
-        // Its slots are gone with its panes; the bookkeeping must not outlive
-        // them or a later tab reusing a slot number would inherit its kind.
-        self.indicators
-            .slot_kinds
-            .retain(|(owner, _)| owner.tab != closed.id);
-        self.indicators
-            .operator_slots
-            .retain(|owner| owner.tab != closed.id);
-        self.indicators
-            .script_files
-            .retain(|(owner, ..)| owner.tab != closed.id);
-        self.indicators
-            .pending_hidden
-            .retain(|owner| owner.tab != closed.id);
-        self.indicators
-            .pending_styles
-            .retain(|(owner, _)| owner.tab != closed.id);
-        self.indicators
-            .pending_mouse_vertical_lines
-            .retain(|owner| owner.tab != closed.id);
-        self.active_tab = self.active_tab.min(self.tabs.len() - 1);
-        drop(closed);
-    }
-
-    /// Move `delta` tabs along the strip, wrapping (§10: Ctrl+Tab).
-    pub(super) fn cycle_tab(&mut self, delta: isize) {
-        if self.tabs.len() < 2 {
-            return;
-        }
-        let count = self.tabs.len() as isize;
-        let next = (self.active_tab as isize + delta).rem_euclid(count);
-        self.active_tab = next as usize;
     }
 
     /// Whether the toolbar's heatmap lamp is lit.
@@ -256,42 +162,11 @@ impl QuantickApp {
         // recorder built for the market it belongs to.
         super::deal_recording_wiring::ensure(self);
         let config = &self.config;
-        let progressive_history = self.history.progressive_history;
-        let history_reach = self.history.history_reach;
-        let history_reach_span_minutes = self.history.history_reach_span_minutes;
-        let venue_lead_in = self.history.venue_lead_in;
+        let policy = self.history.policy();
         let mut trades = 0_u64;
-        for tab in &mut self.tabs {
+        for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.live_trades;
-            tab.drain_feed();
-            for pane in tab.panes_mut() {
-                pane.apply_indicator_events();
-            }
-            tab.drain_book_feed();
-            tab.drain_notices();
-            // Heartbeat for the recorder. The lifecycle calls elsewhere already
-            // start it at every point that knows the market changed; this one
-            // makes "always recording" true by construction, so a start command
-            // lost to a momentarily full channel heals on the next frame
-            // instead of leaving the session silently unrecorded. Free while it
-            // is running: one bool read and an early return.
-            tab.ensure_book_capture(config);
-            // MetaTrader narrows its capabilities when the bridge says hello,
-            // after the pane may already have asked and been told there was
-            // nothing held. Watching the edge is what asks again once the
-            // answer can be a real one.
-            // The switch lives on the window, the request is phrased by the
-            // tab: mirrored here so every tab asks the way the trader last
-            // said, including one opened after the choice was made.
-            tab.progressive_history = progressive_history;
-            tab.history_reach = history_reach;
-            tab.history_reach_span_minutes = history_reach_span_minutes;
-            // Through the setter, not the field: flipping the lead-in refolds
-            // the prefix, and a tab that only had the field written would keep
-            // drawing the answer to the previous choice until the next candle
-            // landed. Idempotent, so the steady state costs one comparison.
-            tab.set_venue_lead_in(venue_lead_in);
-            tab.poll_ohlcv_capability(config);
+            tab.drain_frame(tab_id, config, policy);
             trades += tab.live_trades - before;
         }
         // What the window ingested, across every market it is holding.
@@ -318,13 +193,14 @@ impl QuantickApp {
             self.surfaces.source_picker.open(&self.config);
         }
         if close_tab {
-            self.close_tab(self.active_tab);
+            let index = self.tabs.active_index();
+            self.arrangement_adapter().close_tab(index);
         }
         if next {
-            self.cycle_tab(1);
+            self.arrangement_adapter().cycle_tab(1);
         }
         if previous {
-            self.cycle_tab(-1);
+            self.arrangement_adapter().cycle_tab(-1);
         }
     }
 
@@ -332,29 +208,97 @@ impl QuantickApp {
     pub(super) fn apply_market_request(&mut self, request: crate::surfaces::MarketRequest) {
         use crate::surfaces::MarketRequest;
         match request {
-            MarketRequest::Open { feed_id, symbol } => self.open_tab(feed_id, symbol, None),
-            MarketRequest::Add { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
-                Ok(()) => {
-                    self.surfaces.source_picker.close();
-                    self.open_tab(feed_id, symbol, None);
+            MarketRequest::Open { feed_id, symbol } => {
+                self.arrangement_adapter().open_tab(feed_id, symbol, None)
+            }
+            MarketRequest::Add { feed_id, symbol } => {
+                match self.symbol_catalog().add(&feed_id, &symbol) {
+                    Ok(()) => {
+                        self.surfaces.source_picker.close();
+                        self.arrangement_adapter().open_tab(feed_id, symbol, None);
+                    }
+                    // The dialog stays open carrying the reason: the user is one
+                    // keystroke from a symbol that does fit, and closing would
+                    // make the refusal look like a crash.
+                    Err(reason) => self.surfaces.source_picker.refuse(reason),
                 }
-                // The dialog stays open carrying the reason: the user is one
-                // keystroke from a symbol that does fit, and closing would
-                // make the refusal look like a crash.
-                Err(reason) => self.surfaces.source_picker.refuse(reason),
-            },
-            MarketRequest::Remove { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
+            }
+            MarketRequest::Remove { feed_id, symbol } => {
+                self.symbol_catalog().remove(&feed_id, &symbol);
+            }
         }
     }
 
+    /// Carry out what the tab strip asked for.
+    pub(super) fn apply_tab_action(&mut self, action: TabAction) {
+        match action {
+            TabAction::Activate(index) => {
+                if index < self.tabs.len() {
+                    self.tabs.select(index);
+                }
+            }
+            TabAction::Close(index) => self.arrangement_adapter().close_tab(index),
+            TabAction::New => self.surfaces.source_picker.open(&self.config),
+        }
+    }
+}
+
+impl HistorySettings {
+    /// Choose how far one press of *load older* reaches.
+    ///
+    /// The named call behind the history menu's reach chips and the
+    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
+    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
+    /// where a run in flight also reads it: withdrawing the longer reach is
+    /// how a trader calls that run off.
+    pub(super) fn set_reach(&mut self, reach: history_reach::HistoryReach) {
+        self.history_reach = reach;
+    }
+
+    /// How far back one press of the `by time` reach pulls, in minutes of
+    /// traded time.
+    ///
+    /// Clamped rather than refused: a span of zero is a press that asks for
+    /// nothing, and the operator that sent it meant *some* history. The
+    /// ceiling is the campaign's own span cap, past which no run can reach
+    /// anyway, so accepting a larger number would be promising a reach the
+    /// budgets forbid.
+    pub(super) fn set_span_minutes(&mut self, minutes: u32) {
+        let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
+        self.history_reach_span_minutes = minutes.clamp(1, ceiling);
+    }
+
+    /// The window's standing choice, phrased for the tabs. The switch lives
+    /// on the window, the request is phrased by the tab: handed to every
+    /// tab's drain each frame so every tab asks the way the trader last said,
+    /// including one opened after the choice was made.
+    pub(super) fn policy(&self) -> crate::tab::HistoryPolicy {
+        crate::tab::HistoryPolicy {
+            progressive: self.progressive_history,
+            reach: self.history_reach,
+            reach_span_minutes: self.history_reach_span_minutes,
+            venue_lead_in: self.venue_lead_in,
+        }
+    }
+}
+
+/// The instruments the picker can add to a feed: the running config, the
+/// user's own additions kept apart from it, and the sidecar they persist in.
+///
+/// The config file itself is never written: it is hand-written, comments
+/// and all, and a program that rewrote it would eat them. An addition lives
+/// in its own sidecar, which the next launch folds back in before the config
+/// is validated (see [`crate::symbols_file`]).
+pub(crate) struct SymbolCatalog<'a> {
+    pub(super) config: &'a mut AppConfig,
+    pub(super) added: &'a mut symbols_file::AddedSymbols,
+    pub(super) path: &'a std::path::Path,
+}
+
+impl SymbolCatalog<'_> {
     /// Put `symbol` in feed `feed_id`'s catalog and remember it across
     /// restarts. Reports whether the catalog took it.
-    ///
-    /// The config file itself is never written: it is hand-written, comments
-    /// and all, and a program that rewrote it would eat them. The addition
-    /// lives in its own sidecar, which the next launch folds back in before
-    /// the config is validated (see [`crate::symbols_file`]).
-    pub(super) fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
+    pub(crate) fn add(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
         // Against the *whole* config, on a copy. A symbol is not just a name
         // in a list: it takes part in every cross-check the config has, and
         // the MetaTrader port map is one where a single mapped symbol offered
@@ -369,16 +313,16 @@ impl QuantickApp {
             ));
         }
         candidate.validate()?;
-        self.config = candidate;
-        self.added_symbols.add(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
+        *self.config = candidate;
+        self.added.add(feed_id, symbol);
+        if let Err(error) = symbols_file::save(self.path, self.added) {
             // The catalog took it for this session either way; what is lost is
             // the next launch, and the user is told which file did not take it.
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.workspace.symbols_path().display(),
+                path = %self.path.display(),
                 error = %error,
                 action = "addition_is_session_only",
                 "cannot write the added-symbols file"
@@ -390,7 +334,7 @@ impl QuantickApp {
             event_code = "SYMBOL_ADDED",
             feed = %feed_id,
             symbol = %symbol,
-            path = %self.workspace.symbols_path().display(),
+            path = %self.path.display(),
             action = "open_in_new_tab",
             "a symbol was added from the source picker"
         );
@@ -402,17 +346,17 @@ impl QuantickApp {
     /// Only ever a catalog edit: a tab already showing that market keeps
     /// streaming it. The picker will not offer this for a market a tab is on,
     /// which is what stops the selection correction from retargeting it.
-    pub(super) fn remove_symbol(&mut self, feed_id: &str, symbol: &str) {
+    pub(crate) fn remove(&mut self, feed_id: &str, symbol: &str) {
         if !self.config.remove_symbol(feed_id, symbol) {
             return;
         }
-        self.added_symbols.remove(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
+        self.added.remove(feed_id, symbol);
+        if let Err(error) = symbols_file::save(self.path, self.added) {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.workspace.symbols_path().display(),
+                path = %self.path.display(),
                 error = %error,
                 action = "removal_is_session_only",
                 "cannot write the added-symbols file"
@@ -424,22 +368,9 @@ impl QuantickApp {
             event_code = "SYMBOL_REMOVED",
             feed = %feed_id,
             symbol = %symbol,
-            path = %self.workspace.symbols_path().display(),
+            path = %self.path.display(),
             action = "leave_open_tabs_alone",
             "a user-added symbol left the catalog"
         );
-    }
-
-    /// Carry out what the tab strip asked for.
-    pub(super) fn apply_tab_action(&mut self, action: TabAction) {
-        match action {
-            TabAction::Activate(index) => {
-                if index < self.tabs.len() {
-                    self.active_tab = index;
-                }
-            }
-            TabAction::Close(index) => self.close_tab(index),
-            TabAction::New => self.surfaces.source_picker.open(&self.config),
-        }
     }
 }

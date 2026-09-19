@@ -22,6 +22,8 @@ use super::{
 /// nothing it says is data (the layers keep drawing, and the trader can bring
 /// it back from the right-click menu).
 pub(super) const MAX_LEGEND_TOP_INSET_FRAC: f32 = 0.5;
+/// The key's hairline, included in its published painted footprint.
+const LEGEND_BORDER_WIDTH_PX: f32 = 0.75;
 
 /// The legend keys for this style, one per layer that can actually draw.
 ///
@@ -70,17 +72,20 @@ pub(super) fn legend_entries(
 
 /// Draw a responsive legend inside the chart. Labels deliberately distinguish
 /// confirmed aggression from aligned or unattributed L2 reductions.
-pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderContext<'_>) {
+pub(crate) fn draw_compact_legend(
+    painter: &egui::Painter,
+    context: &RenderContext<'_>,
+) -> Option<egui::Rect> {
     let style = context.style.sanitized();
     if !style.show_legend || context.layout.chart_rect.width() < 150.0 {
-        return;
+        return None;
     }
     // The corner may already be full — a tall stack of indicator chips over a
     // short canvas. The key stands down rather than printing over them: it is
     // chrome, everything it names keeps drawing, and it comes back the moment
     // there is room (or a chip goes away).
     if style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC {
-        return;
+        return None;
     }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
@@ -97,7 +102,7 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
     };
     let entries = legend_entries(&style, liquidity_label);
     if entries.is_empty() {
-        return;
+        return None;
     }
     let font = egui::FontId::proportional(10.0);
     let galleys: Vec<_> = entries
@@ -134,9 +139,10 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
     clip.rect_stroke(
         panel,
         egui::Rounding::same(4.0),
-        egui::Stroke::new(0.75_f32, palette.legend_border),
+        egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
     );
 
+    let mut footprint = panel.expand(LEGEND_BORDER_WIDTH_PX / 2.0);
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
         let item = origin + offset;
@@ -145,8 +151,10 @@ pub(crate) fn draw_compact_legend(painter: &egui::Painter, context: &RenderConte
             item.x + glyph.width() + 5.0,
             item.y + (14.0 - galley.size().y) / 2.0,
         );
+        footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
         clip.galley(text_pos, galley, palette.legend_text);
     }
+    Some(footprint.intersect(clip.clip_rect()))
 }
 
 #[derive(Debug, Clone, Copy)]

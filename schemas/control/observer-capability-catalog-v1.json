@@ -343,6 +343,32 @@
             ],
             "type": "object"
           },
+          "ChartReference": {
+            "additionalProperties": false,
+            "properties": {
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "series_revision": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "pane_id",
+              "series_revision"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
@@ -366,6 +392,17 @@
             "maxItems": 3,
             "minItems": 2,
             "type": "array"
+          },
+          "chart_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional exact series identity. Absent: the original timestamp/future\nbehavior. Present: bar positions and supplied times must agree with\nthis pane's current series and active layout before anything is placed."
           },
           "name": {
             "maxLength": 120,
@@ -616,6 +653,32 @@
             ],
             "type": "object"
           },
+          "ChartReference": {
+            "additionalProperties": false,
+            "properties": {
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "series_revision": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "pane_id",
+              "series_revision"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
@@ -639,6 +702,17 @@
             "maxItems": 3,
             "minItems": 2,
             "type": "array"
+          },
+          "chart_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional exact series identity. Absent: the original timestamp/future\nbehavior. Present: bar positions and supplied times must agree with\nthis pane's current series and active layout before anything is placed."
           },
           "name": {
             "maxLength": 120,
@@ -1145,6 +1219,32 @@
             ],
             "type": "object"
           },
+          "ChartReference": {
+            "additionalProperties": false,
+            "properties": {
+              "layout_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "series_revision": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "pane_id",
+              "series_revision"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
@@ -1168,6 +1268,17 @@
             "maxItems": 3,
             "minItems": 2,
             "type": "array"
+          },
+          "chart_reference": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ChartReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional exact series identity. Absent: the original timestamp/future\nbehavior. Present: bar positions and supplied times must agree with\nthis pane's current series and active layout before anything is placed."
           },
           "name": {
             "maxLength": 120,
@@ -6357,6 +6468,142 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layers.visibility.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "layer_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Stable identity from chart.summary, never a position that a pane move can change."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "layer_id",
+          "visible"
+        ],
+        "title": "SetVisibilityInput",
+        "type": "object"
+      },
+      "module": "layers",
+      "output_schema": {
+        "$defs": {
+          "LayerSnapshot": {
+            "properties": {
+              "blocked_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "effective": {
+                "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "persistence": {
+                "type": "string"
+              },
+              "requested": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "scope",
+              "persistence",
+              "requested",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "layer": {
+            "$ref": "#/$defs/LayerSnapshot"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "layer",
+          "changed"
+        ],
+        "title": "VisibilityResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.",
+      "title": "Set chart layer visibility",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
       "destructive": false,
       "dry_run_supported": false,
@@ -7513,6 +7760,123 @@
       "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
       "title": "Resize the context column",
       "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Moves the divider between the named upper and lower context panes. Uses the same neighbor floors as a pointer drag, keeps other boundaries and column width unchanged, and returns the applied position. The current stack must have been drawn.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.pane.resize_pair",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Divider position in the whole context column, top=0 and bottom=1.\nAt most six decimal places. The applied position obeys both neighbor floors."
+          },
+          "lower_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          },
+          "upper_pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "Stable pane IDs from workspace.summary, in upper/lower order."
+          }
+        },
+        "required": [
+          "upper_pane_id",
+          "lower_pane_id",
+          "fraction"
+        ],
+        "title": "ResizePairInput",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Applied divider position, including any floor clamp."
+          },
+          "lower_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "upper_pane_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "upper_pane_id",
+          "lower_pane_id",
+          "fraction",
+          "changed"
+        ],
+        "title": "ResizePairResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable pane IDs must still name adjacent visible charts; otherwise the request is refused before any height changes.",
+      "title": "Resize adjacent context charts",
+      "version": 1
     },
     {
       "availability": {
@@ -10575,6 +10939,11 @@
       "title": "Interaction"
     },
     {
+      "description": "Registered chart visibility and availability, including hidden panes.",
+      "id": "layers",
+      "title": "Chart layers"
+    },
+    {
       "description": "The canvas: which charts are on screen, where they sit, and how wide.",
       "id": "layout",
       "title": "Layout"
@@ -12018,7 +12387,7 @@
                 "x-unit": "milliseconds"
               },
               "tape_gaps": {
-                "description": "Stretches of market time this tab's tape does not cover, left by a\nreconnect that kept the timeline. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
+                "description": "Market-time bounds of source loss or a reconnect interruption.\nEqual bounds can bracket known missing messages. Bounded, oldest first.\n\nOmitted when there are none, so a reader written against the scope\nbefore this field existed keeps parsing every payload from a tab that\nnever reconnected — which is nearly all of them.",
                 "items": {
                   "$ref": "#/$defs/FeedGapSnapshot"
                 },
@@ -12139,6 +12508,30 @@
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
+          },
+          "FeedIntegritySnapshot": {
+            "description": "Counts source messages, never estimates how many executed trades were lost.",
+            "properties": {
+              "anomalies": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "missing_messages": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "non_monotonic": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "unknown_loss": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "anomalies",
+              "missing_messages",
+              "unknown_loss",
+              "non_monotonic"
+            ],
+            "type": "object"
           },
           "FrameHealthSnapshot": {
             "properties": {
@@ -12485,6 +12878,17 @@
                 },
                 "type": "array"
               },
+              "feed_integrity": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FeedIntegritySnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Cumulative source diagnostics, independent of latency and gap eviction."
+              },
               "panes": {
                 "items": {
                   "$ref": "#/$defs/PaneHealthSnapshot"
@@ -12587,6 +12991,16 @@
         "properties": {
           "frame": {
             "$ref": "#/$defs/FrameHealthSnapshot"
+          },
+          "saves_off_unread_hooks": {
+            "description": "Present when this session writes no store (decision DS7): the\n`QUANTICK_*` names set at launch that this build does not read.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "tabs": {
             "items": {
@@ -13170,6 +13584,106 @@
       },
       "schema_version": 1,
       "title": "Current selection"
+    },
+    {
+      "description": "Bounded registered layer discovery and requested/effective visibility per stable pane ID; grid is window-wide.",
+      "id": "layers.visibility",
+      "module_id": "layers",
+      "required_permissions": [
+        "observe",
+        "observe.market",
+        "observe.workspace"
+      ],
+      "schema": {
+        "$defs": {
+          "LayerSnapshot": {
+            "properties": {
+              "blocked_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "effective": {
+                "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+                "type": "boolean"
+              },
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "persistence": {
+                "type": "string"
+              },
+              "requested": {
+                "type": "boolean"
+              },
+              "scope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label",
+              "scope",
+              "persistence",
+              "requested",
+              "effective"
+            ],
+            "type": "object"
+          },
+          "PaneLayersSnapshot": {
+            "properties": {
+              "layers": {
+                "items": {
+                  "$ref": "#/$defs/LayerSnapshot"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "pane_id": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "tab_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "tab_id",
+              "pane_id",
+              "layers"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "omitted_panes": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "panes": {
+            "items": {
+              "$ref": "#/$defs/PaneLayersSnapshot"
+            },
+            "maxItems": 64,
+            "type": "array"
+          }
+        },
+        "required": [
+          "panes",
+          "omitted_panes"
+        ],
+        "title": "LayersSnapshot",
+        "type": "object"
+      },
+      "schema_version": 1,
+      "title": "Layer visibility"
     },
     {
       "description": "Reports whether aggression bubbles are drawn over the chart and the lane, and what the display floor keeps off the canvas.",

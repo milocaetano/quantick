@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "LayerSnapshot": {
+      "properties": {
+        "blocked_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effective": {
+          "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "persistence": {
+          "type": "string"
+        },
+        "requested": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "scope",
+        "persistence",
+        "requested",
+        "effective"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "layer": {
+      "$ref": "#/$defs/LayerSnapshot"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "layer",
+    "changed"
+  ],
+  "title": "VisibilityResult",
+  "type": "object"
+}

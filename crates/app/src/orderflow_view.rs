@@ -21,6 +21,7 @@ use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
 mod frame;
+mod layers;
 mod settings;
 
 /// Borrowed chart timeline handed to one order-flow projection request.
@@ -416,6 +417,7 @@ impl OrderflowView {
     /// to exhaust the budget, which is a market condition rather than a
     /// setting. One path, never two — the projection reads this field whoever
     /// wrote it.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_primitive_budget(&mut self, budget: usize) {
         if budget == 0 || self.config.max_aggression_primitives == budget {
             return;
@@ -921,6 +923,7 @@ impl OrderflowView {
     /// The bars, the indicators and the simulator are untouched — they are fed
     /// upstream of here — which is exactly right: the candles keep their
     /// prints, the tape loses them, and that contrast is the thing under test.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_starve_tape_after_ms(&mut self, after_ms: i64) {
         self.starve_tape_after_ms = Some(after_ms.max(0));
     }
@@ -1241,6 +1244,100 @@ mod tests {
         assert!(
             !output.shapes.is_empty(),
             "the tab must still paint when bubbles are hidden"
+        );
+    }
+
+    /// Picking a history cluster window updates the live lane's "Same as
+    /// history" label in the same frame, not one repaint later: the lane
+    /// reads the window after the clustering section has drawn.
+    #[test]
+    fn the_live_lane_inherits_a_history_cluster_picked_this_frame() {
+        fn texts(output: &egui::FullOutput) -> Vec<(String, egui::Pos2)> {
+            fn walk(shape: &egui::Shape, found: &mut Vec<(String, egui::Pos2)>) {
+                match shape {
+                    egui::Shape::Text(text) => found.push((
+                        text.galley.text().to_owned(),
+                        text.visual_bounding_rect().center(),
+                    )),
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, found)),
+                    _ => {}
+                }
+            }
+            let mut found = Vec::new();
+            for clipped in &output.shapes {
+                walk(&clipped.shape, &mut found);
+            }
+            found
+        }
+        let ctx = egui::Context::default();
+        // No open animation: the lane section's body paints the frame it opens.
+        ctx.style_mut(|style| style.animation_time = 0.0);
+        let mut view = OrderflowView::new("BTCUSDT");
+        // The bubble controls are disabled while the layer is off.
+        view.config.show_aggressions = true;
+        view.config.bubble_cluster_ms = 200;
+        assert_eq!(view.config.live_lane.cluster_ms, None);
+        let frame = |view: &mut OrderflowView, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 4000.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    view.draw_bubbles_tab(ui);
+                });
+            })
+        };
+        let button = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: position,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let click = |view: &mut OrderflowView, at: egui::Pos2| {
+            frame(view, vec![egui::Event::PointerMoved(at)]);
+            frame(view, vec![egui::Event::PointerMoved(at), button(at, true)]);
+            frame(view, vec![egui::Event::PointerMoved(at), button(at, false)])
+        };
+        let find = |output: &egui::FullOutput, wanted: &str| {
+            texts(output)
+                .into_iter()
+                .filter(|(text, _)| text == wanted)
+                .map(|(_, at)| at)
+                .collect::<Vec<_>>()
+        };
+
+        let output = frame(&mut view, Vec::new());
+        let lane_header = find(&output, "live lane")[0];
+        click(&mut view, lane_header);
+        let output = frame(&mut view, Vec::new());
+        assert!(
+            !find(&output, "Same as history · 200 ms").is_empty(),
+            "the open lane inherits history's window"
+        );
+        // The history cluster combo is the section's first control.
+        let combo = find(&output, "200 ms")[0];
+        click(&mut view, combo);
+        let output = frame(&mut view, Vec::new());
+        // The popup paints last, so its item is the last "2 s" on screen.
+        let item = *find(&output, "2 s")
+            .last()
+            .expect("the cluster popup is open");
+        let output = click(&mut view, item);
+
+        assert_eq!(view.config.bubble_cluster_ms, 2_000);
+        assert!(
+            !find(&output, "Same as history · 2 s").is_empty(),
+            "the click frame already labels the lane with the new window: {:?}",
+            texts(&output)
+                .into_iter()
+                .map(|(text, _)| text)
+                .filter(|text| text.starts_with("Same as history"))
+                .collect::<Vec<_>>()
         );
     }
 

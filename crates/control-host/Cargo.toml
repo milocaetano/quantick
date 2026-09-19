@@ -9,8 +9,11 @@ publish.workspace = true
 
 [dependencies]
 quantick-control = { path = "../control" }
+# The bar vocabulary the chart projections put on the wire.
+quantick-engine = { path = "../engine" }
 # The journal's lock-free change signal to parked `wait_for_change` waiters.
 crossbeam-channel = { workspace = true }
+rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

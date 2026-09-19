@@ -1,0 +1,12 @@
+[package]
+name = "quantick-operability"
+description = "Headless operability contract: every supported UI behaviour, the capability that reaches it or the recorded exclusion, and the drift comparison against what an interface registers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

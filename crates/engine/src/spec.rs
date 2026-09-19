@@ -2,42 +2,19 @@
 //! as the `kind:parameter` string a person types — `tick:50`, `volume:5`,
 //! `dollar:500000`, `time:1m`, `imbalance:volume:500`, `trades:2000`.
 //!
-//! One definition for every consumer. The chart, the backtest and the bot
-//! read this [`BarSpec`] and build through its [`BarSpec::build`], so the spec
-//! a trader reads off a tab is the spec a backtest runs, and "same trades in,
-//! same bars out" holds across consumers, not only within one. A consumer that
-//! cannot honour a kind — the backtest has no deal counter to cut
-//! [`BarSpec::Trades`] on — refuses it at its own boundary; it never keeps a
-//! vocabulary of its own.
+//! Legacy value vocabulary. Definitions, parsing and construction belong to
+//! [`crate::bar_registry`]; the chart and runner retain its resolved configurations.
+//! This closed enum remains an adapter for callers of the original API.
 
 use rust_decimal::Decimal;
 
-use crate::{
-    BarBuilder, DealBarBuilder, DollarBarBuilder, ImbalanceBarBuilder, ImbalanceUnit,
-    TickBarBuilder, TimeBarBuilder, VolumeBarBuilder,
+use crate::bar_registry::{BUILTIN_BARS, BarConfiguration, BarConfigurationError};
+pub use crate::bar_registry::{
+    DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS,
+    fmt_time_interval,
 };
-
-/// Smallest interval a time-bar spec may ask for, in milliseconds.
-///
-/// A tenth of a second is already finer than any venue's own bar; below it
-/// the series is a tick chart wearing a clock.
-pub const MIN_TIME_INTERVAL_MS: i64 = 100;
-
-/// Largest interval a time-bar spec may ask for, in milliseconds — one day,
-/// the coarsest that still fits inside a session.
-pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
-
-/// The interval a time-bar spec opens on when nothing has chosen one: a real
-/// timeframe, not a one-second chart.
-pub const DEFAULT_TIME_INTERVAL_MS: i64 = 60_000;
-
-/// The smallest a `Decimal` bar parameter — volume units, dollar notional — is
-/// allowed to be.
-///
-/// Not zero: a bar rule that closes on no quantity closes on every trade, and
-/// the chart that produces is not what anyone asked for. Small enough that no
-/// parameter a trader would choose is touched by it.
-pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
+use crate::{BarBuilder, ImbalanceUnit};
+use rust_decimal::prelude::ToPrimitive;
 
 /// Which bar rule, without its parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +37,7 @@ pub enum BarKind {
 }
 
 impl BarKind {
-    /// All bar kinds, for building a selector.
+    /// All legacy enum variants. Selectors enumerate registered definitions.
     pub const ALL: [BarKind; 6] = [
         BarKind::Tick,
         BarKind::Volume,
@@ -74,20 +51,16 @@ impl BarKind {
     /// yet — the value a fresh chart, and every kind the trader has not
     /// visited, starts from.
     ///
-    /// One arm per variant, and the only per-kind table of defaults: a
-    /// consumer that retains a parameter per kind builds its set by mapping
-    /// this over [`Self::ALL`], so a new kind's default is written here and
-    /// nowhere else.
+    /// The default comes from the registered definition, like every consumer's.
     #[must_use]
     pub fn default_spec(self) -> BarSpec {
-        match self {
-            BarKind::Tick => BarSpec::Tick(50),
-            BarKind::Trades => BarSpec::Trades(2_000),
-            BarKind::Volume => BarSpec::Volume(Decimal::from(5u64)),
-            BarKind::Dollar => BarSpec::Dollar(Decimal::from(500_000u64)),
-            BarKind::Time => BarSpec::Time(DEFAULT_TIME_INTERVAL_MS),
-            BarKind::Imbalance => BarSpec::Imbalance(ImbalanceUnit::Trades, 100),
-        }
+        BarSpec::try_from(
+            BUILTIN_BARS
+                .find(self.label())
+                .expect("built-in registration")
+                .default_config(),
+        )
+        .expect("legacy kind")
     }
 
     /// A short display label.
@@ -112,7 +85,11 @@ impl BarKind {
     /// which is the misunderstanding this kind exists to correct.
     #[must_use]
     pub fn needs_deal_counter(self) -> bool {
-        matches!(self, BarKind::Trades)
+        BUILTIN_BARS
+            .find(self.label())
+            .expect("built-in registration")
+            .requirements
+            .deal_counter
     }
 
     /// Whether this rule measures traded size, and so needs a venue that
@@ -128,22 +105,20 @@ impl BarKind {
     /// feed exactly as this method gates the kinds.
     #[must_use]
     pub fn needs_traded_volume(self) -> bool {
-        match self {
-            BarKind::Volume | BarKind::Dollar => true,
-            BarKind::Tick | BarKind::Time | BarKind::Imbalance | BarKind::Trades => false,
-        }
+        BUILTIN_BARS
+            .find(self.label())
+            .expect("built-in registration")
+            .requirements
+            .traded_volume
     }
 
     /// The unit the closing rule counts in, for the forming bar's countdown.
     #[must_use]
     pub fn progress_unit(self) -> &'static str {
-        match self {
-            BarKind::Tick | BarKind::Imbalance => "ticks",
-            BarKind::Volume => "vol",
-            BarKind::Dollar => "notional",
-            BarKind::Time => "ms",
-            BarKind::Trades => "deals",
-        }
+        BUILTIN_BARS
+            .find(self.label())
+            .expect("built-in registration")
+            .progress_unit
     }
 }
 
@@ -192,30 +167,14 @@ impl BarSpec {
     /// [`DECIMAL_PARAM_FLOOR`] for the two measured in `Decimal`.
     #[must_use]
     pub fn clamped(&self) -> BarSpec {
-        match self {
-            BarSpec::Tick(n) => BarSpec::Tick((*n).max(1)),
-            BarSpec::Trades(n) => BarSpec::Trades((*n).max(1)),
-            BarSpec::Time(ms) => BarSpec::Time((*ms).max(1)),
-            BarSpec::Imbalance(unit, target) => BarSpec::Imbalance(*unit, (*target).max(1)),
-            BarSpec::Volume(units) => BarSpec::Volume((*units).max(DECIMAL_PARAM_FLOOR)),
-            BarSpec::Dollar(notional) => BarSpec::Dollar((*notional).max(DECIMAL_PARAM_FLOOR)),
-        }
+        Self::try_from(BarConfiguration::from(*self).clamped()).expect("legacy kind")
     }
 
     /// Construct the matching builder. This is the whole "bar rule → builder"
     /// dispatch: one place, every consumer of the engine.
     #[must_use]
     pub fn build(&self) -> Box<dyn BarBuilder> {
-        match self {
-            BarSpec::Tick(n) => Box::new(TickBarBuilder::new(*n)),
-            BarSpec::Volume(units) => Box::new(VolumeBarBuilder::new(*units)),
-            BarSpec::Dollar(notional) => Box::new(DollarBarBuilder::new(*notional)),
-            BarSpec::Time(ms) => Box::new(TimeBarBuilder::new(*ms)),
-            BarSpec::Imbalance(unit, target) => {
-                Box::new(ImbalanceBarBuilder::with_unit(*target, *unit))
-            }
-            BarSpec::Trades(n) => Box::new(DealBarBuilder::new(*n)),
-        }
+        BarConfiguration::from(*self).build()
     }
 
     /// The interval this spec cuts bars at, when it cuts by time at all.
@@ -234,15 +193,7 @@ impl BarSpec {
     /// A human-readable summary, e.g. `tick(50)` or `time(1m)`.
     #[must_use]
     pub fn summary(&self) -> String {
-        match self {
-            BarSpec::Tick(n) => format!("tick({n})"),
-            BarSpec::Volume(u) => format!("volume({u})"),
-            BarSpec::Dollar(d) => format!("dollar({d})"),
-            BarSpec::Time(ms) => format!("time({})", fmt_time_interval(*ms)),
-            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance({target})"),
-            BarSpec::Imbalance(unit, target) => format!("imbalance({} {target})", unit.as_str()),
-            BarSpec::Trades(n) => format!("trades({n})"),
-        }
+        BarConfiguration::from(*self).summary()
     }
 
     /// This spec in the `kind:parameter` vocabulary [`Self::parse`] reads —
@@ -253,18 +204,7 @@ impl BarSpec {
     /// workspace file can ask for by name.
     #[must_use]
     pub fn to_config_string(&self) -> String {
-        match self {
-            BarSpec::Tick(n) => format!("tick:{n}"),
-            BarSpec::Volume(units) => format!("volume:{units}"),
-            BarSpec::Dollar(notional) => format!("dollar:{notional}"),
-            BarSpec::Time(ms) => format!("time:{}", fmt_time_interval(*ms)),
-            // The trades unit keeps its historical short form, so every spec
-            // a workspace saved before units existed still reads back as the
-            // same chart.
-            BarSpec::Imbalance(ImbalanceUnit::Trades, target) => format!("imbalance:{target}"),
-            BarSpec::Imbalance(unit, target) => format!("imbalance:{}:{target}", unit.as_str()),
-            BarSpec::Trades(n) => format!("trades:{n}"),
-        }
+        BarConfiguration::from(*self).to_config_string()
     }
 
     /// Parse a `kind:parameter` spec string: `tick:50`, `trades:2000`,
@@ -284,71 +224,17 @@ impl BarSpec {
     /// human-readable sentence, with the accepted forms, for the caller to
     /// surface verbatim.
     pub fn parse(text: &str) -> Result<Self, BarSpecError> {
-        let (kind, param) = text
-            .split_once(':')
-            .ok_or_else(|| BarSpecError::NotKindParameter {
-                text: text.to_owned(),
-            })?;
-        let (kind, param) = (kind.trim(), param.trim());
-        let positive_count = |kind: BarKind| -> Result<u64, BarSpecError> {
-            match param.parse::<u64>() {
-                Ok(n) if n > 0 => Ok(n),
-                _ => Err(BarSpecError::NotPositiveCount {
-                    kind,
-                    param: param.to_owned(),
-                }),
-            }
-        };
-        let positive_decimal = |kind: BarKind| -> Result<Decimal, BarSpecError> {
-            match param.parse::<Decimal>() {
-                Ok(d) if d > Decimal::ZERO => Ok(d),
-                _ => Err(BarSpecError::NotPositiveNumber {
-                    kind,
-                    param: param.to_owned(),
-                }),
-            }
-        };
-        match kind {
-            "tick" => Ok(BarSpec::Tick(positive_count(BarKind::Tick)?)),
-            "trades" => Ok(BarSpec::Trades(positive_count(BarKind::Trades)?)),
-            "imbalance" => {
-                // The parameter is `target` or `unit:target`. The unit picks
-                // what θ accumulates; the target counts trades in every unit.
-                let (unit, target) = match param.split_once(':') {
-                    None => (ImbalanceUnit::Trades, param),
-                    Some((token, target)) => {
-                        let token = token.trim();
-                        let unit = ImbalanceUnit::parse_token(token).ok_or_else(|| {
-                            BarSpecError::UnknownImbalanceUnit {
-                                unit: token.to_owned(),
-                            }
-                        })?;
-                        (unit, target.trim())
-                    }
-                };
-                match target.parse::<u64>() {
-                    Ok(n) if n > 0 => Ok(BarSpec::Imbalance(unit, n)),
-                    _ => Err(BarSpecError::NotPositiveTarget {
-                        target: target.to_owned(),
-                    }),
-                }
-            }
-            "volume" => Ok(BarSpec::Volume(positive_decimal(BarKind::Volume)?)),
-            "dollar" => Ok(BarSpec::Dollar(positive_decimal(BarKind::Dollar)?)),
-            "time" => {
-                let ms = parse_time_interval(param)?;
-                if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
-                    return Err(BarSpecError::IntervalOutOfRange {
-                        ms,
-                        param: param.to_owned(),
-                    });
-                }
-                Ok(BarSpec::Time(ms))
-            }
-            _ => Err(BarSpecError::UnknownKind {
-                kind: kind.to_owned(),
-            }),
+        if let Some((kind, _)) = text.split_once(':')
+            && !BarKind::ALL
+                .iter()
+                .any(|legacy| legacy.label() == kind.trim())
+        {
+            return Err(BarSpecError::UnknownKind {
+                kind: kind.trim().to_owned(),
+            });
         }
+        let config = BUILTIN_BARS.parse(text).map_err(legacy_error)?;
+        Self::try_from(config).map_err(legacy_error)
     }
 }
 
@@ -458,47 +344,117 @@ impl std::fmt::Display for BarSpecError {
 
 impl std::error::Error for BarSpecError {}
 
-/// Parse a time interval in the same vocabulary [`fmt_time_interval`] emits:
-/// `1h`, `5m`, `90s`, `1500ms`, or a bare millisecond count. The round trip is
-/// deliberate — whatever the status bar can say, a config can ask for.
-fn parse_time_interval(text: &str) -> Result<i64, BarSpecError> {
-    let parse_scaled = |digits: &str, scale: i64| -> Result<i64, BarSpecError> {
-        digits
-            .parse::<i64>()
-            .ok()
-            .and_then(|n| n.checked_mul(scale))
-            .filter(|ms| *ms > 0)
-            .ok_or_else(|| BarSpecError::NotAnInterval {
-                text: text.to_owned(),
-            })
-    };
-    // `ms` before `m` and `s`: the longest suffix owns the string.
-    if let Some(digits) = text.strip_suffix("ms") {
-        parse_scaled(digits, 1)
-    } else if let Some(digits) = text.strip_suffix('h') {
-        parse_scaled(digits, 3_600_000)
-    } else if let Some(digits) = text.strip_suffix('m') {
-        parse_scaled(digits, 60_000)
-    } else if let Some(digits) = text.strip_suffix('s') {
-        parse_scaled(digits, 1_000)
-    } else {
-        parse_scaled(text, 1)
+impl AsRef<str> for BarKind {
+    fn as_ref(&self) -> &str {
+        self.label()
+    }
+}
+impl From<BarKind> for &'static crate::bar_registry::BarDefinition {
+    fn from(kind: BarKind) -> Self {
+        BUILTIN_BARS
+            .find(kind.label())
+            .expect("built-in registration")
     }
 }
 
-/// A time-bar interval for humans: `1m`, `5m`, `1h` for round units, `90s`
-/// for whole seconds, raw milliseconds otherwise. The vocabulary the chart's
-/// timeframe chips speak, so the status bar, the toolbar and the chips can
-/// never disagree about what `60000` means.
-#[must_use]
-pub fn fmt_time_interval(ms: i64) -> String {
-    if ms >= 3_600_000 && ms % 3_600_000 == 0 {
-        format!("{}h", ms / 3_600_000)
-    } else if ms >= 60_000 && ms % 60_000 == 0 {
-        format!("{}m", ms / 60_000)
-    } else if ms >= 1_000 && ms % 1_000 == 0 {
-        format!("{}s", ms / 1_000)
-    } else {
-        format!("{ms}ms")
+/// The closed public enum is a compatibility codec, never the registry's
+/// internal representation. Generic consumers keep BarConfiguration throughout.
+impl From<BarSpec> for BarConfiguration {
+    fn from(spec: BarSpec) -> Self {
+        let (parameter, choice) = match spec {
+            BarSpec::Tick(n) | BarSpec::Trades(n) => (Decimal::from(n), None),
+            BarSpec::Volume(n) | BarSpec::Dollar(n) => (n, None),
+            BarSpec::Time(ms) => (Decimal::from(ms), None),
+            BarSpec::Imbalance(unit, n) => (Decimal::from(n), Some(unit.as_str())),
+        };
+        Self::legacy(
+            BUILTIN_BARS
+                .find(spec.kind().label())
+                .expect("built-in registration"),
+            parameter,
+            choice,
+        )
+    }
+}
+
+impl TryFrom<BarConfiguration> for BarSpec {
+    type Error = BarConfigurationError;
+    fn try_from(config: BarConfiguration) -> Result<Self, Self::Error> {
+        let canonical = BUILTIN_BARS.find(config.id()).ok();
+        if !canonical.is_some_and(|definition| std::ptr::eq(definition, config.definition())) {
+            return Err(BarConfigurationError::LegacyKindUnavailable {
+                kind: config.id().to_owned(),
+            });
+        }
+        let value = config.parameter();
+        Ok(match config.id() {
+            "tick" => Self::Tick(value.to_u64().expect("count representation")),
+            "trades" => Self::Trades(value.to_u64().expect("count representation")),
+            "volume" => Self::Volume(value),
+            "dollar" => Self::Dollar(value),
+            "time" => Self::Time(value.to_i64().expect("interval representation")),
+            "imbalance" => Self::Imbalance(
+                ImbalanceUnit::parse_token(config.choice().expect("imbalance unit"))
+                    .expect("imbalance unit"),
+                value.to_u64().expect("count representation"),
+            ),
+            kind => {
+                return Err(BarConfigurationError::LegacyKindUnavailable {
+                    kind: kind.to_owned(),
+                });
+            }
+        })
+    }
+}
+impl PartialEq<BarSpec> for BarConfiguration {
+    fn eq(&self, other: &BarSpec) -> bool {
+        *self == Self::from(*other)
+    }
+}
+impl PartialEq<BarConfiguration> for BarSpec {
+    fn eq(&self, other: &BarConfiguration) -> bool {
+        other == self
+    }
+}
+
+fn legacy_error(error: BarConfigurationError) -> BarSpecError {
+    match error {
+        BarConfigurationError::NotKindParameter { text } => BarSpecError::NotKindParameter { text },
+        BarConfigurationError::UnknownKind { kind }
+        | BarConfigurationError::LegacyKindUnavailable { kind } => {
+            BarSpecError::UnknownKind { kind }
+        }
+        BarConfigurationError::InvalidCount { kind, parameter } if kind == "imbalance" => {
+            BarSpecError::NotPositiveTarget { target: parameter }
+        }
+        BarConfigurationError::InvalidCount { kind, parameter } => BarSpecError::NotPositiveCount {
+            kind: BarKind::ALL
+                .into_iter()
+                .find(|k| k.label() == kind)
+                .expect("built-in kind"),
+            param: parameter,
+        },
+        BarConfigurationError::InvalidNumber { kind, parameter } => {
+            BarSpecError::NotPositiveNumber {
+                kind: BarKind::ALL
+                    .into_iter()
+                    .find(|k| k.label() == kind)
+                    .expect("built-in kind"),
+                param: parameter,
+            }
+        }
+        BarConfigurationError::UnknownChoice { choice } => {
+            BarSpecError::UnknownImbalanceUnit { unit: choice }
+        }
+        BarConfigurationError::InvalidInterval { parameter } => {
+            BarSpecError::NotAnInterval { text: parameter }
+        }
+        BarConfigurationError::IntervalOutOfRange { ms, parameter } => {
+            BarSpecError::IntervalOutOfRange {
+                ms,
+                param: parameter,
+            }
+        }
+        other => unreachable!("legacy parsing cannot produce {other}"),
     }
 }

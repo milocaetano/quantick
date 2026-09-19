@@ -309,6 +309,7 @@ pub(super) async fn serve_connection(
     let mut mapper =
         TickMapper::new(config.side_mode, hello.server_utc_offset_s).with_tape(hello.tape);
     let mut tracker = SeqTracker::new();
+    let mut highest_tick_ms = None;
     let mut latency = LatencyTracker::new();
     let mut deals = crate::deals::DealSampler::new(hello.server_utc_offset_s);
     // Whether the tape has already been reported late. Edge-triggered, so a
@@ -486,7 +487,24 @@ pub(super) async fn serve_connection(
                 );
             }
             Ok(BridgeMsg::Tick(tick)) => {
-                let _ = tracker.observe(tick.seq);
+                let tick_ms = mapper.to_utc_ms(tick.time_ms);
+                let advances = tracker.highest().is_none_or(|highest| tick.seq > highest);
+                if let Some(anomaly) = tracker.observe(tick.seq)
+                    && let Some(from_ms) = highest_tick_ms
+                    && tx
+                        .send(Mt5Event::SequenceAnomaly {
+                            anomaly,
+                            from_ms,
+                            to_ms: tick_ms,
+                        })
+                        .await
+                        .is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
+                if advances {
+                    highest_tick_ms = Some(tick_ms);
+                }
                 // Ahead of the print it stamps; quote-only ticks carry it too.
                 if let Some(sample) = deals.observe(&tick)
                     && tx.send(Mt5Event::DealCounter(sample)).await.is_err()
