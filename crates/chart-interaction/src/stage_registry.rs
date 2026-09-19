@@ -16,7 +16,7 @@
 mod tests;
 
 /// The widest pipeline a `u64` dependency mask can describe.
-pub(crate) const MAX_STAGES: usize = 64;
+pub const MAX_STAGES: usize = 64;
 
 /// One registered stage: its identity, its name, and what it runs after.
 ///
@@ -36,7 +36,7 @@ pub struct StageNode<S> {
 /// Requiring each prerequisite to have been visited already rejects forward
 /// edges, self edges, cycles and unknown prerequisite bits as well as a
 /// missing or duplicated stage.
-pub(crate) const fn nodes_in_valid_order<S>(nodes: &[StageNode<S>], count: usize) -> bool {
+pub const fn nodes_in_valid_order<S>(nodes: &[StageNode<S>], count: usize) -> bool {
     if count == 0 || count > MAX_STAGES {
         return false;
     }
@@ -90,30 +90,39 @@ pub fn hoisted<S: Copy, const N: usize>(order: [S; N], earlier: usize, later: us
 /// }
 /// ```
 ///
+/// A stage or an edge may be compiled conditionally: `Name when (predicate)`
+/// registers the stage only where `#[cfg(predicate)]` holds, and
+/// `after [Other when (predicate)]` declares the edge only there. The
+/// predicate is evaluated in the crate that expands the declaration, so a
+/// build without a harness has no harness stage at all rather than a no-op.
+///
 /// Generates `COUNT`, `NODES`, `ORDER`, `bit`, `name`, `after`,
 /// `is_valid_order` and `canonical`, and a constant assertion that the
 /// declaration order satisfies every declared dependency.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! declare_stages {
     (
         $(#[$meta:meta])*
         $vis:vis enum $Stage:ident {
-            $( $(#[$variant_meta:meta])* $Variant:ident after [$($Dep:ident),* $(,)?] ),+ $(,)?
+            $( $(#[$variant_meta:meta])* $Variant:ident $(when ($when:meta))?
+                after [$($Dep:ident $(when ($dep_when:meta))?),* $(,)?] ),+ $(,)?
         }
     ) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         $vis enum $Stage {
-            $( $(#[$variant_meta])* $Variant ),+
+            $( $(#[$variant_meta])* $(#[cfg($when)])? $Variant ),+
         }
 
         #[allow(dead_code)]
         impl $Stage {
             /// How many stages the pipeline registers.
-            pub const COUNT: usize = [$(stringify!($Variant)),+].len();
+            pub const COUNT: usize = [$($(#[cfg($when)])? stringify!($Variant)),+].len();
             /// The registered stages with their names and dependencies, in
             /// canonical order.
             pub const NODES: [$crate::stage_registry::StageNode<Self>; Self::COUNT] = [
-                $($crate::stage_registry::StageNode {
+                $($(#[cfg($when)])? $crate::stage_registry::StageNode {
                     stage: Self::$Variant,
                     name: stringify!($Variant),
                     bit: Self::$Variant.bit(),
@@ -121,7 +130,7 @@ macro_rules! declare_stages {
                 }),+
             ];
             /// The canonical traversal.
-            pub const ORDER: [Self; Self::COUNT] = [$(Self::$Variant),+];
+            pub const ORDER: [Self; Self::COUNT] = [$($(#[cfg($when)])? Self::$Variant),+];
 
             /// This stage's dependency-mask bit.
             pub const fn bit(self) -> u64 {
@@ -131,14 +140,21 @@ macro_rules! declare_stages {
             /// The registered name.
             pub const fn name(self) -> &'static str {
                 match self {
-                    $(Self::$Variant => stringify!($Variant)),+
+                    $($(#[cfg($when)])? Self::$Variant => stringify!($Variant)),+
                 }
             }
 
             /// The mask of the stages this one runs after.
             pub const fn after(self) -> u64 {
                 match self {
-                    $(Self::$Variant => 0 $(| Self::$Dep.bit())*),+
+                    $($(#[cfg($when)])? Self::$Variant => {
+                        #[allow(unused_mut)]
+                        let mut mask = 0;
+                        $($(#[cfg($dep_when)])? {
+                            mask |= Self::$Dep.bit();
+                        })*
+                        mask
+                    }),+
                 }
             }
 
@@ -174,4 +190,4 @@ macro_rules! declare_stages {
     };
 }
 
-pub(crate) use declare_stages;
+pub use crate::declare_stages;

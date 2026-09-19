@@ -91,3 +91,22 @@ fn coverage_follows_the_declared_variants_not_a_hand_mask() {
     assert!(!Diamond::is_valid_order(&Diamond::ORDER[..3]));
     assert!(!Diamond::is_valid_order(&[]));
 }
+
+declare_stages! {
+    /// A pipeline whose middle stage and its edge exist only where the
+    /// predicate holds; here it never does.
+    enum Gated {
+        Source after [],
+        Hook when (any()) after [Source],
+        Sink after [Source, Hook when (any())],
+    }
+}
+
+#[test]
+fn a_stage_whose_predicate_fails_is_not_registered_nor_depended_on() {
+    assert_eq!(Gated::COUNT, 2);
+    assert_eq!(Gated::ORDER, [Gated::Source, Gated::Sink]);
+    assert_eq!(Gated::Sink.after(), Gated::Source.bit());
+    assert_eq!(Gated::Sink.bit(), 0b10, "the bits stay contiguous");
+    assert!(nodes_in_valid_order(&Gated::NODES, Gated::COUNT));
+}

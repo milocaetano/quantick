@@ -2,8 +2,8 @@
 //! adapters with one declared dependency hoisted: each swap does visible
 //! harm, which is what the declaration exists to refuse.
 
+use super::frame::FrameStage;
 use super::*;
-use quantick_chart_interaction::frame_plan::FrameStage;
 use quantick_chart_interaction::stage_registry::hoisted;
 use quantick_chart_interaction::tab_drain_plan::TabDrainStage;
 
@@ -245,8 +245,8 @@ fn the_pinned_inspector_before_the_demo_misses_the_selection_it_made() {
 /// stages listed by hand.
 #[test]
 fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
+    use super::frame::FramePlan;
     use TabDrainStage::*;
-    use quantick_chart_interaction::frame_plan::FramePlan;
     use quantick_chart_interaction::tab_drain_plan::TabDrainPlan;
     const BY_HAND: [TabDrainStage; 7] = [
         ReceiveSource,
