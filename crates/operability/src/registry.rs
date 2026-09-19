@@ -47,12 +47,9 @@ const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
              fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401",
 };
 
-/// A chart layer switch with no capability behind it.
-const PENDING_LAYER: Mapping = Mapping::Excluded {
-    class: ExclusionClass::PendingCapability,
-    reason: "no capability switches a chart layer; the scene reports the toggle's state but \
-             nothing can press it. Tracked in issue 401",
-};
+/// A chart layer switch: the toolbar button and the pane's layer menu both set
+/// one pane's layer, which `layers.visibility.set` does by stable pane ID.
+const LAYER_SWITCH: Mapping = capability!("layers.visibility.set");
 
 /// A window or panel that opens, with no capability that opens it.
 const PENDING_SURFACE: Mapping = Mapping::Excluded {
@@ -354,7 +351,7 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &[
             (Source::ToolbarAction, "SetBubbles"),
             (Source::LayerToggle, "Bubbles"),
         ],
-        mapping: PENDING_LAYER,
+        mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.footprint.settings.open",
@@ -371,7 +368,7 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &[
             (Source::ToolbarAction, "SetFootprint"),
             (Source::LayerToggle, "Footprint"),
         ],
-        mapping: PENDING_LAYER,
+        mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.heatmap.toggle",
@@ -381,7 +378,7 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &[
             (Source::ToolbarAction, "SetHeatmap"),
             (Source::LayerToggle, "Heatmap"),
         ],
-        mapping: PENDING_LAYER,
+        mapping: LAYER_SWITCH,
     },
     UiBehaviour {
         id: "layer.live_strip.toggle",
@@ -391,7 +388,7 @@ pub const UI_BEHAVIOURS: &[UiBehaviour] = &[
             (Source::ToolbarAction, "SetLiveStrip"),
             (Source::LayerToggle, "LiveStrip"),
         ],
-        mapping: PENDING_LAYER,
+        mapping: LAYER_SWITCH,
     },
     // ---- History --------------------------------------------------------
     UiBehaviour {
