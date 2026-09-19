@@ -187,7 +187,7 @@ anyway, so the two are separated rather than one being traded for the other.
 | --- | --- |
 | Push to a draft PR | `fast` only |
 | Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus `ci` and `windows` |
-| Draft flipped to ready | `ci` and `windows`, unless the draft carried `full-ci`: that head already has them |
+| Draft flipped to ready | `ci` and `windows`, always |
 | Push to a ready PR, push to `main` | `ci` and `windows` |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
@@ -201,13 +201,19 @@ tests compare the closure for every crate with `cargo tree --invert`, and run
 in the `ci` job. `fast` covers no hook suite, Python tool or Windows build:
 those are the full jobs' work.
 
+The flip re-runs full CI even when the labelled draft already has it at that
+head. Skipping it was tried: the flip's run then posted skipped `ci` and
+`windows`, and GitHub's check list showed only those, hiding the green run
+from whoever merges. One duplicate run is cheaper than a PR that reads as
+untested.
+
 **The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
 It reads the check runs GitHub Actions posted for the exact commit, drops
 skipped ones, and requires the newest `ci` and the newest `windows` to have
 concluded `success`. Skipped is no verdict: a head with nothing but skipped
 full jobs has no full CI. It reads per commit, not through `gh pr checks`,
-because a later skipped run for the same head (the flip of a labelled draft)
-must not hide the green one. Exit 2 means GitHub could not answer, and the
+because a later skipped run for the same head (adding an unrelated label
+posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was
 never pushed, which is a known answer: not green.
 

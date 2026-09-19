@@ -13,8 +13,8 @@
 # them. A skipped run carries no verdict and is ignored rather than counted as
 # passing; a commit with nothing but skipped runs has no full CI at all. The
 # check runs are read per commit rather than through `gh pr checks`, because
-# a later skipped run for the same head (a `ready_for_review` on a draft that
-# already ran full CI under the `full-ci` label) must not hide the green one.
+# a later skipped run for the same head (adding an unrelated label posts one)
+# must not hide the green one.
 # Only runs posted by GitHub Actions count: a check name is not an identity.
 
 set -u
