@@ -257,7 +257,8 @@ impl ClipPlayer {
         // What was asked for goes to the log, so a session on a build
         // without audio still shows which clip, and how much of it, an
         // alarm wanted.
-        for (clip, length) in clips {
+        for (id, length) in clips {
+            let clip = id.clip();
             let cut_secs = match length {
                 PlayLength::Whole => None,
                 PlayLength::Capped(duration) => Some(duration.as_secs()),
@@ -267,7 +268,7 @@ impl ClipPlayer {
                 schema_version = 1_u8,
                 event_code = "AUDIO_CLIP_UNPLAYABLE",
                 clip = clip.token,
-                bytes = super::library::bytes(id).len(),
+                bytes = super::library::bytes(*id).len(),
                 cut_secs,
                 "an alarm clip was asked for on a build with no audio backend"
             );
