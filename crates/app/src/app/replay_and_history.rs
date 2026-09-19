@@ -8,16 +8,22 @@
 //! each, reading at most one hook and either doing its one thing against the
 //! active tab or returning. Neither sees the window: the frame hands them the
 //! tabs and the config and posts whatever they hand back.
+#[cfg(any(feature = "scenario-harness", test))]
 use eframe::egui;
 
 use crate::config::AppConfig;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::harness::{ContextMenuPane, Harness};
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::loading::LoadingTask;
+#[cfg(any(feature = "scenario-harness", test))]
 use crate::pane::ChartPane;
 use crate::replay_view::ReplayAction;
 use crate::tab::Tab;
 
-use quantick_feed::{FeedCommand, ReplayControl};
+use quantick_feed::FeedCommand;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_feed::ReplayControl;
 
 use super::arrangement_host::ArrangementHost;
 
@@ -146,6 +152,7 @@ pub(super) fn apply_replay_action(tab: &mut Tab, config: &AppConfig, action: Rep
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 impl ContextMenuPane {
     /// Where a scripted right-click should land to reach this pane's menu on
     /// `flow`, the active tab's flow pane.
@@ -169,11 +176,13 @@ impl ContextMenuPane {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 fn active_with_id(tabs: &mut ArrangementHost) -> (u64, &mut Tab) {
     let index = tabs.active_index();
     (tabs.id_at(index), tabs.runtime_mut(index))
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 impl Harness {
     /// Where `QUANTICK_POINTER` puts the mouse this frame, in window points.
     ///

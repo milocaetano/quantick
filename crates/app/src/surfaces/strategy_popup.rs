@@ -142,6 +142,7 @@ impl StrategyPopupSurface {
     }
 
     /// Drop the sound list open on the next frame the dialog draws it.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn stage_sound_picker(&mut self) {
         self.pending_sound_picker = true;
     }
@@ -454,6 +455,7 @@ impl Surface for StrategyPopupSurface {
     /// Arm on. `QUANTICK_STRATEGY_DEMO` therefore stages both, from the host
     /// that owns the drawing, and reaches this surface through [`Self::open`]
     /// and [`Self::stage_sound_picker`]: the same door a right-click uses.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
 
     /// The arming dialog. Drains the panes' menu requests first, so the

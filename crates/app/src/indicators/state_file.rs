@@ -18,8 +18,6 @@ use quantick_indicators::{InputValue, Rgba8, SourceId};
 
 use crate::indicator_style::PlotOverride;
 
-/// Environment override for the state file location.
-pub(crate) const STATE_ENV: &str = "QUANTICK_INDICATORS_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const STATE_FILE: &str = "indicators-state.toml";
 /// Bumped on breaking layout changes; unknown versions start empty.
@@ -105,7 +103,7 @@ pub(crate) fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(STATE_FILE);
     }
-    crate::store_home::resolve(STATE_ENV, STATE_FILE)
+    crate::store_home::resolve(STATE_FILE)
 }
 
 /// Parse an indicator-state file, reporting why it is not one. The gate a
@@ -164,6 +162,9 @@ pub(crate) fn load(path: &std::path::Path) -> Vec<SavedIndicator> {
 /// migrate, and never writes it again. Tests write it to prove the migration.
 #[cfg(test)]
 pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
+    if crate::store_home::guard_write(path).is_err() {
+        return;
+    }
     let file = StateFile {
         version: FORMAT_VERSION,
         indicators: indicators.to_vec(),
@@ -199,8 +200,6 @@ pub(crate) fn save(path: &std::path::Path, indicators: &[SavedIndicator]) {
         ),
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_INDICATORS_STATE"];
 
 #[cfg(test)]
 mod tests {

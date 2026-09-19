@@ -18,7 +18,7 @@ use super::drawing_projection::DrawingProjection;
 use super::{DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
 
 /// Enough history for the demo's two anchors to span a real, visible range.
-#[cfg(feature = "quick-range-harness")]
+#[cfg(any(feature = "quick-range-harness", test))]
 const DEMO_MIN_BARS: usize = 72;
 
 /// One pane's side of the quick range for one frame.
@@ -132,7 +132,7 @@ impl QuickRangeView<'_> {
     ) {
         let owner = self.owner;
         chrome.drawing_chrome.quick_range.reconcile(Some(owner));
-        #[cfg(feature = "quick-range-harness")]
+        #[cfg(any(feature = "quick-range-harness", test))]
         if chrome.side == super::PaneSide::Flow {
             chrome
                 .drawing_chrome

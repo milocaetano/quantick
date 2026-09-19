@@ -197,6 +197,7 @@ impl Tab {
     /// carries its indicators and its drawings across too; writing
     /// `pane.layout` under a standing pane would leave the field disagreeing
     /// with what that chart is showing.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_opening_layout(&mut self, side: PaneSide, id: crate::layouts::LayoutId) {
         // The flow pane is built with the tab and is never pending, so the
         // only address that can be waiting is a context slot.

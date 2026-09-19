@@ -138,6 +138,7 @@ impl Viewport {
     /// Set the zoom directly to `px` per bar, clamped to the same bounds the
     /// gesture obeys. This is the scripted entry (`QUANTICK_CANDLE_WIDTH`) to
     /// the zoom the scroll gesture reaches — one clamp, two doors.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_px_per_bar(&mut self, px: f32) {
         if px.is_finite() && px > 0.0 {
             self.px_per_bar = px.clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);

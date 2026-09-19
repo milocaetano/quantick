@@ -844,6 +844,7 @@ impl ControlState {
     }
 }
 
+#[cfg(any(feature = "control-harness", test))]
 crate::hooks::declare_hooks![
     "QUANTICK_CONTROL_ACCESS",
     "QUANTICK_CONTROL_ANNOTATE",

@@ -99,7 +99,6 @@ fn registered_store(key: &str) -> CockpitStore {
     if key == "foreign_store" {
         return CockpitStore {
             key: "foreign_store",
-            env: "QUANTICK_FOREIGN_STORE",
             file: "foreign-store.toml",
             path: foreign_path,
             validate: validate_foreign,
@@ -113,7 +112,6 @@ fn registered_store(key: &str) -> CockpitStore {
         .unwrap();
     CockpitStore {
         key: store.key,
-        env: store.env,
         file: store.file,
         path: store.path,
         validate: store.validate,

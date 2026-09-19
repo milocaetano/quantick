@@ -168,7 +168,7 @@ fn the_note_hook_before_the_expiry_draws_a_frame_with_an_empty_lane() {
         run_frame(&mut app, &ctx);
         app.active_tab_mut()
             .raise_history_note(ending.notice().expect("chosen for its words"));
-        app.harness.arm_history_note(ending, 8);
+        app.chrome.harness.arm_history_note(ending, 8);
         // The frame on which the held note has outlived its linger.
         let past_linger = Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
         staged_frame_at(&mut app, &ctx, order, past_linger);
@@ -448,7 +448,8 @@ fn the_surfaces_before_the_indicator_dialog_paint_a_preview_it_just_replaced() {
             "an unapplied preview carries the watermark"
         );
         // The dialog is replaced by a fresh one, with nothing previewed.
-        app.harness
+        app.chrome
+            .harness
             .arm_settings_autostart(0, crate::indicator_panel::SettingsTab::default());
         painted_preview_watermark(&staged_frame_at(&mut app, &ctx, order, Instant::now()))
     };

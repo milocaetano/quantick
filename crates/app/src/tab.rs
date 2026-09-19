@@ -657,8 +657,7 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
-                .is_ok_and(|value| value == "1"),
+            context_collapsed: pane_collapsed_hook(),
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
             last_canvas_width: 0.0,
@@ -907,6 +906,20 @@ impl Tab {
     }
 }
 
+/// `QUANTICK_PANE_COLLAPSED=1` opens every tab with its context panes folded.
+/// A capture hook: compiled only with the scenario harness (or under test).
+fn pane_collapsed_hook() -> bool {
+    #[cfg(any(feature = "scenario-harness", test))]
+    {
+        std::env::var("QUANTICK_PANE_COLLAPSED").is_ok_and(|value| value == "1")
+    }
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    {
+        false
+    }
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 
 #[cfg(test)]

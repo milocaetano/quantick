@@ -21,11 +21,10 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use serde::{Deserialize, Serialize};
 
 /// Environment override for the footprint config location.
+#[cfg(any(feature = "scenario-harness", test))]
 const FOOTPRINT_ENV: &str = "QUANTICK_FOOTPRINT";
 /// Default file, next to the working directory's config.
 const FOOTPRINT_FILE: &str = "config/footprint.toml";
-/// Environment override for where the in-app edits persist.
-pub(crate) const SETTINGS_ENV: &str = "QUANTICK_FOOTPRINT_SETTINGS";
 /// Where the in-app edits persist, next to the chart-layers file. Separate
 /// from `config/footprint.toml` on purpose: that file is a hand-written,
 /// commented preset the app must never rewrite; this one is app state.
@@ -481,7 +480,7 @@ pub fn settings_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(SETTINGS_FILE);
     }
-    crate::store_home::resolve(SETTINGS_ENV, SETTINGS_FILE)
+    crate::store_home::resolve(SETTINGS_FILE)
 }
 
 /// Parse a footprint-settings file, reporting why it is not one. The gate a
@@ -540,6 +539,9 @@ pub fn load(settings: &Path) -> FootprintConfig {
 /// Persist the in-app edits. Temp sibling + rename, the store discipline
 /// every state file here follows.
 pub fn save(settings: &Path, config: &FootprintConfig) {
+    if crate::store_home::guard_write(settings).is_err() {
+        return;
+    }
     let file = SettingsFile {
         version: SETTINGS_VERSION,
         config: to_file(config),
@@ -565,9 +567,14 @@ pub fn save(settings: &Path, config: &FootprintConfig) {
 
 /// The preset half of [`load`]: env > file > defaults, tolerant.
 fn load_preset() -> FootprintConfig {
+    // `QUANTICK_FOOTPRINT` points a capture at another preset file; the hook
+    // exists only in a build with the scenario harness.
+    #[cfg(any(feature = "scenario-harness", test))]
     let path = std::env::var_os(FOOTPRINT_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(FOOTPRINT_FILE));
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    let path = PathBuf::from(FOOTPRINT_FILE);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return FootprintConfig::default();
     };
@@ -644,7 +651,8 @@ pub(crate) fn resolve(file: FootprintFile) -> FootprintConfig {
     }
 }
 
-crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT", "QUANTICK_FOOTPRINT_SETTINGS"];
+#[cfg(any(feature = "scenario-harness", test))]
+crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT"];
 
 #[cfg(test)]
 mod tests {

@@ -81,14 +81,17 @@ impl QuantickApp {
     /// Existing hook and pane requests are resolved at their original frame phase.
     pub(super) fn service_indicator_requests(&mut self) {
         let tab_id = self.tabs.active_id();
-        let tab = &self.tabs[self.tabs.active_index()];
-        if self.indicators.open_autostart(
-            tab_id,
-            (tab.focused_side(), tab.focused_pane().indicators.all()),
-            tab.flow_pane.indicators.all(),
-            self.harness.settings_autostart(),
-        ) {
-            self.harness.settings_autostart_opened();
+        #[cfg(any(feature = "scenario-harness", test))]
+        {
+            let tab = &self.tabs[self.tabs.active_index()];
+            if self.indicators.open_autostart(
+                tab_id,
+                (tab.focused_side(), tab.focused_pane().indicators.all()),
+                tab.flow_pane.indicators.all(),
+                self.chrome.harness.settings_autostart(),
+            ) {
+                self.chrome.harness.settings_autostart_opened();
+            }
         }
         let requests: SmallVec<[(PaneSide, SlotId); MAX_CANVAS_PANES]> = self
             .active_tab_mut()
@@ -98,7 +101,8 @@ impl QuantickApp {
         for (side, slot) in requests {
             self.apply_indicator_legend_action(tab_id, side, LegendAction::OpenSettings(slot));
         }
-        if let Some(index) = self.harness.indicator_mouse_line() {
+        #[cfg(any(feature = "scenario-harness", test))]
+        if let Some(index) = self.chrome.harness.indicator_mouse_line() {
             let target = self
                 .active_tab()
                 .flow_pane
@@ -107,7 +111,7 @@ impl QuantickApp {
                 .get(index)
                 .map(|view| (self.active_tab().flow_pane.id, view.slot));
             if let Some((pane_id, slot)) = target {
-                self.harness.indicator_mouse_line_opened();
+                self.chrome.harness.indicator_mouse_line_opened();
                 let _ = self.control_action(crate::control::INDICATOR_GUIDE_CAPABILITY_ID, 1, crate::control::ActionOrigin::Human,
                     serde_json::json!({"tab_id":tab_id.to_string(),"pane_id":pane_id.to_string(),"slot_id":slot.0.to_string(),"enabled":true}));
             }
@@ -129,13 +133,16 @@ impl QuantickApp {
     }
 
     pub(super) fn draw_indicator_surfaces(&mut self, ctx: &egui::Context) {
-        let tab = &self.tabs[self.tabs.active_index()];
-        if self.indicators.open_first_editable(
-            self.tabs.active_id(),
-            tab.flow_pane.indicators.all(),
-            self.harness.wants_indicator_settings_dialog(),
-        ) {
-            self.harness.indicator_settings_dialog_opened();
+        #[cfg(any(feature = "scenario-harness", test))]
+        {
+            let tab = &self.tabs[self.tabs.active_index()];
+            if self.indicators.open_first_editable(
+                self.tabs.active_id(),
+                tab.flow_pane.indicators.all(),
+                self.chrome.harness.wants_indicator_settings_dialog(),
+            ) {
+                self.chrome.harness.indicator_settings_dialog_opened();
+            }
         }
         if let Some(slot) = self
             .indicators

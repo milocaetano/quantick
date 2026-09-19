@@ -18,7 +18,6 @@ fn validate(text: &str) -> Result<(), String> {
 fn store(key: &'static str) -> CockpitStore {
     CockpitStore {
         key,
-        env: "UNUSED",
         file: key,
         path,
         validate,

@@ -781,6 +781,7 @@ impl LayerPlan {
         // the boundary bugs so far were all states the eye could not explain
         // from the outside (wedged k, stale group), and the chart telling its
         // own numbers beats a screenshot guessing game.
+        #[cfg(any(feature = "scenario-harness", test))]
         let debug = {
             static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             (*DEBUG.get_or_init(|| {
@@ -797,6 +798,8 @@ impl LayerPlan {
                 )
             })
         };
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let debug: Option<String> = None;
         Self {
             group,
             group_f,
@@ -1262,6 +1265,7 @@ impl Legend {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_FOOTPRINT_DEBUG"];
 
 #[cfg(test)]

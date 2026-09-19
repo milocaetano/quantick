@@ -1,5 +1,6 @@
 //! Opt-in quick-range launch input. The executable captures the value before
 //! construction; this owner applies it at the existing drawing-hook phase.
+#![cfg(any(feature = "quick-range-harness", test))]
 
 use std::ffi::OsString;
 
@@ -54,6 +55,8 @@ impl QuickRangeLaunch {
         }
     }
 }
+
+crate::hooks::declare_hooks!["QUANTICK_QUICK_RANGE_DEMO"];
 
 #[cfg(test)]
 mod tests {

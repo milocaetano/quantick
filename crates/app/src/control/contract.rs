@@ -1019,9 +1019,7 @@ impl ObserverContract {
         DescribeResult {
             instance_id,
             application_version: env!("CARGO_PKG_VERSION").to_owned(),
-            application_commit: option_env!("QUANTICK_GIT_COMMIT")
-                .unwrap_or("unknown")
-                .to_owned(),
+            application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
             protocol_version: CURRENT_PROTOCOL_VERSION,
             effective_profile,
             effective_scopes,

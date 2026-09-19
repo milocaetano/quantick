@@ -46,8 +46,6 @@ pub use quantick_workspace::arrangement_document::{
     SavedChrome, SavedDockTab, SavedFocus, SavedRailDock, SavedTab,
 };
 
-/// Environment override for the workspace file location.
-pub const UI_STATE_ENV: &str = "QUANTICK_UI_STATE";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const UI_STATE_FILE: &str = "ui-state.toml";
 pub use quantick_workspace::workspace_document::{
@@ -347,7 +345,7 @@ pub fn default_path() -> PathBuf {
     if cfg!(test) {
         return crate::store_home::test_path(UI_STATE_FILE);
     }
-    crate::store_home::resolve(UI_STATE_ENV, UI_STATE_FILE)
+    crate::store_home::resolve(UI_STATE_FILE)
 }
 
 /// Parse a workspace file, reporting why it is not one.
@@ -486,6 +484,9 @@ pub fn load_for_edit(path: &Path) -> Option<Workspace> {
 /// says so on the status line either way, and a trader who is told "saved"
 /// when nothing was written would find out at the worst possible moment.
 pub fn save(path: &Path, workspace: &Workspace) -> bool {
+    if crate::store_home::guard_write(path).is_err() {
+        return false;
+    }
     let workspace = workspace.clone().into_current_format();
     let text = match toml::to_string_pretty(&workspace) {
         Ok(text) => text,
@@ -527,6 +528,11 @@ pub fn save(path: &Path, workspace: &Workspace) -> bool {
 /// defaults. `true` when nothing is left on disk — a file that was never
 /// written is already forgotten, so a missing file is a success.
 pub fn forget(path: &Path) -> bool {
+    // Deleting the file is a store write too: a session that writes no store
+    // (DS7) leaves it where it is.
+    if crate::store_home::guard_write(path).is_err() {
+        return false;
+    }
     match std::fs::remove_file(path) {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
@@ -544,8 +550,6 @@ pub fn forget(path: &Path) -> bool {
         }
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_UI_STATE"];
 
 #[cfg(test)]
 mod tests {

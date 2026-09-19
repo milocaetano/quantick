@@ -120,11 +120,20 @@ impl QuantickApp {
         let mut layout_picker_open = self.chrome.layout_picker_open;
         // One shot: the hook opens the popover on the first drawn frame and
         // then gets out of the way, so a trader's click can close it.
-        let layout_picker_autostart = self.harness.take_layout_picker_autostart();
+        #[cfg(any(feature = "scenario-harness", test))]
+        let layout_picker_autostart = self.chrome.harness.take_layout_picker_autostart();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let layout_picker_autostart = false;
         let deal_recording = self.active_tab().deal_recording_view();
+        #[cfg(any(feature = "scenario-harness", test))]
         let deal_recording_menu =
-            deal_recording.is_some() && self.harness.take_deal_recording_menu();
-        let mut bars_menu = self.harness.bars_menu_pending();
+            deal_recording.is_some() && self.chrome.harness.take_deal_recording_menu();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let deal_recording_menu = false;
+        #[cfg(any(feature = "scenario-harness", test))]
+        let mut bars_menu = self.chrome.harness.bars_menu_pending();
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        let mut bars_menu = false;
         let tab = self.active_tab_mut();
         let focused = tab.focused_side();
         let pane = match focused {
@@ -177,8 +186,9 @@ impl QuantickApp {
         // resets every frame and the button never reads as open.
         drop(model);
         self.chrome.layout_picker_open = layout_picker_open;
+        #[cfg(any(feature = "scenario-harness", test))]
         if !bars_menu {
-            self.harness.clear_bars_menu();
+            self.chrome.harness.clear_bars_menu();
         }
         self.history.set_reach(history_reach);
         // Through the setter, so a value dragged past the campaign's own span

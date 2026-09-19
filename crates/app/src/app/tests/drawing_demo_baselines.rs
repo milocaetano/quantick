@@ -101,7 +101,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
         &mut app.active_tab_mut().flow_pane.state,
         crate::state::ChartState::new(crate::state::BarSpec::Tick(1)),
     );
-    app.apply_frvp_demo();
+    crate::app::demo_hooks::apply_frvp_demo(&mut app);
     assert!(app.drawings.chrome.demos().profile_requested().is_some());
     assert!(
         app.active_tab()
@@ -112,7 +112,7 @@ fn stress_without_a_flow_anchor_retries_then_uses_the_real_delivery_path() {
             .is_empty()
     );
     app.active_tab_mut().flow_pane.state = flow;
-    app.apply_frvp_demo();
+    crate::app::demo_hooks::apply_frvp_demo(&mut app);
     assert!(app.drawings.chrome.demos().profile_requested().is_none());
     let pane = app.active_tab().time_pane().unwrap();
     assert!(pane.history_prefix.len() > 24_000);
@@ -161,7 +161,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
                 app.active_tab_mut().context_collapsed = true;
             }
-            app.apply_drawing_demo();
+            crate::app::demo_hooks::apply_drawing_demo(&mut app);
             assert!(!app.drawings.chrome.demos().gallery_requested());
             let pane = &app.active_tab().flow_pane;
             assert!(pane.drawings.items().len() >= drawings::DRAWING_TOOLS.len());
@@ -206,7 +206,7 @@ fn nine_hook_case(case: &str, env: Env) {
                         .id(),
                     "horizontal-line"
                 );
-                app.apply_frvp_demo();
+                crate::app::demo_hooks::apply_frvp_demo(&mut app);
                 assert!(
                     app.drawings.chrome.demos().profile_requested().is_some(),
                     "stress waits for an actual time pane"
@@ -242,11 +242,11 @@ fn nine_hook_case(case: &str, env: Env) {
                 );
             }
             let before = app.active_tab().flow_pane.drawings.items().len();
-            app.apply_drawing_demo();
+            crate::app::demo_hooks::apply_drawing_demo(&mut app);
             assert_eq!(app.active_tab().flow_pane.drawings.items().len(), before);
         }
         "draft" | "draft-zero" => {
-            app.apply_drawing_draft();
+            crate::app::demo_hooks::apply_drawing_draft(&mut app);
             assert!(
                 app.drawings.chrome.demos().draft_requested().is_some(),
                 "no armed tool means retry"
@@ -262,7 +262,7 @@ fn nine_hook_case(case: &str, env: Env) {
                     .find(|tool| tool.id() == id)
                     .unwrap(),
             ));
-            app.apply_drawing_draft();
+            crate::app::demo_hooks::apply_drawing_draft(&mut app);
             assert!(app.drawings.chrome.demos().draft_requested().is_none());
             let pane = &app.active_tab().flow_pane;
             assert_eq!(
@@ -286,7 +286,7 @@ fn nine_hook_case(case: &str, env: Env) {
             }
         }
         "profile" | "compare" | "compare-wait" => {
-            app.apply_frvp_demo();
+            crate::app::demo_hooks::apply_frvp_demo(&mut app);
             if case == "compare-wait" {
                 assert!(app.drawings.chrome.demos().profile_requested().is_some());
                 assert!(app.active_tab().flow_pane.drawings.items().is_empty());
@@ -313,7 +313,7 @@ fn nine_hook_case(case: &str, env: Env) {
             assert_eq!(pane.drawings.selected(), Some(ranges.len() - 1));
         }
         "avwap" => {
-            app.apply_avwap_demo();
+            crate::app::demo_hooks::apply_avwap_demo(&mut app);
             assert!(!app.drawings.chrome.demos().avwap_requested());
             let pane = &app.active_tab().flow_pane;
             assert_eq!(pane.drawings.items().len(), 1);
@@ -333,9 +333,9 @@ fn nine_hook_case(case: &str, env: Env) {
             );
         }
         "wait" => {
-            app.apply_drawing_demo();
-            app.apply_frvp_demo();
-            app.apply_avwap_demo();
+            crate::app::demo_hooks::apply_drawing_demo(&mut app);
+            crate::app::demo_hooks::apply_frvp_demo(&mut app);
+            crate::app::demo_hooks::apply_avwap_demo(&mut app);
             assert!(app.drawings.chrome.demos().gallery_requested());
             assert!(app.drawings.chrome.demos().profile_requested().is_some());
             assert!(app.drawings.chrome.demos().avwap_requested());
@@ -350,7 +350,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 app.drawings.chrome.demos().recut_requested(),
                 "recut is read independently"
             );
-            app.apply_drawing_demo();
+            crate::app::demo_hooks::apply_drawing_demo(&mut app);
             assert_eq!(
                 app.active_tab()
                     .flow_pane
@@ -373,7 +373,7 @@ fn nine_hook_case(case: &str, env: Env) {
                 tab.apply_pending_layout(tab_id, config, style, pane_ids);
             }
             assert!(app.active_tab().time_pane().unwrap().slots() >= 12);
-            app.apply_frvp_demo();
+            crate::app::demo_hooks::apply_frvp_demo(&mut app);
             assert!(app.drawings.chrome.demos().profile_requested().is_none());
             let pane = app.active_tab().time_pane().unwrap();
             assert!(pane.history_prefix.len() > 24_000);

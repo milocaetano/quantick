@@ -477,10 +477,12 @@ impl LayoutAdapter<'_> {
     /// pane, then the context stack up to [`crate::canvas_layout::MAX_CONTEXT_PANES`].
     /// Distinct from `pane_is_real`, which asks whether the pane is standing
     /// *now* — a stack lands a frame after the layout that asked for it.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn pane_address_exists(index: usize) -> bool {
         index <= crate::canvas_layout::MAX_CONTEXT_PANES
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn apply_pane_layouts_hook(&mut self, names: &str) {
         let tab_id = self.tabs.active_id();
         for (index, name) in names.split(',').enumerate() {

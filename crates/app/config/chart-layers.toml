@@ -2,7 +2,8 @@
 #
 # This is the *shipped* answer, not the trader's. Resolution order at startup
 # (first hit wins):
-#   1. the file named by the QUANTICK_CHART_LAYERS environment variable
+#   1. in a capture build (`--features harness`) only, the scratch file a
+#      run names for this store
 #   2. `chart-layers.toml` in the durable cockpit home (Documents/Quantick),
 #      which the app writes back the moment a switch flips
 #   3. this file, compiled into the binary as the built-in default

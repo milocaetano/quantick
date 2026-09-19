@@ -47,6 +47,7 @@ pub const TRANSPORT_HEIGHT: f32 = 30.0;
 /// `1` opens it on the chart's own instrument — what clicking the tab does —
 /// and any other value states the symbol outright, so a scripted run reaches
 /// the calendar of a *named* contract from a fresh launch with no clicks.
+#[cfg(any(feature = "scenario-harness", test))]
 pub const GET_DATA_ENV: &str = "QUANTICK_REPLAY_GET_DATA";
 
 /// Height of the seek track, in pixels.
@@ -252,6 +253,7 @@ impl ReplayView {
     /// What the environment hook does. A validation run states a screen it
     /// wants to photograph; it does not make a standing choice on the
     /// trader's behalf — the same rule the replay folder follows.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn stage_day_before(&mut self, enabled: bool) {
         self.day_before = enabled;
     }
@@ -295,6 +297,7 @@ impl ReplayView {
     /// The folder actually being read this run — what a log or a status line
     /// must name, because it is the one the scan happened in.
     #[must_use]
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn folder_in_use(&self) -> &str {
         &self.folder
     }
@@ -335,6 +338,7 @@ impl ReplayView {
     /// The same states a click produces: the tab, the typed symbol, and — so
     /// the calendar is reachable from a fresh launch with no hand on the mouse
     /// — the day look-up that a press of **Look up days** would run.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn open_get_data(&mut self, symbol: Option<&str>) {
         self.open_browser();
         self.tab = BrowserTab::GetData;
@@ -375,6 +379,7 @@ impl ReplayView {
     /// person meets — see `feed::replay::ReplayOptions::autoplay` — and a run
     /// that wants the state they actually get asks for the paused one, which
     /// is the only way that state is reachable with no hand on the mouse.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn autostart(&mut self, speed: f32, day: Option<&str>, play: bool) -> bool {
         self.speed = speed;
         self.autoplay = play;
@@ -415,6 +420,7 @@ impl ReplayView {
     /// order — instrument, then day. A folder carrying two contracts for one
     /// date is named precisely by the file stem instead (`WINV26-20260828`),
     /// which is why both spellings are accepted.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn select_day(&mut self, wanted: &str) -> bool {
         let wanted = wanted.trim();
         let Some(library) = self.library.as_ref() else {
@@ -1223,6 +1229,7 @@ pub(crate) fn thousands(value: usize) -> String {
     out
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_REPLAY_GET_DATA"];
 
 #[cfg(test)]

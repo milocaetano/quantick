@@ -292,7 +292,15 @@ pub fn report<'a>(notice: &'a FeedNotice, stall: Option<&'a Stall>) -> Option<Re
 /// popup about a healthy feed being a thing the application must never show.
 #[must_use]
 pub fn popup_open_from_env() -> bool {
-    popup_open_from(std::env::var("QUANTICK_FEED_POPUP").ok().as_deref())
+    // A capture hook: compiled only with the scenario harness (or under test).
+    #[cfg(any(feature = "scenario-harness", test))]
+    {
+        popup_open_from(std::env::var("QUANTICK_FEED_POPUP").ok().as_deref())
+    }
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    {
+        false
+    }
 }
 
 /// The rule the hook applies, separated from the reading of it.
@@ -303,6 +311,7 @@ pub fn popup_open_from_env() -> bool {
 /// builds a `QuantickApp` reads exactly this variable in its constructor. The
 /// failure would land on that neighbour, on a green branch, at random.
 #[must_use]
+#[cfg(any(feature = "scenario-harness", test))]
 fn popup_open_from(value: Option<&str>) -> bool {
     value == Some("1")
 }
@@ -706,6 +715,7 @@ pub fn draw_popup(
     (action, popup)
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_FEED_POPUP"];
 
 #[cfg(test)]
