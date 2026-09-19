@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 13] = [
+const TESTED: [&str; 16] = [
     "size",
     "language",
     "encoding",
@@ -31,6 +31,9 @@ const TESTED: [&str; 13] = [
     "instruction_links",
     "app-ui-free",
     "evidence",
+    "app-lines",
+    "struct-width",
+    "single-consumer",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -132,6 +135,27 @@ fn no_execution_evidence_or_mission_file_is_carried_by_git() {
     assert_clean(TESTED[12]);
 }
 
+/// The UI crate does not grow: its absolute production lines stay within the
+/// recorded ceiling, and a ceiling left far above them asks for `--tighten`.
+#[test]
+fn the_ui_crate_stays_within_its_absolute_ceiling() {
+    assert_clean(TESTED[13]);
+}
+
+/// No struct gains a field past its recorded count, and one that lost a field
+/// has had its count tightened.
+#[test]
+fn no_struct_grows_past_its_recorded_field_count() {
+    assert_clean(TESTED[14]);
+}
+
+/// A crate with exactly one shipped consumer is signed for, and every signed
+/// exemption still describes a single-consumer crate.
+#[test]
+fn every_single_consumer_crate_is_signed_for() {
+    assert_clean(TESTED[15]);
+}
+
 // --- `--report`, the mode that measures rather than judges -------------------
 //
 // The guard tests above ask whether the repository is within its ceilings.
@@ -143,7 +167,7 @@ fn no_execution_evidence_or_mission_file_is_carried_by_git() {
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
-use quantick_guards::{report, size};
+use quantick_guards::{report, size, struct_width};
 
 /// One `pub struct` whose fields sit at one indent, wrapped in the things
 /// that have to be ignored around them: a doc comment, an attribute, a
@@ -175,18 +199,18 @@ fn fixture_struct(fields: usize) -> String {
 }
 
 /// The rule the mission stated: a field is a `name:` line at one indent
-/// inside a `pub struct` body. Everything at another indent, and everything
+/// inside a struct body. Everything at another indent, and everything
 /// without a colon, is not a field.
 #[test]
 fn a_struct_is_as_wide_as_its_fields_at_one_indent() {
-    let source = fixture_struct(report::WIDE_STRUCT_FIELDS);
+    let source = fixture_struct(struct_width::WIDE_STRUCT_FIELDS);
     let production = size::production_source(&source);
     // Three hand-written fields — `kind`, `shared` and `nested` — plus the
     // generated ones. The doc comment, the attribute, the generic header, the
     // closing braces and the private `Inner` all count for nothing.
     assert_eq!(
-        report::wide_structs(&production),
-        vec![("Wide".to_owned(), report::WIDE_STRUCT_FIELDS + 3)]
+        struct_width::wide_structs(&production),
+        vec![("Wide".to_owned(), struct_width::WIDE_STRUCT_FIELDS + 3)]
     );
 }
 
@@ -195,26 +219,41 @@ fn a_struct_is_as_wide_as_its_fields_at_one_indent() {
 /// is actually arguing about.
 #[test]
 fn a_struct_below_the_field_threshold_is_not_wide() {
-    let source = fixture_struct(report::WIDE_STRUCT_FIELDS - 4);
+    let source = fixture_struct(struct_width::WIDE_STRUCT_FIELDS - 4);
     let production = size::production_source(&source);
-    assert!(report::wide_structs(&size::production_source(&source)).is_empty());
+    assert!(struct_width::wide_structs(&size::production_source(&source)).is_empty());
     // …and the counting itself still ran, rather than the fixture being
     // malformed in a way that would pass this test for the wrong reason.
     assert!(production.iter().any(|line| line.contains("field_0")));
 }
 
-/// A struct that is not `pub`, and a struct with no brace-delimited body, are
-/// both outside the rule — the first because a private type is not a surface,
-/// the second because a tuple or unit struct has no fields of this shape.
+/// A struct is counted whatever its visibility — deleting `pub` is not an
+/// architectural improvement — while a tuple or unit struct has no fields of
+/// this shape.
 #[test]
-fn only_a_public_brace_bodied_struct_declares_fields() {
-    let mut source = String::from("struct Private {\n");
-    for index in 0..report::WIDE_STRUCT_FIELDS {
-        source.push_str(&format!("    field_{index}: usize,\n"));
+fn every_brace_bodied_struct_declares_fields_whatever_its_visibility() {
+    let mut source = String::from(
+        "struct Private {
+",
+    );
+    for index in 0..struct_width::WIDE_STRUCT_FIELDS {
+        source.push_str(&format!(
+            "    field_{index}: usize,
+"
+        ));
     }
-    source.push_str("}\n\npub struct Tuple(usize, usize);\npub struct Unit;\n");
+    source.push_str(
+        "}
+
+pub struct Tuple(usize, usize);
+pub struct Unit;
+",
+    );
     let production = size::production_source(&source);
-    assert!(report::wide_structs(&production).is_empty());
+    assert_eq!(
+        struct_width::wide_structs(&production),
+        vec![("Private".to_owned(), struct_width::WIDE_STRUCT_FIELDS)]
+    );
 }
 
 /// The property the whole report rests on: a site inside a test module is not
@@ -316,6 +355,29 @@ fn the_report_row_is_the_number_the_ui_free_ratchet_rations() {
     assert_eq!(
         value("app.lines.without_egui"),
         value("ratchet.app-ui-free.measured")
+    );
+}
+
+/// `crate.lines.app` is the number the `app-lines` ratchet rations: one
+/// definition of the size of the UI crate, not two that can drift.
+#[test]
+fn the_report_row_is_the_number_the_app_lines_ratchet_rations() {
+    let report = run_report();
+    let value = |label: &str| {
+        report
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{label}	")))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no `{label}` row in:
+{report}"
+                )
+            })
+            .to_owned()
+    };
+    assert_eq!(
+        value("crate.lines.app"),
+        value("ratchet.app-lines.measured")
     );
 }
 

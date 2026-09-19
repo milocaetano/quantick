@@ -37,7 +37,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use crate::{GUARDS, graph, headless, size, ui_free};
+use crate::{GUARDS, graph, headless, single_consumer, size, struct_width, ui_free};
 
 /// How many of the largest production files the report names.
 ///
@@ -46,18 +46,6 @@ use crate::{GUARDS, graph, headless, size, ui_free};
 /// ones below are ordinary. A longer list would move more lines per diff
 /// without adding a decision to take.
 pub const LARGEST_FILES: usize = 8;
-
-/// How many fields a `pub struct` must carry to be called wide.
-///
-/// A struct this size is the same defect the size ratchet exists for, one
-/// level down: a type that absorbed a subsystem instead of docking against
-/// it. Thirty is deliberately far above anything ordinary — the report is
-/// meant to name four or five types, not audit every record in the tree.
-pub const WIDE_STRUCT_FIELDS: usize = 30;
-
-/// One indent of Rust, in spaces. A field of a struct sits at exactly one;
-/// anything deeper belongs to a nested type or a generic bound.
-const INDENT: usize = 4;
 
 /// The substrings counted per production line, each with the label it is
 /// reported under.
@@ -144,6 +132,11 @@ pub fn render(root: &Path) -> Rendered {
     // are measurements here and enforcement elsewhere -- `--report` describes
     // the tree, it does not judge it.
     row(&mut out, "graph.edges", graph::edges());
+    row(
+        &mut out,
+        "graph.single_consumer",
+        single_consumer::count(root),
+    );
     row(&mut out, "headless.findings", headless::findings(root));
     row(&mut out, "scan.unreadable", sizes.unreadable.len());
     row(&mut out, "scan.undecodable", sizes.undecodable.len());
@@ -333,7 +326,7 @@ impl Scan {
             }
             if let Some(name) = crate_of(path) {
                 scan.wide_structs.extend(
-                    wide_structs(&production)
+                    struct_width::wide_structs(&production)
                         .into_iter()
                         .map(|(struct_name, fields)| (format!("{name}::{struct_name}"), fields)),
                 );
@@ -354,85 +347,4 @@ fn is_test_file(path: &str) -> bool {
     path.rsplit('/')
         .next()
         .is_some_and(|file| file == "tests.rs")
-}
-
-/// Every `pub struct` in this production source with at least
-/// [`WIDE_STRUCT_FIELDS`] fields, by name.
-///
-/// A line rule rather than a parse: a `pub struct Name … {` at column zero
-/// opens a body, a line at exactly one [`INDENT`] naming a field closes over
-/// it, and a `}` back at column zero ends it. That is the rule the mission
-/// stated, and it is the rule `rustfmt` guarantees over this repository —
-/// every source here is formatted, so the indent carries the structure.
-/// Writing a real parser would be a larger and less predictable thing than
-/// the number is worth, and the fixture tests pin the rule rather than a
-/// parse tree.
-pub fn wide_structs(production: &[&str]) -> Vec<(String, usize)> {
-    let mut found = Vec::new();
-    let mut index = 0;
-    while index < production.len() {
-        let Some(name) = struct_name(production[index]) else {
-            index += 1;
-            continue;
-        };
-        index += 1;
-        let mut fields = 0;
-        while index < production.len() && production[index] != "}" {
-            if is_field(production[index]) {
-                fields += 1;
-            }
-            index += 1;
-        }
-        if fields >= WIDE_STRUCT_FIELDS {
-            found.push((name.to_owned(), fields));
-        }
-    }
-    found
-}
-
-/// The name of the `pub struct` this line opens a body for, if it does.
-///
-/// Only a brace-bodied struct at column zero qualifies. A tuple struct and a
-/// unit struct end on their own line with `;` and have no fields of the shape
-/// this counts, and an indented `struct` is nested inside something that is
-/// already being counted.
-fn struct_name(line: &str) -> Option<&str> {
-    let rest = line.strip_prefix("pub struct ")?;
-    if !rest.ends_with('{') {
-        return None;
-    }
-    let name = rest
-        .split(|c: char| c == '<' || c == '{' || c == '(' || c.is_whitespace())
-        .next()?;
-    if name.is_empty() { None } else { Some(name) }
-}
-
-/// Whether a line inside a struct body declares a field.
-///
-/// Exactly one indent, then an optional visibility, then an identifier and a
-/// colon. The indent test is what keeps a nested type's own fields, a
-/// multi-line generic bound and a `where` clause out of the count; the colon
-/// is what keeps attributes, doc comments and blank lines out.
-fn is_field(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix(&" ".repeat(INDENT)) else {
-        return false;
-    };
-    if rest.starts_with(' ') {
-        return false;
-    }
-    let rest = match rest.strip_prefix("pub") {
-        // `pub name:` and `pub(crate) name:` both declare a field; `public: u8`
-        // is a field called `public` and must not lose its own prefix.
-        Some(after) => after
-            .strip_prefix(' ')
-            .or_else(|| after.split_once(") ").map(|(_, tail)| tail))
-            .unwrap_or(rest),
-        None => rest,
-    };
-    let Some((name, _)) = rest.split_once(':') else {
-        return false;
-    };
-    !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && !name.starts_with(|c: char| c.is_ascii_digit())
 }

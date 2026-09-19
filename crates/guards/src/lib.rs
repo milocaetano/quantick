@@ -8,6 +8,9 @@
 //! ([`language`]), sources are UTF-8 without a BOM and without welded doc
 //! comments ([`encoding`]), the generated indexes still say what the code
 //! says ([`generated`]), instruction links resolve ([`instruction_links`]),
+//! the UI crate may not grow in absolute lines ([`app_lines`]), no struct may
+//! gain a field past its recorded count ([`struct_width`]), a crate with one
+//! consumer must be signed for ([`single_consumer`]),
 //! a test's temporary directory is minted by its
 //! crate's scratch module rather than spelled by hand ([`scratch`]), the
 //! crate graph runs one way ([`graph`]), everything below `app` stays
@@ -46,6 +49,7 @@
 //! is [`encoding`], which now sees every crate rather than only the one it
 //! was born inside.
 
+pub mod app_lines;
 pub mod blast_radius;
 pub mod context;
 pub mod cycle;
@@ -62,7 +66,9 @@ pub mod report;
 pub mod scratch;
 #[cfg(test)]
 pub mod scratch_dir;
+pub mod single_consumer;
 pub mod size;
+pub mod struct_width;
 pub mod ui_free;
 
 use std::path::{Path, PathBuf};
@@ -216,6 +222,34 @@ pub const GUARDS: &[Guard] = &[
             policy: &ui_free::POLICY,
             measured: ui_free::measured,
         }),
+    },
+    Guard {
+        name: "app-lines",
+        check: app_lines::check,
+        check_file: app_lines::check_file,
+        ratchet: Some(Ratchet {
+            tighten: app_lines::tighten,
+            policy: &app_lines::POLICY,
+            measured: app_lines::measured,
+        }),
+    },
+    Guard {
+        name: "struct-width",
+        check: struct_width::check,
+        check_file: struct_width::check_file,
+        ratchet: Some(Ratchet {
+            tighten: struct_width::tighten,
+            policy: &struct_width::POLICY,
+            measured: struct_width::measured,
+        }),
+    },
+    Guard {
+        // No ratchet: an exemption is signed or it is not, and a stale one
+        // is a finding, so the list can only shrink without an argument.
+        name: "single-consumer",
+        check: single_consumer::check,
+        check_file: single_consumer::check_file,
+        ratchet: None,
     },
     Guard {
         name: "context",

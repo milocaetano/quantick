@@ -191,47 +191,14 @@ fn exemptions(root: &Path) -> Result<(Vec<Exemption>, Vec<Finding>), String> {
 /// than a smaller list when anything under `crates/app` could not be read:
 /// a partial walk is the flattering number.
 fn files(root: &Path) -> Result<Vec<(String, bool, usize)>, Unmeasured> {
-    if !root.join(SOURCE).is_dir() {
-        return Err(Unmeasured {
-            missed: vec![format!("  {SOURCE}: not a readable directory")],
-        });
-    }
-    let walk = size::measure(root);
-    // A file or directory under the source tree, as the walk reported it.
-    // `size::measure` writes an unlistable directory to `unreadable` as well
-    // as to `blind`, so one inside the tree is caught here, not below.
-    let mut missed: Vec<String> = walk
-        .unreadable
-        .iter()
-        .filter(|line| line.trim_start().starts_with(SOURCE))
-        .cloned()
-        .collect();
-    // An ancestor the walk could not list hides the whole tree; its line in
-    // `unreadable` names the ancestor, which the filter above cannot match.
-    missed.extend(
-        walk.blind
-            .iter()
-            .filter(|dir| SOURCE.starts_with(dir.as_str()) && !dir.starts_with(SOURCE))
-            .map(|dir| format!("  {dir}: directory could not be listed")),
-    );
-    missed.extend(
-        walk.undecodable
-            .iter()
-            .filter(|path| path.starts_with(SOURCE))
-            .map(|path| format!("  {path}: does not decode as UTF-8")),
-    );
+    let mut missed = Vec::new();
     let mut files = Vec::new();
-    for (path, lines) in walk
-        .counts
-        .iter()
-        .filter(|(path, _)| path.starts_with(SOURCE))
-    {
-        match fs::read_to_string(root.join(path)) {
-            Ok(source) => files.push((
-                path.clone(),
-                names_ui(&size::production_source(&source)),
-                *lines,
-            )),
+    for (path, lines) in size::measure_under(root, SOURCE)? {
+        match fs::read_to_string(root.join(&path)) {
+            Ok(source) => {
+                let names_ui = names_ui(&size::production_source(&source));
+                files.push((path, names_ui, lines));
+            }
             Err(e) => missed.push(format!("  {path}: could not be read: {e}")),
         }
     }
