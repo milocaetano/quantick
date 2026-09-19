@@ -20,4 +20,5 @@ pub mod dispatch;
 pub mod evidence;
 pub mod idempotency;
 pub mod journal;
+pub mod launch;
 pub mod projection;

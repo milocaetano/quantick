@@ -28,6 +28,7 @@
 //! drawing half, and now captures this module's enumerating scope alongside
 //! the pointer scopes it already covered.
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE, CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE},
@@ -39,7 +40,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::ControlWindow,
     drawings::{Drawing, DrawingScope},
     indicators::IndicatorView,
     pane::{ChartPane, PaneSide},
@@ -304,7 +304,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// Everything either scope publishes and the readings do not carry belongs
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
-fn revision(app: &ControlWindow) -> Vec<AnalysisRevisionKey> {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<AnalysisRevisionKey> {
     app.tab_reads()
         .tabs()
         .iter_with_ids()
@@ -394,15 +394,18 @@ struct IndicatorAnalysisRevisionKey {
     declaration: String,
 }
 
-fn project_indicators(app: &ControlWindow, _context: CaptureContext) -> IndicatorsSnapshot {
+fn project_indicators<P: TabsPort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> IndicatorsSnapshot {
     indicators_snapshot(app)
 }
 
-fn project_drawings(app: &ControlWindow, _context: CaptureContext) -> DrawingsSnapshot {
+fn project_drawings<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> DrawingsSnapshot {
     drawings_snapshot(app)
 }
 
-fn indicators_snapshot(app: &ControlWindow) -> IndicatorsSnapshot {
+fn indicators_snapshot<P: TabsPort + ?Sized>(app: &P) -> IndicatorsSnapshot {
     IndicatorsSnapshot {
         tabs: app
             .tab_reads()
@@ -538,7 +541,7 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
     })
 }
 
-fn drawings_snapshot(app: &ControlWindow) -> DrawingsSnapshot {
+fn drawings_snapshot<P: TabsPort + ?Sized>(app: &P) -> DrawingsSnapshot {
     DrawingsSnapshot {
         tabs: app
             .tab_reads()

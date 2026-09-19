@@ -43,6 +43,7 @@ mod bar_registry_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;
+mod control_port_tests;
 mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;

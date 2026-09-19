@@ -1,5 +1,6 @@
 //! Workspace, tab, layout, and focus snapshot.
 
+use crate::app::{ChromePort, HealthPort, LayoutPort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -8,7 +9,7 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{app::ControlWindow, pane::PaneSide};
+use crate::pane::PaneSide;
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -141,15 +142,22 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &ControlWindow) -> WorkspaceSnapshot {
+fn revision<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn project(app: &ControlWindow, _context: CaptureContext) -> WorkspaceSnapshot {
+fn project<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &ControlWindow) -> WorkspaceSnapshot {
+fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+) -> WorkspaceSnapshot {
     let active_index = app.tab_reads().active_tab_index();
     let tabs = app.tab_reads().tabs();
     let timezone = app.chrome_reads().timezone();

@@ -6145,7 +6145,7 @@ fn every_refused_agent_sound_is_reported_and_the_alarm_state_is_untouched() {
     app.audio.alerts = Box::new(Refusing);
     for call in 0..2 {
         assert_eq!(
-            app.control_actions().sound_alert().as_deref(),
+            app.alerts().sound_alert().as_deref(),
             Some("no audio output device could be opened"),
             "call {call} must report the refusal, not claim it was heard"
         );

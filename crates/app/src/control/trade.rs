@@ -28,6 +28,7 @@
 //! `quantick_trading::TradingVenue`, these actions reach it unchanged, and
 //! the permission that guards them is already carved out.
 
+use crate::app::{PaperPort, TabsMutPort, TabsPort};
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -47,7 +48,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::ControlWindow, metrics, paper_trading::PaperTrading};
+use crate::{metrics, paper_trading::PaperTrading};
 
 use super::{
     actions::{ActionRegistry, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -241,7 +242,7 @@ pub(crate) struct WorkingOrderView {
 }
 
 /// Turn the venue's answer into the result, whatever the call was.
-fn answer(app: &ControlWindow, events: &[VenueEvent]) -> TradeResult {
+fn answer<P: TabsPort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
     let rejected_because = events.iter().find_map(|event| match event {
         VenueEvent::Rejected(reason) => Some(reason.to_string()),
         _ => None,
@@ -346,8 +347,8 @@ fn to_value(result: TradeResult) -> Result<Value, ControlError> {
         .map_err(|error| ControlError::invalid_request(format!("trade result: {error}")))
 }
 
-fn place_order(
-    app: &mut ControlWindow,
+fn place_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -407,7 +408,7 @@ fn place_order(
     };
     let intent = intent.with_bracket(bracket);
     let paper = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?;
     // The risk per trade is a ceiling on the account, so it holds on this
@@ -423,8 +424,8 @@ fn place_order(
     to_value(result)
 }
 
-fn bracket_order(
-    app: &mut ControlWindow,
+fn bracket_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -445,7 +446,7 @@ fn bracket_order(
             .transpose()?,
     );
     let events = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
@@ -455,8 +456,8 @@ fn bracket_order(
     to_value(result)
 }
 
-fn cancel_order(
-    app: &mut ControlWindow,
+fn cancel_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -465,7 +466,7 @@ fn cancel_order(
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
@@ -676,8 +677,8 @@ fn set_ruler_descriptor() -> CapabilityDescriptor {
     ))
 }
 
-fn select_strategy(
-    app: &mut ControlWindow,
+fn select_strategy<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -686,7 +687,7 @@ fn select_strategy(
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let paper = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?;
     let strategies = paper.account().order_strategies().to_vec();
@@ -707,8 +708,8 @@ fn select_strategy(
     to_value(result)
 }
 
-fn set_ruler(
-    app: &mut ControlWindow,
+fn set_ruler<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -716,7 +717,7 @@ fn set_ruler(
     let asked = input.clone();
     let input: SetRulerInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.control_actions()
+    app.tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
@@ -747,8 +748,8 @@ fn set_instrument_money_descriptor() -> CapabilityDescriptor {
     ))
 }
 
-fn set_risk(
-    app: &mut ControlWindow,
+fn set_risk<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -794,7 +795,7 @@ fn set_risk(
         }
     };
     let paper = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?;
     // The currency an amount set through this call is denominated in: the one
@@ -836,8 +837,8 @@ fn set_risk(
     to_value(result)
 }
 
-fn set_instrument_money(
-    app: &mut ControlWindow,
+fn set_instrument_money<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -846,7 +847,7 @@ fn set_instrument_money(
     let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let paper = app
-        .control_actions()
+        .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?;
     let symbol = match input.symbol.as_deref().map(str::trim) {

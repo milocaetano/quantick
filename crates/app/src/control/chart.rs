@@ -1,5 +1,6 @@
 //! Chart summary and append-only paginated bar-window projections.
 
+use crate::app::TabsPort;
 use quantick_control::{
     cursor::{PageContext, PageCursor, PaginationConsistency},
     error::ControlError,
@@ -14,7 +15,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::ControlWindow,
     config::AppConfig,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -232,15 +232,15 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &ControlWindow) -> ChartSnapshot {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn project(app: &ControlWindow, _context: CaptureContext) -> ChartSnapshot {
+fn project<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &ControlWindow) -> ChartSnapshot {
+fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
     let active = app.tab_reads().active_tab_index();
     let config = app.tab_reads().config();
     let mut panes = Vec::new();
@@ -459,8 +459,8 @@ fn bar_snapshot_with(
 /// a prefix install, backfill, reset, or bar-spec rebuild advances the pane's
 /// pagination revision and returns `control.page_stale`.
 #[cfg(test)]
-pub(crate) fn chart_window(
-    app: &ControlWindow,
+pub(crate) fn chart_window<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&PageCursor>,
@@ -472,8 +472,8 @@ pub(crate) fn chart_window(
 
 /// Gateway path for a query parsed, schema-checked, and canonicalized away
 /// from the application thread.
-pub(crate) fn chart_window_prevalidated(
-    app: &ControlWindow,
+pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     canonical_query: &serde_json::Value,

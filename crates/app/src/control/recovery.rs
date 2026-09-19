@@ -15,6 +15,7 @@
 //! descriptor, and the answer is the whole reason the trader is offered a
 //! choice at all.
 
+use crate::app::{TabsMutPort, TabsPort};
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -31,7 +32,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::ControlWindow;
 use quantick_feed::stall::Recovery;
 
 use super::{
@@ -110,8 +110,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn reconnect(
-    app: &mut ControlWindow,
+fn reconnect<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -119,8 +119,8 @@ fn reconnect(
     recover(app, input, true)
 }
 
-fn reload(
-    app: &mut ControlWindow,
+fn reload<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -131,8 +131,8 @@ fn reload(
 /// The shared body. `keep_timeline` picks which of the tab's two methods runs;
 /// nothing else differs, so the two capabilities can never drift apart in
 /// anything but the act they name.
-fn recover(
-    app: &mut ControlWindow,
+fn recover<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     input: &Value,
     keep_timeline: bool,
 ) -> Result<Value, ControlError> {
@@ -141,7 +141,7 @@ fn recover(
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, config) = app
-        .control_actions()
+        .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // Asked of the tab rather than inferred from one of its fields: a
@@ -167,8 +167,8 @@ fn recover(
 }
 
 /// Which tab a call named, or the one the trader is looking at.
-pub(crate) fn tab_index(
-    app: &ControlWindow,
+pub(crate) fn tab_index<P: TabsPort + ?Sized>(
+    app: &P,
     tab_id: Option<WireU64>,
 ) -> Result<usize, ControlError> {
     let Some(id) = tab_id else {

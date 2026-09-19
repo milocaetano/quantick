@@ -1,5 +1,5 @@
 //! Existing registered script actions: authority and shell composition.
-use super::ControlWindow;
+use super::ScriptsPort;
 use crate::control::{ControlAccess, script::*};
 use quantick_control::{
     error::{ControlError, codes},
@@ -7,8 +7,8 @@ use quantick_control::{
 };
 use serde_json::Value;
 
-pub(crate) fn attach_script(
-    app: &mut ControlWindow,
+pub(crate) fn attach_script<P: ScriptsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -49,8 +49,8 @@ pub(crate) fn attach_script(
         .map_err(|error| ControlError::invalid_request(format!("attach result: {error}")))
 }
 
-pub(crate) fn detach_script(
-    app: &mut ControlWindow,
+pub(crate) fn detach_script<P: ScriptsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

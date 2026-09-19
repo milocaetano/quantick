@@ -6,7 +6,7 @@
 //! because the menu bar is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
-use super::ControlPort;
+use super::{GatewayPort, LayoutPort};
 use eframe::egui;
 
 use crate::tabstrip::{self, TabAction};

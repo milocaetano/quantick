@@ -1,5 +1,6 @@
 //! Durable per-indicator price-hover guide, shared by UI and automation.
 
+use crate::app::LayoutPort;
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -19,7 +20,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{app::ControlWindow, indicator_worker::SlotId};
+use crate::indicator_worker::SlotId;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -89,8 +90,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set(
-    app: &mut ControlWindow,
+fn set<P: LayoutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

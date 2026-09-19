@@ -4,6 +4,7 @@
 //! simulator holds while they do. Both read state the application already
 //! maintains; neither recomputes anything inside a capture.
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_CLOSED_TRADES, CONTROL_SNAPSHOT_MAX_WORKING_ORDERS},
@@ -14,7 +15,7 @@ use quantick_sim::{ClosedTrade, Order};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{app::ControlWindow, paper_chrome::PositionSummary, tab::Tab};
+use crate::{paper_chrome::PositionSummary, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -314,7 +315,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// tracks is a deliberate change: which recording is loaded, whether it is
 /// playing or finished, the speed, a seek, and the shape of the simulated
 /// book — the same reasoning `health.rs` applies to its frame averages.
-fn revision(app: &ControlWindow) -> Vec<SessionRevisionKey> {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<SessionRevisionKey> {
     app.tab_reads()
         .tabs()
         .iter_with_ids()
@@ -397,15 +398,15 @@ struct ReplayRevisionKey {
     rewinds: u64,
 }
 
-fn project_replay(app: &ControlWindow, _context: CaptureContext) -> ReplaySnapshot {
+fn project_replay<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ReplaySnapshot {
     replay_snapshot(app)
 }
 
-fn project_paper(app: &ControlWindow, _context: CaptureContext) -> PaperSnapshot {
+fn project_paper<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> PaperSnapshot {
     paper_snapshot(app)
 }
 
-fn replay_snapshot(app: &ControlWindow) -> ReplaySnapshot {
+fn replay_snapshot<P: TabsPort + ?Sized>(app: &P) -> ReplaySnapshot {
     ReplaySnapshot {
         tabs: app
             .tab_reads()
@@ -467,7 +468,7 @@ fn replay_session_snapshot(link: &quantick_feed::replay::ReplayLink) -> ReplaySe
     }
 }
 
-fn paper_snapshot(app: &ControlWindow) -> PaperSnapshot {
+fn paper_snapshot<P: TabsPort + ?Sized>(app: &P) -> PaperSnapshot {
     PaperSnapshot {
         tabs: app
             .tab_reads()

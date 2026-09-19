@@ -1,22 +1,32 @@
-//! What the control plane is allowed to see and do to the window.
+//! The control plane's port onto the window, split by capability family, and
+//! the gateway's seat on the window.
 //!
-//! [`ControlPort`] is the port the gateway and every registered handler and
-//! projector take instead of the root: capability-family views (tabs and
-//! panes, chrome and layout, health and history, actions), the owners the
-//! layout, paper and layer capabilities drive, and the gateway doors
-//! (`control_action`, `run_agent_action`, `take_mark`) provided over those
-//! alone. `QuantickApp` is its one adapter. They are together because they
-//! share one rule: none of them may assume a surface was drawn, because the
-//! caller is a script.
-
-use std::time::Instant;
+//! The gateway, every registered handler and every projector depend on these
+//! traits, never on [`super::QuantickApp`]. A handler or projector is generic
+//! over the narrowest families it uses — `fn handler<P: TabsPort + ?Sized>`
+//! — and is registered instantiated at [`ControlWindow`], so the compiler refuses a handler that reaches a family
+//! its signature does not name, and a test drives it with a fake window that
+//! implements only those families.
+//!
+//! The families return views over roots the window owns (`Tab`, the style,
+//! the dock), so they live here in `app` rather than in `quantick-control-host`,
+//! which cannot name app types. The chrome family also speaks egui geometry.
+//! The one adapter, `QuantickApp`, follows the views: the only code that
+//! knows which root each family reads. Last comes the gateway's seat — the
+//! access it runs in between calls and the `QUANTICK_CONTROL_*` launch hooks
+//! that configure it; the scenarios those hooks ask for are headless state in
+//! `quantick_control_host::launch`.
+//!
+//! One file, not two: the adapter and the seat name no `egui` type of their
+//! own, so a file of them alone would count against the app UI-free ratchet
+//! as code that belongs below `app` — which code reading `QuantickApp`'s
+//! fields cannot be.
 
 use eframe::egui;
 
 use crate::config::AppConfig;
 use crate::dock::Dock;
 use crate::drawings;
-use crate::feed_notice;
 use crate::pane::ChartPane;
 use crate::style::ChartStyle;
 use crate::tab::Tab;
@@ -26,632 +36,118 @@ use crate::toolrail::ToolRail;
 use quantick_feed::history_reach;
 
 use super::arrangement_host::ArrangementHost;
+use super::chart_layers_wiring::LayerWiring;
+use super::indicator_manager::IndicatorEdit;
+use super::layout_wiring::{LayoutAdapter, LayoutRead};
+use super::paper_wiring::PaperSettingsAdapter;
 use super::{ControlFrameMetrics, QuantickApp};
 
-/// The ordinary local gateway and its opt-in launch scenarios.
-pub(super) struct ControlState {
-    pub(super) control_access: Option<crate::control::ControlAccess>,
-    #[cfg(any(feature = "control-harness", test))]
-    pub(super) scenarios: ControlScenarios,
-}
-
-/// The temporary range's visible action button, if the current frame has laid
-/// it out. Read through the port, like every other control-plane read.
-#[cfg(test)]
-pub(crate) fn control_quick_range(
-    app: &ControlWindow,
-) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
-    app.chrome_reads().quick_range()
-}
-
-/// All drawing actions in the temporary range's visible action bar.
-pub(crate) fn control_quick_range_actions(
-    app: &ControlWindow,
-) -> Option<[crate::surfaces::drawing_chrome::QuickRangeControl; 3]> {
-    app.chrome_reads().quick_range_actions()
-}
-
-/// Control-only launch inputs, captured before owner construction.
-#[cfg(any(feature = "control-harness", test))]
-#[derive(Default)]
-pub(crate) struct ControlLaunch {
-    panel: bool,
-    scopes: Option<String>,
-    scenarios: ControlScenarios,
-}
-
-#[cfg(any(feature = "control-harness", test))]
-impl ControlLaunch {
-    pub(crate) fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
-        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
-        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
-        let scopes = value("QUANTICK_CONTROL_SCOPES");
-        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
-        let mark = value("QUANTICK_CONTROL_MARK")
-            .filter(|raw| !raw.trim().is_empty())
-            .map(|raw| if raw == "1" { String::new() } else { raw });
-        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
-        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
-        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
-        Self {
-            panel,
-            scopes,
-            scenarios: ControlScenarios {
-                pending_control_access_enable: access,
-                pending_control_annotation: annotation,
-                pending_control_notification: notification,
-                pending_control_evidence: evidence,
-                pending_control_mark: mark,
-                evidence_frames: 0,
-            },
-        }
-    }
-}
-
-#[cfg(any(feature = "control-harness", test))]
-impl ControlState {
-    pub(super) fn apply_launch(&mut self, launch: ControlLaunch) {
-        if launch.panel
-            && let Some(access) = self.control_access.as_mut()
-        {
-            access.open_panel();
-        }
-        if let Some(scopes) = launch.scopes
-            && let Some(access) = self.control_access.as_mut()
-            && let Err(error) = access.configure_scopes(&scopes)
-        {
-            tracing::warn!(
-                target: "quantick::control",
-                event_code = "CONTROL_SCOPE_HOOK_REFUSED",
-                error = %error,
-                "QUANTICK_CONTROL_SCOPES named something this build does not register"
-            );
-        }
-        self.scenarios = launch.scenarios;
-    }
-}
-
-/// Only launch scenarios live here. The ordinary gateway remains in ControlState.
-#[cfg(any(feature = "control-harness", test))]
-#[derive(Default)]
-pub(super) struct ControlScenarios {
-    pending_control_access_enable: bool,
-    pending_control_annotation: Option<String>,
-    pending_control_notification: Option<String>,
-    pending_control_evidence: Option<String>,
-    pending_control_mark: Option<String>,
-    /// Lifetime-wide screenshot wait count, never reset by request rearming.
-    evidence_frames: u32,
-}
-
-#[cfg(any(feature = "control-harness", test))]
-pub(super) struct EvidenceCapture {
-    request: String,
-    scopes: std::collections::BTreeSet<String>,
-    pub(super) wants_screenshot: bool,
-    pub(super) screenshot_not_granted: bool,
-}
-
-#[cfg(any(feature = "control-harness", test))]
-pub(super) enum EvidenceStep {
-    Waiting,
-    Capture {
-        scopes: std::collections::BTreeSet<String>,
-        screenshot: bool,
-        image_timed_out: bool,
-    },
-}
-
-#[cfg(any(feature = "control-harness", test))]
-pub(super) enum NotificationStep {
-    Ready {
-        capability: &'static str,
-        input: serde_json::Value,
-    },
-    Refused {
-        channel: String,
-    },
-}
-
-/// The same bounded wait as the original Harness: wait attempts1..=120,
-/// then capture honest missing-image coverage on attempt121.
-#[cfg(any(feature = "control-harness", test))]
-pub(crate) const CONTROL_EVIDENCE_HOOK_FRAMES: u32 = 120;
-
-#[cfg(any(feature = "control-harness", test))]
-impl ControlScenarios {
-    pub(super) fn take_enable(&mut self) -> bool {
-        std::mem::take(&mut self.pending_control_access_enable)
-    }
-
-    pub(super) fn take_mark(&mut self) -> Option<String> {
-        self.pending_control_mark.take()
-    }
-
-    pub(super) fn has_annotation(&self) -> bool {
-        self.pending_control_annotation.is_some()
-    }
-
-    pub(super) fn has_evidence(&self) -> bool {
-        self.pending_control_evidence.is_some()
-    }
-
-    pub(super) fn annotation(
-        &mut self,
-        anchor: Option<serde_json::Value>,
-    ) -> Option<serde_json::Value> {
-        let anchor = anchor?;
-        let text = self.pending_control_annotation.take()?;
-        Some(serde_json::json!({ "anchors": [anchor], "text": text }))
-    }
-
-    pub(super) fn notification(&mut self) -> Option<NotificationStep> {
-        let request = self.pending_control_notification.take()?;
-        let (channel, message) = request
-            .split_once(':')
-            .unwrap_or(("toast", request.as_str()));
-        let capability = match channel.trim() {
-            "popup" => "notify.popup",
-            "sound" => "notify.sound",
-            "toast" => "notify.toast",
-            other => {
-                return Some(NotificationStep::Refused {
-                    channel: other.to_owned(),
-                });
-            }
-        };
-        Some(NotificationStep::Ready {
-            capability,
-            input: serde_json::json!({ "message": message, "title": "From your assistant" }),
-        })
-    }
-
-    // The caller obtains access before this takes the pending input.
-    pub(super) fn prepare_evidence(
-        &mut self,
-        access: &crate::control::ControlAccess,
-    ) -> Option<EvidenceCapture> {
-        let request = self.pending_control_evidence.take()?;
-        let mut wants_screenshot = false;
-        let mut scopes = std::collections::BTreeSet::new();
-        for token in request
-            .split(',')
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-        {
-            match token {
-                "screenshot" => wants_screenshot = true,
-                "all" | "1" => scopes.extend(
-                    access
-                        .readable_scopes()
-                        .into_iter()
-                        .map(|scope| scope.to_string()),
-                ),
-                scope => {
-                    scopes.insert(scope.to_owned());
-                }
-            }
-        }
-        if scopes.is_empty() {
-            scopes.extend(
-                access
-                    .readable_scopes()
-                    .into_iter()
-                    .map(|scope| scope.to_string()),
-            );
-        }
-        let screenshot_not_granted = wants_screenshot && !access.grants_screenshot();
-        wants_screenshot &= !screenshot_not_granted;
-        Some(EvidenceCapture {
-            request,
-            scopes,
-            wants_screenshot,
-            screenshot_not_granted,
-        })
-    }
-
-    pub(super) fn finish_evidence(
-        &mut self,
-        capture: EvidenceCapture,
-        has_screenshot: bool,
-    ) -> EvidenceStep {
-        let missing = capture.wants_screenshot && !has_screenshot;
-        if missing && self.evidence_frame_waited() {
-            self.pending_control_evidence = Some(capture.request);
-            return EvidenceStep::Waiting;
-        }
-        EvidenceStep::Capture {
-            scopes: capture.scopes,
-            screenshot: capture.wants_screenshot,
-            image_timed_out: missing,
-        }
-    }
-
-    pub(super) fn evidence_frame_waited(&mut self) -> bool {
-        self.evidence_frames = self.evidence_frames.saturating_add(1);
-        self.evidence_frames <= CONTROL_EVIDENCE_HOOK_FRAMES
-    }
-}
-
-#[cfg(test)]
-pub(super) struct PendingControl<'a> {
-    pub(super) enable: bool,
-    pub(super) mark: Option<&'a str>,
-    pub(super) annotation: Option<&'a str>,
-    pub(super) notification: Option<&'a str>,
-    pub(super) evidence: Option<&'a str>,
-}
-
-#[cfg(test)]
-impl ControlScenarios {
-    pub(super) fn pending(&self) -> PendingControl<'_> {
-        PendingControl {
-            enable: self.pending_control_access_enable,
-            mark: self.pending_control_mark.as_deref(),
-            annotation: self.pending_control_annotation.as_deref(),
-            notification: self.pending_control_notification.as_deref(),
-            evidence: self.pending_control_evidence.as_deref(),
-        }
-    }
-
-    pub(super) fn queue_annotation(&mut self, text: String) {
-        self.pending_control_annotation = Some(text);
-    }
-
-    pub(super) fn queue_notification(&mut self, request: String) {
-        self.pending_control_notification = Some(request);
-    }
-
-    pub(super) fn queue_mark(&mut self, note: String) {
-        self.pending_control_mark = Some(note);
-    }
-
-    pub(super) fn queue_evidence(&mut self, request: String) {
-        self.pending_control_evidence = Some(request);
-    }
-}
-
-crate::hooks::declare_hooks![
-    "QUANTICK_CONTROL_ACCESS",
-    "QUANTICK_CONTROL_ANNOTATE",
-    "QUANTICK_CONTROL_EVIDENCE",
-    "QUANTICK_CONTROL_MARK",
-    "QUANTICK_CONTROL_NOTIFY",
-    "QUANTICK_CONTROL_PANEL",
-    "QUANTICK_CONTROL_SCOPES"
-];
-
-/// The tabs-and-panes family of the control port: the markets the window
-/// holds, the configuration they were opened under, and the drawing defaults
-/// a placed object starts from. Every accessor takes the view by value and
-/// hands back the root's own borrow, so a projection keeps what it read for
-/// as long as it holds the window.
-#[derive(Clone, Copy)]
-pub(crate) struct TabReads<'a> {
-    tabs: &'a ArrangementHost,
-    config: &'a AppConfig,
-    footprint_config: &'a crate::footprint_config::FootprintConfig,
-    presets: &'a drawings::presets::PresetStore,
-}
-
-impl<'a> TabReads<'a> {
-    /// One tab by position, for a control capability that resolved an id.
-    pub(crate) fn tab_at(self, index: usize) -> Option<&'a Tab> {
-        self.tabs.get(index)
-    }
-
-    /// The read side of [`ControlActions::active_paper_mut`], resolved the
-    /// same way so a call and its read-back can never name different tabs.
-    pub(crate) fn active_paper(self) -> Option<&'a crate::paper_trading::PaperTrading> {
-        self.tabs
-            .get(self.tabs.active_index())
-            .map(|tab| &tab.paper)
-    }
-
-    pub(crate) fn tabs(self) -> &'a ArrangementHost {
-        self.tabs
-    }
-
-    pub(crate) fn active_tab_index(self) -> usize {
-        self.tabs.active_index()
-    }
-
-    /// What a freshly placed object of `tool` opens with, through the same
-    /// door the click path uses — saved defaults, named preset and all.
-    pub(crate) fn new_drawing(self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
-        drawings::new_drawing_from_defaults(self.presets, tool)
-    }
-
-    pub(crate) fn config(self) -> &'a AppConfig {
-        self.config
-    }
-
-    /// The window's footprint setup — the one a pane falls back to when it
-    /// carries no override of its own.
-    pub(crate) fn footprint_config(self) -> &'a crate::footprint_config::FootprintConfig {
-        self.footprint_config
-    }
-}
-
-/// The chrome-and-layout family of the control port: what the window drew
-/// around the chart — style, tool rail, dock, feed chip, replay browser,
-/// quick range — about the tab on screen. It reads the tab strip only to
-/// know which tab that is.
-#[derive(Clone, Copy)]
-pub(crate) struct ChromeReads<'a> {
-    tabs: &'a ArrangementHost,
-    style: &'a ChartStyle,
-    toolrail: &'a ToolRail,
-    chrome: &'a super::chrome::ChromeState,
-    drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
-    dock: &'a Dock,
-    tz: TzOffset,
-    replay_view: &'a crate::replay_view::ReplayView,
-}
-
-impl<'a> ChromeReads<'a> {
-    /// The window's shared chart style, which owns the layers no pane does.
-    pub(crate) fn style(self) -> &'a ChartStyle {
-        self.style
-    }
-
-    /// The drawing tool rail: which tool is armed, and whether it is on
-    /// screen at all.
-    pub(crate) fn tool_rail(self) -> &'a ToolRail {
-        self.toolrail
-    }
-
-    /// The colour the chart's corner is wearing, or `None` while the chart
-    /// is being fed.
-    ///
-    /// The status line's provenance dot takes this rather than deciding for
-    /// itself. It used to read the connection alone, which is a socket's
-    /// opinion: a terminal that froze with the socket open had the
-    /// bottom-left of the window saying `live` while the bottom-right said
-    /// `offline`, about the same feed, at the same moment. Two surfaces
-    /// disagreeing about the one question the trader is asking is worse than
-    /// either answer alone, so there is one report and both read it.
-    pub(crate) fn feed_offline_accent(
-        self,
-        stall: Option<&quantick_feed::stall::Stall>,
-    ) -> Option<egui::Color32> {
-        feed_notice::report(&self.tabs[self.tabs.active_index()].notice, stall)
-            .filter(feed_notice::Report::is_offline)
-            .map(|report| report.accent())
-    }
-
-    /// Where the feed's offline chip was painted, or `None` when it was not.
-    ///
-    /// The projection reads what was drawn rather than re-deciding it, so the
-    /// scene and the screen cannot disagree across the edge of a stall budget.
-    pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
-        self.chrome.feed_chip_rect
-    }
-
-    /// Whether the recovery popup that chip opens is showing, on the chart
-    /// the trader is looking at.
-    pub(crate) fn feed_popup_open(self) -> bool {
-        self.chrome.feed_popup_tab == Some(self.tabs.active_id())
-    }
-
-    /// The right-hand dock: whether it is shown, and which tab is open.
-    pub(crate) fn dock(self) -> &'a Dock {
-        self.dock
-    }
-
-    pub(crate) fn timezone(self) -> TzOffset {
-        self.tz
-    }
-
-    /// Whether a recording opens with the session day before it joined in
-    /// front, and a download fetches that day's tape too.
-    ///
-    /// A choice an operator without a mouse has to be able to read back after
-    /// setting it: it decides what a replay they are about to open will hold.
-    pub(crate) fn replay_day_before(self) -> bool {
-        self.replay_view.day_before()
-    }
-
-    /// The temporary range's visible action button on the tab on screen, if
-    /// the current frame has laid it out.
-    #[cfg(test)]
-    pub(crate) fn quick_range(self) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
-        self.drawing_chrome
-            .quick_range
-            .control(self.tabs.id_at(self.tabs.active_index()))
-    }
-
-    /// All drawing actions in the temporary range's visible action bar.
-    pub(crate) fn quick_range_actions(
-        self,
-    ) -> Option<[crate::surfaces::drawing_chrome::QuickRangeControl; 3]> {
-        self.drawing_chrome
-            .quick_range
-            .controls(self.tabs.id_at(self.tabs.active_index()))
-    }
-}
-
-/// The health-and-history family of the control port: what the window
-/// measures about itself, how far it reaches back, and the session choices
-/// an operator reads back after setting them.
-#[derive(Clone, Copy)]
-pub(crate) struct HealthReads<'a> {
-    workspace: &'a crate::workspace_store::WorkspaceStore,
-    health: &'a super::health::HealthCounters,
-    history: &'a super::tabs::HistorySettings,
-}
-
-impl HealthReads<'_> {
-    pub(crate) fn workspace_flags(self) -> (bool, bool, bool) {
-        (
-            self.workspace.session().save_on_exit(),
-            self.health.show_perf,
-            self.history.progressive_history,
-        )
-    }
-
-    /// What the `by time` reach's span is now, for an operator reading back
-    /// what it set.
-    pub(crate) fn history_reach_span_minutes(self) -> u32 {
-        self.history.history_reach_span_minutes
-    }
-
-    /// How far the window's *load older* press reaches, and whether a chart
-    /// cut by trades carries the venue's candles.
-    ///
-    /// Both are choices an operator without a mouse has to be able to read
-    /// back after setting them — the reach especially, since it decides
-    /// whether one press is one request or a run of them.
-    pub(crate) fn history_settings(self) -> (history_reach::HistoryReach, bool) {
-        (self.history.history_reach, self.history.venue_lead_in)
-    }
-
-    pub(crate) fn frame_metrics(self) -> ControlFrameMetrics {
-        ControlFrameMetrics {
-            wall_average_ms: self.health.frames.avg_ms(),
-            wall_worst_ms: self.health.frames.worst_ms(),
-            frames_per_second: self.health.frames.fps(),
-            cpu_average_ms: self.health.cpu_frames.avg_ms(),
-            cpu_worst_ms: self.health.cpu_frames.worst_ms(),
-        }
-    }
-}
-
-/// The actions family of the control port, for the cockpit tier: the tabs
-/// an action changes and the three lanes the assistant answers on.
-///
-/// Narrow on purpose: the layout capabilities need to *change* a tab, and
-/// handing them the whole application would let a later one reach past the
-/// canvas into the feed or the simulator. Each accessor consumes the view
-/// and hands back one borrow, so an action names its target once.
-pub(crate) struct ControlActions<'a> {
-    tabs: &'a mut ArrangementHost,
-    config: &'a AppConfig,
-    agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
-    toast: &'a mut crate::surfaces::ToastSurface,
-    audio: &'a mut super::replay_and_history::AlertState,
-}
-
-impl<'a> ControlActions<'a> {
-    /// The mutable twin of [`TabReads::tab_at`].
-    pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
-        self.tabs.get_mut(index)
-    }
-
-    /// One tab beside the configuration it reads, by position.
-    ///
-    /// [`QuantickApp::active_with_config`] for a tab that is not necessarily
-    /// the active one — a capability names the tab it acts on, and respawning
-    /// a feed needs the feed table the same way a click in the corner does.
-    pub(crate) fn tab_with_config(self, index: usize) -> Option<(&'a mut Tab, &'a AppConfig)> {
-        let config = self.config;
-        self.tabs.get_mut(index).map(|tab| (tab, config))
-    }
-
-    /// The trading host of the tab on screen — where the `trade.*` actions
-    /// land. The active tab and not an addressed one: an order belongs to
-    /// the symbol the trader is looking at, and a call that could quietly
-    /// trade a chart nobody has open is a call nobody should be able to
-    /// make.
-    pub(crate) fn active_paper_mut(self) -> Option<&'a mut crate::paper_trading::PaperTrading> {
-        // Fallible, because the rest of the control code does not trust the
-        // invariant either: `annotate::resolve_target` guards an empty tab
-        // list and clamps the index, and two more sites clamp it. A
-        // `trade.*` call must answer "this window has no chart open" rather
-        // than panic the whole trading application, and it must resolve the
-        // *same* tab its own read-back resolves.
-        let active = self.tabs.active_index();
-        self.tabs.get_mut(active).map(|tab| &mut tab.paper)
-    }
-
-    /// One pane, by tab position and side — the mutable half of
-    /// [`TabReads::tabs`], for the actions that place objects.
-    pub(crate) fn pane_mut(
-        self,
-        tab_index: usize,
-        side: crate::pane::PaneSide,
-    ) -> &'a mut ChartPane {
-        self.tabs.runtime_mut(tab_index).pane_mut(side)
-    }
-
-    /// Open the assistant's popup. One at a time: a second message replaces
-    /// the first rather than stacking windows over a chart someone is
-    /// trading, and the trader dismisses it.
-    pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
-        self.agent_popup.show(popup);
-    }
-
-    /// Post one line to the window's own acknowledgement lane — the same
-    /// channel a delete or a workspace save uses, with no Undo: there is
-    /// nothing to take back from having been told something.
-    pub(crate) fn show_toast(self, message: String) {
-        self.toast.note(message, Instant::now());
-    }
-
-    /// Ask for the platform's attention sound, through the same sink the
-    /// alarms use, and report honestly when it could not be made rather
-    /// than letting a client believe it was heard.
-    ///
-    /// Straight to the sink, not through the alarms' once-per-run report:
-    /// every refused call answers with its reason, and the trader's alarm
-    /// failure state is not the assistant's to set or clear.
-    pub(crate) fn sound_alert(self) -> Option<String> {
-        self.audio
-            .alerts
-            .play(&[crate::audio::Cue::default()])
-            .err()
-            .map(ToOwned::to_owned)
-    }
-}
-
-/// The window as the control plane holds it: any [`ControlPort`], `'static`
+/// The window as the gateway holds it: every family at once, `'static`
 /// because the projection registry is keyed on the type it reads.
 pub(crate) type ControlWindow = dyn ControlPort;
 
-/// The control plane's port onto the window. The gateway and every
-/// registered handler and projector depend on this trait, never on
-/// [`QuantickApp`].
-///
-/// It hands out capability-family views — tabs and panes, chrome and layout,
-/// health and history, actions — plus the existing layout, paper and layer
-/// owners, so a handler's reach is the family it names. The gateway doors
-/// (`control_action`, `take_mark`, the agent hook actions) are provided here
-/// over those methods alone, which is what lets them leave the root.
-pub(crate) trait ControlPort {
-    /// Tabs and panes: the markets, their config and drawing defaults.
+/// Every family together — what the gateway itself needs to dispatch any
+/// capability. Handlers never take this; they name their families.
+pub(crate) trait ControlPort:
+    TabsPort
+    + TabsMutPort
+    + ChromePort
+    + HealthPort
+    + AlertsPort
+    + LayoutPort
+    + PaperPort
+    + LayersPort
+    + ScriptsPort
+    + RecordingPort
+    + GatewayPort
+{
+}
+
+impl<T> ControlPort for T where
+    T: TabsPort
+        + TabsMutPort
+        + ChromePort
+        + HealthPort
+        + AlertsPort
+        + LayoutPort
+        + PaperPort
+        + LayersPort
+        + ScriptsPort
+        + RecordingPort
+        + GatewayPort
+        + ?Sized
+{
+}
+
+/// Tabs and panes, read: the markets, their config and drawing defaults.
+pub(crate) trait TabsPort {
     fn tab_reads(&self) -> TabReads<'_>;
-    /// Chrome and layout: what the window drew around the tab on screen.
+}
+
+/// Tabs and panes, changed: the tab or pane an action targets.
+pub(crate) trait TabsMutPort {
+    fn tabs_mut(&mut self) -> TabsMut<'_>;
+}
+
+/// Chrome and layout: what the window drew around the tab on screen.
+pub(crate) trait ChromePort {
     fn chrome_reads(&self) -> ChromeReads<'_>;
-    /// Health and history: frame metrics, reach, session flags.
+}
+
+/// Health and history: what the window measures, how far it reaches back,
+/// and the session flags an operator reads back after setting them.
+pub(crate) trait HealthPort {
     fn health_reads(&self) -> HealthReads<'_>;
-    /// What the cockpit tier may change.
-    fn control_actions(&mut self) -> ControlActions<'_>;
-    /// The pane-layout read owner.
+}
+
+/// The three lanes the assistant answers on.
+pub(crate) trait AlertsPort {
+    fn alerts(&mut self) -> Alerts<'_>;
+}
+
+/// The pane-layout owners.
+pub(crate) trait LayoutPort {
     fn layout_state(&self) -> super::layout_wiring::LayoutRead<'_>;
-    /// The pane-layout write owner.
     fn layout_adapter(&mut self) -> super::layout_wiring::LayoutAdapter<'_>;
-    /// The paper-trading settings owner.
+}
+
+/// The paper-trading settings owner.
+pub(crate) trait PaperPort {
     fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_>;
-    /// The chart-layer owner.
+}
+
+/// The chart-layer owner.
+pub(crate) trait LayersPort {
     fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_>;
-    /// Where the gateway itself lives between calls: taken out for the
-    /// length of one action, so the action can borrow the window.
-    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess>;
-    /// This port as the object the gateway takes.
-    fn as_window(&mut self) -> &mut ControlWindow;
-    /// Indicators: attach `source` to the focused pane of the tab on screen,
-    /// as an operator's or the trader's own; answers where it landed.
-    fn attach_script(
-        &mut self,
-        name: String,
-        source: String,
-        by_operator: bool,
-    ) -> (u64, crate::pane::PaneSide, crate::indicator_worker::SlotId);
-    /// Indicators: detach an operator-attached slot. `Err` when the slot is
-    /// the trader's own; `Ok(false)` when there was nothing to detach.
+}
+
+/// Indicator scripts an operator attaches and detaches.
+pub(crate) trait ScriptsPort {
+    /// Attach `source` to the focused pane of the tab on screen, as an
+    /// operator's or the trader's own; answers where it landed.
+    fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot;
+    /// Detach an operator-attached slot. `Err` when the slot is the trader's
+    /// own; `Ok(false)` when there was nothing to detach.
     fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()>;
-    /// Deal recording: save the default and apply it to undecided recorders.
+}
+
+/// Where an attached script landed: tab id, pane side, slot.
+pub(crate) type ScriptSlot = (u64, crate::pane::PaneSide, crate::indicator_worker::SlotId);
+
+/// The deal recorder's window-wide default.
+pub(crate) trait RecordingPort {
+    /// Save the default and apply it to undecided recorders.
     fn set_deal_recording_default(&mut self, enabled: bool);
+}
+
+/// The gateway's own seat on the window, and the doors every in-window
+/// caller (the hotkey, the launch hooks, the tests) invokes an action by.
+pub(crate) trait GatewayPort {
+    /// Where the gateway lives between calls: taken out for the length of
+    /// one action, so the action can borrow the window.
+    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess>;
+    /// This window as the object the gateway dispatches over.
+    fn as_window(&mut self) -> &mut ControlWindow;
 
     /// Invoke one registered control action from inside the application,
     /// attributed to the human at this window (or to automation when a
@@ -761,91 +257,463 @@ pub(crate) trait ControlPort {
     }
 }
 
-/// The window's one adapter onto the port: each method borrows exactly the
-/// roots its family names.
-impl ControlPort for QuantickApp {
+/// The tabs-and-panes read view: every accessor takes the view by value and
+/// hands back the root's own borrow, so a projection keeps what it read for
+/// as long as it holds the window.
+#[derive(Clone, Copy)]
+pub(crate) struct TabReads<'a> {
+    tabs: &'a ArrangementHost,
+    config: &'a AppConfig,
+    footprint_config: &'a crate::footprint_config::FootprintConfig,
+    presets: &'a drawings::presets::PresetStore,
+}
+
+impl<'a> TabReads<'a> {
+    /// The view over the window's own roots. The window's adapter builds it,
+    /// and so does a test's fake window over roots it owns.
+    pub(crate) fn new(
+        tabs: &'a ArrangementHost,
+        config: &'a AppConfig,
+        footprint_config: &'a crate::footprint_config::FootprintConfig,
+        presets: &'a drawings::presets::PresetStore,
+    ) -> Self {
+        Self {
+            tabs,
+            config,
+            footprint_config,
+            presets,
+        }
+    }
+
+    /// One tab by position, for a control capability that resolved an id.
+    pub(crate) fn tab_at(self, index: usize) -> Option<&'a Tab> {
+        self.tabs.get(index)
+    }
+
+    /// The read side of [`TabsMut::active_paper_mut`], resolved the same
+    /// way so a call and its read-back can never name different tabs.
+    pub(crate) fn active_paper(self) -> Option<&'a crate::paper_trading::PaperTrading> {
+        self.tabs
+            .get(self.tabs.active_index())
+            .map(|tab| &tab.paper)
+    }
+
+    pub(crate) fn tabs(self) -> &'a ArrangementHost {
+        self.tabs
+    }
+
+    pub(crate) fn active_tab_index(self) -> usize {
+        self.tabs.active_index()
+    }
+
+    /// What a freshly placed object of `tool` opens with, through the same
+    /// door the click path uses — saved defaults, named preset and all.
+    pub(crate) fn new_drawing(self, tool: drawings::DrawingTool) -> drawings::NewDrawing {
+        drawings::new_drawing_from_defaults(self.presets, tool)
+    }
+
+    pub(crate) fn config(self) -> &'a AppConfig {
+        self.config
+    }
+
+    /// The window's footprint setup — the one a pane falls back to when it
+    /// carries no override of its own.
+    pub(crate) fn footprint_config(self) -> &'a crate::footprint_config::FootprintConfig {
+        self.footprint_config
+    }
+}
+
+/// The tabs-and-panes write view, for the cockpit tier: the tab or pane an
+/// action changes. Each accessor consumes the view and hands back one borrow,
+/// so an action names its target once.
+pub(crate) struct TabsMut<'a> {
+    tabs: &'a mut ArrangementHost,
+    config: &'a AppConfig,
+}
+
+impl<'a> TabsMut<'a> {
+    /// The view over the window's own roots, as [`TabReads::new`].
+    pub(crate) fn new(tabs: &'a mut ArrangementHost, config: &'a AppConfig) -> Self {
+        Self { tabs, config }
+    }
+
+    /// The mutable twin of [`TabReads::tab_at`].
+    pub(crate) fn tab_at_mut(self, index: usize) -> Option<&'a mut Tab> {
+        self.tabs.get_mut(index)
+    }
+
+    /// One tab beside the configuration it reads, by position — a capability
+    /// names the tab it acts on, and respawning a feed needs the feed table
+    /// the same way a click in the corner does.
+    pub(crate) fn tab_with_config(self, index: usize) -> Option<(&'a mut Tab, &'a AppConfig)> {
+        let config = self.config;
+        self.tabs.get_mut(index).map(|tab| (tab, config))
+    }
+
+    /// The trading host of the tab on screen — where the `trade.*` actions
+    /// land. The active tab and not an addressed one: an order belongs to
+    /// the symbol the trader is looking at, and a call that could quietly
+    /// trade a chart nobody has open is a call nobody should be able to
+    /// make.
+    pub(crate) fn active_paper_mut(self) -> Option<&'a mut crate::paper_trading::PaperTrading> {
+        // Fallible, because the rest of the control code does not trust the
+        // invariant either: `annotate::resolve_target` guards an empty tab
+        // list and clamps the index, and two more sites clamp it. A
+        // `trade.*` call must answer "this window has no chart open" rather
+        // than panic the whole trading application, and it must resolve the
+        // *same* tab its own read-back resolves.
+        let active = self.tabs.active_index();
+        self.tabs.get_mut(active).map(|tab| &mut tab.paper)
+    }
+
+    /// One pane, by tab position and side — the mutable half of
+    /// [`TabReads::tabs`], for the actions that place objects.
+    pub(crate) fn pane_mut(
+        self,
+        tab_index: usize,
+        side: crate::pane::PaneSide,
+    ) -> &'a mut ChartPane {
+        self.tabs.runtime_mut(tab_index).pane_mut(side)
+    }
+}
+
+/// The chrome-and-layout read view: what the window drew around the tab on
+/// screen, read as values where the frame published them.
+#[derive(Clone, Copy)]
+pub(crate) struct ChromeReads<'a> {
+    tabs: &'a ArrangementHost,
+    style: &'a ChartStyle,
+    tool_rail: &'a ToolRail,
+    dock: &'a Dock,
+    tz: TzOffset,
+    drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
+    drawn: ChromeDrawn,
+}
+
+/// What the last frame published about the window chrome.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ChromeDrawn {
+    /// Where the feed's offline chip was painted, or `None` when it was not.
+    pub(crate) feed_chip_rect: Option<egui::Rect>,
+    /// The tab whose chip opened the feed's recovery popup, if any.
+    pub(crate) feed_popup_tab: Option<u64>,
+    /// Whether a recording opens with the session day before it joined.
+    pub(crate) replay_day_before: bool,
+}
+
+impl<'a> ChromeReads<'a> {
+    /// The view over the window's own roots, as [`TabReads::new`].
+    pub(crate) fn new(
+        tabs: &'a ArrangementHost,
+        style: &'a ChartStyle,
+        tool_rail: &'a ToolRail,
+        dock: &'a Dock,
+        tz: TzOffset,
+        drawing_chrome: &'a crate::surfaces::drawing_chrome::DrawingChromeSurface,
+        drawn: ChromeDrawn,
+    ) -> Self {
+        Self {
+            tabs,
+            style,
+            tool_rail,
+            dock,
+            tz,
+            drawing_chrome,
+            drawn,
+        }
+    }
+
+    /// The window's shared chart style, which owns the layers no pane does.
+    pub(crate) fn style(self) -> &'a ChartStyle {
+        self.style
+    }
+
+    /// The drawing tool rail: which tool is armed, and whether it is shown.
+    pub(crate) fn tool_rail(self) -> &'a ToolRail {
+        self.tool_rail
+    }
+
+    /// The colour the chart's corner is wearing, or `None` while the chart
+    /// is being fed.
+    ///
+    /// The status line's provenance dot takes this rather than deciding for
+    /// itself. It used to read the connection alone, which is a socket's
+    /// opinion: a terminal that froze with the socket open had the
+    /// bottom-left of the window saying `live` while the bottom-right said
+    /// `offline`, about the same feed, at the same moment. Two surfaces
+    /// disagreeing about the one question the trader is asking is worse than
+    /// either answer alone, so there is one report and both read it.
+    pub(crate) fn feed_offline_accent(
+        self,
+        stall: Option<&quantick_feed::stall::Stall>,
+    ) -> Option<egui::Color32> {
+        crate::feed_notice::report(&self.tabs[self.tabs.active_index()].notice, stall)
+            .filter(crate::feed_notice::Report::is_offline)
+            .map(|report| report.accent())
+    }
+
+    /// Where the feed's offline chip was painted, or `None` when it was not.
+    ///
+    /// The projection reads what was drawn rather than re-deciding it, so the
+    /// scene and the screen cannot disagree across the edge of a stall budget.
+    pub(crate) fn feed_chip_rect(self) -> Option<egui::Rect> {
+        self.drawn.feed_chip_rect
+    }
+
+    /// Whether the recovery popup that chip opens is showing, on the chart
+    /// the trader is looking at.
+    pub(crate) fn feed_popup_open(self) -> bool {
+        self.drawn.feed_popup_tab == Some(self.tabs.active_id())
+    }
+
+    /// The right-hand dock: whether it is shown, and which tab is open.
+    pub(crate) fn dock(self) -> &'a Dock {
+        self.dock
+    }
+
+    pub(crate) fn timezone(self) -> TzOffset {
+        self.tz
+    }
+
+    /// Whether a recording opens with the session day before it joined in
+    /// front, and a download fetches that day's tape too — a choice an
+    /// operator must be able to read back after setting it.
+    pub(crate) fn replay_day_before(self) -> bool {
+        self.drawn.replay_day_before
+    }
+
+    /// All drawing actions in the temporary range's visible action bar.
+    pub(crate) fn quick_range_actions(
+        self,
+    ) -> Option<[crate::surfaces::drawing_chrome::QuickRangeControl; 3]> {
+        self.drawing_chrome
+            .quick_range
+            .controls(self.tabs.id_at(self.tabs.active_index()))
+    }
+}
+
+/// The health-and-history read view.
+#[derive(Clone, Copy)]
+pub(crate) struct HealthReads<'a> {
+    save_on_exit: bool,
+    health: &'a super::health::HealthCounters,
+    history: &'a super::tabs::HistorySettings,
+}
+
+impl<'a> HealthReads<'a> {
+    /// The view over the window's own roots, as [`TabReads::new`].
+    pub(super) fn new(
+        save_on_exit: bool,
+        health: &'a super::health::HealthCounters,
+        history: &'a super::tabs::HistorySettings,
+    ) -> Self {
+        Self {
+            save_on_exit,
+            health,
+            history,
+        }
+    }
+
+    /// Save-on-exit, the performance overlay, progressive history.
+    pub(crate) fn workspace_flags(self) -> (bool, bool, bool) {
+        (
+            self.save_on_exit,
+            self.health.show_perf,
+            self.history.progressive_history,
+        )
+    }
+
+    /// What the `by time` reach's span is now, for an operator reading back
+    /// what it set.
+    pub(crate) fn history_reach_span_minutes(self) -> u32 {
+        self.history.history_reach_span_minutes
+    }
+
+    /// How far the window's *load older* press reaches, and whether a chart
+    /// cut by trades carries the venue's candles.
+    ///
+    /// Both are choices an operator without a mouse has to be able to read
+    /// back after setting them — the reach especially, since it decides
+    /// whether one press is one request or a run of them.
+    pub(crate) fn history_settings(self) -> (history_reach::HistoryReach, bool) {
+        (self.history.history_reach, self.history.venue_lead_in)
+    }
+
+    pub(crate) fn frame_metrics(self) -> ControlFrameMetrics {
+        ControlFrameMetrics {
+            wall_average_ms: self.health.frames.avg_ms(),
+            wall_worst_ms: self.health.frames.worst_ms(),
+            frames_per_second: self.health.frames.fps(),
+            cpu_average_ms: self.health.cpu_frames.avg_ms(),
+            cpu_worst_ms: self.health.cpu_frames.worst_ms(),
+        }
+    }
+}
+
+/// The three lanes the assistant answers on: its popup, the window's
+/// acknowledgement toast, and the attention sound.
+pub(crate) struct Alerts<'a> {
+    agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
+    toast: &'a mut crate::surfaces::ToastSurface,
+    audio: &'a mut super::replay_and_history::AlertState,
+}
+
+impl<'a> Alerts<'a> {
+    /// The view over the window's own roots, as [`TabReads::new`].
+    pub(super) fn new(
+        agent_popup: &'a mut crate::surfaces::AgentPopupSurface,
+        toast: &'a mut crate::surfaces::ToastSurface,
+        audio: &'a mut super::replay_and_history::AlertState,
+    ) -> Self {
+        Self {
+            agent_popup,
+            toast,
+            audio,
+        }
+    }
+
+    /// Open the assistant's popup. One at a time: a second message replaces
+    /// the first rather than stacking windows over a chart someone is
+    /// trading, and the trader dismisses it.
+    pub(crate) fn show_popup(self, popup: crate::control::AgentPopup) {
+        self.agent_popup.show(popup);
+    }
+
+    /// Post one line to the window's own acknowledgement lane — the same
+    /// channel a delete or a workspace save uses, with no Undo: there is
+    /// nothing to take back from having been told something.
+    pub(crate) fn show_toast(self, message: String) {
+        self.toast.note(message, std::time::Instant::now());
+    }
+
+    /// Ask for the platform's attention sound, through the same sink the
+    /// alarms use, and report honestly when it could not be made rather
+    /// than letting a client believe it was heard.
+    ///
+    /// Straight to the sink, not through the alarms' once-per-run report:
+    /// every refused call answers with its reason, and the trader's alarm
+    /// failure state is not the assistant's to set or clear.
+    pub(crate) fn sound_alert(self) -> Option<String> {
+        self.audio
+            .alerts
+            .play(&[crate::audio::Cue::default()])
+            .err()
+            .map(ToOwned::to_owned)
+    }
+}
+
+// `QuantickApp`, the port's one adapter: each family borrows exactly the
+// roots it names.
+
+impl TabsPort for QuantickApp {
     fn tab_reads(&self) -> TabReads<'_> {
-        TabReads {
-            tabs: &self.tabs,
-            config: &self.config,
-            footprint_config: &self.footprint_config,
-            presets: &self.drawings.presets,
-        }
+        let presets = &self.drawings.presets;
+        TabReads::new(&self.tabs, &self.config, &self.footprint_config, presets)
     }
+}
 
+impl TabsMutPort for QuantickApp {
+    fn tabs_mut(&mut self) -> TabsMut<'_> {
+        TabsMut::new(&mut self.tabs, &self.config)
+    }
+}
+
+impl ChromePort for QuantickApp {
     fn chrome_reads(&self) -> ChromeReads<'_> {
-        ChromeReads {
-            tabs: &self.tabs,
-            style: &self.style,
-            toolrail: &self.toolrail,
-            chrome: &self.chrome,
-            drawing_chrome: &self.drawings.chrome,
-            dock: &self.dock,
-            tz: self.tz,
-            replay_view: &self.replay_view,
-        }
+        let drawn = ChromeDrawn {
+            feed_chip_rect: self.chrome.feed_chip_rect,
+            feed_popup_tab: self.chrome.feed_popup_tab,
+            replay_day_before: self.replay_view.day_before(),
+        };
+        let (rail, chrome) = (&self.toolrail, &self.drawings.chrome);
+        ChromeReads::new(
+            &self.tabs,
+            &self.style,
+            rail,
+            &self.dock,
+            self.tz,
+            chrome,
+            drawn,
+        )
     }
+}
 
+impl HealthPort for QuantickApp {
     fn health_reads(&self) -> HealthReads<'_> {
-        HealthReads {
-            workspace: &self.workspace,
-            health: &self.health,
-            history: &self.history,
+        let save_on_exit = self.workspace.session().save_on_exit();
+        HealthReads::new(save_on_exit, &self.health, &self.history)
+    }
+}
+
+impl AlertsPort for QuantickApp {
+    fn alerts(&mut self) -> Alerts<'_> {
+        let surfaces = &mut self.surfaces;
+        Alerts::new(
+            &mut surfaces.agent_popup,
+            &mut surfaces.toast,
+            &mut self.audio,
+        )
+    }
+}
+
+impl LayoutPort for QuantickApp {
+    fn layout_state(&self) -> LayoutRead<'_> {
+        let session = self.workspace.layouts().session();
+        LayoutRead {
+            tabs: &self.tabs,
+            active: self.tabs.active_index(),
+            session,
         }
     }
 
-    fn control_actions(&mut self) -> ControlActions<'_> {
-        ControlActions {
+    fn layout_adapter(&mut self) -> LayoutAdapter<'_> {
+        LayoutAdapter {
+            active: self.tabs.active_index(),
             tabs: &mut self.tabs,
-            config: &self.config,
-            agent_popup: &mut self.surfaces.agent_popup,
+            indicators: &mut self.indicators,
+            store: self.workspace.layouts_mut(),
+            drawing_chrome: &mut self.drawings.chrome,
             toast: &mut self.surfaces.toast,
-            audio: &mut self.audio,
+            rename: &mut self.chrome.layout_rename,
+            delete_confirm: &mut self.chrome.layout_delete_confirm,
         }
     }
+}
 
-    fn layout_state(&self) -> super::layout_wiring::LayoutRead<'_> {
-        QuantickApp::layout_state(self)
+impl PaperPort for QuantickApp {
+    fn paper_settings(&mut self) -> PaperSettingsAdapter<'_> {
+        PaperSettingsAdapter {
+            tabs: &mut self.tabs,
+            workspace: &mut self.workspace,
+        }
     }
+}
 
-    fn layout_adapter(&mut self) -> super::layout_wiring::LayoutAdapter<'_> {
-        QuantickApp::layout_adapter(self)
+impl LayersPort for QuantickApp {
+    fn layer_wiring(&mut self) -> LayerWiring<'_> {
+        LayerWiring {
+            tabs: &mut self.tabs,
+            workspace: &mut self.workspace,
+            style: &mut self.style,
+            style_revision: &mut self.style_revision,
+            footprint_config: &mut self.footprint_config,
+            footprint_settings: &mut self.surfaces.footprint_settings,
+        }
     }
+}
 
-    fn paper_settings(&mut self) -> super::paper_wiring::PaperSettingsAdapter<'_> {
-        QuantickApp::paper_settings(self)
-    }
-
-    fn layer_wiring(&mut self) -> super::chart_layers_wiring::LayerWiring<'_> {
-        QuantickApp::layer_wiring(self)
-    }
-
-    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess> {
-        &mut self.control.control_access
-    }
-
-    fn as_window(&mut self) -> &mut ControlWindow {
-        self
-    }
-
-    fn attach_script(
-        &mut self,
-        name: String,
-        source: String,
-        by_operator: bool,
-    ) -> (u64, crate::pane::PaneSide, crate::indicator_worker::SlotId) {
+impl ScriptsPort for QuantickApp {
+    fn attach_script(&mut self, name: String, source: String, by_operator: bool) -> ScriptSlot {
         let target = (self.tabs.active_id(), self.active_tab().focused_side());
-        let attached = self.indicators.attach_script(
-            self.tabs
-                .runtime_mut(self.tabs.active_index())
-                .pane_mut(target.1),
-            target,
-            name,
-            source,
-            by_operator,
-        );
+        let pane = self
+            .tabs
+            .runtime_mut(self.tabs.active_index())
+            .pane_mut(target.1);
+        let attached = self
+            .indicators
+            .attach_script(pane, target, name, source, by_operator);
         let owner = attached.target;
-        self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Attached(attached));
+        self.apply_indicator_edit(IndicatorEdit::Attached(attached));
         (owner.tab, owner.side, owner.slot)
     }
 
@@ -853,153 +721,138 @@ impl ControlPort for QuantickApp {
         let Some(target) = self.indicators.operator_target(slot)? else {
             return Ok(false);
         };
-        self.apply_indicator_edit(super::indicator_manager::IndicatorEdit::Remove(target));
+        self.apply_indicator_edit(IndicatorEdit::Remove(target));
         self.indicators.operator_slots.remove(&target);
         Ok(true)
     }
+}
 
+impl RecordingPort for QuantickApp {
     fn set_deal_recording_default(&mut self, enabled: bool) {
         super::deal_recording_wiring::set_default(self, enabled);
     }
 }
 
-#[cfg(test)]
-mod control_launch_tests {
-    use super::*;
-
-    fn launch(inputs: &[(&str, &str)]) -> ControlLaunch {
-        ControlLaunch::capture(|name| {
-            inputs
-                .iter()
-                .find(|(key, _)| *key == name)
-                .map(|(_, value)| std::ffi::OsString::from(value))
-        })
+impl GatewayPort for QuantickApp {
+    fn gateway_slot(&mut self) -> &mut Option<crate::control::ControlAccess> {
+        &mut self.control.control_access
     }
 
-    #[test]
-    fn captured_enable_and_mark_are_consumed_once() {
-        let mut launch = launch(&[
-            ("QUANTICK_CONTROL_ACCESS", "1"),
-            ("QUANTICK_CONTROL_MARK", " 1 "),
-        ]);
-        assert!(launch.scenarios.take_enable());
-        assert!(!launch.scenarios.take_enable());
-        assert_eq!(launch.scenarios.take_mark().as_deref(), Some(" 1 "));
-        assert_eq!(launch.scenarios.take_mark(), None);
-    }
-
-    #[test]
-    fn annotation_retains_raw_text_until_an_anchor_exists() {
-        let mut launch = launch(&[("QUANTICK_CONTROL_ANNOTATE", " keep this ")]);
-        assert!(launch.scenarios.annotation(None).is_none());
-        assert!(launch.scenarios.has_annotation());
-        let anchor = serde_json::json!({"time_unix_ms": 1800, "price": "100.8"});
-        assert_eq!(
-            launch.scenarios.annotation(Some(anchor.clone())),
-            Some(serde_json::json!({"anchors": [anchor], "text": " keep this "}))
-        );
-        assert!(!launch.scenarios.has_annotation());
-    }
-
-    #[test]
-    fn notification_preserves_message_and_types_unknown_channel() {
-        let mut launch = launch(&[("QUANTICK_CONTROL_NOTIFY", " popup :a:b ")]);
-        let Some(NotificationStep::Ready { capability, input }) = launch.scenarios.notification()
-        else {
-            panic!("registered popup must be ready");
-        };
-        assert_eq!(capability, "notify.popup");
-        assert_eq!(
-            input,
-            serde_json::json!({"message": "a:b ", "title": "From your assistant"})
-        );
-        assert!(launch.scenarios.notification().is_none());
-        launch
-            .scenarios
-            .queue_notification(" unknown :message".into());
-        let Some(NotificationStep::Refused { channel }) = launch.scenarios.notification() else {
-            panic!("unknown channel must be typed refusal");
-        };
-        assert_eq!(channel, "unknown");
-        assert!(launch.scenarios.notification().is_none());
-    }
-
-    #[test]
-    fn evidence_reexpands_current_grants_and_keeps_its_lifetime_wait_count() {
-        let mut access = crate::control::ControlAccess::new();
-        access
-            .configure_scopes("all-reads,observe.evidence,observe.screenshot")
-            .unwrap();
-        let mut launch = launch(&[("QUANTICK_CONTROL_EVIDENCE", "all,screenshot")]);
-        for _ in 0..CONTROL_EVIDENCE_HOOK_FRAMES {
-            let capture = launch.scenarios.prepare_evidence(&access).unwrap();
-            assert!(capture.wants_screenshot);
-            assert!(!capture.screenshot_not_granted);
-            assert!(matches!(
-                launch.scenarios.finish_evidence(capture, false),
-                EvidenceStep::Waiting
-            ));
-        }
-        access
-            .configure_scopes("observe.events,observe.evidence,observe.screenshot")
-            .unwrap();
-        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
-        let expected: std::collections::BTreeSet<_> = access
-            .readable_scopes()
-            .into_iter()
-            .map(|scope| scope.to_string())
-            .collect();
-        assert_eq!(capture.scopes, expected);
-        assert!(matches!(
-            launch.scenarios.finish_evidence(capture, false),
-            EvidenceStep::Capture {
-                screenshot: true,
-                image_timed_out: true,
-                ..
-            }
-        ));
-        assert!(!launch.scenarios.has_evidence());
-        launch.scenarios.queue_evidence("all,screenshot".into());
-        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
-        assert!(matches!(
-            launch.scenarios.finish_evidence(capture, false),
-            EvidenceStep::Capture {
-                image_timed_out: true,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn screenshot_permission_is_checked_before_waiting() {
-        let access = crate::control::ControlAccess::new();
-        let mut launch = launch(&[("QUANTICK_CONTROL_EVIDENCE", "all,screenshot")]);
-        let capture = launch.scenarios.prepare_evidence(&access).unwrap();
-        assert!(capture.screenshot_not_granted);
-        assert!(!capture.wants_screenshot);
-        assert!(matches!(
-            launch.scenarios.finish_evidence(capture, false),
-            EvidenceStep::Capture {
-                screenshot: false,
-                image_timed_out: false,
-                ..
-            }
-        ));
-        assert_eq!(launch.scenarios.evidence_frames, 0);
-    }
-
-    #[test]
-    fn the_evidence_hook_waits_its_budget_and_then_stops() {
-        let mut scenarios = super::ControlScenarios::default();
-        for frame in 1..=super::CONTROL_EVIDENCE_HOOK_FRAMES {
-            assert!(
-                scenarios.evidence_frame_waited(),
-                "frame {frame} is within the budget"
-            );
-        }
-        assert!(
-            !scenarios.evidence_frame_waited(),
-            "the window never delivered a frame to rasterise"
-        );
+    fn as_window(&mut self) -> &mut ControlWindow {
+        self
     }
 }
+
+#[cfg(any(feature = "control-harness", test))]
+pub(super) use quantick_control_host::launch::{
+    CONTROL_EVIDENCE_HOOK_FRAMES, EvidenceStep, LaunchScenarios, NotificationStep,
+};
+
+/// The ordinary local gateway and its opt-in launch scenarios.
+pub(super) struct ControlState {
+    pub(super) control_access: Option<crate::control::ControlAccess>,
+    #[cfg(any(feature = "control-harness", test))]
+    pub(super) scenarios: LaunchScenarios,
+}
+
+/// The temporary range's visible action button on the tab on screen, if the
+/// current frame has laid it out. Test support over the window's own roots.
+#[cfg(test)]
+pub(crate) fn control_quick_range(
+    app: &QuantickApp,
+) -> Option<crate::surfaces::drawing_chrome::QuickRangeControl> {
+    app.drawings
+        .chrome
+        .quick_range
+        .control(app.tabs.id_at(app.tabs.active_index()))
+}
+
+/// Control-only launch inputs, captured before owner construction.
+#[cfg(any(feature = "control-harness", test))]
+#[derive(Default)]
+pub(crate) struct ControlLaunch {
+    panel: bool,
+    scopes: Option<String>,
+    scenarios: LaunchScenarios,
+}
+
+#[cfg(any(feature = "control-harness", test))]
+impl ControlLaunch {
+    pub(crate) fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        let mut value = |name| lookup(name).and_then(|raw| raw.into_string().ok());
+        let panel = value("QUANTICK_CONTROL_PANEL").is_some_and(|raw| raw == "1");
+        let scopes = value("QUANTICK_CONTROL_SCOPES");
+        let access = value("QUANTICK_CONTROL_ACCESS").is_some_and(|raw| raw == "1");
+        let mark = value("QUANTICK_CONTROL_MARK")
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| if raw == "1" { String::new() } else { raw });
+        let evidence = value("QUANTICK_CONTROL_EVIDENCE").filter(|raw| !raw.trim().is_empty());
+        let annotation = value("QUANTICK_CONTROL_ANNOTATE").filter(|raw| !raw.trim().is_empty());
+        let notification = value("QUANTICK_CONTROL_NOTIFY").filter(|raw| !raw.trim().is_empty());
+        Self {
+            panel,
+            scopes,
+            scenarios: LaunchScenarios::new(quantick_control_host::launch::LaunchRequests {
+                enable_access: access,
+                annotation,
+                notification,
+                evidence,
+                mark,
+            }),
+        }
+    }
+}
+
+#[cfg(any(feature = "control-harness", test))]
+impl ControlState {
+    pub(super) fn apply_launch(&mut self, launch: ControlLaunch) {
+        if launch.panel
+            && let Some(access) = self.control_access.as_mut()
+        {
+            access.open_panel();
+        }
+        if let Some(scopes) = launch.scopes
+            && let Some(access) = self.control_access.as_mut()
+            && let Err(error) = access.configure_scopes(&scopes)
+        {
+            tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_SCOPE_HOOK_REFUSED",
+                error = %error,
+                "QUANTICK_CONTROL_SCOPES named something this build does not register"
+            );
+        }
+        self.scenarios = launch.scenarios;
+    }
+
+    /// Take the pending evidence request, expanded against the grants the
+    /// gateway holds now.
+    pub(super) fn prepare_evidence(
+        &mut self,
+        access: &crate::control::ControlAccess,
+    ) -> Option<quantick_control_host::launch::EvidenceCapture> {
+        self.scenarios.prepare_evidence(
+            || {
+                access
+                    .readable_scopes()
+                    .into_iter()
+                    .map(|scope| scope.to_string())
+                    .collect()
+            },
+            access.grants_screenshot(),
+        )
+    }
+}
+
+crate::hooks::declare_hooks![
+    "QUANTICK_CONTROL_ACCESS",
+    "QUANTICK_CONTROL_ANNOTATE",
+    "QUANTICK_CONTROL_EVIDENCE",
+    "QUANTICK_CONTROL_MARK",
+    "QUANTICK_CONTROL_NOTIFY",
+    "QUANTICK_CONTROL_PANEL",
+    "QUANTICK_CONTROL_SCOPES"
+];
+
+#[cfg(test)]
+pub(crate) mod tests;

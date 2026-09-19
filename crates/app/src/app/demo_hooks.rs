@@ -50,7 +50,6 @@ impl QuantickApp {
         };
         let capture = self
             .control
-            .scenarios
             .prepare_evidence(&access)
             .expect("the hook was pending one line above");
         if capture.screenshot_not_granted {

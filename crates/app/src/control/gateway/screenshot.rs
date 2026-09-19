@@ -161,8 +161,7 @@ impl ControlAccess {
     pub(super) fn accept_screenshot(&mut self, app: &mut ControlWindow, raw: RawScreenshot) {
         self.screenshot_armed = false;
         self.screenshot = Some(raw);
-        app.control_actions()
-            .show_toast(SCREENSHOT_NOTICE.to_owned());
+        app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
     }
 
     /// Run the captures that were waiting for an image, or give up on them,

@@ -232,7 +232,8 @@ fn quick_range_action(
     app: &QuantickApp,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
 ) -> crate::surfaces::drawing_chrome::QuickRangeControl {
-    crate::app::control_quick_range_actions(app)
+    app.chrome_reads()
+        .quick_range_actions()
         .expect("the quick-range actions are visible")
         .into_iter()
         .find(|control| control.action == action)

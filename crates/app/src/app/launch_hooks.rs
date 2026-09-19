@@ -28,6 +28,7 @@
 //! fields: this *is* app logic, split off only so the constructor above it is
 //! the window's definition and nothing else.
 
+use super::LayoutPort;
 use crate::dock::DockTab;
 use crate::indicator_worker::IndicatorSource;
 use crate::indicators::state_file::SavedKind;

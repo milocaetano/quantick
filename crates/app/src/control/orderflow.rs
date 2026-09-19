@@ -19,6 +19,7 @@
 //! rule where it does not; the feed scope owns that declaration for the market
 //! as a whole and it is named here rather than restated per level.
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE,
@@ -32,8 +33,7 @@ use serde::{Deserialize, Serialize};
 use quantick_orderflow::{DisplayGrouping, LaneWindow};
 
 use crate::{
-    app::ControlWindow, footprint_config::FootprintStyle, orderflow_view::OrderflowView,
-    pane::ChartPane, tab::Tab,
+    footprint_config::FootprintStyle, orderflow_view::OrderflowView, pane::ChartPane, tab::Tab,
 };
 
 use super::{
@@ -356,7 +356,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// averages. What this tracks is a change a person made or a connection
 /// underwent: a layer switched, a grouping changed, a setup edited, the
 /// capture state moving between disabled, syncing and live.
-fn revision(app: &ControlWindow) -> Vec<OrderflowRevisionKey> {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
     app.tab_reads()
         .tabs()
         .iter_with_ids()
@@ -424,7 +424,7 @@ struct EngineRevisionKey {
     config: String,
 }
 
-fn project_tape(app: &ControlWindow, context: CaptureContext) -> TapeSnapshot {
+fn project_tape<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
             .tab_reads()
@@ -465,7 +465,7 @@ fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeS
     }
 }
 
-fn project_footprint(app: &ControlWindow, _context: CaptureContext) -> FootprintSnapshot {
+fn project_footprint<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> FootprintSnapshot {
     let window = app.tab_reads().footprint_config();
     FootprintSnapshot {
         tabs: app
@@ -505,7 +505,7 @@ fn footprint_setup(
     }
 }
 
-fn project_bubbles(app: &ControlWindow, _context: CaptureContext) -> BubblesSnapshot {
+fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> BubblesSnapshot {
     BubblesSnapshot {
         tabs: app
             .tab_reads()
@@ -534,7 +534,7 @@ fn project_bubbles(app: &ControlWindow, _context: CaptureContext) -> BubblesSnap
     }
 }
 
-fn project_heatmap(app: &ControlWindow, _context: CaptureContext) -> HeatmapSnapshot {
+fn project_heatmap<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> HeatmapSnapshot {
     HeatmapSnapshot {
         tabs: app
             .tab_reads()
@@ -571,7 +571,7 @@ fn heatmap_state(view: &OrderflowView) -> HeatmapStateSnapshot {
     }
 }
 
-fn project_l2(app: &ControlWindow, _context: CaptureContext) -> L2Snapshot {
+fn project_l2<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snapshot {
     L2Snapshot {
         tabs: app
             .tab_reads()

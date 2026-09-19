@@ -13,7 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
-use super::ControlPort;
+use super::{AlertsPort, ChromePort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_plan::{FramePlan, FrameStage};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
@@ -257,7 +257,7 @@ impl QuantickApp {
                     tab.apply_strategy_cleanup();
                 }
                 if let Some(note) = self.audio.play_pending(&mut self.tabs) {
-                    self.control_actions().show_toast(note);
+                    self.alerts().show_toast(note);
                 }
             }
             FrameStage::Tail => {
@@ -378,7 +378,7 @@ impl QuantickApp {
         if let Some(cue) = asks.test_alert
             && let Some(note) = self.audio.play(&[cue])
         {
-            self.control_actions().show_toast(note);
+            self.alerts().show_toast(note);
         }
         if let Some(request) = asks.arm_strategy {
             let outcome = self

@@ -6,7 +6,8 @@ use super::{
     layout::{self, TabTarget},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
-use crate::{app::ControlWindow, pane::ChartPane};
+use crate::app::{ChromePort, LayersPort, TabsPort};
+use crate::pane::ChartPane;
 use quantick_control::{
     error::{ControlError, codes},
     id::{ErrorCode, EventKind, ModuleId, SnapshotScopeId},
@@ -66,8 +67,8 @@ pub(crate) struct VisibilityResult {
     pub layer: LayerSnapshot,
     pub changed: bool,
 }
-fn read_layer(
-    app: &ControlWindow,
+fn read_layer<P: TabsPort + ChromePort + ?Sized>(
+    app: &P,
     tab: &crate::tab::Tab,
     pane: &ChartPane,
     layer: ChartLayer,
@@ -96,7 +97,7 @@ fn read_layer(
         blocked_reason: blocked.map(|block| block.code.to_owned()),
     }
 }
-pub(crate) fn snapshot(app: &ControlWindow) -> LayersSnapshot {
+pub(crate) fn snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> LayersSnapshot {
     let mut panes = Vec::new();
     let mut omitted = 0;
     for (tab_id, tab) in app.tab_reads().tabs().iter_with_ids() {
@@ -124,7 +125,7 @@ pub(crate) fn snapshot(app: &ControlWindow) -> LayersSnapshot {
         omitted_panes: WireU64::new(omitted),
     }
 }
-fn project(app: &ControlWindow, _: CaptureContext) -> LayersSnapshot {
+fn project<P: TabsPort + ChromePort + ?Sized>(app: &P, _: CaptureContext) -> LayersSnapshot {
     snapshot(app)
 }
 
@@ -155,8 +156,8 @@ pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), Regis
     descriptor.stale_input_safety = Some("Stable tab and pane IDs are resolved before mutation; a stale requested visibility affects display only, and the result names its actual scope.".to_owned());
     registry.register(descriptor, set_visibility)
 }
-fn set_visibility(
-    app: &mut ControlWindow,
+fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     value: &Value,

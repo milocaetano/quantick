@@ -10,6 +10,7 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
+use crate::app::TabsPort;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -82,8 +83,8 @@ pub(crate) type ActionResolver =
     fn(&ControlWindow, &ActorContext, Value) -> Result<Value, ControlError>;
 
 /// The resolver of an action whose input is already exactly what it will do.
-fn identity_resolution(
-    _app: &ControlWindow,
+fn identity_resolution<P: ?Sized>(
+    _app: &P,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -334,8 +335,8 @@ fn mark_descriptor() -> CapabilityDescriptor {
 
 /// A mark's resolver: what is under the pointer *now* becomes part of the
 /// input, so the trace line and a replay of it name the same bar.
-fn resolve_mark(
-    app: &ControlWindow,
+fn resolve_mark<P: TabsPort + ?Sized>(
+    app: &P,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -356,8 +357,8 @@ fn resolve_mark(
 /// The mark handler: append the event for the resolved target. One path for
 /// the hotkey, the hook, the tests, a replayed trace entry and any authorized
 /// agent.
-fn create_mark(
-    _app: &mut ControlWindow,
+fn create_mark<P: ?Sized>(
+    _app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

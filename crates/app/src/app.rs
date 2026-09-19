@@ -25,9 +25,12 @@ mod chart_layers_wiring;
 mod chrome;
 pub(crate) mod control_host;
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) use control_host::control_quick_range;
-pub(crate) use control_host::control_quick_range_actions;
-pub(crate) use control_host::{ControlPort, ControlWindow};
+pub(crate) use control_host::{
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
+    PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
+};
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 pub(crate) mod drawing_controller;
@@ -371,47 +374,11 @@ impl QuantickApp {
         arrangement_adapter!(self).into_save(&self.replay_view)
     }
 
-    pub(crate) fn paper_settings(&mut self) -> paper_wiring::PaperSettingsAdapter<'_> {
-        paper_wiring::PaperSettingsAdapter {
-            tabs: &mut self.tabs,
-            workspace: &mut self.workspace,
-        }
-    }
     pub(crate) fn symbol_catalog(&mut self) -> tabs::SymbolCatalog<'_> {
         tabs::SymbolCatalog {
             config: &mut self.config,
             added: &mut self.added_symbols,
             path: self.workspace.symbols_path(),
-        }
-    }
-    pub(crate) fn layer_wiring(&mut self) -> chart_layers_wiring::LayerWiring<'_> {
-        chart_layers_wiring::LayerWiring {
-            tabs: &mut self.tabs,
-            workspace: &mut self.workspace,
-            style: &mut self.style,
-            style_revision: &mut self.style_revision,
-            footprint_config: &mut self.footprint_config,
-            footprint_settings: &mut self.surfaces.footprint_settings,
-        }
-    }
-
-    pub(crate) fn layout_state(&self) -> layout_wiring::LayoutRead<'_> {
-        layout_wiring::LayoutRead {
-            tabs: &self.tabs,
-            active: self.tabs.active_index(),
-            session: self.workspace.layouts().session(),
-        }
-    }
-    pub(crate) fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
-        layout_wiring::LayoutAdapter {
-            active: self.tabs.active_index(),
-            tabs: &mut self.tabs,
-            indicators: &mut self.indicators,
-            store: self.workspace.layouts_mut(),
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
         }
     }
 

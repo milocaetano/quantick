@@ -8,6 +8,7 @@
 //! file the trader asked for and nothing the chart holds is touched, so it
 //! is neither destructive nor risky, and it can be undone by the same call.
 
+use crate::app::{RecordingPort, TabsMutPort, TabsPort};
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -24,7 +25,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::ControlWindow;
 use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
@@ -208,8 +208,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set(
-    app: &mut ControlWindow,
+fn set<P: TabsPort + TabsMutPort + RecordingPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -219,7 +219,7 @@ fn set(
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, _config) = app
-        .control_actions()
+        .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // A replay is another tape: the live market's recorder is not reachable
@@ -257,7 +257,7 @@ fn set(
     };
     let _ = tab;
     let (tab, _config) = app
-        .control_actions()
+        .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if let Some(index) = day_index {
@@ -277,7 +277,7 @@ fn set(
         app.set_deal_recording_default(on);
     }
     let (tab, _config) = app
-        .control_actions()
+        .tabs_mut()
         .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let result = DealRecordingResult {

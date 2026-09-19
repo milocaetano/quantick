@@ -32,6 +32,7 @@
 //! the fraction it reads back: an `f32` in 0..1 is accurate to far better
 //! than half a unit in the sixth place.
 
+use crate::app::{LayoutPort, TabsMutPort, TabsPort};
 use quantick_control::{
     error::ControlError,
     registry::{CapabilityDescriptor, RegistryError},
@@ -42,8 +43,6 @@ use rust_decimal::{Decimal, prelude::ToPrimitive};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::app::ControlWindow;
 
 use super::super::{actions::ActionRegistry, gateway::ControlAccess, types::canonical_f64};
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
@@ -151,8 +150,8 @@ fn exact(answer: Value) -> Result<Value, ControlError> {
     Ok(answer)
 }
 
-fn apply_preset(
-    app: &mut ControlWindow,
+fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -160,8 +159,8 @@ fn apply_preset(
     exact(super::apply_preset(app, access, actor, input)?)
 }
 
-fn move_pane(
-    app: &mut ControlWindow,
+fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -169,8 +168,8 @@ fn move_pane(
     exact(super::move_pane(app, access, actor, input)?)
 }
 
-fn collapse(
-    app: &mut ControlWindow,
+fn collapse<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -178,8 +177,8 @@ fn collapse(
     exact(super::collapse(app, access, actor, input)?)
 }
 
-fn expand(
-    app: &mut ControlWindow,
+fn expand<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -187,8 +186,8 @@ fn expand(
     exact(super::expand(app, access, actor, input)?)
 }
 
-fn focus(
-    app: &mut ControlWindow,
+fn focus<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -196,8 +195,8 @@ fn focus(
     exact(super::focus(app, access, actor, input)?)
 }
 
-fn set_interval(
-    app: &mut ControlWindow,
+fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -205,8 +204,8 @@ fn set_interval(
     exact(super::set_interval(app, access, actor, input)?)
 }
 
-fn set_bar_spec(
-    app: &mut ControlWindow,
+fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -216,8 +215,8 @@ fn set_bar_spec(
 
 /// Resize, with the share read as an exact decimal and handed to the v1 body
 /// as the number it has always taken — in process, where no wire is crossed.
-fn resize(
-    app: &mut ControlWindow,
+fn resize<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

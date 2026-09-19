@@ -1,5 +1,6 @@
 //! Pointer meaning and current UI selection projections.
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -9,7 +10,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::ControlWindow,
     drawings::{Drawing, DrawingBand, DrawingScope},
     orderflow_view::FlowCellHit,
     pane::{ChartPane, ControlDrawingHit, ControlPointerHit, PaneSide},
@@ -182,22 +182,22 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &ControlWindow) -> InteractionRevision {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> InteractionRevision {
     InteractionRevision {
         cursor: cursor_snapshot(app),
         selection: selection_snapshot(app),
     }
 }
 
-fn project_cursor(app: &ControlWindow, _context: CaptureContext) -> CursorSnapshot {
+fn project_cursor<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> CursorSnapshot {
     cursor_snapshot(app)
 }
 
-fn project_selection(app: &ControlWindow, _context: CaptureContext) -> SelectionSnapshot {
+fn project_selection<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> SelectionSnapshot {
     selection_snapshot(app)
 }
 
-pub(crate) fn cursor_snapshot(app: &ControlWindow) -> CursorSnapshot {
+pub(crate) fn cursor_snapshot<P: TabsPort + ?Sized>(app: &P) -> CursorSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -228,8 +228,8 @@ pub(crate) fn cursor_snapshot(app: &ControlWindow) -> CursorSnapshot {
     }
 }
 
-fn pointer_snapshot(
-    app: &ControlWindow,
+fn pointer_snapshot<P: TabsPort + ?Sized>(
+    app: &P,
     tab_id: u64,
     tab: &Tab,
     pane: &ChartPane,
@@ -294,7 +294,7 @@ pub(crate) struct SelectionIdentity {
     pub paper_trade_row: Option<usize>,
 }
 
-pub(crate) fn selection_identity(app: &ControlWindow) -> SelectionIdentity {
+pub(crate) fn selection_identity<P: TabsPort + ?Sized>(app: &P) -> SelectionIdentity {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let drawing_pane = tab.pane(tab.drawing_side());
@@ -311,7 +311,7 @@ pub(crate) fn selection_identity(app: &ControlWindow) -> SelectionIdentity {
     }
 }
 
-pub(crate) fn selection_snapshot(app: &ControlWindow) -> SelectionSnapshot {
+pub(crate) fn selection_snapshot<P: TabsPort + ?Sized>(app: &P) -> SelectionSnapshot {
     let tab = active_tab(app);
     let focused_side = tab.focused_side();
     let focused_pane = tab.pane(focused_side);
@@ -416,7 +416,7 @@ fn drawing_band(band: &DrawingBand) -> String {
     drawing_band_name(band).to_owned()
 }
 
-fn active_tab(app: &ControlWindow) -> &Tab {
+fn active_tab<P: TabsPort + ?Sized>(app: &P) -> &Tab {
     &app.tab_reads().tabs()[app.tab_reads().active_tab_index()]
 }
 
