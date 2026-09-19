@@ -27,7 +27,6 @@ use crate::indicator_worker::{IndicatorCommand, IndicatorEvent};
 use crate::live_envelope::*;
 use crate::orderflow_worker::BookCommand;
 use crate::state::{BarSpec, ChartState};
-use crate::worker_progress::WorkerProgress;
 use quantick_engine::{Bar, Side, Trade};
 use quantick_orderflow::HeatmapConfig;
 use quantick_orderflow::engine::BookEngine;
@@ -214,8 +213,8 @@ fn queue_depths() {
     );
     let mut rig = Rig::new(
         BarSpec::Tick(1),
-        WorkerProgress::new(),
-        WorkerProgress::new(),
+        crate::worker_progress::monotonic(),
+        crate::worker_progress::monotonic(),
     );
     let mut tape = Tape::default();
     let phases = [

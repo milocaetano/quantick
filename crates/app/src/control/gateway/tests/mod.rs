@@ -18,13 +18,11 @@
 
 use std::sync::atomic::AtomicUsize;
 
-use quantick_control::limits::CONTROL_MAX_BUFFERED_RESPONSE_SLOTS;
-
 use super::*;
 // Three server-thread helpers the tests exercise directly. The host does not
 // call all three, so they are named here rather than re-bound in `gateway.rs`
 // only to be seen from a test.
-use super::server::{activity_status_high_watermark, drain_bounded_since, try_reserve_in_flight};
+use super::server::{activity_status_high_watermark, drain_bounded_since};
 
 mod gateway_tests {
     use super::*;
@@ -193,26 +191,6 @@ mod gateway_tests {
         }
         assert!(!limiter.allow(started));
         assert!(limiter.allow(started + Duration::from_secs(1)));
-    }
-
-    #[test]
-    fn global_response_slots_enforce_the_reviewed_buffer_bound() {
-        assert_eq!(
-            CONTROL_MAX_BUFFERED_RESPONSE_SLOTS
-                * quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES,
-            quantick_control::limits::CONTROL_MAX_BUFFERED_RESPONSE_BYTES
-        );
-        let in_flight = AtomicUsize::new(0);
-        for _ in 0..CONTROL_MAX_BUFFERED_RESPONSE_SLOTS {
-            assert!(try_reserve_in_flight(
-                &in_flight,
-                CONTROL_MAX_BUFFERED_RESPONSE_SLOTS
-            ));
-        }
-        assert!(!try_reserve_in_flight(
-            &in_flight,
-            CONTROL_MAX_BUFFERED_RESPONSE_SLOTS
-        ));
     }
 
     #[test]

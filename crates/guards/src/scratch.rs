@@ -42,6 +42,7 @@ const SCRATCH_MODULES: &[&str] = &[
     // The paper account journals every close, so the harness test that
     // drives one needs a folder of its own.
     "crates/backtest/tests/common/mod.rs",
+    "crates/control-host/src/scratch.rs",
     "crates/control-local/src/scratch.rs",
     "crates/feed/src/scratch.rs",
     "crates/guards/src/scratch_dir.rs",
@@ -52,6 +53,8 @@ const SCRATCH_MODULES: &[&str] = &[
     "crates/mcp/tests/common/mod.rs",
     "crates/paper/src/scratch.rs",
     "crates/replay/src/scratch.rs",
+    "crates/stores/src/scratch.rs",
+    "crates/strategy/src/scratch.rs",
 ];
 
 /// Files outside a scratch module that may still read the temporary

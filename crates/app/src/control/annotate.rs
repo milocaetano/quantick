@@ -9,225 +9,32 @@
 //! this module can discard work done by hand (plan §2.6), which is what keeps
 //! the annotate tier below the cockpit.
 
-use std::collections::BTreeSet;
-
+use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::{
     error::{ControlError, codes},
-    id::{CapabilityId, CostClassId, EventKind, ModuleId, PermissionId, RiskFlagId},
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
-    wire::{ActorContext, ActorKind, CanonicalDecimal, WireU64},
+    id::{EventKind, ModuleId},
+    registry::RegistryError,
+    wire::{ActorContext, ActorKind, WireU64},
 };
-use rust_decimal::prelude::ToPrimitive;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    app::QuantickApp,
     drawings::{self, ChartPoint, DrawingAuthor, DrawingBand},
     metrics,
     pane::ChartPane,
 };
 
 use super::{
-    actions::{ANNOTATE_EFFECT_ID, ANNOTATE_PERMISSION_ID, ActionRegistry},
+    actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
     types::{PaneSideDto, actor_kind_name, canonical_f64, known_error, wire_usize},
 };
 
-/// The module every annotation capability belongs to.
-pub(crate) const ANNOTATE_MODULE_ID: &str = "annotate";
-/// The scope that lets an operator add objects to the chart.
-pub(crate) const ANNOTATE_CHART_PERMISSION_ID: &str = "annotate.chart";
+pub(crate) use quantick_control::annotation::*;
 
-pub(crate) const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
-pub(crate) const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
-pub(crate) const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
-pub(crate) const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
-pub(crate) const PROFILE_CAPABILITY_VERSION: u32 = 2;
-pub(crate) const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
-pub(crate) const FIB_PROJECTION_CAPABILITY_ID: &str = "annotate.fib_projection.create";
-pub(crate) const FIB_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
-pub(crate) const REMOVE_CAPABILITY_ID: &str = "annotate.remove";
-
-pub(crate) const ANNOTATION_CREATED_EVENT_KIND: &str = "annotate.object.created";
-pub(crate) const ANNOTATION_REMOVED_EVENT_KIND: &str = "annotate.object.removed";
-
-const CAPABILITY_VERSION: u32 = 1;
-const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
-
-/// The registry ids of the drawing tools an annotation reaches for. They are
-/// looked up by id in `DRAWING_TOOLS`, exactly as the rail does, so a rename
-/// in the tool registry is a compile-time-visible lookup failure here rather
-/// than a second list of tools.
-const LABEL_TOOL_ID: &str = "text";
-const ARROW_TOOL_ID: &str = "arrow";
-const ZONE_TOOL_ID: &str = "rectangle";
-
-/// The longest label an annotation may carry. A note is a sentence on a
-/// chart, not a document; the bound is what keeps one call from covering the
-/// tape.
-const ANNOTATION_TEXT_MAX_BYTES: usize = 280;
-/// The longest trader-facing name an annotation may carry, matching what the
-/// object manager's rename accepts.
-const ANNOTATION_NAME_MAX_BYTES: usize = 120;
-/// Decimal places an anchor price is reported back with. Prices on the wire
-/// are exact text (types.rs); eight places is past every venue's tick.
-const ANNOTATION_PRICE_DECIMALS: u32 = 8;
-
-/// Where an annotation goes. Omitting both halves means the chart the trader
-/// is looking at — the same default the toolbar's own placement uses.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AnnotationTarget {
-    /// The tab, by the id every snapshot reports. Omitted: the active tab.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_id: Option<WireU64>,
-    /// The pane within that tab. Omitted: the pane drawings go to.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane_side: Option<PaneSideDto>,
-    /// Which context chart `pane_side = "time"` means, top to bottom from
-    /// `0`. Omitted: the top one. Ignored for the flow pane, which has no
-    /// stack to pick from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane_slot: Option<WireU64>,
-}
-
-/// One anchor, in the coordinates the cursor and the chart window report:
-/// market time and price. Screen pixels are deliberately not accepted — they
-/// mean nothing a frame later, and an agent that read a bar knows its time.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AnnotationAnchor {
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub time_unix_ms: i64,
-    pub price: CanonicalDecimal,
-}
-
-/// What a chart annotation takes. The anchor count is the tool's (one for a
-/// label, two for the ranged tools) and is checked against the registry rather
-/// than restated here.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AnnotationInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<AnnotationTarget>,
-    #[schemars(length(min = 1, max = 2))]
-    pub anchors: Vec<AnnotationAnchor>,
-    /// The words a label carries. Ignored by the tools that have none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = ANNOTATION_TEXT_MAX_BYTES))]
-    pub text: Option<String>,
-    /// The name the object manager and the inspector show.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = ANNOTATION_NAME_MAX_BYTES))]
-    pub name: Option<String>,
-}
-
-/// One coordinate from a chart gesture. Market time is retained when a bar
-/// exists; `bar_position` keeps future chart space expressible without
-/// inventing a timestamp.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ChartAnnotationAnchor {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    time_unix_ms: Option<i64>,
-    bar_position: CanonicalDecimal,
-    price: CanonicalDecimal,
-}
-
-/// Ranged drawings share this future-aware input; the selected tool still
-/// owns whether exactly two or three anchors complete it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ChartAnnotationInput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    target: Option<AnnotationTarget>,
-    #[schemars(length(min = 2, max = 3))]
-    anchors: Vec<ChartAnnotationAnchor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = ANNOTATION_NAME_MAX_BYTES))]
-    name: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-enum ChartResolvedAnchor {
-    Market(ResolvedAnchor),
-    Future {
-        bar_position: CanonicalDecimal,
-        price: CanonicalDecimal,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-struct ChartAnnotationResult {
-    annotation_id: WireU64,
-    tab_id: WireU64,
-    pane_id: WireU64,
-    pane_side: PaneSideDto,
-    tool_id: String,
-    anchors: Vec<ChartResolvedAnchor>,
-    author: AnnotationAuthor,
-    label: String,
-}
-
-/// What an annotation returns: the object's stable id, where it actually
-/// landed, and the authorship the trader sees on it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct AnnotationResult {
-    pub annotation_id: WireU64,
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub pane_side: PaneSideDto,
-    pub tool_id: String,
-    /// Where each anchor landed after resolution: the slot it fell on and the
-    /// market time of that slot, which is not always the time asked for.
-    pub anchors: Vec<ResolvedAnchor>,
-    pub author: AnnotationAuthor,
-    pub label: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ResolvedAnchor {
-    pub slot: WireU64,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub time_unix_ms: i64,
-    pub price: CanonicalDecimal,
-}
-
-/// Who placed an object, as the interface shows it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct AnnotationAuthor {
-    /// The actor kind on the wire: `agent`, `automation`, `human_ui`.
-    pub actor_kind: String,
-    /// The client's own name from its handshake.
-    pub client_name: String,
-}
-
-/// What a removal takes: the annotation's id, and nothing else. There is no
-/// "remove all" here on purpose — an operator that can sweep the chart is a
-/// cockpit capability, and the trader's own sweep lives in the object manager.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RemoveInput {
-    pub annotation_id: WireU64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct RemoveResult {
-    pub annotation_id: WireU64,
-    pub tab_id: WireU64,
-    pub pane_id: WireU64,
-    pub removed: bool,
-}
+mod series;
 
 /// Dock the annotate tier's actions.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
@@ -292,113 +99,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn annotate_permissions(scope: &str) -> BTreeSet<PermissionId> {
-    [ANNOTATE_PERMISSION_ID, scope]
-        .into_iter()
-        .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
-        .collect()
-}
-
-fn annotation_descriptor(id: &str, title: &str, description: &str) -> CapabilityDescriptor {
-    CapabilityDescriptor {
-        id: CapabilityId::new(id).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: title.to_owned(),
-        description: description.to_owned(),
-        module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-        input_schema: generated_schema::<AnnotationInput>(),
-        output_schema: generated_schema::<AnnotationResult>(),
-        examples: Vec::new(),
-        effect: quantick_control::id::EffectId::new(ANNOTATE_EFFECT_ID)
-            .expect("static effect ID is valid"),
-        risk_flags: BTreeSet::<RiskFlagId>::new(),
-        read_only: false,
-        idempotency: IdempotencyPolicy::Forbidden,
-        // An annotation adds an object and overwrites none, so a stale caller
-        // can only place the wrong thing — visible, attributed, and removed
-        // in one action.
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "An annotation adds one object and edits nothing; a stale caller places an object that is visibly attributed and removed in one action."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        persistence: EffectPersistence::Durable,
-        reversible: true,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: annotate_permissions(ANNOTATE_CHART_PERMISSION_ID),
-        preconditions: Vec::new(),
-        confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
-}
-
-fn fib_descriptor(id: &str, title: &str, description: &str) -> CapabilityDescriptor {
-    chart_descriptor(id, FIB_CAPABILITY_VERSION, title, description)
-}
-
-fn chart_descriptor(
-    id: &str,
-    version: u32,
-    title: &str,
-    description: &str,
-) -> CapabilityDescriptor {
-    let mut descriptor = annotation_descriptor(id, title, description);
-    descriptor.version = version;
-    descriptor.input_schema = generated_schema::<ChartAnnotationInput>();
-    descriptor.output_schema = generated_schema::<ChartAnnotationResult>();
-    descriptor
-}
-
-fn remove_descriptor() -> CapabilityDescriptor {
-    CapabilityDescriptor {
-        id: CapabilityId::new(REMOVE_CAPABILITY_ID).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: "Remove an annotation".to_owned(),
-        description: "Removes one object placed by an operator other than the trader. An object the trader drew by hand is never removable through this tier.".to_owned(),
-        module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-        input_schema: generated_schema::<RemoveInput>(),
-        output_schema: generated_schema::<RemoveResult>(),
-        examples: Vec::new(),
-        effect: quantick_control::id::EffectId::new(ANNOTATE_EFFECT_ID)
-            .expect("static effect ID is valid"),
-        risk_flags: BTreeSet::<RiskFlagId>::new(),
-        read_only: false,
-        idempotency: IdempotencyPolicy::Forbidden,
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "Removing an already-removed annotation reports that it was not there; no other object can be reached."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        persistence: EffectPersistence::Durable,
-        reversible: true,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: annotate_permissions(ANNOTATE_CHART_PERMISSION_ID),
-        preconditions: Vec::new(),
-        confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
-}
-
-fn create_label(
-    app: &mut QuantickApp,
+fn create_label<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -406,8 +108,8 @@ fn create_label(
     place(app, access, actor, input, LABEL_TOOL_ID)
 }
 
-fn create_arrow(
-    app: &mut QuantickApp,
+fn create_arrow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -415,8 +117,8 @@ fn create_arrow(
     place(app, access, actor, input, ARROW_TOOL_ID)
 }
 
-fn create_zone(
-    app: &mut QuantickApp,
+fn create_zone<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -424,8 +126,8 @@ fn create_zone(
     place(app, access, actor, input, ZONE_TOOL_ID)
 }
 
-fn create_profile(
-    app: &mut QuantickApp,
+fn create_profile<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -433,8 +135,8 @@ fn create_profile(
     place(app, access, actor, input, crate::frvp::TOOL_ID)
 }
 
-fn create_chart_profile(
-    app: &mut QuantickApp,
+fn create_chart_profile<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -442,8 +144,8 @@ fn create_chart_profile(
     place_chart(app, access, actor, input, crate::frvp::TOOL_ID)
 }
 
-fn create_fib_retracement(
-    app: &mut QuantickApp,
+fn create_fib_retracement<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -451,8 +153,8 @@ fn create_fib_retracement(
     place_chart(app, access, actor, input, "fib-retracement")
 }
 
-fn create_fib_projection(
-    app: &mut QuantickApp,
+fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -460,8 +162,8 @@ fn create_fib_projection(
     place_chart(app, access, actor, input, "fib-extension")
 }
 
-fn place_chart(
-    app: &mut QuantickApp,
+fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -475,84 +177,41 @@ fn place_chart(
         ))
     })?;
     let required = tool.required_points();
-    if input.anchors.len() != required {
-        return Err(ControlError::invalid_request(format!(
-            "`{}` takes exactly {required} anchor(s), not {}",
-            tool.name(),
-            input.anchors.len()
-        )));
-    }
     let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
-    let mut fresh = Some(app.control_new_drawing(tool));
+    let fresh = app.tab_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
-    if pane.drawings.draft().is_some() {
-        return Err(capability_unavailable(
-            "the trader is drawing on that pane right now; an annotation would land in their unfinished object",
-        ));
-    }
 
-    let mut points = Vec::with_capacity(input.anchors.len());
-    let mut resolved = Vec::with_capacity(input.anchors.len());
-    for anchor in &input.anchors {
-        let price = parse_price(&anchor.price)?;
-        if let Some(time) = anchor.time_unix_ms {
-            let (slot, time_ms) = resolve_slot(pane, time)?;
-            points.push(ChartPoint::at_time(
-                slot as f32 + 0.5,
-                price,
-                pane.slot_open_time(slot),
-            ));
-            resolved.push(ChartResolvedAnchor::Market(ResolvedAnchor {
-                slot: wire_usize(slot),
-                time_unix_ms: time_ms,
-                price: canonical_f64(price, ANNOTATION_PRICE_DECIMALS).ok_or_else(|| {
-                    ControlError::invalid_request("an anchor price is not finite")
-                })?,
-            }));
-        } else {
-            let bar = parse_bar_position(&anchor.bar_position)?;
-            points.push(ChartPoint::at_time(bar, price, None));
-            resolved.push(ChartResolvedAnchor::Future {
-                bar_position: canonical_f64(f64::from(bar), 3).ok_or_else(|| {
-                    ControlError::invalid_request("an anchor bar position is not finite")
-                })?,
-                price: canonical_f64(price, ANNOTATION_PRICE_DECIMALS).ok_or_else(|| {
-                    ControlError::invalid_request("an anchor price is not finite")
-                })?,
-            });
-        }
-    }
-
-    let mut completed = false;
-    for point in points {
-        completed = pane
-            .drawings
-            .place_with(tool, &DrawingBand::Price, point, |_| {
-                fresh.take().expect("one opening look per placement")
-            });
-    }
-    if !completed {
-        pane.drawings.cancel_draft();
-        return Err(capability_unavailable(format!(
-            "the `{}` tool did not complete from {required} anchor(s)",
-            tool.name()
-        )));
-    }
-    let Some(drawing) = pane.drawings.selected_mut() else {
-        return Err(capability_unavailable(
-            "the placed annotation could not be read back",
-        ));
-    };
-    drawing.author = author;
-    drawing.name = input.name;
-    let annotation_id = drawing.id.0;
-    let index = pane.drawings.selected().unwrap_or_default();
-    let label = pane
-        .drawings
-        .items()
-        .get(index)
-        .map_or_else(String::new, |drawing| drawing.display_label(index));
+    let validated = series::resolve(pane, tab_id, &input, required)?;
+    let points: Vec<_> = validated
+        .iter()
+        .map(|anchor| {
+            ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms)
+        })
+        .collect();
+    let resolved = validated
+        .iter()
+        .map(|anchor| {
+            let price = canonical_f64(anchor.point.price, ANNOTATION_PRICE_DECIMALS)
+                .expect("validated finite price");
+            match anchor.slot {
+                Some(slot) => ChartResolvedAnchor::Market(ResolvedAnchor {
+                    slot: wire_usize(slot),
+                    time_unix_ms: anchor
+                        .point
+                        .time_ms
+                        .expect("a resolved market anchor has time"),
+                    price,
+                }),
+                None => ChartResolvedAnchor::Future {
+                    bar_position: canonical_bar_position(anchor.point.bar)
+                        .expect("validated finite bar position"),
+                    price,
+                },
+            }
+        })
+        .collect();
+    let (annotation_id, label) = install(pane, tool, points, fresh, author, input.name, None)?;
     let result = ChartAnnotationResult {
         annotation_id: WireU64::new(annotation_id),
         tab_id: WireU64::new(tab_id),
@@ -571,57 +230,43 @@ fn place_chart(
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
 }
 
-/// Build the typed input the on-chart quick-range action sends through the
-/// same registered capability an operator without a mouse can invoke.
-pub(crate) fn fixed_range_profile_input(
-    tab_id: u64,
+/// Serialize the model's exact operation through the existing admitted capability.
+pub(crate) fn quick_range_input(
+    request: &quantick_chart_interaction::quick_range::PlaceRequest,
     pane_side: crate::pane::PaneSide,
-    anchors: [ChartPoint; 2],
 ) -> Option<Value> {
-    chart_annotation_input(tab_id, pane_side, anchors.to_vec())
-}
-
-/// Build a Fibonacci action input from the settled on-chart range.
-pub(crate) fn fibonacci_input(
-    tab_id: u64,
-    pane_side: crate::pane::PaneSide,
-    anchors: [ChartPoint; 2],
-    projection: bool,
-) -> Option<Value> {
-    let mut anchors = anchors.to_vec();
-    if projection {
-        anchors.push(anchors[1]);
-    }
-    chart_annotation_input(tab_id, pane_side, anchors)
-}
-
-fn chart_annotation_input(
-    tab_id: u64,
-    pane_side: crate::pane::PaneSide,
-    anchors: Vec<ChartPoint>,
-) -> Option<Value> {
+    use quantick_chart_interaction::quick_range::Action;
     let pane_slot = match pane_side {
         crate::pane::PaneSide::Flow => None,
         crate::pane::PaneSide::Time(slot) => Some(WireU64::new(u64::try_from(slot).ok()?)),
     };
-    let anchors = anchors
+    let mut points = request.anchors.to_vec();
+    if request.action == Action::Projection {
+        points.push(points[1]);
+    }
+    let anchors = points
         .into_iter()
         .map(|anchor| {
             Some(ChartAnnotationAnchor {
                 time_unix_ms: anchor.time_ms,
-                bar_position: canonical_f64(f64::from(anchor.bar), 3)?,
+                bar_position: canonical_bar_position(anchor.bar)?,
                 price: canonical_f64(anchor.price, ANNOTATION_PRICE_DECIMALS)?,
             })
         })
         .collect::<Option<Vec<_>>>()?;
     serde_json::to_value(ChartAnnotationInput {
         target: Some(AnnotationTarget {
-            tab_id: Some(WireU64::new(tab_id)),
+            tab_id: Some(WireU64::new(request.context.owner.tab)),
             pane_side: Some(pane_side.into()),
             pane_slot,
         }),
         anchors,
         name: None,
+        chart_reference: Some(ChartReference {
+            pane_id: WireU64::new(request.context.owner.pane),
+            series_revision: WireU64::new(request.context.revision),
+            layout_id: request.context.owner.layout.map(WireU64::new),
+        }),
     })
     .ok()
 }
@@ -629,8 +274,8 @@ fn chart_annotation_input(
 /// The one placement path: resolve the target pane, resolve every anchor
 /// against that pane's series, then place through the tool registry exactly
 /// as a click does.
-fn place(
-    app: &mut QuantickApp,
+fn place<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -666,7 +311,7 @@ fn place(
     // trader would have drawn. One is enough for the whole placement —
     // `place_with` asks for the opening only when it installs the draft, so
     // the second anchor of an arrow or a zone never calls for another.
-    let mut fresh = Some(app.control_new_drawing(tool));
+    let fresh = app.tab_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
     // The trader is mid-gesture: `place_with` would push this call's anchor
@@ -675,15 +320,15 @@ fn place(
     // Refused, retryable, with the reason — the assistant tries again when
     // the hand has finished.
     if pane.drawings.draft().is_some() {
-        return Err(capability_unavailable(
-            "the trader is drawing on that pane right now; an annotation would land in their unfinished object",
+        return Err(series::refused(
+            quantick_chart_interaction::annotation::Refusal::DraftInProgress,
         ));
     }
 
     let mut resolved = Vec::with_capacity(input.anchors.len());
     let mut points = Vec::with_capacity(input.anchors.len());
     for anchor in &input.anchors {
-        let (slot, time_ms) = resolve_slot(pane, anchor.time_unix_ms)?;
+        let (slot, time_ms) = series::resolve_slot(pane, tab_id, anchor.time_unix_ms)?;
         let price = parse_price(&anchor.price)?;
         points.push(ChartPoint::at_time(
             slot as f32 + 0.5,
@@ -699,50 +344,8 @@ fn place(
         });
     }
 
-    let mut completed = false;
-    for point in points {
-        completed = pane
-            .drawings
-            .place_with(tool, &DrawingBand::Price, point, |_| {
-                fresh.take().expect("one opening look per placement")
-            });
-    }
-    if !completed {
-        // The anchors that did land are sitting in a draft nobody owns. Left
-        // there, the pane reads as "the trader is drawing right now" for the
-        // rest of the session and every later annotation on it is refused —
-        // and a half-drawn object the trader never started is on their chart.
-        pane.drawings.cancel_draft();
-        return Err(capability_unavailable(format!(
-            "the `{}` tool did not complete from {required} anchor(s)",
-            tool.name()
-        )));
-    }
-    let Some(drawing) = pane.drawings.selected_mut() else {
-        return Err(capability_unavailable(
-            "the placed annotation could not be read back",
-        ));
-    };
-    // Authorship before anything else touches it: an object that reaches the
-    // chart without saying who placed it is indistinguishable from the
-    // trader's own hand, which is the one thing this tier may not do.
-    drawing.author = author;
-    drawing.name = input.name.clone();
-    if let Some(text) = &input.text
-        && drawing.tool.holds_text()
-    {
-        drawing
-            .tool
-            .set_inline_text(drawing.payload.as_mut(), text.clone());
-    }
-    let annotation_id = drawing.id.0;
-    let index = pane.drawings.selected().unwrap_or_default();
-    let label = pane
-        .drawings
-        .items()
-        .get(index)
-        .map_or_else(String::new, |drawing| drawing.display_label(index));
-
+    let (annotation_id, label) =
+        install(pane, tool, points, fresh, author, input.name, input.text)?;
     let result = AnnotationResult {
         annotation_id: WireU64::new(annotation_id),
         tab_id: WireU64::new(tab_id),
@@ -763,11 +366,60 @@ fn place(
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
 }
 
+/// Both wire versions commit through one store operation, after complete validation.
+fn install(
+    pane: &mut ChartPane,
+    tool: drawings::DrawingTool,
+    points: Vec<ChartPoint>,
+    fresh: drawings::NewDrawing,
+    author: Option<DrawingAuthor>,
+    name: Option<String>,
+    text: Option<String>,
+) -> Result<(u64, String), ControlError> {
+    let required = points.len();
+    let mut fresh = Some(fresh);
+    let mut completed = false;
+    for point in points {
+        completed = pane
+            .drawings
+            .place_with(tool, &DrawingBand::Price, point, |_| {
+                fresh.take().expect("one opening look per placement")
+            });
+    }
+    if !completed {
+        // Never leave a partial draft which would block later admitted operations.
+        pane.drawings.cancel_draft();
+        return Err(capability_unavailable(format!(
+            "the `{}` tool did not complete from {required} anchor(s)",
+            tool.name()
+        )));
+    }
+    let drawing = pane
+        .drawings
+        .selected_mut()
+        .ok_or_else(|| capability_unavailable("the placed annotation could not be read back"))?;
+    drawing.author = author;
+    drawing.name = name;
+    if let Some(text) = text
+        && drawing.tool.holds_text()
+    {
+        drawing.tool.set_inline_text(drawing.payload.as_mut(), text);
+    }
+    let id = drawing.id.0;
+    let index = pane.drawings.selected().unwrap_or_default();
+    let label = pane
+        .drawings
+        .items()
+        .get(index)
+        .map_or_else(String::new, |drawing| drawing.display_label(index));
+    Ok((id, label))
+}
+
 /// Remove one annotation — and only an annotation. An object the trader drew
 /// stays where it is, whatever id was asked for (plan §2.6: this tier cannot
 /// discard work done by hand).
-fn remove_annotation(
-    app: &mut QuantickApp,
+fn remove_annotation<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -777,7 +429,7 @@ fn remove_annotation(
     let annotation_id = input.annotation_id.get();
     let mut found = None;
     for (tab_index, side) in annotated_panes(app) {
-        let pane = app.control_pane_mut(tab_index, side);
+        let pane = app.tabs_mut().pane_mut(tab_index, side);
         let Some(index) = pane
             .drawings
             .items()
@@ -797,7 +449,7 @@ fn remove_annotation(
         // An annotation can be the region a strategy is armed on, like any
         // other object: the same sweep every removal path in the interface
         // does, so no resting simulated order outlives the mark it names.
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
         found = Some((tab_index, pane_id));
         break;
     }
@@ -810,7 +462,7 @@ fn remove_annotation(
         })
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")));
     };
-    let tab_id = app.control_tabs()[tab_index].id;
+    let tab_id = app.tab_reads().tabs().id_at(tab_index);
     let result = RemoveResult {
         annotation_id: input.annotation_id,
         tab_id: WireU64::new(tab_id),
@@ -823,9 +475,9 @@ fn remove_annotation(
 }
 
 /// Every (tab, pane) an annotation could be sitting on.
-fn annotated_panes(app: &QuantickApp) -> Vec<(usize, crate::pane::PaneSide)> {
+fn annotated_panes<P: TabsPort + ?Sized>(app: &P) -> Vec<(usize, crate::pane::PaneSide)> {
     let mut panes = Vec::new();
-    for (index, tab) in app.control_tabs().iter().enumerate() {
+    for (index, tab) in app.tab_reads().tabs().iter().enumerate() {
         panes.extend(tab.sides().map(|side| (index, side)));
     }
     panes
@@ -857,24 +509,22 @@ fn journal_annotation<T: Serialize>(
 
 /// Which tab and pane an annotation addresses, defaulting to the chart the
 /// trader is looking at.
-fn resolve_target(
-    app: &QuantickApp,
+fn resolve_target<P: TabsPort + ?Sized>(
+    app: &P,
     target: Option<&AnnotationTarget>,
 ) -> Result<(u64, crate::pane::PaneSide), ControlError> {
-    let tabs = app.control_tabs();
+    let tabs = app.tab_reads().tabs();
     if tabs.is_empty() {
         return Err(capability_unavailable("this window has no chart open"));
     }
-    let active = app.control_active_tab_index().min(tabs.len() - 1);
+    let active = app.tab_reads().active_tab_index().min(tabs.len() - 1);
     let tab_index = match target.and_then(|target| target.tab_id) {
         None => active,
-        Some(tab_id) => tabs
-            .iter()
-            .position(|tab| tab.id == tab_id.get())
-            .ok_or_else(|| {
-                ControlError::invalid_request(format!("no open tab has id {}", tab_id.get()))
-            })?,
+        Some(tab_id) => tabs.position(tab_id.get()).ok_or_else(|| {
+            ControlError::invalid_request(format!("no open tab has id {}", tab_id.get()))
+        })?,
     };
+    let tab_id = tabs.id_at(tab_index);
     let tab = &tabs[tab_index];
     let side = match target.and_then(|target| target.pane_side) {
         None => tab.drawing_side(),
@@ -892,63 +542,20 @@ fn resolve_target(
             crate::pane::PaneSide::Time(slot)
         }
     };
-    Ok((tab.id, side))
+    Ok((tab_id, side))
 }
 
-fn control_pane_mut(
-    app: &mut QuantickApp,
+fn control_pane_mut<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     tab_id: u64,
     side: crate::pane::PaneSide,
 ) -> Result<&mut ChartPane, ControlError> {
     let index = app
-        .control_tabs()
-        .iter()
-        .position(|tab| tab.id == tab_id)
+        .tab_reads()
+        .tabs()
+        .position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
-    Ok(app.control_pane_mut(index, side))
-}
-
-/// The slot a market time falls on, and the time that slot actually opened.
-fn resolve_slot(pane: &ChartPane, time_unix_ms: i64) -> Result<(usize, i64), ControlError> {
-    if pane.slots() == 0 {
-        return Err(capability_unavailable(
-            "that chart has no bars yet, so an anchor has nothing to land on",
-        ));
-    }
-    let slot = pane.slot_at_time(time_unix_ms).ok_or_else(|| {
-        let mut error = ControlError::invalid_request(
-            "no bar on that chart covers the anchor time",
-        );
-        error.context.next_steps = vec![
-            "Read a bar's open_time_unix_ms from chart.window.read or the cursor, and anchor to that."
-                .to_owned(),
-        ];
-        error
-    })?;
-    let time = pane.slot_open_time(slot).unwrap_or(time_unix_ms);
-    Ok((slot, time))
-}
-
-fn parse_price(price: &CanonicalDecimal) -> Result<f64, ControlError> {
-    price
-        .as_str()
-        .parse::<rust_decimal::Decimal>()
-        .ok()
-        .and_then(|value| value.to_f64())
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| ControlError::invalid_request("an anchor price is not a finite decimal"))
-}
-
-fn parse_bar_position(position: &CanonicalDecimal) -> Result<f32, ControlError> {
-    position
-        .as_str()
-        .parse::<rust_decimal::Decimal>()
-        .ok()
-        .and_then(|value| value.to_f32())
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .ok_or_else(|| {
-            ControlError::invalid_request("an anchor bar position is not a non-negative number")
-        })
+    Ok(app.tabs_mut().pane_mut(index, side))
 }
 
 fn annotation_author(access: &ControlAccess, actor: &ActorContext) -> Option<DrawingAuthor> {

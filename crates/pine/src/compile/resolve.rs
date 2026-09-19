@@ -182,17 +182,12 @@ impl Compiler {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    /// The expression walker: control flow and operators recurse here; the
+    /// kinds that record facts (blocks, loops, history reads, member access,
+    /// calls, names) each own a visitor below.
     fn walk_expr(&mut self, id: NodeId, scope: &mut Scope, ctx: &mut WalkCtx) {
         match self.kind(id).clone() {
-            NodeKind::Block { statements } => {
-                scope.block_marks.push(scope.names.len());
-                for statement in statements {
-                    self.walk_statement(statement, scope, ctx);
-                }
-                let mark = scope.block_marks.pop().expect("pushed above");
-                scope.names.truncate(mark);
-            }
+            NodeKind::Block { statements } => self.walk_block(&statements, scope, ctx),
             NodeKind::If {
                 condition,
                 then_block,
@@ -218,31 +213,11 @@ impl Compiler {
                 if let Some(by) = by {
                     self.walk_expr(by, scope, ctx);
                 }
-                // The loop variable is a block-scoped declaration.
-                scope.block_marks.push(scope.names.len());
-                let resolution = if let Some(frame) = ctx.frame.as_mut() {
-                    let slot = frame.next_slot;
-                    frame.next_slot += 1;
-                    scope.names.push((var, Resolution::Local(slot)));
-                    Resolution::Local(slot)
-                } else {
-                    let slot = self.declare_global(&var, None, VarMode::Plain, scope);
-                    Resolution::Global(slot)
-                };
-                self.resolutions[id.index()] = resolution;
-                let was_in_loop = ctx.in_loop;
-                ctx.in_loop = true;
-                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
-                ctx.in_loop = was_in_loop;
-                let mark = scope.block_marks.pop().expect("pushed above");
-                scope.names.truncate(mark);
+                self.walk_for_body(id, var, body, scope, ctx);
             }
             NodeKind::While { condition, body } => {
                 self.walk_expr(condition, scope, ctx);
-                let was_in_loop = ctx.in_loop;
-                ctx.in_loop = true;
-                ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
-                ctx.in_loop = was_in_loop;
+                self.walk_loop_body(body, scope, ctx);
             }
             NodeKind::Switch { subject, arms } => {
                 if let Some(subject) = subject {
@@ -277,124 +252,14 @@ impl Compiler {
             NodeKind::History { subject, offset } => {
                 self.walk_expr(subject, scope, ctx);
                 self.walk_expr(offset, scope, ctx);
-                let series = self.history_series_count;
-                self.history_series_count += 1;
-                self.history_series[id.index()] = Some(series);
-                match self.fold(offset).and_then(|c| c.as_positive_len()) {
-                    Some(depth) => self.max_bars_back = self.max_bars_back.max(depth + 1),
-                    // Offset 0 is legal and folds to None above; only cap
-                    // genuinely dynamic offsets.
-                    None => {
-                        if !matches!(self.fold(offset), Some(Const::Int(0))) {
-                            // Raise the floor, never assign: a script with
-                            // both `close[700]` and `close[i]` still needs
-                            // 701 rows, and assigning made the answer depend
-                            // on which read came first.
-                            self.max_bars_back = self.max_bars_back.max(MAX_BARS_BACK_CAP);
-                        }
-                    }
-                }
+                self.record_history_read(id, offset);
             }
             NodeKind::Member { object, field } => {
-                if let NodeKind::Name(namespace) = self.kind(object).clone() {
-                    let dotted = format!("{namespace}.{field}");
-                    if let Some(builtin) = Builtin::lookup(&dotted) {
-                        self.resolutions[id.index()] = Resolution::Builtin(builtin);
-                        return;
-                    }
-                    if let Some(constant) = member_constant(&namespace, &field) {
-                        self.resolutions[id.index()] = match constant {
-                            Const::Enum(tag) => Resolution::EnumConst(tag),
-                            Const::Color(rgba) => Resolution::ColorConst(rgba),
-                            // member_constant only produces enums and colors.
-                            _ => Resolution::None,
-                        };
-                        return;
-                    }
-                    if let Some((code, reason)) = rejection_of(&dotted) {
-                        let span = self.span(id);
-                        self.errors.push(PineError::new(code, span, reason));
-                        return;
-                    }
-                    // An unknown member of a known namespace is an unknown
-                    // name; a member of a *variable* is an object method
-                    // (resolved at eval against the handle's kind).
-                    if matches!(
-                        namespace.as_str(),
-                        "ta" | "math" | "color" | "input" | "line" | "box" | "label"
-                    ) {
-                        self.unknown_name(&dotted, self.span(id));
-                        return;
-                    }
+                if !self.resolve_member(id, object, &field) {
+                    self.walk_expr(object, scope, ctx);
                 }
-                self.walk_expr(object, scope, ctx);
             }
-            NodeKind::Call { callee, args } => {
-                for arg in &args {
-                    self.walk_expr(arg.value, scope, ctx);
-                }
-                // `na(x)`: the callee lexes as the na keyword, not a name.
-                if matches!(self.kind(callee), NodeKind::Na) {
-                    self.resolutions[callee.index()] = Resolution::Builtin(Builtin::NaCall);
-                    return;
-                }
-                let name = self.callee_name(callee);
-                if let Some(name) = name {
-                    if let Some(builtin) = Builtin::lookup(&name) {
-                        self.resolutions[callee.index()] = Resolution::Builtin(builtin);
-                        self.builtin_call(id, builtin, &args, ctx);
-                        return;
-                    }
-                    if let Some((code, reason)) = rejection_of(&name) {
-                        let span = self.span(id);
-                        self.errors.push(PineError::new(code, span, reason));
-                        return;
-                    }
-                    // A user function?
-                    if let Some(resolution) = self.lookup_name(&name, scope, ctx) {
-                        if let Resolution::Function(index) = resolution {
-                            self.resolutions[callee.index()] = resolution;
-                            if ctx.function_stack.contains(&index) {
-                                let span = self.span(id);
-                                self.errors.push(PineError::new(
-                                    ErrorCode::PineRecursion,
-                                    span,
-                                    format!(
-                                        "recursive call of `{}` is not supported",
-                                        self.function_names[index as usize]
-                                    ),
-                                ));
-                            }
-                            return;
-                        }
-                        // Calling a non-function value.
-                        let span = self.span(id);
-                        self.errors.push(PineError::new(
-                            ErrorCode::PineType,
-                            span,
-                            format!("`{name}` is not callable"),
-                        ));
-                        return;
-                    }
-                    // `handle.set_xy(...)`: the dotted name is a method
-                    // call when its base resolves to a variable — dispatch
-                    // happens at eval against the handle's kind.
-                    if let Some((base, _)) = name.split_once('.')
-                        && matches!(
-                            self.lookup_name(base, scope, ctx),
-                            Some(Resolution::Global(_) | Resolution::Local(_))
-                        )
-                    {
-                        self.walk_expr(callee, scope, ctx);
-                        return;
-                    }
-                    self.unknown_name(&name, self.span(id));
-                    return;
-                }
-                // Method-style call on an expression (`f(x).set_xy(...)`)
-                // resolves at eval; still walk the callee chain.
-                self.walk_expr(callee, scope, ctx);
-            }
+            NodeKind::Call { callee, args } => self.walk_call(id, callee, &args, scope, ctx),
             NodeKind::Name(name) => match self.lookup_name(&name, scope, ctx) {
                 Some(resolution) => self.resolutions[id.index()] = resolution,
                 None => self.unknown_name(&name, self.span(id)),
@@ -416,6 +281,201 @@ impl Compiler {
                 unreachable!("statement node {other:?} reached the expression walker")
             }
         }
+    }
+
+    /// A block: its statements in order, then its names go out of scope.
+    fn walk_block(&mut self, statements: &[NodeId], scope: &mut Scope, ctx: &mut WalkCtx) {
+        scope.block_marks.push(scope.names.len());
+        for &statement in statements {
+            self.walk_statement(statement, scope, ctx);
+        }
+        let mark = scope.block_marks.pop().expect("pushed above");
+        scope.names.truncate(mark);
+    }
+
+    /// A `for` loop after its bounds: the loop variable is a block-scoped
+    /// declaration resolved on the loop node, then the body walks as a loop.
+    fn walk_for_body(
+        &mut self,
+        id: NodeId,
+        var: String,
+        body: NodeId,
+        scope: &mut Scope,
+        ctx: &mut WalkCtx,
+    ) {
+        scope.block_marks.push(scope.names.len());
+        let resolution = if let Some(frame) = ctx.frame.as_mut() {
+            let slot = frame.next_slot;
+            frame.next_slot += 1;
+            scope.names.push((var, Resolution::Local(slot)));
+            Resolution::Local(slot)
+        } else {
+            let slot = self.declare_global(&var, None, VarMode::Plain, scope);
+            Resolution::Global(slot)
+        };
+        self.resolutions[id.index()] = resolution;
+        self.walk_loop_body(body, scope, ctx);
+        let mark = scope.block_marks.pop().expect("pushed above");
+        scope.names.truncate(mark);
+    }
+
+    /// A loop body: nested, with the in-loop flag raised for its duration.
+    fn walk_loop_body(&mut self, body: NodeId, scope: &mut Scope, ctx: &mut WalkCtx) {
+        let was_in_loop = ctx.in_loop;
+        ctx.in_loop = true;
+        ctx.nested(|ctx| self.walk_expr(body, scope, ctx));
+        ctx.in_loop = was_in_loop;
+    }
+
+    /// A history read `subject[offset]`: number its series and raise the
+    /// `max_bars_back` floor to what the offset needs.
+    fn record_history_read(&mut self, id: NodeId, offset: NodeId) {
+        let series = self.history_series_count;
+        self.history_series_count += 1;
+        self.history_series[id.index()] = Some(series);
+        match self.fold(offset).and_then(|c| c.as_positive_len()) {
+            Some(depth) => self.max_bars_back = self.max_bars_back.max(depth + 1),
+            // Offset 0 is legal and folds to None above; only cap
+            // genuinely dynamic offsets.
+            None => {
+                if !matches!(self.fold(offset), Some(Const::Int(0))) {
+                    // Raise the floor, never assign: a script with
+                    // both `close[700]` and `close[i]` still needs
+                    // 701 rows, and assigning made the answer depend
+                    // on which read came first.
+                    self.max_bars_back = self.max_bars_back.max(MAX_BARS_BACK_CAP);
+                }
+            }
+        }
+    }
+
+    /// Member access on a bare name: a dotted builtin, a namespace constant,
+    /// a rejected namespace or an unknown member of a known namespace.
+    /// Returns whether the member was settled here; `false` means the object
+    /// still needs walking.
+    fn resolve_member(&mut self, id: NodeId, object: NodeId, field: &str) -> bool {
+        let NodeKind::Name(namespace) = self.kind(object).clone() else {
+            return false;
+        };
+        let dotted = format!("{namespace}.{field}");
+        if let Some(builtin) = Builtin::lookup(&dotted) {
+            self.resolutions[id.index()] = Resolution::Builtin(builtin);
+            return true;
+        }
+        if let Some(constant) = member_constant(&namespace, field) {
+            self.resolutions[id.index()] = match constant {
+                Const::Enum(tag) => Resolution::EnumConst(tag),
+                Const::Color(rgba) => Resolution::ColorConst(rgba),
+                // member_constant only produces enums and colors.
+                _ => Resolution::None,
+            };
+            return true;
+        }
+        if let Some((code, reason)) = rejection_of(&dotted) {
+            let span = self.span(id);
+            self.errors.push(PineError::new(code, span, reason));
+            return true;
+        }
+        // An unknown member of a known namespace is an unknown
+        // name; a member of a *variable* is an object method
+        // (resolved at eval against the handle's kind).
+        if matches!(
+            namespace.as_str(),
+            "ta" | "math" | "color" | "input" | "line" | "box" | "label"
+        ) {
+            self.unknown_name(&dotted, self.span(id));
+            return true;
+        }
+        false
+    }
+
+    /// A call: its arguments first, then the callee — `na(x)`, a builtin, a
+    /// rejected namespace, a name in scope, a method on a variable, or an
+    /// unknown name.
+    fn walk_call(
+        &mut self,
+        id: NodeId,
+        callee: NodeId,
+        args: &[Arg],
+        scope: &mut Scope,
+        ctx: &mut WalkCtx,
+    ) {
+        for arg in args {
+            self.walk_expr(arg.value, scope, ctx);
+        }
+        // `na(x)`: the callee lexes as the na keyword, not a name.
+        if matches!(self.kind(callee), NodeKind::Na) {
+            self.resolutions[callee.index()] = Resolution::Builtin(Builtin::NaCall);
+            return;
+        }
+        let Some(name) = self.callee_name(callee) else {
+            // Method-style call on an expression (`f(x).set_xy(...)`)
+            // resolves at eval; still walk the callee chain.
+            self.walk_expr(callee, scope, ctx);
+            return;
+        };
+        if let Some(builtin) = Builtin::lookup(&name) {
+            self.resolutions[callee.index()] = Resolution::Builtin(builtin);
+            self.builtin_call(id, builtin, args, ctx);
+            return;
+        }
+        if let Some((code, reason)) = rejection_of(&name) {
+            let span = self.span(id);
+            self.errors.push(PineError::new(code, span, reason));
+            return;
+        }
+        // A user function?
+        if let Some(resolution) = self.lookup_name(&name, scope, ctx) {
+            self.resolve_user_call(id, callee, &name, resolution, ctx);
+            return;
+        }
+        // `handle.set_xy(...)`: the dotted name is a method
+        // call when its base resolves to a variable — dispatch
+        // happens at eval against the handle's kind.
+        if let Some((base, _)) = name.split_once('.')
+            && matches!(
+                self.lookup_name(base, scope, ctx),
+                Some(Resolution::Global(_) | Resolution::Local(_))
+            )
+        {
+            self.walk_expr(callee, scope, ctx);
+            return;
+        }
+        self.unknown_name(&name, self.span(id));
+    }
+
+    /// A call whose callee names something in scope: a user function (with
+    /// the recursion check) or a value, which is not callable.
+    fn resolve_user_call(
+        &mut self,
+        id: NodeId,
+        callee: NodeId,
+        name: &str,
+        resolution: Resolution,
+        ctx: &WalkCtx,
+    ) {
+        if let Resolution::Function(index) = resolution {
+            self.resolutions[callee.index()] = resolution;
+            if ctx.function_stack.contains(&index) {
+                let span = self.span(id);
+                self.errors.push(PineError::new(
+                    ErrorCode::PineRecursion,
+                    span,
+                    format!(
+                        "recursive call of `{}` is not supported",
+                        self.function_names[index as usize]
+                    ),
+                ));
+            }
+            return;
+        }
+        // Calling a non-function value.
+        let span = self.span(id);
+        self.errors.push(PineError::new(
+            ErrorCode::PineType,
+            span,
+            format!("`{name}` is not callable"),
+        ));
     }
 
     /// Checks specific to one builtin call: call-site numbering, loop rule,

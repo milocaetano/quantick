@@ -19,5 +19,6 @@
 
 pub mod client;
 pub mod discovery;
+mod retry;
 #[cfg(test)]
 mod scratch;

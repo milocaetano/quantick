@@ -62,7 +62,7 @@ The adapter span changes from `indicator_manager.rs:99-890` to `99-887`; all oth
 
 ## Supported formatted-source grammar
 
-The dependency-free scanner walks all `.rs` files under `crates/app/src`, including ordinary unregistered sibling files and inline modules. It omits `tests/` and `target/` directories, and reuses `size::production_flags` exactly for top-level `#[cfg(test)]` items. It first lexes the complete file and checks that classifier markers/exclusion ends occur at valid lexical boundaries, so a marker or column-zero brace inside string data cannot silently suppress production scope. Indented test helpers stay conservatively counted as in the existing classifier.
+The dependency-free scanner walks all `.rs` files under `crates/app/src` and `crates/chart/src` (where `ChartState` lives), including ordinary unregistered sibling files and inline modules. It omits `tests/` and `target/` directories, and reuses `size::production_flags` exactly for top-level `#[cfg(test)]` items. It first lexes the complete file and checks that classifier markers/exclusion ends occur at valid lexical boundaries, so a marker or column-zero brace inside string data cannot silently suppress production scope. Indented test helpers stay conservatively counted as in the existing classifier.
 
 Lexing supports UTF-8, LF/CRLF, whitespace, line comments, nested block comments, ordinary/byte/C strings, raw strings with matching hash delimiters, character/byte-character literals, lifetime/label identifiers, and balanced parentheses, brackets and braces. Strings remain single tokens; comments and inter-token whitespace disappear from the shape. Delimiter and unterminated lexical input errors name the source path/line. This is not a full Rust expression/type checker.
 

@@ -7,6 +7,7 @@
 //! reuses process ids. The repository guard `crates/guards/src/scratch.rs`
 //! names each copy and refuses the call anywhere else.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,6 +47,29 @@ impl ScratchDir {
     pub(crate) fn path(&self) -> &Path {
         &self.0
     }
+}
+
+thread_local! {
+    /// The per-thread directories this thread's tests share, removed with
+    /// the thread: `libtest` runs each test on its own thread, so a path
+    /// minted here outlives no test and leaks past no run.
+    static OWNED: RefCell<Vec<(String, ScratchDir)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A directory shared by every call on this thread with the same `label`,
+/// for the store tests that have no value to hold a [`ScratchDir`] in.
+/// Gone when the thread ends.
+pub(crate) fn thread_dir(label: &str) -> PathBuf {
+    OWNED.with(|owned| {
+        let mut dirs = owned.borrow_mut();
+        if let Some((_, dir)) = dirs.iter().find(|(known, _)| known == label) {
+            return dir.path().to_path_buf();
+        }
+        let dir = ScratchDir::new(label);
+        let path = dir.path().to_path_buf();
+        dirs.push((label.to_owned(), dir));
+        path
+    })
 }
 
 impl std::ops::Deref for ScratchDir {

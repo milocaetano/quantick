@@ -1,7 +1,7 @@
 use super::*;
-use crate::indicator_worker::{IndicatorCommand, IndicatorWorker};
+use crate::indicator_worker::IndicatorWorker;
 use crate::orderflow_worker::{BookCommand, BookWorker};
-use crate::worker_progress::{Phase, WorkerProgress, tests::Gate};
+use crate::worker_progress::{Phase, WorkerProgress, test_support::Gate};
 use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -41,9 +41,10 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     // with one in-flight command each, then one queued Flush. Explicit time
     // advances 0 -> 10 (queue) -> 40 (observe) -> release. No frame or sleeps.
     let (mut app, _events, _commands, _book) = test_app();
-    let (mut other, _other_events, _other_commands, _other_book) = test_app();
-    let mut tab = other.tabs.remove(0);
-    tab.id = 42;
+    let (other, _other_events, _other_commands, _other_book) = test_app();
+    app.tabs = app.tabs.with_fixture_identity(41);
+    let mut tab = other.tabs.into_single_runtime();
+
     tab.time_panes
         .push(crate::pane::ChartPane::time(900, 60_000));
     let indicator_clock = Gate::new();
@@ -57,7 +58,9 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
         BookWorker::prepared_for_test("TESTUSDT", WorkerProgress::with_clock(book_clock.clone()));
     let (book_first_tx, book_first_rx) = channel();
     let (book_ack_tx, book_ack_rx) = channel();
-    app.tabs.push(tab);
+    let opening = app.tabs.plan_open();
+    app.tabs.append(opening, tab);
+    app.tabs.select(0);
     let flow_id = app.tabs[1].flow_pane.id;
     let indicator_id = app.tabs[1]
         .flow_pane
@@ -83,18 +86,18 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     book_clock.at(10);
     book.send(BookCommand::Flush(book_ack_tx));
     book_clock.at(40);
-    app.tabs[1].flow_pane.orderflow = Some(
+    app.tabs.runtime_mut(1).flow_pane.orderflow = Some(
         crate::orderflow_view::OrderflowView::with_worker_for_test("TESTUSDT", book),
     );
     let indicator_thread = tracing::subscriber::with_default(subscriber, || {
         let normal_at = app.health.last_summary + Duration::from_secs(2);
         app.maybe_emit_summary(normal_at, &ctx);
         let worker = &app.tabs[1].flow_pane.indicator_worker;
-        worker.send(IndicatorCommand::Flush(first_tx));
+        worker.send(crate::indicator_worker::WorkerCommand::Flush(first_tx));
         let thread = std::thread::spawn(run_indicator);
         indicator_hold.reached();
         indicator_clock.at(10);
-        worker.send(IndicatorCommand::Flush(ack_tx));
+        worker.send(crate::indicator_worker::WorkerCommand::Flush(ack_tx));
         indicator_clock.at(40);
         app.maybe_emit_summary(normal_at + Duration::from_secs(2), &ctx);
         indicator_hold.release();

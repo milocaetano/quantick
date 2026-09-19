@@ -13,7 +13,7 @@
 //! across the canvas, which is a mode a trader arms to line two things up; this
 //! is chrome that costs nothing to read and never crosses market data. The two
 //! coexist by division of labour: the crosshair owns the cross, this owns the
-//! axis tags, and [`ChartPane::draw_pointer_compass`] hands the price half over
+//! axis tags, and the pointer render pass hands the price half over
 //! while the crosshair is armed so one price can never be tagged twice.
 //!
 //! Two switches, one per axis, because the two answers are wanted separately:
@@ -32,7 +32,6 @@
 //! two different bars.
 //!
 //! [`ChartLayer`]: crate::chart_layers::ChartLayer
-//! [`ChartPane::draw_pointer_compass`]: crate::pane::ChartPane::draw_pointer_compass
 
 use eframe::egui;
 use smallvec::SmallVec;
@@ -168,7 +167,7 @@ pub(crate) struct PointerBar {
 /// Both halves describe the world and neither is gated on a switch: a mark
 /// being off is not a statement about what is under the pointer, and the
 /// control plane's cursor scope reads the same resolver. The switches decide
-/// what is *painted*, in `ChartPane::pointer_compass`.
+/// what is *painted*, in `PointerCompass::resolve`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PointerReadout {
     /// Where the pointer is, in screen pixels.
@@ -310,6 +309,43 @@ pub(crate) fn paint_time_mark(
         theme::TAG_BG,
     );
     painter.galley(text_pos, galley, theme::TEXT_PRIMARY);
+}
+
+/// What the pointer's compass will draw this frame, and where.
+///
+/// One decision, read twice: the axes consult it before labelling themselves
+/// so they can leave the coordinate alone, and the paint pass draws exactly
+/// what it says.
+pub(crate) struct PointerCompass {
+    pub readout: PointerReadout,
+    /// The price half is drawn — its layer is on, the pointer is over the
+    /// price band, and the crosshair is not already writing one.
+    pub price: bool,
+    /// The time half is drawn — its layer is on and a bar is under the
+    /// pointer.
+    pub time: bool,
+}
+
+impl PointerCompass {
+    pub(crate) fn resolve(
+        pointer: Option<egui::Pos2>,
+        chart_rect: egui::Rect,
+        scale: &PriceScale,
+        bar: Option<PointerBar>,
+        price_on: bool,
+        time_on: bool,
+        price_owned: bool,
+    ) -> Option<Self> {
+        if !price_on && !time_on {
+            return None;
+        }
+        let readout = readout(pointer, chart_rect, scale, bar)?;
+        Some(Self {
+            price: price_on && !price_owned,
+            time: time_on && readout.bar.is_some(),
+            readout,
+        })
+    }
 }
 
 #[cfg(test)]

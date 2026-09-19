@@ -152,12 +152,12 @@ pub(crate) fn draw(
     views: &[IndicatorView],
     preview_slot: Option<SlotId>,
     collapsed: bool,
-) -> Vec<LegendAction> {
+) -> (Vec<LegendAction>, Option<egui::Rect>) {
     let mut actions = Vec::new();
     if views.is_empty() {
-        return actions;
+        return (actions, None);
     }
-    egui::Area::new(egui::Id::new(("indicator_legend", pane_id)))
+    let drawn = egui::Area::new(egui::Id::new(("indicator_legend", pane_id)))
         .fixed_pos(chart_rect.left_top() + egui::vec2(LEGEND_MARGIN_PX, LEGEND_MARGIN_PX))
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
@@ -210,9 +210,11 @@ pub(crate) fn draw(
                             );
                         }
                     }
-                });
+                })
+                .response
+                .rect
         });
-    actions
+    (actions, Some(drawn.inner))
 }
 
 /// The collapsed legend's one row: a disclosure that opens it, and the count
@@ -584,7 +586,7 @@ mod tests {
         let mut text = String::new();
         for _ in 0..2 {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
-                let actions = draw(ctx, 0, chart, views.all(), None, collapsed);
+                let (actions, _) = draw(ctx, 0, chart, views.all(), None, collapsed);
                 assert!(actions.is_empty(), "no clicks, no actions");
             });
             text.clear();
@@ -625,7 +627,7 @@ mod tests {
                 let mut views = IndicatorViews::new();
                 for row in 0..rows {
                     let slot = views.allocate_slot("test.indicator");
-                    views.apply(IndicatorEvent::rebuilt(
+                    views.apply(crate::indicator_worker::event_fixture::rebuilt(
                         slot,
                         descriptor(&format!("EMA({row}, close)")),
                         vec![vec![101.5, 1_234.0]],
@@ -674,7 +676,7 @@ mod tests {
     fn a_folded_legend_still_states_a_broken_indicator() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("zigzag.pine"),
                 vec![vec![1.0]],
@@ -725,14 +727,14 @@ mod tests {
         let mut views = IndicatorViews::new();
         for name in ["EMA(9, close)", "ATR(14)"] {
             let slot = views.allocate_slot("test.indicator");
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor(name),
                 vec![vec![101.5, 1_234.0]],
             ));
         }
         let broken = views.allocate_slot("test.indicator");
-        views.apply(IndicatorEvent::rebuilt(
+        views.apply(crate::indicator_worker::event_fixture::rebuilt(
             broken,
             descriptor("zigzag.pine"),
             vec![vec![1.0]],
@@ -796,7 +798,7 @@ mod tests {
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
 
         let healthy = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -830,7 +832,7 @@ mod tests {
         // Same indicator, now broken and previewing: it keeps its own row, so
         // the puck has nothing of its own to announce.
         let broken = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5]],
@@ -862,7 +864,7 @@ mod tests {
     fn the_chevron_asks_to_fold_and_to_unfold() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -905,7 +907,7 @@ mod tests {
                     modifiers: egui::Modifiers::default(),
                 });
                 let _ = ctx.run(input, |ctx| {
-                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed));
+                    actions.extend(draw(ctx, 0, chart, views.all(), None, collapsed).0);
                 });
             }
             assert!(
@@ -927,7 +929,7 @@ mod tests {
     fn double_clicking_anywhere_on_a_row_opens_its_settings() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -963,7 +965,7 @@ mod tests {
                 modifiers: egui::Modifiers::default(),
             });
             let _ = ctx.run(input, |ctx| {
-                actions.extend(draw(ctx, 0, chart, views.all(), None, false));
+                actions.extend(draw(ctx, 0, chart, views.all(), None, false).0);
             });
         }
         assert!(
@@ -980,7 +982,7 @@ mod tests {
     fn the_legend_names_the_indicator_and_its_last_value() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("EMA(9, close)"),
                 vec![vec![101.5, 1_234.0]],
@@ -997,7 +999,7 @@ mod tests {
     fn an_errored_indicator_states_its_error_on_the_chart() {
         let ctx = egui::Context::default();
         let views = views_with(|views, slot| {
-            views.apply(IndicatorEvent::rebuilt(
+            views.apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor("zigzag.pine"),
                 vec![vec![1.0]],

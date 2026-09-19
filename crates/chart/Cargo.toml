@@ -1,0 +1,22 @@
+[package]
+name = "quantick-chart"
+description = "Headless chart model: bar state over the engine, price geometry, viewport, style and the live strip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-chart-interaction = { path = "../chart-interaction" }
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-orderflow = { path = "../orderflow" }
+rust_decimal = { workspace = true }
+
+[dev-dependencies]
+# The live strip's tests speak book sides; production reaches the book only
+# through `orderflow`'s projections.
+quantick-orderbook = { path = "../orderbook" }
+
+[lints]
+workspace = true

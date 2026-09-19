@@ -14,152 +14,11 @@ use super::{HISTORY_NOTE_LINGER, HistoryNote, Tab};
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::loading::LoadingTask;
 use quantick_feed::FeedCommand;
+pub use quantick_feed::candles::OlderCandles;
+use quantick_feed::candles::{merge_older_candles, trim_borrowed_to_seam, trim_to_seam};
 use quantick_feed::history_reach::{
     self, Campaign, CampaignEnd, CampaignStep, EMPTY_PAGE_NOTICE, REQUEST_REFUSED_NOTICE,
 };
-
-/// Put an older slice of venue candles in front of the ones already held,
-/// keeping the base ascending by `open_time` and free of duplicates.
-///
-/// The fast path is the one progressive loading actually produces: the slice
-/// is strictly older than everything held, so it is spliced in front and the
-/// order is already right. The merge below exists for the case the port
-/// permits but no provider aims for — a window that overlaps what is held,
-/// through a venue re-reporting a bucket at a boundary. There the candle
-/// already on screen wins: it is the one the trader has been reading, and a
-/// bar that redraws itself for no visible reason is worse than a bar fetched
-/// a second apart from an identical twin.
-fn merge_older_candles(base: &mut Vec<quantick_engine::Bar>, older: Vec<quantick_engine::Bar>) {
-    let disjoint = match (older.last(), base.first()) {
-        (Some(newest_incoming), Some(oldest_held)) => {
-            newest_incoming.open_time < oldest_held.open_time
-        }
-        _ => true,
-    };
-    if disjoint {
-        base.splice(0..0, older);
-        return;
-    }
-    let mut merged: std::collections::BTreeMap<i64, quantick_engine::Bar> =
-        older.into_iter().map(|bar| (bar.open_time, bar)).collect();
-    for bar in base.drain(..) {
-        merged.insert(bar.open_time, bar);
-    }
-    *base = merged.into_values().collect();
-}
-
-/// Drop venue bars that overlap the trade-derived series.
-///
-/// The two series meet at a seam, and the composed chart is only searchable if
-/// `open_time` never decreases across it. A venue candle covering the same
-/// window as the first engine bar would sit *after* it in time while sitting
-/// before it in slot order, so every venue bucket from that one on is dropped:
-/// what the app cut from prints is the better record of that window anyway.
-///
-/// With no engine bars yet the whole prefix stands — there is nothing to
-/// overlap.
-fn trim_to_seam(
-    mut folded: Vec<quantick_engine::Bar>,
-    first_engine_bar: Option<&quantick_engine::Bar>,
-    partial: Option<&quantick_engine::Bar>,
-    interval_ms: i64,
-) -> Vec<quantick_engine::Bar> {
-    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
-        return folded;
-    };
-    folded.retain(|bar| bar.open_time < seam);
-    folded
-}
-
-/// The same trim over a block the caller only has on loan.
-///
-/// Two functions rather than one taking a `Cow`, because they pay for
-/// different things and both paths are on the diet. The owning one above trims
-/// a vector `resample::fold` just built and is about to drop — a `retain` there
-/// copies nothing at all. This one is handed the venue's whole base, which the
-/// tab keeps, so it copies out only the bars that survive rather than cloning a
-/// week of minutes in order to throw most of them away.
-fn trim_borrowed_to_seam(
-    base: &[quantick_engine::Bar],
-    first_engine_bar: Option<&quantick_engine::Bar>,
-    partial: Option<&quantick_engine::Bar>,
-    interval_ms: i64,
-) -> Vec<quantick_engine::Bar> {
-    let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
-        return base.to_vec();
-    };
-    base.iter()
-        .filter(|bar| bar.open_time < seam)
-        .cloned()
-        .collect()
-}
-
-/// Where the venue's candles have to stop for the pane's own bars to begin, or
-/// `None` when there are no bars yet and the whole block stands.
-///
-/// Buckets, not stamps. A venue candle's `open_time` is its bucket start; an
-/// engine bar's is its *first trade*, which sits strictly inside the bucket.
-/// Comparing the two raw would keep the venue candle covering the same window
-/// and put a later-closing bar in an earlier slot.
-///
-/// One owner for the rule, so the two trims above cannot drift apart about
-/// where the seam is.
-fn seam_bucket_ms(
-    first_engine_bar: Option<&quantick_engine::Bar>,
-    partial: Option<&quantick_engine::Bar>,
-    interval_ms: i64,
-) -> Option<i64> {
-    let first = first_engine_bar.or(partial)?;
-    Some(crate::resample::bucket_start(first.open_time, interval_ms))
-}
-
-/// Whether the chart can reach further back for venue candles, and when it
-/// cannot, why — see [`Tab::older_candles`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OlderCandles {
-    /// Another span can be asked for.
-    Available,
-    /// This feed publishes no candle history at all.
-    FeedServesNone,
-    /// Nothing on this chart is cut by time, so no venue candle was ever
-    /// wanted — the prefix follows what a pane *shows*, not which pane it is.
-    NoChartCutByTime,
-    /// A request is out; the answer is what to wait for.
-    Fetching,
-    /// The opening span has not landed yet. There is nothing to reach back
-    /// *from* until it does.
-    NotArrivedYet,
-    /// A reach-back came back complete with nothing older in it. That is the
-    /// venue's record, or the provider's, and it is the one reason here that
-    /// had to be learned by asking.
-    RecordStartsHere,
-}
-
-impl OlderCandles {
-    /// Whether the control is live.
-    #[must_use]
-    pub const fn is_available(self) -> bool {
-        matches!(self, Self::Available)
-    }
-
-    /// What to tell the trader hovering a control this state disabled.
-    /// `None` when it is not disabled.
-    #[must_use]
-    pub const fn why_not(self) -> Option<&'static str> {
-        match self {
-            Self::Available => None,
-            Self::FeedServesNone => Some("this feed publishes no candle history"),
-            Self::NoChartCutByTime => Some(
-                "no chart here is cut by time, so there are no venue candles \
-                 to extend — switch on the venue lead-in to put them in front \
-                 of a chart cut by trades",
-            ),
-            Self::Fetching => Some("a request is already out; this is what it is fetching"),
-            Self::NotArrivedYet => Some("the first span has not arrived yet"),
-            Self::RecordStartsHere => Some("this is as far back as the venue's record goes"),
-        }
-    }
-}
 
 impl Tab {
     /// Whether any pane on this tab cuts bars by a foldable time interval —
@@ -193,7 +52,7 @@ impl Tab {
     /// run-up it was downloaded to carry. One request at a time, and a base
     /// already held is not re-fetched: changing a pane's interval is a
     /// different fold over the same bars.
-    pub(super) fn request_ohlcv_history(&mut self, config: &AppConfig) {
+    pub(super) fn request_ohlcv_history(&mut self, tab_id: u64, config: &AppConfig) {
         let progressive = self.progressive_history;
         // Not gated on the source. A recording answers this from the context
         // file downloaded beside it — the run-up it exists to carry — and the
@@ -226,7 +85,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_REQUESTED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     slice_ms = slice_ms.unwrap_or(0),
@@ -240,7 +99,7 @@ impl Tab {
             Err(mpsc::error::TrySendError::Full(_)) => tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_REQUEST_BACKPRESSURE",
-                tab = self.id,
+                tab = tab_id,
                 action = "retry_next_frame",
                 "candle-history request not queued; channel full"
             ),
@@ -248,7 +107,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_REQUEST_CHANNEL_CLOSED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 action = "no_history_until_feed_restart",
                 "candle-history request cannot be sent; the feed is gone"
@@ -260,7 +119,7 @@ impl Tab {
     ///
     /// Called every frame: the check is two bools and an `Option` when there
     /// is nothing to do.
-    pub fn poll_ohlcv_capability(&mut self, config: &AppConfig) {
+    pub fn poll_ohlcv_capability(&mut self, tab_id: u64, config: &AppConfig) {
         let capabilities = self.capabilities(config);
         let capable = capabilities.ohlcv_history;
         let rising = capable && !self.ohlcv_capable;
@@ -298,7 +157,7 @@ impl Tab {
         // request is out or answered, and asking here is what actually retries
         // a request the command channel refused. The feed ignores a duplicate
         // while one is in flight, and `ohlcv_pending` means we never send one.
-        self.request_ohlcv_history(config);
+        self.request_ohlcv_history(tab_id, config);
     }
 
     /// Take a candle-history reply, and put it in front of the time pane.
@@ -319,6 +178,7 @@ impl Tab {
     /// bar-anchored drawing by the same amount the prefix grew).
     pub(super) fn take_ohlcv_history(
         &mut self,
+        tab_id: u64,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: quantick_feed::OhlcvSlice,
@@ -337,7 +197,7 @@ impl Tab {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_SLICE_DISCARDED",
-                tab = self.id,
+                tab = tab_id,
                 bars = bars.len(),
                 last,
                 action = "await_fresh_request",
@@ -362,7 +222,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_REFUSED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 action = "await_the_running_fetch",
                 "the provider was already fetching; this request was not served"
@@ -383,7 +243,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_INCOMPLETE",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 interval_ms,
                 bars = bars.len(),
@@ -396,7 +256,7 @@ impl Tab {
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "OHLCV_RECEIVED",
-            tab = self.id,
+            tab = tab_id,
             symbol = %self.symbol,
             interval_ms,
             bars = bars.len(),
@@ -426,7 +286,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "OHLCV_OLDER_SETTLED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 was_oldest_ms = was_oldest,
                 now_oldest_ms = now_oldest.unwrap_or(0),
@@ -505,8 +365,10 @@ impl Tab {
     /// The pending flags are set first because that is what a request having
     /// gone out looks like, and an unclosed run is precisely the frame the
     /// `partial` variant exists to reach.
+    #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
     pub fn deliver_ohlcv_slice(
         &mut self,
+        tab_id: u64,
         interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: quantick_feed::OhlcvSlice,
@@ -515,7 +377,7 @@ impl Tab {
             self.ohlcv_pending = true;
             self.loading.begin(LoadingTask::VenueHistory);
         }
-        self.take_ohlcv_history(interval_ms, bars, slice);
+        self.take_ohlcv_history(tab_id, interval_ms, bars, slice);
     }
 
     /// How many venue candles this tab holds, at the base interval. Zero on a
@@ -589,13 +451,17 @@ impl Tab {
     ///
     /// Reports whether a request actually went out, so a caller can tell "the
     /// venue is fetching" from "there was nothing to ask for".
-    pub fn request_older_ohlcv_history(&mut self, capabilities: FeedCapabilities) -> bool {
+    pub fn request_older_ohlcv_history(
+        &mut self,
+        tab_id: u64,
+        capabilities: FeedCapabilities,
+    ) -> bool {
         let oldest = self.oldest_venue_candle_ms();
         if !self.can_load_older_candles(capabilities) || oldest.is_none() {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "OHLCV_OLDER_DECLINED",
-                tab = self.id,
+                tab = tab_id,
                 pending = self.ohlcv_pending,
                 exhausted = self.ohlcv_older_exhausted,
                 held = oldest.is_some(),
@@ -628,7 +494,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_OLDER_REQUESTED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
                     before_ms,
@@ -645,7 +511,7 @@ impl Tab {
                 tracing::debug!(
                     target: "quantick::app",
                     event_code = "OHLCV_OLDER_BACKPRESSURE",
-                    tab = self.id,
+                    tab = tab_id,
                     action = "retry_on_next_click",
                     "older-candle request not queued; channel full"
                 );
@@ -656,7 +522,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "OHLCV_OLDER_CHANNEL_CLOSED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     action = "no_history_until_feed_restart",
                     "older-candle request cannot be sent; the feed is gone"
@@ -729,7 +595,7 @@ impl Tab {
     /// page this is the single request it always was, and with a longer reach
     /// it is the first of a run each reply continues
     /// ([`Self::settle_history_page`]).
-    pub fn request_older_history(&mut self, config: &AppConfig) {
+    pub fn request_older_history(&mut self, tab_id: u64, config: &AppConfig) {
         if self.campaign.is_some() {
             // A run already has its one permitted request out, and the reply
             // is what sends the next. Pressing again would raise a second wait
@@ -738,7 +604,7 @@ impl Tab {
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "HISTORY_REACH_ALREADY_RUNNING",
-                tab = self.id,
+                tab = tab_id,
                 action = "ignore_press",
                 "a reach is already paging; this press changes nothing"
             );
@@ -837,7 +703,7 @@ impl Tab {
     /// Rate: **rare** — once per history reply. The scan inside
     /// [`Campaign::advance`] stops at the anchor, so its cost is the page that
     /// arrived rather than the whole retained tape.
-    pub(super) fn settle_history_page(&mut self, page_len: usize) {
+    pub(super) fn settle_history_page(&mut self, tab_id: u64, page_len: usize) {
         let Some(mut campaign) = self.campaign.take() else {
             if page_len == 0 {
                 self.raise_history_note(self.empty_page_verdict());
@@ -854,7 +720,7 @@ impl Tab {
                 target: "quantick::app",
                 schema_version = 1_u8,
                 event_code = "HISTORY_REACH_SETTLED",
-                tab = self.id,
+                tab = tab_id,
                 symbol = %self.symbol,
                 pages = campaign.pages_spent(),
                 anchor_ms = campaign.anchor_ms(),
@@ -881,7 +747,7 @@ impl Tab {
                         target: "quantick::app",
                         schema_version = 1_u8,
                         event_code = "HISTORY_REACH_STALLED",
-                        tab = self.id,
+                        tab = tab_id,
                         symbol = %self.symbol,
                         pages = campaign.pages_spent(),
                         action = "stop_and_wait_for_another_press",
@@ -895,7 +761,7 @@ impl Tab {
                     target: "quantick::app",
                     schema_version = 1_u8,
                     event_code = "HISTORY_REACH_SETTLED",
-                    tab = self.id,
+                    tab = tab_id,
                     symbol = %self.symbol,
                     pages = campaign.pages_spent(),
                     anchor_ms = campaign.anchor_ms(),

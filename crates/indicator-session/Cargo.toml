@@ -1,0 +1,18 @@
+[package]
+name = "quantick-indicator-session"
+description = "Headless indicator source, batch and incremental publication session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-pine = { path = "../pine" }
+
+[dev-dependencies]
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true

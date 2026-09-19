@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "LayerSnapshot": {
+      "properties": {
+        "blocked_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "effective": {
+          "description": "Visibility eligible under current layer policy; no pixel geometry is claimed.",
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "persistence": {
+          "type": "string"
+        },
+        "requested": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "scope",
+        "persistence",
+        "requested",
+        "effective"
+      ],
+      "type": "object"
+    },
+    "PaneLayersSnapshot": {
+      "properties": {
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/LayerSnapshot"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "pane_id": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "tab_id": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "tab_id",
+        "pane_id",
+        "layers"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "omitted_panes": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "panes": {
+      "items": {
+        "$ref": "#/$defs/PaneLayersSnapshot"
+      },
+      "maxItems": 64,
+      "type": "array"
+    }
+  },
+  "required": [
+    "panes",
+    "omitted_panes"
+  ],
+  "title": "LayersSnapshot",
+  "type": "object"
+}

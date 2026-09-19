@@ -11,122 +11,40 @@
 //! Rate class: a human or an agent asking for attention. Never per trade,
 //! never per frame.
 
-use std::{
-    collections::BTreeSet,
-    time::{Duration, Instant},
-};
+use crate::app::AlertsPort;
+pub(crate) use quantick_control_schema::notify::*;
+
+use std::time::{Duration, Instant};
 
 use quantick_control::{
     error::{ControlError, codes},
-    id::{
-        CapabilityId, ConfirmationClassId, CostClassId, EffectId, EventKind, ModuleId,
-        PermissionId, RiskFlagId,
-    },
+    id::{EventKind, ModuleId},
     limits::{CONTROL_NOTIFICATION_BURST, CONTROL_NOTIFICATION_RATE_PER_MINUTE},
-    registry::{
-        Availability, CapabilityDescriptor, EffectConstraints, EffectPersistence, EffectPolicy,
-        ExpectedCost, IdempotencyPolicy, McpHintFloor, RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
+    registry::RegistryError,
     wire::ActorContext,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::metrics;
 
 use super::{
-    actions::{ANNOTATE_PERMISSION_ID, ActionRegistry},
+    actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
     types::known_error,
 };
 
 /// The module the notification capabilities belong to.
-pub(crate) const NOTIFY_MODULE_ID: &str = "notify";
 /// Popup and toast: an interruption the trader can read and dismiss.
-pub(crate) const NOTIFY_PERMISSION_ID: &str = "annotate.notification";
 /// Sound: off unless the trader says otherwise, because it reaches them even
 /// when they are not looking at the window.
-pub(crate) const NOTIFY_SOUND_PERMISSION_ID: &str = "annotate.sound";
 /// The effect every notification carries. Separate from `annotate` because
 /// nothing here is reversible.
-pub(crate) const NOTIFY_EFFECT_ID: &str = "notify";
 /// Declared by every notification: it takes attention that was somewhere else.
-pub(crate) const USER_INTERRUPT_RISK_FLAG: &str = "user_interrupt";
-/// Declared by the one that also makes noise.
-pub(crate) const AUDIBLE_OUTPUT_RISK_FLAG: &str = "audible_output";
-
-pub(crate) const POPUP_CAPABILITY_ID: &str = "notify.popup";
-pub(crate) const TOAST_CAPABILITY_ID: &str = "notify.toast";
-pub(crate) const SOUND_CAPABILITY_ID: &str = "notify.sound";
-
-pub(crate) const NOTIFICATION_EVENT_KIND: &str = "notify.raised";
-
-const CAPABILITY_VERSION: u32 = 1;
-const NO_CONFIRMATION_ID: &str = "none";
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
-
-/// The longest notification text. A popup is a sentence the trader reads
-/// mid-session, not a report; the report goes in a snapshot.
-pub(crate) const NOTIFICATION_TEXT_MAX_BYTES: usize = 240;
-/// The longest popup title.
-pub(crate) const NOTIFICATION_TITLE_MAX_BYTES: usize = 80;
-
-/// What a notification says. The actor is not part of it: the interface
-/// stamps who asked, so a client cannot sign a popup as the platform.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct NotifyInput {
-    #[schemars(length(min = 1, max = NOTIFICATION_TEXT_MAX_BYTES))]
-    pub message: String,
-    /// A popup's heading. Ignored by the toast and the sound.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(min = 1, max = NOTIFICATION_TITLE_MAX_BYTES))]
-    pub title: Option<String>,
-}
-
-/// What a notification returns: that it was raised, and what the trader will
-/// see attributed to whom.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct NotifyResult {
-    pub channel: String,
-    pub raised: bool,
-    /// What the interface shows, including the attribution it added.
-    pub displayed_text: String,
-    /// Present when the channel cannot reach the trader in this build; the
-    /// call still says so rather than pretending it was heard.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unavailable_reason: Option<String>,
-}
-
-/// The trader-visible surface a notification arrives on.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NotifyChannel {
-    Popup,
-    Toast,
-    Sound,
-}
-
-impl NotifyChannel {
-    fn id(self) -> &'static str {
-        match self {
-            Self::Popup => "popup",
-            Self::Toast => "toast",
-            Self::Sound => "sound",
-        }
-    }
-}
-
-/// A popup waiting to be read, owned by the application and drawn by it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AgentPopup {
-    pub title: String,
-    pub message: String,
-    /// Who asked for it, shown in the window's own chrome.
-    pub author: String,
-}
+pub(crate) use quantick_control_host::authority::{
+    NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID,
+};
 
 /// Per-client notification budget: stricter than the ordinary request limit
 /// because the cost of exceeding it is a trader who cannot work, not a queue
@@ -181,42 +99,6 @@ impl NotificationLimiter {
     }
 }
 
-/// The effect policy notifications answer to. Registered beside `annotate`
-/// and `observe`; nothing else uses it.
-pub(crate) fn effect_policy(annotator: &quantick_control::id::ProfileId) -> EffectPolicy {
-    EffectPolicy {
-        id: EffectId::new(NOTIFY_EFFECT_ID).expect("static effect ID is valid"),
-        permission_floor: PermissionId::new(ANNOTATE_PERMISSION_ID)
-            .expect("static permission ID is valid"),
-        profile_ceilings: BTreeSet::from([annotator.clone()]),
-        confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        risk_reducing_confirmation_class: None,
-        mcp_hint_floor: McpHintFloor {
-            read_only: false,
-            destructive: false,
-            idempotent: false,
-            open_world: false,
-        },
-        // Every capability under this policy must say that it interrupts.
-        required_risk_flags: BTreeSet::from([
-            RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid")
-        ]),
-        constraints: EffectConstraints {
-            required_read_only: Some(false),
-            allows_destructive: false,
-            durable_requires_reversible: true,
-            // A notification is transient and cannot be taken back, so the
-            // contract demands the flag that says so.
-            irreversible_transient_risk: Some(
-                RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid"),
-            ),
-            allows_risk_reducing: false,
-        },
-    }
-}
-
-/// Dock the notification actions.
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(
         notify_descriptor(
@@ -251,63 +133,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn notify_descriptor(
-    id: &str,
-    title: &str,
-    description: &str,
-    scope: &str,
-    audible: bool,
-) -> CapabilityDescriptor {
-    let mut risk_flags = BTreeSet::from([
-        RiskFlagId::new(USER_INTERRUPT_RISK_FLAG).expect("static risk flag is valid")
-    ]);
-    if audible {
-        risk_flags
-            .insert(RiskFlagId::new(AUDIBLE_OUTPUT_RISK_FLAG).expect("static risk flag is valid"));
-    }
-    CapabilityDescriptor {
-        id: CapabilityId::new(id).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: title.to_owned(),
-        description: description.to_owned(),
-        module: ModuleId::new(NOTIFY_MODULE_ID).expect("static module ID is valid"),
-        input_schema: generated_schema::<NotifyInput>(),
-        output_schema: generated_schema::<NotifyResult>(),
-        examples: Vec::new(),
-        effect: EffectId::new(NOTIFY_EFFECT_ID).expect("static effect ID is valid"),
-        risk_flags,
-        read_only: false,
-        idempotency: IdempotencyPolicy::Forbidden,
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "A notification changes no state a later call depends on; a stale caller interrupts once and is attributed."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        // Transient and irreversible: it has already been seen or heard.
-        persistence: EffectPersistence::Transient,
-        reversible: false,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: [ANNOTATE_PERMISSION_ID, scope]
-            .into_iter()
-            .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
-            .collect(),
-        preconditions: Vec::new(),
-        confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
-}
-
-fn raise_popup(
-    app: &mut QuantickApp,
+fn raise_popup<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -315,8 +142,8 @@ fn raise_popup(
     raise(app, access, actor, input, NotifyChannel::Popup)
 }
 
-fn raise_toast(
-    app: &mut QuantickApp,
+fn raise_toast<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -324,8 +151,8 @@ fn raise_toast(
     raise(app, access, actor, input, NotifyChannel::Toast)
 }
 
-fn sound_alert(
-    app: &mut QuantickApp,
+fn sound_alert<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -334,8 +161,8 @@ fn sound_alert(
 }
 
 /// One notification path: budget first, then the surface, then the journal.
-fn raise(
-    app: &mut QuantickApp,
+fn raise<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -367,7 +194,7 @@ fn raise(
     let displayed_text = format!("{} — {author}", input.message);
     let unavailable_reason = match channel {
         NotifyChannel::Popup => {
-            app.show_agent_popup(AgentPopup {
+            app.alerts().show_popup(AgentPopup {
                 title: input
                     .title
                     .clone()
@@ -378,10 +205,10 @@ fn raise(
             None
         }
         NotifyChannel::Toast => {
-            app.show_agent_toast(displayed_text.clone());
+            app.alerts().show_toast(displayed_text.clone());
             None
         }
-        NotifyChannel::Sound => app.sound_agent_alert(),
+        NotifyChannel::Sound => app.alerts().sound_alert(),
     };
 
     let event_actor = EventActor {
@@ -409,4 +236,46 @@ fn raise(
         unavailable_reason,
     })
     .map_err(|error| ControlError::invalid_request(format!("notification result: {error}")))
+}
+
+/// The notify handlers driven through the alerts family of a fake window,
+/// with no application behind it.
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::app::control_host::tests::fake::FakeWindow;
+
+    #[test]
+    fn a_toast_lands_on_the_fake_windows_lane_with_its_author() {
+        let mut window = FakeWindow::new();
+        let result = raise_toast(
+            &mut window,
+            &mut ControlAccess::new(),
+            &FakeWindow::assistant(),
+            &json!({ "message": "hello" }),
+        )
+        .expect("a toast within budget is raised");
+        assert_eq!(result["raised"], true);
+        assert_eq!(
+            window.toast.message(),
+            Some("hello — fake assistant (agent)")
+        );
+    }
+
+    #[test]
+    fn every_refused_sound_is_reported_as_not_raised() {
+        let mut window = FakeWindow::with_refusing_speaker("no audio output device");
+        let mut access = ControlAccess::new();
+        for call in 0..2 {
+            let result = sound_alert(
+                &mut window,
+                &mut access,
+                &FakeWindow::assistant(),
+                &json!({ "message": "listen" }),
+            )
+            .expect("a refused sound is an answer, not an error");
+            assert_eq!(result["raised"], false, "call {call}");
+            assert_eq!(result["unavailable_reason"], "no audio output device");
+        }
+    }
 }

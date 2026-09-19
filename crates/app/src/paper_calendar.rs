@@ -29,9 +29,9 @@ use crate::timezone::TzOffset;
 // The civil-date law itself moved into `quantick-civil`, where the
 // report cuts on it and the journal names its files by it. Re-exported here so
 // the ledger, the report window and the harness hooks keep asking this module.
-pub(crate) use quantick_civil::{
-    CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, parse_iso_date, weekday_abbr,
-};
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) use quantick_civil::parse_iso_date;
+pub(crate) use quantick_civil::{CivilDate, DateRange, WEEK_DAYS, fmt_offset_minute, weekday_abbr};
 
 /// Rows a month grid always paints. Six is the worst case (a 31-day month
 /// starting on a Sunday), and painting a fixed six keeps the calendar from
@@ -217,6 +217,7 @@ pub(crate) struct CalendarState {
 /// picked, `YYYY-MM-DD` opens it on one day, and `YYYY-MM-DD..YYYY-MM-DD`
 /// on a span. A spec that is none of those is refused rather than guessed
 /// — a typo must reach no calendar, never the wrong month.
+#[cfg(any(feature = "scenario-harness", test))]
 pub(crate) fn parse_selection(spec: &str) -> Option<DaySelection> {
     let spec = spec.trim();
     if spec == "1" {

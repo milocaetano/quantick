@@ -4,6 +4,30 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
+    "FeedIntegritySnapshot": {
+      "description": "Counts source messages, never estimates how many executed trades were lost.",
+      "properties": {
+        "anomalies": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "missing_messages": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "non_monotonic": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "unknown_loss": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "anomalies",
+        "missing_messages",
+        "unknown_loss",
+        "non_monotonic"
+      ],
+      "type": "object"
+    },
     "FrameHealthSnapshot": {
       "properties": {
         "cpu_average_ms": {
@@ -349,6 +373,17 @@
           },
           "type": "array"
         },
+        "feed_integrity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedIntegritySnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cumulative source diagnostics, independent of latency and gap eviction."
+        },
         "panes": {
           "items": {
             "$ref": "#/$defs/PaneHealthSnapshot"
@@ -451,6 +486,16 @@
   "properties": {
     "frame": {
       "$ref": "#/$defs/FrameHealthSnapshot"
+    },
+    "saves_off_unread_hooks": {
+      "description": "Present when this session writes no store (decision DS7): the\n`QUANTICK_*` names set at launch that this build does not read.",
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
     },
     "tabs": {
       "items": {

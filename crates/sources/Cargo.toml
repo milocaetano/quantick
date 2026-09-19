@@ -1,0 +1,19 @@
+[package]
+name = "quantick-sources"
+description = "Headless source vocabulary: the feed catalogue's provider settings and capabilities, and how far a history reach goes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-engine = { path = "../engine" }
+# The provider vocabulary and the MetaTrader listener settings are
+# deserialized from the cockpit's TOML config.
+serde = { workspace = true }
+
+[dev-dependencies]
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true

@@ -28,6 +28,15 @@ pub(super) struct LayoutRename {
 /// none of it is chart state and none of it outlives the frame that is
 /// drawing, except to reach the workspace on the frame after.
 pub(super) struct ChromeState {
+    /// Every scenario hook an agent drives this window by, captured once at
+    /// launch and named. See [`crate::harness`] for what belongs here and why
+    /// the trunk asks it rather than holding its flags. Exists only with the
+    /// scenario harness (or under test).
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) harness: crate::harness::Harness,
+    /// Ordinary startup window command, consumed on the first frame.
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(super) window_startup: crate::launch::window::WindowStartupState,
     /// Saved override for recording deal counters; `None` follows feed config.
     pub(super) record_deals: Option<bool>,
     /// Where the offline chip was drawn, or `None` when it was not.
@@ -82,36 +91,9 @@ pub(super) struct ChromeState {
     /// to open, and a hook must photograph that rather than force it.
     pub(super) history_menu_rect: Option<egui::Rect>,
 
-    /// The window's inner size as of the last frame, in points — captured here
-    /// because the size a workspace records is the one the user last saw, and
-    /// by exit time the viewport has already been asked to close.
-    pub(super) window_size: Option<[f32; 2]>,
-
     /// The window this app is drawing into, kept so the health summary can
     /// report the client area the platform believes it has — see
     /// [`crate::window_scale`] for why that number is worth logging, and for
     /// the defect it was measured chasing.
     pub(super) surface: Option<window_scale::SurfaceProbe>,
-
-    /// The popup's position changed by hand this frame and the workspace has
-    /// not been told yet.
-    ///
-    /// The position itself is automatic until the user drags the title bar and
-    /// manual from then on (only ever re-clamped), and the chart rectangle it
-    /// is placed against belongs to the focused [`ChartPane`] — so a split
-    /// window places against the pane the selection lives on, not the window.
-    ///
-    /// A flag rather than a write on the spot, for two reasons. A drag reports
-    /// a new position on *every* frame the hand is moving, and writing the file
-    /// sixty times a second for a window that has not landed yet is a lot of
-    /// disk for one decision. And the write itself belongs beside the other
-    /// workspace writes ([`Self::maintain_workspace`]), not inside the closure
-    /// that is painting the window — one place that knows how a workspace
-    /// reaches the disk, not two.
-    ///
-    /// That host runs at the top of a frame, so the file is written on the
-    /// frame *after* the one the hand came off in — sixteen milliseconds, and
-    /// the frame that closes the window flushes this before taking the exit
-    /// save, so nothing can be dropped between the two.
-    pub(super) inspector_position_dirty: bool,
 }

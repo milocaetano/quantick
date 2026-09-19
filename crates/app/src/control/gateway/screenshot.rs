@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use quantick_control::error::codes;
 use quantick_control::limits::{CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::{
     CONTROL_MAX_SCREENSHOT_WAITERS, CONTROL_SCREENSHOT_GRACE_MS, ControlAccess, RawScreenshot,
@@ -34,7 +34,7 @@ impl ControlAccess {
     #[cfg(test)]
     pub(crate) fn publish_screenshot_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         raw: RawScreenshot,
     ) {
         self.accept_screenshot(app, raw);
@@ -60,11 +60,13 @@ impl ControlAccess {
     }
 
     /// Whether this window is holding a rasterised frame a read could use.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn has_screenshot(&self) -> bool {
         self.screenshot.is_some()
     }
 
     /// The registered snapshot scopes the configured grant already reaches.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn readable_scopes(&self) -> Vec<quantick_control::id::SnapshotScopeId> {
         self.contract.readable_scopes(&self.configured_scopes)
     }
@@ -75,6 +77,7 @@ impl ControlAccess {
     /// what raises the notice: a caller that will be refused the scope one
     /// step later must not first tell the trader their window was captured.
     /// The indicator only means something if it is never wrong.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn grants_screenshot(&self) -> bool {
         self.configured_scopes
             .iter()
@@ -89,9 +92,10 @@ impl ControlAccess {
     /// enabled while the frame service that normally harvests runs only when
     /// it is — so a hook that armed but could not harvest would wait out its
     /// whole budget for a frame sitting in the input queue.
+    #[cfg(any(feature = "control-harness", test))]
     pub(crate) fn service_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         self.harvest_screenshot(app, ctx);
@@ -108,7 +112,7 @@ impl ControlAccess {
     /// something that should happen quietly (threat model O-18).
     pub(super) fn harvest_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         if !self.screenshot_armed {
@@ -154,10 +158,10 @@ impl ControlAccess {
     /// The single door for pixels entering the control plane, so the notice
     /// cannot be bypassed by whatever hands them over — the window's own
     /// screenshot event today, a test's fixture in the same breath.
-    pub(super) fn accept_screenshot(&mut self, app: &mut QuantickApp, raw: RawScreenshot) {
+    pub(super) fn accept_screenshot(&mut self, app: &mut ControlWindow, raw: RawScreenshot) {
         self.screenshot_armed = false;
         self.screenshot = Some(raw);
-        app.show_agent_toast(SCREENSHOT_NOTICE.to_owned());
+        app.alerts().show_toast(SCREENSHOT_NOTICE.to_owned());
     }
 
     /// Run the captures that were waiting for an image, or give up on them,
@@ -167,7 +171,7 @@ impl ControlAccess {
     /// frame of every session where no client asked for a picture.
     pub(super) fn serve_awaiting_screenshot(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         generation: u64,
         ctx: &eframe::egui::Context,
         frame_started: Instant,

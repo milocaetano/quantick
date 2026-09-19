@@ -41,6 +41,36 @@ pub(crate) fn bounds(chart: egui::Rect, right_limit: f32, size: egui::Vec2) -> e
     egui::Rect::from_min_max(chart.min, egui::pos2(right, chart.bottom()))
 }
 
+/// Repair either automatic or parked placement around the measured legend.
+/// Four bounded candidates keep the lane constraint; no paint shapes are scanned.
+fn avoid_legend(
+    position: egui::Pos2,
+    size: egui::Vec2,
+    reachable: egui::Rect,
+    legend: Option<egui::Rect>,
+) -> egui::Pos2 {
+    let position = clamp_into_chart(position, size, reachable);
+    let Some(legend) = legend else {
+        return position;
+    };
+    let gap = drawings::context_bar::OBJECT_GAP_PX;
+    let excluded = legend.expand(gap);
+    if !egui::Rect::from_min_size(position, size).intersects(excluded) {
+        return position;
+    }
+    [
+        egui::pos2(position.x, excluded.bottom()),
+        egui::pos2(excluded.right(), position.y),
+        egui::pos2(position.x, excluded.top() - size.y),
+        egui::pos2(excluded.left() - size.x, position.y),
+    ]
+    .into_iter()
+    .map(|candidate| clamp_into_chart(candidate, size, reachable))
+    .filter(|candidate| !egui::Rect::from_min_size(*candidate, size).intersects(legend))
+    .min_by(|a, b| a.distance_sq(position).total_cmp(&b.distance_sq(position)))
+    .unwrap_or(position)
+}
+
 /// Draw this frame.
 pub(crate) fn draw(
     chrome: &mut DrawingChromeSurface,
@@ -72,51 +102,18 @@ pub(crate) fn draw(
     if env.drawing_tool_armed {
         return ask;
     }
-    // Which gestures hide the bar is decided here, once, from the raw input —
-    // not at each of the six call sites that could move the world. A *click*
-    // never suppresses: it is how the trader reaches the bar. Only a decided
-    // drag does, and only when it began outside the bar, so dragging the grip
-    // does not hide what is being dragged.
-    //
-    // Note what is deliberately absent: the market moving. A drawing carried
-    // along by the auto-scroll carries the bar with it, smoothly —
-    // suppressing that would blink the bar all session on a live tape.
-    let now_ms = (ctx.input(|input| input.time) * 1000.0) as u64;
-    let bar_rect = chrome.bar.bar.last_rect();
-    let (dragging, origin, zoomed, screen) = ctx.input(|input| {
-        (
-            input.pointer.is_decidedly_dragging(),
-            input.pointer.press_origin(),
-            input.raw_scroll_delta.y.abs() > f32::EPSILON
-                || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
-            input.screen_rect,
-        )
-    });
-    // Against the rect the press *landed* on, not this frame's — the bar
-    // moves with a grip drag, so comparing against the moved rect makes the
-    // origin fall outside after ~20 px and suppresses the very gesture that
-    // is moving it. The grip is the escape hatch for a bar sitting over
-    // something the trader needs to see; it has to survive being used.
-    let on_the_bar = matches!(
-        (origin, chrome.bar.bar.press_rect(origin, bar_rect)),
-        (Some(origin), Some(rect)) if rect.contains(origin)
-    );
-    if dragging && !on_the_bar {
-        chrome.bar.bar.suppress_gesture();
-    } else if !dragging {
-        chrome.bar.bar.release_gesture();
-    }
-    if zoomed {
-        chrome.bar.bar.suppress_transient(now_ms);
-    }
-    chrome.bar.bar.note_screen(screen, now_ms);
     // Suppressed means suppressed: nothing below this line runs, so the bar
     // cannot measure a world the gesture that suppressed it is still moving.
     // That is the rule the drag gestures already learned.
-    if chrome.bar.bar.suppressed(now_ms) {
+    if GestureInput::read(ctx).suppresses(&mut chrome.bar.bar) {
         return ask;
     }
-    let (Some(chart), Some(bbox)) = (env.chart_area, env.selected_bbox) else {
+    let chart_area = if chrome.bar.bar.manual_position().is_none() {
+        env.automatic_bar_area.or(env.chart_area)
+    } else {
+        env.chart_area
+    };
+    let (Some(chart), Some(bbox)) = (chart_area, env.selected_bbox) else {
         return ask;
     };
     // Read the object, never clone it, on the way in. This runs every frame
@@ -128,14 +125,13 @@ pub(crate) fn draw(
     let tool = drawing.tool;
     let locked = drawing.locked;
     let mut style = drawing.style;
-    let glyph_before = tool.glyph_size(drawing);
     // One line, only for an object the trader did not place. Formatting it
     // costs an allocation on the frames a selected annotation is on screen —
     // never on the tape's path, and never for the objects the trader drew.
     let author = drawing.author.as_ref().map(DrawingAuthor::label);
     let mut object = drawings::context_bar::BarObject {
         style: &mut style,
-        glyph_size: glyph_before,
+        glyph_size: tool.glyph_size(drawing),
         author: author.as_deref(),
         locked,
         hidden: drawing.hidden,
@@ -152,59 +148,12 @@ pub(crate) fn draw(
     let size = drawings::context_bar::bar_size(&drawings::context_bar::slots(
         drawings::context_bar::capabilities(&object),
     ));
-    // The live lane is off limits to the bar however it got where it is: that
-    // strip is where the price the trader is reading is being formed, and
-    // `place` has kept clear of it since it was written. A parked bar is
-    // placed by a different rule, not held to a different one.
-    let right_limit = env.lane_divider_x.unwrap_or(chart.right());
-    let reachable = bounds(chart, right_limit, size);
-    let position = match chrome.bar.bar.manual_position() {
-        // Repair for drawing, never overwrite — the rule the properties popup
-        // already follows, for the same reason. A bar parked out near the
-        // right edge of a wide pane must stay reachable when the canvas is
-        // split and that pane is half as wide, and the repair leaves the
-        // parked point alone, so widening the pane gives it back. (A fresh
-        // drag is a fresh decision and does replace it, measured from where
-        // the bar is actually drawn — dragging from a point the window is not
-        // at would make it jump on the first pixel.)
-        //
-        // The clamp is against the pane the *selection* lives on, which is
-        // what makes a bar parked over one chart of a split come back inside
-        // the other one rather than hovering over its neighbour.
-        Some(parked) => parked,
-        None => drawings::context_bar::place(chart, right_limit, bbox, size),
-    };
-    // Both answers go through the same repair, so "clear of the live lane" is
-    // a property of the bar and not of the branch that placed it. `place`
-    // keeps clear of the lane on every path but its last one — the fallback
-    // for an object that covers the pane end to end, which clamps against the
-    // pane's own right edge — and that path is reachable with a full-height
-    // profile on a narrow split. It also keeps the popover bound below
-    // honest, which is derived from where the bar ends up.
-    let position = clamp_into_chart(position, size, reachable);
-    // What the popovers are clamped into: the same rectangle *without* the
-    // bar's width floor, but never narrower than the bar that was actually
-    // drawn.
-    //
-    // The floor exists so a history area narrower than the bar still has
-    // somewhere to put one — `place` makes the same call — and it is the
-    // bar's reason, not the palette's: a palette can be pushed left, so
-    // nothing buys it the right to sit on the forming column. But when the
-    // floor did have to push the bar into the lane, a bound that stopped
-    // short of it would leave the palette hanging off nothing, which is the
-    // failure the placement rule spends its effort on.
-    let popover_bounds = egui::Rect::from_min_max(
-        chart.min,
-        egui::pos2(
-            right_limit.min(chart.right()).max(position.x + size.x),
-            chart.bottom(),
-        ),
-    );
+    let placement = Placement::resolve(&chrome.bar.bar, env, chart, bbox, size);
     let intent = drawings::context_bar::show(
         &mut chrome.bar.bar,
         ctx,
-        position,
-        popover_bounds,
+        placement.position,
+        placement.popover_bounds,
         &mut object,
     );
     let glyph_after = object.glyph_size;
@@ -216,35 +165,22 @@ pub(crate) fn draw(
     if intent.reset_position {
         chrome.bar.bar.clear_manual();
     } else if intent.drag_delta != egui::Vec2::ZERO {
-        chrome.bar.bar.set_manual(position + intent.drag_delta);
+        chrome
+            .bar
+            .bar
+            .set_manual(placement.position + intent.drag_delta);
     }
-    let edited = intent.edited || intent.toggle_shared;
-    let actions = InspectorActions {
-        toggle_hidden: intent.toggle_hidden,
-        toggle_lock: intent.actions.toggle_lock,
-        delete: intent.actions.delete,
-        force_delete: intent.force_delete,
-        cancel_delete: intent.cancel_delete,
-        edited,
-        ..InspectorActions::default()
-    };
-    if edited {
+    let actions = actions_of(&intent);
+    if actions.edited {
         // The copy the trader is editing, handed back rather than written
         // through a `&mut` into the pane: the host owns every object every
         // renderer reads.
-        let mut edited = drawing.clone();
-        edited.style = style;
-        if intent.toggle_shared {
-            edited.scope = if edited.scope == drawings::DrawingScope::AllCharts {
-                drawings::DrawingScope::ThisChart
-            } else {
-                drawings::DrawingScope::AllCharts
-            };
-        }
-        if let Some(size) = glyph_after {
-            tool.set_glyph_size(&mut edited, size.px);
-        }
-        ask.edited = Some(Box::new(edited));
+        let edit = BarEdit {
+            style,
+            toggle_shared: intent.toggle_shared,
+            glyph_px: glyph_after.map(|size| size.px),
+        };
+        ask.edited = Some(Box::new(edit.applied_to(drawing)));
     }
     if intent.open_settings {
         chrome.shared.open = true;
@@ -256,9 +192,216 @@ pub(crate) fn draw(
     ask
 }
 
+/// The raw input that decides whether the bar stands down this frame.
+///
+/// Which gestures hide the bar is decided here, once, from the raw input —
+/// not at each of the six call sites that could move the world. A *click*
+/// never suppresses: it is how the trader reaches the bar. Only a decided
+/// drag does, and only when it began outside the bar, so dragging the grip
+/// does not hide what is being dragged.
+///
+/// Note what is deliberately absent: the market moving. A drawing carried
+/// along by the auto-scroll carries the bar with it, smoothly — suppressing
+/// that would blink the bar all session on a live tape.
+struct GestureInput {
+    now_ms: u64,
+    dragging: bool,
+    origin: Option<egui::Pos2>,
+    zoomed: bool,
+    screen: egui::Rect,
+}
+
+impl GestureInput {
+    fn read(ctx: &egui::Context) -> Self {
+        let now_ms = (ctx.input(|input| input.time) * 1000.0) as u64;
+        let (dragging, origin, zoomed, screen) = ctx.input(|input| {
+            (
+                input.pointer.is_decidedly_dragging(),
+                input.pointer.press_origin(),
+                input.raw_scroll_delta.y.abs() > f32::EPSILON
+                    || (input.zoom_delta() - 1.0).abs() > f32::EPSILON,
+                input.screen_rect,
+            )
+        });
+        Self {
+            now_ms,
+            dragging,
+            origin,
+            zoomed,
+            screen,
+        }
+    }
+
+    /// Step the bar's suppression state with this frame's input, and answer
+    /// whether the bar is suppressed now.
+    fn suppresses(self, bar: &mut drawings::context_bar::ContextBar) -> bool {
+        let bar_rect = bar.last_rect();
+        // Against the rect the press *landed* on, not this frame's — the bar
+        // moves with a grip drag, so comparing against the moved rect makes
+        // the origin fall outside after ~20 px and suppresses the very
+        // gesture that is moving it. The grip is the escape hatch for a bar
+        // sitting over something the trader needs to see; it has to survive
+        // being used.
+        let on_the_bar = matches!(
+            (self.origin, bar.press_rect(self.origin, bar_rect)),
+            (Some(origin), Some(rect)) if rect.contains(origin)
+        );
+        if self.dragging && !on_the_bar {
+            bar.suppress_gesture();
+        } else if !self.dragging {
+            bar.release_gesture();
+        }
+        if self.zoomed {
+            bar.suppress_transient(self.now_ms);
+        }
+        bar.note_screen(self.screen, self.now_ms);
+        bar.suppressed(self.now_ms)
+    }
+}
+
+/// Where the bar goes this frame, and what its popovers are clamped into.
+struct Placement {
+    position: egui::Pos2,
+    popover_bounds: egui::Rect,
+}
+
+impl Placement {
+    fn resolve(
+        bar: &drawings::context_bar::ContextBar,
+        env: &DrawingEnv<'_>,
+        chart: egui::Rect,
+        bbox: egui::Rect,
+        size: egui::Vec2,
+    ) -> Self {
+        // The live lane is off limits to the bar however it got where it is:
+        // that strip is where the price the trader is reading is being
+        // formed, and `place` has kept clear of it since it was written. A
+        // parked bar is placed by a different rule, not held to a different
+        // one.
+        let right_limit = env.lane_divider_x.unwrap_or(chart.right());
+        let reachable = bounds(chart, right_limit, size);
+        let position = match bar.manual_position() {
+            // Repair for drawing, never overwrite — the rule the properties
+            // popup already follows, for the same reason. A bar parked out
+            // near the right edge of a wide pane must stay reachable when the
+            // canvas is split and that pane is half as wide, and the repair
+            // leaves the parked point alone, so widening the pane gives it
+            // back. (A fresh drag is a fresh decision and does replace it,
+            // measured from where the bar is actually drawn — dragging from a
+            // point the window is not at would make it jump on the first
+            // pixel.)
+            //
+            // The clamp is against the pane the *selection* lives on, which
+            // is what makes a bar parked over one chart of a split come back
+            // inside the other one rather than hovering over its neighbour.
+            Some(parked) => parked,
+            None => drawings::context_bar::place(chart, right_limit, bbox, size),
+        };
+        // Both answers go through the same repair, so "clear of the live
+        // lane" is a property of the bar and not of the branch that placed
+        // it. `place` keeps clear of the lane on every path but its last one
+        // — the fallback for an object that covers the pane end to end,
+        // which clamps against the pane's own right edge — and that path is
+        // reachable with a full-height profile on a narrow split. It also
+        // keeps the popover bound below honest, which is derived from where
+        // the bar ends up.
+        let position = avoid_legend(position, size, reachable, env.legends);
+        // What the popovers are clamped into: the same rectangle *without*
+        // the bar's width floor, but never narrower than the bar that was
+        // actually drawn.
+        //
+        // The floor exists so a history area narrower than the bar still has
+        // somewhere to put one — `place` makes the same call — and it is the
+        // bar's reason, not the palette's: a palette can be pushed left, so
+        // nothing buys it the right to sit on the forming column. But when
+        // the floor did have to push the bar into the lane, a bound that
+        // stopped short of it would leave the palette hanging off nothing,
+        // which is the failure the placement rule spends its effort on.
+        let popover_bounds = egui::Rect::from_min_max(
+            chart.min,
+            egui::pos2(
+                right_limit.min(chart.right()).max(position.x + size.x),
+                chart.bottom(),
+            ),
+        );
+        Self {
+            position,
+            popover_bounds,
+        }
+    }
+}
+
+/// The bar's intent in the one shape the shared applier executes.
+fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActions {
+    InspectorActions {
+        toggle_hidden: intent.toggle_hidden,
+        toggle_lock: intent.actions.toggle_lock,
+        delete: intent.actions.delete,
+        force_delete: intent.force_delete,
+        cancel_delete: intent.cancel_delete,
+        edited: intent.edited || intent.toggle_shared,
+        ..InspectorActions::default()
+    }
+}
+
+/// The property edits the bar made this frame, applied to a copy of the
+/// object — never through a `&mut` into the pane.
+struct BarEdit {
+    style: drawings::DrawingStyle,
+    toggle_shared: bool,
+    /// The glyph size the bar left, for a tool drawn as a glyph.
+    glyph_px: Option<f32>,
+}
+
+impl BarEdit {
+    fn applied_to(self, drawing: &drawings::Drawing) -> drawings::Drawing {
+        let mut edited = drawing.clone();
+        edited.style = self.style;
+        if self.toggle_shared {
+            edited.scope = if edited.scope == drawings::DrawingScope::AllCharts {
+                drawings::DrawingScope::ThisChart
+            } else {
+                drawings::DrawingScope::AllCharts
+            };
+        }
+        if let Some(px) = self.glyph_px {
+            drawing.tool.set_glyph_size(&mut edited, px);
+        }
+        edited
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_and_parked_bars_avoid_the_measured_legend_and_lane() {
+        for width in [650.0, 1000.0, 1500.0] {
+            let chart = egui::Rect::from_min_size(egui::pos2(60.0, 88.0), egui::vec2(width, 700.0));
+            let size = egui::vec2(460.0, 40.0);
+            let lane = chart.right() - 100.0;
+            let reachable = bounds(chart, lane, size);
+            let legend = egui::Rect::from_min_size(
+                chart.min + egui::vec2(6.0, 42.0),
+                egui::vec2(500.0, 65.0),
+            );
+            let bbox = chart.shrink(10.0);
+            for wanted in [
+                drawings::context_bar::place(chart, lane, bbox, size),
+                legend.min,
+                egui::pos2(4000.0, legend.top()),
+            ] {
+                let placed = egui::Rect::from_min_size(
+                    avoid_legend(wanted, size, reachable, Some(legend)),
+                    size,
+                );
+                assert!(!placed.intersects(legend), "{placed:?} / {legend:?}");
+                assert!(reachable.contains_rect(placed));
+                assert!(placed.right() <= lane);
+            }
+        }
+    }
 
     /// The live lane is off limits to the bar however it got where it is.
     ///

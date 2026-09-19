@@ -3,17 +3,19 @@
 //! removal, a hide, an input edit or a style edit onto every pane showing
 //! the same layout.
 
-use super::{QuantickApp, TabSlot};
+use super::LayoutAdapter;
+use super::TabSlot;
 use crate::indicator_style::StyleOverride;
 use crate::indicator_worker::{IndicatorCommand, IndicatorEvent, IndicatorSource, SlotId};
 use crate::indicators::state_file::{SavedIndicator, SavedInput, SavedKind, SavedPlotStyle};
+use crate::indicators::state_file::{SavedInputExt, SavedPlotStyleExt};
 use crate::layouts::LayoutId;
 use crate::pane::PaneSide;
 
 mod guide;
 pub(crate) use guide::set_indicator_mouse_vertical_line;
 
-impl QuantickApp {
+impl LayoutAdapter<'_> {
     /// Where a slot sits in its pane's layout, or `None` for a slot the
     /// layout does not carry — an operator's, or one a validation hook added.
     fn layout_index_of(&self, target: TabSlot) -> Option<usize> {
@@ -143,8 +145,7 @@ impl QuantickApp {
     fn remove_indicator_silently(&mut self, target: TabSlot) {
         let pane = self
             .tabs
-            .iter_mut()
-            .find(|tab| tab.id == target.tab)
+            .by_id_mut(target.tab)
             .and_then(|tab| tab.pane_at_mut(target.side.index()));
         self.indicators.slots_mut().remove(pane, target);
     }
@@ -271,11 +272,9 @@ impl QuantickApp {
 
     /// A layout's entry at a layout index, for an edit to write.
     fn layout_entry_mut(&mut self, layout: LayoutId, index: usize) -> Option<&mut SavedIndicator> {
-        self.workspace
-            .layouts_mut()
-            .book_mut()
-            .get_mut(layout)?
-            .indicators
+        self.store
+            .session_mut()
+            .indicators_mut(layout)?
             .get_mut(index)
     }
 
@@ -304,11 +303,11 @@ impl QuantickApp {
             inputs: Vec::new(),
             plot_styles: Vec::new(),
         };
-        if let Some(target) = self.workspace.layouts_mut().book_mut().get_mut(layout) {
-            if index <= target.indicators.len() {
-                target.indicators.insert(index, entry);
+        if let Some(target) = self.store.session_mut().indicators_mut(layout) {
+            if index <= target.len() {
+                target.insert(index, entry);
             } else {
-                target.indicators.push(entry);
+                target.push(entry);
             }
         }
         for (tab, side) in self.mirror_targets(origin, layout) {
@@ -323,10 +322,10 @@ impl QuantickApp {
         let Some((layout, index)) = self.edit_coordinates(origin) else {
             return;
         };
-        if let Some(target) = self.workspace.layouts_mut().book_mut().get_mut(layout)
-            && index < target.indicators.len()
+        if let Some(target) = self.store.session_mut().indicators_mut(layout)
+            && index < target.len()
         {
-            target.indicators.remove(index);
+            target.remove(index);
         }
         for (tab, side) in self.mirror_targets(origin, layout) {
             if let Some(slot) = self.layout_slots_at(tab, side).get(index).copied() {

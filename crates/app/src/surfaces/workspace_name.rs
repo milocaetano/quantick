@@ -61,8 +61,11 @@ impl Surface for WorkspaceNameSurface {
     /// The box is behind the Workspace menu's *Save as*, which a scripted run
     /// cannot click. Goes through [`Self::open`], the call the menu entry
     /// makes.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        if std::env::var("QUANTICK_WORKSPACE_NAME_BOX").is_ok_and(|value| value == "1") {
+        if crate::hooks::captured::var("QUANTICK_WORKSPACE_NAME_BOX")
+            .is_some_and(|value| value == "1")
+        {
             self.open();
         }
     }
@@ -147,6 +150,7 @@ impl Surface for WorkspaceNameSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_WORKSPACE_NAME_BOX"];
 
 #[cfg(test)]

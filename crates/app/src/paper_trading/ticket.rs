@@ -16,12 +16,16 @@ use super::{
     ArmedPlacement, PaperTrading, TradingTabAction, kind_short, kind_word, reveal_folder,
     side_word, side_word_upper,
 };
-use crate::paper_chrome::{
-    caption, fmt_decimal, fmt_points, fmt_signed_points, pill_toggle, points_color, position_word,
-};
+use crate::paper_chrome::{caption, fmt_decimal, fmt_signed_points, pill_toggle, points_color};
 use crate::paper_report::LedgerAction;
 use crate::theme;
 use crate::timezone::TzOffset;
+
+mod entry_pair;
+mod position_card;
+
+use entry_pair::{EntryPress, entry_pair};
+use position_card::{CardCommand, PositionCard};
 
 impl PaperTrading {
     /// The form quantity, parsed without side effects — the label builders
@@ -212,279 +216,29 @@ impl PaperTrading {
         action
     }
 
-    /// A quiet action button — the HUD's control grammar, sized to share a
-    /// row evenly.
-    fn quiet_action(label: &str, width: f32) -> egui::Button<'_> {
-        egui::Button::new(
-            egui::RichText::new(label)
-                .color(theme::TEXT_PRIMARY)
-                .small(),
-        )
-        .fill(theme::CONTROL)
-        .stroke(egui::Stroke::new(1.0_f32, theme::BORDER))
-        .rounding(egui::Rounding::same(3.0))
-        .min_size(egui::vec2(width, 22.0))
-    }
-
-    /// The position block: a one-row FLAT card while flat (with the
-    /// session's realized points), the full card while a position is open —
-    /// identity, brackets with their P&L, the R:R read, and the actions.
+    /// The position block, drawn by [`PositionCard`] from a snapshot; its
+    /// press is applied here, before the order form reads the account.
     fn draw_position_card(&mut self, ui: &mut egui::Ui) {
-        let Some(position) = self.account.venue().position().cloned() else {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("FLAT")
-                        .monospace()
-                        .color(theme::TEXT_MUTED),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let realized = self.account.venue().realized_points();
-                    ui.label(
-                        egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
-                            .monospace()
-                            .strong()
-                            .color(points_color(realized)),
-                    )
-                    .on_hover_text("this session's realized points");
-                });
-            });
-            if !self.account.venue().working_orders().is_empty()
-                && ui
-                    .button("Cancel all orders")
-                    .on_hover_text("remove every working order without trading (Shift+X)")
-                    .clicked()
-            {
-                self.account.cancel_all_orders();
-            }
-            return;
+        let venue = self.account.venue();
+        let position = venue.position().cloned();
+        let card = PositionCard {
+            position: position.as_ref(),
+            mark: venue.mark_price(),
+            realized: venue.realized_points(),
+            has_working_orders: !venue.working_orders().is_empty(),
+            stop_offset: parse_offset(&self.stop_offset_text).ok().flatten(),
+            profit_offset: parse_offset(&self.profit_offset_text).ok().flatten(),
         };
-        let color = theme::side_color(position.side);
-        let open = self
-            .account
-            .venue()
-            .mark_price()
-            .map(|mark| position.open_points(mark));
-
-        // Identity: the HUD's own chip, so the two surfaces read as one.
-        ui.horizontal(|ui| {
-            egui::Frame::none()
-                .fill(color)
-                .rounding(egui::Rounding::same(2.0))
-                .inner_margin(egui::Margin::symmetric(5.0, 1.0))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "SIM {} {}",
-                            position_word(position.side),
-                            fmt_decimal(position.quantity)
-                        ))
-                        .color(theme::CHIP_INK)
-                        .strong()
-                        .small(),
-                    );
-                });
-            ui.label(
-                egui::RichText::new(format!("@ {}", fmt_decimal(position.avg_price)))
-                    .monospace()
-                    .color(theme::TEXT_PRIMARY),
-            );
-            if let Some(open) = open {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
-                            .monospace()
-                            .strong()
-                            .color(points_color(open)),
-                    )
-                    .on_hover_text(
-                        "open profit at the last print, in points (price units × quantity)",
-                    );
-                });
-            }
-        });
-
-        // Brackets: the level, what it pays, ✕ to clear — or the way to set
-        // the missing leg right here, from the ticket's offset.
-        let mut bracket_change = None;
-        egui::Grid::new("paper_position_brackets")
-            .num_columns(3)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                let legs = [
-                    (
-                        "SL",
-                        position.stop_loss,
-                        theme::SELL,
-                        parse_offset(&self.stop_offset_text).ok().flatten(),
-                        "remove the protective stop",
-                    ),
-                    (
-                        "TP",
-                        position.take_profit,
-                        theme::BUY,
-                        parse_offset(&self.profit_offset_text).ok().flatten(),
-                        "remove the profit target",
-                    ),
-                ];
-                for (word, level, leg_color, offset, clear_hover) in legs {
-                    ui.label(egui::RichText::new(word).color(theme::TEXT_MUTED).small());
-                    match level {
-                        Some(level) => {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{} {} pts",
-                                    fmt_decimal(level),
-                                    fmt_signed_points(position.open_points(level)),
-                                ))
-                                .monospace()
-                                .color(leg_color),
-                            );
-                            if ui.small_button("×").on_hover_text(clear_hover).clicked() {
-                                bracket_change = Some(match word {
-                                    "SL" => Command::SetBracket {
-                                        stop_loss: None,
-                                        take_profit: position.take_profit,
-                                    },
-                                    _ => Command::SetBracket {
-                                        stop_loss: position.stop_loss,
-                                        take_profit: None,
-                                    },
-                                });
-                            }
-                        }
-                        None => match offset {
-                            Some(offset) => {
-                                ui.label(
-                                    egui::RichText::new("—")
-                                        .monospace()
-                                        .color(theme::TEXT_FAINT),
-                                );
-                                if ui
-                                    .small_button(format!("Set {} pts", fmt_decimal(offset)))
-                                    .on_hover_text(
-                                        "place this leg the ticket's offset away from the \
-                                         average entry",
-                                    )
-                                    .clicked()
-                                {
-                                    let (stop_loss, take_profit) = if word == "SL" {
-                                        (
-                                            Some(offset_price(&position, offset, true)),
-                                            position.take_profit,
-                                        )
-                                    } else {
-                                        (
-                                            position.stop_loss,
-                                            Some(offset_price(&position, offset, false)),
-                                        )
-                                    };
-                                    bracket_change = Some(Command::SetBracket {
-                                        stop_loss,
-                                        take_profit,
-                                    });
-                                }
-                            }
-                            None => {
-                                ui.label(
-                                    egui::RichText::new(
-                                        "drag from the entry line, or type an offset below",
-                                    )
-                                    .color(theme::TEXT_SUPPORT)
-                                    .small(),
-                                );
-                                ui.label("");
-                            }
-                        },
-                    }
-                    ui.end_row();
-                }
-            });
-        if let (Some(stop), Some(target)) = (position.stop_loss, position.take_profit) {
-            let risk = position.avg_price.saturating_sub(stop).abs();
-            let reward = target.saturating_sub(position.avg_price).abs();
-            if risk > Decimal::ZERO {
-                ui.label(
-                    egui::RichText::new(format!("R:R {}", fmt_points(reward / risk)))
-                        .monospace()
-                        .color(theme::TEXT_MUTED),
-                )
-                .on_hover_text("reward divided by risk, in points, at the current levels");
-            }
-        }
-        if let Some(command) = bracket_change {
-            let events = self.account.dispatch(command);
-            self.account.handle_events(events);
-        }
-
-        // Actions, two per row at equal width; consequential ones stay
-        // text-first, never a bare glyph.
-        ui.add_space(4.0);
-        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        let word = position_word(position.side);
-        let qty = fmt_decimal(position.quantity);
-        ui.horizontal(|ui| {
-            if ui
-                .add(Self::quiet_action("× Close", half))
-                .on_hover_text(format!("exit the {word} {qty} at the next print (market)"))
-                .clicked()
-            {
-                self.account.close_position();
-            }
-            if ui
-                .add(Self::quiet_action(
-                    &format!("{} Reverse", icons::ARROWS_LEFT_RIGHT),
-                    half,
-                ))
-                .on_hover_text(format!(
-                    "close the {word} {qty} and open the opposite side at the same size \
-                     (Shift+R)"
-                ))
-                .clicked()
-            {
-                self.reverse_position();
-            }
-        });
-        ui.horizontal(|ui| {
-            let in_profit = open.is_some_and(|open| open > Decimal::ZERO);
-            if ui
-                .add_enabled(in_profit, Self::quiet_action("Breakeven", half))
-                .on_hover_text(
-                    "move the stop to the average entry - with no fees simulated, \
-                     break-even is the entry exactly",
-                )
-                .on_disabled_hover_text(
-                    "the stop can only move to entry while the position is in profit - \
-                     below it, this would widen your risk",
-                )
-                .clicked()
-            {
-                let events = self.account.dispatch(Command::SetBracket {
-                    stop_loss: Some(position.avg_price),
-                    take_profit: position.take_profit,
-                });
+        match card.show(ui) {
+            None => {}
+            Some(CardCommand::CancelAllOrders) => self.account.cancel_all_orders(),
+            Some(CardCommand::Venue(command)) => {
+                let events = self.account.dispatch(*command);
                 self.account.handle_events(events);
             }
-            if ui
-                .add(Self::quiet_action("Close 50%", half))
-                .on_hover_text(
-                    "close half the open quantity at the next print; the rest keeps \
-                     its average entry and brackets",
-                )
-                .clicked()
-            {
-                let events = self.account.dispatch(Command::ClosePartial {
-                    quantity: (position.quantity / Decimal::TWO).normalize(),
-                });
-                self.account.handle_events(events);
-            }
-        });
-        let full = ui.available_width();
-        if ui
-            .add(Self::quiet_action("Flatten all", full))
-            .on_hover_text("close the position and cancel every working order (Shift+F)")
-            .clicked()
-        {
-            self.account.flatten();
+            Some(CardCommand::Close) => self.account.close_position(),
+            Some(CardCommand::Reverse) => self.reverse_position(),
+            Some(CardCommand::Flatten) => self.account.flatten(),
         }
     }
 
@@ -511,9 +265,79 @@ impl PaperTrading {
                 self.qty_text = derived;
             }
         }
-        // Qty: free decimal text (empty must keep meaning "fix me"), with
-        // steppers beside it; Shift steps by ten. Derived and read-only
-        // while the risk per trade is deciding it.
+        self.draw_quantity_row(ui, derived_quantity.is_none());
+        // The discreet line: what the number means, or why there is none.
+        // Small and quiet on purpose - it explains the size without taking
+        // the screen away from the chart.
+        let sentence = risk_state.sentence();
+        if !sentence.is_empty() {
+            let colour = if risk_blocks {
+                theme::WARN
+            } else {
+                theme::TEXT_FAINT
+            };
+            ui.label(egui::RichText::new(sentence).color(colour).small());
+        }
+        self.draw_order_fields(ui);
+        let strategies_changed = self.draw_strategy_row(ui);
+        // The whole risk surface, in its own module: this file already
+        // carries the order form, and a second feature inside it is how the
+        // trunk grew the first time.
+        let editor = self.account.risk_editor();
+        let risk_changed = crate::risk_sizing::draw_risk_block(
+            ui,
+            crate::risk_sizing::RiskBlock {
+                symbol: editor.symbol,
+                settings: editor.settings,
+                capital: editor.capital,
+                book: editor.book,
+                amount_text: &mut self.risk_amount_text,
+                percent_text: &mut self.risk_percent_text,
+                capital_text: &mut self.capital_text,
+                point_value_text: &mut self.point_value_text,
+                size_step_text: &mut self.size_step_text,
+                currency_text: &mut self.currency_text,
+            },
+        );
+        ui.add_space(4.0);
+
+        // The lock, enforced on the surface as well as at the click: a
+        // ceiling the trader can still press through is one they will press
+        // through by accident on a fast tape.
+        let ready = self.account.ready() && !risk_blocks;
+        match entry_pair(ui, self, ready) {
+            None => {}
+            Some(EntryPress::Disarm) => self.account.armed = None,
+            Some(EntryPress::Fire(side)) => self.market(side),
+            Some(EntryPress::Arm(side)) => {
+                self.account.armed = Some(ArmedPlacement {
+                    side,
+                    kind: self.order_type,
+                });
+            }
+        }
+        ui.label(
+            egui::RichText::new(if self.account.armed.is_some() {
+                "Click the chart at your price. Esc cancels."
+            } else if self.order_type == EntryKind::Market {
+                "Market orders fill at the next print."
+            } else {
+                "The button arms a click; the next chart click rests the order there."
+            })
+            .color(theme::TEXT_SUPPORT)
+            .small(),
+        );
+        OrderEntryChanges {
+            cmd_trading: self.draw_cmd_trading_settings(ui),
+            strategies: strategies_changed,
+            risk: risk_changed,
+        }
+    }
+
+    /// Qty: free decimal text (empty must keep meaning "fix me"), with
+    /// steppers beside it; Shift steps by ten. Derived and read-only while
+    /// the risk per trade is deciding it (`typed` false).
+    fn draw_quantity_row(&mut self, ui: &mut egui::Ui, typed: bool) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Qty").color(theme::TEXT_MUTED).small());
             let step = if ui.input(|input| input.modifiers.shift) {
@@ -521,7 +345,6 @@ impl PaperTrading {
             } else {
                 Decimal::ONE
             };
-            let typed = derived_quantity.is_none();
             let hint = self.account.quantity_step_hint(step);
             ui.add_enabled_ui(typed, |ui| {
                 if ui
@@ -545,18 +368,10 @@ impl PaperTrading {
                 "the size is derived from your risk per trade - switch the mode off to type one",
             );
         });
-        // The discreet line: what the number means, or why there is none.
-        // Small and quiet on purpose - it explains the size without taking
-        // the screen away from the chart.
-        let sentence = risk_state.sentence();
-        if !sentence.is_empty() {
-            let colour = if risk_blocks {
-                theme::WARN
-            } else {
-                theme::TEXT_FAINT
-            };
-            ui.label(egui::RichText::new(sentence).color(colour).small());
-        }
+    }
+
+    /// The order's shape: the type pills and the protective offsets.
+    fn draw_order_fields(&mut self, ui: &mut egui::Ui) {
         // Type: three pills. Picking Limit or Stop is a promise of an
         // accent line on the chart, so the selected pill wears the accent.
         ui.horizontal(|ui| {
@@ -590,112 +405,6 @@ impl PaperTrading {
             ui.add(egui::TextEdit::singleline(&mut self.profit_offset_text).desired_width(52.0));
             ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
-        let strategies_changed = self.draw_strategy_row(ui);
-        // The whole risk surface, in its own module: this file already
-        // carries the order form, and a second feature inside it is how the
-        // trunk grew the first time.
-        let editor = self.account.risk_editor();
-        let risk_changed = crate::risk_sizing::draw_risk_block(
-            ui,
-            crate::risk_sizing::RiskBlock {
-                symbol: editor.symbol,
-                settings: editor.settings,
-                capital: editor.capital,
-                book: editor.book,
-                amount_text: &mut self.risk_amount_text,
-                percent_text: &mut self.risk_percent_text,
-                capital_text: &mut self.capital_text,
-                point_value_text: &mut self.point_value_text,
-                size_step_text: &mut self.size_step_text,
-                currency_text: &mut self.currency_text,
-            },
-        );
-        ui.add_space(4.0);
-
-        // The entry pair: the surface where you commit, taller than the
-        // toolbar's buttons. An armed side inverts — a mode you are in must
-        // be visible on the control that put you there.
-        let half = (ui.available_width() - 6.0) / 2.0;
-        // The lock, enforced on the surface as well as at the click: a
-        // ceiling the trader can still press through is one they will press
-        // through by accident on a fast tape.
-        let ready = self.account.ready() && !risk_blocks;
-        let mut fire: Option<Side> = None;
-        let mut arm: Option<Side> = None;
-        let mut disarm = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            for side in [Side::Buy, Side::Sell] {
-                let color = theme::side_color(side);
-                let armed_here = self.account.armed.is_some_and(|armed| armed.side == side);
-                let armed_other = self.account.armed.is_some_and(|armed| armed.side != side);
-                let label = match (self.order_type, armed_here) {
-                    (_, true) => "Click a price…".to_owned(),
-                    (EntryKind::Market, _) => self.entry_label(side),
-                    (kind, _) => format!(
-                        "{} {} {}",
-                        side_word_upper(side),
-                        kind_word(kind).to_uppercase(),
-                        self.quantity_preview()
-                            .map_or_else(String::new, fmt_decimal),
-                    ),
-                };
-                let button = if armed_here {
-                    egui::Button::new(egui::RichText::new(label).color(color).strong())
-                        .fill(theme::CONTROL)
-                        .stroke(egui::Stroke::new(1.5_f32, color))
-                } else {
-                    egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
-                        .fill(color)
-                        .stroke(egui::Stroke::NONE)
-                }
-                .rounding(egui::Rounding::same(3.0))
-                .min_size(egui::vec2(half, 34.0));
-                let response = ui
-                    .add_enabled(ready && !armed_other, button)
-                    .on_hover_text(self.entry_hover(side))
-                    .on_disabled_hover_text(if armed_other {
-                        "cancel the armed order first (Esc)"
-                    } else {
-                        "waiting for the first print - there is no market yet"
-                    });
-                if response.clicked() {
-                    match (self.order_type, armed_here) {
-                        (_, true) => disarm = true,
-                        (EntryKind::Market, _) => fire = Some(side),
-                        (EntryKind::Limit | EntryKind::Stop, _) => arm = Some(side),
-                    }
-                }
-            }
-        });
-        if disarm {
-            self.account.armed = None;
-        }
-        if let Some(side) = fire {
-            self.market(side);
-        }
-        if let Some(side) = arm {
-            self.account.armed = Some(ArmedPlacement {
-                side,
-                kind: self.order_type,
-            });
-        }
-        ui.label(
-            egui::RichText::new(if self.account.armed.is_some() {
-                "Click the chart at your price. Esc cancels."
-            } else if self.order_type == EntryKind::Market {
-                "Market orders fill at the next print."
-            } else {
-                "The button arms a click; the next chart click rests the order there."
-            })
-            .color(theme::TEXT_SUPPORT)
-            .small(),
-        );
-        OrderEntryChanges {
-            cmd_trading: self.draw_cmd_trading_settings(ui),
-            strategies: strategies_changed,
-            risk: risk_changed,
-        }
     }
 
     /// Walk the typed quantity by `notches` of the instrument's own size

@@ -18,7 +18,7 @@ use crate::indicator_worker::{
 use crate::live_envelope::*;
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::state::{BarSpec, ChartState};
-use crate::worker_progress::{Counts, Phase, WorkerProgress, tests::Gate};
+use crate::worker_progress::{Counts, Phase, WorkerProgress, test_support::Gate};
 use quantick_engine::{Side, Trade};
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot, DepthEvent};
 use quantick_orderflow::HeatmapConfig;
@@ -359,8 +359,8 @@ fn inside_the_envelope_every_print_arrives_and_no_queue_fills() {
     // so every print is one indicator command as well as one book command.
     let mut rig = Rig::new(
         BarSpec::Tick(1),
-        WorkerProgress::new(),
-        WorkerProgress::new(),
+        crate::worker_progress::monotonic(),
+        crate::worker_progress::monotonic(),
     );
     let mut tape = Tape::default();
     let mut depth = play(

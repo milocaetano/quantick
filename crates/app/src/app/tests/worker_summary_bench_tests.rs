@@ -40,18 +40,21 @@ fn worker_summary_cadence_cost() {
     const WARMUP: usize = 30;
     const MEASURED: usize = 600;
     let (mut app, _events, _commands, _book) = test_app();
-    let (mut other, _other_events, _other_commands, _other_book) = test_app();
-    app.tabs[0].id = 41;
-    app.tabs[0].flow_pane.id = 901;
-    app.tabs[0].time_panes.clear();
-    let mut tab = other.tabs.remove(0);
-    tab.id = 42;
+    let (other, _other_events, _other_commands, _other_book) = test_app();
+    app.tabs = app.tabs.with_fixture_identity(41);
+
+    app.tabs.runtime_mut(0).flow_pane.id = 901;
+    app.tabs.runtime_mut(0).time_panes.clear();
+    let mut tab = other.tabs.into_single_runtime();
+
     tab.flow_pane.id = 902;
     tab.time_panes.clear();
     tab.time_panes
         .push(crate::pane::ChartPane::time(900, 60_000));
-    app.tabs.push(tab);
-    assert_eq!(app.active_tab, 0);
+    let opening = app.tabs.plan_open();
+    app.tabs.append(opening, tab);
+    app.tabs.select(0);
+    assert_eq!(app.tabs.active_index(), 0);
     assert_eq!(app.tabs.len(), 2);
     assert_eq!(
         app.tabs
