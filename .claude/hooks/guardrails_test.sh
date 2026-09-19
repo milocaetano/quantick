@@ -1554,6 +1554,34 @@ run "a cd to a path that does not exist falls back to the session cwd" \
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 markers=$(sed -n 's/^[A-Z_]*MARKER_NAME="\([^"]*\)".*/\1/p' "$GUARDRAILS")
 
+# --- full_ci.sh and ci.yml must name the same jobs and label ----------------
+#
+# Another boundary nothing type-checks, read from this repository for the same
+# reason as the markers above: full_ci.sh requires check runs by job name, and
+# ci.yml gives those names and reads the `full-ci` label the gate's denial
+# tells an agent to add. Rename a job on one side only and every ready flip is
+# refused for a check that can never exist.
+workflow="$repo_root/.github/workflows/ci.yml"
+full_ci_checks=$(sed -n "s/^FULL_CI_CHECKS='\([^']*\)'.*/\1/p" "$script_dir/full_ci.sh")
+if [ -z "$full_ci_checks" ]; then
+    printf 'FAIL full_ci.sh declares no FULL_CI_CHECKS\n'
+    failed=$((failed + 1))
+fi
+for check in $full_ci_checks; do
+    if grep -q "^  $check:\$" "$workflow"; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL full_ci.sh requires check %s, which ci.yml defines no job for\n' "$check"
+        failed=$((failed + 1))
+    fi
+done
+if grep -q "'full-ci'" "$workflow" && grep -q 'add-label full-ci' "$GUARDRAILS"; then
+    passed=$((passed + 1))
+else
+    printf 'FAIL the full-ci label named in the gate denial is not the one ci.yml reads\n'
+    failed=$((failed + 1))
+fi
+
 # --- Claude and Codex must expose the same repository workflows ------------
 
 skill_parity() {

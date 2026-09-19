@@ -165,8 +165,11 @@ def main(argv=None):
     root, packages = workspace(metadata)
 
     # --no-renames reports both sides of a move: the crate that lost the file is
-    # affected as much as the one that gained it.
-    changed = git("diff", "--name-only", "--no-renames", f"{args.base}...{args.head}", cwd=root).split()
+    # affected as much as the one that gained it. -z keeps a path with a space
+    # or a non-ASCII byte whole and unquoted.
+    changed = [p for p in git(
+        "diff", "--name-only", "-z", "--no-renames", f"{args.base}...{args.head}", cwd=root
+    ).split("\0") if p]
 
     def referrers(needle):
         result = subprocess.run(
