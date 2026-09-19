@@ -1,0 +1,21 @@
+# Signed exceptions to the single-consumer rule (`crates/guards/src/single_consumer.rs`).
+#
+#   <crate directory under crates/> <reason>
+#
+# A crate listed here has exactly one shipped consumer (`[dependencies]` or a
+# target-specific variant; dev and build dependencies do not count) and the
+# rule lets it stand. Lines beginning with `#` are comments. An entry for a
+# crate that is gone, or no longer has exactly one consumer, is itself a
+# finding: delete the line.
+#
+# The five below were recorded when the guard landed, at main bcfb5f19, so the
+# change could land green. They are the finding, not a verdict that each is
+# fine: every one is a crate that left `app`'s line count without yet giving a
+# second consumer anything to link. A line leaves when its crate gains a
+# consumer or folds back into the one it has.
+
+control-host consumed by `app` only; the host machinery (projection registry, admission, idempotency store, event journal) moved out of `app` in #452 so the headless guard scans it. Open: `mcp` and `backtest` do not host a control plane yet.
+feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
+orderflow consumed by `app` only; the headless order-flow engine the chart draws. Open: AGENTS.md names `backtest` as its next consumer.
+paper consumed by `app` only in shipped code; `backtest` links it as a dev-dependency to prove the paper account in a test, which the rule does not count. Open: a backtest report built on the paper account would make it a second consumer.
+trading consumed by `sim` only; the venue-neutral `TradingVenue` port a broker adapter docks against beside the simulator. Open: no second venue implements it yet.
