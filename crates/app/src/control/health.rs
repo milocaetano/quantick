@@ -1,5 +1,6 @@
 //! Frame, loading, indicator, and order-flow health projection.
 
+use crate::app::{HealthPort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -11,7 +12,6 @@ use serde::{Deserialize, Serialize};
 use quantick_orderflow::engine::OrderflowHealth;
 
 use crate::{
-    app::QuantickApp,
     loading::LoadingTask,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -229,7 +229,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// hear is that the tape *became* late, or that the hop changed, so that is
 /// what the key holds. The milliseconds stay in the projection, where a reader
 /// that asked for them gets them.
-fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
+fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabRevisionKey> {
     snapshot(app)
         .tabs
         .into_iter()
@@ -269,12 +269,12 @@ fn tape_revision_key(tape: &TapeHealthSnapshot) -> TapeRevisionKey {
     }
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
+fn project<P: TabsPort + HealthPort + ?Sized>(app: &P, _context: CaptureContext) -> HealthSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> HealthSnapshot {
-    let frame = app.control_frame_metrics();
+fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
+    let frame = app.health_reads().frame_metrics();
     HealthSnapshot {
         frame: FrameHealthSnapshot {
             wall_average_ms: frame
@@ -294,7 +294,8 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
         },
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {
                 let panes: Vec<PaneHealthSnapshot> = tab
@@ -449,5 +450,20 @@ const fn loading_task_id(task: LoadingTask) -> &'static str {
         LoadingTask::BookSync => "book_sync",
         LoadingTask::ReplaySession => "replay_session",
         LoadingTask::VenueHistory => "venue_history",
+    }
+}
+
+/// The health projection driven through the tabs and health families of a
+/// fake window, with no application behind it.
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::app::control_host::tests::fake::FakeWindow;
+
+    #[test]
+    fn a_window_that_measured_nothing_reports_no_frame_metrics() {
+        let snapshot = snapshot(&FakeWindow::new());
+        assert_eq!(snapshot.frame.wall_average_ms, None);
+        assert_eq!(snapshot.tabs.len(), 1);
     }
 }

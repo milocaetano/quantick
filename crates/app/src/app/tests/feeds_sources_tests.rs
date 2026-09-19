@@ -200,7 +200,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // Whatever startup queued is not what this test is about.
     while cmd_rx.try_recv().is_ok() {}
     app.chrome.harness.arm_load_older(2, 3);
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "nothing is charted yet, so nothing may be asked for"
@@ -214,7 +216,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // Give up rather than hang a capture run on a bridge that never came:
     // the budget counts down one frame at a time and then the hook is done.
     for _ in 0..3 {
-        app.apply_load_older();
+        app.chrome
+            .harness
+            .apply_load_older(&mut app.tabs, &app.config);
     }
     assert_eq!(
         app.chrome.harness.load_older_remaining(),
@@ -232,7 +236,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     while cmd_rx.try_recv().is_ok() {}
     app.active_tab_mut().loading.end(LoadingTask::History);
     app.chrome.harness.arm_load_older(2, 10);
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
         "the first page is asked for"
@@ -246,7 +252,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // One at a time: the feed serves one request per session, so firing
     // the second before the first is answered would have it refused and
     // answered empty.
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "a page is still in flight; the hook waits for it"
@@ -254,7 +262,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     assert_eq!(app.chrome.harness.load_older_remaining(), Some((1, 10)));
 
     app.active_tab_mut().loading.end(LoadingTask::History);
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(matches!(
         cmd_rx.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
@@ -385,9 +395,12 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     // Where the popup landed, derived rather than assumed: the corner is
     // measured against the canvas, and on a flow-only layout the pane *is*
@@ -425,7 +438,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     click_chart(&mut app, &ctx, on_the_sentence);
 
     assert!(
-        app.control_feed_popup_open(),
+        app.chrome_reads().feed_popup_open(),
         "a click on the popup is not a click somewhere else"
     );
     let after = {
@@ -446,14 +459,17 @@ fn a_recovered_feed_puts_the_popup_away() {
     let ctx = egui::Context::default();
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
-    assert!(!app.control_feed_popup_open());
-    assert!(app.control_feed_chip_rect().is_none());
+    assert!(!app.chrome_reads().feed_popup_open());
+    assert!(app.chrome_reads().feed_chip_rect().is_none());
 }
 
 /// The floor lives for one event. Left standing it swallowed the next
@@ -557,7 +573,7 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
         app.active_tab_mut().drain_notices_at(step * 3_000);
     }
 
-    let config = app.control_config().clone();
+    let config = app.tab_reads().config().clone();
     assert!(
         app.active_tab()
             .stall_at(&config, RECONNECT_BUDGET_MS)
@@ -2134,7 +2150,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         "and nothing was persisted — the next launch is unharmed"
     );
     // The same symbol on the feed that *does* own it is still fine.
-    assert!(app.add_symbol("tickmill", "WINQ26").is_ok());
+    assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
 }
 

@@ -482,12 +482,4 @@ impl ChartPane {
         self.lane
             .command(self.state.partial().cloned(), self.state.trades())
     }
-
-    /// Where an instant later than this pane's newest bar falls, as a
-    /// fractional slot past the end. `None` unless the pane's bars run on a
-    /// fixed interval — see [`Self::anchor_time`] for why a tick chart has no
-    /// answer here.
-    pub(super) fn future_slot_at_time(&self, time: i64) -> Option<f32> {
-        self.series_read().future_slot_at_time(time)
-    }
 }

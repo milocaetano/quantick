@@ -11,6 +11,7 @@
 //! Rate class: a human or an agent asking for attention. Never per trade,
 //! never per frame.
 
+use crate::app::AlertsPort;
 use std::{
     collections::BTreeSet,
     time::{Duration, Instant},
@@ -34,7 +35,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::metrics;
 
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ActionRegistry},
@@ -306,8 +307,8 @@ fn notify_descriptor(
     }
 }
 
-fn raise_popup(
-    app: &mut QuantickApp,
+fn raise_popup<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -315,8 +316,8 @@ fn raise_popup(
     raise(app, access, actor, input, NotifyChannel::Popup)
 }
 
-fn raise_toast(
-    app: &mut QuantickApp,
+fn raise_toast<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -324,8 +325,8 @@ fn raise_toast(
     raise(app, access, actor, input, NotifyChannel::Toast)
 }
 
-fn sound_alert(
-    app: &mut QuantickApp,
+fn sound_alert<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -334,8 +335,8 @@ fn sound_alert(
 }
 
 /// One notification path: budget first, then the surface, then the journal.
-fn raise(
-    app: &mut QuantickApp,
+fn raise<P: AlertsPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -367,7 +368,7 @@ fn raise(
     let displayed_text = format!("{} — {author}", input.message);
     let unavailable_reason = match channel {
         NotifyChannel::Popup => {
-            app.show_agent_popup(AgentPopup {
+            app.alerts().show_popup(AgentPopup {
                 title: input
                     .title
                     .clone()
@@ -378,10 +379,10 @@ fn raise(
             None
         }
         NotifyChannel::Toast => {
-            app.show_agent_toast(displayed_text.clone());
+            app.alerts().show_toast(displayed_text.clone());
             None
         }
-        NotifyChannel::Sound => app.sound_agent_alert(),
+        NotifyChannel::Sound => app.alerts().sound_alert(),
     };
 
     let event_actor = EventActor {
@@ -409,4 +410,46 @@ fn raise(
         unavailable_reason,
     })
     .map_err(|error| ControlError::invalid_request(format!("notification result: {error}")))
+}
+
+/// The notify handlers driven through the alerts family of a fake window,
+/// with no application behind it.
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::app::control_host::tests::fake::FakeWindow;
+
+    #[test]
+    fn a_toast_lands_on_the_fake_windows_lane_with_its_author() {
+        let mut window = FakeWindow::new();
+        let result = raise_toast(
+            &mut window,
+            &mut ControlAccess::new(),
+            &FakeWindow::assistant(),
+            &json!({ "message": "hello" }),
+        )
+        .expect("a toast within budget is raised");
+        assert_eq!(result["raised"], true);
+        assert_eq!(
+            window.toast.message(),
+            Some("hello — fake assistant (agent)")
+        );
+    }
+
+    #[test]
+    fn every_refused_sound_is_reported_as_not_raised() {
+        let mut window = FakeWindow::with_refusing_speaker("no audio output device");
+        let mut access = ControlAccess::new();
+        for call in 0..2 {
+            let result = sound_alert(
+                &mut window,
+                &mut access,
+                &FakeWindow::assistant(),
+                &json!({ "message": "listen" }),
+            )
+            .expect("a refused sound is an answer, not an error");
+            assert_eq!(result["raised"], false, "call {call}");
+            assert_eq!(result["unavailable_reason"], "no audio output device");
+        }
+    }
 }

@@ -50,6 +50,7 @@
 //! and the first that would benefit from the journal-driven change counters
 //! that replace it.
 
+use crate::app::{ChromePort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::CONTROL_SCENE_MAX_CONTROLS,
@@ -62,7 +63,6 @@ use serde::{Deserialize, Serialize};
 use eframe::egui;
 
 use crate::{
-    app::QuantickApp,
     chart_layers::ChartLayer,
     dock::DockTab,
     feed::stall::Recovery,
@@ -292,11 +292,14 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> SceneSnapshot {
+fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> SceneSnapshot {
     scene_snapshot(app)
 }
 
-fn project_controls(app: &QuantickApp, _context: CaptureContext) -> SceneSnapshot {
+fn project_controls<P: TabsPort + ChromePort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> SceneSnapshot {
     scene_snapshot(app)
 }
 
@@ -341,9 +344,9 @@ pub(crate) fn pane_canvas_control_id(pane_id: u64) -> String {
     format!("pane.{pane_id}.canvas")
 }
 
-pub(crate) fn scene_snapshot(app: &QuantickApp) -> SceneSnapshot {
-    let tabs = app.control_tabs();
-    let active = &tabs[app.control_active_tab_index()];
+pub(crate) fn scene_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> SceneSnapshot {
+    let tabs = app.tab_reads().tabs();
+    let active = &tabs[app.tab_reads().active_tab_index()];
     let focused_side = active.focused_side();
     let mut controls = Vec::new();
 
@@ -415,9 +418,9 @@ const COVERED_REGIONS: [SceneOwnerKindDto; 6] = [
 ];
 
 /// The contextual drawing actions visible after a temporary range settles.
-fn push_quick_range(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
+fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
     use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
-    let Some(actions) = crate::app::control_quick_range_actions(app) else {
+    let Some(actions) = app.chrome_reads().quick_range_actions() else {
         return;
     };
     for control in actions {
@@ -522,15 +525,19 @@ fn push_tab_strip(
 
 /// The toolbar's LAYERS group: one toggle per visual layer, each answering
 /// for the same field the pane's own layer menu writes.
-fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp, tab: &Tab) {
-    let capabilities = tab.capabilities(app.control_config());
+fn push_layer_toggles<P: TabsPort + ChromePort + ?Sized>(
+    controls: &mut Vec<SceneControlSnapshot>,
+    app: &P,
+    tab: &Tab,
+) {
+    let capabilities = tab.capabilities(app.tab_reads().config());
     // `LayerToggle::ALL` is call order, which the group's right-to-left layout
     // turns into right-to-left screen order. Reversed here so the scene lists
     // them the way the trader reads them: an assistant asked about "the third
     // button from the left" must count the same direction the eye does.
     for toggle in LayerToggle::ALL.into_iter().rev() {
         let layer = toggle.layer();
-        let (on, blocked) = tab.layer_toggle_state(layer, app.control_style(), capabilities);
+        let (on, blocked) = tab.layer_toggle_state(layer, app.chrome_reads().style(), capabilities);
         controls.push(SceneControlSnapshot {
             control_id: layer_control_id(layer),
             label: layer.label().to_owned(),
@@ -559,8 +566,8 @@ fn push_layer_toggles(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickAp
 /// see, and the keyboard shortcuts that still arm a tool are not controls.
 /// [`crate::toolrail::ToolRail::painted_controls`] answers with nothing in
 /// that case, so the rule lives with the rail rather than here.
-fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let rail = app.control_tool_rail();
+fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let rail = app.chrome_reads().tool_rail();
     // What the rail *painted*, folded through the same slots the draw folds
     // through and cut by the stage and the band window the draw recorded.
     // Listing the registry instead would name thirteen tools that live behind
@@ -585,8 +592,8 @@ fn push_tool_rail(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
 }
 
 /// The dock's tab strip, when the dock is on screen.
-fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let dock = app.control_dock();
+fn push_dock<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let dock = app.chrome_reads().dock();
     if !dock.visible() {
         return;
     }
@@ -618,15 +625,15 @@ fn push_dock(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
 /// control behind a click is not on screen — and they are the first entries in
 /// this module to name the capability that operates them, which is the whole
 /// reason `capability_id` exists.
-fn push_feed_status(controls: &mut Vec<SceneControlSnapshot>, app: &QuantickApp) {
-    let Some(chip) = app.control_feed_chip_rect() else {
+fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapshot>, app: &P) {
+    let Some(chip) = app.chrome_reads().feed_chip_rect() else {
         return;
     };
     let owner = || SceneOwnerSnapshot {
         kind: SceneOwnerKindDto::FeedStatus,
         id: FEED_STATUS_OWNER_ID.to_owned(),
     };
-    let popup_open = app.control_feed_popup_open();
+    let popup_open = app.chrome_reads().feed_popup_open();
     let chip_bounds = rect_bounds(chip);
     controls.push(SceneControlSnapshot {
         control_id: FEED_CHIP_CONTROL_ID.to_owned(),

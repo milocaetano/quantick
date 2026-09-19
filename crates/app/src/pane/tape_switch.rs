@@ -3,15 +3,15 @@
 //!
 //! The chip's geometry, its click in the input pass and its paint in the draw
 //! pass live together so the pixel a press lands on is the pixel the chip is
-//! drawn in. `click_on_tape` sits beside them because it reads the same divider
-//! the chip's state moves.
+//! drawn in. [`TapeSwitch`] is the owner: it holds the one thing the chip
+//! remembers between the passes — whether the pointer is on it — and answers
+//! the click. Which layer the click flips, and what a hovered chip does to the
+//! crosshair, is the pane's to decide; the switch never reaches into it.
 
 use eframe::egui;
 
 use crate::theme;
 use quantick_layers::ChartLayer;
-
-use super::{ChartPane, PaneChrome};
 
 /// The tape switch's chip, in logical pixels.
 ///
@@ -65,61 +65,47 @@ pub(crate) fn tape_switch_rect(chart_rect: egui::Rect) -> egui::Rect {
     )
 }
 
-impl ChartPane {
-    /// The canvas right-click menu: one entry per chart layer, then one per
-    /// indicator on this pane.
-    ///
-    /// The indicator entries drive `IndicatorViews::toggle_hidden` — the same
-    /// state the toolbar's eye writes — so an indicator hidden here shows as
-    /// hidden there, and the indicator state file remains its single home.
-    /// Aim the next menu at one pane or the other, as a right-click would.
-    #[cfg(test)]
-    pub(crate) fn aim_context_menu_at_tape(&mut self, on_tape: bool) {
-        self.context_menu.on_tape = on_tape;
-    }
+/// The chip's state between the input pass and the paint pass. See the
+/// module docs.
+#[derive(Default)]
+pub struct TapeSwitch {
+    /// Whether the pointer is over the chip. Read by the paint pass, which
+    /// runs after the input pass and has no `Ui` of its own to ask.
+    hovered: bool,
+}
 
-    /// Whether a click at this x belongs to the tape rather than the candles.
-    ///
-    /// Read off the divider the draw already published, never a second copy of
-    /// the lane's geometry — the two could then disagree, and the menu would
-    /// configure a pane the trader did not click. A canvas with no lane has no
-    /// divider, and every click on it is the candles'.
+impl TapeSwitch {
+    /// Whether the pointer was on the chip in the last input pass.
     #[must_use]
-    pub(super) fn click_on_tape(&self, x: f32) -> bool {
-        self.frame
-            .lane_divider_x
-            .is_some_and(|divider| x >= divider)
+    pub(super) fn hovered(&self) -> bool {
+        self.hovered
     }
 
-    /// The tape switch's click, in the input pass.
+    /// No chip this frame: a pane with no tape machinery registers nothing
+    /// (§11: a time pane has none), so no chip appears there to promise a
+    /// band that canvas will never draw.
+    pub(super) fn absent(&mut self) {
+        self.hovered = false;
+    }
+
+    /// The tape switch's click, in the input pass. `on` is the tape layer's
+    /// current switch; the answer is whether the chip was clicked, which the
+    /// pane turns into the layer flip.
     ///
-    /// Drawn by [`Self::draw_canvas_contributions`] in the pass after this one, off the
-    /// same [`tape_switch_rect`]. Nothing is registered on a pane with no tape
-    /// machinery (§11: a time pane has none), so no chip appears there to
-    /// promise a band that canvas will never draw.
-    pub(super) fn handle_tape_switch(
+    /// Drawn by the canvas pass after this one, off the same
+    /// [`tape_switch_rect`].
+    #[must_use]
+    pub(super) fn handle(
         &mut self,
         ui: &egui::Ui,
         chart_rect: egui::Rect,
-        chrome: &mut PaneChrome<'_>,
-    ) {
-        self.tape_switch_hovered = false;
-        if self.orderflow.is_none() {
-            return;
-        }
-        let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
-        let response = ui.interact(
-            tape_switch_rect(chart_rect),
-            self.interaction_id("tape_switch"),
-            egui::Sense::click(),
-        );
-        self.tape_switch_hovered = response.hovered();
+        id: egui::Id,
+        on: bool,
+    ) -> bool {
+        let response = ui.interact(tape_switch_rect(chart_rect), id, egui::Sense::click());
+        self.hovered = response.hovered();
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-            // The chip is chrome on top of the canvas. A crosshair chasing the
-            // pointer underneath it would say the chart is being hovered while
-            // the pointer is reading a button.
-            self.hover_pos = None;
         }
         let clicked = response.clicked();
         // `on_hover_ui` over `on_hover_text`: the closure runs only while the
@@ -137,9 +123,7 @@ impl ChartPane {
                     .color(theme::TEXT_MUTED),
             );
         });
-        if clicked {
-            self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
-        }
+        clicked
     }
 }
 

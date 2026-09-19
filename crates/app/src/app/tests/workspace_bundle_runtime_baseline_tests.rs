@@ -14,7 +14,7 @@ fn bundle_runtime_baseline_idle_and_pending_picker_do_no_allocating_work() {
         }
         let before = crate::work_meter::tally();
         for _ in 0..1000 {
-            app.poll_workspace_picker();
+            app.workspace_bundle_adapter().poll_picker();
             if pending {
                 app.workspace.picker_mut().open_import();
                 let tab = &app.tabs[app.tabs.active_index()];
@@ -43,10 +43,10 @@ fn bundle_runtime_baseline_cancel_clears_once_and_stays_silent() {
         .picker_mut()
         .set_pending_for_test(WorkspacePick::Export, receiver);
     sender.send(None).unwrap();
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert!(!app.workspace.picker_open());
     assert_eq!(app.surfaces.toast.message(), None);
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert_eq!(app.surfaces.toast.message(), None);
     assert!(!app.workspace.ui_state_path().exists());
 }
@@ -59,14 +59,14 @@ fn bundle_runtime_baseline_lost_picker_clears_and_reports_once() {
         .picker_mut()
         .set_pending_for_test(WorkspacePick::Import, receiver);
     drop(sender);
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert!(!app.workspace.picker_open());
     assert_eq!(
         app.surfaces.toast.message(),
         Some("The file chooser could not open — see the log. Try again.")
     );
     app.surfaces.toast.clear();
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert_eq!(app.surfaces.toast.message(), None);
 }
 
@@ -79,7 +79,7 @@ fn bundle_runtime_baseline_chosen_export_writes_and_visits() {
         .picker_mut()
         .set_pending_for_test(WorkspacePick::Export, receiver);
     sender.send(Some(output.to_path_buf())).unwrap();
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert!(!app.workspace.picker_open());
     assert!(output.is_file());
     assert_eq!(
@@ -107,7 +107,7 @@ fn bundle_runtime_baseline_chosen_refusal_preserves_runtime_and_recent() {
         .picker_mut()
         .set_pending_for_test(WorkspacePick::Import, receiver);
     sender.send(Some(input.to_path_buf())).unwrap();
-    app.poll_workspace_picker();
+    app.workspace_bundle_adapter().poll_picker();
     assert!(!app.workspace.picker_open());
     assert!(app.workspace.session().recent().is_empty());
     assert_eq!(app.workspace_state().starred_tool_ids(), ["measure"]);

@@ -6,6 +6,7 @@
 //! because the menu bar is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
+use super::{GatewayPort, LayoutPort};
 use eframe::egui;
 
 use crate::tabstrip::{self, TabAction};
@@ -222,7 +223,9 @@ impl QuantickApp {
             MenuCommand::ApplyLayoutPreset(preset) => self.apply_layout_preset(preset),
             MenuCommand::SwitchLayoutIndex(index) => {
                 if let Err(error) = self.layout_adapter().switch_layout_index(index) {
-                    self.note_workspace(error.to_string());
+                    self.surfaces
+                        .toast
+                        .note(error.to_string(), std::time::Instant::now());
                 }
             }
             MenuCommand::Strip(action) => self.layout_adapter().apply_strip_action(action),

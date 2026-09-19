@@ -131,7 +131,10 @@ fn the_scene_names_the_corner_and_what_operates_it() {
         "a control behind a click is not on screen"
     );
 
-    let chip_rect = app.control_feed_chip_rect().expect("the corner is up");
+    let chip_rect = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip_rect.center());
     let scene = observer_scene(&app);
     let calls: Vec<String> = scene["controls"]
@@ -189,7 +192,7 @@ fn the_heatmap_lamp_reads_the_switch_not_the_capture() {
 fn the_scripted_click_lands_on_the_pane_it_names() {
     let (mut app, _events, _commands, _book) = test_app();
     assert_eq!(
-        app.scripted_context_menu_pos(ContextMenuPane::Tape),
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
         None,
         "nothing has drawn yet, so there is no geometry to click"
     );
@@ -200,12 +203,12 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
         pane.frame.chart_rect = Some(rect);
         pane.frame.lane_divider_x = Some(700.0);
     }
-    let tape = app
-        .scripted_context_menu_pos(ContextMenuPane::Tape)
+    let tape = ContextMenuPane::Tape
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("a drawn tape can be clicked");
     assert!(tape.x > 700.0 && tape.x < 1000.0, "{tape:?}");
-    let chart = app
-        .scripted_context_menu_pos(ContextMenuPane::Chart)
+    let chart = ContextMenuPane::Chart
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("and so can the candles");
     assert!(chart.x > 0.0 && chart.x < 700.0, "{chart:?}");
     assert!(
@@ -220,9 +223,13 @@ fn the_scripted_click_lands_on_the_pane_it_names() {
 
     // No lane: the candles still answer, the tape has nothing to open.
     app.active_tab_mut().flow_pane.frame.lane_divider_x = None;
-    assert_eq!(app.scripted_context_menu_pos(ContextMenuPane::Tape), None);
+    assert_eq!(
+        ContextMenuPane::Tape.scripted_position(&app.active_tab().flow_pane),
+        None
+    );
     assert!(
-        app.scripted_context_menu_pos(ContextMenuPane::Chart)
+        ContextMenuPane::Chart
+            .scripted_position(&app.active_tab().flow_pane)
             .is_some()
     );
 }
@@ -242,7 +249,9 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
 
     // No round trip yet: the hook waits rather than seeking an empty
     // ledger, which would photograph nothing it exists to show.
-    app.apply_replay_restart();
+    app.chrome
+        .harness
+        .apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         Some(1),
@@ -265,7 +274,9 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(app.active_tab().paper.session_trades().len(), 1);
 
-    app.apply_replay_restart();
+    app.chrome
+        .harness
+        .apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         None,
@@ -281,7 +292,9 @@ fn the_scripted_replay_restart_seeks_once_the_trades_are_in() {
 
     // A second frame asks for nothing: an env var is a request for this
     // run, not a standing rule.
-    app.apply_replay_restart();
+    app.chrome
+        .harness
+        .apply_replay_restart(&mut app.tabs, &app.config);
     assert!(cmd_rx.try_recv().is_err(), "the seek repeated itself");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -296,7 +309,9 @@ fn the_scripted_replay_restart_waits_for_a_recording() {
     // subject; only what the hook adds after it is.
     while cmd_rx.try_recv().is_ok() {}
     app.chrome.harness.arm_replay_restart(1);
-    app.apply_replay_restart();
+    app.chrome
+        .harness
+        .apply_replay_restart(&mut app.tabs, &app.config);
     assert_eq!(
         app.chrome.harness.replay_restart_after(),
         Some(1),
@@ -3193,11 +3208,12 @@ plot(close)
     );
 
     let traders_index = app
-        .control_tabs()
+        .tab_reads()
+        .tabs()
         .position(traders_tab)
         .expect("the trader's chart is still open");
     assert_eq!(
-        app.control_tabs()[traders_index]
+        app.tab_reads().tabs()[traders_index]
             .focused_pane()
             .indicators
             .all()
@@ -3243,7 +3259,7 @@ fn an_annotation_refuses_to_land_in_a_drawing_the_trader_is_still_making() {
         drawings::ChartPoint::at_time(slot as f32 + 0.5, 1.0, pane.slot_open_time(slot))
     };
     let rectangle = drawings::DrawingTool::by_id("rectangle").unwrap();
-    let fresh = app.control_new_drawing(rectangle);
+    let fresh = app.tab_reads().new_drawing(rectangle);
     app.active_tab_mut().drawing_pane_mut().drawings.place_with(
         rectangle,
         &drawings::DrawingBand::Price,
@@ -6120,4 +6136,30 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// An agent's `notify.sound` reports every refusal, not only the first of a
+/// run, and leaves the trader's alarm-failure state alone: that state decides
+/// whether the *alarm* toast shows, and an assistant's call is not an alarm.
+#[test]
+fn every_refused_agent_sound_is_reported_and_the_alarm_state_is_untouched() {
+    struct Refusing;
+    impl crate::audio::AlertSink for Refusing {
+        fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
+            Err("no audio output device could be opened")
+        }
+    }
+    let (mut app, _commands) = app_with_history(4);
+    app.audio.alerts = Box::new(Refusing);
+    for call in 0..2 {
+        assert_eq!(
+            app.alerts().sound_alert().as_deref(),
+            Some("no audio output device could be opened"),
+            "call {call} must report the refusal, not claim it was heard"
+        );
+    }
+    assert_eq!(
+        app.audio.alert_failure, None,
+        "an agent's sound call must not mark the trader's alarm as already reported"
+    );
 }

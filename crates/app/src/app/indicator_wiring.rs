@@ -1,6 +1,7 @@
 //! The indicator owner's worker, layout and control recipients at the frame boundary.
 use super::QuantickApp;
 use super::indicator_manager::{IndicatorEdit, SettingsChange};
+use super::{GatewayPort, LayoutPort};
 use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::indicator_legend::LegendAction;
 use crate::indicator_worker::SlotId;

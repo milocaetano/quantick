@@ -13,6 +13,7 @@
 //! the window's own methods call them; stages over plain owners live in the
 //! child modules, which never see the window.
 
+use super::{AlertsPort, ChromePort, GatewayPort, LayersPort, LayoutPort, PaperPort};
 use quantick_chart_interaction::frame_plan::{FramePlan, FrameStage};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
@@ -151,7 +152,7 @@ impl QuantickApp {
             }
             FrameStage::HistoryNoteHook => {
                 #[cfg(any(feature = "scenario-harness", test))]
-                self.apply_history_note_hook();
+                self.chrome.harness.apply_history_note_hook(&mut self.tabs);
             }
             FrameStage::EnableControlAccess => {
                 #[cfg(any(feature = "control-harness", test))]
@@ -211,7 +212,7 @@ impl QuantickApp {
             FrameStage::IndicatorMaintenance => {
                 surfaces::reload_changed_scripts(&mut self.indicators, &mut self.tabs);
                 self.layout_adapter().apply_pending_indicator_state();
-                self.maintain_chart_layers();
+                self.layer_wiring().maintain();
             }
             FrameStage::StatusLine => self.draw_status_line(ctx, scratch),
             FrameStage::LayoutDialogs => self.layout_adapter().draw_layout_delete_confirm(ctx),
@@ -259,7 +260,9 @@ impl QuantickApp {
                 for tab in self.tabs.iter_mut() {
                     tab.apply_strategy_cleanup();
                 }
-                self.play_pending_alarms();
+                if let Some(note) = self.audio.play_pending(&mut self.tabs) {
+                    self.alerts().show_toast(note);
+                }
             }
             FrameStage::Tail => {
                 if let Some(tail) = tail.take() {
@@ -292,13 +295,17 @@ impl QuantickApp {
     /// the order a launch composes them.
     fn apply_scenario_hooks(&mut self) {
         #[cfg(any(feature = "scenario-harness", test))]
-        self.apply_scripted_view();
+        self.chrome.harness.apply_scripted_view(&mut self.tabs);
         #[cfg(any(feature = "drawing-harness", test))]
         super::demo_hooks::apply_drawing_demo(self);
         #[cfg(any(feature = "scenario-harness", test))]
-        self.apply_load_older();
+        self.chrome
+            .harness
+            .apply_load_older(&mut self.tabs, &self.config);
         #[cfg(any(feature = "scenario-harness", test))]
-        self.apply_load_older_candles();
+        self.chrome
+            .harness
+            .apply_load_older_candles(&mut self.tabs, &self.config);
         #[cfg(any(feature = "drawing-harness", test))]
         super::demo_hooks::apply_drawing_draft(self);
         #[cfg(any(feature = "scenario-harness", test))]
@@ -310,7 +317,9 @@ impl QuantickApp {
         #[cfg(any(feature = "scenario-harness", test))]
         super::demo_hooks::apply_strategy_demo(self);
         #[cfg(any(feature = "scenario-harness", test))]
-        self.apply_replay_restart();
+        self.chrome
+            .harness
+            .apply_replay_restart(&mut self.tabs, &self.config);
     }
 
     /// Chrome panels claim their zones outside-in (§5): menu and toolbar on
@@ -380,9 +389,10 @@ impl QuantickApp {
         // The audition goes through the one speaker every armed instance
         // shares, and reports a sound that could not be heard exactly as a
         // missed signal would.
-        if let Some(cue) = asks.test_alert {
-            let outcome = self.audio.alerts.play(&[cue]);
-            self.report_alert_attempt(outcome);
+        if let Some(cue) = asks.test_alert
+            && let Some(note) = self.audio.play(&[cue])
+        {
+            self.alerts().show_toast(note);
         }
         if let Some(request) = asks.arm_strategy {
             let outcome = self
@@ -401,14 +411,14 @@ impl QuantickApp {
             self.apply_market_request(request);
         }
         if let Some(change) = asks.footprint {
-            self.apply_footprint_change(change);
+            self.layer_wiring().apply_footprint_change(change);
         }
         if asks.undo_drawing {
             let pane = self.drawing_pane_mut();
             pane.drawings.undo();
             // Same orphan risk as the keyboard undo: the drawing an armed
             // instance rides may just have been taken away.
-            pane.sweep_strategy_orphans();
+            pane.strategies.sweep_orphans(&pane.drawings);
         }
     }
 
@@ -416,7 +426,9 @@ impl QuantickApp {
         scratch.stall = self
             .active_tab()
             .stall_at(&self.config, crate::metrics::wall_clock_ms());
-        let offline_accent = self.feed_offline_accent(scratch.stall.as_ref());
+        let offline_accent = self
+            .chrome_reads()
+            .feed_offline_accent(scratch.stall.as_ref());
         let status = self.status_model();
         let status_response = statusbar::draw(ctx, &status, &mut self.tz, offline_accent);
         if status_response.open_trading_tab {
@@ -428,7 +440,8 @@ impl QuantickApp {
         let action =
             panels::draw_replay_browser(ctx, &mut self.replay_view, &self.tabs, &self.config);
         if let Some(action) = action {
-            self.apply_replay_action(action);
+            let (tab, config) = self.active_with_config();
+            super::replay_and_history::apply_replay_action(tab, config, action);
         }
         // A folder the trader just pointed the browser at is written down on
         // the frame they pointed it, not at exit: "it forgot my folder again"
@@ -460,7 +473,8 @@ impl QuantickApp {
         // trader who opens it and then looks at the ledger has not asked for
         // it to close.
         if self.active_tab_mut().paper.draw_strategy_editor(ctx) {
-            self.persist_order_strategies();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
         if response.restart_book_capture {
             self.active_tab_mut().restart_book_capture();
@@ -468,25 +482,29 @@ impl QuantickApp {
         if let Some(action) = response.replay_action {
             // A click that lost its slot has the trader's next click behind
             // it; only the one-shot hook cares about the answer.
-            let _ = self.apply_replay_action(action);
+            let (tab, config) = self.active_with_config();
+            let _ = super::replay_and_history::apply_replay_action(tab, config, action);
         }
         if let Some((opened, closed)) = response.navigate_to_trade {
             panels::center_flow_pane_on_trade(self.active_tab_mut(), opened, closed);
         }
         if response.pick_trades_dir {
-            self.open_trades_dir_picker();
+            self.paper_settings().open_trades_dir_picker();
         }
         if response.order_strategies_changed {
-            self.persist_order_strategies();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::OrderStrategies);
         }
         if response.cmd_trading_changed {
-            self.persist_cmd_trading();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::CmdTrading);
         }
         if response.risk_settings_changed {
-            self.persist_risk_settings();
+            self.paper_settings()
+                .persist(super::paper_wiring::PaperSettingsChange::RiskSettings);
         }
-        self.poll_trades_dir_picker();
-        self.poll_workspace_picker();
+        self.paper_settings().poll_trades_dir_picker();
+        self.workspace_bundle_adapter().poll_picker();
     }
 
     /// Respawn the feed if the feed/symbol selection changed (resets the
@@ -558,7 +576,7 @@ impl QuantickApp {
                 self.layout_adapter().draw_layout_strips(ui);
                 // The grid and the indicator state belong to the window, not
                 // to the pane whose menu switched them.
-                self.apply_layer_actions();
+                self.layer_wiring().apply_actions();
                 canvas::draw_overlays(ui, area, self.active_tab(), stall, &mut answers);
             });
         scratch.canvas = answers;

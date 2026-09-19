@@ -1,5 +1,6 @@
 //! Chart summary and append-only paginated bar-window projections.
 
+use crate::app::TabsPort;
 use quantick_control::{
     cursor::{PageContext, PageCursor, PaginationConsistency},
     error::ControlError,
@@ -14,7 +15,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    app::QuantickApp,
     config::AppConfig,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -232,19 +232,19 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> ChartSnapshot {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> ChartSnapshot {
+fn project<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ChartSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> ChartSnapshot {
-    let active = app.control_active_tab_index();
-    let config = app.control_config();
+fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
+    let active = app.tab_reads().active_tab_index();
+    let config = app.tab_reads().config();
     let mut panes = Vec::new();
-    for (tab_index, tab) in app.control_tabs().iter().enumerate() {
+    for (tab_index, tab) in app.tab_reads().tabs().iter().enumerate() {
         let focused = tab.focused_side();
         let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
         for (pane, side) in tab.panes() {
@@ -253,7 +253,7 @@ fn snapshot(app: &QuantickApp) -> ChartSnapshot {
                 PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
             };
             panes.push(pane_snapshot(
-                app.control_tabs().id_at(tab_index),
+                app.tab_reads().tabs().id_at(tab_index),
                 tab,
                 pane,
                 side,
@@ -459,8 +459,8 @@ fn bar_snapshot_with(
 /// a prefix install, backfill, reset, or bar-spec rebuild advances the pane's
 /// pagination revision and returns `control.page_stale`.
 #[cfg(test)]
-pub(crate) fn chart_window(
-    app: &QuantickApp,
+pub(crate) fn chart_window<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     cursor: Option<&PageCursor>,
@@ -472,8 +472,8 @@ pub(crate) fn chart_window(
 
 /// Gateway path for a query parsed, schema-checked, and canonicalized away
 /// from the application thread.
-pub(crate) fn chart_window_prevalidated(
-    app: &QuantickApp,
+pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
+    app: &P,
     instance_id: &InstanceId,
     query: &ChartWindowQuery,
     canonical_query: &serde_json::Value,
@@ -485,7 +485,8 @@ pub(crate) fn chart_window_prevalidated(
         )));
     }
     let tab = app
-        .control_tabs()
+        .tab_reads()
+        .tabs()
         .by_id(query.tab_id.get())
         .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
     let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
@@ -578,7 +579,7 @@ pub(crate) fn chart_window_prevalidated(
         ));
     }
     let end = start.saturating_add(query.page_size).min(stop);
-    let provenance = provenance_context(tab, app.control_config());
+    let provenance = provenance_context(tab, app.tab_reads().config());
     let items = (start..end)
         .filter_map(|slot| {
             pane.closed_bar(slot).map(|bar| {

@@ -10,6 +10,7 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
+use crate::app::TabsPort;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -31,7 +32,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 use super::{
     gateway::ControlAccess,
@@ -61,8 +62,12 @@ pub(crate) const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 /// it lives in (the journal, the trace), the trusted actor, and the resolved
 /// input; it returns the structured result the registry's output schema
 /// describes.
-pub(crate) type ActionHandler =
-    fn(&mut QuantickApp, &mut ControlAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
+pub(crate) type ActionHandler = fn(
+    &mut ControlWindow,
+    &mut ControlAccess,
+    &ActorContext,
+    &Value,
+) -> Result<Value, ControlError>;
 
 /// The step that turns what a caller wrote into what actually happened, before
 /// anything happens.
@@ -75,11 +80,11 @@ pub(crate) type ActionHandler =
 /// than what was asked (contract §11), and an action with nothing to resolve
 /// uses [`identity_resolution`] and pays nothing.
 pub(crate) type ActionResolver =
-    fn(&QuantickApp, &ActorContext, Value) -> Result<Value, ControlError>;
+    fn(&ControlWindow, &ActorContext, Value) -> Result<Value, ControlError>;
 
 /// The resolver of an action whose input is already exactly what it will do.
-fn identity_resolution(
-    _app: &QuantickApp,
+fn identity_resolution<P: ?Sized>(
+    _app: &P,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -330,8 +335,8 @@ fn mark_descriptor() -> CapabilityDescriptor {
 
 /// A mark's resolver: what is under the pointer *now* becomes part of the
 /// input, so the trace line and a replay of it name the same bar.
-fn resolve_mark(
-    app: &QuantickApp,
+fn resolve_mark<P: TabsPort + ?Sized>(
+    app: &P,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -352,8 +357,8 @@ fn resolve_mark(
 /// The mark handler: append the event for the resolved target. One path for
 /// the hotkey, the hook, the tests, a replayed trace entry and any authorized
 /// agent.
-fn create_mark(
-    _app: &mut QuantickApp,
+fn create_mark<P: ?Sized>(
+    _app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

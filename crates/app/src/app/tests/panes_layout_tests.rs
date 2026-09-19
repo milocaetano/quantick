@@ -517,7 +517,7 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
     assert_eq!(
-        app.scripted_context_menu_pos(ContextMenuPane::Axis),
+        ContextMenuPane::Axis.scripted_position(&app.active_tab().flow_pane),
         None,
         "no draw yet, so no gutter to click"
     );
@@ -528,8 +528,8 @@ fn the_axis_menu_hook_lands_on_the_gutter() {
         .frame
         .price_gutter
         .expect("the draw published the gutter");
-    let position = app
-        .scripted_context_menu_pos(ContextMenuPane::Axis)
+    let position = ContextMenuPane::Axis
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("one frame published it");
     assert!(gutter.contains(position));
     let chart = app
@@ -567,7 +567,7 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
     assert_eq!(
-        app.scripted_context_menu_pos(ContextMenuPane::Time),
+        ContextMenuPane::Time.scripted_position(&app.active_tab().flow_pane),
         None,
         "no draw yet, so no strip to click"
     );
@@ -578,8 +578,8 @@ fn the_time_menu_hook_lands_on_the_time_strip() {
         .frame
         .time_strip
         .expect("the draw published the strip");
-    let position = app
-        .scripted_context_menu_pos(ContextMenuPane::Time)
+    let position = ContextMenuPane::Time
+        .scripted_position(&app.active_tab().flow_pane)
         .expect("one frame published it");
     assert!(strip.contains(position));
     let chart = app
@@ -834,29 +834,35 @@ fn the_popup_belongs_to_the_tab_whose_chip_opened_it() {
     }
     app.tabs.select(0);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open(), "opened on the first chart");
+    assert!(
+        app.chrome_reads().feed_popup_open(),
+        "opened on the first chart"
+    );
 
     app.tabs.select(1);
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_feed_chip_rect().is_some(),
+        app.chrome_reads().feed_chip_rect().is_some(),
         "the second chart is stalled too, so it has its own corner"
     );
     assert!(
-        !app.control_feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "but nobody pressed that corner"
     );
 
     app.tabs.select(0);
     run_frame(&mut app, &ctx);
     assert!(
-        !app.control_feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "and leaving the chart put it away, the way clicking elsewhere does"
     );
     assert!(
-        app.control_feed_chip_rect().is_some(),
+        app.chrome_reads().feed_chip_rect().is_some(),
         "the corner itself stays: the feed is still stalled"
     );
 }
@@ -1624,7 +1630,7 @@ fn the_watched_market_wins_the_slot() {
     for (index, tab) in app.tabs.iter_mut().enumerate() {
         tab.paper.show_toast(format!("message from tab {index}"));
     }
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
     assert_eq!(
         app.surfaces.toast.message(),
         Some(format!("message from tab {watched}").as_str()),
@@ -3276,7 +3282,8 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     let path = symbols_scratch("removed");
     let _ = std::fs::remove_file(&path);
     app.workspace.set_symbols_path(path.clone());
-    app.add_symbol("binance", "WINQ26")
+    app.symbol_catalog()
+        .add("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
     app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
@@ -3287,7 +3294,7 @@ fn removing_a_symbol_updates_the_file_and_leaves_open_tabs_alone() {
     run_frame(&mut app, &ctx);
     let open_tabs = app.tabs.len();
 
-    app.remove_symbol("binance", "WINQ26");
+    app.symbol_catalog().remove("binance", "WINQ26");
 
     assert!(
         !app.config
@@ -3321,7 +3328,8 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     let (mut app, _cmd_rx) = app_with_history(50);
     app.workspace.set_symbols_path(symbols_scratch("guard"));
     let _ = std::fs::remove_file(app.workspace.symbols_path());
-    app.add_symbol("binance", "WINQ26")
+    app.symbol_catalog()
+        .add("binance", "WINQ26")
         .expect("the catalog takes a symbol that fits");
     app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
@@ -3345,7 +3353,7 @@ fn a_symbol_a_tab_is_showing_is_not_offered_for_removal() {
     // The app-side rule holds even if the affordance were clicked: the
     // catalog edit is refused for the last symbol and allowed otherwise,
     // and the tab is never touched either way.
-    app.remove_symbol("binance", "WINQ26");
+    app.symbol_catalog().remove("binance", "WINQ26");
     assert_eq!(
         app.active_tab().symbol,
         "WINQ26",

@@ -1,5 +1,6 @@
 //! Wire-to-canvas adapter for the addressed vertical splitter operation.
 
+use crate::app::{TabsMutPort, TabsPort};
 use eframe::egui;
 use quantick_control::{registry::IdempotencyPolicy, wire::CanonicalDecimal};
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -46,8 +47,8 @@ pub(super) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     registry.register(descriptor, resize)
 }
 
-fn resize(
-    app: &mut QuantickApp,
+fn resize<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -71,9 +72,10 @@ fn resize(
         .to_f32()
         .ok_or_else(|| ControlError::invalid_request("fraction is out of range"))?;
     let index = super::tab_index(app, input.target)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let (column, _) = tab.context_stack_geometry().ok_or_else(|| {
         ControlError::invalid_request(

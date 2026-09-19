@@ -62,7 +62,6 @@ pub(super) fn apply_control_evidence_hook(app: &mut QuantickApp, ctx: &egui::Con
     };
     let capture = app
         .control
-        .scenarios
         .prepare_evidence(&access)
         .expect("the hook was pending one line above");
     if capture.screenshot_not_granted {

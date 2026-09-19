@@ -12,7 +12,7 @@
 //! entries allocates only when one came due, a human gesture's worth of
 //! times per session.
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::super::trace::{TraceEntry, TraceReplay};
 use super::{ActionOrigin, ControlAccess, RecordedActor};
@@ -146,12 +146,12 @@ impl ControlAccess {
     /// recording adds nothing. A live tab costs one comparison. Runs whether
     /// or not local access is enabled: replay determinism does not depend on
     /// a client being connected.
-    pub(crate) fn service_replay_trace(&mut self, app: &mut QuantickApp) {
+    pub(crate) fn service_replay_trace(&mut self, app: &mut ControlWindow) {
         // The entries that came due this frame. The Vec allocates only when
         // one did, a human gesture's worth of times per session.
         let mut due: Vec<TraceEntry> = Vec::new();
         {
-            let tabs = app.control_tabs();
+            let tabs = app.tab_reads().tabs();
             if !self.trace_reinjection.is_empty() {
                 self.trace_reinjection.retain(|path, _| {
                     tabs.iter().any(|tab| {

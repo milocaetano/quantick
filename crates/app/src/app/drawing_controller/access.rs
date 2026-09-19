@@ -181,7 +181,7 @@ impl<'a> DrawingAccess<'a> {
             for pane in tab.panes_mut() {
                 let taken = pane.drawings.remove_authored();
                 if taken > 0 {
-                    pane.sweep_strategy_orphans();
+                    pane.strategies.sweep_orphans(&pane.drawings);
                     removed += taken;
                 }
             }
@@ -198,24 +198,24 @@ impl DrawingAccess<'_> {
         &mut self.pane_mut().drawings
     }
     pub(super) fn remove_strategy(&mut self, id: drawings::DrawingId) {
-        self.pane_mut().remove_strategy_for_drawing(id);
+        self.pane_mut().strategies.remove_for_drawing(id);
     }
     // Each destructive operation keeps its original owner even if it clears
     // the selection. The next independent command resolves its owner afresh.
     pub(super) fn undo_drawings(&mut self) {
         let pane = self.pane_mut();
         pane.drawings.undo();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
     }
     pub(super) fn redo_drawings(&mut self) {
         let pane = self.pane_mut();
         pane.drawings.redo();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
     }
     pub(super) fn delete_all_drawings(&mut self) -> usize {
         let pane = self.pane_mut();
         let deleted = pane.drawings.delete_all();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
         deleted
     }
     pub(super) fn selected_value_per_px(&self) -> Option<f64> {

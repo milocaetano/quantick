@@ -8,6 +8,7 @@
 //! file the trader asked for and nothing the chart holds is touched, so it
 //! is neither destructive nor risky, and it can be undone by the same call.
 
+use crate::app::{RecordingPort, TabsMutPort, TabsPort};
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -24,7 +25,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::QuantickApp;
 use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
@@ -208,8 +208,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set(
-    app: &mut QuantickApp,
+fn set<P: TabsPort + TabsMutPort + RecordingPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -217,9 +217,10 @@ fn set(
     let input: DealRecordingInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .tabs_mut()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // A replay is another tape: the live market's recorder is not reachable
     // over it, and the answer says so rather than reading as "no counter".
@@ -256,7 +257,8 @@ fn set(
     };
     let _ = tab;
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .tabs_mut()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if let Some(index) = day_index {
         tab.load_recorded_day_checked(index)
@@ -272,10 +274,11 @@ fn set(
     }
     let _ = tab;
     if let Some(on) = input.record_by_default {
-        crate::app::deal_recording_wiring::set_default(app, on);
+        app.set_deal_recording_default(on);
     }
     let (tab, _config) = app
-        .control_tab_with_config(index)
+        .tabs_mut()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let result = DealRecordingResult {
         tab_id: WireU64::new(tab_id),

@@ -10,8 +10,6 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::app::QuantickApp;
-
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 pub(crate) const SCOPE_ID: &str = "system.info";
@@ -55,11 +53,11 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(_app: &QuantickApp) -> SystemSnapshot {
+fn revision<P: ?Sized>(_app: &P) -> SystemSnapshot {
     snapshot()
 }
 
-fn project(_app: &QuantickApp, _context: CaptureContext) -> SystemSnapshot {
+fn project<P: ?Sized>(_app: &P, _context: CaptureContext) -> SystemSnapshot {
     snapshot()
 }
 

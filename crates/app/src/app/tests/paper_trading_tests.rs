@@ -587,7 +587,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     bar(&mut app, &mut id, "100", "101");
     bar(&mut app, &mut id, "101", "102");
     bar(&mut app, &mut id, "102", "103");
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert!(
         recorder.sounds().is_empty(),
         "a warming ruler has nothing to announce: {:?}",
@@ -603,7 +603,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..33 {
         print(&mut app, &mut id, "107");
     }
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert!(
         recorder.sounds().is_empty(),
         "before 70% of the bar the alarm holds its tongue: {:?}",
@@ -612,7 +612,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
 
     // Print 35 crosses the share. The bar has not closed.
     print(&mut app, &mut id, "107");
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert_eq!(
         recorder.cues(),
         vec![crate::audio::Cue::cut_after(clip, 3)],
@@ -641,7 +641,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..15 {
         print(&mut app, &mut id, "107");
     }
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert_eq!(
         recorder.sounds(),
         vec![clip],
@@ -856,7 +856,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
     {
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.drawings.delete_all();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
     }
     app.active_tab_mut().apply_strategy_cleanup();
     assert!(
@@ -2079,7 +2079,7 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
         .runtime_mut(0)
         .paper
         .show_toast("SIM: dropped at the fill - no bid".to_owned());
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
 
     assert_eq!(
         app.surfaces.toast.message(),
@@ -2102,9 +2102,9 @@ fn a_paper_acknowledgement_is_handed_over_once() {
         .runtime_mut(0)
         .paper
         .show_toast("SIM: flat".to_owned());
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
     app.surfaces.toast.clear();
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
     assert!(
         app.surfaces.toast.message().is_none(),
         "the outbox was emptied by the first drain"

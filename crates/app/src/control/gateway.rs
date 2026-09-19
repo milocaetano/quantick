@@ -25,7 +25,7 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, RequestEnvelope},
 };
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 #[cfg(any(feature = "control-harness", test))]
 use super::contract::OBSERVE_PERMISSION_ID;
@@ -470,7 +470,7 @@ struct DrainObservation {
     queue_has_more: bool,
 }
 
-/// UI-owned access state. It never exposes `QuantickApp` to worker threads.
+/// UI-owned access state. It never exposes the window's port to worker threads.
 pub(crate) struct ControlAccess {
     identity: Option<ProcessIdentity>,
     initialization_error: Option<String>,
@@ -622,7 +622,7 @@ impl ControlAccess {
     /// the read or the action itself.
     fn execute_on_ui(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         current_generation: u64,
         request: &UiRequest,
     ) -> Result<UiReadExecution, ControlError> {
@@ -707,7 +707,7 @@ impl ControlAccess {
         })
     }
 
-    pub fn begin_frame(&mut self, app: &mut QuantickApp, ctx: &eframe::egui::Context) {
+    pub fn begin_frame(&mut self, app: &mut ControlWindow, ctx: &eframe::egui::Context) {
         self.begin_frame_since(app, ctx, Instant::now());
     }
 
@@ -717,7 +717,7 @@ impl ControlAccess {
     /// which is what a loaded machine's frame prelude does.
     fn begin_frame_since(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
         frame_started: Instant,
     ) {
@@ -1227,7 +1227,7 @@ impl ControlAccess {
     #[cfg(test)]
     pub(crate) fn begin_frame_over_budget_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
         ctx: &eframe::egui::Context,
     ) {
         let spent = Duration::from_micros(CONTROL_UI_BUDGET_US + 1);

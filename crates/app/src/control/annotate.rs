@@ -9,6 +9,7 @@
 //! this module can discard work done by hand (plan §2.6), which is what keeps
 //! the annotate tier below the cockpit.
 
+use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::{
     error::{ControlError, codes},
     id::{EventKind, ModuleId},
@@ -19,7 +20,6 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    app::QuantickApp,
     drawings::{self, ChartPoint, DrawingAuthor, DrawingBand},
     metrics,
     pane::ChartPane,
@@ -99,8 +99,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn create_label(
-    app: &mut QuantickApp,
+fn create_label<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -108,8 +108,8 @@ fn create_label(
     place(app, access, actor, input, LABEL_TOOL_ID)
 }
 
-fn create_arrow(
-    app: &mut QuantickApp,
+fn create_arrow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -117,8 +117,8 @@ fn create_arrow(
     place(app, access, actor, input, ARROW_TOOL_ID)
 }
 
-fn create_zone(
-    app: &mut QuantickApp,
+fn create_zone<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -126,8 +126,8 @@ fn create_zone(
     place(app, access, actor, input, ZONE_TOOL_ID)
 }
 
-fn create_profile(
-    app: &mut QuantickApp,
+fn create_profile<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -135,8 +135,8 @@ fn create_profile(
     place(app, access, actor, input, crate::frvp::TOOL_ID)
 }
 
-fn create_chart_profile(
-    app: &mut QuantickApp,
+fn create_chart_profile<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -144,8 +144,8 @@ fn create_chart_profile(
     place_chart(app, access, actor, input, crate::frvp::TOOL_ID)
 }
 
-fn create_fib_retracement(
-    app: &mut QuantickApp,
+fn create_fib_retracement<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -153,8 +153,8 @@ fn create_fib_retracement(
     place_chart(app, access, actor, input, "fib-retracement")
 }
 
-fn create_fib_projection(
-    app: &mut QuantickApp,
+fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -162,8 +162,8 @@ fn create_fib_projection(
     place_chart(app, access, actor, input, "fib-extension")
 }
 
-fn place_chart(
-    app: &mut QuantickApp,
+fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -179,7 +179,7 @@ fn place_chart(
     let required = tool.required_points();
     let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
-    let fresh = app.control_new_drawing(tool);
+    let fresh = app.tab_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
 
     let validated = series::resolve(pane, tab_id, &input, required)?;
@@ -274,8 +274,8 @@ pub(crate) fn quick_range_input(
 /// The one placement path: resolve the target pane, resolve every anchor
 /// against that pane's series, then place through the tool registry exactly
 /// as a click does.
-fn place(
-    app: &mut QuantickApp,
+fn place<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -311,7 +311,7 @@ fn place(
     // trader would have drawn. One is enough for the whole placement —
     // `place_with` asks for the opening only when it installs the draft, so
     // the second anchor of an arrow or a zone never calls for another.
-    let fresh = app.control_new_drawing(tool);
+    let fresh = app.tab_reads().new_drawing(tool);
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let pane_id = pane.id;
     // The trader is mid-gesture: `place_with` would push this call's anchor
@@ -418,8 +418,8 @@ fn install(
 /// Remove one annotation — and only an annotation. An object the trader drew
 /// stays where it is, whatever id was asked for (plan §2.6: this tier cannot
 /// discard work done by hand).
-fn remove_annotation(
-    app: &mut QuantickApp,
+fn remove_annotation<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -429,7 +429,7 @@ fn remove_annotation(
     let annotation_id = input.annotation_id.get();
     let mut found = None;
     for (tab_index, side) in annotated_panes(app) {
-        let pane = app.control_pane_mut(tab_index, side);
+        let pane = app.tabs_mut().pane_mut(tab_index, side);
         let Some(index) = pane
             .drawings
             .items()
@@ -449,7 +449,7 @@ fn remove_annotation(
         // An annotation can be the region a strategy is armed on, like any
         // other object: the same sweep every removal path in the interface
         // does, so no resting simulated order outlives the mark it names.
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
         found = Some((tab_index, pane_id));
         break;
     }
@@ -462,7 +462,7 @@ fn remove_annotation(
         })
         .map_err(|error| ControlError::invalid_request(format!("removal result: {error}")));
     };
-    let tab_id = app.control_tabs().id_at(tab_index);
+    let tab_id = app.tab_reads().tabs().id_at(tab_index);
     let result = RemoveResult {
         annotation_id: input.annotation_id,
         tab_id: WireU64::new(tab_id),
@@ -475,9 +475,9 @@ fn remove_annotation(
 }
 
 /// Every (tab, pane) an annotation could be sitting on.
-fn annotated_panes(app: &QuantickApp) -> Vec<(usize, crate::pane::PaneSide)> {
+fn annotated_panes<P: TabsPort + ?Sized>(app: &P) -> Vec<(usize, crate::pane::PaneSide)> {
     let mut panes = Vec::new();
-    for (index, tab) in app.control_tabs().iter().enumerate() {
+    for (index, tab) in app.tab_reads().tabs().iter().enumerate() {
         panes.extend(tab.sides().map(|side| (index, side)));
     }
     panes
@@ -509,15 +509,15 @@ fn journal_annotation<T: Serialize>(
 
 /// Which tab and pane an annotation addresses, defaulting to the chart the
 /// trader is looking at.
-fn resolve_target(
-    app: &QuantickApp,
+fn resolve_target<P: TabsPort + ?Sized>(
+    app: &P,
     target: Option<&AnnotationTarget>,
 ) -> Result<(u64, crate::pane::PaneSide), ControlError> {
-    let tabs = app.control_tabs();
+    let tabs = app.tab_reads().tabs();
     if tabs.is_empty() {
         return Err(capability_unavailable("this window has no chart open"));
     }
-    let active = app.control_active_tab_index().min(tabs.len() - 1);
+    let active = app.tab_reads().active_tab_index().min(tabs.len() - 1);
     let tab_index = match target.and_then(|target| target.tab_id) {
         None => active,
         Some(tab_id) => tabs.position(tab_id.get()).ok_or_else(|| {
@@ -545,16 +545,17 @@ fn resolve_target(
     Ok((tab_id, side))
 }
 
-fn control_pane_mut(
-    app: &mut QuantickApp,
+fn control_pane_mut<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     tab_id: u64,
     side: crate::pane::PaneSide,
 ) -> Result<&mut ChartPane, ControlError> {
     let index = app
-        .control_tabs()
+        .tab_reads()
+        .tabs()
         .position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
-    Ok(app.control_pane_mut(index, side))
+    Ok(app.tabs_mut().pane_mut(index, side))
 }
 
 /// The slot a market time falls on, and the time that slot actually opened.

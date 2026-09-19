@@ -239,7 +239,7 @@ impl DrawingPass<'_> {
                 continue;
             }
             let points = projection.projected_drawing_points(drawing, history_right, total, scale);
-            super::super::strategy_badges::paint_strategy_badge(
+            super::super::strategies::paint_strategy_badge(
                 &clipped,
                 instance,
                 drawing,

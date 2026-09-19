@@ -1,5 +1,6 @@
 //! Feed, market-data capability, status, and provenance snapshot.
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -8,10 +9,7 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    app::QuantickApp,
-    feed::{FeedConnectionState, FeedNotice},
-};
+use crate::feed::{FeedConnectionState, FeedNotice};
 
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
@@ -199,11 +197,11 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> FeedSnapshot {
+fn revision<P: TabsPort + ?Sized>(app: &P) -> FeedSnapshot {
     snapshot(app, None)
 }
 
-fn project(app: &QuantickApp, context: CaptureContext) -> FeedSnapshot {
+fn project<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> FeedSnapshot {
     snapshot(app, Some(context.captured_at_unix_ms))
 }
 
@@ -243,11 +241,12 @@ pub(crate) fn market_data_provenance(
     }
 }
 
-fn snapshot(app: &QuantickApp, now_ms: Option<i64>) -> FeedSnapshot {
-    let config = app.control_config();
+fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot {
+    let config = app.tab_reads().config();
     FeedSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| {
                 let capabilities = tab.capabilities(config);
@@ -328,5 +327,20 @@ fn notice(notice: &FeedNotice) -> FeedNoticeSnapshot {
             "not_applicable"
         }
         .to_owned(),
+    }
+}
+
+/// The feed projection driven through the tabs family of a fake window.
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::app::control_host::tests::fake::{FAKE_FEED_ID, FAKE_SYMBOL, FakeWindow};
+
+    #[test]
+    fn the_feed_projection_names_the_fake_tabs_market() {
+        let snapshot = snapshot(&FakeWindow::new(), None);
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.tabs[0].requested_feed_id, FAKE_FEED_ID);
+        assert_eq!(snapshot.tabs[0].requested_symbol, FAKE_SYMBOL);
     }
 }

@@ -1,5 +1,6 @@
 //! Workspace, tab, layout, and focus snapshot.
 
+use crate::app::{ChromePort, HealthPort, LayoutPort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
@@ -8,7 +9,7 @@ use quantick_control::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{app::QuantickApp, pane::PaneSide};
+use crate::pane::PaneSide;
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -141,21 +142,28 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-fn revision(app: &QuantickApp) -> WorkspaceSnapshot {
+fn revision<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> WorkspaceSnapshot {
+fn project<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> WorkspaceSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
-    let active_index = app.control_active_tab_index();
-    let tabs = app.control_tabs();
-    let timezone = app.control_timezone();
+fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
+    app: &P,
+) -> WorkspaceSnapshot {
+    let active_index = app.tab_reads().active_tab_index();
+    let tabs = app.tab_reads().tabs();
+    let timezone = app.chrome_reads().timezone();
     let (save_on_exit, performance_readings_visible, progressive_venue_history) =
-        app.control_workspace_flags();
-    let (history_reach, venue_lead_in) = app.control_history_settings();
+        app.health_reads().workspace_flags();
+    let (history_reach, venue_lead_in) = app.health_reads().history_settings();
     let history_reach_running = tabs
         .get(active_index)
         .is_some_and(|tab| tab.history_reach_running());
@@ -172,10 +180,12 @@ fn snapshot(app: &QuantickApp) -> WorkspaceSnapshot {
         performance_readings_visible,
         progressive_venue_history,
         history_reach: history_reach.token().to_owned(),
-        history_reach_span_minutes: WireU64::new(app.control_history_reach_span_minutes().into()),
+        history_reach_span_minutes: WireU64::new(
+            app.health_reads().history_reach_span_minutes().into(),
+        ),
         history_reach_running,
         venue_lead_in,
-        replay_day_before: app.control_replay_day_before(),
+        replay_day_before: app.chrome_reads().replay_day_before(),
         tabs: tabs
             .iter()
             .enumerate()

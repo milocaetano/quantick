@@ -33,7 +33,7 @@ use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::trade::{TRADE_EFFECT_ID, TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 use super::{
@@ -331,7 +331,7 @@ impl DeferredUiRead for DeferredActionResult {
 pub(crate) struct UiReadContext<'a> {
     pub projections: &'a mut ProjectionRegistry,
     pub journal: &'a EventJournal,
-    pub app: &'a QuantickApp,
+    pub app: &'a ControlWindow,
     pub instance_id: &'a InstanceId,
     pub session: &'a SessionIdentity,
     pub evidence: &'a EvidenceStore,

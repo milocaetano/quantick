@@ -26,7 +26,10 @@ mod chrome;
 pub(crate) mod control_host;
 #[cfg(test)]
 pub(crate) use control_host::control_quick_range;
-pub(crate) use control_host::control_quick_range_actions;
+pub(crate) use control_host::{
+    AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
+    PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
+};
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;
 pub(crate) mod drawing_controller;
@@ -42,17 +45,16 @@ pub(crate) mod launch_hooks;
 mod layout_wiring;
 pub(crate) use layout_wiring::set_indicator_mouse_vertical_line;
 mod menu_bar;
-mod paper_wiring;
+pub(crate) mod paper_wiring;
 mod replay_and_history;
 mod tabs;
 mod toolbar_wiring;
 mod workspace_bundle_adapter;
 mod workspace_restore;
-mod workspace_save;
 mod workspace_save_adapter;
 
 // The tab lifecycle took `saved_context_intervals` with it; `workspace_restore`
-// and `workspace_save` still reach it through `super::`.
+// still reaches it through `super::`.
 use tabs::saved_context_intervals;
 // Named by the paper-trading and drawing tests through `use super::*`, and by
 // nothing in production outside the module that owns them, so the imports are
@@ -111,8 +113,9 @@ use crate::harness::ContextMenuPane;
 use crate::loading::LoadingTask;
 #[cfg(test)]
 use crate::metrics;
+use crate::pane::ChartPane;
 #[cfg(test)]
-use crate::pane::{self, ChartPane, DRAWING_ANCHOR_RADIUS_PX};
+use crate::pane::{self, DRAWING_ANCHOR_RADIUS_PX};
 #[cfg(test)]
 use crate::statusbar;
 #[cfg(test)]
@@ -373,23 +376,86 @@ impl QuantickApp {
         arrangement_adapter!(self).into_save(&self.replay_view)
     }
 
-    pub(crate) fn layout_state(&self) -> layout_wiring::LayoutRead<'_> {
-        layout_wiring::LayoutRead {
-            tabs: &self.tabs,
-            active: self.tabs.active_index(),
-            session: self.workspace.layouts().session(),
+    pub(crate) fn symbol_catalog(&mut self) -> tabs::SymbolCatalog<'_> {
+        tabs::SymbolCatalog {
+            config: &mut self.config,
+            added: &mut self.added_symbols,
+            path: self.workspace.symbols_path(),
         }
     }
-    pub(crate) fn layout_adapter(&mut self) -> layout_wiring::LayoutAdapter<'_> {
-        layout_wiring::LayoutAdapter {
-            active: self.tabs.active_index(),
-            tabs: &mut self.tabs,
-            indicators: &mut self.indicators,
-            store: self.workspace.layouts_mut(),
-            drawing_chrome: &mut self.drawings.chrome,
-            toast: &mut self.surfaces.toast,
-            rename: &mut self.chrome.layout_rename,
-            delete_confirm: &mut self.chrome.layout_delete_confirm,
+
+    /// The active tab beside the config it reads.
+    ///
+    /// Split here, once, because almost every tab operation needs both and
+    /// `self.tabs[i].f(&self.config)` is a borrow error at every call site.
+    pub(super) fn active_with_config(&mut self) -> (&mut Tab, &AppConfig) {
+        (
+            self.tabs.runtime_mut(self.tabs.active_index()),
+            &self.config,
+        )
+    }
+
+    /// The tab on screen.
+    pub(super) fn active_tab(&self) -> &Tab {
+        &self.tabs[self.tabs.active_index()]
+    }
+
+    /// See [`Self::active_tab`].
+    pub(super) fn active_tab_mut(&mut self) -> &mut Tab {
+        self.tabs.runtime_mut(self.tabs.active_index())
+    }
+
+    /// The pane the chrome speaks for: the active tab's focused pane (§11).
+    pub(super) fn focused_pane(&self) -> &ChartPane {
+        self.active_tab().focused_pane()
+    }
+
+    /// See [`Self::focused_pane`].
+    pub(super) fn focused_pane_mut(&mut self) -> &mut ChartPane {
+        self.active_tab_mut().focused_pane_mut()
+    }
+
+    /// The pane every drawing surface speaks for: the one holding the
+    /// selection, which is the focused pane unless a shared mark was taken
+    /// from the chart it is mirrored on (see [`Tab::drawing_side`]).
+    ///
+    /// The inspector, the keyboard, the object manager and the toast all read
+    /// through here, so an object selected on either of its two charts is
+    /// edited and deleted from either of them.
+    pub(super) fn drawing_pane_mut(&mut self) -> &mut ChartPane {
+        self.active_tab_mut().drawing_pane_mut()
+    }
+
+    /// Launch scenarios invoke the registered label and notification handlers
+    /// through trusted local actions with an agent actor. Unlike remote calls,
+    /// these local actions do not pass through configured remote-grant admission.
+    #[cfg(any(feature = "control-harness", test))]
+    pub(super) fn apply_control_annotate_hooks(&mut self) {
+        if self.control.scenarios.has_annotation() {
+            let pane = self.active_tab().drawing_pane();
+            let slot = pane.slots().saturating_sub(1);
+            let anchor = match (pane.slot_open_time(slot), pane.closed_bar(slot)) {
+                (Some(time), Some(bar)) => Some(serde_json::json!({
+                    "time_unix_ms": time,
+                    "price": rust_decimal::prelude::ToPrimitive::to_f64(&bar.close).unwrap_or(1.0).to_string(),
+                })),
+                _ => None,
+            };
+            if let Some(input) = self.control.scenarios.annotation(anchor) {
+                self.run_hook_action("annotate.label.create", input);
+            }
+        }
+        match self.control.scenarios.notification() {
+            Some(control_host::NotificationStep::Ready { capability, input }) => {
+                self.run_hook_action(capability, input)
+            }
+            Some(control_host::NotificationStep::Refused { channel }) => tracing::warn!(
+                target: "quantick::control",
+                event_code = "CONTROL_NOTIFY_HOOK_REFUSED",
+                channel = %channel,
+                "QUANTICK_CONTROL_NOTIFY names no notification channel"
+            ),
+            None => {}
         }
     }
 
@@ -613,15 +679,15 @@ impl QuantickApp {
         app.active_tab_mut().apply_feed_declared_layout(&config);
         // The code's own baseline, and nothing more: what a launch actually
         // opens with is `config/chart-layers.toml`, applied by
-        // `restore_chart_layers` immediately below and shipping the map on.
+        // `LayerWiring::restore` immediately below and shipping the map on.
         // This line is what remains if that config is ever unreadable — a
         // layer nobody requested costing no projection. Capture is already
         // running either way, so it is a display choice and nothing else.
         app.active_tab_mut().tape_mut().set_depth_visible(false);
         // What the user last had on the canvas, applied over those defaults and
         // under the autostart hooks below: an env var is an explicit request
-        // for this run and must still win (see `restore_chart_layers`).
-        app.restore_chart_layers();
+        // for this run and must still win (see `LayerWiring::restore`).
+        app.layer_wiring().restore();
         // And the workspace itself — the tab strip, each tab's canvas, and the
         // chrome around them. After the config defaults (a saved cockpit is
         // the user's own answer to what a feed declares) and before the
@@ -746,13 +812,15 @@ impl eframe::App for QuantickApp {
         // down with it: the capture showed no compass, no crosshair and no
         // hover readout at all, and read as "the compass does not draw"
         // rather than "the menu never opened".
-        self.push_scripted_pointer(raw_input);
+        self.chrome
+            .harness
+            .push_scripted_pointer(&self.active_tab().flow_pane, raw_input);
         let Some(pane) = self.chrome.harness.context_menu() else {
             return;
         };
         // The divider is published by the draw, so the first frame has none:
         // wait for it rather than guess where the tape is.
-        let Some(position) = self.scripted_context_menu_pos(pane) else {
+        let Some(position) = pane.scripted_position(&self.active_tab().flow_pane) else {
             return;
         };
         self.chrome.harness.context_menu_pressed(position);
