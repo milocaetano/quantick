@@ -53,6 +53,14 @@ pub struct PaneContextMenu {
     pub(crate) chart_layers_rect: Option<egui::Rect>,
 }
 
+impl PaneContextMenu {
+    /// Aim the next menu at one pane or the other, as a right-click would.
+    #[cfg(test)]
+    pub(crate) fn aim_at_tape(&mut self, on_tape: bool) {
+        self.on_tape = on_tape;
+    }
+}
+
 impl ChartPane {
     /// The secondary click on the canvas: what the press resolves (the price,
     /// the tape flag, the drawing, the placing entries), the layer menu it
@@ -83,7 +91,7 @@ impl ChartPane {
             // projection `drawing_point_at` owns, each with the tool's own
             // snap — the anchored VWAP's candle magnet included.
             let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
-            self.context_menu.on_tape = self.click_on_tape(position.x);
+            self.context_menu.on_tape = self.frame.click_on_tape(position.x);
             // The most specific thing under the click: a drawing, resolved
             // on the band the click actually landed in (a CVD line and a
             // price line can share the pixel). Right-click selects like the

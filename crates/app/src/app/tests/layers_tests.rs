@@ -101,7 +101,7 @@ fn layer_visibility_survives_a_restart() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.layer_mask();
+    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
     app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
@@ -117,16 +117,16 @@ fn layer_visibility_survives_a_restart() {
     // its defaults every single launch.
     switch_layer(&mut app, ChartLayer::TapeHeatmap, false);
     switch_layer(&mut app, ChartLayer::TapeChart, false);
-    app.maintain_chart_layers();
+    app.layer_wiring().maintain();
     assert_eq!(
         app.workspace.layers().mask(),
-        app.layer_mask(),
+        app.active_tab().flow_pane.layer_mask(&app.style),
         "a settled canvas writes nothing further"
     );
 
     let (mut restored, _events, _commands, _book) = test_app();
     restored.workspace.set_chart_layers_path(path.clone());
-    restored.restore_chart_layers();
+    restored.layer_wiring().restore();
     for (layer, expected) in [
         (ChartLayer::Crosshair, false),
         (ChartLayer::PaperTrading, false),
@@ -166,14 +166,14 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.layer_mask();
+    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
     app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
-    app.maintain_chart_layers();
+    app.layer_wiring().maintain();
     // A fresh app reads the file, then opens a second market.
     let (mut restored, _events, _commands, _book) = test_app();
     restored.workspace.set_chart_layers_path(path.clone());
-    restored.restore_chart_layers();
+    restored.layer_wiring().restore();
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
     let (cmd_tx, _cmd_rx) = mpsc::channel(4);
@@ -272,7 +272,7 @@ crosshair = false
 ",
     )
     .unwrap();
-    app.restore_chart_layers();
+    app.layer_wiring().restore();
     assert!(!layer_on(&app, ChartLayer::Crosshair), "the file was read");
     // ...then the trader switches it back on, and opens a second market.
     switch_layer(&mut app, ChartLayer::Crosshair, true);

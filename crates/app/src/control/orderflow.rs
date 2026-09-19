@@ -21,6 +21,7 @@
 
 pub(crate) use quantick_control_schema::orderflow::*;
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE,
@@ -28,7 +29,7 @@ use quantick_control::{
     wire::WireU64,
 };
 
-use crate::{app::QuantickApp, orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
+use crate::{orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -103,8 +104,9 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// averages. What this tracks is a change a person made or a connection
 /// underwent: a layer switched, a grouping changed, a setup edited, the
 /// capture state moving between disabled, syncing and live.
-fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
-    app.control_tabs()
+fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
+    app.tab_reads()
+        .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| OrderflowRevisionKey {
             tab_id,
@@ -116,7 +118,7 @@ fn revision(app: &QuantickApp) -> Vec<OrderflowRevisionKey> {
                     footprint_overridden: pane.footprint.config.is_some(),
                     footprint_setup: format!(
                         "{:?}",
-                        pane.footprint_config(app.control_footprint_config())
+                        pane.footprint_config(app.tab_reads().footprint_config())
                     ),
                     engine: pane.orderflow.as_ref().map(|view| {
                         let (status, _ladder, grouping) = view.cached_book();
@@ -170,10 +172,11 @@ struct EngineRevisionKey {
     config: String,
 }
 
-fn project_tape(app: &QuantickApp, context: CaptureContext) -> TapeSnapshot {
+fn project_tape<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> TapeSnapshot {
     TapeSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabTapeSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -210,11 +213,12 @@ fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeS
     }
 }
 
-fn project_footprint(app: &QuantickApp, _context: CaptureContext) -> FootprintSnapshot {
-    let window = app.control_footprint_config();
+fn project_footprint<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> FootprintSnapshot {
+    let window = app.tab_reads().footprint_config();
     FootprintSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabFootprintSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -249,10 +253,11 @@ fn footprint_setup(
     }
 }
 
-fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapshot {
+fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> BubblesSnapshot {
     BubblesSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabBubblesSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -277,10 +282,11 @@ fn project_bubbles(app: &QuantickApp, _context: CaptureContext) -> BubblesSnapsh
     }
 }
 
-fn project_heatmap(app: &QuantickApp, _context: CaptureContext) -> HeatmapSnapshot {
+fn project_heatmap<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> HeatmapSnapshot {
     HeatmapSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabHeatmapSnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -313,10 +319,11 @@ fn heatmap_state(view: &OrderflowView) -> HeatmapStateSnapshot {
     }
 }
 
-fn project_l2(app: &QuantickApp, _context: CaptureContext) -> L2Snapshot {
+fn project_l2<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snapshot {
     L2Snapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabL2Snapshot {
                 tab_id: WireU64::new(tab_id),

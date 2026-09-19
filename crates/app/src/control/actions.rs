@@ -10,6 +10,7 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
+use crate::app::TabsPort;
 pub(crate) use quantick_control_schema::attention::*;
 
 use std::{collections::BTreeSet, sync::Arc};
@@ -34,15 +35,19 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics};
+use crate::{app::ControlWindow, metrics};
 
 /// One action's handler over this application: it mutates the window and
 /// journals through its control access.
-pub(crate) type ActionHandler =
-    fn(&mut QuantickApp, &mut ControlAccess, &ActorContext, &Value) -> Result<Value, ControlError>;
+pub(crate) type ActionHandler = fn(
+    &mut ControlWindow,
+    &mut ControlAccess,
+    &ActorContext,
+    &Value,
+) -> Result<Value, ControlError>;
 /// The resolver that turns what a caller wrote into what will be done.
 pub(crate) type ActionResolver =
-    fn(&QuantickApp, &ActorContext, Value) -> Result<Value, ControlError>;
+    fn(&ControlWindow, &ActorContext, Value) -> Result<Value, ControlError>;
 
 /// The registry over this application — the headless registry in
 /// `quantick_control_host::actions` with the window as its host. A newtype
@@ -50,7 +55,7 @@ pub(crate) type ActionResolver =
 /// boundary refuses a root type alias, and every forwarding method here
 /// is one line.
 pub(crate) struct ActionRegistry(
-    quantick_control_host::actions::ActionRegistry<QuantickApp, ControlAccess>,
+    quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess>,
 );
 
 impl ActionRegistry {
@@ -94,7 +99,7 @@ impl ActionRegistry {
         &self,
         capability_id: &str,
         version: u32,
-    ) -> Option<Arc<quantick_control_host::actions::RegisteredAction<QuantickApp, ControlAccess>>>
+    ) -> Option<Arc<quantick_control_host::actions::RegisteredAction<ControlWindow, ControlAccess>>>
     {
         self.0.lookup(capability_id, version)
     }
@@ -253,8 +258,8 @@ fn mark_descriptor() -> CapabilityDescriptor {
 
 /// A mark's resolver: what is under the pointer *now* becomes part of the
 /// input, so the trace line and a replay of it name the same bar.
-fn resolve_mark(
-    app: &QuantickApp,
+fn resolve_mark<P: TabsPort + ?Sized>(
+    app: &P,
     _actor: &ActorContext,
     input: Value,
 ) -> Result<Value, ControlError> {
@@ -275,8 +280,8 @@ fn resolve_mark(
 /// The mark handler: append the event for the resolved target. One path for
 /// the hotkey, the hook, the tests, a replayed trace entry and any authorized
 /// agent.
-fn create_mark(
-    _app: &mut QuantickApp,
+fn create_mark<P: ?Sized>(
+    _app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

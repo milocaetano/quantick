@@ -6,6 +6,7 @@
 
 pub(crate) use quantick_control_schema::session::*;
 
+use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_CLOSED_TRADES, CONTROL_SNAPSHOT_MAX_WORKING_ORDERS},
@@ -15,7 +16,7 @@ use quantick_control::{
 
 use quantick_sim::Order;
 
-use crate::{app::QuantickApp, paper_chrome::PositionSummary, tab::Tab};
+use crate::{paper_chrome::PositionSummary, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -62,8 +63,9 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// tracks is a deliberate change: which recording is loaded, whether it is
 /// playing or finished, the speed, a seek, and the shape of the simulated
 /// book — the same reasoning `health.rs` applies to its frame averages.
-fn revision(app: &QuantickApp) -> Vec<SessionRevisionKey> {
-    app.control_tabs()
+fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<SessionRevisionKey> {
+    app.tab_reads()
+        .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| SessionRevisionKey {
             tab_id,
@@ -144,18 +146,19 @@ struct ReplayRevisionKey {
     rewinds: u64,
 }
 
-fn project_replay(app: &QuantickApp, _context: CaptureContext) -> ReplaySnapshot {
+fn project_replay<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ReplaySnapshot {
     replay_snapshot(app)
 }
 
-fn project_paper(app: &QuantickApp, _context: CaptureContext) -> PaperSnapshot {
+fn project_paper<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> PaperSnapshot {
     paper_snapshot(app)
 }
 
-fn replay_snapshot(app: &QuantickApp) -> ReplaySnapshot {
+fn replay_snapshot<P: TabsPort + ?Sized>(app: &P) -> ReplaySnapshot {
     ReplaySnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(tab_id, tab)| TabReplaySnapshot {
                 tab_id: WireU64::new(tab_id),
@@ -204,10 +207,11 @@ fn replay_session_snapshot(link: &quantick_feed::replay::ReplayLink) -> ReplaySe
     }
 }
 
-fn paper_snapshot(app: &QuantickApp) -> PaperSnapshot {
+fn paper_snapshot<P: TabsPort + ?Sized>(app: &P) -> PaperSnapshot {
     PaperSnapshot {
         tabs: app
-            .control_tabs()
+            .tab_reads()
+            .tabs()
             .iter_with_ids()
             .map(|(id, tab)| tab_paper_snapshot(id, tab))
             .collect(),

@@ -41,6 +41,7 @@ use crate::tab::CanvasLayout;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::history_reach;
 
+use super::LayoutPort;
 use super::QuantickApp;
 #[cfg(any(feature = "scenario-harness", test))]
 use super::{AUTOSTART_NATIVES, parse_tape_window};
@@ -89,7 +90,7 @@ pub(super) fn apply_launch_phase(
     // An env var is not a user edit: what the autostart hooks switched on
     // must not be written back as though the user had asked for it every
     // launch from now on. Same rule the indicator state follows.
-    let staged_layers = app.layer_mask();
+    let staged_layers = app.active_tab().flow_pane.layer_mask(&app.style);
     app.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);
@@ -131,7 +132,7 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
     // like a press that ignored the run it was told to make.
     if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
         match history_reach::HistoryReach::from_token(&token) {
-            Some(reach) => app.set_history_reach(reach),
+            Some(reach) => app.history.set_reach(reach),
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -147,7 +148,7 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
         // goes are one choice: a hook that could pick `by time` but not say
         // how much time would leave the operator setting half of it.
         match raw.trim().parse::<u32>() {
-            Ok(minutes) => app.set_history_reach_span_minutes(minutes),
+            Ok(minutes) => app.history.set_span_minutes(minutes),
             Err(_) => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,

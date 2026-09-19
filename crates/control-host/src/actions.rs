@@ -36,7 +36,7 @@ pub type ActionHandler<H, A> =
 pub type ActionResolver<H> = fn(&H, &ActorContext, Value) -> Result<Value, ControlError>;
 
 /// The resolver of an action whose input is already exactly what it will do.
-pub fn identity_resolution<H>(
+pub fn identity_resolution<H: ?Sized>(
     _host: &H,
     _actor: &ActorContext,
     input: Value,
@@ -47,7 +47,7 @@ pub fn identity_resolution<H>(
 /// One docked action: what `describe` publishes, what runs, and the three
 /// schemas that bound it — the caller's input, the resolved input the trace
 /// records and a replay feeds back, and the result.
-pub struct RegisteredAction<H, A> {
+pub struct RegisteredAction<H: ?Sized, A> {
     pub descriptor: CapabilityDescriptor,
     pub handler: ActionHandler<H, A>,
     pub resolve: ActionResolver<H>,
@@ -58,17 +58,17 @@ pub struct RegisteredAction<H, A> {
 
 /// The registry: descriptors for discovery, handlers for execution, schemas
 /// for both sides of every call.
-pub struct ActionRegistry<H, A> {
+pub struct ActionRegistry<H: ?Sized, A> {
     actions: BTreeMap<(CapabilityId, u32), Arc<RegisteredAction<H, A>>>,
 }
 
-impl<H, A> Default for ActionRegistry<H, A> {
+impl<H: ?Sized, A> Default for ActionRegistry<H, A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<H, A> ActionRegistry<H, A> {
+impl<H: ?Sized, A> ActionRegistry<H, A> {
     #[must_use]
     pub fn new() -> Self {
         Self {

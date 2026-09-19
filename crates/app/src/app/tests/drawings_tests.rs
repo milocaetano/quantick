@@ -232,7 +232,8 @@ fn quick_range_action(
     app: &QuantickApp,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
 ) -> crate::surfaces::drawing_chrome::QuickRangeControl {
-    crate::app::control_quick_range_actions(app)
+    app.chrome_reads()
+        .quick_range_actions()
         .expect("the quick-range actions are visible")
         .into_iter()
         .find(|control| control.action == action)
@@ -1221,7 +1222,8 @@ fn rearm_after_a_series_reset_rewarms_the_ruler_from_the_chart() {
             .disarm(quantick_strategy::DisarmReason::BarSpecChanged);
         // The pane's re-arm: kernel re-arm (which resets the ruler)
         // plus the re-warm from the chart's own closed bars.
-        pane.rearm_strategy_for_drawing(drawing);
+        let (strategies, series) = pane.strategies_with_series();
+        strategies.rearm(drawing, series);
     }
     assert_eq!(
         state_of(&app, drawing),

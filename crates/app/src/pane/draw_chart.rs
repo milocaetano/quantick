@@ -388,7 +388,7 @@ impl ChartPane {
             painter,
             rect: chart_rect,
             tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-            tape_hovered: self.tape_switch_hovered,
+            tape_hovered: self.tape_switch.hovered(),
             state: &self.layers,
             facts: self.layer_facts(Some(chrome.capabilities)),
         });
@@ -420,7 +420,13 @@ impl ChartPane {
     ) {
         self.carve_bands(layout, carved);
         self.paint_drawing_bands(frame, carved, DrawPass::OverCandles);
-        self.draw_quick_range(frame.painter, carved, frame.right, frame.total, chrome);
+        self.quick_range_view(chrome.tab, chrome.side).draw(
+            frame.painter,
+            carved,
+            frame.right,
+            frame.total,
+            chrome,
+        );
     }
 
     /// Carve the drawing bands — the price band and one per indicator pane —

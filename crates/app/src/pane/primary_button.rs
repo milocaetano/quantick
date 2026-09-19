@@ -11,23 +11,34 @@
 use eframe::egui;
 
 use crate::bands::{self, Bands};
+use crate::drawings::Drawings;
 use crate::indicator_render;
 use crate::paper_trading::ChartInput;
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
-use quantick_layers::ChartLayer;
 
 use super::axes_and_panes::PANE_DIVIDER_HANDLE_PX;
-use super::{ChartPane, PaneChrome, SharedPointer, tape_switch_rect};
+use super::drawing_projection::DrawingProjection;
+use super::{PaneChrome, SharedPointer, tape_switch_rect};
 
-impl ChartPane {
+/// What the paper arbitration reads off the pane: the projection its handles
+/// are picked through, the drawings under the pointer, and whether the paper
+/// layer is drawn at all this frame.
+pub(super) struct PaperArbitration<'a> {
+    pub(super) projection: &'a DrawingProjection<'a>,
+    pub(super) drawings: &'a Drawings,
+    pub(super) layer_visible: bool,
+}
+
+impl PaperArbitration<'_> {
     /// Who owns the primary button before the drawings are asked: the paper
     /// simulator's grabbed lines, its cancel targets and the cmd-trading aim.
     ///
-    /// One arm of [`ChartPane::handle_navigation`], called once per frame with
-    /// the pointer the frame already read. Returns whether paper took the
-    /// gesture, which is what keeps the chart from panning under a held line.
-    pub(super) fn handle_paper_input(
+    /// One arm of [`super::ChartPane::handle_navigation`], called once per
+    /// frame with the pointer the frame already read. Returns whether paper
+    /// took the gesture, which is what keeps the chart from panning under a
+    /// held line.
+    pub(super) fn handle(
         &self,
         ui: &egui::Ui,
         chrome: &mut PaneChrome<'_>,
@@ -98,16 +109,16 @@ impl ChartPane {
         let canvas_claimed = pointer_position
             .filter(|_| modifier_down)
             .is_some_and(|position| {
-                Self::pane_chrome_hit(areas, position)
+                pane_chrome_hit(areas, position)
                     || tape_switch_rect(areas.chart).contains(position)
                     || (chrome.toolrail.tool() == Tool::Pointer
                         && !over_chrome
                         && bands::band_at(bands, position)
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
-                                self.drawing_projection()
+                                self.projection
                                     .drawing_handle_at(
-                                        &self.drawings,
+                                        self.drawings,
                                         position,
                                         band,
                                         history_right,
@@ -116,7 +127,6 @@ impl ChartPane {
                                     .is_some()
                             }))
             });
-        let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
         // The wheel over the plot, offered to the paper layer first: with an
         // aim up it belongs to the ruler, and the chart's zoom is told in
         // `handle_navigation` to leave that frame's travel alone.
@@ -150,7 +160,7 @@ impl ChartPane {
                 scroll_y: paper_scroll,
                 middle_pressed: ui
                     .input(|input| input.pointer.button_pressed(egui::PointerButton::Middle)),
-                layer_visible: paper_layer_visible,
+                layer_visible: self.layer_visible,
             })
         } else {
             if chrome.paper_takes_input {
@@ -177,18 +187,6 @@ impl ChartPane {
             ui.ctx().set_cursor_icon(cursor);
         }
         paper_gesture
-    }
-
-    /// Pixels inside a band that belong to the pane's own chrome rather than
-    /// to its canvas: the collapse chevron and the divider grab band.
-    ///
-    /// A drawing gesture never takes them. egui hands an overlapping rect to
-    /// whoever registers last, and both of those register after the canvas —
-    /// but the drawing path reads the raw pointer rather than a response, so
-    /// it has to honour that order itself instead of inheriting it. Without
-    /// this, arming a tool silently kills the chevron and the pane resize.
-    pub(super) fn pane_chrome_hit(areas: &PlotAreas, pos: egui::Pos2) -> bool {
-        pane_chrome_hit(areas, pos)
     }
 }
 

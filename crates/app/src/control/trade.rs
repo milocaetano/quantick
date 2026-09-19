@@ -28,6 +28,7 @@
 //! `quantick_trading::TradingVenue`, these actions reach it unchanged, and
 //! the permission that guards them is already carved out.
 
+use crate::app::{PaperPort, TabsMutPort, TabsPort};
 pub(crate) use quantick_control_schema::trade::*;
 // The version the tests invoke the trade actions at.
 #[cfg(test)]
@@ -48,7 +49,7 @@ use rust_decimal::Decimal;
 
 use serde_json::{Value, json};
 
-use crate::{app::QuantickApp, metrics, paper_trading::PaperTrading};
+use crate::{metrics, paper_trading::PaperTrading};
 
 use super::{
     actions::ActionRegistry,
@@ -59,7 +60,7 @@ use super::{
 pub(crate) use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 
 /// Turn the venue's answer into the result, whatever the call was.
-fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
+fn answer<P: TabsPort + ?Sized>(app: &P, events: &[VenueEvent]) -> TradeResult {
     let rejected_because = events.iter().find_map(|event| match event {
         VenueEvent::Rejected(reason) => Some(reason.to_string()),
         _ => None,
@@ -71,21 +72,25 @@ fn answer(app: &QuantickApp, events: &[VenueEvent]) -> TradeResult {
     });
     TradeResult {
         selected_strategy: app
-            .control_active_paper()
+            .tab_reads()
+            .active_paper()
             .and_then(|paper| paper.account().selected_order_strategy())
             .map(|strategy| strategy.name.clone()),
         ruler_ticks: app
-            .control_active_paper()
+            .tab_reads()
+            .active_paper()
             .map_or(0, crate::paper_trading::PaperTrading::ruler_ticks),
         accepted: rejected_because.is_none(),
         rejected_because,
         order_id,
         mark_price: app
-            .control_active_paper()
+            .tab_reads()
+            .active_paper()
             .and_then(PaperTrading::mark_price)
             .map(|price| price.to_string()),
         working_orders: app
-            .control_active_paper()
+            .tab_reads()
+            .active_paper()
             .map(PaperTrading::working_orders)
             .unwrap_or_default()
             .iter()
@@ -142,8 +147,8 @@ fn journal(
     );
 }
 
-fn place_order(
-    app: &mut QuantickApp,
+fn place_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -192,7 +197,7 @@ fn place_order(
     // that ladder would be the two-surfaces bug this rule exists to
     // prevent.
     let bracket = if named.is_empty() {
-        let paper = app.control_active_paper().ok_or_else(no_chart_open)?;
+        let paper = app.tab_reads().active_paper().ok_or_else(no_chart_open)?;
         let reference = intent
             .price
             .or_else(|| paper.account().mark_price())
@@ -202,7 +207,10 @@ fn place_order(
         named
     };
     let intent = intent.with_bracket(bracket);
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .tabs_mut()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     // The risk per trade is a ceiling on the account, so it holds on this
     // path too. Asked of the same function the ticket asks, so an operator
     // reads the refusal the trader would have read - and gets it as an
@@ -216,8 +224,8 @@ fn place_order(
     to_value(result)
 }
 
-fn bracket_order(
-    app: &mut QuantickApp,
+fn bracket_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -238,7 +246,8 @@ fn bracket_order(
             .transpose()?,
     );
     let events = app
-        .control_active_paper_mut()
+        .tabs_mut()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .set_order_bracket(OrderId(input.order_id), bracket);
@@ -247,8 +256,8 @@ fn bracket_order(
     to_value(result)
 }
 
-fn cancel_order(
-    app: &mut QuantickApp,
+fn cancel_order<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -257,7 +266,8 @@ fn cancel_order(
     let input: CancelInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let events = app
-        .control_active_paper_mut()
+        .tabs_mut()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .account_mut()
         .cancel_order(OrderId(input.order_id));
@@ -266,8 +276,8 @@ fn cancel_order(
     to_value(result)
 }
 
-fn select_strategy(
-    app: &mut QuantickApp,
+fn select_strategy<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -275,7 +285,10 @@ fn select_strategy(
     let asked = input.clone();
     let input: SelectStrategyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .tabs_mut()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     let strategies = paper.account().order_strategies().to_vec();
     if let Some(name) = input.name.as_deref()
         && !strategies.iter().any(|strategy| strategy.name == name)
@@ -287,14 +300,15 @@ fn select_strategy(
     paper
         .account_mut()
         .set_order_strategies(strategies, input.name.as_deref());
-    app.control_persist_order_strategies();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::OrderStrategies);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_ruler(
-    app: &mut QuantickApp,
+fn set_ruler<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -302,7 +316,8 @@ fn set_ruler(
     let asked = input.clone();
     let input: SetRulerInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    app.control_active_paper_mut()
+    app.tabs_mut()
+        .active_paper_mut()
         .ok_or_else(no_chart_open)?
         .set_ruler_ticks(input.ticks);
     let result = answer(app, &[]);
@@ -310,8 +325,8 @@ fn set_ruler(
     to_value(result)
 }
 
-fn set_risk(
-    app: &mut QuantickApp,
+fn set_risk<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -356,7 +371,10 @@ fn set_risk(
             ));
         }
     };
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .tabs_mut()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     // The currency an amount set through this call is denominated in: the one
     // the call named, or the chart's own instrument. Read before the mutation
     // so it describes the instrument the caller was looking at.
@@ -389,14 +407,15 @@ fn set_risk(
         }
         paper.account_mut().set_capital(declared);
     }
-    app.control_persist_risk_settings();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)
 }
 
-fn set_instrument_money(
-    app: &mut QuantickApp,
+fn set_instrument_money<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -404,7 +423,10 @@ fn set_instrument_money(
     let asked = input.clone();
     let input: SetInstrumentMoneyInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let paper = app.control_active_paper_mut().ok_or_else(no_chart_open)?;
+    let paper = app
+        .tabs_mut()
+        .active_paper_mut()
+        .ok_or_else(no_chart_open)?;
     let symbol = match input.symbol.as_deref().map(str::trim) {
         Some(symbol) if !symbol.is_empty() => symbol.to_owned(),
         _ => paper.account().symbol().to_owned(),
@@ -460,7 +482,8 @@ fn set_instrument_money(
         }
     }
     paper.account_mut().set_instrument_money(book);
-    app.control_persist_risk_settings();
+    app.paper_settings()
+        .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);
     journal(access, actor, TICKET_EVENT_KIND, &result, asked);
     to_value(result)

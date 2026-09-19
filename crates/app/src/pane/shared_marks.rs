@@ -7,17 +7,23 @@
 //! Everything here speaks in market time and price: `reproject` reads a foreign
 //! mark into this pane's slots, `paint_shared_from` paints it, `shared_pick`
 //! and `PaneGestures::interact_shared` let the trader take hold of it here, and
-//! `apply_shared_edit` lands the edit back on the pane that owns the object.
-//! Gesture updates live in `pointer_gestures`; this module keeps the shared
-//! contract, projection and destination-store adapter.
+//! [`SharedMarksMut::apply_edit`] lands the edit back on the pane that owns the
+//! object. Gesture updates live in `pointer_gestures`; this module keeps the
+//! shared contract, projection and destination-store adapter.
+//!
+//! The read side rides [`PaneHitTest`], the last frame's geometry lent out;
+//! the write side is [`SharedMarksMut`], the owning pane's store beside the
+//! projection its instants resolve through. Neither holds the pane.
 
 use eframe::egui;
 use smallvec::SmallVec;
 
 use crate::bands;
-use crate::drawings::{ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle};
+use crate::drawings::{ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings};
 
-use super::{ChartPane, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX};
+use super::drawing_projection::DrawingProjection;
+use super::pointer_hit::PaneHitTest;
+use super::{DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX};
 
 /// What a pane resolved on *another* pane's shared marks this frame.
 ///
@@ -139,7 +145,19 @@ impl SharedDrag {
     }
 }
 
-impl ChartPane {
+/// The marks another pane of the tab holds, as this pane reads them: the
+/// owning store and whether one of them is in its text editor right now.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedSource<'a> {
+    pub(crate) drawings: &'a Drawings,
+    /// The object living on the source pane whose words are being typed.
+    /// Left hardcoded, a shared note being typed kept painting its old words
+    /// on the companion chart — the same double render the editor stands the
+    /// original down to avoid.
+    pub(crate) content_editing: Option<usize>,
+}
+
+impl PaneHitTest<'_> {
     /// What a pointer at `pos` grabs among `source`'s shared marks: a handle
     /// anywhere first, then the topmost body — the same order, and the same
     /// primitives, this pane uses on its own objects.
@@ -150,8 +168,12 @@ impl ChartPane {
     ///
     /// Per-frame cost: nothing until a mark is actually shared, and bounded by
     /// the handful of objects on the chart when one is.
-    pub fn shared_pick(&self, source: &Self, pos: egui::Pos2) -> Option<(usize, Option<usize>)> {
-        if !source.drawings.items().iter().any(Drawing::shared) {
+    pub(crate) fn shared_pick(
+        &self,
+        source: &Drawings,
+        pos: egui::Pos2,
+    ) -> Option<(usize, Option<usize>)> {
+        if !source.items().iter().any(Drawing::shared) {
             return None;
         }
         let (_, history_right, total, _) = self.last_projection()?;
@@ -161,37 +183,33 @@ impl ChartPane {
         let band = bands::band_at(&self.frame.bands, pos)?;
         let scale = band.scale?;
         let mut body = None;
-        for (index, drawing) in source.drawings.items().iter().enumerate().rev() {
+        for (index, drawing) in source.items().iter().enumerate().rev() {
             if !drawing.shared()
-                || !source.drawings.is_visible(index)
+                || !source.is_visible(index)
                 || !bands::drawing_in_band(drawing, band)
             {
                 continue;
             }
-            let Some((anchors, _)) = self.reproject(drawing) else {
+            let Some((anchors, _)) = self.projection.reproject(drawing) else {
                 continue;
             };
             let points: SmallVec<[egui::Pos2; 4]> = anchors
                 .iter()
                 .map(|anchor| {
-                    self.drawing_projection().drawing_screen_point(
-                        *anchor,
-                        history_right,
-                        total,
-                        &scale,
-                    )
+                    self.projection
+                        .drawing_screen_point(*anchor, history_right, total, &scale)
                 })
                 .collect();
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
-                px_per_bar: self.viewport.px_per_bar(),
+                px_per_bar: self.projection.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
                 // The mirror also hides locked selection handles.
-                selected: source.drawings.selected() == Some(index) && !drawing.locked,
+                selected: source.selected() == Some(index) && !drawing.locked,
                 halo: false,
                 content_editing: false,
             };
@@ -222,74 +240,6 @@ impl ChartPane {
         body
     }
 
-    /// Apply an edit another pane of this tab made to one of this pane's
-    /// shared marks, back in this pane's own bar space.
-    ///
-    /// The instants arrive as they were read off the other chart and are
-    /// resolved here, which is what makes the two views one object rather than
-    /// two copies of one.
-    pub fn apply_shared_edit(&mut self, edit: SharedEdit) {
-        match edit {
-            SharedEdit::Select(index) => self.drawings.select(Some(index)),
-            SharedEdit::MoveAnchor {
-                index,
-                anchor,
-                time_ms,
-                price,
-            } => {
-                let Some(bar) = self.slot_of_time(time_ms) else {
-                    return;
-                };
-                self.drawings.move_anchor(
-                    index,
-                    anchor,
-                    ChartPoint::at_time(bar, price, Some(time_ms)),
-                );
-            }
-            SharedEdit::Translate {
-                index,
-                delta_ms,
-                delta_price,
-            } => self.translate_shared(index, delta_ms, delta_price),
-        }
-    }
-
-    /// Move a whole shared object by an amount of market time and price.
-    ///
-    /// Time, not bars: the two panes cut the tape differently, so the same
-    /// drag is a different number of bars on each — and market time is what
-    /// both of them mean by it.
-    ///
-    /// Resolved in full before anything is written. A drag that would put part
-    /// of the object where this pane's series cannot reach moves nothing at
-    /// all, rather than leaving a shape with one end on a bar and the other on
-    /// an instant that has none.
-    fn translate_shared(&mut self, index: usize, delta_ms: i64, delta_price: f64) {
-        let Some(drawing) = self.drawings.items().get(index) else {
-            return;
-        };
-        if drawing.locked {
-            return;
-        }
-        let mut moved: SmallVec<[ChartPoint; 4]> = SmallVec::new();
-        for point in &drawing.points {
-            let Some(time) = point.time_ms.and_then(|time| time.checked_add(delta_ms)) else {
-                return;
-            };
-            let Some(bar) = self.slot_of_time(time) else {
-                return;
-            };
-            moved.push(ChartPoint::at_time(
-                bar,
-                point.price + delta_price,
-                Some(time),
-            ));
-        }
-        for (anchor, point) in moved.into_iter().enumerate() {
-            self.drawings.move_anchor(index, anchor, point);
-        }
-    }
-
     /// Paint the shared drawings that live on `source`, re-expressed on this
     /// pane (`docs/ux/drawing-tools-2026-08.md` §D7).
     ///
@@ -306,7 +256,7 @@ impl ChartPane {
     /// Per-frame cost: nothing at all until a drawing is actually shared —
     /// the loop below runs over `source.drawings` and does nothing for the
     /// `ThisChart` default every object opens with.
-    pub fn paint_shared_from(&self, painter: &egui::Painter, source: &Self) {
+    pub(crate) fn paint_shared_from(&self, painter: &egui::Painter, source: SharedSource<'_>) {
         if !source.drawings.items().iter().any(Drawing::shared) {
             return;
         }
@@ -317,7 +267,7 @@ impl ChartPane {
             if !drawing.shared() || !source.drawings.is_visible(index) {
                 continue;
             }
-            let Some((anchors, clamped)) = self.reproject(drawing) else {
+            let Some((anchors, clamped)) = self.projection.reproject(drawing) else {
                 continue;
             };
             // A clamped anchor is an honest half-truth: the object really is
@@ -356,12 +306,8 @@ impl ChartPane {
                 let points: SmallVec<[egui::Pos2; 4]> = anchors
                     .iter()
                     .map(|anchor| {
-                        self.drawing_projection().drawing_screen_point(
-                            *anchor,
-                            history_right,
-                            total,
-                            &scale,
-                        )
+                        self.projection
+                            .drawing_screen_point(*anchor, history_right, total, &scale)
                     })
                     .collect();
                 // A mark selected here shows it here. The trader can take and
@@ -373,18 +319,15 @@ impl ChartPane {
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
                     scale: &scale,
-                    px_per_bar: self.viewport.px_per_bar(),
+                    px_per_bar: self.projection.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: drawing.band != DrawingBand::AllBands || band_index == 0,
                     style,
                     selected,
                     halo: false,
-                    // The object lives on `source`, so that is the pane that knows
-                    // whether its words are in an editor right now. Left
-                    // hardcoded, a shared note being typed kept painting its
-                    // old words on the companion chart — the same double
-                    // render the editor stands the original down to avoid.
-                    content_editing: source.gestures.content_editing == Some(index),
+                    // The object lives on `source`, so that is the pane that
+                    // knows whether its words are in an editor right now.
+                    content_editing: source.content_editing == Some(index),
                 };
                 // Both halves, so a shared object is the same object on both
                 // charts. A tool whose body lives in the background pass —
@@ -414,12 +357,14 @@ impl ChartPane {
             }
         }
     }
+}
 
+impl DrawingProjection<'_> {
     /// Re-express a foreign drawing's anchors in this pane's bar space.
     /// Returns the anchors and whether any of them had to be clamped to the
     /// end of this pane's series.
     fn reproject(&self, drawing: &Drawing) -> Option<(SmallVec<[ChartPoint; 4]>, bool)> {
-        let slots = self.slots();
+        let slots = self.series.slots();
         if slots == 0 {
             return None;
         }
@@ -427,7 +372,7 @@ impl ChartPane {
         let mut clamped = false;
         for point in &drawing.points {
             let time = point.time_ms?;
-            let slot = match self.slot_at_time(time) {
+            let slot = match self.series.slot_at_time(time) {
                 Some(slot) => slot.min(slots - 1),
                 // Before this pane's first bar: the series does not reach
                 // back that far, so the anchor sits on the oldest bar and is
@@ -442,7 +387,7 @@ impl ChartPane {
             // where a trend line pointing into the future belongs. Without
             // this the future end of a shared line would pile up on the right
             // edge instead of running on.
-            if let Some(future) = self.future_slot_at_time(time) {
+            if let Some(future) = self.series.future_slot_at_time(time) {
                 anchors.push(ChartPoint::at_time(future + 0.5, point.price, Some(time)));
                 continue;
             }
@@ -453,6 +398,7 @@ impl ChartPane {
             // forming bar is simply now, and fading it would be a lie in the
             // other direction.
             clamped |= self
+                .series
                 .closed_bar(slot)
                 .is_some_and(|bar| bar.close_time < time);
             anchors.push(ChartPoint::at_time(
@@ -462,5 +408,82 @@ impl ChartPane {
             ));
         }
         Some((anchors, clamped))
+    }
+}
+
+/// The owning pane's store beside the projection its instants resolve
+/// through — the destination of an edit made from another pane.
+pub(crate) struct SharedMarksMut<'a> {
+    pub(super) projection: DrawingProjection<'a>,
+    pub(super) drawings: &'a mut Drawings,
+}
+
+impl SharedMarksMut<'_> {
+    /// Apply an edit another pane of this tab made to one of this pane's
+    /// shared marks, back in this pane's own bar space.
+    ///
+    /// The instants arrive as they were read off the other chart and are
+    /// resolved here, which is what makes the two views one object rather than
+    /// two copies of one.
+    pub(crate) fn apply_edit(self, edit: SharedEdit) {
+        match edit {
+            SharedEdit::Select(index) => self.drawings.select(Some(index)),
+            SharedEdit::MoveAnchor {
+                index,
+                anchor,
+                time_ms,
+                price,
+            } => {
+                let Some(bar) = self.projection.series.slot_of_time(time_ms) else {
+                    return;
+                };
+                self.drawings.move_anchor(
+                    index,
+                    anchor,
+                    ChartPoint::at_time(bar, price, Some(time_ms)),
+                );
+            }
+            SharedEdit::Translate {
+                index,
+                delta_ms,
+                delta_price,
+            } => self.translate(index, delta_ms, delta_price),
+        }
+    }
+
+    /// Move a whole shared object by an amount of market time and price.
+    ///
+    /// Time, not bars: the two panes cut the tape differently, so the same
+    /// drag is a different number of bars on each — and market time is what
+    /// both of them mean by it.
+    ///
+    /// Resolved in full before anything is written. A drag that would put part
+    /// of the object where this pane's series cannot reach moves nothing at
+    /// all, rather than leaving a shape with one end on a bar and the other on
+    /// an instant that has none.
+    fn translate(self, index: usize, delta_ms: i64, delta_price: f64) {
+        let Some(drawing) = self.drawings.items().get(index) else {
+            return;
+        };
+        if drawing.locked {
+            return;
+        }
+        let mut moved: SmallVec<[ChartPoint; 4]> = SmallVec::new();
+        for point in &drawing.points {
+            let Some(time) = point.time_ms.and_then(|time| time.checked_add(delta_ms)) else {
+                return;
+            };
+            let Some(bar) = self.projection.series.slot_of_time(time) else {
+                return;
+            };
+            moved.push(ChartPoint::at_time(
+                bar,
+                point.price + delta_price,
+                Some(time),
+            ));
+        }
+        for (anchor, point) in moved.into_iter().enumerate() {
+            self.drawings.move_anchor(index, anchor, point);
+        }
     }
 }

@@ -2,6 +2,7 @@
 
 pub(crate) use quantick_control_schema::indicator_guide::*;
 
+use crate::app::LayoutPort;
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -20,7 +21,7 @@ use quantick_control::{
 
 use serde_json::Value;
 
-use crate::{app::QuantickApp, indicator_worker::SlotId};
+use crate::indicator_worker::SlotId;
 
 use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
@@ -70,8 +71,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set(
-    app: &mut QuantickApp,
+fn set<P: LayoutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,

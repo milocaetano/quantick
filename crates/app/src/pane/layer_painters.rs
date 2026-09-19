@@ -357,7 +357,7 @@ impl ChartPane {
                 painter,
                 rect: chart_rect,
                 tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-                tape_hovered: self.tape_switch_hovered,
+                tape_hovered: self.tape_switch.hovered(),
                 state: &self.layers,
                 facts: self.layer_facts(Some(chrome.capabilities)),
             });

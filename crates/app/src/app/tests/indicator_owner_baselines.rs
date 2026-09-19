@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::LayoutPort;
 use crate::app::QuantickApp;
 use crate::app::tests::{click_chart, pane_point, settle_indicators, split_app};
 use crate::toolbar::ToolbarAction;

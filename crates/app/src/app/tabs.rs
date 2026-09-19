@@ -1,9 +1,12 @@
 //! The tab lifecycle: opening a market, closing one, moving between them.
 //!
 //! `adopt_tab` — the step that actually builds a `Tab` from a live feed
-//! handle — stays in `super`, beside the constructor it shares its
-//! inheritance rules with. What is here is everything that decides *which*
-//! tab, and what happens to the window when the set of them changes.
+//! handle — lives on the arrangement adapter, beside the constructor it
+//! shares its inheritance rules with. What is here is everything that
+//! decides *which* tab, and what happens to the window when the set of them
+//! changes — plus the two owners the window mirrors onto every tab: the
+//! history reach ([`HistorySettings`]) and the symbol catalog
+//! ([`SymbolCatalog`]).
 
 use eframe::egui;
 
@@ -15,6 +18,8 @@ use crate::indicator_worker::SlotId;
 use crate::symbols_file;
 use crate::tabstrip::TabAction;
 use quantick_feed::history_reach;
+
+use crate::config::AppConfig;
 
 use super::menu_bar::{
     CLOSE_TAB_SHORTCUT, NEW_TAB_SHORTCUT, NEXT_TAB_SHORTCUT, PREVIOUS_TAB_SHORTCUT,
@@ -157,12 +162,7 @@ impl QuantickApp {
         // recorder built for the market it belongs to.
         super::deal_recording_wiring::ensure(self);
         let config = &self.config;
-        let policy = crate::tab::HistoryPolicy {
-            progressive: self.history.progressive_history,
-            reach: self.history.history_reach,
-            reach_span_minutes: self.history.history_reach_span_minutes,
-            venue_lead_in: self.history.venue_lead_in,
-        };
+        let policy = self.history.policy();
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.live_trades;
@@ -211,101 +211,22 @@ impl QuantickApp {
             MarketRequest::Open { feed_id, symbol } => {
                 self.arrangement_adapter().open_tab(feed_id, symbol, None)
             }
-            MarketRequest::Add { feed_id, symbol } => match self.add_symbol(&feed_id, &symbol) {
-                Ok(()) => {
-                    self.surfaces.source_picker.close();
-                    self.arrangement_adapter().open_tab(feed_id, symbol, None);
+            MarketRequest::Add { feed_id, symbol } => {
+                match self.symbol_catalog().add(&feed_id, &symbol) {
+                    Ok(()) => {
+                        self.surfaces.source_picker.close();
+                        self.arrangement_adapter().open_tab(feed_id, symbol, None);
+                    }
+                    // The dialog stays open carrying the reason: the user is one
+                    // keystroke from a symbol that does fit, and closing would
+                    // make the refusal look like a crash.
+                    Err(reason) => self.surfaces.source_picker.refuse(reason),
                 }
-                // The dialog stays open carrying the reason: the user is one
-                // keystroke from a symbol that does fit, and closing would
-                // make the refusal look like a crash.
-                Err(reason) => self.surfaces.source_picker.refuse(reason),
-            },
-            MarketRequest::Remove { feed_id, symbol } => self.remove_symbol(&feed_id, &symbol),
+            }
+            MarketRequest::Remove { feed_id, symbol } => {
+                self.symbol_catalog().remove(&feed_id, &symbol);
+            }
         }
-    }
-
-    /// Put `symbol` in feed `feed_id`'s catalog and remember it across
-    /// restarts. Reports whether the catalog took it.
-    ///
-    /// The config file itself is never written: it is hand-written, comments
-    /// and all, and a program that rewrote it would eat them. The addition
-    /// lives in its own sidecar, which the next launch folds back in before
-    /// the config is validated (see [`crate::symbols_file`]).
-    pub(super) fn add_symbol(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
-        // Against the *whole* config, on a copy. A symbol is not just a name
-        // in a list: it takes part in every cross-check the config has, and
-        // the MetaTrader port map is one where a single mapped symbol offered
-        // by two feeds is a configuration the app refuses to load. Persisting
-        // one of those would write a file that kills the next launch — and the
-        // error would name the config, which is not the file that broke.
-        let mut candidate = self.config.clone();
-        if !candidate.add_symbol(feed_id, symbol) {
-            return Err(format!(
-                "{} already offers {symbol}",
-                self.config.feed_name(feed_id)
-            ));
-        }
-        candidate.validate()?;
-        self.config = candidate;
-        self.added_symbols.add(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
-            // The catalog took it for this session either way; what is lost is
-            // the next launch, and the user is told which file did not take it.
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.workspace.symbols_path().display(),
-                error = %error,
-                action = "addition_is_session_only",
-                "cannot write the added-symbols file"
-            );
-        }
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "SYMBOL_ADDED",
-            feed = %feed_id,
-            symbol = %symbol,
-            path = %self.workspace.symbols_path().display(),
-            action = "open_in_new_tab",
-            "a symbol was added from the source picker"
-        );
-        Ok(())
-    }
-
-    /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
-    ///
-    /// Only ever a catalog edit: a tab already showing that market keeps
-    /// streaming it. The picker will not offer this for a market a tab is on,
-    /// which is what stops the selection correction from retargeting it.
-    pub(super) fn remove_symbol(&mut self, feed_id: &str, symbol: &str) {
-        if !self.config.remove_symbol(feed_id, symbol) {
-            return;
-        }
-        self.added_symbols.remove(feed_id, symbol);
-        if let Err(error) = symbols_file::save(self.workspace.symbols_path(), &self.added_symbols) {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
-                path = %self.workspace.symbols_path().display(),
-                error = %error,
-                action = "removal_is_session_only",
-                "cannot write the added-symbols file"
-            );
-        }
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "SYMBOL_REMOVED",
-            feed = %feed_id,
-            symbol = %symbol,
-            path = %self.workspace.symbols_path().display(),
-            action = "leave_open_tabs_alone",
-            "a user-added symbol left the catalog"
-        );
     }
 
     /// Carry out what the tab strip asked for.
@@ -323,8 +244,133 @@ impl QuantickApp {
 }
 
 impl HistorySettings {
+    /// Choose how far one press of *load older* reaches.
+    ///
+    /// The named call behind the history menu's reach chips and the
+    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
+    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
+    /// where a run in flight also reads it: withdrawing the longer reach is
+    /// how a trader calls that run off.
+    pub(super) fn set_reach(&mut self, reach: history_reach::HistoryReach) {
+        self.history_reach = reach;
+    }
+
+    /// How far back one press of the `by time` reach pulls, in minutes of
+    /// traded time.
+    ///
+    /// Clamped rather than refused: a span of zero is a press that asks for
+    /// nothing, and the operator that sent it meant *some* history. The
+    /// ceiling is the campaign's own span cap, past which no run can reach
+    /// anyway, so accepting a larger number would be promising a reach the
+    /// budgets forbid.
     pub(super) fn set_span_minutes(&mut self, minutes: u32) {
         let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
         self.history_reach_span_minutes = minutes.clamp(1, ceiling);
+    }
+
+    /// The window's standing choice, phrased for the tabs. The switch lives
+    /// on the window, the request is phrased by the tab: handed to every
+    /// tab's drain each frame so every tab asks the way the trader last said,
+    /// including one opened after the choice was made.
+    pub(super) fn policy(&self) -> crate::tab::HistoryPolicy {
+        crate::tab::HistoryPolicy {
+            progressive: self.progressive_history,
+            reach: self.history_reach,
+            reach_span_minutes: self.history_reach_span_minutes,
+            venue_lead_in: self.venue_lead_in,
+        }
+    }
+}
+
+/// The instruments the picker can add to a feed: the running config, the
+/// user's own additions kept apart from it, and the sidecar they persist in.
+///
+/// The config file itself is never written: it is hand-written, comments
+/// and all, and a program that rewrote it would eat them. An addition lives
+/// in its own sidecar, which the next launch folds back in before the config
+/// is validated (see [`crate::symbols_file`]).
+pub(crate) struct SymbolCatalog<'a> {
+    pub(super) config: &'a mut AppConfig,
+    pub(super) added: &'a mut symbols_file::AddedSymbols,
+    pub(super) path: &'a std::path::Path,
+}
+
+impl SymbolCatalog<'_> {
+    /// Put `symbol` in feed `feed_id`'s catalog and remember it across
+    /// restarts. Reports whether the catalog took it.
+    pub(crate) fn add(&mut self, feed_id: &str, symbol: &str) -> Result<(), String> {
+        // Against the *whole* config, on a copy. A symbol is not just a name
+        // in a list: it takes part in every cross-check the config has, and
+        // the MetaTrader port map is one where a single mapped symbol offered
+        // by two feeds is a configuration the app refuses to load. Persisting
+        // one of those would write a file that kills the next launch — and the
+        // error would name the config, which is not the file that broke.
+        let mut candidate = self.config.clone();
+        if !candidate.add_symbol(feed_id, symbol) {
+            return Err(format!(
+                "{} already offers {symbol}",
+                self.config.feed_name(feed_id)
+            ));
+        }
+        candidate.validate()?;
+        *self.config = candidate;
+        self.added.add(feed_id, symbol);
+        if let Err(error) = symbols_file::save(self.path, self.added) {
+            // The catalog took it for this session either way; what is lost is
+            // the next launch, and the user is told which file did not take it.
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.path.display(),
+                error = %error,
+                action = "addition_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "SYMBOL_ADDED",
+            feed = %feed_id,
+            symbol = %symbol,
+            path = %self.path.display(),
+            action = "open_in_new_tab",
+            "a symbol was added from the source picker"
+        );
+        Ok(())
+    }
+
+    /// Take a user-added `symbol` back out of feed `feed_id`'s catalog.
+    ///
+    /// Only ever a catalog edit: a tab already showing that market keeps
+    /// streaming it. The picker will not offer this for a market a tab is on,
+    /// which is what stops the selection correction from retargeting it.
+    pub(crate) fn remove(&mut self, feed_id: &str, symbol: &str) {
+        if !self.config.remove_symbol(feed_id, symbol) {
+            return;
+        }
+        self.added.remove(feed_id, symbol);
+        if let Err(error) = symbols_file::save(self.path, self.added) {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SYMBOL_CATALOG_WRITE_FAILED",
+                path = %self.path.display(),
+                error = %error,
+                action = "removal_is_session_only",
+                "cannot write the added-symbols file"
+            );
+        }
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "SYMBOL_REMOVED",
+            feed = %feed_id,
+            symbol = %symbol,
+            path = %self.path.display(),
+            action = "leave_open_tabs_alone",
+            "a user-added symbol left the catalog"
+        );
     }
 }

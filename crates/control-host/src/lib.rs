@@ -24,6 +24,7 @@ pub mod evidence;
 pub mod idempotency;
 pub mod inventory;
 pub mod journal;
+pub mod launch;
 pub mod projection;
 pub mod refusal;
 #[cfg(test)]

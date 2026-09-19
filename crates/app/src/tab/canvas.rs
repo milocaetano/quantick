@@ -536,7 +536,9 @@ impl Tab {
                 let Some(source) = self.pane_at(owner) else {
                     continue;
                 };
-                if let Some((index, anchor)) = pane.shared_pick(source, position) {
+                if let Some((index, anchor)) =
+                    pane.hit_test().shared_pick(&source.drawings, position)
+                {
                     picks.by_pane[viewer] = Some(SharedPick {
                         owner,
                         index,
@@ -586,7 +588,8 @@ impl Tab {
                 }
                 self.pane_at_mut(owner)
                     .expect("owner checked above")
-                    .apply_shared_edit(edit);
+                    .shared_marks_mut()
+                    .apply_edit(edit);
             }
             if interaction.commit_gesture {
                 self.pane_at_mut(owner)
@@ -615,7 +618,8 @@ impl Tab {
             };
             for owner in (0..count).filter(|owner| *owner != viewer) {
                 if let Some(source) = self.pane_at(owner) {
-                    pane.paint_shared_from(painter, source);
+                    pane.hit_test()
+                        .paint_shared_from(painter, source.shared_source());
                 }
             }
         }

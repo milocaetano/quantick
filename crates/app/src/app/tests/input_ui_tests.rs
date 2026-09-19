@@ -9,19 +9,26 @@ fn the_chip_is_the_popups_only_door() {
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     assert!(
-        !app.control_feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "a stall alone must not open anything"
     );
 
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open(), "the chip opens it");
+    assert!(app.chrome_reads().feed_popup_open(), "the chip opens it");
 
     let chip = app
-        .control_feed_chip_rect()
+        .chrome_reads()
+        .feed_chip_rect()
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(!app.control_feed_popup_open(), "and the chip closes it");
+    assert!(
+        !app.chrome_reads().feed_popup_open(),
+        "and the chip closes it"
+    );
 }
 
 /// The reason is one hover away, not one click: a trader mid-session who
@@ -39,7 +46,10 @@ fn the_corner_answers_a_hover_without_being_opened() {
     app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     let headline = app
         .active_tab()
         .stall_at(&app.config, metrics::wall_clock_ms())
@@ -54,7 +64,7 @@ fn the_corner_answers_a_hover_without_being_opened() {
         "the hover has to carry the reason: {headline}"
     );
     assert!(
-        !app.control_feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "and it must not open anything"
     );
 }

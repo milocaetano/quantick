@@ -15,6 +15,7 @@
 //! descriptor, and the answer is the whole reason the trader is offered a
 //! choice at all.
 
+use crate::app::{TabsMutPort, TabsPort};
 pub(crate) use quantick_control_schema::recovery::*;
 
 use quantick_control::{
@@ -25,8 +26,6 @@ use quantick_control::{
 };
 
 use serde_json::Value;
-
-use crate::app::QuantickApp;
 
 use super::{actions::ActionRegistry, gateway::ControlAccess};
 
@@ -54,8 +53,8 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn reconnect(
-    app: &mut QuantickApp,
+fn reconnect<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -63,8 +62,8 @@ fn reconnect(
     recover(app, input, true)
 }
 
-fn reload(
-    app: &mut QuantickApp,
+fn reload<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -75,17 +74,18 @@ fn reload(
 /// The shared body. `keep_timeline` picks which of the tab's two methods runs;
 /// nothing else differs, so the two capabilities can never drift apart in
 /// anything but the act they name.
-fn recover(
-    app: &mut QuantickApp,
+fn recover<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     input: &Value,
     keep_timeline: bool,
 ) -> Result<Value, ControlError> {
     let input: RecoveryInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.control_tabs().id_at(index);
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let (tab, config) = app
-        .control_tab_with_config(index)
+        .tabs_mut()
+        .tab_with_config(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // Asked of the tab rather than inferred from one of its fields: a
     // recorded session owns the chart while it plays, and a tab whose feed id
@@ -110,11 +110,15 @@ fn recover(
 }
 
 /// Which tab a call named, or the one the trader is looking at.
-pub(crate) fn tab_index(app: &QuantickApp, tab_id: Option<WireU64>) -> Result<usize, ControlError> {
+pub(crate) fn tab_index<P: TabsPort + ?Sized>(
+    app: &P,
+    tab_id: Option<WireU64>,
+) -> Result<usize, ControlError> {
     let Some(id) = tab_id else {
-        return Ok(app.control_active_tab_index());
+        return Ok(app.tab_reads().active_tab_index());
     };
-    app.control_tabs()
+    app.tab_reads()
+        .tabs()
         .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
