@@ -4,6 +4,8 @@
 //! time. Same trades in, same bars out, always. See `CLAUDE.md` for the
 //! non-negotiable design rules.
 //!
+//! (Demo edit for PR #547: an engine-only change; this PR is closed unmerged.)
+//!
 //! # The input/output contract
 //!
 //! The engine consumes [`Trade`]s and produces [`Bar`]s. Everything else is a
