@@ -12,8 +12,10 @@
 # is private, and was invisible to the report's old `pub struct`-only rule.
 !budget 361
 app::ChartPane 35
-app::OrderflowHealthSnapshot 31
 app::PaperTrading 31
+# Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into
+# `control-schema` with the same 31 fields; the budget is unchanged.
+control-schema::OrderflowHealthSnapshot 31
 app::Tab 67
 app::ToolRail 32
 orderflow::BookEngine 31
