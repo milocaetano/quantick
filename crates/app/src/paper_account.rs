@@ -303,7 +303,7 @@ fn apply_launch_hooks(mut core: Core) -> Core {
     // defaulted: a capture run that silently got a different risk than
     // it asked for photographs the wrong thing and says nothing about
     // it. The rule `QUANTICK_PAPER_ORDERS` already follows.
-    let hook = std::env::var(PAPER_RISK_ENV).ok().and_then(|value| {
+    let hook = crate::hooks::captured::var(PAPER_RISK_ENV).and_then(|value| {
         crate::risk_sizing::parse_hook(&value).or_else(|| {
             tracing::warn!(
                 target: "quantick::app",
@@ -320,7 +320,7 @@ fn apply_launch_hooks(mut core: Core) -> Core {
     if let Some(hook) = hook {
         core = core.with_risk_hook(hook);
     }
-    if std::env::var(PAPER_DEMO_ENV).is_ok_and(|value| value == "1") {
+    if crate::hooks::captured::var(PAPER_DEMO_ENV).is_some_and(|value| value == "1") {
         core = core.with_demo();
     }
     core

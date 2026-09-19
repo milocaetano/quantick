@@ -52,7 +52,8 @@ impl Surface for IndicatorPreviewSurface {
 
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        self.forced = std::env::var("QUANTICK_INDICATOR_PREVIEW").is_ok_and(|value| value == "1");
+        self.forced = crate::hooks::captured::var("QUANTICK_INDICATOR_PREVIEW")
+            .is_some_and(|value| value == "1");
     }
 
     fn draw(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {

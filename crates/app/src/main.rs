@@ -230,6 +230,8 @@ fn main() -> eframe::Result {
     feed::binance::configure_initial_book_depth(startup.book_depth.as_deref());
     #[cfg(feature = "scenario-harness")]
     let scenario = hooks::ScenarioInputs::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "scenario-harness")]
+    hooks::captured::install(hooks::scenario_names(), |name| std::env::var_os(name));
     #[cfg(feature = "drawing-harness")]
     let toolrail = toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name));
     #[cfg(feature = "control-harness")]

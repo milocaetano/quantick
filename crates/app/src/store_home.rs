@@ -178,7 +178,9 @@ pub(crate) fn home() -> Option<PathBuf> {
 /// then the cwd-relative name the app used before this module existed.
 pub(crate) fn resolve(file: &str) -> PathBuf {
     #[cfg(any(feature = "scenario-harness", test))]
-    if let Some(explicit) = capture_override(file, |env| std::env::var_os(env)) {
+    if let Some(explicit) =
+        capture_override(file, |env| crate::hooks::captured::var(env).map(Into::into))
+    {
         return PathBuf::from(explicit);
     }
     resolve_in(home(), file)
@@ -306,7 +308,9 @@ pub(crate) fn consolidate_once() -> Option<RescueSummary> {
     // A session that writes no store copies nothing into the home either.
     guard_write(&home).ok()?;
     #[cfg(any(feature = "scenario-harness", test))]
-    let overridden = |file: &str| capture_override(file, |env| std::env::var_os(env)).is_some();
+    let overridden = |file: &str| {
+        capture_override(file, |env| crate::hooks::captured::var(env).map(Into::into)).is_some()
+    };
     #[cfg(not(any(feature = "scenario-harness", test)))]
     let overridden = |_: &str| false;
     let summary = rescue_into(&home, Path::new("."), COCKPIT_STORES, &overridden)?;

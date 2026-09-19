@@ -77,8 +77,7 @@ pub fn fold_budget() -> usize {
         // A capture hook: compiled only with the scenario harness (or under
         // test); a default build folds at the default budget.
         #[cfg(any(feature = "scenario-harness", test))]
-        if let Some(budget) = std::env::var("QUANTICK_FRVP_FOLD_BUDGET")
-            .ok()
+        if let Some(budget) = crate::hooks::captured::var("QUANTICK_FRVP_FOLD_BUDGET")
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|budget| *budget > 0)
         {

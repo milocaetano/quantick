@@ -436,7 +436,9 @@ pub fn demo_gap_ms() -> Option<i64> {
     // The hook compiles only with the `harness` feature (or under test).
     #[cfg(any(test, feature = "harness"))]
     {
-        let requested: i64 = std::env::var("QUANTICK_FEED_GAP").ok()?.parse().ok()?;
+        let requested: i64 = crate::hooks::captured::var("QUANTICK_FEED_GAP")?
+            .parse()
+            .ok()?;
         (requested >= MIN_MARKED_GAP_MS).then_some(requested)
     }
     #[cfg(not(any(test, feature = "harness")))]
@@ -707,8 +709,7 @@ pub struct FeedHandle {
 pub fn initial_backfill_target() -> usize {
     // The override compiles only with the `harness` feature (or under test).
     #[cfg(any(test, feature = "harness"))]
-    if let Some(target) = std::env::var("QUANTICK_BACKFILL")
-        .ok()
+    if let Some(target) = crate::hooks::captured::var("QUANTICK_BACKFILL")
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)
     {

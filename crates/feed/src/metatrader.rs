@@ -189,7 +189,7 @@ pub fn forced_latency_split() -> Option<FeedLatency> {
 
 #[cfg(any(test, feature = "harness"))]
 fn forced_latency_split_hook() -> Option<FeedLatency> {
-    let raw = std::env::var("QUANTICK_FAKE_LATENCY_SPLIT").ok()?;
+    let raw = crate::hooks::captured::var("QUANTICK_FAKE_LATENCY_SPLIT")?;
     let parsed = parse_forced_latency(raw.trim());
     if parsed.is_none() {
         tracing::warn!(

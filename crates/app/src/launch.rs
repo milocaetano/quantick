@@ -12,7 +12,8 @@
 //!
 //! Capture, demo, automation and fault hooks are not configuration and are not
 //! here. They compile only under the `harness` Cargo features or `cfg(test)`
-//! (see `crate::hooks`), so a default binary names none of them. The window
+//! (see `crate::hooks`), so a default binary names none of them; a harness
+//! build's `main` captures them too, so no owner reads the environment. The window
 //! hooks in `window` are the one pair captured beside the configuration, and
 //! they are gated the same way.
 

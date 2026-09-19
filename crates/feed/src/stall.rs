@@ -275,7 +275,7 @@ impl ForcedStall {
     pub fn from_env() -> Option<Self> {
         #[cfg(any(test, feature = "harness"))]
         {
-            match std::env::var("QUANTICK_FEED_STALL").ok()?.as_str() {
+            match crate::hooks::captured::var("QUANTICK_FEED_STALL")?.as_str() {
                 "connecting" => Some(Self::FirstConnect),
                 "reconnecting" => Some(Self::Reconnect),
                 "silent" => Some(Self::Silent),

@@ -219,8 +219,8 @@ neither of them is the trunk:
   `crates/guards/src/size.rs` fails a branch that adds it to the trunk instead.
 
 So: **a surface's hook goes beside the surface; every other hook goes in
-`harness.rs`.** If you are about to add a `std::env::var` call to the window,
-the answer is almost always one of those two files instead.
+`harness.rs`.** Neither calls `std::env::var`: `main` captures every declared
+name once and an owner asks `crate::hooks::captured::var`.
 
 *Almost*: about fifty launch reads stay in `app/launch_hooks.rs`, applied to
 the built window and not debt in the same sense — see

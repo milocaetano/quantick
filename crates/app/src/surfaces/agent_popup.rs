@@ -91,7 +91,7 @@ impl Surface for AgentPopupSurface {
     /// [`Self::show`], the same call `quantick_notify` makes.
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        if std::env::var("QUANTICK_AGENT_POPUP").is_ok_and(|value| value == "1") {
+        if crate::hooks::captured::var("QUANTICK_AGENT_POPUP").is_some_and(|value| value == "1") {
             self.show(AgentPopup {
                 title: "Assistant".to_string(),
                 message: "Volume at 108k is three times the session median.".to_string(),

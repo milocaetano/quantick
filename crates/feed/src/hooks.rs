@@ -17,6 +17,8 @@
 //! hook, and `quantick-app` re-exports both; the registry stays whole and there
 //! is still exactly one definition of each.
 
+#[cfg(any(test, feature = "harness"))]
+pub mod captured;
 pub mod registry;
 
 /// One hook, declared where it is read.

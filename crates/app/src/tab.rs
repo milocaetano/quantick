@@ -911,7 +911,7 @@ impl Tab {
 fn pane_collapsed_hook() -> bool {
     #[cfg(any(feature = "scenario-harness", test))]
     {
-        std::env::var("QUANTICK_PANE_COLLAPSED").is_ok_and(|value| value == "1")
+        crate::hooks::captured::var("QUANTICK_PANE_COLLAPSED").is_some_and(|value| value == "1")
     }
     #[cfg(not(any(feature = "scenario-harness", test)))]
     {

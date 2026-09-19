@@ -5307,8 +5307,24 @@ fn evidence_costs_the_frame_nothing_until_a_client_asks_for_it() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// How a stale observer snapshot is rewritten: asked for by name, never read
+/// from the environment.
+const REGENERATE_OBSERVER_SCHEMAS: &str =
+    "cargo test -p quantick-app -- --ignored regenerate_observer_schemas";
+
+#[test]
+#[ignore = "rewrites schemas/control; run by name to regenerate"]
+fn regenerate_observer_schemas() {
+    observer_schemas(true);
+    observer_catalog(true);
+}
+
 #[test]
 fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
+    observer_schemas(false);
+}
+
+fn observer_schemas(update: bool) {
     let documents = crate::control::schema_catalog::documents();
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
@@ -5317,8 +5333,6 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");
-    let update =
-        std::env::var_os("QUANTICK_UPDATE_CONTROL_SCHEMAS").is_some_and(|value| value == "1");
     if update {
         std::fs::create_dir_all(&root).unwrap();
     }
@@ -5340,7 +5354,7 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
         }
         let committed = std::fs::read_to_string(&path).unwrap_or_else(|error| {
                 panic!(
-                    "read {} ({error}); regenerate observer schemas with QUANTICK_UPDATE_CONTROL_SCHEMAS=1",
+                    "read {} ({error}); regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
                     path.display()
                 )
             });
@@ -5355,6 +5369,10 @@ fn observer_schemas_are_versioned_valid_and_ui_framework_free() {
 
 #[test]
 fn observer_capability_catalog_is_registry_derived_and_versioned() {
+    observer_catalog(false);
+}
+
+fn observer_catalog(update: bool) {
     let catalog = crate::control::schema_catalog::capability_catalog();
     assert_eq!(catalog["catalog_version"], 1);
     assert_eq!(catalog["profile_id"], "observer");
@@ -5407,15 +5425,13 @@ fn observer_capability_catalog_is_registry_derived_and_versioned() {
         .join("schemas/control");
     let path = root.join("observer-capability-catalog-v1.json");
     let json = format!("{}\n", serde_json::to_string_pretty(&catalog).unwrap());
-    let update =
-        std::env::var_os("QUANTICK_UPDATE_CONTROL_SCHEMAS").is_some_and(|value| value == "1");
     if update {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(&path, &json).unwrap();
     }
     let committed = std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
-            "read {} ({error}); regenerate observer schemas with QUANTICK_UPDATE_CONTROL_SCHEMAS=1",
+            "read {} ({error}); regenerate observer schemas with `{REGENERATE_OBSERVER_SCHEMAS}`",
             path.display()
         )
     });

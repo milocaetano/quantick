@@ -295,7 +295,7 @@ pub fn popup_open_from_env() -> bool {
     // A capture hook: compiled only with the scenario harness (or under test).
     #[cfg(any(feature = "scenario-harness", test))]
     {
-        popup_open_from(std::env::var("QUANTICK_FEED_POPUP").ok().as_deref())
+        popup_open_from(crate::hooks::captured::var("QUANTICK_FEED_POPUP").as_deref())
     }
     #[cfg(not(any(feature = "scenario-harness", test)))]
     {

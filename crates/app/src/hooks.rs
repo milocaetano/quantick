@@ -47,6 +47,19 @@ use std::collections::BTreeSet;
 // beside the type in `quantick_feed::hooks::registry`.
 pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
 
+/// Scenario hook values the composition root captured; owners ask it by name
+/// rather than reading the process environment.
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) use quantick_feed::hooks::captured;
+
+/// Every scenario hook's name, for the composition root to capture once.
+#[cfg(feature = "scenario-harness")]
+pub(crate) fn scenario_names() -> impl Iterator<Item = &'static str> {
+    SCENARIO_OWNERS
+        .iter()
+        .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+}
+
 /// `QUANTICK_*` variables that are deliberately **not** launch hooks.
 ///
 /// One definition, two readers. [`unknown_hooks`] skips them, so a build

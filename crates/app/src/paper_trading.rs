@@ -583,8 +583,8 @@ impl PaperTrading {
     #[cfg(any(feature = "scenario-harness", test))]
     fn with_launch_hooks(mut self) -> Self {
         self.order_bracket_demo =
-            std::env::var(PAPER_ORDER_BRACKET_ENV).is_ok_and(|value| value == "1");
-        self.cmd_preview_force = std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
+            crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|value| value == "1");
+        self.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV).and_then(|value| {
             CmdPreviewForce::parse(&value).or_else(|| {
                 tracing::warn!(
                     target: "quantick::app",
@@ -597,8 +597,8 @@ impl PaperTrading {
             })
         });
         self.order_hover_force =
-            std::env::var(PAPER_ORDER_HOVER_ENV).is_ok_and(|value| value == "1");
-        self.orders_demo = std::env::var(PAPER_ORDERS_ENV).ok().and_then(|value| {
+            crate::hooks::captured::var(PAPER_ORDER_HOVER_ENV).is_some_and(|value| value == "1");
+        self.orders_demo = crate::hooks::captured::var(PAPER_ORDERS_ENV).and_then(|value| {
             value
                 .trim()
                 .parse::<u8>()
@@ -620,9 +620,8 @@ impl PaperTrading {
                 })
         });
         self.strategy_editor_open =
-            std::env::var(STRATEGY_EDITOR_ENV).is_ok_and(|value| value == "1");
-        self.ruler_notches = std::env::var(RULER_TICKS_ENV)
-            .ok()
+            crate::hooks::captured::var(STRATEGY_EDITOR_ENV).is_some_and(|value| value == "1");
+        self.ruler_notches = crate::hooks::captured::var(RULER_TICKS_ENV)
             .and_then(|value| value.trim().parse::<u32>().ok())
             .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES));
         self
