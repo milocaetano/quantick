@@ -25,7 +25,6 @@ mod chart_layers_wiring;
 mod chrome;
 pub(crate) mod control_host;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::{
     AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
