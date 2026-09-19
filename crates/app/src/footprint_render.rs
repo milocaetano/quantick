@@ -785,7 +785,8 @@ impl LayerPlan {
         let debug = {
             static DEBUG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             (*DEBUG.get_or_init(|| {
-                std::env::var("QUANTICK_FOOTPRINT_DEBUG").is_ok_and(|value| value == "1")
+                crate::hooks::captured::var("QUANTICK_FOOTPRINT_DEBUG")
+                    .is_some_and(|value| value == "1")
             }))
             .then(|| {
                 format!(

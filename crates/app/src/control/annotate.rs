@@ -320,15 +320,15 @@ fn place<P: TabsPort + TabsMutPort + ?Sized>(
     // Refused, retryable, with the reason — the assistant tries again when
     // the hand has finished.
     if pane.drawings.draft().is_some() {
-        return Err(capability_unavailable(
-            "the trader is drawing on that pane right now; an annotation would land in their unfinished object",
+        return Err(series::refused(
+            quantick_chart_interaction::annotation::Refusal::DraftInProgress,
         ));
     }
 
     let mut resolved = Vec::with_capacity(input.anchors.len());
     let mut points = Vec::with_capacity(input.anchors.len());
     for anchor in &input.anchors {
-        let (slot, time_ms) = resolve_slot(pane, anchor.time_unix_ms)?;
+        let (slot, time_ms) = series::resolve_slot(pane, tab_id, anchor.time_unix_ms)?;
         let price = parse_price(&anchor.price)?;
         points.push(ChartPoint::at_time(
             slot as f32 + 0.5,
@@ -556,27 +556,6 @@ fn control_pane_mut<P: TabsPort + TabsMutPort + ?Sized>(
         .position(tab_id)
         .ok_or_else(|| ControlError::invalid_request("the target tab closed"))?;
     Ok(app.tabs_mut().pane_mut(index, side))
-}
-
-/// The slot a market time falls on, and the time that slot actually opened.
-fn resolve_slot(pane: &ChartPane, time_unix_ms: i64) -> Result<(usize, i64), ControlError> {
-    if pane.slots() == 0 {
-        return Err(capability_unavailable(
-            "that chart has no bars yet, so an anchor has nothing to land on",
-        ));
-    }
-    let slot = pane.slot_at_time(time_unix_ms).ok_or_else(|| {
-        let mut error = ControlError::invalid_request(
-            "no bar on that chart covers the anchor time",
-        );
-        error.context.next_steps = vec![
-            "Read a bar's open_time_unix_ms from chart.window.read or the cursor, and anchor to that."
-                .to_owned(),
-        ];
-        error
-    })?;
-    let time = pane.slot_open_time(slot).unwrap_or(time_unix_ms);
-    Ok((slot, time))
 }
 
 fn annotation_author(access: &ControlAccess, actor: &ActorContext) -> Option<DrawingAuthor> {

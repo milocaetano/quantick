@@ -26,7 +26,7 @@ pub fn settings_path() -> PathBuf {
 #[must_use]
 pub fn preset_path() -> PathBuf {
     #[cfg(any(feature = "scenario-harness", test))]
-    if let Some(explicit) = std::env::var_os(FOOTPRINT_ENV) {
+    if let Some(explicit) = crate::hooks::captured::var(FOOTPRINT_ENV) {
         return PathBuf::from(explicit);
     }
     PathBuf::from(FOOTPRINT_FILE)

@@ -2,7 +2,7 @@
 //!
 //! Everything [`eframe::App::update`] does that is not eframe's own
 //! bookkeeping runs as the stages of
-//! [`FramePlan`](quantick_chart_interaction::frame_plan::FramePlan): drain the
+//! [`FramePlan`], declared below from `quantick_chart_interaction::frame_stages!`: drain the
 //! feeds, run the harness hooks, lay the chrome out around the canvas, draw
 //! the chart, then the frame tail. The plan declares which stage depends on
 //! which, and the declaration is checked when it compiles; the frame loop
@@ -14,7 +14,6 @@
 //! child modules, which never see the window.
 
 use super::{AlertsPort, ChromePort, GatewayPort, LayersPort, LayoutPort, PaperPort};
-use quantick_chart_interaction::frame_plan::{FramePlan, FrameStage};
 use quantick_chart_interaction::frame_tail_plan::{FrameTailPlan, FrameTailStage};
 use quantick_feed::stall::Stall;
 use std::time::{Duration, Instant};
@@ -27,6 +26,14 @@ use crate::statusbar;
 use crate::tab::CanvasChrome;
 
 use super::QuantickApp;
+
+// The frame's stages, each harness stage compiled only where its hooks are:
+// a default build's plan has none of them, not a no-op arm for each.
+quantick_chart_interaction::frame_stages!(
+    scenario: any(feature = "scenario-harness", test),
+    control: any(feature = "control-harness", test),
+    scripted: any(feature = "scenario-harness", feature = "drawing-harness", test),
+);
 
 mod canvas;
 mod panels;
@@ -150,14 +157,12 @@ impl QuantickApp {
                     tab.expire_history_note(now);
                 }
             }
+            #[cfg(any(feature = "scenario-harness", test))]
             FrameStage::HistoryNoteHook => {
-                #[cfg(any(feature = "scenario-harness", test))]
                 self.chrome.harness.apply_history_note_hook(&mut self.tabs);
             }
-            FrameStage::EnableControlAccess => {
-                #[cfg(any(feature = "control-harness", test))]
-                self.enable_scenario_control(ctx);
-            }
+            #[cfg(any(feature = "control-harness", test))]
+            FrameStage::EnableControlAccess => self.enable_scenario_control(ctx),
             // Replay determinism: a session with a control trace beside it
             // re-injects its actions at their logical time, connected or not.
             FrameStage::ReplayTrace => {
@@ -166,18 +171,12 @@ impl QuantickApp {
                     self.control.control_access = Some(access);
                 }
             }
-            FrameStage::TakeMark => {
-                #[cfg(any(feature = "control-harness", test))]
-                self.take_scenario_mark();
-            }
-            FrameStage::AnnotateHooks => {
-                #[cfg(any(feature = "control-harness", test))]
-                self.apply_control_annotate_hooks();
-            }
-            FrameStage::EvidenceHook => {
-                #[cfg(any(feature = "control-harness", test))]
-                super::demo_hooks::apply_control_evidence_hook(self, ctx);
-            }
+            #[cfg(any(feature = "control-harness", test))]
+            FrameStage::TakeMark => self.take_scenario_mark(),
+            #[cfg(any(feature = "control-harness", test))]
+            FrameStage::AnnotateHooks => self.apply_control_annotate_hooks(),
+            #[cfg(any(feature = "control-harness", test))]
+            FrameStage::EvidenceHook => super::demo_hooks::apply_control_evidence_hook(self, ctx),
             FrameStage::GatewayService => {
                 if self
                     .control
@@ -190,10 +189,11 @@ impl QuantickApp {
                     self.control.control_access = Some(access);
                 }
             }
+            #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
             FrameStage::ScenarioHooks => self.apply_scenario_hooks(),
+            #[cfg(any(feature = "scenario-harness", test))]
+            FrameStage::WindowStartupHook => self.chrome.window_startup.apply(ctx),
             FrameStage::WindowHousekeeping => {
-                #[cfg(any(feature = "scenario-harness", test))]
-                self.chrome.window_startup.apply(ctx);
                 self.maybe_emit_summary(now, ctx);
                 self.workspace_save_adapter().maintain_workspace(ctx);
             }
@@ -293,6 +293,7 @@ impl QuantickApp {
 
     /// Scripted views, the drawing demos and pending history requests, in
     /// the order a launch composes them.
+    #[cfg(any(feature = "scenario-harness", feature = "drawing-harness", test))]
     fn apply_scenario_hooks(&mut self) {
         #[cfg(any(feature = "scenario-harness", test))]
         self.chrome.harness.apply_scripted_view(&mut self.tabs);

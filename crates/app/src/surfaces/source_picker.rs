@@ -80,7 +80,7 @@ impl Surface for SourcePickerSurface {
 
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
-        if std::env::var("QUANTICK_SOURCE_PICKER").is_ok_and(|value| value == "1") {
+        if crate::hooks::captured::var("QUANTICK_SOURCE_PICKER").is_some_and(|value| value == "1") {
             self.open(env.config);
         }
     }

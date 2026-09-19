@@ -63,7 +63,9 @@ impl Surface for WorkspaceNameSurface {
     /// makes.
     #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        if std::env::var("QUANTICK_WORKSPACE_NAME_BOX").is_ok_and(|value| value == "1") {
+        if crate::hooks::captured::var("QUANTICK_WORKSPACE_NAME_BOX")
+            .is_some_and(|value| value == "1")
+        {
             self.open();
         }
     }
