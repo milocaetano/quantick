@@ -123,7 +123,7 @@ pub struct AccountResponse {
     /// this keeps exactly as it was. A queue here would change which message
     /// a trader sees.
     pub toast: Option<String>,
-    /// A close reported by the venue was journaled since the host last asked.
+    /// A venue close attempted to change the journal since the host last asked.
     ///
     /// The report reads the journal from disk, so a host holding one open
     /// has to re-read it after a close or it shows yesterday until a manual
@@ -131,10 +131,10 @@ pub struct AccountResponse {
     /// so here, and the host takes the flag with
     /// [`PaperAccount::take_journal_changed`].
     ///
-    /// Raised by [`PaperAccount::handle_events`] only. The forced close a
-    /// [`PaperAccount::reset_timeline`] journals does not raise it: the host
-    /// never re-read its report on a reset before the account left `app`,
-    /// and a move keeps that exactly as it was.
+    /// Raised for each Closed event journaled by [`PaperAccount::handle_events`]
+    /// or [`PaperAccount::reset_timeline`]. This is an invalidation hint after
+    /// an attempted write, not a persistence acknowledgement: failed writes
+    /// may leave uncertain disk state, and still warrant a re-read.
     pub journal_changed: bool,
 }
 
@@ -741,6 +741,9 @@ impl PaperAccount {
         for event in &events {
             if let VenueEvent::Closed(trade) = event {
                 all_saved &= self.journal(&trade.clone());
+                // The same invalidation law as handle_events, including a
+                // failed write. Do not erase an earlier hint on a quiet reset.
+                self.outbox.journal_changed = true;
             }
         }
         // A reset ends the tape session, so it ends the file session too:

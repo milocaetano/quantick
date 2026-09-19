@@ -1,0 +1,35 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "layer_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "Stable identity from chart.summary, never a position that a pane move can change."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "visible": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "layer_id",
+    "visible"
+  ],
+  "title": "SetVisibilityInput",
+  "type": "object"
+}

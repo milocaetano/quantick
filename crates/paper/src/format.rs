@@ -54,38 +54,11 @@ pub fn fmt_signed_points(value: Decimal) -> String {
     }
 }
 
-/// Keep the characters real venue symbols use (`WDO$`, `WIN@N`… stay
-/// recognizable); anything else becomes `_` so a symbol can never traverse
-/// paths.
-pub fn sanitize_symbol(symbol: &str) -> String {
-    let cleaned: String = symbol
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || "-_.$#".contains(character) {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if cleaned.is_empty() {
-        "_".to_owned()
-    } else {
-        cleaned
-    }
-}
+pub use quantick_replay::deals::sanitize_symbol;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn symbols_sanitize_without_losing_venue_spellings() {
-        assert_eq!(sanitize_symbol("WDO$"), "WDO$");
-        assert_eq!(sanitize_symbol("BTCUSDT"), "BTCUSDT");
-        assert_eq!(sanitize_symbol("../evil"), ".._evil");
-        assert_eq!(sanitize_symbol(""), "_");
-    }
 
     #[test]
     fn signed_points_always_carry_their_sign() {

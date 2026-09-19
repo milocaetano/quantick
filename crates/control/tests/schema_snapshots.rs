@@ -8,14 +8,24 @@ use serde_json::Value;
 /// compiled in so the regeneration path below writes to the real files.
 const SCHEMA_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/control");
 
+const REGENERATE: &str = "cargo test -p quantick-control --test schema_snapshots -- --ignored regenerate_public_contracts";
+
 #[test]
 fn generated_public_contracts_match_committed_files() {
-    // `QUANTICK_UPDATE_SCHEMAS=1 cargo test -p quantick-control --test
-    // schema_snapshots` rewrites the committed files from the generated
-    // documents. Regenerating by hand is how a schema and its validator drift
-    // apart: the diff is what gets reviewed, and it still has to be reviewed,
-    // but producing it should not be transcription work.
-    let update = std::env::var_os("QUANTICK_UPDATE_SCHEMAS").is_some_and(|value| value == "1");
+    check_or_rewrite(false);
+}
+
+/// Rewrites the committed files from the generated documents. Regenerating by
+/// hand is how a schema and its validator drift apart: the diff is what gets
+/// reviewed, and it still has to be reviewed, but producing it should not be
+/// transcription work. Asked for by name, never read from the environment.
+#[test]
+#[ignore = "rewrites schemas/control; run by name to regenerate"]
+fn regenerate_public_contracts() {
+    check_or_rewrite(true);
+}
+
+fn check_or_rewrite(update: bool) {
     let mut rewritten = Vec::new();
 
     for document in public_contract_documents() {
@@ -35,14 +45,14 @@ fn generated_public_contracts_match_committed_files() {
         }
         assert_eq!(
             document.document, committed,
-            "{} is stale — regenerate with QUANTICK_UPDATE_SCHEMAS=1 and review the diff",
+            "{} is stale — regenerate with `{REGENERATE}` and review the diff",
             document.file_name
         );
     }
 
     assert!(
-        !update,
-        "rewrote {rewritten:?}; rerun without QUANTICK_UPDATE_SCHEMAS to confirm and review the diff"
+        rewritten.is_empty(),
+        "rewrote {rewritten:?}; rerun the check to confirm and review the diff"
     );
 }
 

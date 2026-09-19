@@ -17,6 +17,10 @@
 //! hook, and `quantick-app` re-exports both; the registry stays whole and there
 //! is still exactly one definition of each.
 
+#[cfg(any(test, feature = "harness"))]
+pub mod captured;
+pub mod registry;
+
 /// One hook, declared where it is read.
 ///
 /// A named struct rather than a bare `&str` so a later field — a surface, a
@@ -67,3 +71,53 @@ macro_rules! declare_hooks {
 }
 
 pub use declare_hooks;
+
+/// The `QUANTICK_*` names in `environment` that nothing declares and no
+/// `exempt` row excuses, sorted and unique. The environment is an iterator
+/// rather than a read, so a test exercises the real comparison without
+/// touching process state (setting a variable is `unsafe` in this edition
+/// and racy under a threaded test runner).
+pub fn undeclared<'a>(
+    environment: impl Iterator<Item = &'a str>,
+    declared: &std::collections::BTreeSet<&'static str>,
+    exempt: &[(&str, &str)],
+) -> Vec<String> {
+    let mut out: Vec<String> = environment
+        .filter(|name| name.starts_with("QUANTICK_"))
+        .filter(|name| !declared.contains(name))
+        .filter(|name| !exempt.iter().any(|(known, _)| known == name))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The comparison a default build's saves-off decision rests on: only
+    /// the exact `QUANTICK_` prefix counts, declared names and exempt rows
+    /// are excused, and the answer is sorted and unique.
+    #[test]
+    fn undeclared_keeps_only_unexcused_prefixed_names_sorted_and_unique() {
+        let declared = std::collections::BTreeSet::from(["QUANTICK_CONFIG"]);
+        let exempt = [("QUANTICK_GIT_COMMIT", "build metadata")];
+        let environment = [
+            "PATH",
+            "QUANTICK_UI_STATE",
+            "QUANTICK_CONFIG",
+            "QUANTICK_GIT_COMMIT",
+            "quantick_ui_state",
+            "XQUANTICK_LAYOUTS",
+            "QUANTICK_LAYOUTS",
+            "QUANTICK_UI_STATE",
+        ];
+        assert_eq!(
+            undeclared(environment.into_iter(), &declared, &exempt),
+            ["QUANTICK_LAYOUTS", "QUANTICK_UI_STATE"]
+        );
+        assert!(undeclared(["PATH", "QUANTICK_CONFIG"].into_iter(), &declared, &exempt).is_empty());
+    }
+}

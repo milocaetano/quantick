@@ -1,9 +1,9 @@
 # The supported live envelope
 
 The live workload quantick is built, tested and measured for, and what happens
-past it. The numbers are code — `crates/app/src/live_envelope.rs` — and this
+past it. The numbers are code — `crates/backpressure/src/envelope.rs` — and this
 page renders the same numbers with the measurement behind each one;
-`live_envelope::envelope_doc_tests` fails the build when a row here and a
+`envelope::envelope_doc_tests` fails the build when a row here and a
 constant there disagree.
 
 Measured on `DESKTOP-BTVJFFR` (Intel Core i5-12400F, 31.8 GB, Windows 11 Pro)

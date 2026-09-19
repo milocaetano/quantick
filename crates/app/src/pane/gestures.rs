@@ -1,9 +1,9 @@
 //! A drawing gesture in flight — everything a press has resolved but a release
 //! has not yet finished with.
 //!
-//! The methods that read and write this already live next door in
-//! [`super::drawing_gestures`]; only the state stayed on
-//! [`super::ChartPane`], where fifteen fields of it sat among the pane's
+//! Pointer and shared-mark updates live on this owner in `pointer_gestures`.
+//! Placement updates live here too, implemented in `placement_gestures`.
+//! These fields once sat among the pane's
 //! geometry and its menus. They belong together because they share one
 //! lifetime — a gesture — and because a gesture is the one thing on a pane
 //! that spans frames without being a measurement: a press resolves what it
@@ -18,7 +18,9 @@
 
 use eframe::egui;
 
-use super::{DrawingDrag, PaneIndex, ParkedHand, SharedDrag};
+#[cfg(any(feature = "drawing-harness", test))]
+use super::ParkedHand;
+use super::{DrawingDrag, PaneIndex, SharedDrag};
 use crate::drawings::ChartPoint;
 
 /// Drawing placement and movement state. Anchors are chart coordinates; only
@@ -52,6 +54,7 @@ pub struct PaneGestures {
     /// pointer and the real modifier are read and nowhere else, so everything
     /// downstream — the tool's shaping, the hint chip, the rubber band — runs
     /// the same code a hand runs.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub parked_hand: Option<ParkedHand>,
     /// The last screen position a freehand stroke actually recorded, so the
     /// capture decimates as it goes rather than storing every mouse event.

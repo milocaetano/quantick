@@ -25,12 +25,7 @@ pub const HEIGHT_PX: f32 = 24.0;
 const CONTENT_PADDING: egui::Vec2 = egui::vec2(8.0, 2.0);
 
 /// The named timeframes, in the order they are offered.
-pub const PRESETS: [(&str, i64); 4] = [
-    ("1m", 60_000),
-    ("5m", 300_000),
-    ("15m", 900_000),
-    ("1h", 3_600_000),
-];
+pub const PRESETS: [(&str, i64); 4] = quantick_engine::bar_registry::TIME_PRESETS;
 
 /// The interval a time pane opens on when the split is first shown: M1, the
 /// timeframe a flow trader glances at for context. The engine's default for a

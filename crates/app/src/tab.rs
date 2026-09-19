@@ -31,7 +31,7 @@ use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
-use crate::state::BarSpec;
+use crate::state::BarConfiguration;
 use quantick_feed::history_reach::{self, Campaign, HistoryReach};
 use quantick_feed::stall::{self};
 use quantick_feed::{
@@ -41,6 +41,7 @@ use quantick_feed::{
 use std::path::PathBuf;
 
 mod canvas;
+pub(crate) mod context_resize;
 mod feed;
 mod history;
 mod layout;
@@ -48,6 +49,7 @@ mod panes;
 mod strategies;
 
 pub use canvas::CanvasChrome;
+pub use feed::HistoryPolicy;
 pub use history::OlderCandles;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
@@ -220,12 +222,15 @@ struct HistoryNote {
     raised_at: std::time::Instant,
 }
 
-pub struct Tab {
-    /// Stable for as long as the tab is open, and never reused. The indicator
-    /// state file names one of these (see `QuantickApp::persisted_tab`), and
-    /// per-tab chrome persistence (§14, `ui-state.toml`) would key off it too.
-    pub id: u64,
+pub(crate) type LiveFeedSpawn<'a> = dyn FnMut(
+        quantick_feed::config::ProviderKind,
+        &str,
+        &quantick_feed::config::MetaTraderSettings,
+        Option<std::path::PathBuf>,
+    ) -> quantick_feed::FeedHandle
+    + 'a;
 
+pub struct Tab {
     // Feed & asset selection, driven by the configuration. `feed_id`/`symbol`
     // are what the selectors show (the desired selection); `active` is what the
     // running feed thread is actually streaming. When they diverge, the feed is
@@ -290,9 +295,11 @@ pub struct Tab {
     /// Silences in this tab's tape that no print covers, in market time,
     /// oldest first and bounded by [`MAX_REMEMBERED_GAPS`].
     ///
-    /// Written only by a reconnect that kept the timeline. A reload has no
-    /// gaps to record: it throws the timeline away, so there is no seam.
+    /// Written by reconnects that keep the timeline and source-sequence gaps.
+    /// A reload clears the timeline and its diagnostics together.
     pub feed_gaps: Vec<FeedGap>,
+    /// Cumulative source-message integrity; gaps alone are a bounded view.
+    pub feed_integrity: quantick_feed::FeedIntegrity,
     /// State reported by the live trade transport, independent from how often
     /// that market prints and from the last observed arrival latency.
     pub feed_connection: FeedConnectionState,
@@ -546,14 +553,10 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// Retained context heights and the geometry of their last drawn stack.
+    context_stack: context_resize::ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
     canvas_drag: Option<(f32, bool)>,
-    /// The height rule for each context chart, top to bottom.
-    ///
-    /// Empty entries are seeded as automatic when the chart first appears.
-    /// Kept while a layout hides a chart so returning to the three-pane
-    /// preset does not discard the trader's vertical sizing.
-    context_heights: SmallVec<[crate::canvas_layout::PaneWidth; MAX_CONTEXT_PANES]>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -583,11 +586,10 @@ impl Tab {
     /// they are built, rather than a tab reserving one it may never use.
     #[must_use]
     pub fn new(
-        id: u64,
         flow_pane_id: u64,
         feed_id: String,
         symbol: String,
-        spec: BarSpec,
+        spec: impl Into<BarConfiguration>,
         feed: FeedHandle,
         trades_dir: PathBuf,
     ) -> Self {
@@ -596,7 +598,6 @@ impl Tab {
         // opens with that one load already in flight.
         loading.begin(LoadingTask::History);
         Self {
-            id,
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
             events: feed.events,
@@ -611,6 +612,7 @@ impl Tab {
             forced_stall: stall::ForcedStall::from_env(),
             pending_demo_gap_ms: quantick_feed::demo_gap_ms(),
             feed_gaps: Vec::new(),
+            feed_integrity: quantick_feed::FeedIntegrity::default(),
             feed_connection: FeedConnectionState::Connecting,
             feed_capabilities: feed.capabilities,
             deal_recorder: DealRecorder::placeholder(symbol.clone()),
@@ -655,10 +657,9 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
-                .is_ok_and(|value| value == "1"),
+            context_collapsed: pane_collapsed_hook(),
+            context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
-            context_heights: SmallVec::new(),
             last_canvas_width: 0.0,
             focus: PaneSide::Flow,
             symbol,
@@ -719,6 +720,7 @@ impl Tab {
             // clock and writes a fabricated gap on a chart that never
             // reconnected.
             self.feed_gaps.clear();
+            self.feed_integrity = quantick_feed::FeedIntegrity::default();
             self.resume_floor_ms = None;
         } else {
             // A kept timeline needs no refill, so nothing restarts the history
@@ -904,6 +906,20 @@ impl Tab {
     }
 }
 
+/// `QUANTICK_PANE_COLLAPSED=1` opens every tab with its context panes folded.
+/// A capture hook: compiled only with the scenario harness (or under test).
+fn pane_collapsed_hook() -> bool {
+    #[cfg(any(feature = "scenario-harness", test))]
+    {
+        crate::hooks::captured::var("QUANTICK_PANE_COLLAPSED").is_some_and(|value| value == "1")
+    }
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    {
+        false
+    }
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 
 #[cfg(test)]

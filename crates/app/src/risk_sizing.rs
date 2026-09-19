@@ -37,115 +37,156 @@ pub(crate) struct RiskBlock<'a> {
 /// its text is rewritten from the model. That is what makes switching
 /// symbols show the new instrument's numbers without a marker to keep in
 /// step — and it is why a half-typed value is never clobbered mid-edit.
-pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -> bool {
-    use eframe::egui;
+pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, mut block: RiskBlock<'_>) -> bool {
+    use crate::paper_chrome::caption;
 
-    use crate::paper_chrome::{caption, pill_toggle};
-    use crate::theme;
-
-    let mut changed = false;
     ui.add_space(4.0);
     ui.label(caption("RISK PER TRADE"));
-
-    ui.horizontal(|ui| {
-        for (basis, label, hover) in [
-            (RiskBasis::Off, "off", "type the size yourself, as always"),
-            (
-                RiskBasis::Amount,
-                "amount",
-                "a fixed amount of money one trade may lose",
-            ),
-            (
-                RiskBasis::PercentOfCapital,
-                "% of capital",
-                "a share of the capital you declared for this instrument's currency",
-            ),
-        ] {
-            let on = block.settings.basis == basis;
-            if pill_toggle(ui, label, on, hover).clicked() && !on {
-                block.settings.basis = basis;
-                changed = true;
-            }
-        }
-    });
+    let mut changed = block.basis_pills(ui);
 
     let declared = block.book.get(block.symbol).cloned();
     let currency_code = declared.as_ref().map_or_else(
         || block.currency_text.trim().to_uppercase(),
         |money| money.currency.code().to_owned(),
     );
-
     match block.settings.basis {
         RiskBasis::Off => {}
-        RiskBasis::Amount => {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Lose at most")
-                        .color(theme::TEXT_MUTED)
-                        .small(),
-                );
-                if edit_decimal(ui, block.amount_text, &mut block.settings.amount, 64.0) {
-                    changed = true;
-                }
-                ui.label(
-                    egui::RichText::new(if currency_code.is_empty() {
-                        "per trade"
-                    } else {
-                        currency_code.as_str()
-                    })
-                    .color(theme::TEXT_FAINT)
-                    .small(),
-                );
-            });
+        RiskBasis::Amount => changed |= block.amount_limit(ui, &currency_code),
+        RiskBasis::PercentOfCapital => changed |= block.percent_limit(ui, &currency_code),
+    }
+    if block.settings.basis != RiskBasis::Off {
+        changed |= block.lock_toggle(ui);
+        changed |= InstrumentMoneySection {
+            symbol: block.symbol,
+            book: block.book,
+            declared: declared.as_ref(),
+            currency_code: &currency_code,
+            point_value_text: block.point_value_text,
+            size_step_text: block.size_step_text,
+            currency_text: block.currency_text,
         }
-        RiskBasis::PercentOfCapital => {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Lose at most")
-                        .color(theme::TEXT_MUTED)
-                        .small(),
-                );
-                if edit_decimal(ui, block.percent_text, &mut block.settings.percent, 44.0) {
+        .show(ui);
+    }
+    changed
+}
+
+impl RiskBlock<'_> {
+    /// The three bases as pills; choosing another one is a change.
+    fn basis_pills(&mut self, ui: &mut eframe::egui::Ui) -> bool {
+        use crate::paper_chrome::pill_toggle;
+
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            for (basis, label, hover) in [
+                (RiskBasis::Off, "off", "type the size yourself, as always"),
+                (
+                    RiskBasis::Amount,
+                    "amount",
+                    "a fixed amount of money one trade may lose",
+                ),
+                (
+                    RiskBasis::PercentOfCapital,
+                    "% of capital",
+                    "a share of the capital you declared for this instrument's currency",
+                ),
+            ] {
+                let on = self.settings.basis == basis;
+                if pill_toggle(ui, label, on, hover).clicked() && !on {
+                    self.settings.basis = basis;
                     changed = true;
                 }
-                ui.label(egui::RichText::new("% of").color(theme::TEXT_FAINT).small());
-                let mut capital_value = currency_code
-                    .is_empty()
-                    .then_some(Decimal::ZERO)
-                    .or_else(|| block.capital.get(&currency_code).copied())
-                    .unwrap_or(Decimal::ZERO);
-                if edit_decimal(ui, block.capital_text, &mut capital_value, 72.0)
-                    && !currency_code.is_empty()
-                {
-                    if capital_value > Decimal::ZERO {
-                        block.capital.insert(currency_code.clone(), capital_value);
-                    } else {
-                        block.capital.remove(&currency_code);
-                    }
-                    changed = true;
-                }
-                ui.label(
-                    egui::RichText::new(if currency_code.is_empty() {
-                        "capital"
-                    } else {
-                        currency_code.as_str()
-                    })
-                    .color(theme::TEXT_FAINT)
-                    .small(),
-                );
-            });
+            }
+        });
+        changed
+    }
+
+    /// "Lose at most N <currency>" — the fixed-amount limit.
+    fn amount_limit(&mut self, ui: &mut eframe::egui::Ui, currency_code: &str) -> bool {
+        use eframe::egui;
+
+        use crate::theme;
+
+        let mut changed = false;
+        ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(
-                    "a share of the capital you declared, not of your session's result",
-                )
+                egui::RichText::new("Lose at most")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            if edit_decimal(ui, self.amount_text, &mut self.settings.amount, 64.0) {
+                changed = true;
+            }
+            ui.label(
+                egui::RichText::new(if currency_code.is_empty() {
+                    "per trade"
+                } else {
+                    currency_code
+                })
                 .color(theme::TEXT_FAINT)
                 .small(),
             );
-        }
+        });
+        changed
     }
 
-    if block.settings.basis != RiskBasis::Off {
-        let mut lock = block.settings.lock;
+    /// "Lose at most N % of C <currency>" — the share of declared capital,
+    /// and the capital itself, kept per currency.
+    fn percent_limit(&mut self, ui: &mut eframe::egui::Ui, currency_code: &str) -> bool {
+        use eframe::egui;
+
+        use crate::theme;
+
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Lose at most")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+            if edit_decimal(ui, self.percent_text, &mut self.settings.percent, 44.0) {
+                changed = true;
+            }
+            ui.label(egui::RichText::new("% of").color(theme::TEXT_FAINT).small());
+            let mut capital_value = currency_code
+                .is_empty()
+                .then_some(Decimal::ZERO)
+                .or_else(|| self.capital.get(currency_code).copied())
+                .unwrap_or(Decimal::ZERO);
+            if edit_decimal(ui, self.capital_text, &mut capital_value, 72.0)
+                && !currency_code.is_empty()
+            {
+                if capital_value > Decimal::ZERO {
+                    self.capital.insert(currency_code.to_owned(), capital_value);
+                } else {
+                    self.capital.remove(currency_code);
+                }
+                changed = true;
+            }
+            ui.label(
+                egui::RichText::new(if currency_code.is_empty() {
+                    "capital"
+                } else {
+                    currency_code
+                })
+                .color(theme::TEXT_FAINT)
+                .small(),
+            );
+        });
+        ui.label(
+            egui::RichText::new(
+                "a share of the capital you declared, not of your session's result",
+            )
+            .color(theme::TEXT_FAINT)
+            .small(),
+        );
+        changed
+    }
+
+    /// Whether an entry over the limit is refused or only sized.
+    fn lock_toggle(&mut self, ui: &mut eframe::egui::Ui) -> bool {
+        use eframe::egui;
+
+        let mut lock = self.settings.lock;
         if ui
             .checkbox(
                 &mut lock,
@@ -157,19 +198,42 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
             )
             .changed()
         {
-            block.settings.lock = lock;
-            changed = true;
+            self.settings.lock = lock;
+            return true;
         }
+        false
+    }
+}
 
-        // The two facts no feed reports. Declared per symbol, never derived:
-        // a wrong point value is a wrong position size, and unlike a wrong
-        // row on a chart it is invisible until it fills.
+/// The two facts no feed reports, and the currency they are in.
+///
+/// Declared per symbol, never derived: a wrong point value is a wrong
+/// position size, and unlike a wrong row on a chart it is invisible until
+/// it fills.
+struct InstrumentMoneySection<'a> {
+    symbol: &'a str,
+    book: &'a mut InstrumentBook,
+    /// The declaration on file before this frame's edits.
+    declared: Option<&'a InstrumentMoney>,
+    currency_code: &'a str,
+    point_value_text: &'a mut String,
+    size_step_text: &'a mut String,
+    currency_text: &'a mut String,
+}
+
+impl InstrumentMoneySection<'_> {
+    fn show(self, ui: &mut eframe::egui::Ui) -> bool {
+        use eframe::egui;
+
+        use crate::theme;
+
+        let mut changed = false;
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new(if block.symbol.is_empty() {
+                egui::RichText::new(if self.symbol.is_empty() {
                     "instrument"
                 } else {
-                    block.symbol
+                    self.symbol
                 })
                 .color(theme::TEXT_MUTED)
                 .small(),
@@ -179,48 +243,25 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
                     .color(theme::TEXT_FAINT)
                     .small(),
             );
-            let mut point_value = declared
-                .as_ref()
+            let mut point_value = self
+                .declared
                 .map_or(Decimal::ZERO, |money| money.point_value);
-            let point_changed = edit_decimal(ui, block.point_value_text, &mut point_value, 56.0);
+            let point_changed = edit_decimal(ui, self.point_value_text, &mut point_value, 56.0);
             ui.label(egui::RichText::new("step").color(theme::TEXT_FAINT).small());
-            let mut size_step = declared
-                .as_ref()
-                .map_or(Decimal::ZERO, |money| money.size_step);
-            let step_changed = edit_decimal(ui, block.size_step_text, &mut size_step, 56.0);
-            let currency_changed = edit_currency(ui, block.currency_text, &currency_code);
+            let mut size_step = self.declared.map_or(Decimal::ZERO, |money| money.size_step);
+            let step_changed = edit_decimal(ui, self.size_step_text, &mut size_step, 56.0);
+            let currency_changed = edit_currency(ui, self.currency_text, self.currency_code);
             if point_changed || step_changed || currency_changed {
-                let currency = Currency::new(block.currency_text);
-                match (
-                    currency,
-                    point_value > Decimal::ZERO,
-                    size_step > Decimal::ZERO,
-                ) {
-                    (Some(currency), true, true) => {
-                        block.book.insert(
-                            block.symbol.to_owned(),
-                            InstrumentMoney {
-                                point_value,
-                                size_step,
-                                // A minimum the trader declared is theirs to
-                                // keep: a venue whose smallest order is not
-                                // one increment exists, and overwriting it
-                                // here made the record's field write-only.
-                                min_size: declared
-                                    .as_ref()
-                                    .map_or(size_step, |money| money.min_size),
-                                max_size: declared.as_ref().and_then(|money| money.max_size),
-                                currency,
-                                source: quantick_sim::MoneySource::Declared,
-                            },
-                        );
+                match declaration(self.currency_text, point_value, size_step, self.declared) {
+                    Some(money) => {
+                        self.book.insert(self.symbol.to_owned(), money);
                     }
                     // Half a declaration is no declaration. Dropping it is
                     // what keeps the ticket saying "nothing here knows what
                     // one point is worth" instead of sizing off a stray
                     // number the trader was still typing.
-                    _ => {
-                        block.book.remove(block.symbol);
+                    None => {
+                        self.book.remove(self.symbol);
                     }
                 }
                 changed = true;
@@ -234,9 +275,33 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, block: RiskBlock<'_>) -
             .color(theme::TEXT_FAINT)
             .small(),
         );
+        changed
     }
+}
 
-    changed
+/// The instrument money the three fields declare, or `None` while any of
+/// them is missing.
+fn declaration(
+    currency_text: &str,
+    point_value: Decimal,
+    size_step: Decimal,
+    previous: Option<&InstrumentMoney>,
+) -> Option<InstrumentMoney> {
+    let currency = Currency::new(currency_text)?;
+    if point_value <= Decimal::ZERO || size_step <= Decimal::ZERO {
+        return None;
+    }
+    Some(InstrumentMoney {
+        point_value,
+        size_step,
+        // A minimum the trader declared is theirs to keep: a venue whose
+        // smallest order is not one increment exists, and overwriting it
+        // here made the record's field write-only.
+        min_size: previous.map_or(size_step, |money| money.min_size),
+        max_size: previous.and_then(|money| money.max_size),
+        currency,
+        source: quantick_sim::MoneySource::Declared,
+    })
 }
 
 /// The currency field, following the same rule as the decimal ones: while it

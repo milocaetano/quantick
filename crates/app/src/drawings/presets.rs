@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{DrawingStyle, PresetHost};
 
-/// Environment override for the preset file location.
-pub const PRESETS_ENV: &str = "QUANTICK_DRAWING_PRESETS";
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub const PRESETS_FILE: &str = "quantick-drawing-presets.toml";
 /// Version this build writes and the only one it reads.
@@ -126,7 +124,7 @@ impl PresetStore {
         if cfg!(test) {
             return crate::store_home::test_path(PRESETS_FILE);
         }
-        crate::store_home::resolve(PRESETS_ENV, PRESETS_FILE)
+        crate::store_home::resolve(PRESETS_FILE)
     }
 
     /// Load the store, empty when the file is missing, unreadable or from an
@@ -166,6 +164,9 @@ impl PresetStore {
     }
 
     fn persist(&self) {
+        if crate::store_home::guard_write(&self.path).is_err() {
+            return;
+        }
         let file = StoreFile {
             version: STORE_FORMAT_VERSION,
             tools: self.tools.clone(),
@@ -267,8 +268,6 @@ impl PresetHost for PresetStore {
             .is_some_and(|slot| slot.config.is_some())
     }
 }
-
-crate::hooks::declare_hooks!["QUANTICK_DRAWING_PRESETS"];
 
 #[cfg(test)]
 mod tests {

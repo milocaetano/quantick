@@ -25,6 +25,10 @@ pub struct PaneFrame {
     /// Where the history pane ended last frame — the lane's divider, and the
     /// handle that resizes it. The input pass runs before the draw computes it.
     pub lane_divider_x: Option<f32>,
+    /// Actual visible legend footprint, published by its painter for chrome placement.
+    pub flow_legend: Option<egui::Rect>,
+    /// Actual indicator legend footprint, published before floating chrome.
+    pub indicator_legend: Option<egui::Rect>,
     /// The canvas the last draw used. Published for the same reason the divider
     /// is: something outside the draw needs a point on this pane — the scripted
     /// right-click of `QUANTICK_CONTEXT_MENU` — and computing the geometry a
@@ -86,6 +90,8 @@ impl Default for PaneFrame {
     fn default() -> Self {
         Self {
             lane_divider_x: None,
+            flow_legend: None,
+            indicator_legend: None,
             chart_rect: None,
             area: None,
             layout_strip: None,
@@ -99,5 +105,23 @@ impl Default for PaneFrame {
             bands: Bands::new(),
             plot_area: None,
         }
+    }
+}
+
+impl PaneFrame {
+    /// Immutable geometry from the last completed paint, never a fresh carve.
+    pub(crate) fn cached_bands(&self) -> &[crate::bands::Band] {
+        &self.bands
+    }
+
+    /// Whether a click at this x belongs to the tape rather than the candles.
+    ///
+    /// Read off the divider the draw already published, never a second copy of
+    /// the lane's geometry — the two could then disagree, and the menu would
+    /// configure a pane the trader did not click. A canvas with no lane has no
+    /// divider, and every click on it is the candles'.
+    #[must_use]
+    pub(crate) fn click_on_tape(&self, x: f32) -> bool {
+        self.lane_divider_x.is_some_and(|divider| x >= divider)
     }
 }

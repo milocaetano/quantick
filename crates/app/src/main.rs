@@ -6,6 +6,7 @@
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 
+use crate::ui_state::WorkspaceExt;
 use eframe::egui;
 use tracing_subscriber::EnvFilter;
 
@@ -16,15 +17,23 @@ use quantick_paper::order_strategies;
 
 use crate::state::BarSpec;
 
+#[cfg(test)]
+#[path = "../../engine/tests/support/seventh_bar.rs"]
+mod bar_extension_fixture;
+
 mod app;
+// The headless chart model, under its old module names so every path in
+// this crate keeps its address.
+use quantick_chart::geometry as chart;
+#[cfg(test)]
+use quantick_chart::work_meter;
+use quantick_chart::{indicator_style, live_strip, price_view, state, style, viewport};
 mod audio;
 mod avwap;
 mod bands;
-mod bar_kind_reason;
 mod bubble_presets;
 mod candle_view;
 mod canvas_layout;
-mod chart;
 mod chart_layers;
 mod config;
 mod control;
@@ -38,7 +47,6 @@ mod footprint_config;
 mod footprint_panel;
 mod footprint_presets;
 mod footprint_render;
-mod footprint_series;
 mod frvp;
 mod harness;
 mod hooks;
@@ -46,16 +54,15 @@ mod indicator_guide;
 mod indicator_legend;
 mod indicator_panel;
 mod indicator_render;
-mod indicator_style;
 mod indicator_worker;
 mod indicators;
+mod launch;
 mod layout_picker;
 mod layout_strip;
 mod layouts;
 mod live_envelope;
 #[cfg(test)]
 mod live_envelope_tests;
-mod live_strip;
 mod loading;
 mod metrics;
 mod operability;
@@ -74,19 +81,16 @@ mod paper_trading;
 mod plot_area;
 mod pointer_compass;
 mod popup;
-mod price_view;
 mod replay_get_data;
 mod replay_home;
 mod replay_view;
 mod resample;
 mod risk_sizing;
 mod scratch;
-mod state;
 mod statusbar;
 mod store_home;
 mod strategy_anchors;
 mod strategy_presets;
-mod style;
 mod surfaces;
 mod symbols_file;
 mod tab;
@@ -98,18 +102,15 @@ mod toolbar;
 mod toolrail;
 mod trade_paint;
 mod ui_state;
-mod viewport;
 mod widgets;
 mod window_scale;
-mod worker_backlog;
 mod worker_progress;
 mod workspace_bundle;
+mod workspace_picker;
 mod workspace_store;
 
 // The test binary counts heap work per thread (`work_meter`); production
 // builds keep the system allocator.
-#[cfg(test)]
-mod work_meter;
 #[cfg(test)]
 #[global_allocator]
 static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
@@ -123,11 +124,8 @@ const INITIAL_TICK_SIZE: u64 = 50;
 /// `QUANTICK_LOG_FORMAT=json` for newline-delimited JSON that an operator or an
 /// AI diagnostic tool can parse without scraping prose. Deterministic cores emit
 /// nothing, so logging can never affect replay results.
-fn init_tracing() {
-    let json =
-        std::env::var("QUANTICK_LOG_FORMAT").is_ok_and(|value| value.eq_ignore_ascii_case("json"));
-
-    if json {
+fn init_tracing(format: launch::LogFormat) {
+    if format == launch::LogFormat::Json {
         let filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("quantick=info"));
         tracing_subscriber::fmt()
@@ -223,16 +221,46 @@ fn main() -> eframe::Result {
         return Ok(());
     }
 
-    init_tracing();
+    // The composition root: every launch input is read here, once, before a
+    // thread, a window or an owner exists. Configuration is always read;
+    // each harness family's scenario inputs exist only in a build with its
+    // feature.
+    let startup = launch::LaunchConfig::capture(|name| std::env::var_os(name));
+    launch::install(startup.paths.clone());
+    feed::binance::configure_initial_book_depth(startup.book_depth.as_deref());
+    #[cfg(feature = "scenario-harness")]
+    let scenario = hooks::ScenarioInputs::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "scenario-harness")]
+    hooks::captured::install(hooks::scenario_names(), |name| std::env::var_os(name));
+    #[cfg(feature = "drawing-harness")]
+    let toolrail = toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "control-harness")]
+    let control = app::control_host::ControlLaunch::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "quick-range-harness")]
+    let quick_range =
+        surfaces::drawing_chrome::QuickRangeLaunch::capture(|name| std::env::var_os(name));
+    #[cfg(feature = "drawing-harness")]
+    let drawing_chrome =
+        surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| std::env::var_os(name));
+    init_tracing(startup.log_format);
 
     // Immediately after the subscriber exists, so a mistyped hook is the first
     // thing the run says rather than something inferred later from a surface
-    // that never opened.
-    hooks::log_unknown_hooks();
+    // that never opened — and before any store is read or written, because a
+    // hook this build does not read turns the session's saving off (DS7).
+    let environment: Vec<String> = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .collect();
+    if let Some(reason) = launch::persistence_refusal(
+        environment.iter().map(String::as_str),
+        &hooks::declared_names(),
+    ) {
+        store_home::refuse_writes(reason);
+    }
 
     // Feed and asset are configuration, not constants. A malformed external
     // config is fatal and surfaced, never silently ignored.
-    let (mut config, source) = match config::load() {
+    let (mut config, source) = match config::load(startup.config_path.as_deref()) {
         Ok(loaded) => loaded,
         Err(e) => {
             tracing::error!(
@@ -244,7 +272,7 @@ fn main() -> eframe::Result {
             std::process::exit(1);
         }
     };
-    if let Err(e) = config::apply_startup_selection_from_env(&mut config) {
+    if let Err(e) = startup.apply_selection(&mut config) {
         tracing::error!(
             target: "quantick::app",
             event_code = "STARTUP_SELECTION_ERROR",
@@ -282,7 +310,7 @@ fn main() -> eframe::Result {
     }
 
     let workspace = ui_state::load(&ui_state::default_path()).restore(&config);
-    let env_chose_market = config::startup_selection_came_from_env();
+    let env_chose_market = startup.names_market();
     if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
         config.default_feed = feed.to_owned();
         config.default_symbol = symbol.to_owned();
@@ -314,9 +342,13 @@ fn main() -> eframe::Result {
         .tabs
         .first()
         .filter(|_| !env_chose_market)
-        .and_then(|tab| BarSpec::parse(&tab.flow_bars).ok())
+        .and_then(|tab| {
+            quantick_engine::bar_registry::BUILTIN_BARS
+                .parse(&tab.flow_bars)
+                .ok()
+        })
         .or_else(|| config.startup_spec_for(&feed_id))
-        .unwrap_or(BarSpec::Tick(INITIAL_TICK_SIZE));
+        .unwrap_or_else(|| BarSpec::Tick(INITIAL_TICK_SIZE).into());
 
     let feed = feed::spawn_live(
         provider,
@@ -325,25 +357,34 @@ fn main() -> eframe::Result {
         paper_home::shelf_dir(),
     );
 
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
-        .expect("bundled assets/icon.png is a valid PNG");
+    let options = startup.native_options(workspace.window);
 
-    let options = eframe::NativeOptions {
-        // No `with_min_inner_size`: the window has no floor. Below roughly
-        // 900x560 the chrome stops collapsing and starts clipping — the
-        // drawing rail falls past its Minimal stage
-        // (docs/drawing-toolbar-ux.md §2.8) — but that is a layout that reads
-        // badly, not one that breaks, and a trader parking the chart in a
-        // sliver beside another window is a real thing to want. The one place
-        // a floor is still kept is what the app *reopens* at; see
-        // [`REOPEN_FLOOR_PX`].
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(window_size(workspace.window))
-            .with_title("quantick")
-            .with_icon(icon),
-        ..Default::default()
+    let launch = app::AppLaunch {
+        #[cfg(feature = "scenario-harness")]
+        scenario,
+        #[cfg(all(test, not(feature = "scenario-harness")))]
+        scenario: Default::default(),
+        #[cfg(feature = "control-harness")]
+        control,
+        #[cfg(all(test, not(feature = "control-harness")))]
+        control: Default::default(),
+        #[cfg(feature = "scenario-harness")]
+        window: startup.window.into_window_state(),
+        #[cfg(all(test, not(feature = "scenario-harness")))]
+        window: Default::default(),
+        #[cfg(feature = "drawing-harness")]
+        toolrail,
+        #[cfg(all(test, not(feature = "drawing-harness")))]
+        toolrail: Default::default(),
+        #[cfg(feature = "quick-range-harness")]
+        quick_range,
+        #[cfg(all(test, not(feature = "quick-range-harness")))]
+        quick_range: Default::default(),
+        #[cfg(feature = "drawing-harness")]
+        drawing_chrome,
+        #[cfg(all(test, not(feature = "drawing-harness")))]
+        drawing_chrome: Default::default(),
     };
-
     eframe::run_native(
         "quantick",
         options,
@@ -356,7 +397,7 @@ fn main() -> eframe::Result {
             cc.egui_ctx.set_fonts(fonts);
             theme::apply(&cc.egui_ctx);
             let mut app = app::QuantickApp::new_with_workspace(
-                config, feed_id, symbol, spec, feed, workspace,
+                config, feed_id, symbol, spec, feed, workspace, launch,
             );
             // The window itself, which only this closure is handed: the app
             // measures its real client area through it (see
@@ -367,152 +408,11 @@ fn main() -> eframe::Result {
     )
 }
 
-/// Size the window opens at when nothing asks for another.
-const DEFAULT_WINDOW_PX: [f32; 2] = [1100.0, 650.0];
-/// Smallest window the app will *reopen* at, whatever the last session left
-/// behind.
-///
-/// The window itself has no minimum — it drags down to nothing, which is the
-/// point. But a size is remembered across launches, and a chart squeezed to a
-/// sliver and then closed would come back as a sliver: a window with no title
-/// bar to grab and no edge to find. That is a trap the trader cannot get out
-/// of from inside the app, so the *restore* path floors what it reads.
-///
-/// Small enough to be a deliberately tiny window, large enough to have an edge
-/// and a title bar to drag. It is a recovery floor, not a layout one: nothing
-/// about the chrome is promised at this size.
-///
-/// `QUANTICK_WINDOW_SIZE` is not floored — it is an explicit request for this
-/// one run, made by someone who can unset it, and reaching a degenerate layout
-/// on purpose is exactly what that hook is for.
-const REOPEN_FLOOR_PX: [f32; 2] = [320.0, 240.0];
-
-/// Size the window opens at: `QUANTICK_WINDOW_SIZE=WxH` when it is set, else
-/// the `saved` size from the workspace, else [`DEFAULT_WINDOW_PX`].
-///
-/// The env var wins over the saved size for the same reason it wins over the
-/// saved market: it is an explicit request for this one run, and a validation
-/// run asking for a small window must get one whatever the last session left
-/// behind.
-///
-/// The hook exists because window size is not decoration here — it is what
-/// decides whether the indicator band has room for its panes and whether the
-/// time axis has room for its labels. Without a way to ask for a small window,
-/// that entire class of defect is invisible to any validation that is not a
-/// human dragging a corner.
-///
-/// Not clamped: the hook can ask for a window of any positive size, including
-/// one far too small to lay anything out in, because a validation run proving
-/// the app survives a degenerate window has to be able to *ask* for one. A
-/// value that does not parse is ignored with a warning rather than failing
-/// the launch: a malformed env var must not stand between the user and their
-/// chart.
-fn window_size(saved: Option<[f32; 2]>) -> [f32; 2] {
-    let fallback = restore_size(saved);
-    let Ok(raw) = std::env::var("QUANTICK_WINDOW_SIZE") else {
-        return fallback;
-    };
-    match parse_window_size(&raw) {
-        Some(size) => {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "APP_WINDOW_SIZE_OVERRIDE",
-                width = size[0],
-                height = size[1],
-                "opening at the requested window size"
-            );
-            size
-        }
-        None => {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "APP_WINDOW_SIZE_REJECTED",
-                value = %raw,
-                action = "using_default",
-                "QUANTICK_WINDOW_SIZE is not WIDTHxHEIGHT"
-            );
-            fallback
-        }
-    }
-}
-
-/// The size a saved workspace reopens at, floored at [`REOPEN_FLOOR_PX`].
-///
-/// Not to protect the layout, which is free to be cramped, but so a session
-/// closed on a sliver of a window reopens on something the trader can grab.
-/// Split out from [`window_size`] because it is the whole of the restore
-/// policy and reads no environment, so a test can state it without touching a
-/// process-wide variable other tests are reading at the same time.
-fn restore_size(saved: Option<[f32; 2]>) -> [f32; 2] {
-    saved.map_or(DEFAULT_WINDOW_PX, |[width, height]| {
-        [
-            width.max(REOPEN_FLOOR_PX[0]),
-            height.max(REOPEN_FLOOR_PX[1]),
-        ]
-    })
-}
-
-/// `WIDTHxHEIGHT` in pixels, as asked for. `None` when the text is not two
-/// positive numbers.
-fn parse_window_size(raw: &str) -> Option<[f32; 2]> {
-    let (width, height) = raw.split_once(['x', 'X'])?;
-    let width: f32 = width.trim().parse().ok()?;
-    let height: f32 = height.trim().parse().ok()?;
-    (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
-        .then_some([width, height])
-}
-
-/// The launch hooks read from the crate root; see [`crate::hooks`].
-pub(crate) const MAIN_HOOKS: &[hooks::HookSpec] = &[
-    hooks::HookSpec::new("QUANTICK_LOG_FORMAT"),
-    hooks::HookSpec::new("QUANTICK_WINDOW_SIZE"),
-];
-
+// Test-only, and filed as tests so the sidecar rule can see they are:
+// benchmarks the ordinary suite runs, never the binary.
 #[cfg(test)]
-mod window_size_tests {
-    use super::*;
-
-    #[test]
-    fn a_requested_size_is_honoured_however_small_it_is() {
-        assert_eq!(parse_window_size("1280x720"), Some([1280.0, 720.0]));
-        assert_eq!(parse_window_size(" 1280 X 720 "), Some([1280.0, 720.0]));
-        assert_eq!(
-            parse_window_size("200x100"),
-            Some([200.0, 100.0]),
-            "the hook reaches a degenerate layout on purpose"
-        );
-        assert_eq!(
-            parse_window_size("1x1"),
-            Some([1.0, 1.0]),
-            "there is no floor left to hit"
-        );
-    }
-
-    /// The window drags to nothing, but a session closed on nothing must not
-    /// reopen on nothing: the restore path is the one place a floor survives,
-    /// and it is a recovery floor, not a layout one.
-    #[test]
-    fn a_saved_sliver_reopens_on_something_the_trader_can_grab() {
-        assert_eq!(restore_size(Some([0.0, 0.0])), REOPEN_FLOOR_PX);
-        assert_eq!(
-            restore_size(Some([4.0, 900.0])),
-            [REOPEN_FLOOR_PX[0], 900.0]
-        );
-        assert_eq!(restore_size(Some([1280.0, 720.0])), [1280.0, 720.0]);
-        assert_eq!(restore_size(None), DEFAULT_WINDOW_PX);
-    }
-
-    #[test]
-    fn a_malformed_size_is_rejected_rather_than_guessed_at() {
-        for raw in ["", "1280", "1280x", "x720", "wide x tall", "0x0", "-5x10"] {
-            assert_eq!(parse_window_size(raw), None, "{raw:?}");
-        }
-    }
-}
-
-#[cfg(test)]
+#[path = "worker_progress/tests/bench.rs"]
 mod worker_progress_bench;
 #[cfg(test)]
+#[path = "worker_progress/tests/bench_observer.rs"]
 mod worker_progress_bench_observer;

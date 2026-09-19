@@ -1,69 +1,68 @@
-//! Where every launch hook declares that it exists.
+//! Discovery for declared startup configuration and opt-in harness hooks.
 //!
-//! A *hook* is a `QUANTICK_*` environment variable the application reads to
-//! put itself into a state a hand would otherwise have to click it into.
-//! `ui-harness` documents them, `visual-qa` and `trader-ux-review` drive the
-//! application through them, and until this module existed the documentation
-//! was the only record that a hook was real.
+//! Each owner declares its `QUANTICK_*` names in `HOOKS`, beside the read;
+//! [`owners`] joins those slices into the catalog. Two kinds exist.
+//! *Configuration* is what an operator is told about in the README and docs;
+//! the composition root (`crate::launch`) reads it once and it is always
+//! compiled. Everything else — capture, demo, automation and fault hooks — is
+//! a *harness* hook: it compiles only under its family's Cargo feature
+//! (`scenario-harness`, `control-harness`, `drawing-harness`,
+//! `quick-range-harness`; `harness` enables all four) or `cfg(test)`, and its
+//! declaration is gated with it. A default binary therefore names, reads and
+//! registers configuration and nothing else.
 //!
-//! That record was wrong in both directions. Three hooks the application reads
-//! had no row at all. One row — `QUANTICK_DRAWING_MANAGER`, singular — named a
-//! variable nothing has ever read; the code reads `QUANTICK_DRAWINGS_MANAGER`,
-//! and the same file spells it correctly two rows further down. A capture run
-//! setting the documented spelling got a window that simply did not open the
-//! object manager, which reads exactly like a defect in the surface.
+//! `docs/ui-harness/hook-prose.md` owns each hook's behavior and required
+//! feature. A `--features harness` build's `quantick-app --dump-hook-registry`
+//! joins those descriptions with owner paths into
+//! `.claude/skills/ui-harness/references/hook-registry.md`; any other build
+//! refuses, because its declarations are not the whole registry. Authored
+//! prose stays under `docs/`; the generated catalog is the skill's reference.
 //!
-//! # The two halves, and why they are apart
+//! The guard checks declarations, source names and documented names for
+//! parity, reading source text, so a gated declaration still counts. Adding
+//! an owner requires a declaration slice, one registration in its family's
+//! table here and authored descriptions, followed by regeneration.
 //!
-//! **The code owns which hooks exist.** Each module that reads one declares it
-//! in its own `HOOKS` slice, beside the read, and [`OWNERS`] below carries one
-//! line per module. Adding a hook is a slice entry where the read is; adding a
-//! module that owns hooks is one line here.
+//! Historical drift included the unimplemented `QUANTICK_DRAWING_MANAGER`
+//! spelling alongside the real `QUANTICK_DRAWINGS_MANAGER`. Declaration
+//! parity detects that mismatch; it does not establish runtime availability.
 //!
-//! **The prose owns what each hook means.** `docs/ui-harness/hook-prose.md`
-//! holds the long `Reaches` cells — the paragraphs that explain which class of
-//! defect is invisible without that hook, which is the most valuable content in
-//! the harness and is deliberately not compressed. It stays prose because
-//! prose is what it is, and it stays under `docs/` rather than
-//! `.claude/skills/` because the context ratchet weighs that tree and a second
-//! seventy-kilobyte file there would cost every session what the generated one
-//! already costs it.
-//!
-//! `.claude/skills/ui-harness/references/hook-registry.md` is neither: it is
-//! **generated** by fusing the two, through
-//! `quantick-app --dump-hook-registry`. A hook missing from either half fails
-//! `cargo test -p quantick-guards`, so the pair cannot drift apart the way the
-//! single hand-kept file drifted from the code.
-//!
-//! # `UNKNOWN_HOOK`
-//!
-//! [`log_unknown_hooks`] runs once at startup and warns about any `QUANTICK_*`
-//! in the environment that no slice declares. That is the other half of the
-//! `QUANTICK_DRAWING_MANAGER` story: a dead hook used to present as a surface
-//! that did not open, which sends the reader looking at the surface. Now it
-//! says so on the first line of the log.
-//!
-//! It warns rather than exits. A typo in a capture script should be loud, but
-//! an unbootable application is a worse failure than the one being fixed, and
-//! the variable may belong to something else entirely.
+//! At startup the composition root (`crate::launch::persistence_refusal`)
+//! logs every name this build does not register, except the documented
+//! [`NOT_HOOKS`] entries — a harness hook set against a build without its
+//! feature included — and runs that session writing no store (decision DS7).
 
 use std::collections::BTreeSet;
 
 // The declaration half — the `HookSpec` type and the `declare_hooks!` macro
 // that writes a module's slice — is defined in `quantick-feed` and re-exported
 // here, so every module in the workspace declares its hooks the same way and
-// `OWNERS` below can hold them all in one array.
+// [`owners`] below can join them all into one table.
 //
 // It sits there rather than here because four of that crate's adapters read a
 // hook and it cannot depend on this one; the graph runs the other way. This
-// module is still where the registry is: `OWNERS`, `NOT_HOOKS` and the
+// module is still where the registry is: the owner tables, `NOT_HOOKS` and the
 // startup warning are all below, and this is the file to open to find out
-// which hooks exist.
+// which hooks exist. The registry's markdown rendering, pure string work, sits
+// beside the type in `quantick_feed::hooks::registry`.
 pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
+
+/// Scenario hook values the composition root captured; owners ask it by name
+/// rather than reading the process environment.
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) use quantick_feed::hooks::captured;
+
+/// Every scenario hook's name, for the composition root to capture once.
+#[cfg(feature = "scenario-harness")]
+pub(crate) fn scenario_names() -> impl Iterator<Item = &'static str> {
+    SCENARIO_OWNERS
+        .iter()
+        .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+}
 
 /// `QUANTICK_*` variables that are deliberately **not** launch hooks.
 ///
-/// One definition, two readers. [`log_unknown_hooks`] skips them, so a build
+/// One definition, two readers. [`unknown_hooks`] skips them, so a build
 /// that sets `QUANTICK_GIT_COMMIT` is not warned about its own build metadata;
 /// and `crates/guards/src/generated.rs` parses this same table out of this
 /// file, so the guard cannot demand a harness row for something the
@@ -73,49 +72,63 @@ pub(crate) use quantick_feed::hooks::{HookSpec, declare_hooks};
 ///
 /// Each carries its reason, because an allowlist is how a parity guard is
 /// quietly defeated: a reader who disagrees with an entry has something to
-/// disagree with.
-pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[
-    (
-        "QUANTICK_GIT_COMMIT",
-        "build metadata, read through `option_env!` at compile time and \n         reported in the control plane's system info. Setting it at runtime \n         does nothing.",
-    ),
-    (
-        "QUANTICK_FAKE_STORE",
-        "test plumbing inside `workspace_bundle`'s own `#[cfg(test)]` module. \n         Never read by a release build.",
-    ),
-    (
-        "QUANTICK_TEST_STORE_HOME_ENV",
-        "test plumbing inside `store_home`'s own `#[cfg(test)]` module, which \n         lets a test redirect the store home. Never read by a release build.",
-    ),
-];
+/// disagree with. A fixture that lives inside a `#[cfg(test)]` module needs no
+/// entry: no build that ships reads it, and the guard skips those modules.
+pub(crate) const NOT_HOOKS: &[(&str, &str)] = &[(
+    "QUANTICK_GIT_COMMIT",
+    "build metadata, read through `option_env!` at compile time and \n         reported in the control plane's system info. Setting it at runtime \n         does nothing.",
+)];
 
 /// Every module that owns hooks, with the path a reader should open to find
-/// them.
+/// them, grouped by what compiles them.
 ///
 /// The path is written out rather than derived because `module_path!()` gives
 /// a Rust path and the registry has to name a file someone can open. The guard
 /// checks the two agree: a slice registered under the wrong path, or a file
 /// that reads a `QUANTICK_*` without registering a slice at all, is a finding.
-pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
+///
+/// [`CONFIGURATION`] is the composition root's operator configuration and is
+/// always compiled. Every other table is a harness family and exists only in
+/// a build with that family's feature (or under test) — as do the modules it
+/// names — so a default build registers configuration and nothing else.
+pub(crate) fn owners() -> Vec<(&'static str, &'static [HookSpec])> {
+    #[allow(unused_mut)]
+    let mut out = CONFIGURATION.to_vec();
+    #[cfg(any(feature = "scenario-harness", test))]
+    out.extend_from_slice(SCENARIO_OWNERS);
+    #[cfg(any(feature = "control-harness", test))]
+    out.extend_from_slice(CONTROL_OWNERS);
+    #[cfg(any(feature = "drawing-harness", test))]
+    out.extend_from_slice(DRAWING_OWNERS);
+    #[cfg(any(feature = "quick-range-harness", test))]
+    out.extend_from_slice(QUICK_RANGE_OWNERS);
+    out
+}
+
+/// Whether every harness family is compiled into this build: the only build
+/// whose declarations are the whole registry.
+pub(crate) const ALL_FAMILIES: bool = cfg!(all(
+    feature = "scenario-harness",
+    feature = "control-harness",
+    feature = "drawing-harness",
+    feature = "quick-range-harness"
+));
+
+/// Operator configuration, read once by the composition root.
+const CONFIGURATION: &[(&str, &[HookSpec])] = &[("crates/app/src/launch.rs", crate::launch::HOOKS)];
+
+/// Launch scenarios, scripted menus, demo stagers, capture isolation of the
+/// stores, and the feed's fault injection: `scenario-harness`.
+#[cfg(any(feature = "scenario-harness", test))]
+const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     (
         "crates/app/src/app/launch_hooks.rs",
         crate::app::launch_hooks::HOOKS,
     ),
     (
-        "crates/app/src/bubble_presets.rs",
-        crate::bubble_presets::HOOKS,
-    ),
-    ("crates/app/src/chart_layers.rs", crate::chart_layers::HOOKS),
-    ("crates/app/src/config.rs", crate::config::HOOKS),
-    (
         "crates/app/src/deal_recording.rs",
         crate::deal_recording::HOOKS,
     ),
-    (
-        "crates/app/src/drawings/presets.rs",
-        crate::drawings::presets::HOOKS,
-    ),
-    ("crates/feed/src/binance.rs", quantick_feed::binance::HOOKS),
     (
         "crates/feed/src/metatrader.rs",
         quantick_feed::metatrader::HOOKS,
@@ -128,31 +141,16 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         crate::footprint_config::HOOKS,
     ),
     (
-        "crates/app/src/footprint_presets.rs",
-        crate::footprint_presets::HOOKS,
-    ),
-    (
         "crates/app/src/footprint_render.rs",
         crate::footprint_render::HOOKS,
     ),
     ("crates/app/src/frvp.rs", crate::frvp::HOOKS),
     ("crates/app/src/harness.rs", crate::harness::HOOKS),
+    ("crates/app/src/store_home.rs", crate::store_home::HOOKS),
     (
-        "crates/app/src/indicators/library.rs",
-        crate::indicators::library::HOOKS,
+        "crates/app/src/launch/window.rs",
+        crate::launch::window::HOOKS,
     ),
-    (
-        "crates/app/src/indicators/preset_file.rs",
-        crate::indicators::preset_file::HOOKS,
-    ),
-    (
-        "crates/app/src/indicators/state_file.rs",
-        crate::indicators::state_file::HOOKS,
-    ),
-    ("crates/app/src/layouts.rs", crate::layouts::HOOKS),
-    ("crates/app/src/main.rs", crate::MAIN_HOOKS),
-    ("crates/app/src/paper_home.rs", crate::paper_home::HOOKS),
-    ("crates/app/src/paper_state.rs", crate::paper_state::HOOKS),
     (
         "crates/app/src/paper_account.rs",
         crate::paper_account::HOOKS,
@@ -161,19 +159,10 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/paper_trading.rs",
         crate::paper_trading::HOOKS,
     ),
-    ("crates/app/src/replay_home.rs", crate::replay_home::HOOKS),
     ("crates/app/src/replay_view.rs", crate::replay_view::HOOKS),
-    (
-        "crates/app/src/strategy_presets.rs",
-        crate::strategy_presets::HOOKS,
-    ),
     (
         "crates/app/src/surfaces/agent_popup.rs",
         crate::surfaces::agent_popup::HOOKS,
-    ),
-    (
-        "crates/app/src/surfaces/drawing_chrome/mod.rs",
-        crate::surfaces::drawing_chrome::HOOKS,
     ),
     (
         "crates/app/src/surfaces/footprint_settings.rs",
@@ -199,16 +188,103 @@ pub(crate) const OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/surfaces/workspace_name.rs",
         crate::surfaces::workspace_name::HOOKS,
     ),
-    ("crates/app/src/symbols_file.rs", crate::symbols_file::HOOKS),
     ("crates/app/src/tab.rs", crate::tab::HOOKS),
-    ("crates/app/src/ui_state.rs", crate::ui_state::HOOKS),
 ];
+
+/// The control plane's launch scenarios: `control-harness`.
+#[cfg(any(feature = "control-harness", test))]
+const CONTROL_OWNERS: &[(&str, &[HookSpec])] = &[(
+    "crates/app/src/app/control_host.rs",
+    crate::app::control_host::HOOKS,
+)];
+
+/// The drawing rail and the drawing chrome's demos: `drawing-harness`.
+#[cfg(any(feature = "drawing-harness", test))]
+const DRAWING_OWNERS: &[(&str, &[HookSpec])] = &[
+    ("crates/app/src/toolrail.rs", crate::toolrail::HOOKS),
+    (
+        "crates/app/src/surfaces/drawing_chrome/mod.rs",
+        crate::surfaces::drawing_chrome::HOOKS,
+    ),
+];
+
+/// The quick-range demo: `quick-range-harness`.
+#[cfg(any(feature = "quick-range-harness", test))]
+const QUICK_RANGE_OWNERS: &[(&str, &[HookSpec])] = &[(
+    "crates/app/src/surfaces/drawing_chrome/quick_range/launch.rs",
+    crate::surfaces::drawing_chrome::QUICK_RANGE_HOOKS,
+)];
+
+/// The scenario hooks the launch phase and the frame's scripted stages read,
+/// captured once by the composition root and handed to the app.
+///
+/// Holds every name its owners declare, set or not, so asking for a name no
+/// owner declares is a bug caught in a debug build rather than a hook that
+/// silently never fires.
+#[cfg(any(feature = "scenario-harness", test))]
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ScenarioInputs(std::collections::BTreeMap<&'static str, Option<String>>);
+
+#[cfg(any(feature = "scenario-harness", test))]
+impl ScenarioInputs {
+    /// The owners whose hooks travel in these inputs.
+    const OWNERS: &[&[HookSpec]] = &[
+        crate::app::launch_hooks::HOOKS,
+        crate::harness::HOOKS,
+        crate::deal_recording::HOOKS,
+        crate::replay_view::HOOKS,
+        crate::surfaces::toast::HOOKS,
+    ];
+
+    /// Read every scenario input, once, through `lookup`.
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        Self(
+            Self::OWNERS
+                .iter()
+                .flat_map(|specs| specs.iter())
+                .map(|spec| {
+                    let value = lookup(spec.name).and_then(|value| value.into_string().ok());
+                    (spec.name, value)
+                })
+                .collect(),
+        )
+    }
+
+    /// Inputs a test states outright, as `(name, value)` pairs.
+    #[cfg(test)]
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        Self::capture(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).into())
+        })
+    }
+
+    /// The captured value of `name`, when the launch set one.
+    pub fn var(&self, name: &str) -> Option<String> {
+        debug_assert!(
+            self.0.is_empty() || self.0.contains_key(name),
+            "{name} is not a scenario input; declare it with its owner"
+        );
+        self.0.get(name).cloned().flatten()
+    }
+}
+
+/// The names a default build registers: the composition root's configuration.
+#[cfg(test)]
+pub(crate) fn configuration_names() -> BTreeSet<&'static str> {
+    CONFIGURATION
+        .iter()
+        .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+        .collect()
+}
 
 /// Every declared hook, with the file that owns it, in name order.
 pub(crate) fn all() -> Vec<(&'static str, &'static HookSpec)> {
-    let mut out: Vec<(&'static str, &'static HookSpec)> = OWNERS
-        .iter()
-        .flat_map(|(path, specs)| specs.iter().map(move |spec| (*path, spec)))
+    let mut out: Vec<(&'static str, &'static HookSpec)> = owners()
+        .into_iter()
+        .flat_map(|(path, specs)| specs.iter().map(move |spec| (path, spec)))
         .collect();
     out.sort_by_key(|(_, spec)| spec.name);
     out
@@ -216,197 +292,48 @@ pub(crate) fn all() -> Vec<(&'static str, &'static HookSpec)> {
 
 /// Every declared hook name.
 pub(crate) fn declared_names() -> BTreeSet<&'static str> {
-    OWNERS
-        .iter()
+    owners()
+        .into_iter()
         .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
         .collect()
 }
 
-/// The `QUANTICK_*` variables set in this environment that no slice declares.
-///
-/// Takes the environment as an iterator rather than reading it, so the test
-/// can exercise the real comparison without touching process state — setting
-/// an environment variable is `unsafe` in this edition and racy under a
-/// threaded test runner.
+/// The `QUANTICK_*` variables set in this environment that no slice declares
+/// and [`NOT_HOOKS`] does not excuse; the comparison is
+/// [`quantick_feed::hooks::undeclared`], with the environment injected.
 pub(crate) fn unknown_hooks<'a>(
     environment: impl Iterator<Item = &'a str>,
     declared: &BTreeSet<&'static str>,
 ) -> Vec<String> {
-    let mut out: Vec<String> = environment
-        .filter(|name| name.starts_with("QUANTICK_"))
-        .filter(|name| !declared.contains(name))
-        .filter(|name| !NOT_HOOKS.iter().any(|(known, _)| known == name))
-        .map(str::to_owned)
-        .collect();
-    out.sort();
-    out.dedup();
-    out
+    quantick_feed::hooks::undeclared(environment, declared, NOT_HOOKS)
 }
-
-/// Warn, once at startup, about every `QUANTICK_*` nothing reads.
-pub(crate) fn log_unknown_hooks() {
-    let declared = declared_names();
-    let environment: Vec<String> = std::env::vars().map(|(name, _)| name).collect();
-    for name in unknown_hooks(environment.iter().map(String::as_str), &declared) {
-        tracing::warn!(
-            target: "quantick::app",
-            event_code = "UNKNOWN_HOOK",
-            hook = %name,
-            "no launch hook by this name is registered; it will do nothing. \
-             Check the spelling against .claude/skills/ui-harness/references/hook-registry.md"
-        );
-    }
-}
-
-/// The marker the generated registry opens with.
-pub(crate) const GENERATED_MARKER: &str =
-    "<!-- generated by `quantick-app --dump-hook-registry`; do not edit -->";
 
 /// The authored half, relative to the workspace root.
 pub(crate) const PROSE_PATH: &str = "docs/ui-harness/hook-prose.md";
 
 /// Render `.claude/skills/ui-harness/references/hook-registry.md`.
 ///
-/// The index comes from the specs, so it cannot name a hook the application
-/// does not read. The prose comes from [`PROSE_PATH`] and is copied through
-/// **unaltered** — no reflow, no truncation, no summarising. The long cells
-/// are the point of the file: each says which class of defect is invisible
-/// without that hook, which is the one thing a grep of the source cannot tell
-/// you.
+/// Declarations supply names and owner paths; only a build with every harness
+/// family compiles them all, so any other build refuses rather than write a
+/// partial registry over the committed one. The authored `Reaches` cells
+/// supply behavior and feature requirements; they are copied unchanged,
+/// without reflow, truncation or summarizing.
 pub(crate) fn hook_registry_markdown() -> Result<String, String> {
+    if !ALL_FAMILIES && !cfg!(test) {
+        return Err("this build compiles only part of the hook registry; run \
+             `cargo run -p quantick-app --features harness -- --dump-hook-registry`"
+            .to_owned());
+    }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
         .ok_or("crates/app sits two levels below the workspace root")?;
     let prose = std::fs::read_to_string(root.join(PROSE_PATH))
         .map_err(|error| format!("{PROSE_PATH}: {error}"))?;
-    Ok(render_registry(&all(), &prose))
-}
-
-/// The path a reader opens, with the part every hook shares taken off.
-///
-/// `crates/app/src/` in front of a hundred and twenty-nine rows is two
-/// kilobytes of the context budget spent saying the same eleven words, in a
-/// file whose whole argument is that a targeted run should cost less to
-/// answer, not more.
-const OWNER_PREFIX: &str = "crates/app/src/";
-
-/// Fuse the declared hooks into the authored prose.
-///
-/// One table, not two. An index beside the prose would repeat every hook name
-/// a second time; adding the owner *to the row that already describes the
-/// hook* puts the new fact where a reader is already looking and costs the
-/// context budget a column instead of a page.
-///
-/// Prose lines that are not table rows pass through untouched, and a row's
-/// `Reaches` cell is never rewritten — [`PROSE_PATH`] is the authored half and
-/// this function is not allowed an opinion about it.
-fn render_registry(hooks: &[(&'static str, &'static HookSpec)], prose: &str) -> String {
-    let owners: std::collections::BTreeMap<&str, &str> = hooks
-        .iter()
-        .map(|(path, spec)| (spec.name, path.strip_prefix(OWNER_PREFIX).unwrap_or(path)))
-        .collect();
-
-    let mut out = String::new();
-    out.push_str("# Hook registry\n\n");
-    out.push_str(GENERATED_MARKER);
-    out.push_str("\n\n");
-    out.push_str(concat!(
-        "Every `QUANTICK_*` the application reads, what it reaches, and where it
-",
-        "is declared (paths relative to `crates/app/src/`).
-",
-        "
-",
-        "Generated: existence from the `declare_hooks!` line beside each read,
-",
-        "prose from `docs/ui-harness/hook-prose.md` — edit there, then
-",
-        "`cargo run -p quantick-app -- --dump-hook-registry > <this file>`.
-",
-        "`cargo test -p quantick-guards` fails when a hook is read but not
-",
-        "described, or described but not read; an unrecognised `QUANTICK_*` in the
-",
-        "environment is logged at startup as `UNKNOWN_HOOK`.
-",
-        "
-",
-    ));
-
-    // The prose file opens with its own explanation of what it is and how to
-    // regenerate from it. That is guidance for whoever edits it, not part of
-    // the registry, and the generated file states both things in its own
-    // words above — so the copy starts at the first table.
-    let body = match prose.find("\n| Hook ") {
-        Some(offset) => &prose[offset + 1..],
-        None => prose,
-    };
-
-    for line in body.lines() {
-        if line.starts_with("| Hook ") {
-            out.push_str("| Hook | Declared in | Reaches |\n");
-        } else if line.starts_with("| --- ") {
-            out.push_str("| --- | --- | --- |\n");
-        } else if let Some(fused) = fuse_row(line, &owners) {
-            out.push_str(&fused);
-            out.push('\n');
-        } else {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    out.push_str(&format!("\n{} hooks registered.\n", hooks.len()));
-    out
-}
-
-/// Turn `| <hook cell> | <reaches> |` into `| <hook cell> | <owners> | <reaches> |`.
-///
-/// A row may name more than one hook — several of them do, because the hooks
-/// are used together — so the owner cell lists each distinct file once, in the
-/// order the names appear.
-fn fuse_row(line: &str, owners: &std::collections::BTreeMap<&str, &str>) -> Option<String> {
-    let body = line.strip_prefix("| ")?.strip_suffix(" |")?;
-    let (hook_cell, reaches) = body.split_once(" | ")?;
-    let mut paths: Vec<&str> = Vec::new();
-    for name in hook_names(hook_cell) {
-        if let Some(path) = owners.get(name.as_str())
-            && !paths.contains(path)
-        {
-            paths.push(path);
-        }
-    }
-    let owner_cell = if paths.is_empty() {
-        "—".to_owned()
-    } else {
-        paths
-            .iter()
-            .map(|path| format!("`{path}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    Some(format!("| {hook_cell} | {owner_cell} | {reaches} |"))
-}
-
-/// Every `QUANTICK_*` named in a cell, in order of appearance.
-pub(crate) fn hook_names(cell: &str) -> Vec<String> {
-    let bytes = cell.as_bytes();
-    let mut out = Vec::new();
-    let mut index = 0;
-    while let Some(offset) = cell[index..].find("QUANTICK_") {
-        let start = index + offset;
-        let mut end = start;
-        while end < bytes.len()
-            && (bytes[end].is_ascii_uppercase()
-                || bytes[end].is_ascii_digit()
-                || bytes[end] == b'_')
-        {
-            end += 1;
-        }
-        out.push(cell[start..end].to_owned());
-        index = end;
-    }
-    out
+    Ok(quantick_feed::hooks::registry::render_registry(
+        &all(),
+        &prose,
+    ))
 }
 
 #[cfg(test)]
@@ -460,6 +387,79 @@ mod tests {
         );
     }
 
+    /// The root reads each scenario input once, by its declared name, and
+    /// nothing it was not told about: a name no owner declares is never
+    /// looked up, and a value changed after capture changes nothing.
+    #[test]
+    fn scenario_inputs_capture_declared_names_once() {
+        let mut asked = Vec::new();
+        let mut value = Some(std::ffi::OsString::from("1"));
+        let inputs = ScenarioInputs::capture(|name| {
+            asked.push(name.to_owned());
+            (name == "QUANTICK_INVERTED")
+                .then(|| value.take())
+                .flatten()
+        });
+        assert!(asked.iter().any(|name| name == "QUANTICK_INVERTED"));
+        assert!(asked.iter().any(|name| name == "QUANTICK_POINTER"));
+        assert!(!asked.iter().any(|name| name == "QUANTICK_CONFIG"));
+        let mut unique = asked.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), asked.len(), "each input is read once");
+        assert_eq!(inputs.var("QUANTICK_INVERTED").as_deref(), Some("1"));
+        assert_eq!(inputs.var("QUANTICK_POINTER"), None);
+        assert_eq!(
+            ScenarioInputs::from_pairs(&[("QUANTICK_TAPE", "off")])
+                .var("QUANTICK_TAPE")
+                .as_deref(),
+            Some("off")
+        );
+    }
+
+    /// A default build registers the composition root's configuration and
+    /// nothing else; this test build compiles every family, so every table
+    /// is present and no name is claimed twice across them.
+    #[test]
+    fn configuration_is_declared_by_the_composition_root_alone() {
+        let configuration: Vec<&str> = CONFIGURATION
+            .iter()
+            .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+            .collect();
+        assert!(configuration.contains(&"QUANTICK_CONFIG"));
+        assert!(configuration.len() <= 20, "{configuration:?}");
+        assert_eq!(
+            owners().len(),
+            1 + SCENARIO_OWNERS.len()
+                + CONTROL_OWNERS.len()
+                + DRAWING_OWNERS.len()
+                + QUICK_RANGE_OWNERS.len()
+        );
+    }
+
+    /// A default build registers the composition root's configuration and
+    /// nothing else, so a scenario hook set against it is reported by name at
+    /// startup rather than acted on or silently dropped. (That it is not acted
+    /// on is structural — the reader is compiled out — and CI's "Default
+    /// binary names no harness hook" step reads the shipped bytes to prove it.)
+    #[test]
+    fn a_default_build_reports_a_scenario_hook_it_does_not_compile() {
+        let default_build: BTreeSet<&'static str> = CONFIGURATION
+            .iter()
+            .flat_map(|(_, specs)| specs.iter().map(|spec| spec.name))
+            .collect();
+        let environment = ["QUANTICK_CONFIG", "QUANTICK_TAPE", "QUANTICK_GIT_COMMIT"];
+        assert_eq!(
+            unknown_hooks(environment.into_iter(), &default_build),
+            vec!["QUANTICK_TAPE".to_owned()],
+            "configuration and build metadata are known; the scenario hook is reported"
+        );
+        assert!(
+            unknown_hooks(["QUANTICK_TAPE"].into_iter(), &declared_names()).is_empty(),
+            "a build with the scenario harness knows it"
+        );
+    }
+
     /// Nothing outside the prefix is ever reported, however odd it looks.
     #[test]
     fn variables_outside_the_prefix_are_not_this_guard_s_business() {
@@ -500,7 +500,7 @@ mod tests {
             .parent()
             .and_then(std::path::Path::parent)
             .expect("crates/app sits two levels below the workspace root");
-        for (path, _) in OWNERS {
+        for (path, _) in owners() {
             assert!(root.join(path).is_file(), "{path} is not a file");
         }
     }

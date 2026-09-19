@@ -12,191 +12,42 @@
 //! under a grant whose own words deny it would be a trust bug with no surface
 //! to find it on.
 
-use std::collections::BTreeSet;
+use crate::app::{LayoutPort, TabsMutPort, TabsPort};
+pub(crate) use quantick_control_schema::layout::*;
 
 use quantick_control::{
     error::ControlError,
-    id::{CapabilityId, CostClassId, ModuleId, PermissionId, RiskFlagId},
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
+    registry::RegistryError,
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
+
 use schemars::JsonSchema;
+
 use serde::{Deserialize, Serialize};
+
 use serde_json::Value;
 
-use crate::{app::QuantickApp, canvas_layout, tab::CanvasLayout};
+use crate::{canvas_layout, tab::CanvasLayout};
 
 use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
-    contract::{COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID},
+    actions::{ActionRegistry, CAPABILITY_VERSION},
     gateway::ControlAccess,
 };
 
+pub(super) mod stack;
+
 mod v2;
+
 #[cfg(test)]
 pub(crate) use v2::{LayoutResultV2, ResizeInputV2};
 
-/// The module every layout capability belongs to.
-pub(crate) const LAYOUT_MODULE_ID: &str = "layout";
-
-const APPLY_PRESET_CAPABILITY_ID: &str = "layout.preset.apply";
-const MOVE_PANE_CAPABILITY_ID: &str = "layout.pane.move";
-const RESIZE_CAPABILITY_ID: &str = "layout.pane.resize";
-const COLLAPSE_CAPABILITY_ID: &str = "layout.pane.collapse";
-const EXPAND_CAPABILITY_ID: &str = "layout.pane.expand";
-const FOCUS_CAPABILITY_ID: &str = "layout.focus.set";
-const INTERVAL_CAPABILITY_ID: &str = "layout.pane.set_interval";
-const BAR_SPEC_CAPABILITY_ID: &str = "layout.pane.set_bar_spec";
-const TAB_SWITCH_CAPABILITY_ID: &str = "layout.tab.switch";
-const TAB_CREATE_CAPABILITY_ID: &str = "layout.tab.create";
-const TAB_RENAME_CAPABILITY_ID: &str = "layout.tab.rename";
-
-/// Which tab a call is about. Omitted means the one the trader is looking at —
-/// the same default the chrome's own commands take.
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct TabTarget {
-    /// The tab's id, as `observe.workspace` reports it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_id: Option<WireU64>,
-}
-
-/// Apply a named arrangement from the layout registry.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ApplyPresetInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// A preset id from the registry — `describe` lists them.
-    pub preset_id: String,
-}
-
-/// Move one context chart within the stack.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct MovePaneInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The pane's address now. `0` is the flow pane and cannot be moved.
-    pub from: WireU64,
-    /// Where it should sit.
-    pub to: WireU64,
-}
-
-/// Set the context column's share of the canvas.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ResizeInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The share, 0..1. Held inside the same floor a drag is held to, so a
-    /// call cannot reach a width a hand could not.
-    pub fraction: f64,
-}
-
-/// Focus one pane: the chart the chrome speaks for and commands land on.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct FocusInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The pane's address. `0` is the flow pane.
-    pub pane: WireU64,
-}
-
-/// Set one context chart's timeframe.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct IntervalInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The pane's address. `0` is the flow pane, which the toolbar governs.
-    pub pane: WireU64,
-    /// The interval in milliseconds.
-    pub interval_ms: i64,
-}
-
-/// Set any pane's complete alternative-bar rule.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct BarSpecInput {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The pane's address (`0` is the flow pane).
-    pub pane: WireU64,
-    /// The same stable spelling configuration and workspace files use, such
-    /// as `tick:50`, `time:60000`, or `trades:2000`.
-    pub spec: String,
-}
-
-/// Which layout tab a call is about: by id, by name, or — omitted — the
-/// active one. An id and a name that disagree are refused rather than
-/// resolved, because a caller that gave both meant both.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct LayoutTabTarget {
-    /// The layout's id, as `observe.workspace` reports it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub layout_id: Option<WireU64>,
-    /// The layout's name, as the strip shows it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-/// Put a layout on one pane.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct SwitchLayoutTabInput {
-    #[serde(flatten)]
-    pub layout: LayoutTabTarget,
-    /// Which tab's pane changes layout. Omitted: the active tab.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_id: Option<WireU64>,
-    /// The pane's address (`0` the flow pane, `1..` the context stack).
-    /// Omitted: the focused pane — the pane the strip's own click switches.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pane: Option<WireU64>,
-}
-
-/// Add a layout tab and switch to it.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct CreateLayoutTabInput {
-    /// What to call it. Omitted: the first free `Layout N`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-/// Rename a layout tab.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct RenameLayoutTabInput {
-    #[serde(flatten)]
-    pub target: LayoutTabTarget,
-    /// The new name.
-    pub new_name: String,
-}
-
-/// One layout tab, as the strip lists it.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct LayoutTabSnapshot {
-    pub layout_id: WireU64,
-    pub name: String,
-    pub active: bool,
-    /// How many indicators the layout holds.
-    pub indicator_count: WireU64,
-}
-
-/// What every layout-tab call answers with: the strip as it now stands.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct LayoutTabResult {
-    pub active_layout_id: WireU64,
-    pub active_layout_name: String,
-    pub layouts: Vec<LayoutTabSnapshot>,
-    /// Whether the call changed anything. `false` is a real answer:
-    /// switching to the layout already showing is a no-op, not a failure.
-    pub changed: bool,
-}
-
 /// The strip as the control plane reports it — one reading for the layout
 /// calls and `observe.workspace` alike.
-pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
+pub(crate) fn layout_tabs<P: LayoutPort + ?Sized>(app: &P) -> Vec<LayoutTabSnapshot> {
     // "Active" on the wire is what the strip lights: the focused pane's
     // layout. Every pane's own is in `workspace.summary`.
-    layout_tabs_marking(app, app.focused_pane_layout())
+    layout_tabs_marking(app, app.layout_state().focused_pane_layout())
 }
 
 /// The same reading with `active` on a layout the caller names.
@@ -204,11 +55,12 @@ pub(crate) fn layout_tabs(app: &QuantickApp) -> Vec<LayoutTabSnapshot> {
 /// A call that addressed *another* pane answers about that pane: reporting
 /// the focused pane's layout to a client that just switched a background one
 /// tells it its call did not land, when it did.
-fn layout_tabs_marking(
-    app: &QuantickApp,
+fn layout_tabs_marking<P: LayoutPort + ?Sized>(
+    app: &P,
     active: crate::layouts::LayoutId,
 ) -> Vec<LayoutTabSnapshot> {
-    app.layouts()
+    app.layout_state()
+        .layouts()
         .layouts()
         .iter()
         .map(|layout| LayoutTabSnapshot {
@@ -220,30 +72,8 @@ fn layout_tabs_marking(
         .collect()
 }
 
-/// What every layout call answers with: the arrangement as it now stands.
-///
-/// Echoed back rather than assumed, so a client never has to guess whether a
-/// call it made is the reason the canvas looks the way it does.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct LayoutResult {
-    /// The tab that changed.
-    pub tab_id: WireU64,
-    /// The preset the canvas now matches.
-    pub preset_id: String,
-    /// How many panes it draws.
-    pub pane_count: WireU64,
-    /// The focused pane's address.
-    pub focused_pane: WireU64,
-    /// The context column's share of the canvas.
-    pub fraction: f64,
-    /// Whether the context column is collapsed to its rail.
-    pub collapsed: bool,
-    /// Whether the call changed anything. `false` is a real answer: applying
-    /// the layout that is already showing is a no-op, not a failure.
-    pub changed: bool,
-}
-
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    stack::register(registry)?;
     registry.register(
         descriptor(
             APPLY_PRESET_CAPABILITY_ID,
@@ -352,34 +182,20 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     v2::register(registry)
 }
 
-fn tab_descriptor(
-    id: &str,
-    title: &str,
-    description: &str,
-    input_schema: Value,
-) -> CapabilityDescriptor {
-    let mut descriptor = descriptor(id, title, description, input_schema);
-    descriptor.output_schema = generated_schema::<LayoutTabResult>();
-    descriptor.stale_input_safety = Some(
-        "Switching, creating or renaming a layout removes no work: every layout keeps its indicators and drawings while another is showing. A stale caller can only show the wrong layout, which the result it gets back names."
-            .to_owned(),
-    );
-    descriptor
-}
-
 /// `subject` is the layout the call acted on, when it named a pane; `None`
 /// answers about the focused pane, which is what a rename or a delete moved
 /// nothing away from.
-fn tab_result(
-    app: &QuantickApp,
+fn tab_result<P: LayoutPort + ?Sized>(
+    app: &P,
     changed: bool,
     subject: Option<crate::layouts::LayoutId>,
 ) -> Result<Value, ControlError> {
-    let subject = subject.unwrap_or_else(|| app.focused_pane_layout());
+    let subject = subject.unwrap_or_else(|| app.layout_state().focused_pane_layout());
     let active = app
+        .layout_state()
         .layouts()
         .get(subject)
-        .unwrap_or_else(|| app.layouts().active());
+        .unwrap_or_else(|| app.layout_state().layouts().active());
     let payload = LayoutTabResult {
         active_layout_id: WireU64::new(active.id.0),
         active_layout_name: active.name.clone(),
@@ -393,15 +209,16 @@ fn tab_result(
     })
 }
 
-fn resolve_layout_tab(
-    app: &QuantickApp,
+fn resolve_layout_tab<P: LayoutPort + ?Sized>(
+    app: &P,
     target: &LayoutTabTarget,
 ) -> Result<crate::layouts::LayoutId, ControlError> {
     let by_id = target
         .layout_id
         .map(|id| crate::layouts::LayoutId(id.get()))
         .map(|id| {
-            app.layouts()
+            app.layout_state()
+                .layouts()
                 .get(id)
                 .map(|layout| layout.id)
                 .ok_or_else(|| ControlError::invalid_request(format!("no layout has id {}", id.0)))
@@ -411,7 +228,8 @@ fn resolve_layout_tab(
         .name
         .as_deref()
         .map(|name| {
-            app.layouts()
+            app.layout_state()
+                .layouts()
                 .by_name(name)
                 .map(|layout| layout.id)
                 .ok_or_else(|| {
@@ -426,7 +244,7 @@ fn resolve_layout_tab(
         (Some(id), _) | (None, Some(id)) => Ok(id),
         // Omitted: the layout the focused pane shows — the one the strip
         // lights, never the book's own default.
-        (None, None) => Ok(app.focused_pane_layout()),
+        (None, None) => Ok(app.layout_state().focused_pane_layout()),
     }
 }
 
@@ -434,8 +252,8 @@ fn layout_error(error: crate::layouts::LayoutError) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
-fn tab_switch(
-    app: &mut QuantickApp,
+fn tab_switch<P: TabsPort + LayoutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -450,7 +268,8 @@ fn tab_switch(
         },
     )?;
     let tab = app
-        .control_tab_at(index)
+        .tab_reads()
+        .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let side = match input.pane {
         Some(pane) => {
@@ -464,15 +283,16 @@ fn tab_switch(
         }
         None => tab.focused_side(),
     };
-    let tab_id = tab.id;
+    let tab_id = app.tab_reads().tabs().id_at(index);
     let changed = app
+        .layout_adapter()
         .switch_pane_layout(tab_id, side, id)
         .map_err(layout_error)?;
     tab_result(app, changed, Some(id))
 }
 
-fn tab_create(
-    app: &mut QuantickApp,
+fn tab_create<P: LayoutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -480,13 +300,14 @@ fn tab_create(
     let input: CreateLayoutTabInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let id = app
+        .layout_adapter()
         .create_layout(input.name.as_deref())
         .map_err(layout_error)?;
     tab_result(app, true, Some(id))
 }
 
-fn tab_rename(
-    app: &mut QuantickApp,
+fn tab_rename<P: LayoutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -495,67 +316,10 @@ fn tab_rename(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let id = resolve_layout_tab(app, &input.target)?;
     let changed = app
+        .layout_adapter()
         .rename_layout(id, &input.new_name)
         .map_err(layout_error)?;
     tab_result(app, changed, None)
-}
-
-fn layout_permissions() -> BTreeSet<PermissionId> {
-    [COCKPIT_PERMISSION_ID, COCKPIT_LAYOUT_PERMISSION_ID]
-        .into_iter()
-        .map(|id| PermissionId::new(id).expect("static permission ID is valid"))
-        .collect()
-}
-
-fn descriptor(
-    id: &str,
-    title: &str,
-    description: &str,
-    input_schema: Value,
-) -> CapabilityDescriptor {
-    CapabilityDescriptor {
-        id: CapabilityId::new(id).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: title.to_owned(),
-        description: description.to_owned(),
-        module: ModuleId::new(LAYOUT_MODULE_ID).expect("static module ID is valid"),
-        input_schema,
-        output_schema: generated_schema::<LayoutResult>(),
-        examples: Vec::new(),
-        effect: quantick_control::id::EffectId::new(COCKPIT_EFFECT_ID)
-            .expect("static effect ID is valid"),
-        risk_flags: BTreeSet::<RiskFlagId>::new(),
-        read_only: false,
-        // Applying the same arrangement twice leaves the same arrangement, so
-        // a client may retry a dropped call without wondering what the first
-        // one did. The gateway makes that exact: a repeat under the same key
-        // replays the first answer rather than acting again, for as long as
-        // the connection that made it lasts. A client that reconnects arrives
-        // as a new principal and its keys start over --
-        // `gateway/idempotency.rs` says why.
-        idempotency: IdempotencyPolicy::Optional,
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(
-            "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names."
-                .to_owned(),
-        ),
-        dry_run_supported: false,
-        persistence: EffectPersistence::Durable,
-        reversible: true,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: layout_permissions(),
-        preconditions: Vec::new(),
-        confirmation_class: quantick_control::id::ConfirmationClassId::new(NO_CONFIRMATION_ID)
-            .expect("static confirmation class is valid"),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: None,
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: None,
-    }
 }
 
 /// Which tab a call names, as an index into the open strip.
@@ -563,23 +327,31 @@ fn descriptor(
 /// A tab id that no longer exists is refused rather than resolved to the
 /// active one: a caller that named a tab meant that tab, and quietly acting on
 /// a different market is the worst answer available.
-fn tab_index(app: &QuantickApp, target: TabTarget) -> Result<usize, ControlError> {
+pub(super) fn tab_index<P: TabsPort + ?Sized>(
+    app: &P,
+    target: TabTarget,
+) -> Result<usize, ControlError> {
     let Some(id) = target.tab_id else {
-        return Ok(app.control_active_tab_index());
+        return Ok(app.tab_reads().active_tab_index());
     };
-    app.control_tabs()
-        .iter()
-        .position(|tab| tab.id == id.get())
+    app.tab_reads()
+        .tabs()
+        .position(id.get())
         .ok_or_else(|| ControlError::invalid_request(format!("no open tab has id {}", id.get())))
 }
 
-fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, ControlError> {
+fn result<P: TabsPort + ?Sized>(
+    app: &P,
+    index: usize,
+    changed: bool,
+) -> Result<Value, ControlError> {
     let tab = app
-        .control_tab_at(index)
+        .tab_reads()
+        .tab_at(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let focused = tab.focused_side().index() as u64;
     let payload = LayoutResult {
-        tab_id: WireU64::new(tab.id),
+        tab_id: WireU64::new(app.tab_reads().tabs().id_at(index)),
         preset_id: tab.layout.preset().id.to_owned(),
         pane_count: WireU64::new(tab.pane_count() as u64),
         focused_pane: WireU64::new(focused),
@@ -592,8 +364,8 @@ fn result(app: &QuantickApp, index: usize, changed: bool) -> Result<Value, Contr
     })
 }
 
-fn apply_preset(
-    app: &mut QuantickApp,
+fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -614,15 +386,16 @@ fn apply_preset(
         ))
     })?;
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let changed = tab.layout != layout;
     tab.set_layout(layout);
     result(app, index, changed)
 }
 
-fn move_pane(
-    app: &mut QuantickApp,
+fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -631,18 +404,18 @@ fn move_pane(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let (from, to) = (input.from.get() as usize, input.to.get() as usize);
-    let tab_id = app
-        .control_tab_at(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?
-        .id;
+    app.tab_reads()
+        .tab_at(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let tab_id = app.tab_reads().tabs().id_at(index);
     // The one reposition path — the same call the View menu takes, which
     // moves the slot bookkeeping and the drawing keys with the pane.
-    let changed = app.move_context_pane_at(tab_id, from, to);
+    let changed = app.layout_adapter().move_context_pane_at(tab_id, from, to);
     result(app, index, changed)
 }
 
-fn resize(
-    app: &mut QuantickApp,
+fn resize<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -651,7 +424,8 @@ fn resize(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.target)?;
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The descriptor promises a call cannot reach a width a hand could not,
     // and that promise moved when the floor did: `clamp_pane_fraction` is a
@@ -681,8 +455,8 @@ fn resize(
     result(app, index, changed)
 }
 
-fn collapse(
-    app: &mut QuantickApp,
+fn collapse<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -690,8 +464,8 @@ fn collapse(
     set_collapsed(app, input, true)
 }
 
-fn expand(
-    app: &mut QuantickApp,
+fn expand<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -699,8 +473,8 @@ fn expand(
     set_collapsed(app, input, false)
 }
 
-fn set_collapsed(
-    app: &mut QuantickApp,
+fn set_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     input: &Value,
     collapsed: bool,
 ) -> Result<Value, ControlError> {
@@ -708,15 +482,16 @@ fn set_collapsed(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input)?;
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The same call the divider drag, the rail and the menu take.
     let changed = tab.set_context_collapsed(collapsed);
     result(app, index, changed)
 }
 
-fn focus(
-    app: &mut QuantickApp,
+fn focus<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
@@ -726,7 +501,8 @@ fn focus(
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(
@@ -739,22 +515,24 @@ fn focus(
     result(app, index, changed)
 }
 
-fn set_interval(
-    app: &mut QuantickApp,
+fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: IntervalInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    if input.interval_ms < crate::state::MIN_TIME_INTERVAL_MS
-        || input.interval_ms > crate::state::MAX_TIME_INTERVAL_MS
-    {
-        return Err(ControlError::invalid_request(format!(
-            "an interval of {} ms is outside the range a chart accepts",
-            input.interval_ms
-        )));
-    }
+    let asked = quantick_engine::bar_registry::BUILTIN_BARS
+        .find("time")
+        .expect("registered time definition")
+        .configure(input.interval_ms.into(), None)
+        .map_err(|_| {
+            ControlError::invalid_request(format!(
+                "an interval of {} ms is outside the range a chart accepts",
+                input.interval_ms
+            ))
+        })?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     if pane == 0 {
@@ -764,39 +542,49 @@ fn set_interval(
         ));
     }
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     let Some(chart) = tab.pane_at_mut(pane) else {
         return Err(ControlError::invalid_request(format!(
             "this tab has no context chart at address {pane}"
         )));
     };
-    let asked = crate::state::BarSpec::Time(input.interval_ms);
     let changed = chart.spec.retained(crate::state::BarKind::Time) != &asked;
-    chart.spec.set(asked);
+    chart
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(asked),
+            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+        )
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     result(app, index, changed)
 }
 
-fn set_bar_spec(
-    app: &mut QuantickApp,
+fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
     let input: BarSpecInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let spec = crate::state::BarSpec::parse(&input.spec)
+    let spec = quantick_engine::bar_registry::BUILTIN_BARS
+        .parse(&input.spec)
         .map_err(|error| ControlError::invalid_request(format!("invalid bar spec: {error}")))?;
     let index = tab_index(app, input.target)?;
     let pane = input.pane.get() as usize;
     let tab = app
-        .control_tab_at_mut(index)
+        .tabs_mut()
+        .tab_at_mut(index)
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     if tab.pane_at(pane).is_none() {
         return Err(ControlError::invalid_request(format!(
             "this tab has no pane at address {pane}"
         )));
     }
-    let changed = tab.set_pane_bar_spec(pane, spec);
+    let changed = tab
+        .set_pane_bar_spec(pane, spec)
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     result(app, index, changed)
 }

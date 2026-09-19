@@ -101,7 +101,7 @@ fn layer_visibility_survives_a_restart() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.layer_mask();
+    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
     app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
     switch_layer(&mut app, ChartLayer::PaperTrading, false);
@@ -117,16 +117,16 @@ fn layer_visibility_survives_a_restart() {
     // its defaults every single launch.
     switch_layer(&mut app, ChartLayer::TapeHeatmap, false);
     switch_layer(&mut app, ChartLayer::TapeChart, false);
-    app.maintain_chart_layers();
+    app.layer_wiring().maintain();
     assert_eq!(
         app.workspace.layers().mask(),
-        app.layer_mask(),
+        app.active_tab().flow_pane.layer_mask(&app.style),
         "a settled canvas writes nothing further"
     );
 
     let (mut restored, _events, _commands, _book) = test_app();
     restored.workspace.set_chart_layers_path(path.clone());
-    restored.restore_chart_layers();
+    restored.layer_wiring().restore();
     for (layer, expected) in [
         (ChartLayer::Crosshair, false),
         (ChartLayer::PaperTrading, false),
@@ -166,18 +166,18 @@ fn a_new_tab_opens_on_the_layers_the_user_left_showing() {
 
     let (mut app, _events, _commands, _book) = test_app();
     app.workspace.set_chart_layers_path(path.clone());
-    let mask = app.layer_mask();
+    let mask = app.active_tab().flow_pane.layer_mask(&app.style);
     app.workspace.layers_mut().record(mask);
     switch_layer(&mut app, ChartLayer::Crosshair, false);
-    app.maintain_chart_layers();
+    app.layer_wiring().maintain();
     // A fresh app reads the file, then opens a second market.
     let (mut restored, _events, _commands, _book) = test_app();
     restored.workspace.set_chart_layers_path(path.clone());
-    restored.restore_chart_layers();
+    restored.layer_wiring().restore();
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
     let (cmd_tx, _cmd_rx) = mpsc::channel(4);
-    restored.adopt_tab(
+    restored.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "OTHERUSDT".to_owned(),
         FeedHandle {
@@ -227,6 +227,26 @@ fn the_time_pane_opens_on_the_same_layers_as_the_flow_pane() {
     );
 }
 
+#[test]
+fn inherited_drawing_visibility_opens_without_undo_but_user_changes_are_undoable() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(120);
+    switch_layer(&mut app, ChartLayer::Drawings, false);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    let pane = &mut app.active_tab_mut().time_panes[0];
+    assert!(pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 0);
+    assert!(!pane.drawings.undo());
+
+    let mut actions = quantick_layers::LayerActions::default();
+    pane.set_layer_visible(ChartLayer::Drawings, true, &mut actions);
+    assert!(!pane.drawings.all_hidden());
+    assert_eq!(pane.drawings.undo_depth(), 1);
+    assert!(pane.drawings.undo());
+    assert!(pane.drawings.all_hidden());
+}
+
 /// A tab opened mid-session inherits what is on screen *now*, not what the
 /// file said at startup.
 ///
@@ -252,14 +272,14 @@ crosshair = false
 ",
     )
     .unwrap();
-    app.restore_chart_layers();
+    app.layer_wiring().restore();
     assert!(!layer_on(&app, ChartLayer::Crosshair), "the file was read");
     // ...then the trader switches it back on, and opens a second market.
     switch_layer(&mut app, ChartLayer::Crosshair, true);
     let (_evt_tx, evt_rx) = mpsc::channel(4);
     let (_book_tx, book_rx) = mpsc::channel(4);
     let (cmd_tx, _cmd_rx) = mpsc::channel(4);
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         "OTHERUSDT".to_owned(),
         FeedHandle {
@@ -628,13 +648,16 @@ fn the_trade_paint_layer_switch_stops_the_marks() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert_eq!(
         app.active_tab().paper.session_trades().len(),
         1,
@@ -928,7 +951,12 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     // The toggles still reached the flow pane, which is what owns them.
     assert!(app.active_tab().tape().depth_visible());
     assert!(app.active_tab().tape().bubbles_enabled());
-    assert!(app.active_tab().flow_pane.live_strip_visible);
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .layers
+            .requested(ChartLayer::LiveStrip)
+    );
 }
 
 /// The instrument's price grid is a fact about the market, so both panes
@@ -975,7 +1003,7 @@ fn both_panes_group_the_ladders_at_the_market_bucket_even_with_the_layer_hidden(
         app.active_tab_mut().pane_mut(side).set_layer_visible(
             ChartLayer::Footprint,
             false,
-            &mut chart_layers::LayerActions::default(),
+            &mut quantick_layers::LayerActions::default(),
         );
     }
     let frvp = crate::drawings::DRAWING_TOOLS

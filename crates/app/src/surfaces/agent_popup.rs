@@ -89,8 +89,9 @@ impl Surface for AgentPopupSurface {
     /// assistant, so a scripted capture has no way to raise one — which is
     /// exactly the case `ui-harness` says a hook must cover. It goes through
     /// [`Self::show`], the same call `quantick_notify` makes.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
-        if std::env::var("QUANTICK_AGENT_POPUP").is_ok_and(|value| value == "1") {
+        if crate::hooks::captured::var("QUANTICK_AGENT_POPUP").is_some_and(|value| value == "1") {
             self.show(AgentPopup {
                 title: "Assistant".to_string(),
                 message: "Volume at 108k is three times the session median.".to_string(),
@@ -100,6 +101,7 @@ impl Surface for AgentPopupSurface {
     }
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_AGENT_POPUP"];
 
 #[cfg(test)]

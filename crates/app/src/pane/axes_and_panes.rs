@@ -10,12 +10,12 @@
 
 use eframe::egui;
 
-use crate::chart_layers::ChartLayer;
 use crate::indicator_render;
 use crate::indicator_worker::SlotId;
 use crate::indicators::{MIN_PANE_HEIGHT_PX, PaneSizing};
 use crate::plot_area::{PlotAreas, split_time_strip};
 use crate::price_view::PriceView;
+use quantick_layers::ChartLayer;
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
 

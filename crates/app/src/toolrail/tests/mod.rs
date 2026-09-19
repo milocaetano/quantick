@@ -11,6 +11,33 @@
 
 use super::*;
 
+mod launch;
+
+impl ToolRail {
+    /// Read the launch request before the real draw is allowed to consume it.
+    pub(crate) fn launch_pending_for_test(&self) -> (Option<f32>, Option<&str>) {
+        (self.band_target, self.hook_flyout.as_deref())
+    }
+
+    pub(crate) fn launch_draw_for_test(&mut self, ctx: &egui::Context, size: egui::Vec2) {
+        rail_frame_with(
+            self,
+            &mut Drawings::default(),
+            ctx,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, size),
+            Vec::new(),
+        );
+    }
+
+    pub(crate) fn launch_rendered_for_test(&self) -> (bool, f32, Option<&str>) {
+        (
+            self.band_rect.is_some(),
+            self.band_offset,
+            self.flyout.map(|(family, _)| family),
+        )
+    }
+}
+
 #[test]
 fn toolbox_opens_outside_the_chart_docked_left() {
     let rail = ToolRail::new();

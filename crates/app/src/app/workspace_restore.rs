@@ -1,32 +1,127 @@
-//! Putting a saved cockpit back on the screen.
-//!
-//! [`super::QuantickApp::restore_workspace`] is the read half of the
-//! workspace round trip whose write half is `capture_workspace`: it takes the
-//! arrangement a previous session wrote down and rebuilds the tabs, the
-//! panes, the dock, the rail and the chrome from it. It is one method and it
-//! is long because a cockpit has many parts; it is here rather than in
-//! `app.rs` because nothing else in the window needs to see it.
-
-use crate::state::BarSpec;
+//! Synchronous imperative restore effects driven by the headless arrangement owner.
+use super::arrangement_adapter::ArrangementAdapter;
+use super::saved_context_intervals;
 use crate::tab::{CanvasLayout, LegendFold};
-use crate::ui_state;
+use crate::ui_state::{self, SavedFocusExt};
+use quantick_workspace::arrangement::{RestoreEffect, RestoreMode};
 
-use super::{FIRST_TAB_ID, QuantickApp, saved_context_intervals};
-
-impl QuantickApp {
-    /// Open the saved workspace over the configured defaults.
-    ///
-    /// The first tab already exists and is already streaming the market
-    /// `main` picked from this same workspace, so it is *arranged* here rather
-    /// than opened; the rest are opened outright, each on its own feed. A tab
-    /// carries its bar rule explicitly (see [`Self::adopt_tab`]) — inheriting
-    /// would replace what the user saved with what the tab beside it happens
-    /// to show.
-    ///
-    /// `save_on_exit` is taken from the file even when the file has no tabs:
-    /// a trader who switched autosave off and then reset their layout must not
-    /// find it switched back on at the next launch.
+impl ArrangementAdapter<'_> {
     pub(super) fn restore_workspace(&mut self, workspace: ui_state::Workspace) {
+        self.run_restore(
+            RestoreMode::StartupOrImport,
+            &workspace.tabs,
+            workspace.active_tab,
+            workspace.chrome.as_ref(),
+            Some(&workspace),
+        );
+        if workspace.is_empty() {
+            return;
+        }
+        tracing::info!(target: "quantick::app", schema_version = 1_u8,
+            event_code = "UI_STATE_RESTORED", path = %self.workspace.ui_state_path().display(),
+            tabs = self.tabs.len(), active = self.tabs.active_index(),
+            save_on_exit = self.workspace.session().save_on_exit(), "workspace restored");
+    }
+    pub(super) fn run_restore(
+        &mut self,
+        mode: RestoreMode,
+        documents: &[ui_state::SavedTab],
+        active: usize,
+        chrome: Option<&ui_state::SavedChrome>,
+        startup: Option<&ui_state::Workspace>,
+    ) {
+        self.tabs
+            .begin_restore(
+                mode,
+                documents.len(),
+                documents
+                    .first()
+                    .map(|saved| (saved.feed.as_str(), saved.symbol.as_str())),
+                active,
+            )
+            .expect("caller checked nonempty named arrangement");
+        loop {
+            let step = self.tabs.restore_step();
+            let effect = step.effect();
+            match effect {
+                RestoreEffect::AdoptSettings => {
+                    self.adopt_workspace_settings(startup.expect("startup settings effect"))
+                }
+                RestoreEffect::RestoreChrome => {
+                    if let Some(chrome) = chrome {
+                        self.restore_chrome(chrome);
+                    }
+                }
+                RestoreEffect::OpenSaved { index, adopt } => {
+                    let saved = &documents[index];
+                    let flow = quantick_engine::bar_registry::BUILTIN_BARS
+                        .parse(&saved.flow_bars)
+                        .ok();
+                    if let Some(id) = adopt {
+                        if let Some(spec) = flow {
+                            self.tabs
+                                .by_id_mut(id.0)
+                                .expect("adopted runtime exists")
+                                .flow_pane
+                                .set_spec(spec);
+                        }
+                    } else {
+                        let opening = self
+                            .tabs
+                            .plan_restore(&step)
+                            .expect("open effect plans insertion");
+                        self.open_with_plan(
+                            saved.feed.clone(),
+                            saved.symbol.clone(),
+                            flow,
+                            Some(opening),
+                        );
+                    }
+                }
+                RestoreEffect::ArrangeSaved { index, target } => {
+                    let saved = &documents[index];
+                    let intervals =
+                        saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
+                    let tab = self
+                        .tabs
+                        .by_id_mut(target.0)
+                        .expect("core selected an existing runtime");
+                    tab.restore_canvas(
+                        CanvasLayout::from(saved.layout),
+                        saved.split_fraction,
+                        saved.context_collapsed,
+                        saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
+                        &intervals,
+                        LegendFold {
+                            flow: saved.flow_legend_collapsed,
+                            time: saved.time_legend_collapsed,
+                        },
+                    );
+                    tab.set_opening_layouts(saved.flow_layout, &saved.context_layouts);
+                }
+                RestoreEffect::CloseStale { .. } => {
+                    if let Some(plan) = self.tabs.plan_restore(&step) {
+                        self.close_planned(plan)
+                            .expect("exclusive restore keeps close current");
+                    }
+                }
+                RestoreEffect::SelectSaved { .. } => {
+                    let plan = self.tabs.plan_restore(&step).expect("selection effect");
+                    self.tabs.commit_selection(plan);
+                }
+                RestoreEffect::RefreshLabel => {
+                    let config = self.config.clone();
+                    self.active_tab_mut().refresh_chip_label(&config);
+                }
+                RestoreEffect::Finish => {}
+            }
+            self.tabs.advance_restore(step);
+            if effect == RestoreEffect::Finish {
+                break;
+            }
+        }
+    }
+    fn adopt_workspace_settings(&mut self, workspace: &ui_state::Workspace) {
         self.workspace.session_mut().adopt(
             workspace.save_on_exit,
             workspace.saved.clone(),
@@ -67,90 +162,5 @@ impl QuantickApp {
                 );
             }
         }
-        if let Some(chrome) = &workspace.chrome {
-            self.restore_chrome(chrome);
-        }
-        if workspace.is_empty() {
-            return;
-        }
-        // Whether tab zero is already the workspace's first market.
-        //
-        // At startup it is: `main` read that market out of this very file and
-        // spawned the window on it, so the tab exists and only its bar rule
-        // can differ. Mid-session — a workspace file being opened — it is
-        // whatever the trader was looking at, and adopting it would leave the
-        // strip holding one market with another's name. Then every tab is
-        // opened outright and the ones that were there are closed after, so
-        // the strip is *replaced* rather than grown.
-        let adopt_first = self.tabs.first().is_some_and(|tab| tab.id == FIRST_TAB_ID)
-            && self.tabs.len() == 1
-            && self.tabs[0].feed_id == workspace.tabs[0].feed
-            && self.tabs[0].symbol == workspace.tabs[0].symbol;
-        let stale: Vec<u64> = if adopt_first {
-            Vec::new()
-        } else {
-            self.tabs.iter().map(|tab| tab.id).collect()
-        };
-        for (index, saved) in workspace.tabs.iter().enumerate() {
-            // `restore` has already dropped anything unparseable, so a spec
-            // reaching here is one a control could have produced.
-            let flow = BarSpec::parse(&saved.flow_bars).ok();
-            if index == 0 && adopt_first {
-                // Tab zero is the one `main` spawned. Its market matches this
-                // entry (that is where `main` read it from), so only its bar
-                // rule can still differ — `main` prefers a feed's declared
-                // `default_bars` when the workspace names none.
-                if let Some(spec) = flow {
-                    self.tabs[0].flow_pane.set_spec(spec);
-                }
-            } else {
-                self.open_tab(saved.feed.clone(), saved.symbol.clone(), flow);
-            }
-            let context_intervals =
-                saved_context_intervals(&saved.context_bars, saved.time_bars.as_deref());
-            let focus = saved.focus.map(|focus| focus.to_side(saved.focus_slot));
-            // `open_tab` activates what it opened, so the tab just arranged is
-            // always the last one — index zero on the first pass.
-            let target = if index == 0 && adopt_first {
-                0
-            } else {
-                self.tabs.len() - 1
-            };
-            self.tabs[target].restore_canvas(
-                CanvasLayout::from(saved.layout),
-                saved.split_fraction,
-                saved.context_collapsed,
-                focus,
-                &context_intervals,
-                LegendFold {
-                    flow: saved.flow_legend_collapsed,
-                    time: saved.time_legend_collapsed,
-                },
-            );
-            self.tabs[target].set_opening_layouts(saved.flow_layout, &saved.context_layouts);
-        }
-        // The markets that were on screen before this workspace was opened.
-        // Closed last, so the strip is never empty in between and `close_tab`
-        // — which refuses to close the only tab — always has the restored
-        // ones to keep. Each closes through its own path, so a simulated
-        // position ends in a journaled flatten rather than vanishing.
-        for id in stale {
-            if let Some(index) = self.tabs.iter().position(|tab| tab.id == id) {
-                self.close_tab(index);
-            }
-        }
-        self.active_tab = workspace.active_tab.min(self.tabs.len() - 1);
-        let config = self.config.clone();
-        self.active_tab_mut().refresh_chip_label(&config);
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "UI_STATE_RESTORED",
-            path = %self.workspace.ui_state_path().display(),
-            tabs = self.tabs.len(),
-            active = self.active_tab,
-            save_on_exit = self.workspace.session().save_on_exit(),
-            "workspace restored"
-        );
     }
 }

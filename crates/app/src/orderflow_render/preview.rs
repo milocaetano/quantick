@@ -40,6 +40,9 @@ const PREVIEW_SUMMARY_BUY_SHARE: f32 = 0.62;
 /// demonstrates the exact painter vocabulary with fixed synthetic geometry:
 /// persistent walls, one aggression-aligned bite and one unattributed L2
 /// reduction. It therefore works before a live snapshot is available.
+///
+/// Painted back to front: the frame and grid, the resting walls, the price
+/// path, the two reductions, the sample prints and the legend.
 pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::Response {
     let width = ui.available_width().clamp(240.0, 680.0);
     let desired = egui::vec2(width, 196.0);
@@ -48,111 +51,176 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         return response;
     }
 
-    let style =
-        OrderflowRenderStyle::from_config(config, egui::Color32::from_rgb(19, 23, 34)).sanitized();
-    let palette = Palette::for_theme(style.theme);
-    let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, egui::Rounding::same(4.0), style.canvas_background);
-    painter.rect_stroke(
-        rect,
-        egui::Rounding::same(4.0),
-        egui::Stroke::new(0.75_f32, palette.legend_border),
-    );
-
-    let title = egui::pos2(rect.left() + 9.0, rect.top() + 7.0);
-    painter.text(
-        title,
-        egui::Align2::LEFT_TOP,
-        "synthetic order-flow preview",
-        egui::FontId::proportional(10.0),
-        palette.muted_text,
-    );
-    let chart = egui::Rect::from_min_max(
-        rect.left_top() + egui::vec2(8.0, 24.0),
-        rect.right_bottom() - egui::vec2(8.0, if config.show_legend { 30.0 } else { 8.0 }),
-    );
-
-    for step in 1..5 {
-        let y = egui::lerp(chart.top()..=chart.bottom(), step as f32 / 5.0);
-        painter.line_segment(
-            [egui::pos2(chart.left(), y), egui::pos2(chart.right(), y)],
-            egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(16)),
-        );
-    }
-
-    // Each tuple is `(y, height, x0, x1, intensity, side)`. Segment boundaries
-    // make additions and reductions visible without animation or live data.
-    let segments = [
-        (0.16, 0.034, 0.00, 0.48, 0.34, BookSide::Ask),
-        (0.16, 0.034, 0.48, 0.76, 0.73, BookSide::Ask),
-        (0.27, 0.042, 0.00, 0.58, 0.92, BookSide::Ask),
-        (0.27, 0.042, 0.58, 0.98, 0.40, BookSide::Ask),
-        (0.39, 0.030, 0.08, 0.88, 0.50, BookSide::Ask),
-        (0.61, 0.032, 0.00, 0.44, 0.36, BookSide::Bid),
-        (0.61, 0.032, 0.44, 1.00, 0.66, BookSide::Bid),
-        (0.72, 0.045, 0.00, 0.43, 0.88, BookSide::Bid),
-        (0.72, 0.045, 0.43, 0.82, 0.24, BookSide::Bid),
-        (0.84, 0.032, 0.10, 1.00, 0.54, BookSide::Bid),
-    ];
-    let mut heat_mesh = egui::Mesh::default();
-    for (y, height, x0, x1, intensity, side) in segments {
-        let band = normalized_rect(chart, x0, x1, y - height / 2.0, y + height / 2.0);
-        let rgb = resting_rgb(style.theme, side, intensity);
-        let alpha = config.opacity.clamp(0.0, 1.0) * 0.94;
-        let glow = egui::Rect::from_min_max(
-            egui::pos2(band.left(), band.top() - 0.7),
-            egui::pos2(band.right(), band.bottom() + 0.7),
-        );
-        add_gradient_rect(
-            &mut heat_mesh,
-            glow,
-            rgba(rgb, alpha * style.edge_glow),
-            rgba(rgb, alpha * style.edge_glow),
-        );
-        // Solid fill, matching the live heatmap's crisp bands.
-        add_gradient_rect(&mut heat_mesh, band, rgba(rgb, alpha), rgba(rgb, alpha));
-    }
-    painter.add(egui::Shape::mesh(heat_mesh));
-
-    // A subdued price path gives the liquidity/trade interaction context while
-    // keeping the preview focused on the order-flow layers.
-    let price_points = [
-        (0.00, 0.59),
-        (0.15, 0.57),
-        (0.29, 0.63),
-        (0.43, 0.68),
-        (0.56, 0.53),
-        (0.66, 0.29),
-        (0.79, 0.36),
-        (1.00, 0.25),
-    ]
-    .into_iter()
-    .map(|(x, y)| {
-        egui::pos2(
-            egui::lerp(chart.left()..=chart.right(), x),
-            egui::lerp(chart.top()..=chart.bottom(), y),
-        )
-    })
-    .collect();
-    painter.add(egui::Shape::line(
-        price_points,
-        egui::Stroke::new(1.1_f32, egui::Color32::from_white_alpha(145)),
-    ));
-
+    let canvas = PreviewCanvas::new(ui, rect, config);
+    canvas.draw_frame();
+    canvas.draw_resting_walls(config.opacity);
+    canvas.draw_price_path();
     if config.show_aligned_depletion {
-        // Aggression-aligned consumption front with a glow leaking into the
-        // consumed side.
+        canvas.draw_aligned_bite();
+    }
+    if config.show_unattributed_reductions {
+        canvas.draw_depth_only_pull();
+    }
+    if config.show_aggressions {
+        canvas.draw_sample_prints(config);
+    }
+    if config.show_legend {
+        draw_preview_legend(&canvas.painter, rect, &canvas.palette, canvas.style.theme);
+    }
+    response.on_hover_text(
+        "Deterministic visual sample: green/red dots are confirmed trades; \
+         a bright bite is aggression-aligned depletion; violet is an \
+         unattributed L2 reduction.",
+    )
+}
+
+/// The preview's surface, resolved once per draw: the clipped painter, the
+/// sanitized style and palette, the whole frame and the plot area inside it.
+struct PreviewCanvas {
+    painter: egui::Painter,
+    style: OrderflowRenderStyle,
+    palette: Palette,
+    /// The whole preview, title and legend included.
+    rect: egui::Rect,
+    /// The plot area every normalized coordinate below maps into.
+    chart: egui::Rect,
+}
+
+impl PreviewCanvas {
+    fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
+        let style = OrderflowRenderStyle::from_config(config, egui::Color32::from_rgb(19, 23, 34))
+            .sanitized();
+        let palette = Palette::for_theme(style.theme);
+        let painter = ui.painter().with_clip_rect(rect);
+        let chart = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(8.0, 24.0),
+            rect.right_bottom() - egui::vec2(8.0, if config.show_legend { 30.0 } else { 8.0 }),
+        );
+        Self {
+            painter,
+            style,
+            palette,
+            rect,
+            chart,
+        }
+    }
+
+    fn x(&self, t: f32) -> f32 {
+        egui::lerp(self.chart.left()..=self.chart.right(), t)
+    }
+
+    fn y(&self, t: f32) -> f32 {
+        egui::lerp(self.chart.top()..=self.chart.bottom(), t)
+    }
+
+    /// Background, border, title and the faint horizontal grid.
+    fn draw_frame(&self) {
+        let (painter, rect, palette) = (&self.painter, self.rect, &self.palette);
+        painter.rect_filled(
+            rect,
+            egui::Rounding::same(4.0),
+            self.style.canvas_background,
+        );
+        painter.rect_stroke(
+            rect,
+            egui::Rounding::same(4.0),
+            egui::Stroke::new(0.75_f32, palette.legend_border),
+        );
+
+        let title = egui::pos2(rect.left() + 9.0, rect.top() + 7.0);
+        painter.text(
+            title,
+            egui::Align2::LEFT_TOP,
+            "synthetic order-flow preview",
+            egui::FontId::proportional(10.0),
+            palette.muted_text,
+        );
+
+        let chart = self.chart;
+        for step in 1..5 {
+            let y = self.y(step as f32 / 5.0);
+            painter.line_segment(
+                [egui::pos2(chart.left(), y), egui::pos2(chart.right(), y)],
+                egui::Stroke::new(0.5_f32, egui::Color32::from_white_alpha(16)),
+            );
+        }
+    }
+
+    /// Persistent walls on both sides of the book, in one mesh.
+    fn draw_resting_walls(&self, opacity: f32) {
+        // Each tuple is `(y, height, x0, x1, intensity, side)`. Segment boundaries
+        // make additions and reductions visible without animation or live data.
+        let segments = [
+            (0.16, 0.034, 0.00, 0.48, 0.34, BookSide::Ask),
+            (0.16, 0.034, 0.48, 0.76, 0.73, BookSide::Ask),
+            (0.27, 0.042, 0.00, 0.58, 0.92, BookSide::Ask),
+            (0.27, 0.042, 0.58, 0.98, 0.40, BookSide::Ask),
+            (0.39, 0.030, 0.08, 0.88, 0.50, BookSide::Ask),
+            (0.61, 0.032, 0.00, 0.44, 0.36, BookSide::Bid),
+            (0.61, 0.032, 0.44, 1.00, 0.66, BookSide::Bid),
+            (0.72, 0.045, 0.00, 0.43, 0.88, BookSide::Bid),
+            (0.72, 0.045, 0.43, 0.82, 0.24, BookSide::Bid),
+            (0.84, 0.032, 0.10, 1.00, 0.54, BookSide::Bid),
+        ];
+        let style = &self.style;
+        let mut heat_mesh = egui::Mesh::default();
+        for (y, height, x0, x1, intensity, side) in segments {
+            let band = normalized_rect(self.chart, x0, x1, y - height / 2.0, y + height / 2.0);
+            let rgb = resting_rgb(style.theme, side, intensity);
+            let alpha = opacity.clamp(0.0, 1.0) * 0.94;
+            let glow = egui::Rect::from_min_max(
+                egui::pos2(band.left(), band.top() - 0.7),
+                egui::pos2(band.right(), band.bottom() + 0.7),
+            );
+            add_gradient_rect(
+                &mut heat_mesh,
+                glow,
+                rgba(rgb, alpha * style.edge_glow),
+                rgba(rgb, alpha * style.edge_glow),
+            );
+            // Solid fill, matching the live heatmap's crisp bands.
+            add_gradient_rect(&mut heat_mesh, band, rgba(rgb, alpha), rgba(rgb, alpha));
+        }
+        self.painter.add(egui::Shape::mesh(heat_mesh));
+    }
+
+    /// A subdued price path gives the liquidity/trade interaction context while
+    /// keeping the preview focused on the order-flow layers.
+    fn draw_price_path(&self) {
+        let price_points = [
+            (0.00, 0.59),
+            (0.15, 0.57),
+            (0.29, 0.63),
+            (0.43, 0.68),
+            (0.56, 0.53),
+            (0.66, 0.29),
+            (0.79, 0.36),
+            (1.00, 0.25),
+        ]
+        .into_iter()
+        .map(|(x, y)| egui::pos2(self.x(x), self.y(y)))
+        .collect();
+        self.painter.add(egui::Shape::line(
+            price_points,
+            egui::Stroke::new(1.1_f32, egui::Color32::from_white_alpha(145)),
+        ));
+    }
+
+    /// Aggression-aligned consumption front with a glow leaking into the
+    /// consumed side.
+    fn draw_aligned_bite(&self) {
+        let (painter, palette) = (&self.painter, &self.palette);
         let aligned = EventBand {
-            x: egui::lerp(chart.left()..=chart.right(), 0.58),
-            top: egui::lerp(chart.top()..=chart.bottom(), 0.27 - 0.042 / 2.0),
-            bottom: egui::lerp(chart.top()..=chart.bottom(), 0.27 + 0.042 / 2.0),
+            x: self.x(0.58),
+            top: self.y(0.27 - 0.042 / 2.0),
+            bottom: self.y(0.27 + 0.042 / 2.0),
         };
         let mut front_mesh = egui::Mesh::default();
         add_gradient_rect(
             &mut front_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(aligned.x, aligned.top),
-                egui::pos2((aligned.x + 14.0).min(chart.right()), aligned.bottom),
+                egui::pos2((aligned.x + 14.0).min(self.chart.right()), aligned.bottom),
             ),
             palette.consumption.gamma_multiply(0.24),
             egui::Color32::TRANSPARENT,
@@ -167,19 +235,23 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         );
     }
 
-    if config.show_unattributed_reductions {
-        // Depth-only withdrawal: a calm violet fade with a thin cap.
+    /// Depth-only withdrawal: a calm violet fade with a thin cap.
+    fn draw_depth_only_pull(&self) {
+        let (painter, palette) = (&self.painter, &self.palette);
         let depth_only = EventBand {
-            x: egui::lerp(chart.left()..=chart.right(), 0.76),
-            top: egui::lerp(chart.top()..=chart.bottom(), 0.16 - 0.034 / 2.0),
-            bottom: egui::lerp(chart.top()..=chart.bottom(), 0.16 + 0.034 / 2.0),
+            x: self.x(0.76),
+            top: self.y(0.16 - 0.034 / 2.0),
+            bottom: self.y(0.16 + 0.034 / 2.0),
         };
         let mut ghost_mesh = egui::Mesh::default();
         add_gradient_rect(
             &mut ghost_mesh,
             egui::Rect::from_min_max(
                 egui::pos2(depth_only.x, depth_only.top),
-                egui::pos2((depth_only.x + 20.0).min(chart.right()), depth_only.bottom),
+                egui::pos2(
+                    (depth_only.x + 20.0).min(self.chart.right()),
+                    depth_only.bottom,
+                ),
             ),
             palette.depth_only.gamma_multiply(0.42),
             egui::Color32::TRANSPARENT,
@@ -194,18 +266,15 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
         );
     }
 
-    if config.show_aggressions {
-        let bubbles = &style.bubbles;
-        let colors = BubbleColors::resolve(&palette, bubbles);
-        // Two prints at fixed normalized sizes, so every slider (radius range,
-        // opacity, rim, front, trail, side offset) shows its effect here.
+    /// Two prints at fixed normalized sizes, so every slider (radius range,
+    /// opacity, rim, front, trail, side offset) shows its effect here.
+    fn draw_sample_prints(&self, config: &HeatmapConfig) {
+        let bubbles = &self.style.bubbles;
+        let colors = BubbleColors::resolve(&self.palette, bubbles);
         draw_preview_bubble(
-            &painter,
+            &self.painter,
             PreviewBubble {
-                center: egui::pos2(
-                    egui::lerp(chart.left()..=chart.right(), 0.58),
-                    egui::lerp(chart.top()..=chart.bottom(), 0.27),
-                ),
+                center: egui::pos2(self.x(0.58), self.y(0.27)),
                 size: PREVIEW_LARGE_PRINT_SIZE,
                 side: Side::Buy,
                 linked_reduction: config.show_aligned_depletion,
@@ -217,36 +286,24 @@ pub(crate) fn draw_preview(ui: &mut egui::Ui, config: &HeatmapConfig) -> egui::R
                     1.0
                 },
             },
-            chart.right(),
+            self.chart.right(),
             bubbles,
             &colors,
         );
         draw_preview_bubble(
-            &painter,
+            &self.painter,
             PreviewBubble {
-                center: egui::pos2(
-                    egui::lerp(chart.left()..=chart.right(), 0.43),
-                    egui::lerp(chart.top()..=chart.bottom(), 0.72),
-                ),
+                center: egui::pos2(self.x(0.43), self.y(0.72)),
                 size: PREVIEW_SMALL_PRINT_SIZE,
                 side: Side::Sell,
                 linked_reduction: false,
                 buy_share: 0.0,
             },
-            chart.right(),
+            self.chart.right(),
             bubbles,
             &colors,
         );
     }
-
-    if config.show_legend {
-        draw_preview_legend(&painter, rect, &palette, style.theme);
-    }
-    response.on_hover_text(
-        "Deterministic visual sample: green/red dots are confirmed trades; \
-         a bright bite is aggression-aligned depletion; violet is an \
-         unattributed L2 reduction.",
-    )
 }
 
 fn normalized_rect(bounds: egui::Rect, x0: f32, x1: f32, y0: f32, y1: f32) -> egui::Rect {

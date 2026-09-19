@@ -53,6 +53,14 @@ pub struct PaneContextMenu {
     pub(crate) chart_layers_rect: Option<egui::Rect>,
 }
 
+impl PaneContextMenu {
+    /// Aim the next menu at one pane or the other, as a right-click would.
+    #[cfg(test)]
+    pub(crate) fn aim_at_tape(&mut self, on_tape: bool) {
+        self.on_tape = on_tape;
+    }
+}
+
 impl ChartPane {
     /// The secondary click on the canvas: what the press resolves (the price,
     /// the tape flag, the drawing, the placing entries), the layer menu it
@@ -83,7 +91,7 @@ impl ChartPane {
             // projection `drawing_point_at` owns, each with the tool's own
             // snap — the anchored VWAP's candle magnet included.
             let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
-            self.context_menu.on_tape = self.click_on_tape(position.x);
+            self.context_menu.on_tape = self.frame.click_on_tape(position.x);
             // The most specific thing under the click: a drawing, resolved
             // on the band the click actually landed in (a CVD line and a
             // price line can share the pixel). Right-click selects like the
@@ -91,7 +99,15 @@ impl ChartPane {
             // which object is being acted on.
             let clicked = bands::band_at(bands, position)
                 .filter(|band| band.drawable())
-                .and_then(|band| self.drawing_at(position, band, history_right, total));
+                .and_then(|band| {
+                    self.drawing_projection().drawing_at(
+                        &self.drawings,
+                        position,
+                        band,
+                        history_right,
+                        total,
+                    )
+                });
             self.context_menu.drawing = clicked.map(|index| {
                 self.drawings.select(Some(index));
                 let drawing = &self.drawings.items()[index];
@@ -104,7 +120,7 @@ impl ChartPane {
                 if tool.context_menu_label().is_none() {
                     continue;
                 }
-                if let Some(point) = self.drawing_point_at(
+                if let Some(point) = self.drawing_projection().drawing_point_at(
                     position,
                     history_right,
                     total,
@@ -144,6 +160,7 @@ impl ChartPane {
 
     /// Where the chart-layer submenu button was painted, for the scripted
     /// pointer event that opens the real egui menu during capture.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
         self.context_menu
             .chart_layers_rect

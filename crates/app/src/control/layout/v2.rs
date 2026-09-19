@@ -32,63 +32,26 @@
 //! the fraction it reads back: an `f32` in 0..1 is accurate to far better
 //! than half a unit in the sixth place.
 
-use quantick_control::{
-    error::ControlError,
-    registry::{CapabilityDescriptor, RegistryError},
-    schema::generated_schema,
-    wire::{ActorContext, CanonicalDecimal, WireU64},
-};
+use crate::app::{LayoutPort, TabsMutPort, TabsPort};
+pub(crate) use quantick_control_schema::layout_v2::*;
+
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
+
 use rust_decimal::{Decimal, prelude::ToPrimitive};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+
 use serde_json::Value;
 
-use crate::app::QuantickApp;
+use super::super::{actions::ActionRegistry, gateway::ControlAccess};
 
-use super::super::{actions::ActionRegistry, gateway::ControlAccess, types::canonical_f64};
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
 // own, so the answer and the readback are one number written one way.
 use super::super::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_PLACES;
+
 use super::{
     APPLY_PRESET_CAPABILITY_ID, BAR_SPEC_CAPABILITY_ID, COLLAPSE_CAPABILITY_ID,
     EXPAND_CAPABILITY_ID, FOCUS_CAPABILITY_ID, INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID,
-    RESIZE_CAPABILITY_ID, TabTarget,
+    RESIZE_CAPABILITY_ID,
 };
-
-/// The version this module registers.
-pub(crate) const VERSION: u32 = 2;
-
-/// What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`
-/// exact.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct LayoutResultV2 {
-    /// The tab that changed.
-    pub tab_id: WireU64,
-    /// The preset the canvas now matches.
-    pub preset_id: String,
-    /// How many panes it draws.
-    pub pane_count: WireU64,
-    /// The focused pane's address.
-    pub focused_pane: WireU64,
-    /// The context column's share of the canvas, 0..1, to six places — the
-    /// same number `workspace.summary` reports as `split_fraction`.
-    pub fraction: CanonicalDecimal,
-    /// Whether the context column is collapsed to its rail.
-    pub collapsed: bool,
-    /// Whether the call changed anything. `false` is a real answer: applying
-    /// the layout that is already showing is a no-op, not a failure.
-    pub changed: bool,
-}
-
-/// `layout.pane.resize` v2's input: v1's, with `fraction` exact.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub(crate) struct ResizeInputV2 {
-    #[serde(flatten)]
-    pub target: TabTarget,
-    /// The share, 0..1, as an exact decimal with at most six places. Held
-    /// inside the same floor a drag is held to.
-    pub fraction: CanonicalDecimal,
-}
 
 /// The eight calls, each with the v2 handler that answers for it.
 const CALLS: [(&str, super::super::actions::ActionHandler); 8] = [
@@ -120,39 +83,8 @@ pub(super) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn descriptor(v1: CapabilityDescriptor) -> CapabilityDescriptor {
-    let input_schema = if v1.id.as_str() == RESIZE_CAPABILITY_ID {
-        generated_schema::<ResizeInputV2>()
-    } else {
-        v1.input_schema.clone()
-    };
-    CapabilityDescriptor {
-        version: VERSION,
-        description: format!(
-            "{} Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
-            v1.description
-        ),
-        input_schema,
-        output_schema: generated_schema::<LayoutResultV2>(),
-        ..v1
-    }
-}
-
-/// v1's answer, re-encoded: `fraction` from the number v1 computed to the
-/// exact decimal v2 publishes.
-fn exact(answer: Value) -> Result<Value, ControlError> {
-    let mut answer = answer;
-    let fraction = answer
-        .get("fraction")
-        .and_then(Value::as_f64)
-        .and_then(|fraction| canonical_f64(fraction, FRACTION_DECIMAL_PLACES))
-        .ok_or_else(|| ControlError::invalid_request("the layout result carries no fraction"))?;
-    answer["fraction"] = Value::String(fraction.as_str().to_owned());
-    Ok(answer)
-}
-
-fn apply_preset(
-    app: &mut QuantickApp,
+fn apply_preset<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -160,8 +92,8 @@ fn apply_preset(
     exact(super::apply_preset(app, access, actor, input)?)
 }
 
-fn move_pane(
-    app: &mut QuantickApp,
+fn move_pane<P: TabsPort + LayoutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -169,8 +101,8 @@ fn move_pane(
     exact(super::move_pane(app, access, actor, input)?)
 }
 
-fn collapse(
-    app: &mut QuantickApp,
+fn collapse<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -178,8 +110,8 @@ fn collapse(
     exact(super::collapse(app, access, actor, input)?)
 }
 
-fn expand(
-    app: &mut QuantickApp,
+fn expand<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -187,8 +119,8 @@ fn expand(
     exact(super::expand(app, access, actor, input)?)
 }
 
-fn focus(
-    app: &mut QuantickApp,
+fn focus<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -196,8 +128,8 @@ fn focus(
     exact(super::focus(app, access, actor, input)?)
 }
 
-fn set_interval(
-    app: &mut QuantickApp,
+fn set_interval<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -205,8 +137,8 @@ fn set_interval(
     exact(super::set_interval(app, access, actor, input)?)
 }
 
-fn set_bar_spec(
-    app: &mut QuantickApp,
+fn set_bar_spec<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -216,8 +148,8 @@ fn set_bar_spec(
 
 /// Resize, with the share read as an exact decimal and handed to the v1 body
 /// as the number it has always taken — in process, where no wire is crossed.
-fn resize(
-    app: &mut QuantickApp,
+fn resize<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
@@ -252,7 +184,8 @@ fn resize(
     // been shown.
     let index = super::tab_index(app, input.target)?;
     let drawn = app
-        .control_tab_at(index)
+        .tab_reads()
+        .tab_at(index)
         .is_some_and(|tab| tab.last_canvas_width() > 0.0);
     if !drawn {
         return Err(ControlError::invalid_request(

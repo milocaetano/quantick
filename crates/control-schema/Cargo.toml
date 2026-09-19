@@ -1,0 +1,29 @@
+[package]
+name = "quantick-control-schema"
+description = "What the Quantick control plane says: the wire shapes of every projection and action, their identifiers, and the pure transformations from domain values into them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-control = { path = "../control" }
+quantick-control-host = { path = "../control-host" }
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-layers = { path = "../layers" }
+quantick-orderbook = { path = "../orderbook" }
+quantick-orderflow = { path = "../orderflow" }
+quantick-pine = { path = "../pine" }
+quantick-sim = { path = "../sim" }
+quantick-stores = { path = "../stores" }
+# PNG encoding for the evidence screenshot: a raster no viewer accepts would
+# make an evidence image useless to the human reading the bundle.
+png = { workspace = true }
+rust_decimal = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

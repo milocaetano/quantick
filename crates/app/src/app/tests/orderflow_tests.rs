@@ -6,7 +6,16 @@ use super::*;
 #[test]
 fn switching_only_the_imbalance_unit_recuts_the_series() {
     let (mut app, _evt_tx, _cmd_rx, _book_tx) = test_app();
-    app.active_tab_mut().flow_pane.spec.kind = crate::state::BarKind::Imbalance;
+    app.active_tab_mut()
+        .flow_pane
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Select(
+                crate::state::BarKind::Imbalance.label(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     assert_eq!(
@@ -15,15 +24,17 @@ fn switching_only_the_imbalance_unit_recuts_the_series() {
         "the kind switch lands on the default trades unit first"
     );
 
-    let retained = app
-        .active_tab_mut()
+    app.active_tab_mut()
         .flow_pane
         .spec
-        .retained_mut(crate::state::BarKind::Imbalance);
-    let BarSpec::Imbalance(unit, _) = retained else {
-        panic!("the imbalance slot holds an imbalance spec")
-    };
-    *unit = crate::state::ImbalanceUnit::Volume;
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Choice {
+                name: "imbalance_unit",
+                value: "volume",
+            },
+            quantick_engine::bar_selection::BarInputAvailability::ALL,
+        )
+        .unwrap();
     app.active_tab_mut().apply_spec_changes();
     assert!(
         app.active_tab().loading.is_active(LoadingTask::BarRebuild),
@@ -180,7 +191,15 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.alarm = true;
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF sell".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF sell".to_owned(),
+        )
         .expect("the form compiles and the span still covers the future");
 
     let mut id = 0u64;
@@ -220,7 +239,12 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             }),
             "the reason is readable as a value, not only as a sentence",
         );
-        tab.flow_pane.strategy_badge_text(drawing)
+        crate::pane::strategies::strategy_badge_text(
+            &tab.flow_pane.strategies.anchors,
+            &tab.flow_pane.drawings,
+            drawing,
+            tab.flow_pane.closed_slots(),
+        )
     };
     assert!(
         badge.contains("region ended — stretch it right"),
@@ -273,7 +297,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {
-            pane.aim_context_menu_at_tape(on_tape);
+            pane.context_menu.aim_at_tape(on_tape);
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),

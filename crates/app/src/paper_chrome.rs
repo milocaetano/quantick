@@ -40,7 +40,7 @@ use crate::theme;
 // journal moved into `quantick_paper::format`; re-exported so this module stays
 // the one vocabulary every paper surface imports.
 pub(crate) use quantick_paper::format::{
-    PositionSummary, fmt_decimal, fmt_points, fmt_signed_points, position_word, sanitize_symbol,
+    PositionSummary, fmt_decimal, fmt_points, fmt_signed_points, position_word,
 };
 
 /// Uppercase section caption — the ledger's group labels and column header.

@@ -34,12 +34,12 @@
 //! `#[cfg(test)]`, and the one production change it leans on is
 //! `request_enable` naming its ceiling through `request_enable_under`.
 
-use std::{path::PathBuf, sync::atomic::Ordering, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use crossbeam_channel::Sender;
 use quantick_control::{error::ControlError, id::ProfileId};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::{AccessState, ControlAccess, GatewayOptions, UiReadExecution, UiRequest};
 
@@ -59,7 +59,7 @@ impl ServedRequest {
         Self {
             capability_id: request.prepared.envelope.capability_id.as_str().to_owned(),
             request_id: request.prepared.envelope.request_id.as_str().to_owned(),
-            began: request.started.load(Ordering::Acquire),
+            began: request.started.has_started(),
         }
     }
 }
@@ -105,7 +105,7 @@ impl ControlAccess {
 
     /// Serve everything queued, as the frame's drain would, and say what was
     /// served.
-    pub(crate) fn serve_queued_for_test(&mut self, app: &mut QuantickApp) -> Vec<ServedRequest> {
+    pub(crate) fn serve_queued_for_test(&mut self, app: &mut ControlWindow) -> Vec<ServedRequest> {
         let mut served = Vec::new();
         while let Some(answer) = self.serve_one_withholding_answer_for_test(app) {
             served.push(answer.served.clone());
@@ -118,7 +118,7 @@ impl ControlAccess {
     /// `execute_on_ui`, and keep its answer. `None` when nothing is queued.
     pub(crate) fn serve_one_withholding_answer_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
     ) -> Option<WithheldAnswer> {
         let (requests, generation) = match &self.state {
             AccessState::Enabled(runtime) => (runtime.requests.clone(), runtime.grant_generation),
@@ -133,5 +133,55 @@ impl ControlAccess {
             response: request.response.clone(),
             result,
         })
+    }
+}
+
+/// One specifically armed operation, observed only after the normal drain replies.
+#[derive(Clone, Debug)]
+pub(super) struct ObservedCompletion {
+    request_id: quantick_control::id::RequestId,
+    completed: bool,
+}
+
+impl ControlAccess {
+    pub(crate) fn arm_completion_for_test(&mut self, request_id: quantick_control::id::RequestId) {
+        self.observed_completion = Some(ObservedCompletion {
+            request_id,
+            completed: false,
+        });
+    }
+
+    pub(super) fn observe_completion_for_test(
+        &mut self,
+        request_id: &quantick_control::id::RequestId,
+    ) {
+        if let Some(observation) = &mut self.observed_completion
+            && observation.request_id == *request_id
+        {
+            observation.completed = true;
+        }
+    }
+
+    pub(crate) fn completed_for_test(&self, request_id: &quantick_control::id::RequestId) -> bool {
+        self.observed_completion
+            .as_ref()
+            .is_some_and(|observation| {
+                observation.request_id == *request_id && observation.completed
+            })
+    }
+
+    pub(crate) fn enable_before_write_for_test(
+        &mut self,
+        ctx: &eframe::egui::Context,
+        descriptor_directory: PathBuf,
+        before_write: super::server::AnswerBeforeWrite,
+    ) {
+        let options = GatewayOptions {
+            request_queue_capacity: 4,
+            descriptor_directory: Some(descriptor_directory),
+            answer_before_write: Some(before_write),
+            ..GatewayOptions::default()
+        };
+        self.request_enable(ctx, options);
     }
 }

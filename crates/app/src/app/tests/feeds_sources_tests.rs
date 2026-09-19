@@ -2,6 +2,76 @@ use super::*;
 use quantick_feed::history_reach;
 
 #[test]
+fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades() {
+    let (mut app, _notices, (events, _book)) = test_app_with_notices();
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scopes = [
+        observer_scope("health.summary"),
+        observer_scope("feed.status"),
+    ];
+    let before = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let gap = quantick_feed::FeedGap {
+        from_ms: 100,
+        to_ms: 100,
+    };
+    let count = quantick_feed::MAX_REMEMBERED_GAPS + 1;
+    for _ in 0..count {
+        events
+            .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+                gap: Some(gap),
+                missing_messages: Some(3),
+                non_monotonic: false,
+            }))
+            .unwrap();
+    }
+    events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
+    assert_eq!(app.active_tab().flow_pane.state.trades().len(), 1);
+    assert_eq!(
+        app.active_tab().feed_gaps.len(),
+        quantick_feed::MAX_REMEMBERED_GAPS
+    );
+    assert!(
+        app.active_tab()
+            .feed_gaps
+            .iter()
+            .all(|observed| *observed == gap)
+    );
+    assert_eq!(
+        app.active_tab().feed_integrity.missing_messages,
+        count as u64 * 3
+    );
+    let after = registry
+        .capture(&app, &observer_instance(), &scopes)
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let health = &after.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
+    assert_eq!(health["missing_messages"], (count * 3).to_string());
+    assert_eq!(health["unknown_loss"], "0");
+    assert_ne!(
+        before.scopes[&scopes[0]].value,
+        after.scopes[&scopes[0]].value
+    );
+    let gaps = &after.scopes[&scopes[1]].value["tabs"][0]["tape_gaps"];
+    assert_eq!(
+        gaps.as_array().unwrap().len(),
+        quantick_feed::MAX_REMEMBERED_GAPS
+    );
+    assert_eq!(gaps[0]["duration_ms"], 0);
+    app.active_tab_mut().reset_market_state(true);
+    assert_eq!(
+        app.active_tab().feed_integrity,
+        quantick_feed::FeedIntegrity::default()
+    );
+}
+
+#[test]
 fn the_newest_notice_wins_and_clear_puts_the_chart_back() {
     let (mut app, notices, _feed_ends) = test_app_with_notices();
     assert_eq!(
@@ -129,14 +199,16 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     let (mut app, _evt_tx, mut cmd_rx, _book_tx) = test_app();
     // Whatever startup queued is not what this test is about.
     while cmd_rx.try_recv().is_ok() {}
-    app.harness.arm_load_older(2, 3);
-    app.apply_load_older();
+    app.chrome.harness.arm_load_older(2, 3);
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "nothing is charted yet, so nothing may be asked for"
     );
     assert_eq!(
-        app.harness.load_older_remaining(),
+        app.chrome.harness.load_older_remaining(),
         Some((2, 2)),
         "it waits, spending one frame of its budget"
     );
@@ -144,10 +216,12 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // Give up rather than hang a capture run on a bridge that never came:
     // the budget counts down one frame at a time and then the hook is done.
     for _ in 0..3 {
-        app.apply_load_older();
+        app.chrome
+            .harness
+            .apply_load_older(&mut app.tabs, &app.config);
     }
     assert_eq!(
-        app.harness.load_older_remaining(),
+        app.chrome.harness.load_older_remaining(),
         None,
         "the budget is finite"
     );
@@ -161,14 +235,16 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     let (mut app, mut cmd_rx) = app_with_history(200);
     while cmd_rx.try_recv().is_ok() {}
     app.active_tab_mut().loading.end(LoadingTask::History);
-    app.harness.arm_load_older(2, 10);
-    app.apply_load_older();
+    app.chrome.harness.arm_load_older(2, 10);
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
         "the first page is asked for"
     );
     assert_eq!(
-        app.harness.load_older_remaining(),
+        app.chrome.harness.load_older_remaining(),
         Some((1, 10)),
         "one still owed"
     );
@@ -176,21 +252,25 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     // One at a time: the feed serves one request per session, so firing
     // the second before the first is answered would have it refused and
     // answered empty.
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
         "a page is still in flight; the hook waits for it"
     );
-    assert_eq!(app.harness.load_older_remaining(), Some((1, 10)));
+    assert_eq!(app.chrome.harness.load_older_remaining(), Some((1, 10)));
 
     app.active_tab_mut().loading.end(LoadingTask::History);
-    app.apply_load_older();
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
     assert!(matches!(
         cmd_rx.try_recv(),
         Ok(FeedCommand::LoadOlder { .. })
     ));
     assert_eq!(
-        app.harness.load_older_remaining(),
+        app.chrome.harness.load_older_remaining(),
         None,
         "both pages asked for"
     );
@@ -208,12 +288,19 @@ fn loader_survives_until_every_pending_load_is_answered() {
         "backfill in flight at start"
     );
 
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
 
     evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         2,
@@ -223,7 +310,8 @@ fn loader_survives_until_every_pending_load_is_answered() {
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         1,
@@ -233,7 +321,8 @@ fn loader_survives_until_every_pending_load_is_answered() {
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         0,
@@ -247,7 +336,10 @@ fn rejected_request_does_not_arm_the_loader() {
     // so no reply will ever come - the count must not grow.
     let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
     drop(cmd_rx);
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         1,
@@ -260,8 +352,14 @@ fn a_source_reset_restarts_the_history_wait() {
     // Loads queued before a reset will never be answered; the refill after
     // the reset is the one load left in flight.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
-    with_config(&mut app, |tab, config| tab.request_older_history(config));
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
+    let tab_id = app.tabs.active_id();
+    with_config(&mut app, |tab, config| {
+        tab.request_older_history(tab_id, config)
+    });
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
     app.active_tab_mut()
         .flow_pane
@@ -269,7 +367,8 @@ fn a_source_reset_restarts_the_history_wait() {
         .place(drawing_tool("horizontal-line"), ChartPoint::at(1.0, 100.0));
 
     evt_tx.try_send(FeedEvent::Reset).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     assert_eq!(
         app.active_tab().flow_pane.drawings.items().len(),
@@ -292,12 +391,16 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     // Where the popup landed, derived rather than assumed: the corner is
     // measured against the canvas, and on a flow-only layout the pane *is*
@@ -335,7 +438,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     click_chart(&mut app, &ctx, on_the_sentence);
 
     assert!(
-        app.control_feed_popup_open(),
+        app.chrome_reads().feed_popup_open(),
         "a click on the popup is not a click somewhere else"
     );
     let after = {
@@ -356,14 +459,17 @@ fn a_recovered_feed_puts_the_popup_away() {
     let ctx = egui::Context::default();
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open());
+    assert!(app.chrome_reads().feed_popup_open());
 
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
-    assert!(!app.control_feed_popup_open());
-    assert!(app.control_feed_chip_rect().is_none());
+    assert!(!app.chrome_reads().feed_popup_open());
+    assert!(app.chrome_reads().feed_chip_rect().is_none());
 }
 
 /// The floor lives for one event. Left standing it swallowed the next
@@ -374,7 +480,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(5)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     app.active_tab_mut().resume_floor_ms = Some(floor);
 
@@ -383,7 +490,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::Backfilled(Vec::new()))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().resume_floor_ms,
         None,
@@ -411,7 +519,8 @@ fn a_resume_floor_never_outlives_the_event_it_filtered() {
     events
         .blocking_send(FeedEvent::HistoryPrepended(older))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().flow_pane.state.trades().len(),
         held + 2,
@@ -428,7 +537,8 @@ fn a_market_switch_leaves_no_floor_and_no_seam_behind() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
     app.active_tab_mut().feed_gaps.push(quantick_feed::FeedGap {
         from_ms: 1,
@@ -463,7 +573,7 @@ fn an_alternating_supervisor_cannot_hold_the_reconnect_budget_open() {
         app.active_tab_mut().drain_notices_at(step * 3_000);
     }
 
-    let config = app.control_config().clone();
+    let config = app.tab_reads().config().clone();
     assert!(
         app.active_tab()
             .stall_at(&config, RECONNECT_BUDGET_MS)
@@ -501,7 +611,8 @@ fn backfill_does_not_claim_a_live_transport_latency() {
         .try_send(FeedEvent::Backfilled(vec![trade(1)]))
         .unwrap();
 
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     assert_eq!(app.active_tab().trade_arrival_ms(), None);
     assert_eq!(
@@ -2039,7 +2150,7 @@ fn an_addition_the_config_would_reject_is_refused_and_not_written() {
         "and nothing was persisted — the next launch is unharmed"
     );
     // The same symbol on the feed that *does* own it is still fine.
-    assert!(app.add_symbol("tickmill", "WINQ26").is_ok());
+    assert!(app.symbol_catalog().add("tickmill", "WINQ26").is_ok());
     let _ = std::fs::remove_file(&path);
 }
 
@@ -2080,7 +2191,7 @@ fn the_same_market_can_be_open_twice() {
 
     assert_eq!(app.tabs.len(), 2);
     assert_eq!(app.tabs[0].symbol, app.tabs[1].symbol);
-    assert_ne!(app.tabs[0].id, app.tabs[1].id);
+    assert_ne!(app.tabs.id_at(0), app.tabs.id_at(1));
     assert_ne!(app.tabs[0].flow_pane.id, app.tabs[1].flow_pane.id);
     // Separate engines: what one holds says nothing about the other.
     assert!(!app.tabs[0].flow_pane.state.bars().is_empty());
