@@ -7,6 +7,11 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+default = []
+# Capture and fault-injection hooks (`QUANTICK_FEED_STALL`, `QUANTICK_FEED_GAP`,
+# `QUANTICK_BACKFILL`, `QUANTICK_FAKE_LATENCY_SPLIT`). Off in a default build,
+# which then reads none of them; `quantick-app`'s `scenario-harness` turns it on.
+harness = []
 # Literal local transports for cross-crate app tests; absent from normal builds.
 test-support = ["dep:futures-util", "dep:tokio-tungstenite"]
 # Explicit native evidence harness; never enabled by normal builds.
@@ -16,6 +21,8 @@ live-fixture = ["test-support"]
 quantick-engine = { path = "../engine" }
 quantick-orderbook = { path = "../orderbook" }
 quantick-replay = { path = "../replay" }
+# The provider vocabulary and the history reach, declared headless below this host.
+quantick-sources = { path = "../sources" }
 quantick-feed-binance = { path = "../feed-binance" }
 quantick-feed-hyperliquid = { path = "../feed-hyperliquid" }
 quantick-feed-mt5 = { path = "../feed-mt5" }

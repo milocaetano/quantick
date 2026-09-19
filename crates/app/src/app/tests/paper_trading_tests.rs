@@ -145,7 +145,8 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let floor = app.active_tab().latest_trade_ms.expect("a print landed");
     let live_before = app.active_tab().live_trades;
     let lag_before = app.active_tab().latest_trade_latency_ms;
@@ -159,7 +160,8 @@ fn a_recovered_print_seeds_the_mark_and_fills_nothing() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), recovered.clone()]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
 
     let tab = app.active_tab();
     assert_eq!(
@@ -186,7 +188,8 @@ fn a_simulated_buy_fills_from_the_next_live_print_only() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(app.active_tab().paper.ready(), "backfill seeds the mark");
     assert!(
         app.active_tab().paper.status_cell().is_none(),
@@ -199,7 +202,8 @@ fn a_simulated_buy_fills_from_the_next_live_print_only() {
         "a queued market order is visible state"
     );
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app
         .active_tab()
         .paper
@@ -230,10 +234,12 @@ fn the_toolbar_close_action_exits_the_open_position() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app.active_tab().paper.status_cell().expect("open");
     assert!(text.contains("LONG"), "the cell names the side: {text}");
     assert!(
@@ -243,7 +249,8 @@ fn the_toolbar_close_action_exits_the_open_position() {
 
     app.apply_toolbar_action(ToolbarAction::PaperClose);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.position_summary().is_none(),
         "the close filled at the next print"
@@ -273,13 +280,16 @@ fn a_source_reset_flattens_the_simulated_position_and_journals_it() {
     evt_tx
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
 
     evt_tx.try_send(FeedEvent::Reset).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.status_cell().is_some(),
         "the realized history keeps the cell alive"
@@ -305,7 +315,8 @@ fn one_ui_drain_uses_one_observation_for_single_and_batched_trades() {
         .unwrap();
     let clock_calls = Cell::new(0_u32);
 
-    app.active_tab_mut().drain_feed_with_clock(|| {
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || {
         clock_calls.set(clock_calls.get() + 1);
         received_at_ms
     });
@@ -403,7 +414,15 @@ fn an_armed_rectangle_fires_on_the_force_bar_inside_it() {
     // The fixture's bodies are 4 points; the elephant floor is off so
     // the test exercises the band, not the floor (which has its own).
     form.min_range = "0".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test BF".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "test BF".to_owned(),
+        )
         .expect("the form compiles and the drawing exists");
 
     let mut id = 0u64;
@@ -547,7 +566,15 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     form.alarm_sound = clip.token().to_owned();
     form.alarm_play_secs = Some(3);
     form.alarm_only = true;
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "alarm".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "alarm".to_owned(),
+        )
         .expect("the alarm form compiles and the drawing exists");
     assert_eq!(
         recorder.warmed_up(),
@@ -560,7 +587,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     bar(&mut app, &mut id, "100", "101");
     bar(&mut app, &mut id, "101", "102");
     bar(&mut app, &mut id, "102", "103");
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert!(
         recorder.sounds().is_empty(),
         "a warming ruler has nothing to announce: {:?}",
@@ -576,7 +603,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..33 {
         print(&mut app, &mut id, "107");
     }
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert!(
         recorder.sounds().is_empty(),
         "before 70% of the bar the alarm holds its tongue: {:?}",
@@ -585,7 +612,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
 
     // Print 35 crosses the share. The bar has not closed.
     print(&mut app, &mut id, "107");
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert_eq!(
         recorder.cues(),
         vec![crate::audio::Cue::cut_after(clip, 3)],
@@ -614,7 +641,7 @@ fn the_signal_alarm_sounds_mid_bar_and_places_nothing() {
     for _ in 0..15 {
         print(&mut app, &mut id, "107");
     }
-    app.play_pending_alarms();
+    app.audio.play_pending(&mut app.tabs);
     assert_eq!(
         recorder.sounds(),
         vec![clip],
@@ -683,7 +710,15 @@ fn arming_a_region_that_already_ended_is_refused() {
     let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
     let form = crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     let refused = app
-        .arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "dead".to_owned())
+        .tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "dead".to_owned(),
+        )
         .expect_err("a region ending before the next bar cannot arm");
     assert!(
         refused.contains("extend right"),
@@ -701,7 +736,15 @@ fn arming_a_region_that_already_ended_is_refused() {
             .place(rectangle, drawings::ChartPoint::at(15.0, 101.0));
     }
     let boundary = app.active_tab().flow_pane.drawings.items()[1].id;
-    app.arm_strategy_instance(pane::PaneSide::Flow, boundary, &form, "edge".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            boundary,
+            &form,
+            "edge".to_owned(),
+        )
         .expect_err("a span ending on the newest closed bar covers no future bar");
     // One anchored past the next slot arms fine without extend right.
     {
@@ -712,7 +755,15 @@ fn arming_a_region_that_already_ended_is_refused() {
             .place(rectangle, drawings::ChartPoint::at(16.0, 101.0));
     }
     let alive = app.active_tab().flow_pane.drawings.items()[2].id;
-    app.arm_strategy_instance(pane::PaneSide::Flow, alive, &form, "ok".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            alive,
+            &form,
+            "ok".to_owned(),
+        )
         .expect("a span covering the next slot arms");
 
     // The same dead drawing with extend right on arms fine.
@@ -726,7 +777,15 @@ fn arming_a_region_that_already_ended_is_refused() {
             .expect("a rectangle carries a rectangle payload")
             .extend_right = true;
     }
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "live".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "live".to_owned(),
+        )
         .expect("extend right keeps the region alive, so arming is honest");
 }
 
@@ -772,7 +831,15 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.on_break = "retest_limit".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF".to_owned(),
+        )
         .expect("the form compiles");
     let mut id = 0u64;
     bar(&mut app, &mut id, "110", "109");
@@ -789,7 +856,7 @@ fn delete_all_sweeps_the_armed_instances_pending_entries() {
     {
         let pane = &mut app.active_tab_mut().flow_pane;
         pane.drawings.delete_all();
-        pane.sweep_strategy_orphans();
+        pane.strategies.sweep_orphans(&pane.drawings);
     }
     app.active_tab_mut().apply_strategy_cleanup();
     assert!(
@@ -856,7 +923,15 @@ fn a_force_bar_that_never_crossed_the_region_leaves_no_order_in_it() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.on_break = "retest_limit".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF no cut".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF no cut".to_owned(),
+        )
         .expect("the retest form compiles");
 
     let mut id = 0u64;
@@ -954,7 +1029,15 @@ fn a_resting_retest_limit_stands_down_over_a_manual_position() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.on_break = "retest_limit".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF retest".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF retest".to_owned(),
+        )
         .expect("the retest form compiles");
 
     let mut id = 0u64;
@@ -1052,9 +1135,25 @@ fn co_triggered_instances_do_not_stack_orders() {
         crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Buy);
     form.window = 3;
     form.min_range = "0".to_owned();
-    app.arm_strategy_instance(pane::PaneSide::Flow, first, &form, "a".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            first,
+            &form,
+            "a".to_owned(),
+        )
         .expect("arms");
-    app.arm_strategy_instance(pane::PaneSide::Flow, second, &form, "b".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            second,
+            &form,
+            "b".to_owned(),
+        )
         .expect("arms");
 
     let mut id = 0u64;
@@ -1102,7 +1201,15 @@ fn a_timeline_reset_disarms_the_armed_instances_by_name() {
     }
     let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
     let form = crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "test".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "test".to_owned(),
+        )
         .expect("arms");
 
     app.active_tab_mut().reset_market_state(true);
@@ -1140,7 +1247,8 @@ fn clicking_the_chart_tag_close_cancels_the_order() {
             trade(18),
         ]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     // A resting buy limit in the middle of the backfilled price range,
     // so its line and tag are on screen.
     let price = Decimal::new(1005, 1);
@@ -1202,7 +1310,8 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
             trade(18),
         ]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let price = Decimal::new(1005, 1);
     app.active_tab_mut()
         .paper
@@ -1266,12 +1375,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let bar = egui::pos2(inspector.left() + 60.0, inspector.top() + 14.0);
     drag_chart(&mut app, &ctx, bar, bar + egui::vec2(150.0, 120.0));
     assert!(
-        app.surfaces.drawing_chrome.inspector_moved(),
+        app.drawings.chrome.inspector_moved(),
         "a title-bar drag records the manual move"
     );
     let held = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .inspector_pos()
         .expect("the manual position is recorded");
 
@@ -1283,12 +1392,12 @@ fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     run_frame(&mut app, &ctx);
     open_inspector(&mut app, &ctx);
     assert_eq!(
-        app.surfaces.drawing_chrome.inspector_pos(),
+        app.drawings.chrome.inspector_pos(),
         Some(held),
         "the manual position survives a selection change"
     );
     assert!(
-        app.surfaces.drawing_chrome.inspector_moved(),
+        app.drawings.chrome.inspector_moved(),
         "the manual flag is never auto-cleared"
     );
 }
@@ -1302,13 +1411,13 @@ fn autosave_off_means_the_popup_position_is_not_written_either() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     with_a_saved_workspace(&mut app, &ctx, "popup-no-autosave");
-    *app.workspace.session_mut().save_on_exit_mut() = false;
+    app.workspace.session_mut().set_save_on_exit(false);
     draw_horizontal_line(&mut app, &ctx, 300.0);
 
     let parked = park_the_popup(&mut app, &ctx, egui::vec2(150.0, 90.0));
 
     assert_eq!(
-        app.surfaces.drawing_chrome.inspector_pos(),
+        app.drawings.chrome.inspector_pos(),
         Some(parked),
         "the window still went where it was dragged"
     );
@@ -1338,9 +1447,7 @@ fn a_remembered_position_greets_the_next_drawing_too() {
 
     // What a restored workspace does, through the same one door.
     let remembered = egui::pos2(420.0, 200.0);
-    app.surfaces
-        .drawing_chrome
-        .place_inspector_by_hand(remembered);
+    app.drawings.chrome.place_inspector_by_hand(remembered);
 
     // A different drawing than the one selected when it was parked.
     click_chart(&mut app, &ctx, egui::pos2(400.0, 250.0));
@@ -1377,15 +1484,15 @@ fn a_remembered_position_outranks_the_narrow_chart_auto_pin() {
 
     // What a restored workspace does.
     let remembered = egui::pos2(300.0, 200.0);
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .restore_inspector_position(Some([remembered.x, remembered.y]));
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.surfaces.drawing_chrome.inspector_pinned(),
+        !app.drawings.chrome.inspector_pinned(),
         "the parked position wins over the narrow-chart auto-pin"
     );
     assert!(
@@ -1406,24 +1513,24 @@ fn a_workspace_with_no_remembered_position_leaves_the_auto_pin_alone() {
         .set_ui_state_path(scratch_ui_state("popup-auto-pin-default"));
     // A previous cockpit that *did* park the popup, so this proves the
     // silence is adopted rather than merely never contradicted.
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .place_inspector_by_hand(egui::pos2(300.0, 200.0));
-    app.surfaces.drawing_chrome.restore_inspector_position(None);
+    app.drawings.chrome.restore_inspector_position(None);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_sized(&mut app, &ctx, MIN_WINDOW, egui::pos2(500.0, 300.0));
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     assert!(
-        !app.surfaces.drawing_chrome.inspector_pin_touched(),
+        !app.drawings.chrome.inspector_pin_touched(),
         "silence in the file is not a preference about the pin"
     );
     assert!(
-        app.surfaces.drawing_chrome.inspector_pinned(),
+        app.drawings.chrome.inspector_pinned(),
         "so a chart too narrow for a floating window still docks the panel"
     );
 }
@@ -1446,7 +1553,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
         .set_ui_state_path(scratch_ui_state("popup-clamp"));
     // The auto-pin owns a chart this narrow until the trader touches the
     // pin; this test is about the floating window, so say they have.
-    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
+    app.drawings.chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -1455,18 +1562,20 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
 
     // A workspace written on a much larger monitor.
     let parked = [2_400.0, 1_500.0];
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        Vec::new(),
-        Some(chrome_with_popup_at(Some(parked))),
-    ));
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            Vec::new(),
+            Some(chrome_with_popup_at(Some(parked))),
+        ));
+    app.drawings.chrome.set_inspector_open(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
 
     let chart = app
+        .active_tab()
         .drawing_pane()
         .frame
         .chart_area
@@ -1480,7 +1589,7 @@ fn a_position_that_no_longer_fits_is_repaired_for_drawing_and_kept_in_the_file()
              {popup:?} against {chart:?}"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.remembered_inspector_position(),
+        app.drawings.chrome.remembered_inspector_position(),
         Some(parked),
         "and the point the trader parked is not eaten by the repair — the \
              desk monitor gets it back"
@@ -1496,7 +1605,7 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     let (mut app, _commands) = app_with_history(200);
     app.workspace
         .set_ui_state_path(scratch_ui_state("popup-ratchet"));
-    app.surfaces.drawing_chrome.set_inspector_pin_touched(true);
+    app.drawings.chrome.set_inspector_pin_touched(true);
     run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
@@ -1506,14 +1615,14 @@ fn a_temporary_squeeze_never_edits_the_parked_position() {
     // Parked against the bottom-right of a big screen, then squeezed by a
     // small one for a while.
     let parked = egui::pos2(1_500.0, 900.0);
-    app.surfaces.drawing_chrome.place_inspector_by_hand(parked);
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.place_inspector_by_hand(parked);
+    app.drawings.chrome.set_inspector_open(true);
     for _ in 0..6 {
         run_sized_frame(&mut app, &ctx, MIN_WINDOW, Vec::new());
     }
 
     assert_eq!(
-        app.surfaces.drawing_chrome.inspector_pos(),
+        app.drawings.chrome.inspector_pos(),
         Some(parked),
         "six frames of repair leave the parked point exactly as it was"
     );
@@ -1528,19 +1637,17 @@ fn a_position_that_is_not_a_number_is_read_as_no_position_at_all() {
     let (mut app, _commands) = app_with_history(50);
 
     for pair in [[f32::NAN, 200.0], [200.0, f32::NAN], [f32::INFINITY, 200.0]] {
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .place_inspector_by_hand(egui::pos2(10.0, 10.0));
-        app.surfaces
-            .drawing_chrome
-            .restore_inspector_position(Some(pair));
+        app.drawings.chrome.restore_inspector_position(Some(pair));
         assert_eq!(
-            app.surfaces.drawing_chrome.inspector_pos(),
+            app.drawings.chrome.inspector_pos(),
             None,
             "{pair:?} is not a position, and must not survive as one"
         );
         assert!(
-            !app.surfaces.drawing_chrome.inspector_moved(),
+            !app.drawings.chrome.inspector_moved(),
             "{pair:?} hands the popup back to automatic placement"
         );
     }
@@ -1562,14 +1669,14 @@ fn the_object_manager_toggles_eye_lock_and_z_order_per_row() {
         .expect("the toolbox shows the Objects entry");
     click_chart(&mut app, &ctx, objects.center());
     assert!(
-        app.surfaces.drawing_chrome.manager_open(),
+        app.drawings.chrome.manager_open(),
         "the Objects button opens the manager"
     );
     run_frame(&mut app, &ctx);
 
     let rect_of = |app: &QuantickApp, index: usize, action: &str| {
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .manager_action_rects()
             .iter()
             .find(|(row, name, _)| *row == index && *name == action)
@@ -1614,7 +1721,11 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
     arm_drawing_from_toolbox(&mut app, &ctx, "text");
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
-    let index = app.inline_text_editing().expect("the editor is open");
+    let index = app
+        .drawings
+        .chrome
+        .inline_text_editing()
+        .expect("the editor is open");
 
     run_frame_with_events(
         &mut app,
@@ -1644,7 +1755,11 @@ fn typing_into_the_on_chart_editor_fills_the_note_and_escape_keeps_it() {
         }],
     );
     run_frame(&mut app, &ctx);
-    assert_eq!(app.inline_text_editing(), None, "Escape closes the editor");
+    assert_eq!(
+        app.drawings.chrome.inline_text_editing(),
+        None,
+        "Escape closes the editor"
+    );
     assert_eq!(note(&app), "daily high", "and keeps what was typed");
     assert_eq!(
         app.active_tab().flow_pane.drawings.selected(),
@@ -1762,16 +1877,16 @@ fn an_armed_tool_takes_the_context_bar_off_the_canvas() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.drawing_chrome.context_bar_rect().is_some(),
+        app.drawings.chrome.context_bar_rect().is_some(),
         "the finished object has it"
     );
 
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.forget_context_bar_rect();
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame(&mut app, &ctx);
     assert!(
-        app.surfaces.drawing_chrome.context_bar_rect().is_none(),
+        app.drawings.chrome.context_bar_rect().is_none(),
         "arming a tool clears the way for the next drawing"
     );
 }
@@ -1875,7 +1990,15 @@ fn duplicating_a_band_carries_its_armed_strategy_but_not_its_state() {
     form.window = 7;
     form.min_range = "0".to_owned();
     form.alarm = true;
-    app.arm_strategy_instance(pane::PaneSide::Flow, source, &form, "carry me".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            source,
+            &form,
+            "carry me".to_owned(),
+        )
         .expect("the region arms");
     // Select the band again — arming leaves the dialog, not a selection.
     {
@@ -1952,10 +2075,11 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
     let (mut app, _commands) = app_with_history(50);
     assert!(app.surfaces.toast.message().is_none());
 
-    app.tabs[0]
+    app.tabs
+        .runtime_mut(0)
         .paper
         .show_toast("SIM: dropped at the fill - no bid".to_owned());
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
 
     assert_eq!(
         app.surfaces.toast.message(),
@@ -1974,10 +2098,13 @@ fn a_paper_acknowledgement_reaches_the_windows_one_toast() {
 #[test]
 fn a_paper_acknowledgement_is_handed_over_once() {
     let (mut app, _commands) = app_with_history(50);
-    app.tabs[0].paper.show_toast("SIM: flat".to_owned());
-    app.settle_paper_panels(Instant::now());
+    app.tabs
+        .runtime_mut(0)
+        .paper
+        .show_toast("SIM: flat".to_owned());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
     app.surfaces.toast.clear();
-    app.settle_paper_panels(Instant::now());
+    frame_tail::settle_paper_panels(&mut app.tabs, &mut app.surfaces.toast, Instant::now());
     assert!(
         app.surfaces.toast.message().is_none(),
         "the outbox was emptied by the first drain"
@@ -1999,7 +2126,7 @@ fn a_reset_that_failed_leaves_the_entry_live() {
     app.toolrail.set_favorites(&["measure".to_owned()]);
     app.workspace.session_mut().set_saved(true);
 
-    app.forget_workspace();
+    app.workspace_save_adapter().forget_workspace();
 
     assert!(
         app.workspace.session().saved(),
@@ -2300,10 +2427,12 @@ fn closing_a_tab_flattens_and_journals_its_simulated_position() {
     ends.events
         .try_send(FeedEvent::Backfilled(vec![trade(2)]))
         .unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     app.apply_toolbar_action(ToolbarAction::PaperBuy);
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
-    app.active_tab_mut().drain_feed_with_clock(|| 0);
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(
         app.active_tab().paper.status_cell().is_some(),
         "this proof needs an open simulated position to lose"
@@ -2582,4 +2711,188 @@ fn an_open_report_shows_a_close_in_the_frame_that_journaled_it() {
         Some(1),
         "the report painted the close in the frame that journaled it"
     );
+}
+
+fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
+    fn print(app: &mut QuantickApp, id: &mut u64, price: &str) {
+        *id += 1;
+        let trade = quantick_engine::Trade {
+            agg_id: *id,
+            timestamp_ms: 1_700_000_000_000 + *id as i64 * 100,
+            price: rust_decimal::Decimal::from_str_exact(price).unwrap(),
+            quantity: rust_decimal::Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        };
+        app.active_tab_mut()
+            .ingest_live_trade_at(&trade, trade.timestamp_ms);
+    }
+    fn bar(app: &mut QuantickApp, id: &mut u64, open: &str, close: &str) {
+        for _ in 0..49 {
+            print(app, id, open);
+        }
+        print(app, id, close);
+    }
+
+    let (mut app, _events, _commands, _book) = test_app();
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    let setup_ctx = egui::Context::default();
+    run_frame(&mut app, &setup_ctx);
+    run_frame(&mut app, &setup_ctx);
+    assert_eq!(app.active_tab().time_panes.len(), 1);
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .expect("the rectangle tool is registered");
+    {
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(0.0, 105.0));
+        pane.drawings
+            .place(rectangle, drawings::ChartPoint::at(30.0, 115.0));
+    }
+    let drawing = app.active_tab().flow_pane.drawings.items()[0].id;
+    if operation == "redo" {
+        let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+        assert_eq!(drawings.delete_all(), 1);
+        assert!(drawings.undo(), "restore before arming the deletion redo");
+    }
+    let mut form =
+        crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell);
+    form.window = 3;
+    form.min_range = "0".to_owned();
+    form.on_break = "retest_limit".to_owned();
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF".to_owned(),
+        )
+        .expect("the form compiles");
+    let mut id = 0u64;
+    bar(&mut app, &mut id, "110", "109");
+    bar(&mut app, &mut id, "109", "108");
+    bar(&mut app, &mut id, "108", "104");
+    assert_eq!(
+        app.active_tab().paper.working_orders().len(),
+        1,
+        "the retest limit rests"
+    );
+
+    // The other pane has its own drawing and armed instance, but no selection.
+    // The owner is Flow even when keyboard focus is on Time(0).
+    {
+        let other = &mut app.active_tab_mut().time_panes[0];
+        other
+            .drawings
+            .place(rectangle, drawings::ChartPoint::at(0.0, 205.0));
+        other
+            .drawings
+            .place(rectangle, drawings::ChartPoint::at(30.0, 215.0));
+        other.drawings.select(None);
+    }
+    let other_id = app.active_tab().time_panes[0].drawings.items()[0].id;
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Time(0),
+            other_id,
+            &form,
+            "other".to_owned(),
+        )
+        .expect("other pane strategy arms");
+    app.active_tab_mut().flow_pane.drawings.select(Some(0));
+    app.active_tab_mut().focus = if focused_owner {
+        pane::PaneSide::Flow
+    } else {
+        pane::PaneSide::Time(0)
+    };
+    assert_eq!(app.active_tab().drawing_side(), pane::PaneSide::Flow);
+    assert_eq!(app.active_tab().focused_side(), app.active_tab().focus);
+    let ctx = egui::Context::default();
+    if operation == "delete_all" {
+        app.resolve_drawing_response(
+            crate::surfaces::drawing_chrome::DrawingChromeAsk {
+                delete_all: true,
+                ..Default::default()
+            },
+            Instant::now(),
+        );
+    } else {
+        let key = if operation == "undo" {
+            egui::Key::Z
+        } else {
+            egui::Key::Y
+        };
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![key_press_with(key, egui::Modifiers::COMMAND)],
+                modifiers: egui::Modifiers::COMMAND,
+                ..Default::default()
+            },
+            |ctx| {
+                app.drawings.handle_drawing_keys(
+                    &mut crate::app::drawing_controller::DrawingAccess::new(&mut app.tabs),
+                    &mut app.toolrail,
+                    &mut *app.audio.alerts,
+                    ctx,
+                    Instant::now(),
+                );
+            },
+        );
+    }
+    assert!(
+        app.active_tab().flow_pane.drawings.items().is_empty(),
+        "owner drawing removed"
+    );
+    // Same-frame production drain, with no market print or new closed bar.
+    app.active_tab_mut().apply_strategy_cleanup();
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "no resting order survives its removed nonfocused drawing"
+    );
+    assert!(
+        app.active_tab().flow_pane.strategies.anchors.is_empty(),
+        "owner strategy removed immediately"
+    );
+    let other = &app.active_tab().time_panes[0];
+    assert_eq!(other.drawings.items().len(), 1);
+    assert_eq!(other.drawings.items()[0].id, other_id);
+    assert!(
+        other.strategies.anchors.for_drawing(other_id).is_some(),
+        "other pane strategy untouched"
+    );
+}
+
+#[test]
+fn drawing_owner_cleanup_undo_nonfocused() {
+    drawing_owner_cleanup_case("undo", false);
+}
+
+#[test]
+fn drawing_owner_cleanup_undo_focused() {
+    drawing_owner_cleanup_case("undo", true);
+}
+
+#[test]
+fn drawing_owner_cleanup_redo_nonfocused() {
+    drawing_owner_cleanup_case("redo", false);
+}
+
+#[test]
+fn drawing_owner_cleanup_redo_focused() {
+    drawing_owner_cleanup_case("redo", true);
+}
+
+#[test]
+fn drawing_owner_cleanup_delete_all_nonfocused() {
+    drawing_owner_cleanup_case("delete_all", false);
+}
+
+#[test]
+fn drawing_owner_cleanup_delete_all_focused() {
+    drawing_owner_cleanup_case("delete_all", true);
 }

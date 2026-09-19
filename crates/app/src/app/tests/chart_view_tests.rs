@@ -12,16 +12,25 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
     // the trunk's half — where a fraction lands on the pane that drew.
     let (mut app, _cmd_rx) = app_with_history(50);
     let ctx = egui::Context::default();
-    app.harness.arm_pointer(egui::vec2(0.5, 0.5));
+    app.chrome.harness.arm_pointer(egui::vec2(0.5, 0.5));
     assert_eq!(
-        app.scripted_pointer_pos(),
+        app.chrome
+            .harness
+            .scripted_pointer_pos(&app.active_tab().flow_pane),
         None,
         "no draw yet, so no candle area to be a fraction of"
     );
     run_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane;
-    let candles = pane.drawing_area(pane.frame.chart_rect.expect("the canvas laid out"));
-    let position = app.scripted_pointer_pos().expect("one frame published it");
+    let candles = crate::bands::drawing_area(
+        pane.frame.chart_rect.expect("the canvas laid out"),
+        pane.frame.lane_divider_x,
+    );
+    let position = app
+        .chrome
+        .harness
+        .scripted_pointer_pos(&app.active_tab().flow_pane)
+        .expect("one frame published it");
     assert!(candles.contains(position), "{position:?} vs {candles:?}");
     assert!((position.x - candles.center().x).abs() < 0.5);
     assert!((position.y - candles.center().y).abs() < 0.5);
@@ -55,7 +64,8 @@ fn the_pointer_hook_parks_the_mouse_among_the_candles() {
 fn the_context_menu_hook_expands_chart_layers_without_a_mouse() {
     let (mut app, _commands) = app_with_history(40);
     let ctx = egui::Context::default();
-    app.harness
+    app.chrome
+        .harness
         .arm_context_menu(crate::harness::ContextMenuPane::Chart, true);
     run_frame(&mut app, &ctx);
 
@@ -214,14 +224,15 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_feed_chip_rect().is_none(),
+        app.chrome_reads().feed_chip_rect().is_none(),
         "a chart with nothing wrong with it says nothing"
     );
 
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
     let chip = app
-        .control_feed_chip_rect()
+        .chrome_reads()
+        .feed_chip_rect()
         .expect("a stalled feed shows the corner");
     assert!(
         chip.width() < 100.0 && chip.height() < 30.0,
@@ -233,14 +244,16 @@ fn the_corner_appears_only_while_the_chart_is_not_being_fed() {
         .active_tab()
         .stall_at(&app.config, metrics::wall_clock_ms());
     assert!(
-        app.feed_offline_accent(stall.as_ref()).is_some(),
+        app.chrome_reads()
+            .feed_offline_accent(stall.as_ref())
+            .is_some(),
         "the line has to know what the corner knows"
     );
 
     app.active_tab_mut().forced_stall = None;
     run_frame(&mut app, &ctx);
     assert!(
-        app.control_feed_chip_rect().is_none(),
+        app.chrome_reads().feed_chip_rect().is_none(),
         "a feed that came back takes its corner with it"
     );
 }
@@ -272,10 +285,13 @@ fn the_empty_chart_never_says_the_same_thing_twice() {
         "the empty pane explains itself once: {headline}"
     );
 
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let output = run_frame(&mut app, &ctx);
-    assert!(app.control_feed_popup_open(), "the popup is up");
+    assert!(app.chrome_reads().feed_popup_open(), "the popup is up");
     assert_eq!(
         says_it(&output),
         1,
@@ -292,9 +308,12 @@ fn a_click_on_the_chart_puts_the_popup_away() {
     let ctx = egui::Context::default();
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
-    assert!(app.control_feed_popup_open(), "the chip opened it");
+    assert!(app.chrome_reads().feed_popup_open(), "the chip opened it");
 
     // Far from both rectangles: the popup grows up and left of the chip,
     // and this is the other side of the canvas.
@@ -304,11 +323,11 @@ fn a_click_on_the_chart_puts_the_popup_away() {
         egui::pos2(chip.left() - 600.0, chip.top() - 500.0),
     );
     assert!(
-        !app.control_feed_popup_open(),
+        !app.chrome_reads().feed_popup_open(),
         "a click on the chart is a click somewhere else"
     );
     assert!(
-        app.control_feed_chip_rect().is_some(),
+        app.chrome_reads().feed_chip_rect().is_some(),
         "and the corner itself stays, because the feed is still stalled"
     );
 }
@@ -322,16 +341,21 @@ fn nothing_the_corner_does_throws_a_chart_away() {
     events
         .blocking_send(FeedEvent::LiveBatch(vec![trade(1), trade(2), trade(3)]))
         .unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     let held = app.active_tab().flow_pane.state.trades().len();
     assert!(held > 0, "the chart has something to lose");
 
     app.active_tab_mut().forced_stall = Some(quantick_feed::stall::ForcedStall::Silent);
     run_frame(&mut app, &ctx);
-    let chip = app.control_feed_chip_rect().expect("the corner is up");
+    let chip = app
+        .chrome_reads()
+        .feed_chip_rect()
+        .expect("the corner is up");
     click_chart(&mut app, &ctx, chip.center());
     let chip = app
-        .control_feed_chip_rect()
+        .chrome_reads()
+        .feed_chip_rect()
         .expect("the corner is still up");
     click_chart(&mut app, &ctx, chip.center());
     run_frame(&mut app, &ctx);
@@ -398,15 +422,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     app.drawing_pane_mut().drawings.select(Some(line));
     run_frame(&mut app, &ctx);
     let parked = egui::pos2(320.0, 240.0);
-    app.surfaces
-        .drawing_chrome
-        .context_bar_mut()
-        .set_manual(parked);
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.context_bar_mut().set_manual(parked);
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     let drawn = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is up where it was put")
         .min;
@@ -418,12 +439,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     );
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         None,
         "the press does what the trader aimed it at: the selection goes"
     );
     assert_eq!(
-        app.surfaces.drawing_chrome.context_bar().manual_position(),
+        app.drawings.chrome.context_bar().manual_position(),
         Some(parked),
         "and the position they chose is still theirs on the next object"
     );
@@ -434,12 +455,12 @@ fn escape_drops_the_selection_and_leaves_the_parked_bar_parked() {
     // against the parked point itself, so the test says "unchanged" and
     // not "happens to need no repair at this window size".
     app.drawing_pane_mut().drawings.select(Some(other));
-    app.surfaces.drawing_chrome.forget_context_bar_rect();
+    app.drawings.chrome.forget_context_bar_rect();
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert_eq!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar_rect()
             .expect("the bar is back")
             .min,
@@ -463,8 +484,8 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
     let before = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar is on screen");
 
@@ -475,13 +496,13 @@ fn dragging_the_bar_by_its_grip_does_not_make_it_vanish() {
     run_frame(&mut app, &ctx);
 
     let after = app
-        .surfaces
-        .drawing_chrome
+        .drawings
+        .chrome
         .context_bar_rect()
         .expect("the bar must survive its own drag");
     assert!(
-        app.surfaces
-            .drawing_chrome
+        app.drawings
+            .chrome
             .context_bar()
             .manual_position()
             .is_some(),
@@ -661,7 +682,11 @@ fn candle_appearance_change_is_render_only() {
 
     app.style.candles = CandlePreset::OutlineOnly.style();
     app.style_revision = app.style_revision.saturating_add(1);
-    app.emit_style_changed(Some(CandlePreset::OutlineOnly));
+    crate::app::health::emit_style_changed(
+        &app.style,
+        app.style_revision,
+        Some(CandlePreset::OutlineOnly),
+    );
 
     assert_eq!(app.active_tab().flow_pane.state.spec(), &bar_spec);
     assert!(app.active_tab().tape().enabled());
@@ -678,28 +703,29 @@ fn candle_appearance_change_is_render_only() {
 #[test]
 fn a_restored_bar_rule_moves_the_selector_that_edits_it() {
     let (mut app, _commands) = app_with_history(50);
-    app.restore_workspace(ui_state::Workspace::new(
-        true,
-        None,
-        0,
-        vec![ui_state::SavedTab {
-            feed: "binance".to_owned(),
-            symbol: "TESTUSDT".to_owned(),
-            layout: crate::config::DeclaredLayout::Flow,
-            split_fraction: None,
-            context_collapsed: false,
-            focus: None,
-            focus_slot: 0,
-            context_bars: vec![],
-            flow_layout: None,
-            context_layouts: vec![],
-            flow_bars: "tick:377".to_owned(),
-            time_bars: None,
-            flow_legend_collapsed: false,
-            time_legend_collapsed: false,
-        }],
-        None,
-    ));
+    app.arrangement_adapter()
+        .restore_workspace(ui_state::Workspace::new(
+            true,
+            None,
+            0,
+            vec![ui_state::SavedTab {
+                feed: "binance".to_owned(),
+                symbol: "TESTUSDT".to_owned(),
+                layout: crate::config::DeclaredLayout::Flow,
+                split_fraction: None,
+                context_collapsed: false,
+                focus: None,
+                focus_slot: 0,
+                context_bars: vec![],
+                flow_layout: None,
+                context_layouts: vec![],
+                flow_bars: "tick:377".to_owned(),
+                time_bars: None,
+                flow_legend_collapsed: false,
+                time_legend_collapsed: false,
+            }],
+            None,
+        ));
     let pane = &app.active_tab().flow_pane;
     assert_eq!(pane.state.spec(), &BarSpec::Tick(377));
     assert_eq!(

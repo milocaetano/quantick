@@ -48,11 +48,15 @@ fn render(pane: &ChartPane) -> egui::FullOutput {
     let ctx = egui::Context::default();
     ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
-        pane.draw_canvas_contributions(
-            &painter,
-            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0)),
-            crate::config::ProviderKind::Binance.capabilities(),
-        );
+        pane.layer_renderers
+            .canvas(&mut crate::pane::render_registry::CanvasPass {
+                painter: &painter,
+                rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0)),
+                tape_on: pane.orderflow.as_ref().map(|tape| tape.lane_enabled()),
+                tape_hovered: pane.tape_switch.hovered(),
+                state: &pane.layers,
+                facts: pane.layer_facts(Some(crate::config::ProviderKind::Binance.capabilities())),
+            });
     })
 }
 fn probe_shapes(output: &egui::FullOutput) -> Vec<&egui::epaint::ClippedShape> {

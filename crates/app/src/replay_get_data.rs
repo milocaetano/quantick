@@ -274,6 +274,7 @@ impl GetDataPanel {
     }
 
     /// Type a symbol into the field, as the keyboard would.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_symbol(&mut self, symbol: &str) {
         self.symbol = symbol.to_string();
     }

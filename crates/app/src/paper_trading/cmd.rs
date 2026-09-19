@@ -358,6 +358,7 @@ impl CmdPreviewForce {
     /// `buy`, `sell`, `buy@0.15`. An unparseable fraction degrades to the
     /// mid-band park rather than killing the whole preview — a capture run
     /// that paints nothing is the hardest failure to read.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(super) fn parse(value: &str) -> Option<Self> {
         let (side, fraction) = match value.split_once('@') {
             Some((side, fraction)) => (side, Some(fraction)),

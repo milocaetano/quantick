@@ -92,6 +92,7 @@ impl Tab {
     /// own.
     pub fn apply_pending_layout(
         &mut self,
+        tab_id: u64,
         config: &AppConfig,
         style: &ChartStyle,
         ids: &mut PaneIdAllocator,
@@ -108,12 +109,13 @@ impl Tab {
             .unwrap_or(self.time_pane_opening_interval_ms);
         let mut pane = ChartPane::time(ids.alloc(), interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
-        pane.layout = self
-            .context_opening_layouts
-            .get(self.time_panes.len())
-            .copied()
-            .flatten()
-            .map(crate::layouts::LayoutId);
+        pane.opening_layout = Some(
+            self.context_opening_layouts
+                .get(self.time_panes.len())
+                .copied()
+                .flatten()
+                .map(crate::layouts::LayoutId),
+        );
         pane.seed_from(
             self.flow_pane.state.trades(),
             self.flow_pane.state.backfill_trade_count(),
@@ -145,7 +147,7 @@ impl Tab {
         if self.ohlcv_base.is_some() {
             self.refold_history_prefix();
         } else {
-            self.request_ohlcv_history(config);
+            self.request_ohlcv_history(tab_id, config);
         }
     }
 
@@ -166,7 +168,8 @@ impl Tab {
     /// Both callers do (`restore_workspace` and the bundle import, each
     /// through `reload_cockpit_stores`).
     pub fn set_opening_layouts(&mut self, flow: Option<u64>, context: &[u64]) {
-        self.flow_pane.layout = flow.map(crate::layouts::LayoutId);
+        self.flow_pane
+            .request_opening_layout(flow.map(crate::layouts::LayoutId));
         self.context_opening_layouts = context
             .iter()
             .map(|id| (*id != crate::ui_state::LAYOUT_UNRECORDED).then_some(*id))
@@ -181,7 +184,7 @@ impl Tab {
                 .copied()
                 .filter(|id| *id != crate::ui_state::LAYOUT_UNRECORDED)
             {
-                pane.layout = Some(crate::layouts::LayoutId(id));
+                pane.request_opening_layout(Some(crate::layouts::LayoutId(id)));
             }
         }
     }
@@ -194,6 +197,7 @@ impl Tab {
     /// carries its indicators and its drawings across too; writing
     /// `pane.layout` under a standing pane would leave the field disagreeing
     /// with what that chart is showing.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_opening_layout(&mut self, side: PaneSide, id: crate::layouts::LayoutId) {
         // The flow pane is built with the tab and is never pending, so the
         // only address that can be waiting is a context slot.
@@ -370,7 +374,7 @@ impl Tab {
             // itself continues, so any pending bot entry is swept here
             // and now — through the same funnel manual orders use.
             let cleanup = pane.strategies.anchors.disarm_all(reason);
-            let _ = pane.take_strategy_bars();
+            let _ = pane.strategies.take_bars();
             for command in cleanup {
                 let _ = self.paper.account_mut().apply_strategy_command(command);
             }

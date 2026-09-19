@@ -37,6 +37,55 @@ pub enum Refusal {
     AnchorMismatch,
 }
 
+impl Refusal {
+    /// The session, not the request, is at fault: the same call may succeed later.
+    #[must_use]
+    pub fn is_unavailable(self) -> bool {
+        matches!(
+            self,
+            Self::DraftInProgress | Self::StaleReference | Self::NoBars
+        )
+    }
+
+    /// The English an operator reads; every wire version answers one mistake with it.
+    #[must_use]
+    pub fn message(self) -> String {
+        match self {
+            Self::AnchorCount { expected, actual } => {
+                format!("annotation takes exactly {expected} anchor(s), not {actual}")
+            }
+            Self::DraftInProgress => "the trader is drawing on that pane right now; an annotation would land in their unfinished object".into(),
+            Self::InvalidPrice => "an anchor price is not a finite decimal".into(),
+            Self::InvalidBar => "an anchor bar_position is not a non-negative chart slot".into(),
+            Self::MissingCoordinate => "an anchor names neither a market time nor a bar_position".into(),
+            Self::NoBars => "that chart has no bars yet, so an anchor has nothing to land on".into(),
+            Self::NoCoveringBar => "no bar on that chart covers the anchor time".into(),
+            Self::StaleReference => "the range belongs to a different pane, layout or series revision; draw the range again".into(),
+            Self::AnchorMismatch => "an anchor's bar_position and time_unix_ms name different bars on that chart".into(),
+        }
+    }
+
+    /// What the operator does next, where the message alone does not say.
+    #[must_use]
+    pub fn next_step(self) -> Option<&'static str> {
+        match self {
+            Self::InvalidBar => Some(
+                "Read a bar_position from chart.window.read (a bar's centre is its slot + 0.5), or drop chart_reference and anchor by time_unix_ms.",
+            ),
+            Self::MissingCoordinate => Some(
+                "Give each anchor a bar's open_time_unix_ms from chart.window.read, or a bar_position for space past the newest bar.",
+            ),
+            Self::NoCoveringBar => Some(
+                "Read a bar's open_time_unix_ms from chart.window.read or the cursor, and anchor to that.",
+            ),
+            Self::AnchorMismatch => Some(
+                "Read the bar again from chart.window.read and send its bar_position with its own open_time_unix_ms; a bar_position past the newest bar carries no time.",
+            ),
+            _ => None,
+        }
+    }
+}
+
 pub trait Series {
     fn context(&self) -> RangeContext;
     fn slots(&self) -> usize;
@@ -195,6 +244,36 @@ mod tests {
             bar: Some(0.5),
             price: 100.0,
             time_ms: Some(1000),
+        }
+    }
+
+    #[test]
+    fn every_refusal_reads_as_english_and_coordinate_mistakes_name_a_next_step() {
+        use Refusal::*;
+        let every = [
+            AnchorCount {
+                expected: 2,
+                actual: 1,
+            },
+            DraftInProgress,
+            InvalidPrice,
+            InvalidBar,
+            MissingCoordinate,
+            NoBars,
+            NoCoveringBar,
+            StaleReference,
+            AnchorMismatch,
+        ];
+        for refusal in every {
+            let name = format!("{refusal:?}");
+            let name = name.split([' ', '{']).next().unwrap();
+            assert!(
+                !refusal.message().contains(name),
+                "{name} leaks its Rust name"
+            );
+        }
+        for refusal in [InvalidBar, MissingCoordinate, NoCoveringBar, AnchorMismatch] {
+            assert!(refusal.next_step().is_some(), "{refusal:?} names no remedy");
         }
     }
 

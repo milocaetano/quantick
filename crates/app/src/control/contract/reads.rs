@@ -17,16 +17,12 @@ use quantick_control::{
     cursor::EventCursor,
     error::{ControlError, codes},
     handshake::ProtocolLimits,
-    id::{CapabilityId, CostClassId, InstanceId, PermissionId, ProfileId, SnapshotScopeId},
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RevisionPolicy,
-    },
-    schema::generated_schema,
+    id::{InstanceId, PermissionId, ProfileId, SnapshotScopeId},
+    registry::CapabilityDescriptor,
     wire::ModuleRevision,
 };
+use quantick_control_host::authority::module;
 use quantick_control_host::contract::ScopeCatalogue;
-use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -34,23 +30,19 @@ use super::super::{
     chart::{ChartWindowPage, chart_window_prevalidated},
     events::{EventsReadInput, EventsWaitInput, complete_wait_page, read_page},
     evidence::{
-        EvidenceCapture, EvidenceCaptureInput, EvidenceReadInput, capture_prevalidated,
-        source_scopes,
+        EvidenceCapture, EvidenceCaptureInput, EvidenceChunkPage, EvidenceManifest,
+        EvidenceReadInput, capture_prevalidated, source_scopes,
     },
     journal::EventPage,
-    registry::SnapshotCapture,
+    registry::{SerializedSnapshotCapture, SnapshotCapture},
     scene::CONTROLS_SCOPE_ID as SCENE_CONTROLS_SCOPE_ID,
     types::known_error,
 };
 use super::{
-    ChartWindowInput, DeferredUiRead, EmptyInput, NO_CONFIRMATION_ID, OBSERVE_EFFECT_ID,
-    ObserverContract, ParkedWait, PreparedCapability, PreparedDispatch, PreparedUiRead,
-    PreparedWorkerRead, SerializedUiRead, SnapshotReadInput, UiReadContext, UiReadExecution,
-    confirmation, effect, module, permission,
+    ChartWindowInput, DeferredUiRead, DescribeResult, EmptyInput, ObserverContract, ParkedWait,
+    PrepareHandler, PreparedCapability, PreparedDispatch, PreparedUiRead, PreparedWorkerRead,
+    SerializedUiRead, SnapshotReadInput, UiReadContext, UiReadExecution,
 };
-
-const UI_BOUNDED_COST_ID: &str = "ui_bounded";
-const CAPABILITY_VERSION: u32 = 1;
 
 fn serialization_failed(what: &str) -> ControlError {
     known_error(
@@ -429,56 +421,52 @@ pub(super) fn prepare_scene(
     })
 }
 
-/// One read capability, with its pagination mode and that mode's own page
-/// ceiling.
-///
-/// The ceiling travels with the mode because it is per capability, not per
-/// protocol: a chart page is bounded by the bars an owned DTO may copy, an
-/// evidence page by the chunks that fit one response, and the descriptor is
-/// where a client learns which.
-pub(super) fn read_capability<I, O, const N: usize>(
-    id: &str,
-    module_id: &str,
-    title: &str,
-    description: &str,
-    permissions: [&str; N],
-    pagination: Option<(quantick_control::cursor::PaginationConsistency, usize)>,
-) -> CapabilityDescriptor
-where
-    I: JsonSchema,
-    O: JsonSchema,
-{
-    CapabilityDescriptor {
-        id: CapabilityId::new(id).expect("static capability ID is valid"),
-        version: CAPABILITY_VERSION,
-        title: title.to_owned(),
-        description: description.to_owned(),
-        module: module(module_id),
-        input_schema: generated_schema::<I>(),
-        output_schema: generated_schema::<O>(),
-        examples: Vec::new(),
-        effect: effect(OBSERVE_EFFECT_ID),
-        risk_flags: BTreeSet::new(),
-        read_only: true,
-        idempotency: IdempotencyPolicy::Forbidden,
-        revision_policy: RevisionPolicy::Forbidden,
-        stale_input_safety: None,
-        dry_run_supported: false,
-        persistence: EffectPersistence::None,
-        reversible: false,
-        destructive: false,
-        risk_reducing: false,
-        required_permissions: permissions.iter().map(|id| permission(id)).collect(),
-        preconditions: Vec::new(),
-        confirmation_class: confirmation(NO_CONFIRMATION_ID),
-        availability: Availability::available(),
-        expected_cost: ExpectedCost {
-            class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-            max_items: pagination.map(|(_, max_items)| max_items),
-            max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-        },
-        pagination: pagination.map(|(mode, _)| mode),
-    }
+/// Every read this application answers, with the handler that prepares it:
+/// the descriptor comes from the published authority, the schemas and the
+/// handler from here. Adding a read is one row.
+pub(super) fn bindings() -> [(CapabilityDescriptor, PrepareHandler); 9] {
+    use quantick_control_host::authority::{
+        CHART_WINDOW, DESCRIBE, DIAGNOSTICS, EVENTS_READ, EVENTS_WAIT, EVIDENCE_CAPTURE,
+        EVIDENCE_READ, SCENE, SNAPSHOT, read_descriptor,
+    };
+    [
+        (
+            read_descriptor::<EmptyInput, DescribeResult>(&DESCRIBE),
+            prepare_describe,
+        ),
+        (
+            read_descriptor::<SnapshotReadInput, SerializedSnapshotCapture>(&SNAPSHOT),
+            prepare_snapshot,
+        ),
+        (
+            read_descriptor::<ChartWindowInput, ChartWindowPage>(&CHART_WINDOW),
+            prepare_chart_window,
+        ),
+        (
+            read_descriptor::<EmptyInput, SerializedSnapshotCapture>(&DIAGNOSTICS),
+            prepare_diagnostics,
+        ),
+        (
+            read_descriptor::<EmptyInput, SerializedSnapshotCapture>(&SCENE),
+            prepare_scene,
+        ),
+        (
+            read_descriptor::<EventsReadInput, EventPage>(&EVENTS_READ),
+            prepare_events_read,
+        ),
+        (
+            read_descriptor::<EventsWaitInput, EventPage>(&EVENTS_WAIT),
+            prepare_events_wait,
+        ),
+        (
+            read_descriptor::<EvidenceCaptureInput, EvidenceManifest>(&EVIDENCE_CAPTURE),
+            prepare_evidence_capture,
+        ),
+        (
+            read_descriptor::<EvidenceReadInput, EvidenceChunkPage>(&EVIDENCE_READ),
+            prepare_evidence_read,
+        ),
+    ]
 }
 
 fn decode_payload<T: for<'de> Deserialize<'de>>(payload: &Value) -> Result<T, ControlError> {

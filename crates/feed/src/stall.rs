@@ -269,13 +269,21 @@ impl ForcedStall {
     /// Read the hook, once. Unset or unrecognized means no forced stall: a
     /// typo must leave the real judgement running rather than pick a shape.
     #[must_use]
+    ///
+    /// The hook compiles only with the `harness` feature (or under test); a
+    /// default build has no forced stall to read and answers `None`.
     pub fn from_env() -> Option<Self> {
-        match std::env::var("QUANTICK_FEED_STALL").ok()?.as_str() {
-            "connecting" => Some(Self::FirstConnect),
-            "reconnecting" => Some(Self::Reconnect),
-            "silent" => Some(Self::Silent),
-            _ => None,
+        #[cfg(any(test, feature = "harness"))]
+        {
+            match crate::hooks::captured::var("QUANTICK_FEED_STALL")?.as_str() {
+                "connecting" => Some(Self::FirstConnect),
+                "reconnecting" => Some(Self::Reconnect),
+                "silent" => Some(Self::Silent),
+                _ => None,
+            }
         }
+        #[cfg(not(any(test, feature = "harness")))]
+        None
     }
 
     /// The stall this shape stands for, with each budget's own duration so the
@@ -348,6 +356,7 @@ fn lower_first(text: &str) -> String {
     }
 }
 
+#[cfg(any(test, feature = "harness"))]
 crate::hooks::declare_hooks!["QUANTICK_FEED_STALL"];
 
 #[cfg(test)]

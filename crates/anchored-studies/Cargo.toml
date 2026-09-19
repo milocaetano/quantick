@@ -1,0 +1,13 @@
+[package]
+name = "quantick-anchored-studies"
+description = "Anchored profile and average computation lifecycles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+[dependencies]
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+rust_decimal = { workspace = true }
+[lints]
+workspace = true

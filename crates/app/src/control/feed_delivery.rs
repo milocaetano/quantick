@@ -1,7 +1,7 @@
 //! The independently versioned received-row delivery observation scope.
 
 use super::registry::{ProjectionRegistry, ProjectionRegistryError};
-use crate::app::QuantickApp;
+use crate::app::TabsPort;
 use quantick_control::id::{ModuleId, SnapshotScopeId};
 use quantick_control_host::feed::{
     FeedDeliverySnapshot, ReceivedRowCounts, SourceCounts, TabFeedDeliverySnapshot,
@@ -19,16 +19,17 @@ pub(super) fn register(
     )
 }
 
-pub(super) fn snapshot(app: &QuantickApp) -> FeedDeliverySnapshot {
+pub(super) fn snapshot<P: TabsPort + ?Sized>(app: &P) -> FeedDeliverySnapshot {
     FeedDeliverySnapshot {
         tabs: app
-            .control_tabs()
-            .iter()
-            .map(|tab| {
+            .tab_reads()
+            .tabs()
+            .iter_with_ids()
+            .map(|(tab_id, tab)| {
                 let i = tab.feed_integrity;
                 let x = tab.feed_delivery.exclusions;
                 TabFeedDeliverySnapshot::from_counts(
-                    tab.id,
+                    tab_id,
                     SourceCounts {
                         anomalies: i.anomalies,
                         missing_messages: i.missing_messages,

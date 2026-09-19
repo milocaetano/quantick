@@ -13121,6 +13121,16 @@
           "frame": {
             "$ref": "#/$defs/FrameHealthSnapshot"
           },
+          "saves_off_unread_hooks": {
+            "description": "Present when this session writes no store (decision DS7): the\n`QUANTICK_*` names set at launch that this build does not read.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "tabs": {
             "items": {
               "$ref": "#/$defs/TabHealthSnapshot"

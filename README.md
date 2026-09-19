@@ -325,8 +325,8 @@ evenly across each second for smoother playback and marks the session
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `QUANTICK_REPLAY_DIR` | the folder you last chose, else `Documents/Quantick/replay` | Folder the browser opens on, **for this run only** — what you pick in the app is stored in the workspace and is not overwritten by a run under this variable |
-| `QUANTICK_REPLAY_AUTOSTART` | unset | Set to `1` to load and play the first session in that folder on startup (same code path as clicking **Play session**) |
-| `QUANTICK_REPLAY_SPEED` | `1` | Speed the autostarted session opens at |
+| `QUANTICK_REPLAY_AUTOSTART` | unset | Set to `1` to load and play the first session in that folder on startup (same code path as clicking **Play session**). Automation hook: read only by a `--features harness` build; a default build logs it as `UNKNOWN_HOOK` |
+| `QUANTICK_REPLAY_SPEED` | `1` | Speed the autostarted session opens at (`--features harness` only, like the autostart) |
 
 ## Optional L2 liquidity map
 
@@ -397,7 +397,7 @@ The in-memory safety budgets are 500,000 liquidity runs (approximately 64 MiB), 
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `QUANTICK_BOOK_DEPTH` | `1000` | Binance snapshot depth per side. Numeric values are clamped to `1`–`5000`; a missing or invalid value uses the default. Hyperliquid's public L2 coverage is fixed by the venue at up to 20 levels per side. |
-| `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to show the L2 map on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle). Capture itself needs no flag — it runs for every depth-capable feed. |
+| `QUANTICK_BOOK_AUTOSTART` | unset | Set to `1` to show the L2 map on startup without clicking the chart toggle (development/ops convenience; same code path as the toggle; read only by a `--features harness` build). Capture itself needs no flag — it runs for every depth-capable feed. |
 | `QUANTICK_LOG_FORMAT` | `text` | Set to `json` for newline-delimited JSON diagnostic logs on stderr. |
 | `RUST_LOG` | `quantick=info` | Standard tracing filter; for example, use `quantick=debug` for deeper diagnostics. |
 

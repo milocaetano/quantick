@@ -10,9 +10,11 @@ fn recorder_for(
     symbol: &str,
     day_cache: deal_recording::DayCache,
 ) -> DealRecorder {
-    let default_on = app
-        .harness
-        .deal_recording_default()
+    #[cfg(any(feature = "scenario-harness", test))]
+    let scripted = app.chrome.harness.deal_recording_default();
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    let scripted = None;
+    let default_on = scripted
         .or(app.chrome.record_deals)
         .unwrap_or_else(|| app.config.records_deals(feed_id));
     let mut recorder = DealRecorder::with_cache(
@@ -31,17 +33,17 @@ pub(super) fn ensure(app: &mut QuantickApp) {
     let tz_minutes = app.tz.minutes();
     for index in 0..app.tabs.len() {
         let (feed_id, symbol) = {
-            let tab = &mut app.tabs[index];
+            let tab = app.tabs.runtime_mut(index);
             tab.deal_recorder.set_timezone(tz_minutes);
             if tab.deal_recorder.is_for(&tab.active.0, &tab.active.1) {
                 continue;
             }
             tab.active.clone()
         };
-        app.tabs[index].deal_recorder.stop();
-        let day_cache = app.tabs[index].deal_recorder.take_day_cache();
+        app.tabs.runtime_mut(index).deal_recorder.stop();
+        let day_cache = app.tabs.runtime_mut(index).deal_recorder.take_day_cache();
         let mut recorder = recorder_for(app, &feed_id, &symbol, day_cache);
-        let tab = &mut app.tabs[index];
+        let tab = app.tabs.runtime_mut(index);
         recorder.set_available(tab.feed_capabilities.borrow().deal_counter);
         tab.deal_recorder = recorder;
     }
@@ -70,7 +72,7 @@ pub(super) fn draw_toggle(app: &mut QuantickApp, ui: &mut eframe::egui::Ui) {
 /// Save the default and apply it to undecided recorders.
 pub(crate) fn set_default(app: &mut QuantickApp, enabled: bool) {
     app.chrome.record_deals = Some(enabled);
-    for tab in &mut app.tabs {
+    for tab in app.tabs.iter_mut() {
         tab.deal_recorder.set_default(enabled);
     }
 }

@@ -21,10 +21,11 @@
 //! states the rule in full.
 
 pub mod binance;
+pub mod candles;
 pub mod clock;
-pub mod config;
+pub use quantick_sources::config;
 pub mod continuity;
-pub mod history_reach;
+pub use quantick_sources::history_reach;
 pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;
@@ -38,6 +39,7 @@ mod scratch;
 pub mod stall;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+mod venue_loop;
 
 use std::path::PathBuf;
 
@@ -438,8 +440,16 @@ impl FeedGap {
 /// photograph a mark the application would not have drawn.
 #[must_use]
 pub fn demo_gap_ms() -> Option<i64> {
-    let requested: i64 = std::env::var("QUANTICK_FEED_GAP").ok()?.parse().ok()?;
-    (requested >= MIN_MARKED_GAP_MS).then_some(requested)
+    // The hook compiles only with the `harness` feature (or under test).
+    #[cfg(any(test, feature = "harness"))]
+    {
+        let requested: i64 = crate::hooks::captured::var("QUANTICK_FEED_GAP")?
+            .parse()
+            .ok()?;
+        (requested >= MIN_MARKED_GAP_MS).then_some(requested)
+    }
+    #[cfg(not(any(test, feature = "harness")))]
+    None
 }
 
 /// The shortest silence worth marking, in milliseconds.
@@ -704,11 +714,15 @@ pub struct FeedHandle {
 /// integer, else [`DEFAULT_BACKFILL_TARGET`].
 #[must_use]
 pub fn initial_backfill_target() -> usize {
-    std::env::var("QUANTICK_BACKFILL")
-        .ok()
+    // The override compiles only with the `harness` feature (or under test).
+    #[cfg(any(test, feature = "harness"))]
+    if let Some(target) = crate::hooks::captured::var("QUANTICK_BACKFILL")
         .and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_BACKFILL_TARGET)
+    {
+        return target;
+    }
+    DEFAULT_BACKFILL_TARGET
 }
 
 /// Start the feed for `source` on a background thread, returning the handle the
@@ -756,6 +770,7 @@ pub fn spawn_live(
     )
 }
 
+#[cfg(any(test, feature = "harness"))]
 crate::hooks::declare_hooks!["QUANTICK_BACKFILL", "QUANTICK_FEED_GAP"];
 
 #[cfg(test)]

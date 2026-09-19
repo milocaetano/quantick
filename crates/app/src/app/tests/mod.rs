@@ -33,20 +33,27 @@
 // `CandlePreset` and `IndicatorEvent` are here for the same reason one cut
 // later: the indicator manager took the last production reader of each out of
 // `app.rs`, and the tests that still name them are the only ones left.
-use crate::harness::DrawingsDemo;
-use crate::indicator_worker::IndicatorEvent;
 use crate::plot_area::plot_split;
 use crate::style::CandlePreset;
+use crate::surfaces::drawing_chrome::demo::DrawingsDemo;
+use crate::ui_state::WorkspaceExt;
 
+mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod chart_view_tests;
+mod control_launch_baselines;
 mod control_plane_tests;
+mod control_port_tests;
+mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
+mod launch_phase_tests;
 mod layers_tests;
+mod live_trade_tests;
+mod menu_bar_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
@@ -56,7 +63,11 @@ mod quick_range_control_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
+mod toolrail_launch_baselines;
 mod toolrail_tests;
+mod workspace_bundle_menu_baseline_tests;
+mod workspace_bundle_runtime_baseline_tests;
+mod workspace_commit_baseline_tests;
 mod workspaces_tests;
 
 use super::*;
@@ -116,10 +127,8 @@ fn add_pane_indicator(app: &mut QuantickApp, title: &str, values: Vec<f64>) -> S
 /// The same indicator, recomputed — an edited input, a hot reload, older
 /// trades re-cutting the series.
 fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, values: Vec<f64>) {
-    app.active_tab_mut()
-        .flow_pane
-        .indicators
-        .apply(IndicatorEvent::rebuilt(
+    app.active_tab_mut().flow_pane.indicators.apply(
+        crate::indicator_worker::event_fixture::rebuilt(
             slot,
             quantick_indicators::IndicatorDescriptor {
                 title: title.to_owned(),
@@ -138,7 +147,8 @@ fn rebuild_pane_indicator(app: &mut QuantickApp, slot: SlotId, title: &str, valu
                 fills: Vec::new(),
             },
             vec![values],
-        ));
+        ),
+    );
 }
 
 /// The `(lo, hi)` a pane is drawing with right now: its manual range if the
@@ -253,9 +263,46 @@ fn test_config() -> AppConfig {
     }
 }
 
+/// A launch-hook lookup over a fixed table instead of the process
+/// environment, so a hook exported in the developer's shell cannot flip a
+/// fixture's assertions and every case runs in one `cargo test`.
+fn fixed_env(
+    table: &'static [(&'static str, &'static str)],
+) -> impl FnMut(&str) -> Option<std::ffi::OsString> {
+    move |name| {
+        table
+            .iter()
+            .find(|(hook, _)| *hook == name)
+            .map(|(_, value)| (*value).into())
+    }
+}
+
 /// An app wired to in-memory channels, plus the test's ends of them: send
 /// feed events in, observe feed commands out. No egui, no network.
 fn test_app() -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    mpsc::Sender<DepthEvent>,
+) {
+    test_app_with_launch(AppLaunch::default())
+}
+
+fn test_app_with_launch(
+    launch: AppLaunch,
+) -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    mpsc::Sender<DepthEvent>,
+) {
+    test_app_with_workspace_and_launch(ui_state::Workspace::default(), launch)
+}
+
+fn test_app_with_workspace_and_launch(
+    workspace: ui_state::Workspace,
+    launch: AppLaunch,
+) -> (
     QuantickApp,
     mpsc::Sender<FeedEvent>,
     mpsc::Receiver<FeedCommand>,
@@ -269,7 +316,7 @@ fn test_app() -> (
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    let app = QuantickApp::new(
+    let app = QuantickApp::new_with_workspace(
         test_config(),
         "binance",
         "TESTUSDT",
@@ -283,6 +330,8 @@ fn test_app() -> (
             commands: cmd_tx,
             replay: None,
         },
+        workspace,
+        launch,
     );
     (app, evt_tx, cmd_rx, book_tx)
 }
@@ -373,7 +422,14 @@ fn trade(agg_id: u64) -> quantick_engine::Trade {
 /// An app holding `count` backfilled trades, built into tick(1) bars — one
 /// bar per trade, the finest series a spec change can coarsen.
 fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
-    let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
+    app_with_history_and_launch(count, AppLaunch::default())
+}
+
+fn app_with_history_and_launch(
+    count: u64,
+    launch: AppLaunch,
+) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+    let (mut app, evt_tx, cmd_rx, _book_tx) = test_app_with_launch(launch);
     // A bare canvas, the one every caller here was written against: the
     // strip stands beside the price axis and takes width from the candles,
     // so leaving it on moves every hard-coded pointer coordinate in the
@@ -395,7 +451,8 @@ fn app_with_history(count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     app.active_tab_mut().apply_spec_changes();
     let trades: Vec<_> = (1..=count).map(trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len() as u64, count);
     (app, cmd_rx)
 }
@@ -452,23 +509,22 @@ fn with_flow_pane<R>(
     let mut begin_text_edit = false;
     let QuantickApp {
         tabs,
-        active_tab,
         toolrail,
-        drawing_presets,
+        drawings,
         style,
         tz,
         workspace,
         footprint_config,
-        surfaces,
         ..
     } = app;
-    let tab = &mut tabs[*active_tab];
+    let tab_id = tabs.id_at(tabs.active_index());
+    let tab = tabs.runtime_mut(tabs.active_index());
     let mut chrome = pane::PaneChrome {
-        tab: tab.id,
+        tab: tab_id,
         side: pane::PaneSide::Flow,
         toolrail,
-        presets: drawing_presets,
-        drawing_chrome: &mut surfaces.drawing_chrome,
+        presets: &drawings.presets,
+        drawing_chrome: &mut drawings.chrome,
         begin_text_edit: &mut begin_text_edit,
         style,
         tz: *tz,
@@ -495,7 +551,7 @@ fn switch_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
     with_flow_pane(app, |pane, chrome| {
         pane.set_layer_visible(layer, visible, chrome.layers);
     });
-    app.apply_layer_actions();
+    app.layer_wiring().apply_actions();
 }
 
 /// Whether the active tab's flow pane is painting `layer`.
@@ -698,7 +754,7 @@ fn pointer_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     }
 }
 
-fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
+pub(super) fn click_chart(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) {
     run_frame_with_events(
         app,
         ctx,
@@ -781,7 +837,7 @@ fn drag_chart(app: &mut QuantickApp, ctx: &egui::Context, start: egui::Pos2, end
 /// trader does. `the_gear_on_the_context_bar_opens_the_inspector` is the
 /// test that proves this shortcut matches the real button.
 fn open_inspector(app: &mut QuantickApp, ctx: &egui::Context) {
-    app.surfaces.drawing_chrome.set_inspector_open(true);
+    app.drawings.chrome.set_inspector_open(true);
     // Two frames: the first opens the window, the second lets it settle
     // its size and automatic placement before anything reads its rect.
     run_frame(app, ctx);
@@ -1060,8 +1116,8 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
     // The write is queued during the release frame and flushed at the top
     // of the next one, where every other workspace write lives.
     run_frame(app, ctx);
-    app.surfaces
-        .drawing_chrome
+    app.drawings
+        .chrome
         .inspector_pos()
         .expect("the drag records a position")
 }
@@ -1072,7 +1128,7 @@ fn park_the_popup(app: &mut QuantickApp, ctx: &egui::Context, delta: egui::Vec2)
 fn with_a_saved_workspace(app: &mut QuantickApp, ctx: &egui::Context, name: &str) {
     app.workspace.set_ui_state_path(scratch_ui_state(name));
     run_frame(app, ctx);
-    app.save_workspace("test");
+    app.workspace_save_adapter().save_workspace("test");
     app.surfaces.toast.clear();
     assert!(
         app.workspace.ui_state_path().exists(),
@@ -1095,7 +1151,8 @@ fn place_drawing(
         click_chart(app, ctx, *anchor);
     }
     run_frame(app, ctx);
-    app.drawing_pane()
+    app.active_tab()
+        .drawing_pane()
         .drawings
         .items()
         .iter()
@@ -1115,15 +1172,15 @@ fn select_and_open_popup(app: &mut QuantickApp, ctx: &egui::Context, index: usiz
     // value that would make a position assertion pass on a popup that is
     // no longer floating. Ask the app what it drew before reading egui.
     assert!(
-        app.surfaces.drawing_chrome.inspector_open(),
+        app.drawings.chrome.inspector_open(),
         "the gear's door is open"
     );
     assert!(
-        !app.surfaces.drawing_chrome.inspector_pinned(),
+        !app.drawings.chrome.inspector_pinned(),
         "and the popup is floating, not docked"
     );
     assert_eq!(
-        app.drawing_pane().drawings.selected(),
+        app.active_tab().drawing_pane().drawings.selected(),
         Some(index),
         "on the object this call selected"
     );
@@ -1233,7 +1290,10 @@ fn app_on(config: AppConfig, feed_id: &str, symbol: &str) -> QuantickApp {
 
 /// An app with `count` trades of history, split, and laid out by two real
 /// frames so both panes have reported their rects.
-fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
+pub(super) fn split_app(
+    ctx: &egui::Context,
+    count: u64,
+) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, commands) = app_with_history(count);
     run_frame(&mut app, ctx);
     app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
@@ -1244,7 +1304,7 @@ fn split_app(ctx: &egui::Context, count: u64) -> (QuantickApp, mpsc::Receiver<Fe
 
 /// Let every pane's indicator worker finish what it was sent, then apply
 /// its events — the two steps the frame loop takes, made deterministic.
-fn settle_indicators(app: &mut QuantickApp) {
+pub(super) fn settle_indicators(app: &mut QuantickApp) {
     for pane in app.active_tab_mut().panes_mut() {
         pane.indicator_worker.flush();
         pane.apply_indicator_events();
@@ -1252,7 +1312,7 @@ fn settle_indicators(app: &mut QuantickApp) {
 }
 
 /// A point inside the pane on `side`, for a click that focuses it.
-fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
+pub(super) fn pane_point(app: &QuantickApp, side: PaneSide) -> egui::Pos2 {
     app.active_tab()
         .pane(side)
         .frame
@@ -1381,7 +1441,7 @@ fn open_second_tab(app: &mut QuantickApp, ctx: &egui::Context, symbol: &str) -> 
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    app.adopt_tab(
+    app.arrangement_adapter().adopt_tab(
         "binance".to_owned(),
         symbol.to_owned(),
         FeedHandle {
@@ -1636,6 +1696,7 @@ fn folded_profile_group(app: &QuantickApp) -> Decimal {
         .cache
         .as_ref()
         .expect("a placed range over a live tape folded")
+        .output()
         .profile
         .as_ref()
         .expect("the range covers bars that have tape")
@@ -2151,7 +2212,7 @@ fn loaded_observer_workspace(bars: u64) -> (QuantickApp, mpsc::Receiver<FeedComm
         };
         let column = (0..bars).map(|bar| bar as f64).collect::<Vec<_>>();
         pane.indicators
-            .apply(crate::indicator_worker::IndicatorEvent::rebuilt(
+            .apply(crate::indicator_worker::event_fixture::rebuilt(
                 slot,
                 descriptor,
                 vec![column],
@@ -2313,7 +2374,7 @@ fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
         .expect("the reviewed page limit fits in the wire integer");
     let (app, _commands) = app_with_history(max_page_items);
     let query = ChartWindowQuery {
-        tab_id: WireU64::new(app.active_tab().id),
+        tab_id: WireU64::new(app.tabs.active_id()),
         pane_id: WireU64::new(app.active_tab().flow_pane.id),
         range: ChartWindowRange::Slots {
             start_slot: WireU64::new(0),
@@ -2596,4 +2657,48 @@ fn test_screenshot(width: u32, height: u32) -> crate::control::RawScreenshot {
 
 mod worker_progress_tests;
 
+mod frame_tail_tests;
 mod worker_summary_bench_tests;
+
+mod source_drain_tests;
+mod stage_order_tests;
+
+fn attach_script_for_test(
+    app: &mut QuantickApp,
+    name: String,
+    text: String,
+    by_operator: bool,
+) -> (u64, crate::control::PaneSideDto, SlotId) {
+    let target = (app.tabs.active_id(), app.active_tab().focused_side());
+    let attached = app.indicators.attach_script(
+        app.tabs
+            .runtime_mut(app.tabs.active_index())
+            .pane_mut(target.1),
+        target,
+        name,
+        text,
+        by_operator,
+    );
+    let owner = attached.target;
+    app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+        attached,
+    ));
+    (owner.tab, owner.side.into(), owner.slot)
+}
+fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
+    let target = (app.tabs.active_id(), app.active_tab().focused_side());
+    let (slot, added) = app.indicators.add_library(
+        app.tabs
+            .runtime_mut(app.tabs.active_index())
+            .pane_mut(target.1),
+        target,
+        index,
+    )?;
+    if let Some(attached) = added.attachment {
+        app.apply_indicator_edit(crate::app::indicator_manager::IndicatorEdit::Attached(
+            attached,
+        ));
+    }
+    app.indicators.watch_attachment(added.watch);
+    Some(slot)
+}

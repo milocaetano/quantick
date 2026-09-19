@@ -40,7 +40,7 @@ pub type SnapshotScopeCatalogue = (
 
 /// Build the [`SnapshotScopeCatalogue`] of `projections` against the
 /// registered `permissions`.
-pub fn snapshot_scope_catalogue<H: 'static>(
+pub fn snapshot_scope_catalogue<H: ?Sized + 'static>(
     projections: &ProjectionRegistry<H>,
     permissions: &[PermissionDescriptor],
 ) -> Result<SnapshotScopeCatalogue, RegistryError> {

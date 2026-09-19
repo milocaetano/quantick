@@ -50,6 +50,7 @@ mod panes;
 mod strategies;
 
 pub use canvas::CanvasChrome;
+pub use feed::HistoryPolicy;
 pub use history::OlderCandles;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
@@ -222,12 +223,15 @@ struct HistoryNote {
     raised_at: std::time::Instant,
 }
 
-pub struct Tab {
-    /// Stable for as long as the tab is open, and never reused. The indicator
-    /// state file names one of these (see `QuantickApp::persisted_tab`), and
-    /// per-tab chrome persistence (§14, `ui-state.toml`) would key off it too.
-    pub id: u64,
+pub(crate) type LiveFeedSpawn<'a> = dyn FnMut(
+        quantick_feed::config::ProviderKind,
+        &str,
+        &quantick_feed::config::MetaTraderSettings,
+        Option<std::path::PathBuf>,
+    ) -> quantick_feed::ObservedFeedHandle
+    + 'a;
 
+pub struct Tab {
     // Feed & asset selection, driven by the configuration. `feed_id`/`symbol`
     // are what the selectors show (the desired selection); `active` is what the
     // running feed thread is actually streaming. When they diverge, the feed is
@@ -584,7 +588,6 @@ impl Tab {
     /// they are built, rather than a tab reserving one it may never use.
     #[must_use]
     pub fn new(
-        id: u64,
         flow_pane_id: u64,
         feed_id: String,
         symbol: String,
@@ -599,7 +602,6 @@ impl Tab {
         // opens with that one load already in flight.
         loading.begin(LoadingTask::History);
         Self {
-            id,
             active: (feed_id.clone(), symbol.clone()),
             feed_id,
             events: feed.events,
@@ -660,8 +662,7 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: std::env::var("QUANTICK_PANE_COLLAPSED")
-                .is_ok_and(|value| value == "1"),
+            context_collapsed: pane_collapsed_hook(),
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
             last_canvas_width: 0.0,
@@ -917,6 +918,20 @@ impl Tab {
     }
 }
 
+/// `QUANTICK_PANE_COLLAPSED=1` opens every tab with its context panes folded.
+/// A capture hook: compiled only with the scenario harness (or under test).
+fn pane_collapsed_hook() -> bool {
+    #[cfg(any(feature = "scenario-harness", test))]
+    {
+        crate::hooks::captured::var("QUANTICK_PANE_COLLAPSED").is_some_and(|value| value == "1")
+    }
+    #[cfg(not(any(feature = "scenario-harness", test)))]
+    {
+        false
+    }
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 
 #[cfg(test)]

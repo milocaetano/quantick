@@ -31,7 +31,7 @@ use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::style::ChartStyle;
 use crate::theme;
 use crate::timezone::TzOffset;
-use crate::toolrail::ToolRail;
+use crate::toolrail::{Tool, ToolRail};
 use crate::viewport::Viewport;
 use quantick_layers::{ChartLayer, LayerActions};
 
@@ -47,11 +47,10 @@ use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
 #[cfg(test)]
-use crate::toolrail::Tool;
-#[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
+#[cfg(test)]
+use strategies::strategy_badge_text;
 
-mod axes_and_chrome;
 mod axes_and_panes;
 // `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns
 // `TimePaneAreas`, which nothing outside names yet, so a `pub use` of it is an
@@ -61,13 +60,16 @@ pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod draw_frame;
-mod drawing_gestures;
-mod drawing_paint;
+mod drawing_projection;
 mod footprint;
 mod frame;
+mod frame_layout;
+mod frame_stages;
 mod gestures;
 mod layer_painters;
 mod layers;
+mod placement_gestures;
+mod pointer_gestures;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
@@ -84,8 +86,7 @@ mod primary_button;
 mod quick_range;
 mod series;
 mod shared_marks;
-mod strategies;
-mod strategy_badges;
+pub(crate) mod strategies;
 mod tape_switch;
 
 /// Every sub-struct of a pane is `Pane*`, without exception: prefixing only
@@ -95,6 +96,7 @@ pub use footprint::PaneFootprint;
 pub use frame::PaneFrame;
 pub use gestures::PaneGestures;
 pub use strategies::PaneStrategies;
+pub use tape_switch::TapeSwitch;
 
 pub(crate) use canvas_split::split_pane_layout_strip;
 /// The canvas split and the shared-mark contract keep their public paths
@@ -102,9 +104,11 @@ pub(crate) use canvas_split::split_pane_layout_strip;
 pub use canvas_split::{
     CANVAS_DIVIDER_HANDLE_PX, DEFAULT_PANE_FRACTION, PaneSide, clamp_pane_fraction, split_time_pane,
 };
+pub(crate) use pointer_hit::PaneHitTest;
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};
 pub use shared_marks::{PaneIndex, SharedEdit, SharedInteraction, SharedPick};
 use shared_marks::{SharedDrag, SharedPointer};
+pub(crate) use shared_marks::{SharedMarksMut, SharedSource};
 pub(crate) use tape_switch::tape_switch_rect;
 
 /// Hit radius for selecting a drawing anchor, in logical pixels.
@@ -143,6 +147,7 @@ const DRAWING_DRAG_COMPLETES_PX: f32 = 12.0;
 
 /// A pointer and a modifier for a run with nobody at the keyboard — see
 /// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook.
+#[cfg(any(feature = "drawing-harness", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: egui::Pos2,
@@ -422,20 +427,7 @@ impl PriceAxisClaims<'_> {
     }
 }
 
-/// What the pointer's compass will draw this frame, and where.
-///
-/// One decision, read twice: the axes consult it before labelling themselves
-/// so they can leave the coordinate alone, and the paint pass draws exactly
-/// what it says.
-struct PointerCompass {
-    readout: pointer_compass::PointerReadout,
-    /// The price half is drawn — its layer is on, the pointer is over the
-    /// price band, and the crosshair is not already writing one.
-    price: bool,
-    /// The time half is drawn — its layer is on and a bar is under the
-    /// pointer.
-    time: bool,
-}
+use crate::pointer_compass::PointerCompass;
 
 /// Window chrome borrowed by one pane for input and paint. Mutable because a
 /// tool or the tab-level simulator can change during the input pass.
@@ -559,18 +551,11 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
-    /// Whether the app has put the active layout on this pane — its
-    /// indicators and its market's drawings. `false` from construction until
-    /// the first frame that sees the pane, so a pane opened by any path (a
-    /// new tab, a split, a restore) is seeded exactly once.
-    pub layout_seeded: bool,
-    /// Which of the workspace's layouts this pane shows — its indicator set
-    /// and the drawings it keeps. `None` until the app seeds the pane, when
-    /// it takes the focused pane's layout (or the book's default); a restored
-    /// workspace sets it before seeding. Per pane, because two charts side by
-    /// side are two readings of one market, and a CVD on one is not a CVD the
-    /// other asked for.
-    pub layout: Option<crate::layouts::LayoutId>,
+    /// Read-only handle to the layout session's authoritative membership.
+    pub(crate) layout_view: quantick_workspace::session::LayoutView,
+    /// A restored/opening request, consumed when the session seeds this pane.
+    /// The outer option distinguishes a requested default from no request.
+    pub(crate) opening_layout: Option<Option<crate::layouts::LayoutId>>,
     /// The layout's name, for the pane to show beside its own controls. A
     /// copy the app refreshes on a switch or a rename, so the header — drawn
     /// by the tab, which has no book — never looks it up per frame.
@@ -638,10 +623,9 @@ pub struct ChartPane {
     price_band_label: std::sync::Arc<str>,
     // Pointer position over the plot this frame, for the crosshair.
     pub hover_pos: Option<egui::Pos2>,
-    /// Whether the pointer is over the tape switch in the canvas's top-right
-    /// corner. Read by the paint pass, which runs after the input pass and has
-    /// no `Ui` of its own to ask.
-    tape_switch_hovered: bool,
+    /// The tape switch in the canvas's top-right corner — see
+    /// [`TapeSwitch`].
+    pub tape_switch: TapeSwitch,
 
     /// Venue candles standing in front of the trade-derived series, already
     /// folded to this pane's interval.
@@ -706,6 +690,102 @@ pub struct ChartPane {
 }
 
 impl ChartPane {
+    pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
+        drawing_projection::PaneSeriesRead {
+            history_prefix: &self.history_prefix,
+            state: &self.state,
+            spec: &self.spec,
+        }
+    }
+    pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
+        drawing_projection::DrawingProjection {
+            series: self.series_read(),
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        }
+    }
+
+    /// The last frame's geometry, lent out for a hit test — see
+    /// [`PaneHitTest`].
+    pub(crate) fn hit_test(&self) -> PaneHitTest<'_> {
+        PaneHitTest {
+            frame: &self.frame,
+            price_view: &self.price_view,
+            drawings: &self.drawings,
+            orderflow: self.orderflow.as_ref(),
+            hover_pos: self.hover_pos,
+            projection: self.drawing_projection(),
+        }
+    }
+
+    /// This pane's store beside the projection an edit from another pane
+    /// resolves through — see [`SharedMarksMut`].
+    pub(crate) fn shared_marks_mut(&mut self) -> SharedMarksMut<'_> {
+        SharedMarksMut {
+            projection: drawing_projection::DrawingProjection {
+                series: drawing_projection::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.viewport,
+                indicators: &self.indicators,
+            },
+            drawings: &mut self.drawings,
+        }
+    }
+
+    /// The marks this pane lends its companions: its store and the object
+    /// its editor holds — see [`SharedSource`].
+    pub(crate) fn shared_source(&self) -> SharedSource<'_> {
+        SharedSource {
+            drawings: &self.drawings,
+            content_editing: self.gestures.content_editing,
+        }
+    }
+
+    /// The strategies beside the series their rulers warm on, for a
+    /// re-arm from outside the pane.
+    #[cfg(test)]
+    pub(crate) fn strategies_with_series(
+        &mut self,
+    ) -> (&mut PaneStrategies, drawing_projection::PaneSeriesRead<'_>) {
+        (
+            &mut self.strategies,
+            drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+        )
+    }
+
+    /// One pane's side of the quick range — see [`quick_range::QuickRangeView`].
+    fn quick_range_view(&self, tab: u64, side: PaneSide) -> quick_range::QuickRangeView<'_> {
+        quick_range::QuickRangeView {
+            owner: crate::surfaces::drawing_chrome::QuickRangeOwner {
+                tab,
+                side,
+                pane: self.id,
+                revision: self.pagination_revision(),
+                layout: self.layout_id().map(|id| id.0),
+            },
+            projection: self.drawing_projection(),
+        }
+    }
+
+    /// Current membership, or the pending imported/opening choice before seeding.
+    pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
+        self.opening_layout
+            .unwrap_or_else(|| self.layout_view.layout())
+    }
+    pub(crate) fn layout_seeded(&self) -> bool {
+        self.layout_view.seeded()
+    }
+    pub(crate) fn request_opening_layout(&mut self, id: Option<crate::layouts::LayoutId>) {
+        self.opening_layout = Some(id);
+    }
+
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
     /// with the tape and every layer read off it.
     #[must_use]
@@ -735,8 +815,8 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
-            layout_seeded: false,
-            layout: None,
+            layout_view: quantick_workspace::session::LayoutView::default(),
+            opening_layout: None,
             layout_label: String::new(),
             drawings_key: None,
             drawings_saved_revision: 0,
@@ -758,7 +838,7 @@ impl ChartPane {
             price_view: PriceView::new(),
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
-            tape_switch_hovered: false,
+            tape_switch: TapeSwitch::default(),
             history_prefix: Vec::new(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
@@ -899,6 +979,7 @@ impl ChartPane {
         self.pending_indicator_guide.take()
     }
 
+    #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn first_indicator_pane_center(&self) -> Option<egui::Pos2> {
         self.frame.bands.get(1).map(|band| band.rect.center())
     }
@@ -945,13 +1026,71 @@ impl ChartPane {
         self.frame.chart_area = Some(areas.chart);
         // One carve, consumed by placement, hit-testing, dragging and — after
         // the panes have drawn — painting.
-        let bands = self.bands(&areas);
+        let bands = crate::bands::BandGeometry {
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            lane_divider_x: self.frame.lane_divider_x,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
+        }
+        .bands(&areas);
         // A drawing tool consumes the *primary button*, not the chart. Pan,
         // wheel zoom, the pane dividers and the collapse chevrons all keep
         // working while one is armed: an armed tool used to return early from
         // here, which left the trader unable to move the chart they were
         // annotating (audit S2).
-        let tool_armed = self.handle_drawing_placement(ui, &areas, &bands, chrome);
+        let placement_id = self.interaction_id("drawing_placement");
+        #[cfg(any(feature = "drawing-harness", test))]
+        let hand = self
+            .gestures
+            .parked_hand
+            .map(|hand| (hand.constrain, hand.position));
+        #[cfg(not(any(feature = "drawing-harness", test)))]
+        let hand: Option<(drawings::Constrain, egui::Pos2)> = None;
+        let options = placement_gestures::PlacementOptions {
+            tool: chrome.toolrail.tool().drawing_tool(),
+            magnet: chrome.toolrail.magnet(),
+            constrain: if ui.input(|input| input.modifiers.shift) {
+                drawings::Constrain::Level
+            } else {
+                hand.map_or(drawings::Constrain::Free, |hand| hand.0)
+            },
+            parked_position: hand.map(|hand| hand.1),
+        };
+        let placement = self.gestures.update_placement(
+            &mut self.drawings,
+            &drawing_projection::DrawingProjection {
+                series: drawing_projection::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                },
+                viewport: &self.viewport,
+                indicators: &self.indicators,
+            },
+            placement_gestures::PlacementFrame {
+                ui,
+                areas: &areas,
+                bands: &bands,
+                id: placement_id,
+                history_right: self.frame.lane_divider_x.unwrap_or(areas.chart.right()),
+            },
+            options,
+            placement_gestures::PlacementDefaults {
+                presets: chrome.presets,
+                repeat: chrome.toolrail.repeat(),
+            },
+        );
+        if let Some(position) = placement.hover_position {
+            self.hover_pos = position;
+        }
+        if placement.completion.arm_pointer {
+            chrome.toolrail.arm(Tool::Pointer);
+        }
+        if placement.completion.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        let tool_armed = placement.tool_armed;
         let auto = self.frame.auto_range;
         let height = self.frame.chart_height;
         let total = self.slots();
@@ -982,12 +1121,35 @@ impl ChartPane {
         // the jump-to-live chip's rule — and it is the *only* way back once the
         // tape is off: with no band there is no tape to right-click, so a
         // switch that lived only in that menu would be a one-way door.
-        self.handle_tape_switch(ui, areas.chart, chrome);
+        if self.orderflow.is_some() {
+            let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
+            let clicked =
+                self.tape_switch
+                    .handle(ui, areas.chart, self.interaction_id("tape_switch"), on);
+            if self.tape_switch.hovered() {
+                // The chip is chrome on top of the canvas. A crosshair chasing
+                // the pointer underneath it would say the chart is being
+                // hovered while the pointer is reading a button.
+                self.hover_pos = None;
+            }
+            if clicked {
+                self.set_layer_visible(ChartLayer::TapeChart, !on, chrome.layers);
+            }
+        } else {
+            self.tape_switch.absent();
+        }
         // The paper lines and the right-click price live on the candles, and
         // only there: an order is a price, not a value on someone's oscillator.
         let price_band = &bands[0];
         let history_right = self.frame.lane_divider_x.unwrap_or(areas.chart.right());
-        self.handle_quick_range(ui, price_band, history_right, total, magnet, chrome);
+        self.quick_range_view(chrome.tab, chrome.side).handle(
+            ui,
+            price_band,
+            history_right,
+            total,
+            magnet,
+            chrome,
+        );
         self.handle_context_menu(&chart, &areas, &bands, chrome);
         let drawing_area = price_band.rect;
         let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
@@ -1019,18 +1181,47 @@ impl ChartPane {
             total,
             magnet,
         };
-        let paper_gesture =
-            self.handle_paper_input(ui, chrome, &areas, &bands, &pointer, tool_armed);
-        let drawing_drag_consumes_gesture = self.handle_pointer_tool(
-            ui,
-            chrome,
-            &chart,
-            &areas,
-            &bands,
-            &pointer,
-            pointer_delta,
-            paper_gesture,
+        let paper_layer_visible = self.layer_visible(ChartLayer::PaperTrading, chrome.style);
+        let paper_gesture = primary_button::PaperArbitration {
+            projection: &self.drawing_projection(),
+            drawings: &self.drawings,
+            layer_visible: paper_layer_visible,
+        }
+        .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
+        let projection = drawing_projection::DrawingProjection {
+            series: drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            viewport: &self.viewport,
+            indicators: &self.indicators,
+        };
+        let outcome = self.gestures.handle_pointer_tool(
+            &mut self.drawings,
+            &projection,
+            pointer_gestures::PointerFrame {
+                ui,
+                chart: &chart,
+                areas: &areas,
+                bands: &bands,
+                cached_bands: &self.frame.bands,
+                pointer: &pointer,
+                pointer_delta,
+                paper_gesture,
+                tool: chrome.toolrail.tool(),
+                shared_pick: chrome.shared_pick,
+                shared: chrome.shared,
+            },
         );
+        if let Some(cursor) = outcome.cursor {
+            ui.ctx().set_cursor_icon(cursor);
+        }
+        if outcome.begin_text_edit {
+            *chrome.begin_text_edit = true;
+        }
+        chrome.shared = outcome.shared;
+        let drawing_drag_consumes_gesture = outcome.consumed;
         // Whether the primary button is still the chart's this frame. An
         // armed tool, a drawing being dragged and a grabbed paper line each
         // take it — and only it. Everything that is not the primary button
@@ -1088,7 +1279,7 @@ impl ChartPane {
             // double click on empty chart can have.
             match chart
                 .interact_pointer_pos()
-                .and_then(|pos| self.overlay_plot_at(pos))
+                .and_then(|pos| self.hit_test().overlay_plot_at(pos))
             {
                 Some(slot) => self.pending_settings = Some(slot),
                 None => {

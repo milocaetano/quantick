@@ -19,7 +19,7 @@ impl Series for PaneSeries<'_> {
             owner: Owner {
                 tab: self.tab,
                 pane: self.pane.id,
-                layout: self.pane.layout.map(|id| id.0),
+                layout: self.pane.layout_id().map(|id| id.0),
             },
             revision: self.pane.pagination_revision(),
         }
@@ -34,7 +34,7 @@ impl Series for PaneSeries<'_> {
         self.pane.slot_open_time(slot)
     }
     fn time_at_position(&self, bar: f32) -> Option<i64> {
-        self.pane.anchor_time(bar)
+        self.pane.series_read().anchor_time(bar)
     }
     fn draft_in_progress(&self) -> bool {
         self.pane.drawings.draft().is_some()
@@ -65,13 +65,42 @@ pub(super) fn resolve(
             revision: reference.series_revision.get(),
             layout_id: reference.layout_id.map(|id| id.get()),
         });
-    annotation::resolve(&PaneSeries { tab, pane }, &anchors, reference, required).map_err(|error| {
-        match error {
-            Refusal::AnchorCount { expected, actual } => ControlError::invalid_request(format!("annotation takes exactly {expected} anchor(s), not {actual}")),
-            Refusal::DraftInProgress => capability_unavailable("the trader is drawing on that pane right now; an annotation would land in their unfinished object"),
-            Refusal::StaleReference => capability_unavailable("the range belongs to a different pane, layout or series revision; draw the range again"),
-            Refusal::NoBars => capability_unavailable("that chart has no bars yet, so an anchor has nothing to land on"),
-            other => ControlError::invalid_request(format!("invalid annotation coordinates: {other:?}")),
-        }
-    })
+    annotation::resolve(&PaneSeries { tab, pane }, &anchors, reference, required).map_err(refused)
 }
+
+/// v1's time-only anchor: the slot a market time falls on, and the time that slot opened.
+pub(super) fn resolve_slot(
+    pane: &ChartPane,
+    tab: u64,
+    time_unix_ms: i64,
+) -> Result<(usize, i64), ControlError> {
+    slot_of(&PaneSeries { tab, pane }, time_unix_ms)
+}
+
+fn slot_of(series: &impl Series, time_unix_ms: i64) -> Result<(usize, i64), ControlError> {
+    if series.slots() == 0 {
+        return Err(refused(Refusal::NoBars));
+    }
+    let slot = series
+        .slot_at_time(time_unix_ms)
+        .ok_or_else(|| refused(Refusal::NoCoveringBar))?;
+    Ok((slot, series.open_time(slot).unwrap_or(time_unix_ms)))
+}
+
+/// One refusal, one answer, whichever wire version asked.
+pub(super) fn refused(refusal: Refusal) -> ControlError {
+    let mut error = if refusal.is_unavailable() {
+        capability_unavailable(refusal.message())
+    } else {
+        ControlError::invalid_request(refusal.message())
+    };
+    error
+        .context
+        .next_steps
+        .extend(refusal.next_step().map(str::to_owned));
+    error
+}
+
+#[cfg(test)]
+#[path = "tests/series_tests.rs"]
+mod series_tests;

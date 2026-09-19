@@ -47,7 +47,7 @@ impl Tab {
     /// quietly moving a different pane would be worse than saying no.
     ///
     /// Returns whether anything moved.
-    pub fn move_context_pane(&mut self, from: PaneIndex, to: PaneIndex) -> bool {
+    pub fn move_context_pane(&mut self, tab_id: u64, from: PaneIndex, to: PaneIndex) -> bool {
         let (Some(from_slot), Some(to_slot)) = (from.checked_sub(1), to.checked_sub(1)) else {
             return false;
         };
@@ -67,7 +67,7 @@ impl Tab {
             target: "quantick::app",
             schema_version = 1_u8,
             event_code = "LAYOUT_PANE_MOVED",
-            tab_id = self.id,
+            tab_id = tab_id,
             from = from,
             to = to,
             "a context pane was moved within the stack"

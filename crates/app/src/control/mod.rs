@@ -33,7 +33,7 @@ pub(crate) mod retry_matrix;
 mod scene;
 #[cfg(test)]
 pub(crate) mod schema_catalog;
-mod script;
+pub(crate) mod script;
 mod session;
 mod system;
 mod trace;

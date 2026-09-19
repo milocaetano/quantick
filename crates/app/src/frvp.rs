@@ -1,7 +1,7 @@
 //! Refresh pass for fixed-range volume profile drawings.
 //!
 //! The drawing owns *where* (two anchors, a bar range); the engine owns
-//! *what* ([`ProfileFold`] over that range's bars); this module is the bridge
+//! *what* ([`quantick_engine::ProfileFold`] over that range's bars); this module is the bridge
 //! that keeps the two current. It runs once per frame per pane, before the
 //! drawings paint, and it re-folds only when something the profile depends on
 //! actually changed — the cache key names every such input, so the common
@@ -17,13 +17,15 @@
 //!
 //! Never on the per-trade path: ingestion does not know this module exists.
 
-use quantick_engine::{
-    Bar, BarFootprint, DEFAULT_LEVEL_CAP, ProfileFold, ValueArea, VolumeProfile,
-};
-use rust_decimal::Decimal;
+#[cfg(test)]
+use quantick_anchored_studies::FrvpEmpty;
+use quantick_anchored_studies::{ProfileInputs, ProfileRequest, RangeProfile};
+use quantick_engine::{Bar, BarFootprint};
 
-use crate::drawings::{Drawings, FrvpCache, FrvpCacheKey, FrvpEmpty, FrvpPayload};
+use crate::drawings::{Drawings, FrvpPayload};
 use crate::state::ChartState;
+#[cfg(test)]
+use quantick_anchored_studies::RangeProfile as FrvpCache;
 
 /// The registry id of the fixed-range-profile tool — the one string this
 /// module and the pane share to recognise a profile object.
@@ -33,7 +35,7 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// candle and in ladder rows for a bar with tape.
 ///
 /// The unit is "one map touch": a venue candle joins as a *range* whatever
-/// its width ([`ProfileFold::push_candle`]), while a tape bar costs one touch
+/// its width ([`quantick_engine::ProfileFold::push_candle`]), while a tape bar costs one touch
 /// per row it printed. At the ~1.3 µs per candle the engine's `profile_fold`
 /// bench measures, this budget is about 2 ms — and 2 ms is chosen against the
 /// frame it has to share, not against the 16.7 ms one in the abstract: the
@@ -47,7 +49,7 @@ pub const TOOL_ID: &str = "fixed-range-profile";
 /// lowering it buys the reverse. Never zero — a zero budget would fold
 /// nothing, forever.
 ///
-/// The pass also *reads* the fold once ([`derive`]), which the budget does not
+/// The pass also *reads* the fold once (the core result derivation), which the budget does not
 /// count: while the fold runs that read walks the pending spreads, so the true
 /// per-pass cost is somewhat above the folding alone. It falls to a map clone
 /// the moment the fold is sealed, which is the state a chart spends almost all
@@ -72,57 +74,17 @@ pub const DEFAULT_FOLD_BUDGET: usize = 1_500;
 pub fn fold_budget() -> usize {
     static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *BUDGET.get_or_init(|| {
-        std::env::var("QUANTICK_FRVP_FOLD_BUDGET")
-            .ok()
+        // A capture hook: compiled only with the scenario harness (or under
+        // test); a default build folds at the default budget.
+        #[cfg(any(feature = "scenario-harness", test))]
+        if let Some(budget) = crate::hooks::captured::var("QUANTICK_FRVP_FOLD_BUDGET")
             .and_then(|value| value.trim().parse::<usize>().ok())
             .filter(|budget| *budget > 0)
-            .unwrap_or(DEFAULT_FOLD_BUDGET)
-    })
-}
-
-/// A range's fold of **closed** bars: where it got to, and the engine-side
-/// accumulator it got there with.
-///
-/// Held on the [`FrvpCache`] beside the profile it is building, and kept
-/// after it finishes — the forming bar joins a *copy* of it whenever the live
-/// edge moves, which is cheaper than re-folding the range and is the only
-/// reason a long range survives a running tape.
-#[derive(Debug, Clone)]
-pub struct FoldJob {
-    fold: ProfileFold,
-    /// The next global slot to fold; `end` is inclusive.
-    next: usize,
-    end: usize,
-}
-
-impl FoldJob {
-    /// A fold about to run over the global slots `start..=end`, folding
-    /// ladders grouped at `group`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `group` is not positive — the same configuration contract as
-    /// [`ProfileFold::new`].
-    #[must_use]
-    pub fn over(group: Decimal, start: usize, end: usize) -> Self {
-        Self {
-            fold: ProfileFold::new(group, DEFAULT_LEVEL_CAP),
-            next: start,
-            end,
+        {
+            return budget;
         }
-    }
-
-    /// Carry this fold on to a later last slot, keeping every bar already in
-    /// it.
-    ///
-    /// Legal even once the fold has been sealed: `ProfileFold::seal` only
-    /// collapses the pending spreads, and its contract is that collapsing
-    /// early and collapsing late reach the same rows. So a bar closing under a
-    /// range that reaches the live edge costs one more `push_ladder`, not a
-    /// fold of the whole range from its first bar.
-    fn extend_to(&mut self, end: usize) {
-        self.end = end;
-    }
+        DEFAULT_FOLD_BUDGET
+    })
 }
 
 /// Everything one refresh reads. The partial ladder comes in as the pane's
@@ -153,8 +115,8 @@ pub struct RefreshInputs<'a> {
     pub side_inferred: bool,
     /// The oldest global slot the L2 heatmap covers this frame, `None` when
     /// the map is off or painted nothing. Presentation state: it moves the
-    /// paint's fill→outline cut, never the fold, so it lives on the cache
-    /// *beside* the key — a map growing must not re-merge anything.
+    /// paint's fill→outline cut, never the fold, so it lives on the drawing payload
+    /// outside the computation key — a map growing must not re-merge anything.
     pub heat_first_slot: Option<usize>,
     /// Where the pointer hovers while a profile is being placed — the bar
     /// that completes a one-anchor draft's range, so the histogram is live
@@ -179,6 +141,19 @@ pub struct RefreshInputs<'a> {
 /// from payload equality — so this pass can never register as a user edit
 /// in the undo history, however often it runs.
 pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) -> bool {
+    let core = ProfileInputs {
+        closed: inputs.state.bars(),
+        ladders: inputs.state.bar_footprints(),
+        prefix: inputs.prefix,
+        partial_ladder: inputs.partial_ladder,
+        group: inputs.state.footprint_group(),
+        series_revision: inputs.state.series_revision(),
+        partial_version: inputs.partial_version,
+        blocked: inputs.blocked,
+        side_inferred: inputs.side_inferred,
+        partial_bucket_slot: inputs.partial_bucket_slot,
+        budget: inputs.budget,
+    };
     let mut folding = false;
     for drawing in drawings.items_mut() {
         if drawing.tool.id() != TOOL_ID || drawing.points.len() < 2 {
@@ -188,7 +163,18 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) -> bool {
         let Some(payload) = drawing.payload.as_any_mut().downcast_mut::<FrvpPayload>() else {
             continue;
         };
-        folding |= refresh_one(payload, a.min(b), a.max(b), inputs);
+        payload.heat_first_slot = inputs.heat_first_slot;
+        folding |= RangeProfile::refresh(
+            &mut payload.cache,
+            ProfileRequest {
+                min_bar: a.min(b),
+                max_bar: a.max(b),
+                extend_right: payload.extend_right,
+                approximate_history: payload.approximate_history,
+                value_area_pct: payload.value_area_pct,
+            },
+            &core,
+        );
     }
     // The in-flight draft folds too, with the hovered bar standing in for
     // the second anchor — the histogram forms under the drag, instead of the
@@ -205,307 +191,24 @@ pub fn refresh(drawings: &mut Drawings, inputs: &RefreshInputs<'_>) -> bool {
         if let Some((a, b)) = span
             && let Some(payload) = draft.payload.as_any_mut().downcast_mut::<FrvpPayload>()
         {
-            folding |= refresh_one(payload, a.min(b), a.max(b), inputs);
+            payload.heat_first_slot = inputs.heat_first_slot;
+            folding |= RangeProfile::refresh(
+                &mut payload.cache,
+                ProfileRequest {
+                    min_bar: a.min(b),
+                    max_bar: a.max(b),
+                    extend_right: payload.extend_right,
+                    approximate_history: payload.approximate_history,
+                    value_area_pct: payload.value_area_pct,
+                },
+                &core,
+            );
         }
     }
     folding
 }
 
-/// The slots a `[min_bar, max_bar]` anchor span covers: the candle each
-/// anchor was dropped **on**, and everything between them, clamped to the
-/// slots that exist. `last_slot` is the partial's slot when there is one,
-/// else the last closed.
-///
-/// A slot's centre is its own integer coordinate and it owns the half-open
-/// interval `[slot - 0.5, slot + 0.5)`: the convention
-/// [`Viewport::x_at_bar_position`](crate::viewport::Viewport::x_at_bar_position)
-/// paints with and `Pane::drawing_point_at` inverts. Rounding is therefore
-/// the whole rule — `round(coord)` *is* "which candle is under this pixel".
-///
-/// The tool snaps no anchor, so a real drag lands mid-candle every time. That
-/// is why this rounds instead of taking the first and last centres strictly
-/// inside the span: `ceil`/`floor` would step *past* both endpoints and drop
-/// the two candles the trader could see under their own cursor, and the count
-/// would wobble between 83, 84 and 85 on sub-pixel luck for one repeated
-/// gesture.
-///
-/// `None` when the span reaches no candle at all, including one lying
-/// entirely off either end. A rectangle over no candles has no profile, and
-/// clamping it onto the nearest one would answer a question nobody asked
-/// with a histogram indistinguishable from real data.
-fn covered_slots(min_bar: f32, max_bar: f32, last_slot: Option<usize>) -> Option<(usize, usize)> {
-    let last = last_slot?;
-    let (first_slot, last_slot_hit) = (min_bar.round(), max_bar.round());
-    // Decided in float, before any cast: a float→int cast saturates, so a
-    // span wholly left of slot 0 or wholly past `last` would otherwise
-    // collapse onto an edge slot and fold it as if it had been asked for.
-    #[allow(clippy::cast_precision_loss)]
-    if last_slot_hit < 0.0 || first_slot > last as f32 {
-        return None;
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let start = first_slot.max(0.0) as usize;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let end = (last_slot_hit.max(0.0) as usize).min(last);
-    (start <= end).then_some((start, end))
-}
-
-/// Refresh one profile object, folding at most [`fold_budget`] this pass.
-/// Returns whether its fold is still in flight.
-fn refresh_one(
-    payload: &mut FrvpPayload,
-    min_bar: f32,
-    max_bar: f32,
-    inputs: &RefreshInputs<'_>,
-) -> bool {
-    let closed_len = inputs.state.bars().len();
-    let closed_total = inputs.prefix.len() + closed_len;
-    let partial_slot = inputs.partial_ladder.is_some().then_some(closed_total);
-    let last_slot = partial_slot.or_else(|| closed_total.checked_sub(1));
-
-    // The developing mode: the right edge is the newest slot, whatever the
-    // second anchor says. The anchors are never touched — the cache key's
-    // `end_slot` carries the resolved edge, and every bar close moves it.
-    let max_bar = if payload.extend_right {
-        f32::MAX
-    } else {
-        max_bar
-    };
-    let span = covered_slots(min_bar, max_bar, last_slot);
-    let (start_slot, end_slot) = span.unwrap_or((0, 0));
-    let bars_total = span.map_or(0, |(start, end)| end - start + 1);
-    let include_partial = span.is_some() && partial_slot.is_some_and(|slot| slot <= end_slot);
-    // A range reaching the tape's first bar folds a bar that covers only part
-    // of its interval. In the key, so the caveat cannot outlive the range that
-    // earned it.
-    let partly_covered = span.is_some()
-        && inputs
-            .partial_bucket_slot
-            .is_some_and(|slot| start_slot <= slot && slot <= end_slot);
-
-    let key = FrvpCacheKey {
-        start_slot,
-        end_slot,
-        group: inputs.state.footprint_group(),
-        series_revision: inputs.state.series_revision(),
-
-        include_partial,
-        partial_snapshot: if include_partial {
-            inputs.partial_version
-        } else {
-            0
-        },
-        value_area_pct: payload.value_area_pct,
-        blocked: inputs.blocked,
-        side_inferred: inputs.side_inferred,
-        approximate: payload.approximate_history,
-        partly_covered,
-    };
-    // Everything the *closed* fold depends on is unchanged — at most the
-    // forming bar moved. Its ladder is re-snapshotted several times a second,
-    // and treating that as a new fold is a treadmill a long range never gets
-    // off: it would fill part-way, throw away what it had and start again,
-    // flickering the histogram and the status line on every tick. The forming
-    // bar is not in the fold, so a new snapshot costs a re-read and nothing
-    // else — and a fold still running simply carries on where it was.
-    // ...and the same is true of a right edge that only *grew*. A range whose
-    // right anchor sits at or past the newest candle has its `end_slot`
-    // clamped to the live edge, so every close moves it — and treating that as
-    // a new range restarted the fold from the range's first bar on every bar
-    // close, which on a rolling replay is faster than the fold can finish. The
-    // profile then never leaves its part-built state, and what gets painted is
-    // not a faint version of the answer: it is a fully drawn histogram of the
-    // range's *oldest* bars, normalised against its own busiest row, with its
-    // own POC and value area. That is the flicker. A grown right edge appends
-    // bars; it invalidates none, so the fold carries on and takes them.
-    let carry_on = payload
-        .cache
-        .as_ref()
-        .is_some_and(|c| c.key.same_fold(&key) || c.key.grown_right(&key));
-    if let Some(cache) = payload.cache.as_mut().filter(|_| carry_on) {
-        let live_edge_moved = cache.key.partial_snapshot != key.partial_snapshot;
-        let grew = key.end_slot > cache.key.end_slot;
-        cache.key = key;
-        // Presentation state follows the frame either way — the heatmap's
-        // boundary moving must never re-fold or re-read anything.
-        cache.heat_first_slot = inputs.heat_first_slot;
-        if grew {
-            // The forming bar is never in the fold, so the last *closed* slot
-            // is what the job runs to.
-            let last_closed = if include_partial {
-                key.end_slot.saturating_sub(1)
-            } else {
-                key.end_slot
-            };
-            cache.bars_total = bars_total;
-            if let Some(job) = cache.job.as_mut() {
-                job.extend_to(last_closed);
-                cache.folding = job.next <= job.end;
-            }
-        }
-        if cache.folding {
-            advance(cache, payload.value_area_pct, inputs);
-        } else if live_edge_moved || grew {
-            derive(cache, payload.value_area_pct, inputs);
-        }
-        return cache.folding;
-    }
-
-    if inputs.blocked {
-        payload.cache = Some(FrvpCache {
-            key,
-            profile: None,
-            empty: Some(FrvpEmpty::Blocked),
-            bars_covered: 0,
-            closed_covered: 0,
-            bars_approximated: 0,
-            bars_partly_covered: 0,
-            bars_folded: 0,
-            bars_total,
-            heat_first_slot: inputs.heat_first_slot,
-            folding: false,
-            job: None,
-        });
-        return false;
-    }
-
-    // A fresh range: open a fold over its **closed** bars and spend this
-    // pass's budget on it. Nothing is folded eagerly here — `advance` is the
-    // only place bars enter a profile, so one budget governs the first pass
-    // and every later one. The forming bar is not part of the fold at all;
-    // `derive` adds it to a copy, every time it moves.
-    let job = span.map(|(start, end)| {
-        let last_closed = if include_partial {
-            end.saturating_sub(1)
-        } else {
-            end
-        };
-        FoldJob::over(inputs.state.footprint_group(), start, last_closed)
-    });
-    let mut cache = FrvpCache {
-        key,
-        profile: None,
-        empty: job.is_none().then_some(FrvpEmpty::NoTape),
-        bars_covered: 0,
-        closed_covered: 0,
-        bars_approximated: 0,
-        bars_partly_covered: usize::from(partly_covered),
-        bars_folded: 0,
-        bars_total,
-        heat_first_slot: inputs.heat_first_slot,
-        folding: job.is_some(),
-        job,
-    };
-    advance(&mut cache, payload.value_area_pct, inputs);
-    let folding = cache.folding;
-    payload.cache = Some(cache);
-    folding
-}
-
-/// Spend one pass's [`fold_budget`] on `cache`'s closed-bar fold, then read
-/// the profile out of it.
-///
-/// The read is a snapshot of *what has been folded so far* — a profile of the
-/// range's first N bars, not a guess at its last. That is what the paint is
-/// allowed to draw and the status line is obliged to qualify.
-fn advance(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>) {
-    let Some(job) = cache.job.as_mut() else {
-        return;
-    };
-    let prefix_len = inputs.prefix.len();
-    let closed_total = prefix_len + inputs.state.bars().len();
-    let ladders = inputs.state.bar_footprints();
-    let approximate = cache.key.approximate;
-
-    // With approximation off, no prefix slot can contribute anything: walking
-    // them one budget at a time would spend seventeen passes counting out
-    // `loading N of 25003` over bars that were never going to join.
-    if !approximate && job.next < prefix_len {
-        cache.bars_folded += prefix_len - job.next;
-        job.next = prefix_len;
-    }
-
-    let mut spent = 0usize;
-    while spent < inputs.budget && job.next <= job.end {
-        let slot = job.next;
-        if slot < prefix_len {
-            // A venue candle joins as a range, not as a ladder: one bar's
-            // worth of work whatever its price width.
-            if job.fold.push_candle(&inputs.prefix[slot]) {
-                cache.bars_approximated += 1;
-            }
-            spent += 1;
-        } else if let Some(ladder) = ladders
-            .get(slot - prefix_len)
-            .filter(|_| slot < closed_total)
-        {
-            // A bar whose ladder printed nothing contributes nothing; it
-            // still counts as covered — the tape answered "no trades", which
-            // is data, not absence of data. A ladder the fold *refuses* is
-            // another matter: its buckets never aligned, so it is not in the
-            // profile and must not be counted as if it were.
-            if job.fold.push_ladder(ladder) {
-                cache.closed_covered += 1;
-            }
-            spent += ladder.levels().len().max(1);
-        }
-        job.next += 1;
-        cache.bars_folded += 1;
-    }
-    cache.folding = job.next <= job.end;
-    if !cache.folding {
-        // Last input in: fold the pending spreads once, so the re-reads the
-        // live edge triggers from here on cost a clone of the rows and no
-        // spread folding at all.
-        job.fold.seal();
-    }
-    derive(cache, value_area_pct, inputs);
-}
-
-/// Read the profile out of the closed-bar fold, with the forming bar added to
-/// a copy of it when the range reaches one.
-///
-/// Called once per fold pass, and again — on its own — every time the forming
-/// bar's ladder is re-snapshotted. That is the whole point of keeping the two
-/// apart: the live edge costs one ladder push and one read, never a re-fold.
-fn derive(cache: &mut FrvpCache, value_area_pct: u8, inputs: &RefreshInputs<'_>) {
-    let Some(job) = cache.job.as_ref() else {
-        return;
-    };
-    let partial = cache
-        .key
-        .include_partial
-        .then_some(inputs.partial_ladder)
-        .flatten();
-    // A forming-bar snapshot taken before a group refold carries the previous
-    // base grouping, and its buckets never aligned with this fold's. It is
-    // refused rather than folded, and — this is the honesty half — it is not
-    // counted as covered either, so the status line says "profile from N of M
-    // bars" for the frame or two until the next snapshot lands, instead of
-    // claiming a bar that is not in the histogram.
-    let mut joined_partial = false;
-    let profile = match partial {
-        Some(partial) => {
-            let mut with_partial = job.fold.clone();
-            joined_partial = with_partial.push_ladder(partial);
-            with_partial.profile()
-        }
-        None => job.fold.profile(),
-    };
-    cache.bars_covered = cache.closed_covered + usize::from(joined_partial);
-    let fraction = Decimal::from(value_area_pct) / Decimal::ONE_HUNDRED;
-    cache.profile = profile.map(|profile: VolumeProfile| {
-        let value_area: Option<ValueArea> = profile.value_area(fraction);
-        (profile, value_area)
-    });
-    if !cache.folding {
-        // Folded to the end: the profile is the whole range's, the forming
-        // bar included, and only now may an empty one be called empty.
-        cache.bars_folded = cache.bars_total;
-        cache.empty = cache.profile.is_none().then_some(FrvpEmpty::NoTape);
-    }
-}
-
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_FRVP_FOLD_BUDGET"];
 
 #[cfg(test)]
@@ -620,8 +323,11 @@ mod tests {
             refresh(&mut drawings, &tight(&state));
         }
         let settled = cache_of(&drawings);
-        assert!(!settled.folding, "ten passes at one bar each should finish");
-        let folded_before = settled.bars_folded;
+        assert!(
+            !settled.output().folding,
+            "ten passes at one bar each should finish"
+        );
+        let folded_before = settled.output().bars_folded;
         assert!(folded_before >= 3, "the fixture folds three closed bars");
 
         // Two more prints close another bar under the range's right edge.
@@ -631,137 +337,15 @@ mod tests {
         let after = cache_of(&drawings);
 
         assert!(
-            after.bars_folded >= folded_before,
+            after.output().bars_folded >= folded_before,
             "the fold restarted: {} bars folded on the frame after one bar \
              closed, {folded_before} before",
-            after.bars_folded,
+            after.output().bars_folded,
         );
         assert!(
-            !after.folding,
+            !after.output().folding,
             "an append of one ladder left the fold in flight",
         );
-    }
-
-    /// The other half of the same rule: a range that does *not* reach the live
-    /// edge is untouched by a close, and a range whose left edge moved is a
-    /// different range and does start again.
-    #[test]
-    fn only_a_grown_right_edge_carries_a_fold_over() {
-        let a = FrvpCacheKey {
-            start_slot: 0,
-            end_slot: 3,
-            group: dec("1"),
-            series_revision: 1,
-            include_partial: true,
-            partial_snapshot: 7,
-            value_area_pct: 70,
-            blocked: false,
-            side_inferred: false,
-            approximate: false,
-            partly_covered: false,
-        };
-
-        let grown = FrvpCacheKey {
-            end_slot: 4,
-            partial_snapshot: 9,
-            ..a
-        };
-        assert!(a.grown_right(&grown), "a later right edge is an append");
-        assert!(!a.same_fold(&grown));
-
-        assert!(
-            !a.grown_right(&FrvpCacheKey { end_slot: 2, ..a }),
-            "a right edge dragged *back* drops bars, so the fold is not reusable",
-        );
-        assert!(
-            !a.grown_right(&FrvpCacheKey {
-                start_slot: 1,
-                end_slot: 4,
-                ..a
-            }),
-            "a moved left edge is a different range",
-        );
-        assert!(
-            !a.grown_right(&FrvpCacheKey {
-                end_slot: 4,
-                group: dec("5"),
-                ..a
-            }),
-            "a regrouped ladder has to be re-folded",
-        );
-        assert!(
-            !a.grown_right(&FrvpCacheKey {
-                end_slot: 4,
-                series_revision: 2,
-                ..a
-            }),
-            "a re-cut series has to be re-folded",
-        );
-        assert!(!a.grown_right(&a), "an unchanged key is not a growth");
-    }
-    /// The fold reads an anchor the way the paint writes one: an integer bar
-    /// coordinate is a candle's *centre*. A range dragged from one candle's
-    /// centre to another's therefore folds both end candles — the rectangle
-    /// on screen and the bars behind the histogram are the same bars.
-    #[test]
-    fn covered_slots_folds_exactly_the_drawn_rectangle() {
-        // Centre-to-centre over candles 100..=184 is 85 candles, both ends
-        // included. Reading a centre as `slot + 0.5` drops the candle under
-        // the right edge and pulls in half of the one left of the box.
-        assert_eq!(covered_slots(100.0, 184.0, Some(300)), Some((100, 184)));
-        // A coordinate belongs to the candle it lands *on*: candle N owns
-        // `[N - 0.5, N + 0.5)`, so 99.5 is candle 100 and 184.4 is candle 184.
-        assert_eq!(covered_slots(99.5, 184.4, Some(300)), Some((100, 184)));
-    }
-
-    /// The tool snaps no anchor, so every real drag ends mid-candle. Taking
-    /// the first and last centres strictly *inside* the span (`ceil`/`floor`)
-    /// stepped past both endpoints and folded 83 bars for an 85-candle drag —
-    /// and gave a different count each time the same gesture was repeated.
-    #[test]
-    fn covered_slots_folds_the_candles_a_mid_candle_drag_lands_on() {
-        // Pressed inside candle 100, released inside candle 184.
-        assert_eq!(covered_slots(100.4, 183.6, Some(300)), Some((100, 184)));
-        assert_eq!(covered_slots(99.7, 184.3, Some(300)), Some((100, 184)));
-        // The same gesture, jittered by a sub-pixel, folds the same bars.
-        for (lo, hi) in [(99.6, 183.51), (100.49, 184.49), (99.51, 184.2)] {
-            assert_eq!(
-                covered_slots(lo, hi, Some(300)),
-                Some((100, 184)),
-                "drag {lo}..{hi} is the same 85 candles"
-            );
-        }
-    }
-
-    /// Both anchors on one candle fold that candle. Dropping it left the
-    /// trader with a rectangle, a "no tape in range" label and a bar that
-    /// visibly traded.
-    #[test]
-    fn covered_slots_folds_the_single_candle_under_a_dot() {
-        assert_eq!(covered_slots(5.0, 5.0, Some(300)), Some((5, 5)));
-    }
-
-    /// A range over no candles has no profile. Clamping it onto the nearest
-    /// slot drew that slot's histogram — real-looking data for a rectangle
-    /// the trader put nowhere near it.
-    #[test]
-    fn covered_slots_rejects_a_range_that_reaches_no_candle() {
-        assert_eq!(covered_slots(-50.0, -40.0, Some(300)), None, "left of data");
-        assert_eq!(
-            covered_slots(400.0, 450.0, Some(300)),
-            None,
-            "past the tape"
-        );
-        // A short drag from inside candle 10 to inside candle 11 is those two
-        // candles — there is no "between candles" to land in.
-        assert_eq!(covered_slots(10.2, 10.8, Some(300)), Some((10, 11)));
-        assert_eq!(covered_slots(10.2, 10.4, Some(300)), Some((10, 10)));
-        // Left of candle 0 entirely: both ends round to -1.
-        assert_eq!(covered_slots(-1.4, -0.6, Some(300)), None, "left of slot 0");
-        // The edges still clamp *into* the data when the span overlaps it.
-        assert_eq!(covered_slots(-50.0, 2.0, Some(300)), Some((0, 2)));
-        assert_eq!(covered_slots(298.0, 450.0, Some(300)), Some((298, 300)));
-        assert_eq!(covered_slots(0.0, 10.0, None), None, "no slots exist yet");
     }
 
     /// End to end: a range anchored centre-to-centre folds the tape of both
@@ -774,10 +358,19 @@ mod tests {
         place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 3, "three candles under the rectangle");
-        assert_eq!(cache.bars_covered, 3);
         assert_eq!(
-            cache.profile.expect("range has tape").0.total_volume(),
+            cache.output().bars_total,
+            3,
+            "three candles under the rectangle"
+        );
+        assert_eq!(cache.output().bars_covered, 3);
+        assert_eq!(
+            cache
+                .output()
+                .profile
+                .expect("range has tape")
+                .0
+                .total_volume(),
             dec("6"),
             "the bar under the right edge is part of the profile"
         );
@@ -799,11 +392,15 @@ mod tests {
         };
         refresh(&mut drawings, &seam);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_partly_covered, 1, "the seam bar is in range");
-        assert!(cache.key.partly_covered);
+        assert_eq!(
+            cache.output().bars_partly_covered,
+            1,
+            "the seam bar is in range"
+        );
+        assert!(cache.output().key.partly_covered);
         // The caveat costs no volume: the short bar still folds its own tape.
         assert_eq!(
-            cache.profile.expect("tape").0.total_volume(),
+            cache.output().profile.expect("tape").0.total_volume(),
             dec("6"),
             "nothing is invented and nothing is dropped"
         );
@@ -812,8 +409,8 @@ mod tests {
         drawings.move_anchor(0, 0, ChartPoint::at(1.0, 100.0));
         refresh(&mut drawings, &seam);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_partly_covered, 0);
-        assert!(!cache.key.partly_covered);
+        assert_eq!(cache.output().bars_partly_covered, 0);
+        assert!(!cache.output().key.partly_covered);
     }
 
     /// A pane with no seam bar to speak of stays silent — the caveat is not
@@ -824,8 +421,8 @@ mod tests {
         let mut drawings = Drawings::default();
         place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
-        assert_eq!(cache_of(&drawings).bars_partly_covered, 0);
-        assert!(!cache_of(&drawings).key.partly_covered);
+        assert_eq!(cache_of(&drawings).output().bars_partly_covered, 0);
+        assert!(!cache_of(&drawings).output().key.partly_covered);
     }
 
     #[test]
@@ -837,13 +434,13 @@ mod tests {
         refresh(&mut drawings, &inputs(&state, false));
 
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 3);
-        assert_eq!(cache.bars_covered, 3);
-        let (profile, value_area) = cache.profile.expect("range has tape");
+        assert_eq!(cache.output().bars_total, 3);
+        assert_eq!(cache.output().bars_covered, 3);
+        let (profile, value_area) = cache.output().profile.expect("range has tape");
         // Six trades of qty 1 across the three closed bars.
         assert_eq!(profile.total_volume(), dec("6"));
         assert!(value_area.is_some());
-        assert!(cache.empty.is_none());
+        assert!(cache.output().empty.is_none());
     }
 
     /// A venue candle at a price a time chart actually trades at, wide enough
@@ -894,20 +491,23 @@ mod tests {
             "a 25k-bar range must leave the fold in flight, not swallow it in one frame"
         );
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 25_003);
-        assert!(cache.folding, "the fold is still running after one pass");
+        assert_eq!(cache.output().bars_total, 25_003);
         assert!(
-            cache.bars_approximated <= fold_budget(),
+            cache.output().folding,
+            "the fold is still running after one pass"
+        );
+        assert!(
+            cache.output().bars_approximated <= fold_budget(),
             "one pass folded {} candles, past the {} budget",
-            cache.bars_approximated,
+            cache.output().bars_approximated,
             fold_budget()
         );
         assert!(
-            cache.profile.is_some(),
+            cache.output().profile.is_some(),
             "what has been folded is already on screen — a partial profile, not a blank"
         );
         assert!(
-            cache.empty.is_none(),
+            cache.output().empty.is_none(),
             "a fold still running is not an empty range"
         );
     }
@@ -934,7 +534,7 @@ mod tests {
             let folding = refresh(&mut drawings, &with_prefix);
             passes += 1;
             let cache = cache_of(&drawings);
-            let folded = cache.bars_covered + cache.bars_approximated;
+            let folded = cache.output().bars_covered + cache.output().bars_approximated;
             assert!(
                 folded > folded_before,
                 "pass {passes} folded nothing; the fill would never finish"
@@ -947,16 +547,20 @@ mod tests {
         }
 
         let cache = cache_of(&drawings);
-        assert!(!cache.folding, "the fold finished");
-        assert_eq!(cache.bars_approximated, 25_000, "every venue candle joined");
-        assert_eq!(cache.bars_covered, 3, "and the three tape bars");
-        let (profile, value_area) = cache.profile.expect("the range folded");
+        assert!(!cache.output().folding, "the fold finished");
+        assert_eq!(
+            cache.output().bars_approximated,
+            25_000,
+            "every venue candle joined"
+        );
+        assert_eq!(cache.output().bars_covered, 3, "and the three tape bars");
+        let (profile, value_area) = cache.output().profile.expect("the range folded");
         // 4 units per candle (1.5 buy + 2.5 sell) plus the six tape trades.
         assert_eq!(profile.total_volume(), dec("100006"));
         assert!(value_area.is_some());
         // Still one profile object: the fill must not have left the range
         // claiming more bars than the chart has.
-        assert_eq!(cache.bars_total, 25_003);
+        assert_eq!(cache.output().bars_total, 25_003);
     }
 
     /// A live tape must not keep a long fold from finishing.
@@ -1001,8 +605,8 @@ mod tests {
             assert!(
                 passes < 100,
                 "the fold never converged: {} of {} bars after {passes} passes",
-                cache_of(&drawings).bars_folded,
-                cache_of(&drawings).bars_total
+                cache_of(&drawings).output().bars_folded,
+                cache_of(&drawings).output().bars_total
             );
             if !folding {
                 break;
@@ -1010,17 +614,21 @@ mod tests {
         }
 
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_approximated, 25_000, "every candle joined once");
+        assert_eq!(
+            cache.output().bars_approximated,
+            25_000,
+            "every candle joined once"
+        );
         // The tape kept printing, so bars kept closing and the range's right
         // edge followed them: the three it started with, the forming one, and
         // whatever closed along the way.
         assert!(
-            cache.bars_covered >= 4,
+            cache.output().bars_covered >= 4,
             "the tape bars joined too, not just the candles: {}",
-            cache.bars_covered
+            cache.output().bars_covered
         );
         assert!(
-            cache.profile.expect("folded").0.total_volume() > dec("100006"),
+            cache.output().profile.expect("folded").0.total_volume() > dec("100006"),
             "every candle's volume, and the tape's on top of it"
         );
     }
@@ -1045,13 +653,13 @@ mod tests {
         drawings.items_mut()[0].points[0].bar = 24_000.0;
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 1_003);
+        assert_eq!(cache.output().bars_total, 1_003);
         assert!(
-            cache.bars_approximated <= 1_000,
+            cache.output().bars_approximated <= 1_000,
             "the new range folded only its own candles, not the old range's"
         );
         assert!(
-            !cache.folding,
+            !cache.output().folding,
             "a range inside one budget finishes in the pass that started it"
         );
     }
@@ -1083,15 +691,16 @@ mod tests {
             assert!(passes < 100, "the fold should converge");
         }
         let done = cache_of(&drawings);
-        assert!(!done.folding);
-        assert_eq!(done.bars_total, 25_004);
+        assert!(!done.output().folding);
+        assert_eq!(done.output().bars_total, 25_004);
         assert_eq!(
-            done.bars_covered, 4,
+            done.output().bars_covered,
+            4,
             "three closed tape bars and the forming one"
         );
         // 25 000 candles of 4 units each, six units of closed tape, and the
         // forming bar's single print.
-        let volume = done.profile.clone().expect("folded").0.total_volume();
+        let volume = done.output().profile.expect("folded").0.total_volume();
         assert_eq!(volume, dec("100007"));
 
         // The live edge moves: same range, same closed bars, new snapshot.
@@ -1107,12 +716,18 @@ mod tests {
         );
         let after = cache_of(&drawings);
         assert_eq!(
-            after.bars_folded, done.bars_folded,
+            after.output().bars_folded,
+            done.output().bars_folded,
             "not one bar was folded again"
         );
-        assert_eq!(after.bars_approximated, 25_000);
+        assert_eq!(after.output().bars_approximated, 25_000);
         assert_eq!(
-            after.profile.expect("still folded").0.total_volume(),
+            after
+                .output()
+                .profile
+                .expect("still folded")
+                .0
+                .total_volume(),
             volume,
             "and the forming bar is still in the profile"
         );
@@ -1128,8 +743,8 @@ mod tests {
         let first = cache_of(&drawings);
         refresh(&mut drawings, &inputs(&state, false));
         assert_eq!(
-            cache_of(&drawings).key,
-            first.key,
+            cache_of(&drawings).output().key,
+            first.output().key,
             "same inputs, same key, no recompute"
         );
 
@@ -1137,10 +752,15 @@ mod tests {
         drawings.move_anchor(0, 1, ChartPoint::at(0.0, 105.0));
         refresh(&mut drawings, &inputs(&state, false));
         let narrowed = cache_of(&drawings);
-        assert_ne!(narrowed.key, first.key);
-        assert_eq!(narrowed.bars_total, 1);
+        assert_ne!(narrowed.output().key, first.output().key);
+        assert_eq!(narrowed.output().bars_total, 1);
         assert_eq!(
-            narrowed.profile.expect("bar 0 has tape").0.total_volume(),
+            narrowed
+                .output()
+                .profile
+                .expect("bar 0 has tape")
+                .0
+                .total_volume(),
             dec("2")
         );
     }
@@ -1157,8 +777,15 @@ mod tests {
         state.set_footprint_group(dec("2"));
         refresh(&mut drawings, &inputs(&state, false));
         let after = cache_of(&drawings);
-        assert_ne!(after.key, before.key, "a refold re-keys the cache");
-        assert_eq!(after.profile.expect("still tape").0.group(), dec("2"));
+        assert_ne!(
+            after.output().key,
+            before.output().key,
+            "a refold re-keys the cache"
+        );
+        assert_eq!(
+            after.output().profile.expect("still tape").0.group(),
+            dec("2")
+        );
     }
 
     #[test]
@@ -1175,18 +802,24 @@ mod tests {
         };
         refresh(&mut drawings, &with_partial);
         let cache = cache_of(&drawings);
-        assert!(cache.key.include_partial);
-        assert_eq!(cache.bars_total, 4);
-        assert_eq!(cache.bars_covered, 4);
+        assert!(cache.output().key.include_partial);
+        assert_eq!(cache.output().bars_total, 4);
+        assert_eq!(cache.output().bars_covered, 4);
         // Six closed trades plus the forming bar's one.
-        assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("7"));
+        assert_eq!(
+            cache.output().profile.expect("tape").0.total_volume(),
+            dec("7")
+        );
 
         // A range that stops short of the forming bar leaves it out.
         drawings.move_anchor(0, 1, ChartPoint::at(2.0, 105.0));
         refresh(&mut drawings, &with_partial);
         let cache = cache_of(&drawings);
-        assert!(!cache.key.include_partial);
-        assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("6"));
+        assert!(!cache.output().key.include_partial);
+        assert_eq!(
+            cache.output().profile.expect("tape").0.total_volume(),
+            dec("6")
+        );
     }
 
     /// Two venue candles standing in for a prefix: $2-tall bodies with a
@@ -1223,11 +856,18 @@ mod tests {
         };
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 5);
-        assert_eq!(cache.bars_covered, 3, "tape bars stay exact");
-        assert_eq!(cache.bars_approximated, 2, "venue candles join, labeled");
+        assert_eq!(cache.output().bars_total, 5);
+        assert_eq!(cache.output().bars_covered, 3, "tape bars stay exact");
+        assert_eq!(
+            cache.output().bars_approximated,
+            2,
+            "venue candles join, labeled"
+        );
         // Six units of tape plus one unit per approximated candle.
-        assert_eq!(cache.profile.expect("fold").0.total_volume(), dec("8"));
+        assert_eq!(
+            cache.output().profile.expect("fold").0.total_volume(),
+            dec("8")
+        );
     }
 
     /// The off-switch restores exactly the pre-approximation behaviour: a
@@ -1251,11 +891,11 @@ mod tests {
         };
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_total, 2);
-        assert_eq!(cache.bars_covered, 0);
-        assert_eq!(cache.bars_approximated, 0);
-        assert!(cache.profile.is_none());
-        assert_eq!(cache.empty, Some(FrvpEmpty::NoTape));
+        assert_eq!(cache.output().bars_total, 2);
+        assert_eq!(cache.output().bars_covered, 0);
+        assert_eq!(cache.output().bars_approximated, 0);
+        assert!(cache.output().profile.is_none());
+        assert_eq!(cache.output().empty, Some(FrvpEmpty::NoTape));
 
         // Toggling back on re-keys and the approximated fold appears.
         drawings.items_mut()[0]
@@ -1266,9 +906,14 @@ mod tests {
             .approximate_history = true;
         refresh(&mut drawings, &with_prefix);
         let cache = cache_of(&drawings);
-        assert_eq!(cache.bars_approximated, 2);
+        assert_eq!(cache.output().bars_approximated, 2);
         assert_eq!(
-            cache.profile.expect("approximated fold").0.total_volume(),
+            cache
+                .output()
+                .profile
+                .expect("approximated fold")
+                .0
+                .total_volume(),
             dec("2")
         );
     }
@@ -1280,8 +925,8 @@ mod tests {
         place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, true));
         let cache = cache_of(&drawings);
-        assert!(cache.profile.is_none());
-        assert_eq!(cache.empty, Some(FrvpEmpty::Blocked));
+        assert!(cache.output().profile.is_none());
+        assert_eq!(cache.output().empty, Some(FrvpEmpty::Blocked));
     }
 
     #[test]
@@ -1316,17 +961,27 @@ mod tests {
 
         refresh(&mut drawings, &inputs(&state, false));
         let cache = cache_of(&drawings);
-        assert_eq!(cache.key.end_slot, 2, "edge is the newest closed bar");
-        assert_eq!(cache.bars_total, 3);
-        assert_eq!(cache.profile.expect("tape").0.total_volume(), dec("6"));
+        assert_eq!(
+            cache.output().key.end_slot,
+            2,
+            "edge is the newest closed bar"
+        );
+        assert_eq!(cache.output().bars_total, 3);
+        assert_eq!(
+            cache.output().profile.expect("tape").0.total_volume(),
+            dec("6")
+        );
 
         // A new bar closes: the same drawing re-keys and grows on its own.
         state.ingest_live(&trade(7, "105", "1", Side::Buy));
         assert_eq!(state.bars().len(), 4);
         refresh(&mut drawings, &inputs(&state, false));
         let grown = cache_of(&drawings);
-        assert_eq!(grown.key.end_slot, 3);
-        assert_eq!(grown.profile.expect("tape").0.total_volume(), dec("8"));
+        assert_eq!(grown.output().key.end_slot, 3);
+        assert_eq!(
+            grown.output().profile.expect("tape").0.total_volume(),
+            dec("8")
+        );
 
         // The forming bar joins too, through the snapshot. (Trade 7 closed
         // bar 3 exactly, so a fresh print opens the live bar first.)
@@ -1339,7 +994,7 @@ mod tests {
             ..inputs(&state, false)
         };
         refresh(&mut drawings, &with_partial);
-        assert!(cache_of(&drawings).key.include_partial);
+        assert!(cache_of(&drawings).output().key.include_partial);
 
         // Off again: back to exactly the anchors' own range.
         drawings.items_mut()[0]
@@ -1350,8 +1005,11 @@ mod tests {
             .extend_right = false;
         refresh(&mut drawings, &with_partial);
         let released = cache_of(&drawings);
-        assert_eq!(released.key.end_slot, 0);
-        assert_eq!(released.profile.expect("tape").0.total_volume(), dec("2"));
+        assert_eq!(released.output().key.end_slot, 0);
+        assert_eq!(
+            released.output().profile.expect("tape").0.total_volume(),
+            dec("2")
+        );
     }
 
     /// The map's boundary is presentation state: it lands on the cache every
@@ -1364,7 +1022,15 @@ mod tests {
         place_frvp(&mut drawings, 0.0, 2.0);
         refresh(&mut drawings, &inputs(&state, false));
         let before = cache_of(&drawings);
-        assert_eq!(before.heat_first_slot, None);
+        assert_eq!(
+            drawings.items()[0]
+                .payload
+                .as_any()
+                .downcast_ref::<FrvpPayload>()
+                .unwrap()
+                .heat_first_slot,
+            None
+        );
 
         let with_heat = RefreshInputs {
             heat_first_slot: Some(1),
@@ -1372,8 +1038,20 @@ mod tests {
         };
         refresh(&mut drawings, &with_heat);
         let after = cache_of(&drawings);
-        assert_eq!(after.key, before.key, "the fold's key is untouched");
-        assert_eq!(after.heat_first_slot, Some(1));
+        assert_eq!(
+            after.output().key,
+            before.output().key,
+            "the fold's key is untouched"
+        );
+        assert_eq!(
+            drawings.items()[0]
+                .payload
+                .as_any()
+                .downcast_ref::<FrvpPayload>()
+                .unwrap()
+                .heat_first_slot,
+            Some(1)
+        );
     }
 
     #[test]
@@ -1391,6 +1069,6 @@ mod tests {
             .unwrap()
             .value_area_pct = 90;
         refresh(&mut drawings, &inputs(&state, false));
-        assert_ne!(cache_of(&drawings).key, before.key);
+        assert_ne!(cache_of(&drawings).output().key, before.output().key);
     }
 }

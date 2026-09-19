@@ -1,18 +1,16 @@
 //! Frame, loading, indicator, and order-flow health projection.
 
+pub(crate) use quantick_control_schema::health::*;
+
+use crate::app::{HealthPort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     registry::ModuleDescriptor,
-    wire::{CanonicalDecimal, WireU64},
+    wire::WireU64,
 };
 use quantick_control_host::feed;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-use quantick_orderflow::engine::OrderflowHealth;
 
 use crate::{
-    app::QuantickApp,
     loading::LoadingTask,
     pane::{ChartPane, PaneSide},
     tab::Tab,
@@ -20,131 +18,8 @@ use crate::{
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{PaneSideDto, canonical_decimal, canonical_f32, wire_usize},
+    types::{canonical_f32, wire_usize},
 };
-
-pub(crate) const SCOPE_ID: &str = "health.summary";
-const MODULE_ID: &str = "health";
-const SCHEMA_VERSION: u32 = 1;
-const METRIC_DECIMAL_PLACES: u32 = 6;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct HealthSnapshot {
-    pub frame: FrameHealthSnapshot,
-    pub tabs: Vec<TabHealthSnapshot>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct FrameHealthSnapshot {
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub wall_average_ms: Option<CanonicalDecimal>,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub wall_worst_ms: Option<CanonicalDecimal>,
-    #[schemars(extend("x-unit" = "frames_per_second"))]
-    pub frames_per_second: Option<CanonicalDecimal>,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub cpu_average_ms: Option<CanonicalDecimal>,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub cpu_worst_ms: Option<CanonicalDecimal>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TabHealthSnapshot {
-    pub tab_id: WireU64,
-    /// Cumulative source diagnostics, independent of latency and gap eviction.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feed_integrity: Option<feed::FeedIntegritySnapshot>,
-    pub active_loading_tasks: Vec<LoadingTaskSnapshot>,
-    pub panes: Vec<PaneHealthSnapshot>,
-    /// How late this tab's tape is, and where the time is going. `None` while
-    /// replaying — a recording's prints are as old as the day they were
-    /// captured and the playback clock decides when they appear.
-    pub tape: Option<feed::TapeHealthSnapshot>,
-}
-
-pub(super) fn integrity_snapshot(
-    integrity: quantick_feed::FeedIntegrity,
-) -> Option<feed::FeedIntegritySnapshot> {
-    (integrity.anomalies > 0).then(|| {
-        feed::SourceCounts {
-            anomalies: integrity.anomalies,
-            missing_messages: integrity.missing_messages,
-            unknown_loss: integrity.unknown_loss,
-            non_monotonic: integrity.non_monotonic,
-        }
-        .into()
-    })
-}
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct LoadingTaskSnapshot {
-    pub task: String,
-    pub operation_count: WireU64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct PaneHealthSnapshot {
-    pub pane_id: WireU64,
-    pub side: PaneSideDto,
-    pub indicator_count: WireU64,
-    pub indicator_error_count: WireU64,
-    pub indicator_stale_count: WireU64,
-    pub indicator_issues: Vec<IndicatorIssueSnapshot>,
-    pub orderflow: Option<OrderflowHealthSnapshot>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct IndicatorIssueSnapshot {
-    pub slot_id: WireU64,
-    pub source_kind: String,
-    pub state: String,
-    pub detail: String,
-    pub user_text_redacted: bool,
-    pub bar_index: Option<WireU64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct OrderflowHealthSnapshot {
-    pub enabled: bool,
-    pub status: String,
-    pub generation: Option<WireU64>,
-    pub last_update_id: Option<WireU64>,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub last_event_unix_ms: Option<i64>,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub arrival_latency_ms: Option<i64>,
-    pub bid_levels: WireU64,
-    pub ask_levels: WireU64,
-    pub active_levels: WireU64,
-    pub archived_runs: WireU64,
-    pub aggression_count: WireU64,
-    #[schemars(extend("x-unit" = "bytes"))]
-    pub history_bytes: WireU64,
-    pub projection_cells: WireU64,
-    pub projection_aggressions: WireU64,
-    pub projection_liquidity_events: WireU64,
-    pub dropped_cells: WireU64,
-    /// Aggressions the projection budget folded into a neighbour instead of
-    /// drawing alone. Folded, not dropped: the quantity is still on the canvas.
-    pub folded_aggressions: WireU64,
-    /// Exact quantity the trader's own display floor kept off the canvas.
-    pub floored_quantity: CanonicalDecimal,
-    pub dropped_liquidity_events: WireU64,
-    pub effective_price_grouping: CanonicalDecimal,
-    pub effective_grouping_multiple: u32,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub projection_ms: Option<CanonicalDecimal>,
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub live_projection_ms: Option<CanonicalDecimal>,
-    pub projection_builds: WireU64,
-    pub projection_cache_hits: WireU64,
-    pub config_revision: WireU64,
-    #[schemars(extend("x-unit" = "unix_milliseconds"))]
-    pub last_snapshot_observed_unix_ms: Option<i64>,
-    pub depth_updates: WireU64,
-    pub depth_updates_since_summary: WireU64,
-    pub snapshots: WireU64,
-    pub gaps: WireU64,
-}
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
@@ -186,11 +61,13 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// hear is that the tape *became* late, or that the hop changed, so that is
 /// what the key holds. The milliseconds stay in the projection, where a reader
 /// that asked for them gets them.
-fn revision(app: &QuantickApp) -> Vec<TabRevisionKey> {
+fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabRevisionKey> {
     snapshot(app)
         .tabs
         .into_iter()
         .map(|mut tab| {
+            // The chart's own threshold, so a waiter and a trader are told
+            // the tape went late at the same instant rather than at two.
             let tape = tab
                 .tape
                 .as_ref()
@@ -211,12 +88,26 @@ struct TabRevisionKey {
     tape: Option<feed::TapeRevisionKey>,
 }
 
-fn project(app: &QuantickApp, _context: CaptureContext) -> HealthSnapshot {
+pub(super) fn integrity_snapshot(
+    integrity: quantick_feed::FeedIntegrity,
+) -> Option<feed::FeedIntegritySnapshot> {
+    (integrity.anomalies > 0).then(|| {
+        feed::SourceCounts {
+            anomalies: integrity.anomalies,
+            missing_messages: integrity.missing_messages,
+            unknown_loss: integrity.unknown_loss,
+            non_monotonic: integrity.non_monotonic,
+        }
+        .into()
+    })
+}
+
+fn project<P: TabsPort + HealthPort + ?Sized>(app: &P, _context: CaptureContext) -> HealthSnapshot {
     snapshot(app)
 }
 
-fn snapshot(app: &QuantickApp) -> HealthSnapshot {
-    let frame = app.control_frame_metrics();
+fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
+    let frame = app.health_reads().frame_metrics();
     HealthSnapshot {
         frame: FrameHealthSnapshot {
             wall_average_ms: frame
@@ -236,15 +127,16 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
         },
         tabs: app
-            .control_tabs()
-            .iter()
-            .map(|tab| {
+            .tab_reads()
+            .tabs()
+            .iter_with_ids()
+            .map(|(tab_id, tab)| {
                 let panes: Vec<PaneHealthSnapshot> = tab
                     .panes()
                     .map(|(pane, side)| pane_health(pane, side))
                     .collect();
                 TabHealthSnapshot {
-                    tab_id: WireU64::new(tab.id),
+                    tab_id: WireU64::new(tab_id),
                     feed_integrity: integrity_snapshot(tab.feed_integrity),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
@@ -261,6 +153,7 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
                 }
             })
             .collect(),
+        saves_off_unread_hooks: crate::store_home::writes_refused().map(|refused| refused.hooks),
     }
 }
 
@@ -268,13 +161,13 @@ fn snapshot(app: &QuantickApp) -> HealthSnapshot {
 ///
 /// `None` when there is nothing measured to report at all: a tab that has not
 /// seen a live print, and any tab playing a recording.
-fn tape_health(tab: &Tab) -> Option<feed::TapeHealthSnapshot> {
+fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
     let arrival_latency_ms = tab.trade_arrival_ms();
     let split = tab.feed_latency();
     if arrival_latency_ms.is_none() && split.is_none() {
         return None;
     }
-    Some(feed::TapeHealthSnapshot {
+    Some(TapeHealthSnapshot {
         arrival_latency_ms,
         feed_arrival_latency_ms: split.map(|s| s.arrival_lag_ms),
         source_latency_ms: split.and_then(|s| s.source_lag_ms),
@@ -339,42 +232,6 @@ fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {
     }
 }
 
-fn orderflow_health(health: &OrderflowHealth) -> OrderflowHealthSnapshot {
-    OrderflowHealthSnapshot {
-        enabled: health.enabled,
-        status: health.status.to_owned(),
-        generation: health.generation.map(WireU64::new),
-        last_update_id: health.last_update_id.map(WireU64::new),
-        last_event_unix_ms: health.last_event_ms,
-        arrival_latency_ms: health.arrival_latency_ms,
-        bid_levels: wire_usize(health.bid_levels),
-        ask_levels: wire_usize(health.ask_levels),
-        active_levels: wire_usize(health.active_levels),
-        archived_runs: wire_usize(health.archived_runs),
-        aggression_count: wire_usize(health.aggression_count),
-        history_bytes: wire_usize(health.history_bytes),
-        projection_cells: wire_usize(health.projection_cells),
-        projection_aggressions: wire_usize(health.projection_aggressions),
-        projection_liquidity_events: wire_usize(health.projection_liquidity_events),
-        dropped_cells: wire_usize(health.dropped_cells),
-        folded_aggressions: wire_usize(health.folded_aggressions),
-        floored_quantity: canonical_decimal(health.floored_quantity),
-        dropped_liquidity_events: wire_usize(health.dropped_liquidity_events),
-        effective_price_grouping: canonical_decimal(health.effective_grouping),
-        effective_grouping_multiple: health.effective_grouping_multiple,
-        projection_ms: canonical_f32(health.projection_ms, METRIC_DECIMAL_PLACES),
-        live_projection_ms: canonical_f32(health.live_ms, METRIC_DECIMAL_PLACES),
-        projection_builds: WireU64::new(health.projection_builds),
-        projection_cache_hits: WireU64::new(health.projection_cache_hits),
-        config_revision: WireU64::new(health.config_revision),
-        last_snapshot_observed_unix_ms: health.last_snapshot_observed_ms,
-        depth_updates: WireU64::new(health.depth_updates),
-        depth_updates_since_summary: WireU64::new(health.depth_updates_since_summary),
-        snapshots: WireU64::new(health.snapshots),
-        gaps: WireU64::new(health.gaps),
-    }
-}
-
 const fn loading_task_id(task: LoadingTask) -> &'static str {
     match task {
         LoadingTask::History => "history",
@@ -382,5 +239,20 @@ const fn loading_task_id(task: LoadingTask) -> &'static str {
         LoadingTask::BookSync => "book_sync",
         LoadingTask::ReplaySession => "replay_session",
         LoadingTask::VenueHistory => "venue_history",
+    }
+}
+
+/// The health projection driven through the tabs and health families of a
+/// fake window, with no application behind it.
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::app::control_host::tests::fake::FakeWindow;
+
+    #[test]
+    fn a_window_that_measured_nothing_reports_no_frame_metrics() {
+        let snapshot = snapshot(&FakeWindow::new());
+        assert_eq!(snapshot.frame.wall_average_ms, None);
+        assert_eq!(snapshot.tabs.len(), 1);
     }
 }

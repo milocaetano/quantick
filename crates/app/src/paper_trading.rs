@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use quantick_engine::{Side, Trade};
-use quantick_sim::{Bracket, BracketTarget, ClosedTrade, EntryKind, OrderId, OrderIntent};
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_sim::OrderIntent;
+use quantick_sim::{Bracket, BracketTarget, ClosedTrade, EntryKind, OrderId};
 // The journal's own format, and the command type the sim takes, are named
 // only by the tests that drive one; the writing moved to `paper_account`.
 #[cfg(test)]
@@ -38,7 +40,9 @@ use quantick_civil::civil_utc;
 // The control plane, the dock and the harness hooks all reach them through
 // this module, and a type that changed address because its code did would
 // make every one of those callers pay for a move they did not ask for.
-pub(crate) use crate::paper_report::{LedgerAction, LedgerScope};
+pub(crate) use crate::paper_report::LedgerAction;
+#[cfg(any(feature = "scenario-harness", test))]
+pub(crate) use crate::paper_report::LedgerScope;
 
 mod cmd;
 mod input;
@@ -62,6 +66,7 @@ use ticket::parse_offset;
 /// tape fills it before the shutter. Each rung is a **buy limit below and
 /// a sell limit above**: a move in either direction can fill only one side
 /// of it, so a resting tag always survives on screen.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
 /// `=1` gives every order `QUANTICK_PAPER_ORDERS` rests a protective stop
 /// and target, so the working-order bracket — its two dashed leg lines,
@@ -70,17 +75,21 @@ const PAPER_ORDERS_ENV: &str = "QUANTICK_PAPER_ORDERS";
 /// opens one order's tag and with it the labelled `SL`/`TP` handles for the
 /// legs it does *not* have; set both and one capture holds every state the
 /// bracket has.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDER_BRACKET_ENV: &str = "QUANTICK_PAPER_ORDER_BRACKET";
 /// How far a hooked bracket's legs sit from the order, as a fraction of the
 /// mark. Wider than the rung step so the legs never land on a neighbouring
 /// order's line, and wide enough apart that stop and target read as two
 /// levels rather than one thick one.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDER_BRACKET_FRACTION: Decimal = Decimal::from_parts(15, 0, 0, false, 4);
 /// How far the first rung sits from the mark, as a fraction of it. Small
 /// on purpose: a line outside the chart's autoscaled price range paints no
 /// tag, so an order that cannot be reached also cannot be seen.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 4);
 /// Rungs past this are refused — a capture wants a tag or two, not a book.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
 /// Grab distance for order lines — the drawings' select radius, so the two
 /// grammars feel identical under the pointer.
@@ -129,6 +138,7 @@ const STRATEGY_NONE: &str = "<None>";
 
 /// Opens the strategy editor on launch, so a capture run can photograph it
 /// without a hand on the mouse. See `docs/ux/paper-trading.md`.
+#[cfg(any(feature = "scenario-harness", test))]
 const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
 /// Stands the ruler at this many ticks on launch.
 ///
@@ -136,6 +146,7 @@ const STRATEGY_EDITOR_ENV: &str = "QUANTICK_PAPER_STRATEGY_EDITOR";
 /// without this the projected pair, its distance in points and ticks and the
 /// `1:1` it reads are unreachable from a capture. Pair with
 /// `QUANTICK_CMD_PREVIEW`, which supplies the aim the ruler measures from.
+#[cfg(any(feature = "scenario-harness", test))]
 const RULER_TICKS_ENV: &str = "QUANTICK_PAPER_RULER_TICKS";
 /// The position's entry line leads the paper lines: it is the one that is
 /// history rather than an order, and it matches the drawings' default width.
@@ -183,10 +194,12 @@ const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
 /// the hand that moves the mouse are the two inputs a run with nobody at
 /// the keyboard cannot supply (the ParkedHand rule) — and now that the
 /// label rides the pointer, its x is a state of its own to capture.
+#[cfg(any(feature = "scenario-harness", test))]
 const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
 /// Forces every resting order's in-plot tag, and every bracket leg's, to its
 /// expanded form for a capture run — the same ParkedHand problem: the
 /// compact pill opens under a pointer no scripted run has.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// Shortest cmd-trading preview line: the pointer near the right edge
 /// still gets a line long enough to read as one, by starting left of it.
@@ -340,6 +353,7 @@ enum TagKey {
 pub struct PaperTrading {
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
+    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     order_bracket_demo: bool,
     /// This frame's cmd preview — input computes, paint reads, one
     /// geometry both sides.
@@ -360,6 +374,7 @@ pub struct PaperTrading {
     order_hover_force: bool,
     /// Harness override: how many rungs of resting orders to place on the
     /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
+    #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     orders_demo: Option<u8>,
     // Order-entry form.
     qty_text: String,
@@ -519,59 +534,27 @@ impl PaperTrading {
     /// constructor no longer knows how any of them are made.
     #[must_use]
     pub fn with_trades_dir(dir: PathBuf) -> Self {
-        Self {
+        #[cfg_attr(
+            not(any(feature = "scenario-harness", test)),
+            allow(clippy::let_and_return)
+        )]
+        let host = Self {
             account: crate::paper_account::PaperAccount::with_trades_dir(dir),
-            order_bracket_demo: std::env::var(PAPER_ORDER_BRACKET_ENV)
-                .is_ok_and(|value| value == "1"),
+            order_bracket_demo: false,
             cmd_preview: None,
             open_tags: Vec::new(),
             layer_visible: true,
-            cmd_preview_force: std::env::var(CMD_PREVIEW_ENV).ok().and_then(|value| {
-                CmdPreviewForce::parse(&value).or_else(|| {
-                    tracing::warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
-                        value = %value,
-                        "QUANTICK_CMD_PREVIEW wants `buy` or `sell`, optionally `@<0..1>`"
-                    );
-                    None
-                })
-            }),
-            order_hover_force: std::env::var(PAPER_ORDER_HOVER_ENV).is_ok_and(|value| value == "1"),
-            orders_demo: std::env::var(PAPER_ORDERS_ENV).ok().and_then(|value| {
-                value
-                    .trim()
-                    .parse::<u8>()
-                    .ok()
-                    .filter(|rungs| (1..=PAPER_ORDERS_MAX_RUNGS).contains(rungs))
-                    .or_else(|| {
-                        // Refused, never guessed: a typo that silently
-                        // photographed an orderless chart would read as a
-                        // defect in the thing being photographed.
-                        tracing::warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "PAPER_ORDERS_AUTOSTART_UNKNOWN",
-                            value = %value,
-                            max = PAPER_ORDERS_MAX_RUNGS,
-                            "QUANTICK_PAPER_ORDERS wants a rung count from 1 to the maximum"
-                        );
-                        None
-                    })
-            }),
+            cmd_preview_force: None,
+            order_hover_force: false,
+            orders_demo: None,
             qty_text: "1".to_owned(),
             order_type: EntryKind::Market,
             stop_offset_text: String::new(),
             profit_offset_text: String::new(),
-            strategy_editor_open: std::env::var(STRATEGY_EDITOR_ENV)
-                .is_ok_and(|value| value == "1"),
+            strategy_editor_open: false,
             strategy_dirty: false,
             strategy_editing: None,
-            ruler_notches: std::env::var(RULER_TICKS_ENV)
-                .ok()
-                .and_then(|value| value.trim().parse::<u32>().ok())
-                .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES)),
+            ruler_notches: 0,
             ruler_step_text: String::new(),
             ruler_steps: BTreeMap::new(),
             risk_amount_text: String::new(),
@@ -587,7 +570,61 @@ impl PaperTrading {
             drag: PaperDrag::None,
             drag_price: None,
             hovered_order: None,
-        }
+        };
+        #[cfg(any(feature = "scenario-harness", test))]
+        let host = host.with_launch_hooks();
+        host
+    }
+
+    /// The ticket's capture hooks, applied over the defaults: the staged
+    /// bracket, the forced previews, the order ladder demo, the strategy
+    /// editor and the ruler notches. Compiled only with the scenario harness
+    /// (or under test).
+    #[cfg(any(feature = "scenario-harness", test))]
+    fn with_launch_hooks(mut self) -> Self {
+        self.order_bracket_demo =
+            crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|value| value == "1");
+        self.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV).and_then(|value| {
+            CmdPreviewForce::parse(&value).or_else(|| {
+                tracing::warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
+                    value = %value,
+                    "QUANTICK_CMD_PREVIEW wants `buy` or `sell`, optionally `@<0..1>`"
+                );
+                None
+            })
+        });
+        self.order_hover_force =
+            crate::hooks::captured::var(PAPER_ORDER_HOVER_ENV).is_some_and(|value| value == "1");
+        self.orders_demo = crate::hooks::captured::var(PAPER_ORDERS_ENV).and_then(|value| {
+            value
+                .trim()
+                .parse::<u8>()
+                .ok()
+                .filter(|rungs| (1..=PAPER_ORDERS_MAX_RUNGS).contains(rungs))
+                .or_else(|| {
+                    // Refused, never guessed: a typo that silently
+                    // photographed an orderless chart would read as a
+                    // defect in the thing being photographed.
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "PAPER_ORDERS_AUTOSTART_UNKNOWN",
+                        value = %value,
+                        max = PAPER_ORDERS_MAX_RUNGS,
+                        "QUANTICK_PAPER_ORDERS wants a rung count from 1 to the maximum"
+                    );
+                    None
+                })
+        });
+        self.strategy_editor_open =
+            crate::hooks::captured::var(STRATEGY_EDITOR_ENV).is_some_and(|value| value == "1");
+        self.ruler_notches = crate::hooks::captured::var(RULER_TICKS_ENV)
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES));
+        self
     }
 
     /// Everything the account needs from the ticket for one call.
@@ -820,6 +857,7 @@ impl PaperTrading {
     pub fn on_trade(&mut self, trade: &Trade) {
         self.account.on_trade(trade);
         // `orders_demo` is a harness field, so its orders rest from here.
+        #[cfg(any(feature = "scenario-harness", test))]
         if self.orders_demo.is_some() {
             self.rest_capture_orders();
         }
@@ -836,6 +874,7 @@ impl PaperTrading {
     /// the failure this hook exists to prevent. So the step floors at one
     /// unit of that precision, and the hook stays armed until at least one
     /// order is actually resting.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn rest_capture_orders(&mut self) {
         let Some(rungs) = self.orders_demo else {
             return;
@@ -1026,6 +1065,7 @@ fn test_scratch_dir() -> PathBuf {
     crate::scratch::thread_dir("paper-host").join(NEXT.fetch_add(1, Ordering::Relaxed).to_string())
 }
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks![
     "QUANTICK_CMD_PREVIEW",
     "QUANTICK_PAPER_ORDERS",

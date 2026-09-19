@@ -96,6 +96,7 @@ impl ToolRail {
             *slot = Some((Tool::Drawing(recorded), response.rect));
         }
 
+        #[cfg(any(feature = "drawing-harness", test))]
         if self.hook_flyout.as_deref() == Some(family.id) {
             self.hook_flyout = None;
             self.flyout = Some((family.id, response.rect));

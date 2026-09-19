@@ -1,37 +1,46 @@
 //! The paint frame: [`ChartPane::draw_chart`], the order the layers go down
-//! in, and the [`DrawFrame`] it lends to its painters.
+//! in, and the stages it runs them through.
 //!
-//! What stays in this function is every step that writes the pane — the
-//! footprint switch and the ladder snapshot, the live lane and the viewport
-//! clamp, the projection, the fold refreshes, the footprint layer, the
-//! indicator panes, the flow layers, the paper layer and the frame's cached
-//! geometry — because the slices of `self.state` are borrowed for the whole
-//! frame and a step that writes a field cannot be a method while they are.
-//! Every step that only reads went to `layer_painters.rs` as a `&self`
-//! painter taking the frame by reference. The bodies here are the ones that
-//! ran in `pane.rs`, at the same indentation.
+//! The frame is a staged pipeline. Two opening stages write the pane before
+//! anything borrows its series: [`ChartPane::begin_frame`] (the published
+//! resets, the footprint switch and the ladder snapshot) and
+//! [`ChartPane::lay_out`] (the plot split, the live lane and the viewport
+//! clamp), which returns the frame's geometry as one [`FrameLayout`] value.
+//! [`FrameLayout::resolve`] then borrows the series into the [`DrawFrame`]
+//! every painter reads, and from there on `self.state` stays borrowed for
+//! the whole frame.
+//!
+//! Under that borrow a step that writes a field cannot be a `&mut self`
+//! method, so each writing stage is an owner type in `frame_stages.rs` —
+//! [`FlowFrame`] for the tape's layers, [`HistoryStage`] for the candle
+//! pane's — handed only the field it writes; a stage whose only write is a
+//! published value (the legend's bounds, the paper HUD's anchor, the lane's
+//! reference) is a `&self` method here returning it, and the orchestrator
+//! stores it. Every step that only reads is a `&self` painter here or in
+//! `layer_painters.rs`.
 
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::chart;
-use crate::indicator_render::{self, PlotX};
-use crate::orderflow_view::{OrderflowView, VisibleBarTimeline};
+use crate::bands::{Band, Bands};
+use crate::chart::PriceScale;
+use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_layers::ChartLayer;
 use quantick_orderflow::reserved_span_ms;
 
 use super::draw_frame::{AxisChips, DrawFrame};
+use super::frame_layout::{
+    CandleDress, FrameLayout, FrameStart, Series, live_ladder, nothing_in_view,
+    snapshot_live_ladder,
+};
+use super::frame_stages::{FlowFrame, HistoryStage, PaneLane, refresh_drawing_folds};
 use super::render_registry::*;
 use super::{
-    ChartPane, DrawPass, PaneChrome, PriceAxisClaims, background_color, grid_color, lane_rungs,
+    ChartPane, DrawPass, PaneChrome, PriceAxisClaims, PriceAxisLevel, background_color, grid_color,
+    lane_rungs,
 };
-
-/// How often the forming bar's footprint ladder is re-snapshotted for
-/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
-/// digits, and a layout that repaints per print reflows under the pointer.
-const LIVE_LADDER_REFRESH_S: f64 = 0.1;
 
 impl ChartPane {
     pub fn draw_chart(
@@ -41,6 +50,157 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         let renderers = self.layer_renderers;
+        let start = self.begin_frame(painter, area, chrome);
+        let Some(layout) = self.lay_out(painter, area, chrome) else {
+            return;
+        };
+        // Field borrows, not `self` borrows: the tape below needs `&mut
+        // self.orderflow` while these are alive.
+        let series = Series {
+            prefix: self.history_prefix.as_slice(),
+            closed: self.state.bars(),
+            partial: self.state.partial(),
+        };
+        let Some((frame, auto_range)) = layout.resolve(
+            painter,
+            series,
+            self.frame.auto_range,
+            &self.price_view,
+            start.canvas_background,
+        ) else {
+            return;
+        };
+        let chart_rect = frame.chart_rect;
+
+        // Resting liquidity is the bottom visual layer. Projection is pure with
+        // respect to candles and uses the same bar-warped viewport coordinates.
+        let mut flow = FlowFrame::new(
+            renderers,
+            &frame,
+            layout.lane_width_px(),
+            &self.viewport,
+            self.price_view.is_inverted(),
+        );
+        let demand = self.projection_demand();
+        let timeline_revision = self.state.timeline_revision();
+        flow.project(self.orderflow.as_mut(), demand, timeline_revision, &frame);
+        flow.heatmap(self.orderflow.as_ref());
+        let depth_visible = self
+            .orderflow
+            .as_ref()
+            .is_some_and(OrderflowView::depth_visible);
+
+        let heat_first_slot = flow.first_heat_slot(|| depth_visible && self.wants_range_profile());
+        // Read before the drawings are borrowed mutably below.
+        let partial_bucket_slot = self.partial_bucket_slot();
+        refresh_drawing_folds(
+            &mut self.drawings,
+            &crate::frvp::RefreshInputs {
+                state: &self.state,
+                budget: crate::frvp::fold_budget(),
+                prefix: frame.prefix,
+                partial_ladder: live_ladder(&self.footprint),
+                partial_version: self.footprint.live_version,
+                blocked: start.footprint_blocked,
+                side_inferred: chrome.side_inferred,
+                heat_first_slot,
+                draft_hover_bar: self.gestures.hover.map(|point| point.bar),
+                partial_bucket_slot,
+            },
+            painter.ctx(),
+        );
+
+        let AxisChips {
+            compass,
+            price: price_claims,
+            time: time_claims,
+        } = self.axis_claims(&frame, chrome);
+        // Gathered once, read twice: the axis stands aside for these just
+        // below, and the same list is what gets painted onto the gutter
+        // further down. Borrowed out of the pane so the container survives
+        // the frame and the next one refills it rather than reallocating.
+        let mut levels = std::mem::take(&mut self.price_axis_levels);
+        self.fill_price_axis_levels(&frame, chrome, &mut levels);
+
+        // Grid + price labels first, behind the candles. Labels anchor on the
+        // gutter's edge, past the live strip when one is shown.
+        let axis_x = layout.areas.price_gutter.left();
+        renderers.grid(&mut GridPass {
+            painter,
+            chart_rect,
+            axis_x,
+            scale: &frame.scale,
+            claims: &PriceAxisClaims {
+                marks: price_claims,
+                levels: &levels,
+            },
+            style: chrome.style,
+        });
+
+        let history = HistoryStage {
+            renderers,
+            frame: &frame,
+            clip: painter.with_clip_rect(layout.history_rect),
+            viewport: &self.viewport,
+            dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
+        };
+        let mut carved = std::mem::take(&mut self.frame.bands);
+        let clear_depth = flow.projected() && depth_visible;
+        let mut candle_pass =
+            history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+        renderers.candle_clear(&mut candle_pass);
+        // Only price-band background drawings may precede candle/indicator scales.
+        self.carve_bands(&layout, &mut carved);
+        let price_band = carved.get(..1).unwrap_or_default();
+        self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
+        renderers.candles(&mut candle_pass);
+        if start.footprint_paints {
+            history.footprint(
+                &mut self.footprint,
+                self.state.bar_footprints(),
+                chrome,
+                depth_visible,
+            );
+        }
+        history.overlay(&self.indicators);
+        let lane = self.pane_lane(&layout, &frame);
+        let grid = grid_color(chrome.style);
+        history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
+        flow.aggressions(self.orderflow.as_ref());
+        self.frame.flow_legend = flow.legend(self.orderflow.as_ref(), self.legend_inset(chrome));
+        flow.strip(self.orderflow.as_mut(), &frame);
+
+        self.paint_drawings_over(&frame, &layout, &mut carved, chrome);
+        self.frame.bands = carved;
+        self.paint_band_hint(painter);
+        self.paint_trade_marks(&frame, chrome);
+        self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
+        self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
+        if let Some(reference_ms) = self.paint_lane_time_axis(&frame) {
+            self.frame.lane_reference_ms = Some(reference_ms);
+        }
+        let nothing_in_view = nothing_in_view(&frame);
+        self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
+
+        // The levels' container, back on the pane for the next frame to
+        // refill rather than reallocate.
+        self.price_axis_levels = levels;
+
+        // Cache the auto range + height for next frame's input handler, which
+        // runs before the draw and needs them for pixel↔price conversion.
+        self.frame.auto_range = Some(auto_range);
+        self.frame.chart_height = chart_rect.height();
+        self.frame.chart_top = chart_rect.top();
+    }
+
+    /// The frame's opening writes: the values published per frame reset, the
+    /// canvas cleared, and the footprint ladders switched and snapshotted.
+    fn begin_frame(
+        &mut self,
+        painter: &egui::Painter,
+        area: egui::Rect,
+        chrome: &PaneChrome<'_>,
+    ) -> FrameStart {
         self.paper_hud_anchor = None;
         self.frame.flow_legend = None;
         // Published before anything can return early, so an empty pane still
@@ -81,44 +241,34 @@ impl ChartPane {
         {
             self.state.set_footprint_group(base);
         }
-
-        // Field borrows, not `self` borrows: the tape below needs `&mut
-        // self.orderflow` while these are alive.
-        let prefix = self.history_prefix.as_slice();
-        let closed = self.state.bars();
-        let partial = self.state.partial();
-        let closed_total = prefix.len() + closed.len();
-        let total = closed_total + usize::from(partial.is_some());
-
-        // Snapshot the forming bar's ladder at ~10 Hz rather than per print;
-        // between snapshots the drawn numbers hold still. Taken here, with
-        // the accumulation switch, because it has two consumers now — the
-        // footprint layer and the range-profile drawings — and each reading
-        // the live ladder on its own cadence would show two different bars.
         if footprint_on {
             let now = painter.ctx().input(|i| i.time);
-            match self.state.partial_footprint() {
-                Some(partial_ladder) => {
-                    let stale =
-                        self.footprint
-                            .live
-                            .as_ref()
-                            .is_none_or(|(taken, snapshot_slot, _)| {
-                                *snapshot_slot != closed_total
-                                    || now - *taken >= LIVE_LADDER_REFRESH_S
-                            });
-                    if stale {
-                        self.footprint.live = Some((now, closed_total, partial_ladder.clone()));
-                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
-                    }
-                }
-                None => {
-                    if self.footprint.live.take().is_some() {
-                        self.footprint.live_version = self.footprint.live_version.wrapping_add(1);
-                    }
-                }
-            }
+            let closed_total = self.history_prefix.len() + self.state.bars().len();
+            snapshot_live_ladder(
+                &mut self.footprint,
+                self.state.partial_footprint(),
+                closed_total,
+                now,
+            );
         }
+        FrameStart {
+            canvas_background,
+            footprint_blocked,
+            footprint_paints,
+        }
+    }
+
+    /// The frame's geometry: the plot split, the live lane, the history
+    /// pane beside it and the clamped viewport's visible slots. `None` for an
+    /// empty series, after painting what an empty pane says instead.
+    fn lay_out(
+        &mut self,
+        painter: &egui::Painter,
+        area: egui::Rect,
+        chrome: &PaneChrome<'_>,
+    ) -> Option<FrameLayout> {
+        let closed_total = self.history_prefix.len() + self.state.bars().len();
+        let total = closed_total + usize::from(self.state.partial().is_some());
         let areas = self.plot_areas(area, chrome.capabilities);
         // Indicator panes claimed the bottom band inside `plot_split`, so the
         // rect the candles scale to is the same one the input handler uses.
@@ -126,43 +276,63 @@ impl ChartPane {
         self.frame.price_gutter = Some(areas.price_gutter);
         self.frame.time_strip =
             Some(split_time_strip(areas.time_strip, self.frame.lane_divider_x).0);
-        let pane_rects = areas.indicator_panes.clone();
         let indicator_guide_x = self
             .hover_pos
             .filter(|position| chart_rect.contains(*position))
             .map(|position| position.x);
         if total == 0 {
-            painter.text(
-                area.center(),
-                egui::Align2::CENTER_CENTER,
-                format!("connecting to {} …", chrome.symbol),
-                egui::FontId::proportional(16.0),
-                theme::TEXT_MUTED,
-            );
-            if let Some(orderflow) = self.orderflow.as_ref() {
-                self.layer_renderers
-                    .status(&mut super::render_registry::StatusPass {
-                        owner: orderflow,
-                        painter,
-                        rect: chart_rect,
-                    });
-            }
-            self.draw_canvas_contributions(painter, chart_rect, chrome.capabilities);
-            return;
+            self.paint_empty_pane(painter, area, chart_rect, chrome);
+            return None;
         }
 
-        // The live lane: a pane of its own, pinned to the right edge of the
-        // chart, showing a fixed window of market time that always ends at
-        // now. Fixed width, fixed pixels-per-ms: a print enters at the right
-        // edge and slides left until it leaves into the slot of its own bar.
-        //
-        // It belongs to the tape rather than to the forming bar, which is what
-        // keeps a bar close from emptying it — the reset that made the book
-        // look like it was restarting every few seconds. And it is a pane
-        // rather than a reservation inside the viewport, which is what keeps
-        // every chart movement out of it: panning, zooming and dragging move
-        // the candles beside the tape and never the tape itself, so the most
-        // recent prints are on screen whatever the rest of the chart is doing.
+        let live_lane = self.lay_out_lane(chart_rect);
+        let history_rect = egui::Rect::from_min_max(
+            chart_rect.min,
+            egui::pos2(
+                self.frame
+                    .lane_divider_x
+                    .unwrap_or_else(|| chart_rect.right()),
+                chart_rect.bottom(),
+            ),
+        );
+
+        // The projection margin is enforced here, against the rect the candles
+        // are actually drawn in, rather than in the input handler: panning
+        // leaves the future end open and zooming knows nothing about the
+        // window, and the window itself moves without any gesture at all (the
+        // app resizing, the lane divider dragged, a pane collapsed). Painting
+        // is the one place that sees all of it, so it is the one place the
+        // rule holds — pushed fully left, the newest bar stops at the left
+        // edge and the rest of the window is empty canvas to project into.
+        self.viewport.clamp_to_window(history_rect.width(), total);
+        let (start, end) = self.viewport.visible_range(history_rect.width(), total);
+        Some(FrameLayout {
+            areas,
+            chart_rect,
+            history_rect,
+            live_lane,
+            total,
+            closed_total,
+            start,
+            end,
+            cw: self.viewport.candle_width(),
+            indicator_guide_x,
+        })
+    }
+
+    /// The live lane: a pane of its own, pinned to the right edge of the
+    /// chart, showing a fixed window of market time that always ends at now.
+    /// Fixed width, fixed pixels-per-ms: a print enters at the right edge and
+    /// slides left until it leaves into the slot of its own bar.
+    ///
+    /// It belongs to the tape rather than to the forming bar, which is what
+    /// keeps a bar close from emptying it — the reset that made the book look
+    /// like it was restarting every few seconds. And it is a pane rather than
+    /// a reservation inside the viewport, which is what keeps every chart
+    /// movement out of it: panning, zooming and dragging move the candles
+    /// beside the tape and never the tape itself, so the most recent prints
+    /// are on screen whatever the rest of the chart is doing.
+    fn lay_out_lane(&mut self, chart_rect: egui::Rect) -> Option<LiveLane> {
         // Band and live edge in one look at the published book: the panes need
         // the instant the band's right edge stands for, and reading it again
         // further down would put a second worker-mutex wait on the render
@@ -188,504 +358,159 @@ impl ChartPane {
                 .command(self.state.partial().cloned(), self.state.trades());
             self.indicator_worker.send(command);
         }
-        let history_rect = egui::Rect::from_min_max(
-            chart_rect.min,
-            egui::pos2(
-                self.frame
-                    .lane_divider_x
-                    .unwrap_or_else(|| chart_rect.right()),
-                chart_rect.bottom(),
-            ),
+        live_lane
+    }
+
+    /// What a pane with no bars yet shows: the symbol it is waiting for, the
+    /// tape's status and the canvas layers that need no bars.
+    fn paint_empty_pane(
+        &self,
+        painter: &egui::Painter,
+        area: egui::Rect,
+        chart_rect: egui::Rect,
+        chrome: &PaneChrome<'_>,
+    ) {
+        painter.text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            format!("connecting to {} …", chrome.symbol),
+            egui::FontId::proportional(16.0),
+            theme::TEXT_MUTED,
         );
-
-        // The projection margin is enforced here, against the rect the candles
-        // are actually drawn in, rather than in the input handler: panning
-        // leaves the future end open and zooming knows nothing about the
-        // window, and the window itself moves without any gesture at all (the
-        // app resizing, the lane divider dragged, a pane collapsed). Painting
-        // is the one place that sees all of it, so it is the one place the
-        // rule holds — pushed fully left, the newest bar stops at the left
-        // edge and the rest of the window is empty canvas to project into.
-        self.viewport.clamp_to_window(history_rect.width(), total);
-        let (start, end) = self.viewport.visible_range(history_rect.width(), total);
-
-        // The visible closed bars, plus the partial if it falls in view. With
-        // a venue prefix the window can straddle both series, so it is two
-        // slices — chained where they are read rather than copied into one.
-        // Copying was 24-48 KB every frame for the life of the pane, including
-        // the common case of following the live edge, where the seam is three
-        // months off screen and the prefix half of the window is empty.
-        let closed_start = start.min(closed_total);
-        let closed_end = end.min(closed_total);
-        let visible_prefix = &prefix[closed_start.min(prefix.len())..closed_end.min(prefix.len())];
-        let visible_state = &closed[closed_start.saturating_sub(prefix.len())
-            ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
-        let visible_closed = || visible_prefix.iter().chain(visible_state);
-        let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
-
-        // Auto-fit the visible bars, then apply any manual price pan/zoom. A
-        // window with no bars in it still gets a scale (the last one, then the
-        // newest bar), because a chart that draws nothing at all is
-        // indistinguishable from a hung app — which is exactly how the blank
-        // frame after a rebuild read.
-        let nothing_in_view =
-            visible_prefix.is_empty() && visible_state.is_empty() && partial_visible.is_none();
-        let Some(auto_scale) = chart::price_window(
-            visible_closed(),
-            partial_visible,
-            self.frame.auto_range,
-            partial.or_else(|| closed.last()),
-            chart_rect.top(),
-            chart_rect.bottom(),
-        ) else {
-            return;
-        };
-        let auto_range = auto_scale.range();
-        let scale = self
-            .price_view
-            .scale(auto_range, chart_rect.top(), chart_rect.bottom());
-
-        let cw = self.viewport.candle_width();
-        let half = chrome.style.candles.body_half_width(cw);
-        let right = history_rect.right();
-        let frame = DrawFrame {
-            painter,
-            areas: &areas,
-            chart_rect,
-            history_rect,
-            right,
-            total,
-            start,
-            end,
-            closed_start,
-            closed_total,
-            scale,
-            prefix,
-            closed,
-            partial,
-            partial_visible,
-            visible_prefix,
-            visible_state,
-            canvas_background,
-            cw,
-        };
-
-        // How the candle behaves under the footprint is the *style's* answer,
-        // not this function's: a style that draws inside the candle needs its
-        // interior, and one that draws in a box beside it needs the candle out
-        // of the way entirely. With the layer off, candles are untouched at
-        // any zoom.
-        // The style that will actually draw, not the one that was asked for: a
-        // style below its own zoom floor hands over, and the candle must be
-        // laid out for whichever one paints. Asking the requested style put a
-        // sidebar lane under a style that draws full width.
-        let requested_style = self
-            .footprint
-            .config
-            .as_ref()
-            .unwrap_or(chrome.footprint)
-            .style;
-        let footprint_style = self.footprint.lod.effective_style(requested_style);
-        let treatment = footprint_style.candle_treatment();
-        // The lane a sidebar candle keeps at the left of its slot, and the
-        // style the layer leaves the candle in. Both from one function, whose
-        // whole point is that they answer to `footprint_paints` and never to
-        // the accumulation switch — see `footprint_render::candle_dressing`.
-        let (candle_lane, faded_candles) = crate::footprint_render::candle_dressing(
-            footprint_paints,
-            treatment,
-            cw,
-            chrome.style.candles,
-        );
-        // The half-width the footprint's content actually spans. The lane is
-        // cut out of *this*, so the candle placed beside it has to be measured
-        // from the same edge — measuring from the candle's own body width put
-        // it inside the box the lane was reserved next to, where the opaque
-        // plate then painted straight over it.
-        let content_half = treatment.content_half_width(cw, half);
-        let candles = faded_candles.as_ref().unwrap_or(&chrome.style.candles);
-
-        // Resting liquidity is the bottom visual layer. Projection is pure with
-        // respect to candles and uses the same bar-warped viewport coordinates.
-        // The projection builds a lane exactly when the layout draws one. Tied
-        // to `lane_width_px` rather than restated, because the two decide the
-        // same thing: with them apart, the newest prints would be clustered and
-        // sized as lane prints and then squeezed into a single candle slot.
-        // Only the engine's own bars carry tape, so the timeline starts at
-        // the first *state* bar's global slot: when the window straddles the
-        // venue seam (a time-cutting flow pane, audit S1), that is the seam
-        // itself, not the window's first slot.
-        let timeline = VisibleBarTimeline::new(
-            self.state.timeline_revision(),
-            closed_start.max(prefix.len()),
-            visible_state,
-            partial_visible,
-        );
-        // Two surfaces consume the projection without being the depth map or
-        // the bubbles: the live strip draws the same clusters, and the lane's
-        // marks need the frame's live edge. Stated here, every frame, from the
-        // layers this pane owns — so with the bubbles hidden the pipeline stays
-        // alive for the strip, and with every other flow layer off the lane is
-        // still marked instead of being a reserved but empty band whose menu
-        // entry claims it is on.
-        let demand = self.projection_demand();
-        let orderflow_frame = self.orderflow.as_mut().and_then(|orderflow| {
-            orderflow.set_projection_demand(demand);
-            // The tape's automatic window comes from the newest bars of the
-            // series, never from the slice on screen: panning the candles is
-            // not a statement about how much market time the tape shows.
-            orderflow.project_visible(
-                timeline,
-                lane_width_px > 0.0,
-                end == total,
-                Some(quantick_orderflow::reserved_span_ms(self.state.bars())),
-                scale.range(),
-            )
-        });
-        if let Some(orderflow) = self.orderflow.as_mut()
-            && let Some(frame) = &orderflow_frame
-        {
-            renderers.heatmap(&mut FlowPass {
+        if let Some(orderflow) = self.orderflow.as_ref() {
+            self.layer_renderers.status(&mut StatusPass {
                 owner: orderflow,
                 painter,
                 rect: chart_rect,
-                viewport: &self.viewport,
-                total,
-                projection: frame,
-                background: canvas_background,
-                lane_width: lane_width_px,
-                inverted: self.price_view.is_inverted(),
             });
         }
+        self.layer_renderers.canvas(&mut CanvasPass {
+            painter,
+            rect: chart_rect,
+            tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
+            tape_hovered: self.tape_switch.hovered(),
+            state: &self.layers,
+            facts: self.layer_facts(Some(chrome.capabilities)),
+        });
+    }
 
-        // Bring the range-profile drawings' folds up to date before anything
-        // paints over the map. Key-guarded inside: the common frame compares
-        // one small key per profile object and folds nothing. It runs after
-        // the heatmap projection on purpose — the map's left boundary is
-        // where each profile's paint cuts from fill to silhouette, and the
-        // O(cells) scan behind it is paid only while a profile object exists.
-        let heat_first_slot = orderflow_frame
-            .as_ref()
-            .filter(|_| {
-                self.orderflow
-                    .as_ref()
-                    .is_some_and(OrderflowView::depth_visible)
-                    && self.wants_range_profile()
-            })
-            .and_then(|frame| frame.first_heat_slot());
-        // Read before the drawings are borrowed mutably below.
-        let partial_bucket_slot = self.partial_bucket_slot();
-        let folding = crate::frvp::refresh(
-            &mut self.drawings,
-            &crate::frvp::RefreshInputs {
-                state: &self.state,
-                budget: crate::frvp::fold_budget(),
-                prefix,
-                partial_ladder: self.footprint.live.as_ref().map(|(_, _, ladder)| ladder),
-                partial_version: self.footprint.live_version,
-                blocked: footprint_blocked,
-                side_inferred: chrome.side_inferred,
-                heat_first_slot,
-                draft_hover_bar: self.gestures.hover.map(|point| point.bar),
-                partial_bucket_slot,
-            },
+    /// The live lane's window as the indicator panes draw it, `None`
+    /// without a lane or a tape.
+    fn pane_lane(&self, layout: &FrameLayout, frame: &DrawFrame<'_>) -> Option<PaneLane> {
+        let divider = self.frame.lane_divider_x;
+        PaneLane::resolve(divider, layout.live_lane, self.orderflow.as_ref(), frame)
+    }
+
+    /// Drawings sit above market layers and remain anchored to chart space,
+    /// not the screen, while the viewport moves beneath them, and the quick
+    /// range rides with them.
+    ///
+    /// Re-carved, not reused: the pass under the candles ran before the
+    /// indicator panes drew, and every band's scale is written *by* that
+    /// draw — which is the invariant this whole feature rests on. Into the
+    /// pane's own buffer: same geometry as the input pass computed, no
+    /// container allocated, and what the tab's shared projection reads
+    /// afterwards.
+    fn paint_drawings_over(
+        &self,
+        frame: &DrawFrame<'_>,
+        layout: &FrameLayout,
+        carved: &mut Bands,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        self.carve_bands(layout, carved);
+        self.paint_drawing_bands(frame, carved, DrawPass::OverCandles);
+        self.quick_range_view(chrome.tab, chrome.side).draw(
+            frame.painter,
+            carved,
+            frame.right,
+            frame.total,
+            chrome,
         );
-        if folding {
-            // A range too long for one pass: paint what is folded and come
-            // straight back for the next slice. Without this the fill would
-            // stall wherever the tape happened to stop waking the window.
-            painter.ctx().request_repaint();
+    }
+
+    /// Carve the drawing bands — the price band and one per indicator pane —
+    /// into `out`, against this frame's scales.
+    fn carve_bands(&self, layout: &FrameLayout, out: &mut Bands) {
+        crate::bands::BandGeometry {
+            auto_range: self.frame.auto_range,
+            price_view: &self.price_view,
+            lane_divider_x: self.frame.lane_divider_x,
+            indicators: &self.indicators,
+            price_label: &self.price_band_label,
         }
-        // The anchored-VWAP objects' cached rows, same pass discipline: a key
-        // comparison per object on the common frame, a replay only when the
-        // tape or the config moved (see `crate::avwap`).
-        crate::avwap::refresh(
-            &mut self.drawings,
-            &crate::avwap::RefreshInputs {
-                state: &self.state,
-                prefix: &self.history_prefix,
-            },
-        );
+        .carve(&layout.areas, out);
+    }
 
-        let AxisChips {
-            compass,
-            price: price_claims,
-            time: time_claims,
-        } = self.axis_claims(&frame, chrome);
-        // Gathered once, read twice: the axis stands aside for these just
-        // below, and the same list is what gets painted onto the gutter
-        // further down. Borrowed out of the pane so the container survives
-        // the frame and the next one refills it rather than reallocating —
-        // and lent to the axis as a slice, so the claims list stays the chips
-        // the axis draws itself and never spills onto the heap.
-        let mut levels = std::mem::take(&mut self.price_axis_levels);
+    /// One drawing pass over `bands`, each band numbered by its place in the
+    /// carve.
+    fn paint_drawing_bands(&self, frame: &DrawFrame<'_>, bands: &[Band], pass: DrawPass) {
+        for (index, band) in bands.iter().enumerate() {
+            DrawingPass {
+                painter: frame.painter,
+                band,
+                band_index: index,
+                drawings: &self.drawings,
+                viewport: &self.viewport,
+                history_right: frame.right,
+                total: frame.total,
+                pass,
+                content_editing: self.gestures.content_editing,
+                hover: self.gestures.hover,
+            }
+            .paint(
+                self.layer_renderers,
+                &self.strategies.anchors,
+                &self.drawing_projection(),
+                self.closed_slots(),
+            );
+        }
+    }
+
+    /// The drawings' price-axis levels, refilled into the pane's retained
+    /// container — lent to the axis as a slice, so the claims list stays the
+    /// chips the axis draws itself and never spills onto the heap.
+    fn fill_price_axis_levels(
+        &self,
+        frame: &DrawFrame<'_>,
+        chrome: &PaneChrome<'_>,
+        levels: &mut Vec<PriceAxisLevel>,
+    ) {
         if self.layer_visible(ChartLayer::Drawings, chrome.style) {
-            self.price_axis_levels(chart_rect, right, total, &scale, &mut levels);
+            self.drawing_projection().price_axis_levels(
+                &self.drawings,
+                frame.chart_rect,
+                frame.right,
+                frame.total,
+                &frame.scale,
+                levels,
+            );
         } else {
             levels.clear();
         }
+    }
 
-        // Grid + price labels first, behind the candles. Labels anchor on the
-        // gutter's edge, past the live strip when one is shown.
-        let axis_x = areas.price_gutter.left();
-        let price_claims = PriceAxisClaims {
-            marks: price_claims,
-            levels: &levels,
-        };
-        self.draw_price_axis(painter, chart_rect, axis_x, &scale, &price_claims, chrome);
-
-        // Candles, clipped to their own pane: panning far enough into history
-        // sends the newest bars off the right of it, and they scroll out of
-        // sight behind the tape instead of being drawn over it.
-        let clip = painter.with_clip_rect(history_rect);
-        let viewport = &self.viewport;
-        let mut carved = std::mem::take(&mut self.frame.bands);
-        let mut candle_pass = CandlePass {
-            frame: &frame,
-            painter: &clip,
-            viewport: &self.viewport,
-            indicators: &self.indicators,
-            clear_depth: orderflow_frame.is_some()
-                && self
-                    .orderflow
-                    .as_ref()
-                    .is_some_and(OrderflowView::depth_visible),
-            half,
-            candle_lane,
-            content_half,
-            style: candles,
-        };
-        renderers.candle_clear(&mut candle_pass);
-        // Only price-band background drawings may precede candle/indicator scales.
-        self.carve_bands(&areas, &mut carved);
-        if let Some(price_band) = carved.first() {
-            self.draw_drawings(painter, price_band, 0, right, total, DrawPass::UnderCandles);
-        }
-        renderers.candles(&mut candle_pass);
-        // The footprint rides directly on the candles, before everything
-        // drawn over them: it is a representation of the bars themselves,
-        // not an annotation. Prefix (venue) candles carry no tape and draw
-        // no ladder — the layer starts where trade-built bars start.
-        if footprint_paints {
-            // The forming bar's ladder is the ~10 Hz snapshot taken with the
-            // accumulation switch at the top of the frame, shared with the
-            // range-profile drawings.
-            let frame = crate::footprint_render::LayerFrame {
-                painter: &clip,
-                chart_rect: history_rect,
-                scale: &scale,
-                footprints: self.state.bar_footprints(),
-                first_state_slot: prefix.len(),
-                visible: (start, end),
-                partial: self
-                    .footprint
-                    .live
-                    .as_ref()
-                    .map(|(_, _, ladder)| ladder)
-                    .filter(|_| partial_visible.is_some()),
-                partial_slot: closed_total,
-                x_center: &|slot| viewport.x_center(slot, right, total),
-                // The *content* half-width, which is not always the candle's.
-                // A style that draws inside the candle is bounded by it; one
-                // that draws in a box beside it is bounded only by the slot,
-                // and charging it the candle gap as well spends a quarter of
-                // the row on air twice over.
-                half: content_half,
-                candle_width: cw,
-                side_inferred: chrome.side_inferred,
-                depth_visible: self
-                    .orderflow
-                    .as_ref()
-                    .is_some_and(OrderflowView::depth_visible),
-                pixels_per_point: painter.ctx().pixels_per_point(),
-                // Field access, not `self.footprint_config(..)`: the method
-                // borrows all of `self` and the draw below needs
-                // `self.footprint.lod` mutably. Same resolution rule.
-                config: self.footprint.config.as_ref().unwrap_or(chrome.footprint),
-            };
-            renderers.footprint(&mut FootprintPass {
-                frame: &frame,
-                lod: &mut self.footprint.lod,
-            });
-        }
-        // Overlay indicator plots ride the candles' own clip, scale and
-        // x-mapping — after candles, before aggression bubbles (the same
-        // paint-order slot draw objects take).
-        let plot_x = PlotX {
-            viewport: &self.viewport,
-            right,
-            total,
-        };
-        renderers.overlay(&mut OverlayPass {
-            frame: &frame,
-            painter: &clip,
-            plot_x: &plot_x,
-            indicators: &self.indicators,
-        });
-        // Pane indicators stack in the band carved off above, sharing the
-        // candles' x-mapping so bars and their flow read as one chart. Each
-        // pane records the range it auto-fitted to, so the gesture over its
-        // axis zooms the very range this frame drew.
-        let grid = grid_color(chrome.style);
-        // The lane's window of tape time, and the closes inside it. Both are
-        // the same for every pane, so they are resolved once here rather than
-        // per pane — and both come from the tape's own numbers, so a pane's
-        // curve lands under the prints it was computed from.
-        let lane_window = self
-            .frame
-            .lane_divider_x
-            .zip(live_lane)
-            .and_then(|(divider, lane)| {
-                let orderflow = self.orderflow.as_ref()?;
-                let window = orderflow.live_lane_window_ms(visible_state).max(1);
-                Some((divider, lane.end_ms.saturating_sub(window), lane.end_ms))
-            });
-        let lane_steps: Vec<(i64, usize)> =
-            lane_window.map_or_else(Vec::new, |(_, start_ms, _)| {
-                let first = prefix.len();
-                // Walked back from the newest close and reversed in place: the
-                // window holds a handful of bars, and building it front to back
-                // would mean scanning every closed bar the chart has ever seen.
-                let mut steps: Vec<(i64, usize)> = closed
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .take_while(|(_, bar)| bar.close_time >= start_ms)
-                    .map(|(index, bar)| (bar.close_time, first + index))
-                    .collect();
-                steps.reverse();
-                steps
-            });
-        for ((view, pane), gutter) in self
-            .indicators
-            .visible_panes_mut()
-            .zip(&pane_rects)
-            .zip(&areas.pane_gutters)
-        {
-            let frame = indicator_render::PaneFrame {
-                rect: egui::Rect::from_min_max(
-                    egui::pos2(history_rect.left(), pane.rect.top()),
-                    egui::pos2(history_rect.right(), pane.rect.bottom()),
-                ),
-                lane: lane_window.map(|(divider, start_ms, end_ms)| indicator_render::LaneFrame {
-                    rect: egui::Rect::from_min_max(
-                        egui::pos2(divider, pane.rect.top()),
-                        egui::pos2(chart_rect.right(), pane.rect.bottom()),
-                    ),
-                    start_ms,
-                    end_ms,
-                    steps: &lane_steps,
-                }),
-                gutter: *gutter,
-                background: canvas_background,
-                grid,
-                collapsed: pane.collapsed,
-            };
-            renderers.indicator_pane(&mut IndicatorPanePass {
-                painter,
-                frame: &frame,
-                view,
-                plot_x: &plot_x,
-                start,
-                end,
-                partial_slot: partial_visible.map(|_| closed_total),
-            });
-            if view.mouse_vertical_line
-                && !pane.collapsed
-                && let Some(x) = indicator_guide_x
-            {
-                crate::indicator_guide::paint(painter, frame.rect, x);
-            }
-        }
-        if let Some(orderflow) = self.orderflow.as_mut()
-            && let Some(frame) = &orderflow_frame
-        {
-            renderers.aggressions(&mut FlowPass {
-                owner: orderflow,
-                painter,
-                rect: chart_rect,
-                viewport: &self.viewport,
-                total,
-                projection: frame,
-                background: canvas_background,
-                lane_width: lane_width_px,
-                inverted: self.price_view.is_inverted(),
-            });
-        }
-
-        // The canvas's key, in a pass of its own so the bubble switch cannot
-        // take it down with them. It starts below everything already stacked
-        // at this corner — the chart header, the position HUD while a
-        // position is open, and one row per indicator chip — so nothing at the
-        // top-left prints over anything else.
-        //
-        // The HUD's row counts only where the HUD paints: on the focused
-        // pane — exactly the condition this pane caches its anchor under,
-        // further down this same draw. The anchor is not readable yet this
-        // frame (it is written after the paper layer), so the condition is
-        // restated here rather than read back.
+    /// Where the flow legend starts: below everything already stacked at
+    /// the canvas's top-left corner — the chart header, the position HUD
+    /// while a position is open, and one row per indicator chip — so nothing
+    /// there prints over anything else.
+    ///
+    /// The HUD's row counts only where the HUD paints: on the focused pane —
+    /// exactly the condition this pane caches its anchor under, later in the
+    /// same draw. The anchor is not readable yet this frame (it is written
+    /// after the paper layer), so the condition is restated here rather than
+    /// read back.
+    fn legend_inset(&self, chrome: &PaneChrome<'_>) -> f32 {
         let hud_here = chrome.paper_hud_here && chrome.paper.position_summary().is_some();
-        let legend_inset = crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
+        crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX
             + crate::indicator_legend::hud_offset_px(hud_here)
-            + crate::indicator_legend::stack_height_px(
-                self.indicators.all(),
-                self.legend_collapsed,
-            );
-        if let Some(orderflow) = self.orderflow.as_mut()
-            && let Some(frame) = &orderflow_frame
-        {
-            renderers.legend(&mut LegendPass {
-                owner: orderflow,
-                painter,
-                rect: chart_rect,
-                viewport: &self.viewport,
-                total,
-                projection: frame,
-                background: canvas_background,
-                lane_width: lane_width_px,
-                legend_inset,
-                bounds: &mut self.frame.flow_legend,
-            });
-        }
+            + crate::indicator_legend::stack_height_px(self.indicators.all(), self.legend_collapsed)
+    }
 
-        // The live strip: the book right now plus the forming bar's
-        // aggression histogram, beside the axis the price labels live on.
-        // Its own rect, so chart layers never bleed into it. The histogram
-        // follows `partial` (not its visible filter): the strip reports the
-        // bar forming now even while the user pans through history.
-        if let Some(orderflow) = self.orderflow.as_mut()
-            && let Some(strip) = areas.live_strip
-        {
-            renderers.strip(&mut StripPass {
-                owner: orderflow,
-                painter,
-                rect: strip,
-                scale: &scale,
-                background: canvas_background,
-                partial_time: partial.map(|bar| bar.open_time),
-            });
-        }
-
-        // Drawings sit above market layers and remain anchored to chart space,
-        // not the screen, while the viewport moves beneath them.
-        //
-        // Carved *here*, after the panes drew: each band's scale is then the
-        // one its own curve was just drawn with, which is the invariant this
-        // whole feature rests on.
-        // Re-carved, not reused: the pass above ran before the indicator panes
-        // drew, and every band's scale is written *by* that draw. Into the
-        // pane's own buffer: same geometry as the input pass computed, no
-        // container allocated, and what the tab's shared projection reads
-        // afterwards.
-        self.carve_bands(&areas, &mut carved);
-        for (index, band) in carved.iter().enumerate() {
-            self.draw_drawings(painter, band, index, right, total, DrawPass::OverCandles);
-        }
-        self.draw_quick_range(painter, &carved, right, total, chrome);
-        self.frame.bands = carved;
-        // Which band the next anchor lands in, said the way the split view
-        // already says which pane has focus: one accent hairline on the top
-        // edge. Painted after the drawings so a dense band cannot bury it.
+    /// Which band the next anchor lands in, said the way the split view
+    /// already says which pane has focus: one accent hairline on the top
+    /// edge. Painted after the drawings so a dense band cannot bury it.
+    fn paint_band_hint(&self, painter: &egui::Painter) {
         if let Some(hint) = self.gestures.band_hint {
             painter.line_segment(
                 [
@@ -695,81 +520,83 @@ impl ChartPane {
                 egui::Stroke::new(1.0_f32, theme::ACCENT),
             );
         }
+    }
 
-        self.paint_trade_marks(&frame, chrome);
-
-        // Simulated orders and the position sit above the drawings: they are
-        // operational state, read against the last price painted next. The
-        // unclipped painter carries their chips into the gutter. Both panes
-        // paint them — one market, one set of price levels, and a level is as
-        // true on the 5-minute context as it is on the flow chart. Prices out
-        // of a pane's visible range simply do not draw.
-        //
-        // Switched off, they are only unpainted: the orders keep working and
-        // the dock keeps listing them (see the layer's hint).
-        if self.layer_visible(ChartLayer::PaperTrading, chrome.style) {
-            // The last-price chip's row, computed up front so the paper
-            // chips can dodge it: at the instant a market order fills the
-            // entry *is* the last price, and two chips on one pixel mangle
-            // the only persistent position statement.
-            let reserved_chip_y = if self.layer_visible(ChartLayer::LastPrice, chrome.style) {
-                partial
-                    .or_else(|| closed.last())
-                    .and_then(|bar| bar.close.to_f64())
-                    .map(|price| scale.y(price))
-                    .filter(|y| *y >= chart_rect.top() && *y <= chart_rect.bottom())
-            } else {
-                None
-            };
-            // Tags anchor inside the interactive plot (left of the live
-            // lane when one is up) — the same right edge the input pass
-            // hands to `handle_chart_input`, so a painted ✕ and its press
-            // agree about where it is.
-            let tag_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
-            // Hover affordances paint only on the pane whose pointer feeds
-            // the paper input; the others keep display-only tags. Every pane
-            // still paints the lines themselves — an order is a fact about
-            // the account, true on whichever chart you are looking at.
-            renderers.paper(&mut PaperPass {
-                paper: chrome.paper,
-                painter,
-                rect: chart_rect,
-                tag_right,
-                axis_x,
-                scale,
-                reserved_chip_y,
-                pointer: self.hover_pos,
-                takes_input: chrome.paper_takes_input,
-                hud_here: chrome.paper_hud_here,
-                hud_anchor: &mut self.paper_hud_anchor,
-            });
+    /// Simulated orders and the position sit above the drawings: they are
+    /// operational state, read against the last price painted next. The
+    /// unclipped painter carries their chips into the gutter. Both panes
+    /// paint them — one market, one set of price levels, and a level is as
+    /// true on the 5-minute context as it is on the flow chart. Prices out
+    /// of a pane's visible range simply do not draw.
+    ///
+    /// Switched off, they are only unpainted: the orders keep working and
+    /// the dock keeps listing them (see the layer's hint). Returns where the
+    /// position HUD anchored, for the pane to publish.
+    fn paint_paper(
+        &self,
+        frame: &DrawFrame<'_>,
+        axis_x: f32,
+        chrome: &mut PaneChrome<'_>,
+    ) -> Option<(egui::Rect, PriceScale)> {
+        let mut hud_anchor = None;
+        if !self.layer_visible(ChartLayer::PaperTrading, chrome.style) {
+            return hud_anchor;
         }
+        let chart_rect = frame.chart_rect;
+        // The last-price chip's row, computed up front so the paper chips can
+        // dodge it: at the instant a market order fills the entry *is* the
+        // last price, and two chips on one pixel mangle the only persistent
+        // position statement.
+        let reserved_chip_y = if self.layer_visible(ChartLayer::LastPrice, chrome.style) {
+            frame
+                .partial
+                .or_else(|| frame.closed.last())
+                .and_then(|bar| bar.close.to_f64())
+                .map(|price| frame.scale.y(price))
+                .filter(|y| *y >= chart_rect.top() && *y <= chart_rect.bottom())
+        } else {
+            None
+        };
+        // Tags anchor inside the interactive plot (left of the live lane when
+        // one is up) — the same right edge the input pass hands to
+        // `handle_chart_input`, so a painted ✕ and its press agree about
+        // where it is.
+        let tag_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
+        // Hover affordances paint only on the pane whose pointer feeds the
+        // paper input; the others keep display-only tags. Every pane still
+        // paints the lines themselves — an order is a fact about the account,
+        // true on whichever chart you are looking at.
+        self.layer_renderers.paper(&mut PaperPass {
+            paper: chrome.paper,
+            painter: frame.painter,
+            rect: chart_rect,
+            tag_right,
+            axis_x,
+            scale: frame.scale,
+            reserved_chip_y,
+            pointer: self.hover_pos,
+            takes_input: chrome.paper_takes_input,
+            hud_here: chrome.paper_hud_here,
+            hud_anchor: &mut hud_anchor,
+        });
+        hud_anchor
+    }
 
-        self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
-        if let Some(orderflow) = self.orderflow.as_ref() {
-            self.draw_lane_time_axis(
-                painter,
-                split_time_strip(areas.time_strip, self.frame.lane_divider_x).1,
-                orderflow.live_lane_window_ms(closed),
-                orderflow.tape_age(),
-            );
-            // The automatic reference this frame, kept for the tape's menu:
-            // the entry that says "follows the bars" has to be able to say
-            // what that works out to, and the menu is drawn without the bars
-            // in reach. Recorded from the same bars the axis was just drawn
-            // from, so the label and the axis can never disagree.
-            self.frame.lane_reference_ms = Some(reserved_span_ms(closed));
+    /// The lane's own time axis, under the tape. Returns the automatic
+    /// reference this frame, kept for the tape's menu: the entry that says
+    /// "follows the bars" has to be able to say what that works out to, and
+    /// the menu is drawn without the bars in reach. Recorded from the same
+    /// bars the axis was just drawn from, so the label and the axis can never
+    /// disagree. `None` without a tape.
+    fn paint_lane_time_axis(&self, frame: &DrawFrame<'_>) -> Option<i64> {
+        let orderflow = self.orderflow.as_ref()?;
+        LaneTimeAxisPass {
+            painter: frame.painter,
+            lane_strip: split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1,
+            window_ms: orderflow.live_lane_window_ms(frame.closed),
+            tape_age: orderflow.tape_age(),
         }
-        self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
-
-        // The levels' container, back on the pane for the next frame to
-        // refill rather than reallocate.
-        self.price_axis_levels = levels;
-
-        // Cache the auto range + height for next frame's input handler, which
-        // runs before the draw and needs them for pixel↔price conversion.
-        self.frame.auto_range = Some(auto_range);
-        self.frame.chart_height = chart_rect.height();
-        self.frame.chart_top = chart_rect.top();
+        .paint();
+        Some(reserved_span_ms(frame.closed))
     }
 }

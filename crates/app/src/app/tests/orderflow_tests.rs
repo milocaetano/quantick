@@ -191,7 +191,15 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
     form.window = 3;
     form.min_range = "0".to_owned();
     form.alarm = true;
-    app.arm_strategy_instance(pane::PaneSide::Flow, drawing, &form, "BF sell".to_owned())
+    app.tabs
+        .runtime_mut(app.tabs.active_index())
+        .arm_strategy_instance(
+            &mut *app.audio.alerts,
+            pane::PaneSide::Flow,
+            drawing,
+            &form,
+            "BF sell".to_owned(),
+        )
         .expect("the form compiles and the span still covers the future");
 
     let mut id = 0u64;
@@ -231,7 +239,12 @@ fn a_region_the_tape_walked_past_says_so_on_the_badge_and_keeps_listening() {
             }),
             "the reason is readable as a value, not only as a sentence",
         );
-        tab.flow_pane.strategy_badge_text(drawing)
+        crate::pane::strategies::strategy_badge_text(
+            &tab.flow_pane.strategies.anchors,
+            &tab.flow_pane.drawings,
+            drawing,
+            tab.flow_pane.closed_slots(),
+        )
     };
     assert!(
         badge.contains("region ended — stretch it right"),
@@ -284,7 +297,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {
-            pane.aim_context_menu_at_tape(on_tape);
+            pane.context_menu.aim_at_tape(on_tape);
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),

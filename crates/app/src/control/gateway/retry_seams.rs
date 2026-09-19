@@ -39,7 +39,7 @@ use std::{path::PathBuf, time::Duration};
 use crossbeam_channel::Sender;
 use quantick_control::{error::ControlError, id::ProfileId};
 
-use crate::app::QuantickApp;
+use crate::app::ControlWindow;
 
 use super::{AccessState, ControlAccess, GatewayOptions, UiReadExecution, UiRequest};
 
@@ -105,7 +105,7 @@ impl ControlAccess {
 
     /// Serve everything queued, as the frame's drain would, and say what was
     /// served.
-    pub(crate) fn serve_queued_for_test(&mut self, app: &mut QuantickApp) -> Vec<ServedRequest> {
+    pub(crate) fn serve_queued_for_test(&mut self, app: &mut ControlWindow) -> Vec<ServedRequest> {
         let mut served = Vec::new();
         while let Some(answer) = self.serve_one_withholding_answer_for_test(app) {
             served.push(answer.served.clone());
@@ -118,7 +118,7 @@ impl ControlAccess {
     /// `execute_on_ui`, and keep its answer. `None` when nothing is queued.
     pub(crate) fn serve_one_withholding_answer_for_test(
         &mut self,
-        app: &mut QuantickApp,
+        app: &mut ControlWindow,
     ) -> Option<WithheldAnswer> {
         let (requests, generation) = match &self.state {
             AccessState::Enabled(runtime) => (runtime.requests.clone(), runtime.grant_generation),

@@ -227,13 +227,16 @@ impl Default for CmdTradingSettings {
 /// a click. The trades are as real as any simulated trade (journaled,
 /// listed, painted); point `QUANTICK_TRADES_DIR` somewhere scratch to keep
 /// a demo out of your journal.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_DEMO_ENV: &str = "QUANTICK_PAPER_DEMO";
 
 /// The risk per trade standing up on the first frame, so the derived size,
 /// the line under it and the refusal the lock produces are all reachable
 /// without a hand. Declared here because the risk is the account's.
+#[cfg(any(feature = "scenario-harness", test))]
 const PAPER_RISK_ENV: &str = "QUANTICK_PAPER_RISK";
 
+#[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks!["QUANTICK_PAPER_DEMO", "QUANTICK_PAPER_RISK"];
 
 /// The paper account, hosted: the headless account and the window-side state
@@ -278,31 +281,9 @@ impl PaperAccount {
     /// environment, with this run's launch hooks applied.
     #[must_use]
     pub(crate) fn with_trades_dir(dir: PathBuf) -> Self {
-        let mut core = Core::with_trades_dir(dir);
-        // A spec that does not parse is reported and ignored, never
-        // defaulted: a capture run that silently got a different risk than
-        // it asked for photographs the wrong thing and says nothing about
-        // it. The rule `QUANTICK_PAPER_ORDERS` already follows.
-        let hook = std::env::var(PAPER_RISK_ENV).ok().and_then(|value| {
-            crate::risk_sizing::parse_hook(&value).or_else(|| {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "PAPER_RISK_HOOK_REJECTED",
-                    value = %value,
-                    action = "risk_left_off",
-                    "QUANTICK_PAPER_RISK wants `<amount>` or `<percent>%@<capital>`, optionally \
-                     `:<point value>:<size step>:<currency>` and `:unlocked`"
-                );
-                None
-            })
-        });
-        if let Some(hook) = hook {
-            core = core.with_risk_hook(hook);
-        }
-        if std::env::var(PAPER_DEMO_ENV).is_ok_and(|value| value == "1") {
-            core = core.with_demo();
-        }
+        let core = Core::with_trades_dir(dir);
+        #[cfg(any(feature = "scenario-harness", test))]
+        let core = apply_launch_hooks(core);
         Self {
             core,
             cmd_trading: CmdTradingSettings::default(),
@@ -312,7 +293,40 @@ impl PaperAccount {
             import_rx: None,
         }
     }
+}
 
+/// The account's capture hooks — the risk standing up and the scripted demo.
+/// Compiled only with the scenario harness (or under test).
+#[cfg(any(feature = "scenario-harness", test))]
+fn apply_launch_hooks(mut core: Core) -> Core {
+    // A spec that does not parse is reported and ignored, never
+    // defaulted: a capture run that silently got a different risk than
+    // it asked for photographs the wrong thing and says nothing about
+    // it. The rule `QUANTICK_PAPER_ORDERS` already follows.
+    let hook = crate::hooks::captured::var(PAPER_RISK_ENV).and_then(|value| {
+        crate::risk_sizing::parse_hook(&value).or_else(|| {
+            tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "PAPER_RISK_HOOK_REJECTED",
+                value = %value,
+                action = "risk_left_off",
+                "QUANTICK_PAPER_RISK wants `<amount>` or `<percent>%@<capital>`, optionally \
+                 `:<point value>:<size step>:<currency>` and `:unlocked`"
+            );
+            None
+        })
+    });
+    if let Some(hook) = hook {
+        core = core.with_risk_hook(hook);
+    }
+    if crate::hooks::captured::var(PAPER_DEMO_ENV).is_some_and(|value| value == "1") {
+        core = core.with_demo();
+    }
+    core
+}
+
+impl PaperAccount {
     /// The journal folder for this run: the environment override wins (an
     /// env var is an explicit request for one run, like every autostart
     /// hook), then `stored` — the folder the user last picked with the

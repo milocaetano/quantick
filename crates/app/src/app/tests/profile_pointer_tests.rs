@@ -23,7 +23,8 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
         })
         .collect();
     events.try_send(FeedEvent::Backfilled(trades)).unwrap();
-    app.active_tab_mut().drain_feed();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 200);
     let tool = crate::drawings::DRAWING_TOOLS
         .into_iter()
@@ -138,6 +139,7 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
             .cache
             .as_ref()
             .unwrap()
+            .output()
             .profile
             .as_ref()
             .unwrap()
@@ -245,14 +247,14 @@ fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
             ),
             (pane.drawings.selected(), drawing.locked),
             cache.map(|cache| {
+                let output = cache.output();
                 (
-                    cache.key,
-                    cache.folding,
-                    cache.bars_covered,
-                    cache.bars_total,
-                    cache
+                    output.key,
+                    output.folding,
+                    output.bars_covered,
+                    output.bars_total,
+                    output
                         .profile
-                        .as_ref()
                         .map(|(profile, _)| (profile.group(), profile.levels().len())),
                 )
             }),

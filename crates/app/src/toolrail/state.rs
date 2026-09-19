@@ -252,6 +252,7 @@ impl ToolRail {
     /// validation hook for a state that otherwise takes a chevron click.
     /// The band clamps it on the next frame, so `f32::INFINITY` means "the
     /// far end" and a rail that does not scroll ignores it entirely.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub fn set_band_offset(&mut self, offset: f32) {
         self.band_target = Some(offset.max(0.0));
     }
@@ -276,6 +277,7 @@ impl ToolRail {
     /// Arm the magnet without a click — the `QUANTICK_DRAWING_MAGNET` hook
     /// and the tests both come through here, so neither can drift from what
     /// the button does.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn set_magnet(&mut self, magnet: bool) {
         self.magnet = magnet;
     }
@@ -284,6 +286,7 @@ impl ToolRail {
     /// `QUANTICK_TOOLBOX_FLYOUT` hook. The slot honours it on its next draw,
     /// when the anchor rect exists; an unknown family id is simply never
     /// matched and stays pending, which draws nothing.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub(crate) fn request_flyout(&mut self, family_id: String) {
         self.hook_flyout = Some(family_id);
     }
@@ -352,5 +355,87 @@ impl ToolRail {
         if let Some(tool) = armed {
             self.arm(tool);
         }
+    }
+}
+
+/// Inputs captured once for the drawing rail's existing launch phase.
+#[cfg(any(feature = "drawing-harness", test))]
+#[derive(Default)]
+pub(crate) struct ToolRailLaunch {
+    tool: Option<DrawingTool>,
+    magnet: bool,
+    favorites: Option<Vec<String>>,
+    dock: Option<ToolboxDock>,
+    scroll: Option<f32>,
+    flyout: Option<String>,
+}
+
+#[cfg(any(feature = "drawing-harness", test))]
+impl ToolRailLaunch {
+    pub fn capture(mut lookup: impl FnMut(&str) -> Option<std::ffi::OsString>) -> Self {
+        let mut read = |name| lookup(name).and_then(|value| value.into_string().ok());
+        let tool = read("QUANTICK_DRAWING_TOOL").and_then(|id| {
+            DRAWING_TOOLS
+                .into_iter()
+                .find(|tool| tool.id() == id.trim())
+        });
+        let magnet = read("QUANTICK_DRAWING_MAGNET").is_some_and(|value| value == "1");
+        let favorites = read("QUANTICK_TOOL_FAVORITES").map(|ids| {
+            ids.split(',')
+                .map(|id| id.trim().to_owned())
+                .filter(|id| !id.is_empty())
+                .collect()
+        });
+        let dock = read("QUANTICK_TOOLBOX_DOCK").and_then(|edge| match edge.trim() {
+            "left" => Some(ToolboxDock::Left),
+            "top" => Some(ToolboxDock::Top),
+            "bottom" => Some(ToolboxDock::Bottom),
+            _ => None,
+        });
+        let scroll = read("QUANTICK_TOOLBAR_SCROLL").and_then(|offset| match offset.trim() {
+            "end" => Some(f32::INFINITY),
+            other => other.parse::<f32>().ok().filter(|at| at.is_finite()),
+        });
+        let flyout = read("QUANTICK_TOOLBOX_FLYOUT").map(|id| id.trim().to_owned());
+        Self {
+            tool,
+            magnet,
+            favorites,
+            dock,
+            scroll,
+            flyout,
+        }
+    }
+}
+
+/// The host keeps persistence policy; the rail reports explicit staging.
+#[cfg(any(feature = "drawing-harness", test))]
+pub(crate) struct ToolRailLaunchOutcome {
+    pub favorites_staged: bool,
+}
+
+#[cfg(any(feature = "drawing-harness", test))]
+impl ToolRail {
+    pub(crate) fn apply_launch(&mut self, launch: ToolRailLaunch) -> ToolRailLaunchOutcome {
+        if let Some(tool) = launch.tool {
+            self.arm(Tool::Drawing(tool));
+        }
+        if launch.magnet {
+            self.set_magnet(true);
+        }
+        let favorites_staged = launch.favorites.is_some();
+        if let Some(ids) = launch.favorites {
+            self.set_favorites(&ids);
+        }
+        if let Some(dock) = launch.dock {
+            self.set_dock(dock);
+        }
+        if let Some(offset) = launch.scroll {
+            self.set_band_offset(offset);
+        }
+        if let Some(family) = launch.flyout {
+            self.request_flyout(family);
+        }
+        ToolRailLaunchOutcome { favorites_staged }
     }
 }

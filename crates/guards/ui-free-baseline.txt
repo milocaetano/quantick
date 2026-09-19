@@ -18,5 +18,5 @@
 # Q16 (#453, the paper account into `paper`) and Q17 (#452, the control-plane
 # host into `control-host`) moved out of `app`; the same independent count
 # agrees. This closes #443's A2.
-!budget 45596
-crates/app 45596
+!budget 24233
+crates/app 24233

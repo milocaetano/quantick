@@ -8,10 +8,25 @@ publish.workspace = true
 
 [features]
 default = []
+# Every capture, demo, automation and fault hook compiles only under one of
+# these (or `cfg(test)`); a default build reads no harness `QUANTICK_*` at all.
+# `harness` is the whole set, which is what capture workflows build with.
+harness = ["quick-range-harness", "drawing-harness", "control-harness", "scenario-harness"]
 quick-range-harness = []
+drawing-harness = []
+control-harness = []
+# Launch scenarios, scripted menus and pointers, demo stagers, store isolation
+# for captures, and the feed's fault injection.
+scenario-harness = ["quantick-feed/harness"]
 feed-integrity-harness = ["quantick-feed/live-fixture"]
 
 [dependencies]
+quantick-anchored-studies = { path = "../anchored-studies" }
+# Bounded admission between the window and its workers, and their progress.
+quantick-backpressure = { path = "../backpressure" }
+# The headless chart model: bar state, geometry, viewport, style.
+quantick-chart = { path = "../chart" }
+quantick-workspace = { path = "../workspace" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
 quantick-layers = { path = "../layers" }
@@ -21,7 +36,12 @@ quantick-control = { path = "../control" }
 quantick-control-local = { path = "../control-local" }
 # The headless host machinery: projection registry, admission, idempotency, journal.
 quantick-control-host = { path = "../control-host" }
+# What the control plane says: every projection and action shape.
+quantick-control-schema = { path = "../control-schema" }
+# The operability contract: the behaviour table, the matrix, the drift comparison.
+quantick-operability = { path = "../operability" }
 quantick-engine = { path = "../engine" }
+quantick-indicator-session = { path = "../indicator-session" }
 # The feed host: the FeedEvent/FeedCommand port, the venue adapters that run
 # it, and the feed-shaped config types this crate re-exports.
 quantick-feed = { path = "../feed" }
@@ -37,6 +57,8 @@ quantick-orderflow = { path = "../orderflow" }
 quantick-paper = { path = "../paper" }
 quantick-replay = { path = "../replay" }
 quantick-sim = { path = "../sim" }
+# The cockpit stores: every document the chart remembers between launches.
+quantick-stores = { path = "../stores" }
 quantick-strategy = { path = "../strategy" }
 rust_decimal = { workspace = true }
 schemars = { workspace = true }
@@ -87,8 +109,9 @@ rodio = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-# Exercise actual source/host events through the normal app drain.
-quantick-feed = { path = "../feed", features = ["test-support"] }
+# The gate clock the worker tests park a real worker on, and the ledger
+# schedules; the same fixture the crate proves itself with.
+quantick-backpressure = { path = "../backpressure", features = ["test-support"] }
 # The same crate the `[dependencies]` table already carries, asking for the
 # throwaway native the docking port is tested through. Feature resolution
 # keeps a dev-dependency's features out of the normal build, so the binary
@@ -96,6 +119,13 @@ quantick-feed = { path = "../feed", features = ["test-support"] }
 # else — while the tests get a third one to prove the app never learned their
 # names. See `crates/indicators/src/native/fake.rs`.
 quantick-indicators = { path = "../indicators", features = ["fake-native"] }
+# The feed's harness hooks, for the same reason: the app's own `cfg(test)`
+# compiles its scenario owners, and their registry names the feed's slices.
+# `test-support` exercises actual source/host events through the normal app
+# drain.
+quantick-feed = { path = "../feed", features = ["harness", "test-support"] }
+# The per-thread store-write refusal the saves-off tests hold (DS7).
+quantick-workspace = { path = "../workspace", features = ["test-support"] }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }

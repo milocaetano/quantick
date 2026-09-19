@@ -340,6 +340,7 @@ pub(crate) trait Surface {
     /// wrote is invisible to every test and to the size guard alike. The
     /// default is no hook, which is the honest answer for a surface that
     /// needs none.
+    #[cfg(any(feature = "scenario-harness", test))]
     fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {}
 }
 
@@ -353,6 +354,7 @@ pub(crate) struct Surfaces {
     /// and the history backfill have finished can retire a hook-raised toast
     /// before frame one ever reaches the screen — and the failure is silent,
     /// read as "the toast isn't there" rather than as a mistimed hook.
+    #[cfg(any(feature = "scenario-harness", test))]
     hooks_applied: bool,
     /// The assistant's popup — raised by `quantick_notify` over the control
     /// plane, dismissed by the trader.
@@ -374,23 +376,6 @@ pub(crate) struct Surfaces {
     pub toast: ToastSurface,
     /// The Save-as box, opened from the Workspace menu.
     pub workspace_name: WorkspaceNameSurface,
-    /// Everything that speaks for the selected drawing: the context bar, the
-    /// inline note editor, the inspector in both its hosts, and the object
-    /// manager. One member for four pieces of chrome, because they share five
-    /// pieces of state — see [`drawing_chrome`] for the table and the reason.
-    ///
-    /// The one member [`Self::draw_all`] does not draw, and the only one that
-    /// does not implement [`Surface`]. It is anchored to the *chart* rather
-    /// than floating over the window, so the host draws it at two specific
-    /// points in the frame — the docked inspector before the central canvas,
-    /// which pays its width, and the floating pieces after it, because every
-    /// one of them places against pane geometry the canvas writes as it draws.
-    /// A uniform `draw` here would have to be handed an environment this pass
-    /// cannot fill and a response this pass does not read; naming the two
-    /// entry points instead is the honest shape, and it is the same
-    /// command-a-member-by-name the host already does for the toast and the
-    /// arming dialog.
-    pub drawing_chrome: DrawingChromeSurface,
 }
 
 impl Surfaces {
@@ -405,7 +390,14 @@ impl Surfaces {
     /// photographs Remove buttons that should have been greyed out: a capture
     /// of a state the application would never reach on its own.
     pub fn hooks_pending(&self) -> bool {
-        !self.hooks_applied
+        #[cfg(any(feature = "scenario-harness", test))]
+        {
+            !self.hooks_applied
+        }
+        #[cfg(not(any(feature = "scenario-harness", test)))]
+        {
+            false
+        }
     }
 
     /// Draw every surface and return the merged asks.
@@ -426,6 +418,7 @@ impl Surfaces {
     /// ones, and it is also why a surface added here must set its own order
     /// rather than rely on being last.
     pub fn draw_all(&mut self, ctx: &egui::Context, env: &SurfaceEnv<'_>) -> SurfaceResponse {
+        #[cfg(any(feature = "scenario-harness", test))]
         if !self.hooks_applied {
             self.hooks_applied = true;
             self.agent_popup.apply_env_hook(env);

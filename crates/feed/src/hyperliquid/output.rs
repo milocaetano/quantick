@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::{FeedEvent, FeedExclusion, ObservedFeedEvent};
 
-pub(crate) trait Output: Send + 'static {
+pub(crate) trait Output: Send + Sync + 'static {
     fn send(&self, event: FeedEvent) -> impl Future<Output = Result<(), ()>> + Send;
     fn exclude(&self, event: FeedExclusion) -> impl Future<Output = Result<(), ()>> + Send;
 }

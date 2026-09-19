@@ -161,9 +161,7 @@ fn gateway_run(
         process_id: std::process::id(),
         process_started_at_unix_ms: start.identity.process_started_at_unix_ms,
         application_version: env!("CARGO_PKG_VERSION").to_owned(),
-        application_commit: option_env!("QUANTICK_GIT_COMMIT")
-            .unwrap_or("unknown")
-            .to_owned(),
+        application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
         protocol_versions: ProtocolVersionRange::new(
             CURRENT_PROTOCOL_VERSION,
             CURRENT_PROTOCOL_VERSION,
@@ -678,9 +676,7 @@ fn connection_session(
         connection_id: connection_id.clone(),
         principal_id,
         application_version: env!("CARGO_PKG_VERSION").to_owned(),
-        application_commit: option_env!("QUANTICK_GIT_COMMIT")
-            .unwrap_or("unknown")
-            .to_owned(),
+        application_commit: crate::launch::GIT_COMMIT.unwrap_or("unknown").to_owned(),
         profile_ceiling: authority.profile_ceiling.clone(),
         granted_scopes: authority.granted_scopes.clone(),
         // Advertise the timeout this gateway actually applies, so a client's

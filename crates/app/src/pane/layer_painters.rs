@@ -50,7 +50,29 @@ impl ChartPane {
         // What the compass will say, decided before either axis labels itself:
         // both axes stand aside where a chip is going to land, and a decision
         // made twice is a decision two surfaces can disagree about.
-        let compass = self.pointer_compass(chart_rect, right, total, &scale, chrome);
+        let compass = {
+            let price_on =
+                self.layer_visible(quantick_layers::ChartLayer::PointerPrice, chrome.style);
+            let time_on =
+                self.layer_visible(quantick_layers::ChartLayer::PointerTime, chrome.style);
+            let bar = if price_on || time_on {
+                self.hover_pos.and_then(|pointer| {
+                    self.series_read()
+                        .pointer_bar(&self.viewport, pointer.x, right, total)
+                })
+            } else {
+                None
+            };
+            crate::pointer_compass::PointerCompass::resolve(
+                self.hover_pos,
+                chart_rect,
+                &scale,
+                bar,
+                price_on,
+                time_on,
+                chrome.toolrail.tool() == crate::toolrail::Tool::Crosshair || chrome.paper.aiming(),
+            )
+        };
         // The candles' own segment of the time axis: past the lane divider the
         // strip is the tape's rolling window, which labels itself.
         let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
@@ -180,39 +202,80 @@ impl ChartPane {
         // price is live market data, and the moment the two coincide — price
         // arriving at the level — is exactly the moment the live number must
         // not be the one that gets covered.
-        self.draw_axis_marks(
+        crate::pane::render_registry::AxisMarksPass {
             painter,
             chart_rect,
             axis_x,
-            &scale,
+            scale: &scale,
             levels,
-            partial.or_else(|| closed.last()),
-            chrome,
-        );
+            newest: partial.or_else(|| closed.last()),
+            last_price_visible: self
+                .layer_visible(quantick_layers::ChartLayer::LastPrice, chrome.style),
+            style: chrome.style,
+        }
+        .paint(self.layer_renderers);
         // The candles' own marks, so they are placed and clipped in their
         // pane: where venue candles give way to bars built from prints, and
         // where backfilled prints give way to live ones.
         if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
-            self.draw_seam_divider(painter, history_rect, total, cw);
+            self.layer_renderers
+                .seam(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: &[],
+                });
         }
         if self.layer_visible(ChartLayer::BackfillDivider, chrome.style) {
-            self.draw_backfill_divider(painter, history_rect, total, cw);
+            self.layer_renderers
+                .backfill(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: &[],
+                });
         }
         // Under the same switch as the venue seam: both answer "what is the
         // provenance of the bars either side of this line?", and a trader who
         // turned that class of mark off meant this one too.
         if self.layer_visible(ChartLayer::SeamDivider, chrome.style) {
-            self.draw_feed_gaps(painter, history_rect, total, cw, chrome.feed_gaps);
+            self.layer_renderers
+                .feed_gaps(&mut crate::pane::render_registry::DividerPass {
+                    painter,
+                    pane: history_rect,
+                    total,
+                    candle_width: cw,
+                    viewport: &self.viewport,
+                    seam: self.seam_slot(),
+                    boundary: self.state.backfill_boundary(),
+                    bars: self.state.bars(),
+                    gaps: chrome.feed_gaps,
+                });
         }
-        self.draw_time_strip(
+        crate::pane::render_registry::TimeStripPass {
             painter,
-            areas.time_strip,
+            strip: areas.time_strip,
             start,
             end,
             total,
-            time_claims,
-            chrome,
-        );
+            claims: time_claims,
+            style: chrome.style,
+            tz: chrome.tz,
+            divider_x: self.frame.lane_divider_x,
+            viewport: &self.viewport,
+            series: self.series_read(),
+        }
+        .paint();
     }
 
     /// The last marks on the canvas: the jump-to-live chip, the empty-view
@@ -253,13 +316,29 @@ impl ChartPane {
             );
         }
         if self.layer_visible(ChartLayer::Crosshair, chrome.style) {
-            self.draw_crosshair(painter, chart_rect, axis_x, &scale, chrome);
+            self.layer_renderers
+                .crosshair(&mut crate::pane::render_registry::CrosshairPass {
+                    painter,
+                    chart_rect,
+                    axis_x,
+                    scale: &scale,
+                    pointer: self.hover_pos,
+                    armed: chrome.toolrail.tool() == crate::toolrail::Tool::Crosshair,
+                });
         }
         // Last of the canvas marks, so the answer the trader is asking for by
         // holding the mouse where they are holding it is on top of the ones
         // the chart volunteers. Decided in `axis_claims`, where the axes read it too.
         if let Some(compass) = compass.as_ref() {
-            self.draw_pointer_compass(painter, compass, axis_x, areas.time_strip, chrome);
+            self.layer_renderers
+                .pointer(&mut crate::pane::render_registry::PointerPass {
+                    painter,
+                    compass,
+                    axis_x,
+                    time_strip: areas.time_strip,
+                    divider_x: self.frame.lane_divider_x,
+                    tz: chrome.tz,
+                });
         }
         // The status badge is not a layer: it reports whether the source is
         // healthy, and a chart with every layer off must still say that. It
@@ -273,6 +352,14 @@ impl ChartPane {
                     rect: chart_rect,
                 });
         }
-        self.draw_canvas_contributions(painter, chart_rect, chrome.capabilities);
+        self.layer_renderers
+            .canvas(&mut crate::pane::render_registry::CanvasPass {
+                painter,
+                rect: chart_rect,
+                tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
+                tape_hovered: self.tape_switch.hovered(),
+                state: &self.layers,
+                facts: self.layer_facts(Some(chrome.capabilities)),
+            });
     }
 }

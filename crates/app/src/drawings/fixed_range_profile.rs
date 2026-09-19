@@ -21,6 +21,9 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+#[cfg(test)]
+use quantick_anchored_studies::FrvpCacheKey;
+use quantick_anchored_studies::{ProfileOutput, RangeProfile as FrvpCache};
 use quantick_engine::{ValueArea, VolumeProfile};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -29,15 +32,15 @@ use std::any::Any;
 use super::measure_core::MEASURE_FAMILY;
 use super::{
     Constrain, DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles,
-    PresetHost, drawing_stroke,
+    PresetHost,
 };
 use crate::chart::to_f64;
-use crate::theme;
-use crate::theme::{CASING, CASING_EXTRA_PX};
+use crate::theme::CASING;
 
 mod geometry;
+mod paint;
 
-use geometry::ProfileGeometry;
+use paint::{FrvpPass, paint_body};
 
 pub(super) static TOOL: FixedRangeProfile = FixedRangeProfile;
 
@@ -68,148 +71,6 @@ const OUTLINE_OUT_VA_PX: f32 = 1.25;
 const OUTLINE_OUT_VA_BRIGHTNESS: f32 = 0.6;
 
 /// Why the payload holds no profile, spoken to the trader as-is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrvpEmpty {
-    /// The bars in range carry no footprint ladders — venue history candles,
-    /// or a range dropped where nothing traded.
-    NoTape,
-    /// The feed reports no traded volume, so no honest profile exists.
-    Blocked,
-}
-
-/// What one refresh computed for one object. Derived state: deliberately
-/// excluded from equality and presets, the same rule as `Drawing::off_series`,
-/// so a recompute can never read as a user edit to the undo history.
-#[derive(Debug, Clone)]
-pub struct FrvpCache {
-    /// The inputs this result was computed from; `frvp::refresh` skips the
-    /// merge while it matches.
-    pub key: FrvpCacheKey,
-    /// The folded profile and its value area, when the range had tape.
-    pub profile: Option<(VolumeProfile, Option<ValueArea>)>,
-    /// Why `profile` is `None`, when it is.
-    pub empty: Option<FrvpEmpty>,
-    /// Bars whose ladders went into the fold (the partial counts once).
-    pub bars_covered: usize,
-    /// The same count without the forming bar — the part the fold itself
-    /// holds. The forming bar joins a *copy* of the fold every time its
-    /// ladder is re-snapshotted, so its contribution is re-derived rather
-    /// than accumulated, and this is the base it is re-derived from.
-    pub closed_covered: usize,
-    /// Bars folded from an **approximated** ladder — venue candles with no
-    /// tape, their volume spread over their own high–low. Spoken by the
-    /// status line, never blended away.
-    pub bars_approximated: usize,
-    /// Bars folded that cover only *part* of the interval they occupy — in
-    /// practice the tape's first bar, whose venue candle was dropped at the
-    /// seam. 0 or 1 today. How much volume they are short by is unknowable
-    /// from here and is never invented; the status line names the bar and
-    /// lets the trader judge it.
-    pub bars_partly_covered: usize,
-    /// Bars of the range the fold has reached, contributing or not. Equals
-    /// [`bars_total`](Self::bars_total) once the fold is done; below it while
-    /// [`job`](Self::job) is still running, which is what the status line
-    /// counts out.
-    pub bars_folded: usize,
-    /// Bars the anchors span on the chart, prefix candles included.
-    pub bars_total: usize,
-    /// The oldest global slot the L2 heatmap covers this frame — where the
-    /// paint cuts from fill to silhouette. Presentation state beside the
-    /// key: the map's boundary moving must never re-merge the fold.
-    pub heat_first_slot: Option<usize>,
-    /// Whether the fold has bars left to reach. While it is true,
-    /// [`profile`](Self::profile) holds the profile of the bars folded *so
-    /// far* — real data, just not all of it — and the status line says how
-    /// many are still to come. A range too long to fold in one frame is drawn
-    /// filling rather than not drawn at all.
-    pub folding: bool,
-    /// The fold over the range's **closed** bars, kept after it finishes: the
-    /// forming bar is added to a copy of it whenever its ladder moves, which
-    /// is what keeps a live edge from re-folding the range ten times a
-    /// second. `None` only when the range reaches no bar at all.
-    pub job: Option<crate::frvp::FoldJob>,
-}
-
-/// Everything the fold depends on. Anchor moves change the slots, a refold
-/// changes the group, a rebuild of the bars or ladders bumps
-/// `series_revision`, the
-/// live edge bumps `partial_snapshot`.
-///
-/// What is *absent* here is as deliberate as what is present. A print that
-/// only extends the forming bar moves `ChartState::timeline_revision` and
-/// nothing else about the closed bars, and the count of closed bars moves on
-/// every close even for a range nowhere near the live edge. Keying on either
-/// restarted a long fold tens of times a second, so it never finished — the
-/// closed bars a range covers are named by its slots plus
-/// [`ChartState::series_revision`](crate::state::ChartState::series_revision),
-/// and nothing else moves them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FrvpCacheKey {
-    pub start_slot: usize,
-    pub end_slot: usize,
-    pub group: Decimal,
-    pub series_revision: u64,
-    pub include_partial: bool,
-    pub partial_snapshot: u64,
-    pub value_area_pct: u8,
-    pub blocked: bool,
-    /// Whether the feed *infers* aggressor sides (tick rule) rather than
-    /// reporting them. In the key so a feed switch re-stamps the label: a
-    /// delta whose sides were guessed must say so, like the footprint legend
-    /// does.
-    pub side_inferred: bool,
-    /// Whether venue-history candles are folded in as approximated ladders
-    /// — the payload's own switch, in the key so toggling it re-folds.
-    pub approximate: bool,
-    /// Whether the range reaches a bar covering only part of its interval
-    /// (see [`FrvpCache::bars_partly_covered`]). In the key so dragging off that bar
-    /// clears the caveat and dragging back onto it restores it.
-    pub partly_covered: bool,
-}
-
-impl FrvpCacheKey {
-    /// Whether both keys describe the same fold of **closed** bars — every
-    /// field but the forming bar's snapshot.
-    ///
-    /// The forming bar is the one input that moves without anything else
-    /// moving, several times a second. Telling that case apart is what lets
-    /// the closed fold stand while only the live edge is re-derived.
-    #[must_use]
-    pub fn same_fold(&self, other: &Self) -> bool {
-        Self {
-            partial_snapshot: other.partial_snapshot,
-            ..*self
-        } == *other
-    }
-
-    /// Whether `other` is this same fold with **more closed bars on its right**
-    /// — the range unchanged where it starts, grown at the live edge.
-    ///
-    /// This is the case the type's own doc warns about, arriving through the
-    /// one door it left open. A range whose right anchor sits at or past the
-    /// newest candle has its `end_slot` *clamped* to the live edge, so every
-    /// close moves it, [`same_fold`](Self::same_fold) says no, and a fold that
-    /// had finished is thrown away and restarted from the range's first bar —
-    /// on a rolling replay, faster than it can finish.
-    ///
-    /// A right edge that only grew has invalidated nothing already folded: it
-    /// appended. Telling that apart turns a per-close re-fold of the whole
-    /// range into a per-close push of one ladder.
-    #[must_use]
-    pub fn grown_right(&self, other: &Self) -> bool {
-        other.end_slot > self.end_slot
-            && Self {
-                end_slot: other.end_slot,
-                // The forming bar moves as ever, and `include_partial` flips
-                // with it the first time the range's right edge reaches a bar
-                // that has begun forming.
-                partial_snapshot: other.partial_snapshot,
-                include_partial: other.include_partial,
-                ..*self
-            } == *other
-    }
-}
-
 /// The versioned on-disk shape of a saved preset. Coordinates and cache never
 /// travel with it, only the tool-owned config.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -267,6 +128,8 @@ pub struct FrvpPayload {
     pub approximate_history: bool,
     /// Derived state, refreshed by `frvp::refresh`; see [`FrvpCache`].
     pub cache: Option<FrvpCache>,
+    /// Render-only heat boundary; never part of the computational key.
+    pub heat_first_slot: Option<usize>,
 }
 
 impl Default for FrvpPayload {
@@ -282,6 +145,7 @@ impl Default for FrvpPayload {
             outline_over_heatmap: true,
             approximate_history: true,
             cache: None,
+            heat_first_slot: None,
         }
     }
 }
@@ -315,6 +179,7 @@ impl DrawingPayload for FrvpPayload {
     fn clone_box(&self) -> Box<dyn DrawingPayload> {
         Box::new(Self {
             cache: None,
+            heat_first_slot: None,
             ..self.clone()
         })
     }
@@ -380,7 +245,7 @@ fn range_edges(payload: &FrvpPayload, points: &[egui::Pos2], ctxt: &DrawContext<
     let left = points[0].x.min(points[1].x);
     let mut right = points[0].x.max(points[1].x);
     if payload.extend_right
-        && let Some(cache) = payload.cache.as_ref()
+        && let Some(cache) = payload.cache.as_ref().map(FrvpCache::output)
         && let [a, b, ..] = ctxt.anchors
     {
         let bar_span = b.bar - a.bar;
@@ -409,7 +274,7 @@ fn range_edges(payload: &FrvpPayload, points: &[egui::Pos2], ctxt: &DrawContext<
 /// number.
 fn status_line(
     profile: &VolumeProfile,
-    cache: &FrvpCache,
+    cache: &ProfileOutput<'_>,
     payload: &FrvpPayload,
     outline_active: bool,
 ) -> String {
@@ -508,16 +373,6 @@ fn bar_x(points: &[egui::Pos2], anchors: &[super::ChartPoint], bar: f32) -> Opti
     }
     let slot_width = (points[1].x - points[0].x) / span;
     Some(points[0].x + (bar - a.bar) * slot_width)
-}
-
-/// One straight piece of the silhouette, with the value-area membership that
-/// picks its ink weight. Collected first and stroked in two passes — every
-/// casing under every ink — so a corner never has a later casing overpainting
-/// an earlier ink.
-struct SilhouetteSegment {
-    from: egui::Pos2,
-    to: egui::Pos2,
-    in_va: bool,
 }
 
 /// Text with a glyph knockout: the same galley painted four times offset in
@@ -625,7 +480,7 @@ fn price_extent(
     if let Some((profile, _)) = payload
         .cache
         .as_ref()
-        .and_then(|cache| cache.profile.as_ref())
+        .and_then(|cache| cache.output().profile)
         && let (Some((&low, _)), Some((&high, _))) = (
             profile.levels().first_key_value(),
             profile.levels().last_key_value(),
@@ -957,314 +812,6 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
     edited
 }
 
-/// Which side of the candles one pass of the profile paints on.
-///
-/// A volume profile is two different kinds of thing wearing one name. Its
-/// histogram is *context* — the shape the price is read against, like the
-/// liquidity map — and painted over the candles it tints every body it
-/// covers. Its edges, value-area lines, POC and status line are *annotation*,
-/// and buried under the price they would simply be lost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrvpPass {
-    /// Before the candles: the histogram.
-    Under,
-    /// After them: everything else.
-    Over,
-}
-
-/// Both halves of the object, from one function.
-///
-/// The two passes share every measurement — the range's edges, the price
-/// extent, the level cap, the value-area test, the row geometry, the
-/// fill/silhouette cut — so they share the code that makes them. Split into
-/// two functions this would have copied thirty lines of arithmetic that must
-/// agree exactly, and the day they stopped agreeing the histogram would sit a
-/// pixel off the outline drawn over it.
-#[allow(clippy::too_many_lines)]
-fn paint_body(
-    painter: &egui::Painter,
-    chart_rect: egui::Rect,
-    style: DrawingStyle,
-    points: &[egui::Pos2],
-    ctxt: &DrawContext<'_>,
-    pass: FrvpPass,
-) {
-    let Some(payload) = ctxt.payload.as_any().downcast_ref::<FrvpPayload>() else {
-        return;
-    };
-    let stroke = drawing_stroke(style);
-    if points.len() < 2 {
-        if pass == FrvpPass::Under {
-            return;
-        }
-        // A one-anchor draft with no hover yet: mark the starting edge.
-        if let Some(point) = points.first() {
-            painter.line_segment(
-                [
-                    egui::pos2(point.x, chart_rect.top()),
-                    egui::pos2(point.x, chart_rect.bottom()),
-                ],
-                stroke,
-            );
-        }
-        return;
-    }
-    let (left, right) = range_edges(payload, points, ctxt);
-    let (top, bottom) = price_extent(payload, points, ctxt);
-
-    // The range's edges — the stroke geometry, which is all the halo
-    // pass paints. Over the candles: an edge is where the object *ends*,
-    // and a boundary buried under the price is one the trader cannot
-    // follow.
-    if pass == FrvpPass::Over {
-        for x in [left, right] {
-            painter.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], stroke);
-        }
-    }
-    if ctxt.halo {
-        return;
-    }
-
-    let cache = payload.cache.as_ref();
-    let profile = cache.and_then(|cache| cache.profile.as_ref());
-
-    // Where the fill gives way to the silhouette: the left boundary of
-    // the liquidity map, expressed in this object's own coordinates. Left
-    // of the cut the profile composes over candles exactly as before;
-    // right of it a fill would compose into the map's cells (worst case
-    // measured at 1.002:1 contrast) — so the shape is drawn instead, and
-    // not one uncovered pixel of the map is altered.
-    let cut_x = geometry::silhouette_cut(payload, points, ctxt);
-    let outline_active = cut_x.is_some_and(|x| x < right);
-
-    if let Some((profile, value_area)) = profile {
-        let geometry = ProfileGeometry::new(profile, *value_area, payload, points, ctxt);
-        let in_va = |bucket: i64| {
-            payload.show_value_area
-                && value_area.is_some_and(|area| bucket >= area.val && bucket <= area.vah)
-        };
-        let fill_limit = if outline_active { cut_x } else { None };
-        // The histogram itself — the one part of this object that is
-        // *context* rather than annotation, and the reason the tool takes
-        // the under-candles pass at all.
-        if pass == FrvpPass::Under {
-            for row in geometry.rows(chart_rect) {
-                let (row_top, row_bottom) = (row.base.min(row.far), row.base.max(row.far));
-                let bucket = row.bucket;
-                let level = row.level;
-                let tip = row.tip;
-                let width = tip - left;
-                // The fill stops at the map's boundary; the silhouette pass
-                // below carries the rest of the row.
-                let fill_tip = fill_limit.map_or(tip, |cut| tip.min(cut));
-                if fill_tip <= left {
-                    continue;
-                }
-                let alpha = if in_va(bucket) {
-                    ROW_ALPHA_IN_VA
-                } else {
-                    ROW_ALPHA_OUT_VA
-                };
-                if payload.delta_coloring {
-                    // The row split by aggressor: buys from the edge, sells
-                    // continuing — the same quantities the footprint shows.
-                    let volume = to_f64(level.volume()).max(f64::MIN_POSITIVE);
-                    #[allow(clippy::cast_possible_truncation)]
-                    let buy_width = ((to_f64(level.buy) / volume) as f32) * width;
-                    let buy_tip = (left + buy_width).min(fill_tip);
-                    painter.rect_filled(
-                        egui::Rect::from_min_max(
-                            egui::pos2(left, row_top),
-                            egui::pos2(buy_tip, row_bottom),
-                        ),
-                        egui::Rounding::ZERO,
-                        theme::BUY.gamma_multiply(alpha),
-                    );
-                    if fill_tip > buy_tip {
-                        painter.rect_filled(
-                            egui::Rect::from_min_max(
-                                egui::pos2(buy_tip, row_top),
-                                egui::pos2(fill_tip, row_bottom),
-                            ),
-                            egui::Rounding::ZERO,
-                            theme::SELL.gamma_multiply(alpha),
-                        );
-                    }
-                } else {
-                    painter.rect_filled(
-                        egui::Rect::from_min_max(
-                            egui::pos2(left, row_top),
-                            egui::pos2(fill_tip, row_bottom),
-                        ),
-                        egui::Rounding::ZERO,
-                        style.color.gamma_multiply(alpha),
-                    );
-                }
-            }
-        }
-
-        // The silhouette: the histogram's staircase envelope right of the
-        // cut, double-stroked — casing under ink, all casings first so a
-        // corner never has a later casing overpainting an earlier ink.
-        // The value area keeps its by-weight reading in the ink's width
-        // and brightness; rows short of the cut hug the boundary, so the
-        // filled and outlined halves read as one object.
-        //
-        // Over the candles, unlike the fill: it is a line, and a line is
-        // read as a shape rather than as a wash, so burying it would only
-        // lose it.
-        if pass == FrvpPass::Over && outline_active {
-            let mut segments: Vec<SilhouetteSegment> = Vec::new();
-            geometry.visit_silhouette(chart_rect, |bucket, from, to| {
-                segments.push(SilhouetteSegment {
-                    from,
-                    to,
-                    in_va: bucket.is_some_and(in_va),
-                });
-                false
-            });
-            let ink_width = |in_va: bool| {
-                if in_va {
-                    style.width_px.max(OUTLINE_IN_VA_PX)
-                } else {
-                    style.width_px.clamp(0.75, OUTLINE_OUT_VA_PX)
-                }
-            };
-            for segment in &segments {
-                painter.line_segment(
-                    [segment.from, segment.to],
-                    egui::Stroke::new(ink_width(segment.in_va) + CASING_EXTRA_PX, CASING),
-                );
-            }
-            for segment in &segments {
-                let color = if segment.in_va {
-                    style.color
-                } else {
-                    style.color.gamma_multiply(OUTLINE_OUT_VA_BRIGHTNESS)
-                };
-                painter.line_segment(
-                    [segment.from, segment.to],
-                    egui::Stroke::new(ink_width(segment.in_va), color),
-                );
-            }
-        }
-
-        // POC and the value-area bounds: levels, and a level is annotation
-        // — it is read *against* the price, so it goes over it.
-        if let Some(area) = value_area.filter(|_| pass == FrvpPass::Over) {
-            if payload.show_poc {
-                let y = ctxt.scale.y(to_f64(
-                    profile
-                        .bucket_price(area.poc)
-                        .saturating_add(profile.group() / Decimal::TWO),
-                ));
-                let width = style.width_px.max(1.0);
-                // The casing carries the POC over the map's yellow band —
-                // #FFD54F against it is the worst number of the scene
-                // (1.05:1); against the casing it is ~21:1. Over plain
-                // canvas the casing is near-invisible, so it simply stays.
-                painter.line_segment(
-                    [egui::pos2(left, y), egui::pos2(right, y)],
-                    egui::Stroke::new(width + CASING_EXTRA_PX, CASING),
-                );
-                painter.line_segment(
-                    [egui::pos2(left, y), egui::pos2(right, y)],
-                    egui::Stroke::new(width, theme::POC),
-                );
-            }
-            if payload.show_value_area {
-                // VAH tops its row, VAL bottoms its row: the dashes hug
-                // the area they bound. Casing dashes share the geometry,
-                // so the phase matches and the map shows through the gaps.
-                let vah_y = ctxt
-                    .scale
-                    .y(to_f64(profile.bucket_price(area.vah.saturating_add(1))));
-                let val_y = ctxt.scale.y(to_f64(profile.bucket_price(area.val)));
-                let width = style.width_px.max(0.75);
-                for y in [vah_y, val_y] {
-                    let ends = [egui::pos2(left, y), egui::pos2(right, y)];
-                    painter.add(egui::Shape::dashed_line(
-                        &ends,
-                        egui::Stroke::new(width + CASING_EXTRA_PX, CASING),
-                        VA_DASH_PX,
-                        VA_GAP_PX,
-                    ));
-                    painter.add(egui::Shape::dashed_line(
-                        &ends,
-                        egui::Stroke::new(width, style.color),
-                        VA_DASH_PX,
-                        VA_GAP_PX,
-                    ));
-                }
-            }
-        }
-    }
-
-    // Everything from here down is words and plates: the status line, the
-    // POC/VAH/VAL prices, the handles. All annotation, none of it legible
-    // under a candle.
-    if pass == FrvpPass::Under || !ctxt.primary_band || !payload.show_labels {
-        return;
-    }
-    // The status line under the range: what the profile is made of, in
-    // the footprint legend's language. Everything honesty demands lives
-    // here — coverage, effective rows, why the range is empty.
-    let mut status = String::new();
-    match (profile, cache) {
-        (Some((profile, value_area)), Some(cache)) => {
-            status.push_str(&status_line(profile, cache, payload, outline_active));
-            if let Some(area) = value_area {
-                // POC/VAH/VAL price plates at the right edge of the range.
-                let labels = [
-                    ("POC", area.poc, theme::POC),
-                    ("VAH", area.vah.saturating_add(1), theme::TEXT_MUTED),
-                    ("VAL", area.val, theme::TEXT_MUTED),
-                ];
-                for (name, bucket, color) in labels {
-                    if name != "POC" && !payload.show_value_area {
-                        continue;
-                    }
-                    if name == "POC" && !payload.show_poc {
-                        continue;
-                    }
-                    let price = profile.bucket_price(bucket);
-                    knockout_text(
-                        painter,
-                        egui::pos2(right + LABEL_OFFSET_PX, ctxt.scale.y(to_f64(price))),
-                        egui::Align2::LEFT_CENTER,
-                        &format!("{name} {price}"),
-                        color,
-                    );
-                }
-            }
-        }
-        (None, Some(cache)) => status.push_str(&match (cache.folding, cache.empty) {
-            // A fold that has not reached a bar with tape yet has nothing
-            // to draw *yet* — which is not the same as a range with
-            // nothing in it, and must not borrow that sentence.
-            (true, _) => {
-                format!("loading {} of {} bars", cache.bars_folded, cache.bars_total)
-            }
-            (false, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
-            (false, _) => "no tape in range".to_owned(),
-        }),
-        // Not refreshed yet (first frame of a fresh object): say nothing
-        // rather than guessing. A profile without a cache cannot exist —
-        // the profile *lives in* the cache — but the tuple can't say so.
-        (_, None) => {}
-    }
-    if !status.is_empty() {
-        knockout_text_within(
-            painter,
-            egui::pos2(left, bottom + LABEL_OFFSET_PX),
-            &status,
-            theme::TEXT_MUTED,
-            chart_rect,
-            (top, bottom),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1296,8 +843,55 @@ mod tests {
             .expect("one ladder folds")
     }
 
-    fn cache_for(total: usize, covered: usize, approximated: usize) -> FrvpCache {
-        FrvpCache {
+    /// A real owner for payload/geometry tests, refreshed through the public domain path.
+    fn refreshed_cache(rows: &[(i64, i64)], last_slot: usize) -> FrvpCache {
+        use quantick_anchored_studies::{ProfileInputs, ProfileRequest};
+        use quantick_engine::{BarSpec, Side, Trade, bar_registry::BarConfiguration};
+        let mut builder = BarConfiguration::from(BarSpec::Tick(1)).build();
+        let mut footprint = quantick_engine::FootprintBuilder::new(Decimal::ONE, 4096);
+        let mut first = None;
+        for &(price, quantity) in rows {
+            let trade = Trade {
+                agg_id: 1,
+                timestamp_ms: 0,
+                price: Decimal::from(price),
+                quantity: Decimal::from(quantity),
+                side: Side::Buy,
+            };
+            first = builder.push(&trade);
+            footprint.push(&trade);
+        }
+        let bars = vec![first.expect("fixture trade closes a bar"); last_slot + 1];
+        let ladder = footprint.close().unwrap();
+        let mut owned = None;
+        FrvpCache::refresh(
+            &mut owned,
+            ProfileRequest {
+                min_bar: 0.0,
+                max_bar: f32::MAX,
+                extend_right: true,
+                approximate_history: false,
+                value_area_pct: DEFAULT_VALUE_AREA_PCT,
+            },
+            &ProfileInputs {
+                closed: &bars,
+                ladders: &[ladder],
+                prefix: &[],
+                partial_ladder: None,
+                group: Decimal::ONE,
+                series_revision: 0,
+                partial_version: 0,
+                blocked: false,
+                side_inferred: false,
+                partial_bucket_slot: None,
+                budget: 1500,
+            },
+        );
+        owned.expect("refresh installs a result")
+    }
+
+    fn cache_for(total: usize, covered: usize, approximated: usize) -> ProfileOutput<'static> {
+        ProfileOutput {
             key: FrvpCacheKey {
                 start_slot: 0,
                 end_slot: total.saturating_sub(1),
@@ -1320,28 +914,16 @@ mod tests {
             bars_partly_covered: 0,
             bars_folded: total,
             bars_total: total,
-            heat_first_slot: None,
             folding: false,
-            // A finished fold *keeps* its job — that is how the forming bar
-            // rejoins without a re-fold — so the helper carries one too. A
-            // cache with no job at all is not a state the refresh produces
-            // for a range that reached bars, and a test built on one would
-            // pass while the paint read the wrong field.
-            job: Some(crate::frvp::FoldJob::over(
-                Decimal::ONE,
-                0,
-                total.saturating_sub(1),
-            )),
         }
     }
 
     /// The same cache mid-fill: `folded` of `total` bars in, the fold still
     /// running over the rest.
-    fn folding_cache(total: usize, folded: usize) -> FrvpCache {
-        FrvpCache {
+    fn folding_cache(total: usize, folded: usize) -> ProfileOutput<'static> {
+        ProfileOutput {
             folding: true,
             bars_folded: folded,
-            job: Some(crate::frvp::FoldJob::over(Decimal::ONE, folded, total - 1)),
             ..cache_for(total, folded, 0)
         }
     }
@@ -1502,13 +1084,7 @@ mod tests {
             ..FrvpPayload::default()
         };
         // end_slot 30 while the anchors only reach bar 20.
-        payload.cache = Some(FrvpCache {
-            key: FrvpCacheKey {
-                end_slot: 30,
-                ..cache_for(21, 21, 0).key
-            },
-            ..cache_for(21, 21, 0)
-        });
+        payload.cache = Some(refreshed_cache(&[(100, 1)], 30));
         let scale = PriceScale::from_range(90.0, 110.0, 0.0, 400.0);
         let anchors = [ChartPoint::at(10.0, 104.0), ChartPoint::at(20.0, 96.0)];
         // 10 bars over 200px → 20px per slot, bar 10 at x=100.
@@ -1661,33 +1237,8 @@ mod tests {
             extend_right: true,
             outline_over_heatmap: false,
             approximate_history: false,
-            cache: Some(FrvpCache {
-                key: FrvpCacheKey {
-                    start_slot: 1,
-                    end_slot: 5,
-                    group: Decimal::ONE,
-                    series_revision: 3,
-
-                    include_partial: false,
-                    partial_snapshot: 0,
-                    value_area_pct: 68,
-                    blocked: false,
-                    side_inferred: false,
-                    approximate: true,
-                    partly_covered: false,
-                },
-                profile: None,
-                empty: Some(FrvpEmpty::NoTape),
-                bars_covered: 0,
-                closed_covered: 0,
-                bars_approximated: 0,
-                bars_partly_covered: 0,
-                bars_folded: 5,
-                bars_total: 5,
-                heat_first_slot: None,
-                folding: false,
-                job: None,
-            }),
+            heat_first_slot: None,
+            cache: Some(refreshed_cache(&[(100, 1)], 5)),
         };
         let exported = payload.export_preset().expect("frvp exports its preset");
         // No derived state travels with a preset.

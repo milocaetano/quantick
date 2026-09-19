@@ -43,6 +43,8 @@ IndicatorHost\tpub ( super )|trait |fn add ( & mut self , source : IndicatorSour
 fn fixture() -> ScratchDir {
     let root = ScratchDir::new("extension-boundary");
     fs::create_dir_all(root.join("crates/app/src")).unwrap();
+    // The second tree the guard walks; the specimens keep every root in app.
+    fs::create_dir_all(root.join("crates/chart/src")).unwrap();
     fs::create_dir_all(root.join("crates/guards")).unwrap();
     // The compiled CLI also checks instruction links. Supply a valid independent
     // documentation tree so boundary assertions cannot fail on missing inputs.

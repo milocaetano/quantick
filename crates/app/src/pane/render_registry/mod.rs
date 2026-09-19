@@ -8,7 +8,10 @@ mod flow;
 mod indicators;
 pub(super) use dividers::DividerPass;
 mod axes;
-pub(super) use axes::{CrosshairPass, GridPass, LastPricePass, PointerPass};
+use axes::LastPricePass;
+pub(super) use axes::{
+    AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, TimeStripPass,
+};
 mod drawings;
 mod paper;
 use crate::footprint_render::{FootprintLod, LayerFrame};
@@ -36,24 +39,6 @@ impl CanvasPass<'_> {
     /// feature's switch. Owner-specific stages borrow that feature directly.
     pub fn visible(&self, layer: ChartLayer, requested: bool) -> bool {
         quantick_layers::LayerState::effective(layer, requested, self.facts)
-    }
-}
-
-impl super::ChartPane {
-    pub(super) fn draw_canvas_contributions(
-        &self,
-        painter: &egui::Painter,
-        rect: egui::Rect,
-        capabilities: crate::config::FeedCapabilities,
-    ) {
-        self.layer_renderers.canvas(&mut CanvasPass {
-            painter,
-            rect,
-            tape_on: self.orderflow.as_ref().map(|tape| tape.lane_enabled()),
-            tape_hovered: self.tape_switch_hovered,
-            state: &self.layers,
-            facts: self.layer_facts(Some(capabilities)),
-        });
     }
 }
 

@@ -99,7 +99,6 @@ fn registered_store(key: &str) -> CockpitStore {
     if key == "foreign_store" {
         return CockpitStore {
             key: "foreign_store",
-            env: "QUANTICK_FOREIGN_STORE",
             file: "foreign-store.toml",
             path: foreign_path,
             validate: validate_foreign,
@@ -113,7 +112,6 @@ fn registered_store(key: &str) -> CockpitStore {
         .unwrap();
     CockpitStore {
         key: store.key,
-        env: store.env,
         file: store.file,
         path: store.path,
         validate: store.validate,
@@ -243,7 +241,7 @@ impl Fixture {
             })
             .expect("ordinary production import completes the same bundle");
             assert_eq!(
-                written,
+                written.keys(),
                 [
                     "ui_state",
                     "chart_layers",
@@ -327,7 +325,7 @@ fn installation_case(label: &str, fail_at: Option<usize>) {
         fixture.assert_staged("after partial failure", failed..CASES.len());
     } else {
         assert_eq!(
-            result.unwrap(),
+            result.unwrap().keys(),
             [
                 "ui_state",
                 "chart_layers",
