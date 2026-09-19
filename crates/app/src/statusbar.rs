@@ -109,6 +109,7 @@ pub const SAVES_OFF_LABEL: &str = "SAVES OFF";
 
 /// Everything the bar shows this frame, precomputed by the app.
 pub struct StatusModel {
+    pub feed_delivery: std::sync::Arc<crate::feed_integrity_view::DeliveryText>,
     /// Display name of the venue (or the session, while replaying).
     pub venue: String,
     /// The streamed symbol.
@@ -393,6 +394,7 @@ pub fn draw(
                 draw_machinery(ui, model, tz);
             });
         });
+    crate::feed_integrity_view::draw_panel(ctx, &model.feed_delivery);
     response
 }
 
@@ -604,6 +606,85 @@ fn draw_machinery(ui: &mut egui::Ui, model: &StatusModel, tz: &mut TzOffset) {
             .monospace()
             .color(theme::TEXT_MUTED),
     );
+}
+
+/// Frame measurements needed by the read-only status projection.
+pub(crate) struct StatusPerformance {
+    pub fps: Option<f32>,
+    pub frame_avg_ms: Option<f32>,
+    pub frame_cpu_ms: Option<f32>,
+    pub show_perf: bool,
+}
+
+impl StatusModel {
+    /// Compose the active market and focused pane without borrowing the app root.
+    pub(crate) fn capture(
+        tab: &crate::tab::Tab,
+        pane: &crate::pane::ChartPane,
+        config: &crate::config::AppConfig,
+        performance: StatusPerformance,
+        now_ms: i64,
+    ) -> Self {
+        let bars = pane.state.bars();
+        let (backfilled, live) = match pane.state.backfill_boundary() {
+            Some(boundary) => (boundary, bars.len().saturating_sub(boundary)),
+            None => (0, bars.len()),
+        };
+        let venue_bars = pane.history_prefix.len();
+        let note = tab.side_note(config);
+        Self {
+            feed_delivery: tab.feed_delivery.text(),
+            venue: if tab.replay.is_some() {
+                "recording".to_owned()
+            } else {
+                tab.feed_display_name(config).to_owned()
+            },
+            symbol: tab.symbol.clone(),
+            replay: tab.replay.as_ref().map(|link| ReplayFigures {
+                speed: link.status.speed(),
+                progress: link.status.progress(),
+            }),
+            connection: tab.feed_connection,
+            feed_arrival_ms: tab.trade_arrival_ms(),
+            feed_latency: tab.feed_latency(),
+            tape_age_ms: tab.tape_age_at(now_ms),
+            spec_summary: pane.state.spec().summary(),
+            bar_progress: pane
+                .state
+                .progress()
+                .map(|(progress, unit)| fmt_progress(&progress, unit)),
+            deal_recording: tab.deal_status_cell(),
+            venue_bars,
+            backfilled_bars: backfilled,
+            live_bars: live,
+            side_note: note.clone().map(|(label, _)| label),
+            side_detail: note.and_then(|(_, detail)| detail),
+            // Provenance follows the active tab (§11), and so does the
+            // simulated P&L: the cell speaks for the market on screen, never
+            // for a background tab's position.
+            sim_pnl: tab.paper.status_cell(),
+            follows_live: pane.viewport.follows_live(),
+            price_auto: pane.price_view.is_auto(),
+            live_trades: tab.live_trades,
+            fps: performance.fps,
+            frame_avg_ms: performance.frame_avg_ms,
+            frame_cpu_ms: performance.frame_cpu_ms,
+            show_perf: performance.show_perf,
+            saves_off: crate::store_home::writes_refused().map(|refused| refused.to_string()),
+        }
+    }
+}
+
+/// Format the forming bar's countdown, e.g. `37/50 ticks`.
+///
+/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
+/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
+fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
+    format!(
+        "{}/{} {unit}",
+        progress.done.normalize(),
+        progress.target.normalize()
+    )
 }
 
 #[cfg(test)]
@@ -853,6 +934,7 @@ mod tests {
         let mut tz = TzOffset::default();
         for replaying in [false, true] {
             let model = StatusModel {
+                feed_delivery: crate::feed_integrity_view::DeliveryView::new(false).text(),
                 venue: "Binance".to_owned(),
                 symbol: "BTCUSDT".to_owned(),
                 replay: replaying.then_some(ReplayFigures {
@@ -955,6 +1037,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut tz = TzOffset::default();
         let model = StatusModel {
+            feed_delivery: crate::feed_integrity_view::DeliveryView::new(false).text(),
             venue: "MetaTrader 5".to_owned(),
             symbol: "US500".to_owned(),
             replay: None,

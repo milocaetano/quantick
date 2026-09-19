@@ -14,6 +14,7 @@ mod deal_recording;
 mod events;
 mod evidence;
 mod feed;
+mod feed_delivery;
 mod gateway;
 mod health;
 mod indicator_guide;

@@ -1,0 +1,79 @@
+name: Feed frame compile and geometry
+
+on:
+  pull_request:
+    types: [synchronize]
+    paths:
+      - 'tools/feed_frame_cost/**'
+      - '.github/workflows/feed-frame-geometry.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  compile-geometry:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'fix/feed-handoff-continuity' &&
+      github.base_ref == 'campaign/outside-eight' &&
+      github.event.before == '0e0970ab0d9db99470f5427aeac021ba13c5e4ac'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      F2_COMPILE_DECISION: https://github.com/milocaetano/quantick/issues/495#issuecomment-5718427227
+      F2_MANIFEST_SHA256: 423490e0fa9277d9454b9e21e4dc2097c6776abd6eaac204254895c768176027
+    steps:
+      - name: Refuse rerun and absent finite decision before product execution
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/f2-frame-receipts"
+          printf 'run_attempt=%s\ndecision=%s\nmanifest=%s\n' "$RUN_ATTEMPT" "$F2_COMPILE_DECISION" "$F2_MANIFEST_SHA256" | tee "$RUNNER_TEMP/f2-frame-receipts/admission.log"
+          test "$RUN_ATTEMPT" = 1
+          test "$F2_COMPILE_DECISION" != PENDING_ROOT_RELEASE
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 35243216640
+          name: feed-handoff-0e0970ab0d9db99470f5427aeac021ba13c5e4ac-attempt-1
+          path: ${{ runner.temp }}/f2-original-artifact
+      - name: Validate tooling and prepare immutable source overlays
+        run: |
+          rustc -Vv 2>&1 | tee "$RUNNER_TEMP/f2-frame-receipts/rustc.log"
+          python3 -m unittest discover -s tools/feed_frame_cost -p 'test_negative_paths.py' -v 2>&1 | tee "$RUNNER_TEMP/f2-frame-receipts/python-tests.log"
+          python3 tools/feed_frame_cost/prepare.py --archives "$RUNNER_TEMP/f2-original-artifact/f2-exports" --output "$RUNNER_TEMP/f2-frame-exports" 2>&1 | tee "$RUNNER_TEMP/f2-frame-receipts/prepare.log"
+      - name: Compile both immutable subjects sequentially without executing app tests
+        run: |
+          python3 tools/feed_frame_cost/build.py --exports "$RUNNER_TEMP/f2-frame-exports" --output "$RUNNER_TEMP/f2-frame-build" --rustup-home "${RUSTUP_HOME:-$HOME/.rustup}" --compile-decision "$F2_COMPILE_DECISION" --manifest-sha256 "$F2_MANIFEST_SHA256" 2>&1 | tee "$RUNNER_TEMP/f2-frame-receipts/build.log"
+      - name: Prove actual untimed geometry only after both compiles pass
+        run: |
+          python3 tools/feed_frame_cost/run_geometry.py --exports "$RUNNER_TEMP/f2-frame-exports" --build "$RUNNER_TEMP/f2-frame-build" --output "$RUNNER_TEMP/f2-frame-geometry" --decision "$F2_COMPILE_DECISION" 2>&1 | tee "$RUNNER_TEMP/f2-frame-receipts/geometry.log"
+      - name: Preserve first failures and successful correctness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-frame-geometry-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/f2-frame-receipts/**
+            ${{ runner.temp }}/f2-frame-exports/*.json
+            ${{ runner.temp }}/f2-frame-exports/*.patch
+            ${{ runner.temp }}/f2-frame-exports/*-original-source.zip
+            ${{ runner.temp }}/f2-frame-build/*.json
+            ${{ runner.temp }}/f2-frame-build/*.stdout
+            ${{ runner.temp }}/f2-frame-build/*.stderr
+            ${{ runner.temp }}/f2-frame-build/linux-proof-environment/tmp/f2-linux-owned-proof-*/**
+            tools/feed_frame_cost/negative-path-evidence02/**
+            ${{ runner.temp }}/f2-frame-geometry/*.json
+            ${{ runner.temp }}/f2-frame-geometry/*.stdout
+            ${{ runner.temp }}/f2-frame-geometry/*.stderr

@@ -9,7 +9,8 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-!budget 2808
+!budget 2770
 ChartState 571
-QuantickApp 2237
+QuantickApp 2199
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.
+# #527 merge: `status_model`'s projection moved to `StatusModel::capture`; tightened 2237 -> 2199.

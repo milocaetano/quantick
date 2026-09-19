@@ -30,12 +30,15 @@ pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;
 pub mod mt5_bridge;
+pub mod observed;
 pub mod ohlcv_plan;
 pub mod replay;
 pub mod replay_download;
 #[cfg(test)]
 mod scratch;
 pub mod stall;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 mod venue_loop;
 
 use std::path::PathBuf;
@@ -52,6 +55,10 @@ use crate::config::{FeedCapabilities, MetaTraderSettings, ProviderKind};
 
 pub use continuity::{FeedContinuity, FeedIntegrity};
 pub use metatrader::forced_latency_split;
+pub use observed::{
+    ExclusionReason, FeedExclusion, FeedExclusions, ObservedFeedEvent, ObservedFeedHandle,
+    ObservedReceiver, spawn_live_observed, spawn_observed,
+};
 pub use replay::{ReplayControl, ReplayLink, ReplayOptions, ReplayRequest};
 
 /// Default number of recent trades to backfill so the chart opens populated,

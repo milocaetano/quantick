@@ -94,7 +94,9 @@ pub(crate) async fn feed_task(
     let BinanceSource { http, url, backoff } = source;
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
-    let ControlFlow::Continue(earliest_id) = initial_backfill(&http, &symbol, &tx).await else {
+    let ControlFlow::Continue((earliest_id, continuity)) =
+        initial_backfill(&http, &symbol, &tx).await
+    else {
         return; // UI gone
     };
 
@@ -128,7 +130,7 @@ pub(crate) async fn feed_task(
         book_capture: None,
         ohlcv_tx,
         ohlcv_task: None,
-        continuity: crate::continuity::BinanceContinuity::default(),
+        continuity,
         ever_connected: false,
     };
 
@@ -162,22 +164,26 @@ pub(crate) async fn feed_task(
 /// One reply from a candle fetch: the bars of one window and where it sits.
 type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
 
-/// Send the opening history, returning the earliest agg_id to page back from,
-/// or `Break` when the UI is gone.
+/// Send the opening history, returning the earliest agg_id to page back from
+/// and the continuity watermark the live stream is compared against, or
+/// `Break` when the UI is gone. The watermark is the last backfilled trade, so
+/// a hole between REST history and the first live trade is reported; a failed
+/// or empty backfill leaves the handoff unknown rather than silently clean.
 async fn initial_backfill(
     http: &BinanceHttp,
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
-) -> ControlFlow<(), Option<u64>> {
+) -> ControlFlow<(), (Option<u64>, crate::continuity::BinanceContinuity)> {
     let target = initial_backfill_target();
     match backfill(http, symbol, target).await {
         Ok(trades) => {
             let earliest_id = trades.first().map(|t| t.agg_id);
+            let continuity = crate::continuity::BinanceContinuity::after_backfill(trades.last());
             info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
             if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
                 return ControlFlow::Break(()); // UI gone
             }
-            ControlFlow::Continue(earliest_id)
+            ControlFlow::Continue((earliest_id, continuity))
         }
         Err(e) => {
             error!(target: "quantick::app", symbol, %e, "backfill failed; continuing to live only");
@@ -185,7 +191,10 @@ async fn initial_backfill(
             if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
                 return ControlFlow::Break(());
             }
-            ControlFlow::Continue(None)
+            ControlFlow::Continue((
+                None,
+                crate::continuity::BinanceContinuity::after_backfill(None),
+            ))
         }
     }
 }

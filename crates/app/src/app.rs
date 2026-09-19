@@ -90,6 +90,7 @@ use crate::toolrail::ToolRail;
 use crate::ui_state;
 use crate::window_scale;
 use crate::workspace_store::{LayoutStore, StorePaths, WorkspaceStore};
+#[cfg(test)]
 use quantick_feed::FeedHandle;
 use quantick_feed::history_reach;
 #[cfg(any(feature = "scenario-harness", test))]
@@ -141,18 +142,6 @@ const FIRST_TAB_ID: u64 = 0;
 /// every existing capture shows.
 #[cfg(any(feature = "scenario-harness", test))]
 const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
-
-/// Format the forming bar's countdown, e.g. `37/50 ticks`.
-///
-/// Trailing zeros are trimmed on both figures: a volume bar's accumulator
-/// carries the feed's own scale, and `1.20000000/5 vol` reads as noise.
-fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
-    format!(
-        "{}/{} {unit}",
-        progress.done.normalize(),
-        progress.target.normalize()
-    )
-}
 
 /// Read a tape window off `QUANTICK_TAPE_WINDOW`.
 ///
@@ -473,7 +462,7 @@ impl QuantickApp {
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
         spec: impl Into<crate::state::BarConfiguration>,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
     ) -> Self {
         Self::new_with_workspace(
             config,
@@ -504,7 +493,7 @@ impl QuantickApp {
         feed_id: impl Into<String>,
         symbol: impl Into<String>,
         spec: impl Into<crate::state::BarConfiguration>,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
         workspace: ui_state::Workspace,
         #[cfg_attr(
             not(any(

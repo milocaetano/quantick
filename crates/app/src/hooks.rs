@@ -134,6 +134,10 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         quantick_feed::metatrader::HOOKS,
     ),
     ("crates/feed/src/lib.rs", quantick_feed::HOOKS),
+    (
+        "crates/feed/src/observed.rs",
+        quantick_feed::observed::HOOKS,
+    ),
     ("crates/feed/src/stall.rs", quantick_feed::stall::HOOKS),
     ("crates/app/src/feed_notice.rs", crate::feed_notice::HOOKS),
     (

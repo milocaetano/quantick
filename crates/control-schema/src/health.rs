@@ -4,6 +4,10 @@ use quantick_control_host::wire::{PaneSideDto, canonical_decimal, canonical_f32,
 
 use quantick_control::wire::{CanonicalDecimal, WireU64};
 
+/// The feed DTO family (source integrity, tape latency) is owned by the host
+/// crate beside the delivery projection, so both scopes share one definition.
+pub use quantick_control_host::feed::{FeedIntegritySnapshot, TapeHealthSnapshot};
+
 use schemars::JsonSchema;
 
 use serde::{Deserialize, Serialize};
@@ -54,60 +58,6 @@ pub struct TabHealthSnapshot {
     /// replaying — a recording's prints are as old as the day they were
     /// captured and the playback clock decides when they appear.
     pub tape: Option<TapeHealthSnapshot>,
-}
-
-/// Counts source messages, never estimates how many executed trades were lost.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct FeedIntegritySnapshot {
-    pub anomalies: WireU64,
-    pub missing_messages: WireU64,
-    pub unknown_loss: WireU64,
-    pub non_monotonic: WireU64,
-}
-
-/// Where a tab's tape delay is being spent.
-///
-/// The whole point of the breakdown is that "the chart is eighteen seconds
-/// behind" is not actionable on its own: it reads the same whether the venue's
-/// adapter was late, the wire was late, or this process drained late, and those
-/// have different fixes. An investigation that starts here can name the hop
-/// without a screenshot and without a person watching the corner of a window.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct TapeHealthSnapshot {
-    /// Newest print: venue stamp to this chart drawing it. The end-to-end
-    /// figure the status bar shows.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub arrival_latency_ms: Option<i64>,
-    /// The same measurement taken where the feed read the print off the wire,
-    /// one hop earlier.
-    ///
-    /// The gap between this and `arrival_latency_ms` is what quantick's own
-    /// queue and frame drain cost. It is a *derived* reading, not a measured
-    /// one — the two are sampled at different instants — but a gap of seconds
-    /// between them is unambiguous, and it is the only way to see that hop at
-    /// all. `None` on a provider that cannot cut its own chain.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub feed_arrival_latency_ms: Option<i64>,
-    /// Venue stamp to the source handing the print over: everything upstream
-    /// of quantick.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub source_latency_ms: Option<i64>,
-    /// The worst `source_latency_ms` over the sampled prints.
-    ///
-    /// The only peak reported, and deliberately: it is two source-side stamps
-    /// subtracted per print, so every print contributes with no clock involved.
-    /// A peak on the arrival or wire figures would need the reader's clock
-    /// applied to a print that arrived earlier, which measures that print's age
-    /// rather than its delay — on a quiet tape, the sampling interval itself.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub source_latency_peak_ms: Option<i64>,
-    /// The source handing it over to quantick reading it: the wire.
-    #[schemars(extend("x-unit" = "milliseconds"))]
-    pub transport_latency_ms: Option<i64>,
-    /// The provider's own name for the hop that owns most of the delay.
-    pub dominant_hop: Option<String>,
-    /// How many live prints the split covers.
-    pub sampled_prints: WireU64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

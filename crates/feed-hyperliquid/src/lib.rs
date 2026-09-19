@@ -33,7 +33,8 @@ pub use candles::{
 };
 pub use reconnect::Backoff;
 pub use stream::{
-    HYPERLIQUID_WS_URL, TradeSessionError, run_trade_session, run_trades_with_reconnect,
+    HYPERLIQUID_WS_URL, TradeSessionError, TradeStreamEvent, run_trade_events_with_reconnect,
+    run_trade_session, run_trades_with_reconnect,
 };
 pub use wire::{
     DEFAULT_SEEN_TRADE_CAPACITY, MappedBatch, RawTrade, TradeMapError, TradeMapper, TradeMessage,

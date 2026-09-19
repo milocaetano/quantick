@@ -66,7 +66,7 @@ fn staged_frame_at(
             app.draw_frame_stage_test_order(
                 ctx,
                 now,
-                &mut quantick_feed::spawn_live,
+                &mut quantick_feed::spawn_live_observed,
                 order.iter().copied(),
             );
         },

@@ -5,7 +5,7 @@ use crate::state::BarConfiguration;
 use crate::tab::Tab;
 use crate::timezone::TzOffset;
 use crate::ui_state::{self, SavedFocusExt};
-use quantick_feed::{self as feed, FeedHandle, history_reach};
+use quantick_feed::{self as feed, history_reach};
 
 pub(crate) struct ArrangementAdapter<'a> {
     pub(super) tabs: &'a mut ArrangementHost,
@@ -86,7 +86,7 @@ impl ArrangementAdapter<'_> {
         // and means one port for two listeners: the second loses the bind and
         // shows the feed's own MT5_BIND_FAILED notice, which is the honest
         // answer rather than a silently dead chart.
-        let handle = feed::spawn_live(
+        let handle = feed::spawn_live_observed(
             provider,
             &symbol,
             &self.config.metatrader,
@@ -113,7 +113,7 @@ impl ArrangementAdapter<'_> {
         &mut self,
         feed_id: String,
         symbol: String,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
         spec: Option<BarConfiguration>,
     ) {
         let opening = self.tabs.plan_open();
@@ -123,7 +123,7 @@ impl ArrangementAdapter<'_> {
         &mut self,
         feed_id: String,
         symbol: String,
-        feed: FeedHandle,
+        feed: impl Into<quantick_feed::ObservedFeedHandle>,
         spec: Option<BarConfiguration>,
         opening: quantick_workspace::arrangement::Transition,
     ) {

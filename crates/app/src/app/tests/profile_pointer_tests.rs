@@ -223,10 +223,51 @@ fn precise_profile_locked_selection_leaves_hidden_handle_space_to_the_chart() {
     // The actual painted body still owns the blocked gesture on a locked object.
     let body = target(&app, 100.0, 100.5);
     let reference = target(&app, 120.0, 106.0);
+    // Read-only failure context: no extra frame, wait, or hit-test operation.
+    let diagnostic = |app: &QuantickApp| {
+        let pane = &app.active_tab().flow_pane;
+        let drawing = &pane.drawings.items()[0];
+        let cache = drawing
+            .payload
+            .as_any()
+            .downcast_ref::<crate::drawings::FrvpPayload>()
+            .and_then(|payload| payload.cache.as_ref());
+        (
+            (
+                pane.frame.chart_area,
+                pane.frame.auto_range,
+                pane.frame.chart_top,
+                pane.frame.chart_height,
+                pane.frame.lane_divider_x,
+            ),
+            (
+                pane.viewport.px_per_bar(),
+                pane.viewport.right_edge_bar(pane.slots()),
+                pane.viewport.follows_live(),
+            ),
+            (pane.drawings.selected(), drawing.locked),
+            cache.map(|cache| {
+                let output = cache.output();
+                (
+                    output.key,
+                    output.folding,
+                    output.bars_covered,
+                    output.bars_total,
+                    output
+                        .profile
+                        .map(|(profile, _)| (profile.group(), profile.levels().len())),
+                )
+            }),
+        )
+    };
+    let before_hover = diagnostic(&app);
     let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(body)]);
     assert_eq!(
         hover.platform_output.cursor_icon,
-        egui::CursorIcon::NotAllowed
+        egui::CursorIcon::NotAllowed,
+        "body={body:?}; reference={reference:?}; before={before_hover:?}; after={:?}; pointer={:?}",
+        diagnostic(&app),
+        ctx.input(|input| (input.pointer.hover_pos(), input.pointer.any_down())),
     );
     drag_sized(
         &mut app,

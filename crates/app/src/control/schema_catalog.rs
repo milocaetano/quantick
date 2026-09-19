@@ -51,6 +51,9 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<FeedSnapshot>("observer-feed-status-v1.schema.json"),
         document::<ChartSnapshot>("observer-chart-summary-v1.schema.json"),
         document::<HealthSnapshot>("observer-health-summary-v1.schema.json"),
+        document::<quantick_control_host::feed::FeedDeliverySnapshot>(
+            "observer-health-feed-delivery-v1.schema.json",
+        ),
         document::<CursorSnapshot>("observer-cursor-v1.schema.json"),
         document::<SelectionSnapshot>("observer-selection-v1.schema.json"),
         document::<IndicatorsSnapshot>("observer-analysis-indicators-v1.schema.json"),

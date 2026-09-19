@@ -8,6 +8,7 @@ use quantick_control::{
     registry::ModuleDescriptor,
     wire::WireU64,
 };
+use quantick_control_host::feed;
 
 use crate::{
     loading::LoadingTask,
@@ -28,11 +29,11 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
             title: "Health".to_owned(),
             description: "Frame cost and subsystem readiness observations.".to_owned(),
         },
-        revision,
+        |app| (revision(app), super::feed_delivery::snapshot(app)),
     )?;
     registry.register_scope(
         SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
+        module_id.clone(),
         SCHEMA_VERSION,
         "Health summary",
         "Reports frame timing, active work, indicator failures, and the last published order-flow health.",
@@ -43,7 +44,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
             "observe.orderflow",
         ],
         project,
-    )
+    )?;
+    super::feed_delivery::register(registry, module_id)
 }
 
 /// The module's revision key: the per-tab subsystem state, without the
@@ -64,7 +66,12 @@ fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabRevisionKey> {
         .tabs
         .into_iter()
         .map(|mut tab| {
-            let tape = tab.tape.as_ref().map(tape_revision_key);
+            // The chart's own threshold, so a waiter and a trader are told
+            // the tape went late at the same instant rather than at two.
+            let tape = tab
+                .tape
+                .as_ref()
+                .map(|tape| tape.revision_key(crate::metrics::HIGH_LAG_MS));
             // Dropped from the key, not from the projection: these are the
             // per-print milliseconds the doc above explains.
             tab.tape = None;
@@ -78,25 +85,21 @@ fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabRevisionKey> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TabRevisionKey {
     tab: TabHealthSnapshot,
-    tape: Option<TapeRevisionKey>,
+    tape: Option<feed::TapeRevisionKey>,
 }
 
-/// What a waiter is told about the tape: which hop, and late or not.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TapeRevisionKey {
-    dominant_hop: Option<String>,
-    late: bool,
-}
-
-fn tape_revision_key(tape: &TapeHealthSnapshot) -> TapeRevisionKey {
-    TapeRevisionKey {
-        dominant_hop: tape.dominant_hop.clone(),
-        // The chart's own threshold, so a waiter and a trader are told the
-        // tape went late at the same instant rather than at two.
-        late: tape
-            .arrival_latency_ms
-            .is_some_and(|ms| ms > crate::metrics::HIGH_LAG_MS),
-    }
+pub(super) fn integrity_snapshot(
+    integrity: quantick_feed::FeedIntegrity,
+) -> Option<feed::FeedIntegritySnapshot> {
+    (integrity.anomalies > 0).then(|| {
+        feed::SourceCounts {
+            anomalies: integrity.anomalies,
+            missing_messages: integrity.missing_messages,
+            unknown_loss: integrity.unknown_loss,
+            non_monotonic: integrity.non_monotonic,
+        }
+        .into()
+    })
 }
 
 fn project<P: TabsPort + HealthPort + ?Sized>(app: &P, _context: CaptureContext) -> HealthSnapshot {
@@ -134,15 +137,7 @@ fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
                     .collect();
                 TabHealthSnapshot {
                     tab_id: WireU64::new(tab_id),
-                    feed_integrity: (tab.feed_integrity.anomalies > 0).then(|| {
-                        let integrity = tab.feed_integrity;
-                        FeedIntegritySnapshot {
-                            anomalies: WireU64::new(integrity.anomalies),
-                            missing_messages: WireU64::new(integrity.missing_messages),
-                            unknown_loss: WireU64::new(integrity.unknown_loss),
-                            non_monotonic: WireU64::new(integrity.non_monotonic),
-                        }
-                    }),
+                    feed_integrity: integrity_snapshot(tab.feed_integrity),
                     active_loading_tasks: LoadingTask::ALL
                         .into_iter()
                         .filter_map(|task| {

@@ -18,6 +18,7 @@ control-harness = []
 # Launch scenarios, scripted menus and pointers, demo stagers, store isolation
 # for captures, and the feed's fault injection.
 scenario-harness = ["quantick-feed/harness"]
+feed-integrity-harness = ["quantick-feed/live-fixture"]
 
 [dependencies]
 quantick-anchored-studies = { path = "../anchored-studies" }
@@ -120,7 +121,9 @@ quantick-backpressure = { path = "../backpressure", features = ["test-support"] 
 quantick-indicators = { path = "../indicators", features = ["fake-native"] }
 # The feed's harness hooks, for the same reason: the app's own `cfg(test)`
 # compiles its scenario owners, and their registry names the feed's slices.
-quantick-feed = { path = "../feed", features = ["harness"] }
+# `test-support` exercises actual source/host events through the normal app
+# drain.
+quantick-feed = { path = "../feed", features = ["harness", "test-support"] }
 # The per-thread store-write refusal the saves-off tests hold (DS7).
 quantick-workspace = { path = "../workspace", features = ["test-support"] }
 

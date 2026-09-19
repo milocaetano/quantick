@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "binance": {
+    "backfill_seed": {
+      "e": "aggTrade",
+      "s": "BTCUSDT",
+      "a": 1000000,
+      "p": "36000.30",
+      "q": "0.750",
+      "f": 1,
+      "l": 3,
+      "T": 1700000000450,
+      "m": true
+    },
+    "live_template": {
+      "e": "aggTrade",
+      "s": "BTCUSDT",
+      "a": 1000001,
+      "p": "36000.30",
+      "q": "0.750",
+      "f": 1,
+      "l": 3,
+      "T": 1700000000451,
+      "m": true
+    },
+    "progression": "increment a and T by one for each subsequent live row",
+    "live_rows_per_sample": 1000000,
+    "expected": {
+      "usable_trades_per_sample": 1000000,
+      "continuity_events": 0
+    }
+  },
+  "hyperliquid": {
+    "batches_per_sample": 10000,
+    "dense_valid_template": [
+      { "coin": "BTC", "side": "B", "px": "36000.30", "sz": "0.750", "time": 1700000000500, "tid": 100 },
+      { "coin": "BTC", "side": "A", "px": "36000.40", "sz": "0.125", "time": 1700000000501, "tid": 101 },
+      { "coin": "BTC", "side": "B", "px": "36000.50", "sz": "1.000", "time": 1700000000502, "tid": 102 },
+      { "coin": "BTC", "side": "A", "px": "36000.60", "sz": "0.500", "time": 1700000000503, "tid": 103 }
+    ],
+    "exclusion_prime": [
+      { "coin": "BTC", "side": "B", "px": "36000.20", "sz": "0.250", "time": 1700000000499, "tid": 99 }
+    ],
+    "exclusion_bearing_template": [
+      { "coin": "BTC", "side": "B", "px": "36000.20", "sz": "0.250", "time": 1700000000499, "tid": 99 },
+      { "coin": "BTC", "side": "A", "px": "36000.10", "sz": "0.125", "time": 1700000000498, "tid": 98 },
+      { "coin": "BTC", "side": "X", "px": "36000.30", "sz": "0.750", "time": 1700000000500, "tid": 100 },
+      { "coin": "BTC", "side": "B", "px": "36000.40", "sz": "1.000", "time": 1700000000501, "tid": 101 }
+    ],
+    "progression": "for each later batch add 10 to every time and 100 to every tid, and prime each exclusion mapper with that batch's overlap row before timing",
+    "expected_per_dense_batch": {
+      "usable_trades": 4,
+      "source_batch_messages": 1,
+      "continuity_events": 0
+    },
+    "expected_per_exclusion_batch": {
+      "usable_trades": 1,
+      "duplicates": 1,
+      "malformed_rows": 1,
+      "stale_rows": 1,
+      "source_batch_messages": 1,
+      "continuity_events": 2,
+      "continuity_order": ["malformed", "stale"]
+    }
+  }
+}

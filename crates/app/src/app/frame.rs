@@ -93,7 +93,7 @@ impl QuantickApp {
         self.draw_frame_with_tail(
             ctx,
             now,
-            &mut quantick_feed::spawn_live,
+            &mut quantick_feed::spawn_live_observed,
             FrameTailPlan::stages(),
         );
     }

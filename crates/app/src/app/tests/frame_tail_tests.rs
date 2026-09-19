@@ -103,6 +103,7 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
                 commands,
                 replay: None,
             }
+            .into()
         };
     let _ = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     let drawing;
@@ -312,6 +313,7 @@ fn frame_tail_recovery_refusals_never_spawn_or_reset_and_reconnect_keeps_the_pos
                 commands,
                 replay: None,
             }
+            .into()
         };
         let (tab, config) = app.active_with_config();
         if refused == "reconnect" {

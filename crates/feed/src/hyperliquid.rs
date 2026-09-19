@@ -8,17 +8,18 @@
 
 use std::ops::ControlFlow;
 
-use tokio::{
-    sync::{mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::{sync::mpsc, task::JoinHandle};
+
+pub(crate) mod output;
+use output::Output;
+pub(crate) use output::{LegacyOutput, ObservedOutput};
 use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS, TradeMapper,
+    Backoff, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS, TradeMapper, TradeStreamEvent,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
-    fetch_candle_history, run_trades_with_reconnect,
+    fetch_candle_history, run_trade_events_with_reconnect,
 };
 
 use super::{FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice};
@@ -35,6 +36,13 @@ const STARTUP_RECOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_
 const TRADE_RECONNECT_SEED: u64 = 0x4859_5045_525F_5452;
 const DEPTH_RECONNECT_SEED: u64 = 0x4859_5045_525F_4C32;
 
+pub(crate) struct HyperliquidSource {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) local_fixture: bool,
+    pub(crate) url: String,
+    pub(crate) backoff: Backoff,
+}
+
 /// Start the selected Hyperliquid perpetual on a background runtime.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
@@ -42,18 +50,7 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-    let symbol = symbol.to_owned();
-    std::thread::Builder::new()
-        .name("quantick-hyperliquid-feed".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(FEED_RUNTIME_WORKERS)
-                .enable_all()
-                .build()
-                .expect("build Hyperliquid feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx));
-        })
-        .expect("spawn Hyperliquid feed thread");
+    start(symbol, LegacyOutput(tx), book_tx, notice_tx, cmd_rx);
 
     FeedHandle {
         events: rx,
@@ -68,27 +65,79 @@ pub fn spawn(symbol: &str) -> FeedHandle {
     }
 }
 
-async fn feed_task(
+/// Start the ordered observation port; legacy callers retain their old handle.
+#[must_use]
+pub fn spawn_observed(symbol: &str) -> crate::ObservedFeedHandle {
+    let (tx, rx) = mpsc::channel(FEED_EVENT_CHANNEL_CAPACITY);
+    let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
+    let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+    start(symbol, ObservedOutput(tx), book_tx, notice_tx, cmd_rx);
+    crate::ObservedFeedHandle {
+        events: rx.into(),
+        book_events: book_rx,
+        notices: notice_rx,
+        capabilities: super::fixed_capabilities(ProviderKind::Hyperliquid.capabilities()),
+        latency: super::unsplit_latency(),
+        commands: cmd_tx,
+        replay: None,
+    }
+}
+
+fn start<O: Output>(
+    symbol: &str,
+    tx: O,
+    book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
+    cmd_rx: mpsc::Receiver<FeedCommand>,
+) {
+    let symbol = symbol.to_owned();
+    let source = HyperliquidSource {
+        #[cfg(any(test, feature = "test-support"))]
+        local_fixture: false,
+        url: HYPERLIQUID_WS_URL.to_owned(),
+        backoff: Backoff::for_feed(TRADE_RECONNECT_SEED),
+    };
+    std::thread::Builder::new()
+        .name("quantick-hyperliquid-feed".into())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(FEED_RUNTIME_WORKERS)
+                .enable_all()
+                .build()
+                .expect("build Hyperliquid feed runtime");
+            runtime.block_on(feed_task_with(
+                symbol, tx, book_tx, notice_tx, cmd_rx, source,
+            ));
+        })
+        .expect("spawn Hyperliquid feed thread");
+}
+
+pub(crate) async fn feed_task_with<O: Output>(
     symbol: String,
-    tx: mpsc::Sender<FeedEvent>,
+    tx: O,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
+    source: HyperliquidSource,
 ) {
+    #[cfg(any(test, feature = "test-support"))]
+    let local_fixture = source.local_fixture;
     let symbol = symbol.to_uppercase();
     let mapper = TradeMapper::new(&symbol);
-    let (live_tx, mut live_rx) = mpsc::channel::<Vec<Trade>>(TRADE_BATCH_CHANNEL_CAPACITY);
+    // Connection transitions and mapped batches share one ordered, bounded
+    // channel: a watch would coalesce a drop-and-reconnect into nothing, and a
+    // handoff the host never saw cannot be reported as unknown continuity.
+    let (stream_tx, mut stream_rx) =
+        mpsc::channel::<TradeStreamEvent>(TRADE_BATCH_CHANNEL_CAPACITY);
     let stream_symbol = symbol.clone();
-    let trade_backoff = Backoff::for_feed(TRADE_RECONNECT_SEED);
-    let (connected_tx, mut connected_rx) = watch::channel(false);
     let reconnect = tokio::spawn(async move {
-        run_trades_with_reconnect(
-            HYPERLIQUID_WS_URL,
+        run_trade_events_with_reconnect(
+            &source.url,
             &stream_symbol,
-            &live_tx,
-            &connected_tx,
+            &stream_tx,
             mapper,
-            trade_backoff,
+            source.backoff,
         )
         .await;
     });
@@ -105,6 +154,8 @@ async fn feed_task(
         ohlcv_task: None,
         ever_connected: false,
         recovery_pending: true,
+        #[cfg(any(test, feature = "test-support"))]
+        local_fixture,
     };
     let recovery_timeout = tokio::time::sleep(STARTUP_RECOVERY_TIMEOUT);
     tokio::pin!(recovery_timeout);
@@ -112,18 +163,11 @@ async fn feed_task(
     loop {
         let flow = tokio::select! {
             Some((bars, slice)) = ohlcv_rx.recv() => feed.on_ohlcv_reply(bars, slice).await,
-            maybe_batch = live_rx.recv() => match maybe_batch {
-                Some(trades) => feed.on_batch(trades).await,
+            maybe_stream_event = stream_rx.recv() => match maybe_stream_event {
+                Some(TradeStreamEvent::Connected) => feed.on_link(true).await,
+                Some(TradeStreamEvent::Disconnected) => feed.on_disconnect().await,
+                Some(TradeStreamEvent::Batch(batch)) => feed.on_batch(batch).await,
                 None => ControlFlow::Break(()),
-            },
-            changed = connected_rx.changed() => match changed {
-                Ok(()) => {
-                    // Copied out first: the watch guard is not `Send` and must
-                    // not be held across the notice send.
-                    let connected = *connected_rx.borrow_and_update();
-                    feed.on_link(connected).await
-                }
-                Err(_) => ControlFlow::Break(()),
             },
             () = &mut recovery_timeout, if feed.recovery_pending => feed.on_recovery_timeout().await,
             maybe_cmd = cmd_rx.recv() => feed.on_command(maybe_cmd).await,
@@ -143,9 +187,9 @@ type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
 /// The streaming loop's driver: the side-task handles, whether the startup
 /// recovery batch is still owed, and the channels the plan's effects go out
 /// on. What each command *means* is [`plan_command`]'s decision.
-struct HyperliquidLoop {
+struct HyperliquidLoop<O: Output> {
     symbol: String,
-    tx: mpsc::Sender<FeedEvent>,
+    tx: O,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
     book_capture: Option<BookCaptureTask>,
@@ -155,9 +199,22 @@ struct HyperliquidLoop {
     /// The first batch is the venue's recovery batch and resolves the UI's
     /// backfill; cleared by that batch or by the startup timeout.
     recovery_pending: bool,
+    /// A local synthetic source has no candle or depth transport; its host
+    /// refuses those requests instead of dialling the real venue.
+    #[cfg(any(test, feature = "test-support"))]
+    local_fixture: bool,
 }
 
-impl HyperliquidLoop {
+impl<O: Output> HyperliquidLoop<O> {
+    /// Deliver one event in order, or `Break` when the consumer is gone.
+    async fn emit(&self, event: FeedEvent) -> ControlFlow<()> {
+        if self.tx.send(event).await.is_err() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
     async fn on_ohlcv_reply(
         &mut self,
         bars: Vec<quantick_engine::Bar>,
@@ -173,10 +230,32 @@ impl HyperliquidLoop {
             bars,
             slice,
         };
-        send_or_break(&self.tx, event).await // UI gone
+        self.emit(event).await // UI gone
     }
 
-    async fn on_batch(&mut self, trades: Vec<Trade>) -> ControlFlow<()> {
+    /// Received rows the venue sent but the mapper excluded are reported apart
+    /// from source continuity: they are not missing source IDs.
+    async fn on_batch(&mut self, batch: quantick_feed_hyperliquid::MappedBatch) -> ControlFlow<()> {
+        let malformed = u64::try_from(batch.errors.len()).unwrap_or(u64::MAX);
+        let stale = u64::try_from(batch.stale).unwrap_or(u64::MAX);
+        for (reason, count) in [
+            (crate::ExclusionReason::MalformedRow, malformed),
+            (crate::ExclusionReason::StaleTimestamp, stale),
+        ] {
+            if let Some(rows) = std::num::NonZeroU64::new(count)
+                && self
+                    .tx
+                    .exclude(crate::FeedExclusion { reason, rows })
+                    .await
+                    .is_err()
+            {
+                return ControlFlow::Break(());
+            }
+        }
+        let trades = batch.trades;
+        if trades.is_empty() && !self.recovery_pending {
+            return ControlFlow::Continue(());
+        }
         let is_recovery = self.recovery_pending;
         let count = trades.len();
         let event = classify_trade_batch(trades, &mut self.recovery_pending);
@@ -189,7 +268,19 @@ impl HyperliquidLoop {
                 "initial Hyperliquid websocket recovery ready"
             );
         }
-        send_or_break(&self.tx, event).await
+        self.emit(event).await
+    }
+
+    /// A dropped socket makes the handoff unknown: whatever the venue printed
+    /// until the next connection is neither delivered nor countable.
+    async fn on_disconnect(&mut self) -> ControlFlow<()> {
+        let continuity = crate::FeedContinuity {
+            gap: None,
+            missing_messages: None,
+            non_monotonic: false,
+        };
+        self.emit(FeedEvent::Continuity(continuity)).await?;
+        self.on_link(false).await
     }
 
     async fn on_link(&mut self, connected: bool) -> ControlFlow<()> {
@@ -207,10 +298,41 @@ impl HyperliquidLoop {
             action = "continue_live",
             "initial Hyperliquid websocket recovery timed out"
         );
-        send_or_break(&self.tx, FeedEvent::Backfilled(Vec::new())).await
+        self.emit(FeedEvent::Backfilled(Vec::new())).await
+    }
+
+    /// The local synthetic fixture refuses candle and depth requests; `None`
+    /// hands every other command to the shared plan.
+    #[cfg(any(test, feature = "test-support"))]
+    async fn on_fixture_command(&mut self, cmd: &Option<FeedCommand>) -> Option<ControlFlow<()>> {
+        if !self.local_fixture {
+            return None;
+        }
+        match cmd {
+            Some(FeedCommand::FetchOhlcv { .. }) => {
+                warn!("local synthetic fixture has no candle history; request refused");
+                Some(
+                    self.emit(FeedEvent::OhlcvHistory {
+                        interval_ms: ONE_MINUTE_MS,
+                        bars: Vec::new(),
+                        slice: crate::OhlcvSlice::Refused,
+                    })
+                    .await,
+                )
+            }
+            Some(FeedCommand::SetBookCapture { .. } | FeedCommand::RestartBookCapture { .. }) => {
+                warn!("local synthetic fixture has no depth transport; request refused");
+                Some(ControlFlow::Continue(()))
+            }
+            _ => None,
+        }
     }
 
     async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(flow) = self.on_fixture_command(&cmd).await {
+            return flow;
+        }
         let book = Slot::observe(self.book_capture.as_ref().map(|t| t.handle.is_finished()));
         let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
         match plan_command(cmd, book, ohlcv) {
@@ -259,7 +381,7 @@ impl HyperliquidLoop {
                     action = "report_no_history_paging",
                     "older Hyperliquid public trades are unavailable"
                 );
-                send_or_break(&self.tx, FeedEvent::HistoryPrepended(Vec::new())).await?;
+                self.emit(FeedEvent::HistoryPrepended(Vec::new())).await?;
             }
             CommandPlan::KeepBook { initial_generation } => info!(
                 target: "quantick::app",
@@ -486,7 +608,10 @@ async fn stop_book_capture(task: &mut Option<BookCaptureTask>, symbol: &str, rea
 
 #[cfg(test)]
 mod tests {
+    use futures_util::{SinkExt as _, StreamExt as _};
     use rust_decimal::Decimal;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::Message;
 
     use super::*;
 
@@ -516,5 +641,129 @@ mod tests {
         let mut recovery_pending = false;
         let event = classify_trade_batch(vec![trade(1)], &mut recovery_pending);
         assert!(matches!(event, FeedEvent::LiveBatch(trades) if trades.len() == 1));
+    }
+
+    async fn accept_trade_subscription(
+        listener: &TcpListener,
+    ) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let subscription = socket.next().await.unwrap().unwrap();
+        assert!(
+            matches!(subscription, Message::Text(text) if text.contains("\"type\":\"trades\""))
+        );
+        socket
+    }
+
+    #[tokio::test]
+    async fn real_stream_integrity_reaches_the_provider_neutral_host_in_order() {
+        const ACK: &str = r#"{"channel":"subscriptionResponse","data":{}}"#;
+        const EMPTY: &str = r#"{"channel":"trades","data":[]}"#;
+        const MIXED: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7},
+            {"coin":"BTC","side":"X","px":"1","sz":"1","time":201,"tid":8}
+        ]}"#;
+        const OVERLAP: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"B","px":"1","sz":"1","time":200,"tid":7}
+        ]}"#;
+        const STALE: &str = r#"{"channel":"trades","data":[
+            {"coin":"BTC","side":"A","px":"1","sz":"1","time":199,"tid":9}
+        ]}"#;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut socket = accept_trade_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+
+            let mut socket = accept_trade_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.send(Message::Text(EMPTY.into())).await.unwrap();
+            socket.send(Message::Text(MIXED.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+
+            let mut socket = accept_trade_subscription(&listener).await;
+            socket.send(Message::Text(ACK.into())).await.unwrap();
+            socket.send(Message::Text(OVERLAP.into())).await.unwrap();
+            socket.send(Message::Text(STALE.into())).await.unwrap();
+            socket.close(None).await.unwrap();
+        });
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let (book_tx, _book_rx) = mpsc::channel(8);
+        let (notice_tx, _notice_rx) = mpsc::channel(16);
+        let (cmd_tx, cmd_rx) = mpsc::channel(8);
+        let host = tokio::spawn(feed_task_with(
+            "BTC".into(),
+            ObservedOutput(tx),
+            book_tx,
+            notice_tx,
+            cmd_rx,
+            HyperliquidSource {
+                local_fixture: false,
+                url: format!("ws://{address}"),
+                backoff: Backoff::new(
+                    std::time::Duration::from_millis(1),
+                    std::time::Duration::from_millis(1),
+                    7,
+                ),
+            },
+        ));
+
+        let events = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut events = Vec::new();
+            for _ in 0..7 {
+                events.push(rx.recv().await.unwrap());
+            }
+            events
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            events[0],
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
+                gap: None,
+                missing_messages: None,
+                non_monotonic: false,
+            }))
+        ));
+        assert!(
+            matches!(&events[1], crate::ObservedFeedEvent::Feed(FeedEvent::Backfilled(trades)) if trades.is_empty())
+        );
+        assert!(
+            matches!(events[2], crate::ObservedFeedEvent::Excluded(crate::FeedExclusion { reason: crate::ExclusionReason::MalformedRow, rows }) if rows.get() == 1)
+        );
+        assert!(
+            matches!(&events[3], crate::ObservedFeedEvent::Feed(FeedEvent::LiveBatch(trades)) if trades.len() == 1 && trades[0].timestamp_ms == 200)
+        );
+        assert!(matches!(
+            events[4],
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
+                missing_messages: None,
+                ..
+            }))
+        ));
+        assert!(
+            matches!(events[5], crate::ObservedFeedEvent::Excluded(crate::FeedExclusion { reason: crate::ExclusionReason::StaleTimestamp, rows }) if rows.get() == 1)
+        );
+        assert!(matches!(
+            events[6],
+            crate::ObservedFeedEvent::Feed(FeedEvent::Continuity(crate::FeedContinuity {
+                missing_messages: None,
+                ..
+            }))
+        ));
+        assert!(
+            rx.try_recv().is_err(),
+            "overlap batches must not invent loss"
+        );
+
+        drop(cmd_tx);
+        tokio::time::timeout(std::time::Duration::from_secs(2), host)
+            .await
+            .expect("host did not stop")
+            .unwrap();
+        server.await.unwrap();
     }
 }

@@ -206,6 +206,7 @@ impl Tab {
         // itself onto the refilled series as though a reconnect had happened.
         self.feed_gaps.clear();
         self.feed_integrity = quantick_feed::FeedIntegrity::default();
+        self.feed_delivery.reset();
         self.resume_floor_ms = None;
         self.history_trades = 0;
         // A run anchored to a tape that no longer exists cannot continue, and

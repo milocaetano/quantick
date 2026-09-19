@@ -1363,7 +1363,7 @@ fn observer_modules_project_headless_state_that_matches_their_schemas() {
         .descriptors()
         .map(|descriptor| (descriptor.scope_id.clone(), descriptor.schema.clone()))
         .collect::<Vec<_>>();
-    assert_eq!(descriptors.len(), 18, "every registered scope is projected");
+    assert_eq!(descriptors.len(), 19, "every registered scope is projected");
     let scopes = descriptors
         .iter()
         .map(|(scope_id, _)| scope_id.clone())
@@ -5329,7 +5329,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 53);
+    assert_eq!(documents.len(), 54);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");

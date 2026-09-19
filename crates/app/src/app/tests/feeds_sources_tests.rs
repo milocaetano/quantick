@@ -2,6 +2,137 @@ use super::*;
 use quantick_feed::history_reach;
 
 #[test]
+fn owned_live_fixture_drains_actual_host_receiver_before_completion_is_observed() {
+    let (mut app, _, _) = test_app_with_notices();
+    app.active_tab_mut()
+        .attach_for_test(quantick_feed::test_support::spawn_local_fixture());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let tab_id = app.tabs.active_id();
+    while app.active_tab().feed_integrity.unknown_loss != 3 {
+        app.active_tab_mut().drain_feed(tab_id);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "actual host drain did not complete"
+        );
+        std::thread::yield_now();
+    }
+    let tab = app.active_tab();
+    assert_eq!(tab.flow_pane.state.trades().len(), 1);
+    assert_eq!(
+        (
+            tab.feed_integrity.missing_messages,
+            tab.feed_integrity.non_monotonic
+        ),
+        (0, 0)
+    );
+    assert_eq!(
+        (
+            tab.feed_delivery.exclusions.malformed_rows,
+            tab.feed_delivery.exclusions.stale_rows
+        ),
+        (1, 1)
+    );
+    assert!(tab.feed_delivery.text().0[0].contains("LOCAL SYNTHETIC"));
+    let mut registry = crate::control::standard_registry().unwrap();
+    let scope = observer_scope("health.feed_delivery");
+    let capture = registry
+        .capture(&app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let facts = &capture.scopes[&scope].value["tabs"][0];
+    assert_eq!(facts["source_integrity"]["unknown_loss"], "3");
+    assert_eq!(facts["received_exclusions"]["malformed_rows"], "1");
+    assert_eq!(facts["received_exclusions"]["stale_rows"], "1");
+    assert_eq!(facts["completeness_proven"], false);
+    drop(app); // Receiver drop joins the owned actual host and local sockets.
+}
+
+#[test]
+fn real_transport_host_events_reach_normal_app_integrity_and_observer_snapshots() {
+    use quantick_feed::test_support::{BackfillFixture, binance_events, hyperliquid_events};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let count = quantick_feed::MAX_REMEMBERED_GAPS + 1;
+    let live: Vec<_> = (0..count)
+        .map(|index| (14 + index as u64 * 4, 100))
+        .collect();
+    let binance = runtime.block_on(binance_events(BackfillFixture::Seed, &live, 1 + 2 * count));
+    let binance = binance
+        .into_iter()
+        .map(quantick_feed::ObservedFeedEvent::Feed)
+        .collect::<Vec<_>>();
+    let hyperliquid = runtime.block_on(hyperliquid_events());
+
+    for (host_events, trades, known, unknown, non_monotonic, gaps, anomalies) in [
+        (
+            binance,
+            count + 1,
+            count * 3,
+            0,
+            0,
+            quantick_feed::MAX_REMEMBERED_GAPS,
+            count,
+        ),
+        (hyperliquid, 1, 0, 3, 0, 0, 3),
+    ] {
+        let (mut app, _notices, (_legacy_events, _book)) = test_app_with_notices();
+        let (events, receiver) = tokio::sync::mpsc::channel(128);
+        app.active_tab_mut().events = receiver.into();
+        app.active_tab_mut().feed_delivery.attach(true, false);
+        for event in host_events {
+            // This is the unmodified value received from the actual host,
+            // not a diagnostic reconstructed from this test's expectations.
+            events.blocking_send(event).unwrap();
+            let tab_id = app.tabs.active_id();
+            app.active_tab_mut().drain_feed(tab_id);
+        }
+        let tab = app.active_tab();
+        assert_eq!(tab.flow_pane.state.trades().len(), trades);
+        assert_eq!(tab.feed_gaps.len(), gaps);
+        assert!(
+            tab.feed_gaps
+                .iter()
+                .all(|gap| gap.from_ms == 100 && gap.to_ms == 100)
+        );
+        assert_eq!(tab.feed_integrity.anomalies, anomalies as u64);
+        assert_eq!(tab.feed_integrity.missing_messages, known as u64);
+        assert_eq!(tab.feed_integrity.unknown_loss, unknown as u64);
+        assert_eq!(tab.feed_integrity.non_monotonic, non_monotonic as u64);
+        let mut registry = crate::control::standard_registry().unwrap();
+        let scopes = [
+            observer_scope("health.summary"),
+            observer_scope("feed.status"),
+            observer_scope("health.feed_delivery"),
+        ];
+        let snapshot = registry
+            .capture(&app, &observer_instance(), &scopes)
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        let health = &snapshot.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
+        assert_eq!(health["anomalies"], anomalies.to_string());
+        assert_eq!(health["missing_messages"], known.to_string());
+        assert_eq!(health["unknown_loss"], unknown.to_string());
+        assert_eq!(health["non_monotonic"], non_monotonic.to_string());
+        assert!(
+            snapshot.scopes[&scopes[1]].value["tabs"][0]
+                .get("feed_integrity")
+                .is_none()
+        );
+        let delivery = &snapshot.scopes[&scopes[2]].value["tabs"][0];
+        assert_eq!(delivery["source_integrity"], *health);
+        assert_eq!(delivery["completeness_proven"], false);
+        let excluded = if unknown == 3 { "1" } else { "0" };
+        assert_eq!(delivery["received_exclusions"]["malformed_rows"], excluded);
+        assert_eq!(delivery["received_exclusions"]["stale_rows"], excluded);
+    }
+}
+
+#[test]
 fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades() {
     let (mut app, _notices, (events, _book)) = test_app_with_notices();
     let mut registry = crate::control::standard_registry().unwrap();
@@ -28,6 +159,27 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
             }))
             .unwrap();
     }
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: Some(2),
+            non_monotonic: false,
+        }))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: Some(3),
+            non_monotonic: true,
+        }))
+        .unwrap();
+    events
+        .blocking_send(FeedEvent::Continuity(quantick_feed::FeedContinuity {
+            gap: None,
+            missing_messages: None,
+            non_monotonic: false,
+        }))
+        .unwrap();
     events.blocking_send(FeedEvent::Live(trade(14))).unwrap();
     let tab_id = app.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
@@ -44,7 +196,7 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
     );
     assert_eq!(
         app.active_tab().feed_integrity.missing_messages,
-        count as u64 * 3
+        count as u64 * 3 + 5
     );
     let after = registry
         .capture(&app, &observer_instance(), &scopes)
@@ -52,8 +204,10 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
         .into_serialized()
         .unwrap();
     let health = &after.scopes[&scopes[0]].value["tabs"][0]["feed_integrity"];
-    assert_eq!(health["missing_messages"], (count * 3).to_string());
-    assert_eq!(health["unknown_loss"], "0");
+    assert_eq!(health["anomalies"], (count + 3).to_string());
+    assert_eq!(health["missing_messages"], (count * 3 + 5).to_string());
+    assert_eq!(health["unknown_loss"], "1");
+    assert_eq!(health["non_monotonic"], "1");
     assert_ne!(
         before.scopes[&scopes[0]].value,
         after.scopes[&scopes[0]].value
@@ -64,6 +218,11 @@ fn confirmed_feed_loss_reaches_gap_and_health_snapshots_without_changing_trades(
         quantick_feed::MAX_REMEMBERED_GAPS
     );
     assert_eq!(gaps[0]["duration_ms"], 0);
+    assert!(
+        after.scopes[&scopes[1]].value["tabs"][0]
+            .get("feed_integrity")
+            .is_none()
+    );
     app.active_tab_mut().reset_market_state(true);
     assert_eq!(
         app.active_tab().feed_integrity,

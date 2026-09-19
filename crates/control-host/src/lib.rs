@@ -21,6 +21,7 @@ pub mod contract;
 pub mod dispatch;
 pub mod events;
 pub mod evidence;
+pub mod feed;
 pub mod idempotency;
 pub mod inventory;
 pub mod journal;
