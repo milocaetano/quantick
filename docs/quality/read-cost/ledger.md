@@ -79,3 +79,4 @@ a bound.
 | 543 | 2026-09-19 | fix/final-review-repairs | campaign/outside-eight | 33739 | 31 | `crates/app/src/replay_get_data.rs` (996) |
 | 544 | 2026-09-19 | feat/architecture-ratchets | main | 4146 | 9 | `crates/guards/src/generated.rs` (524) |
 | 547 | 2026-09-19 | feat/fast-draft-ci | main | 0 | 0 | — |
+| 550 | 2026-09-19 | feat/read-cost-ledger | main | 0 | 0 | — |
