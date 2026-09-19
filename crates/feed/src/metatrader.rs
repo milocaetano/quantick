@@ -49,7 +49,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use std::ops::ControlFlow;
+
 use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
 use quantick_feed_mt5::{
@@ -58,10 +61,17 @@ use quantick_feed_mt5::{
 };
 
 use crate::FeedLatency;
-use crate::config::{FeedCapabilities, MetaTraderSettings, Mt5SideSource, ProviderKind};
+use crate::config::{
+    FeedCapabilities, MetaTraderSettings, Mt5Endpoint, Mt5SideSource, ProviderKind,
+};
 
 use super::mt5_bridge::{Supervision, supervise};
 use super::{DepthEvent, FeedCommand, FeedEvent, FeedHandle, FeedNotice};
+
+mod ledger;
+mod listener;
+use ledger::{CandleShelf, HistoryBlock, OpeningSlice, TapeLedger, Trimmed};
+use listener::{AfterExit, Listener, ListenerExit};
 
 /// Depth events are independent from the established trade channel. Sized like
 /// the Binance backend's: a B3 book republishes far faster than the UI drains,
@@ -273,20 +283,6 @@ fn session_capabilities(
     }
 }
 
-/// The earlier of two optional timestamps, treating `None` as "no opinion".
-///
-/// Not `Option::min`: that orders `None` *below* every `Some`, so folding a
-/// fresh batch into an empty cursor with it yields `None` — a chart that just
-/// drew its opening block would go on reporting it holds nothing, and every
-/// "load older" would be refused as "nothing charted yet".
-fn earlier(current: Option<i64>, candidate: Option<i64>) -> Option<i64> {
-    match (current, candidate) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (held, None) => held,
-        (None, fresh) => fresh,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn feed_task(
     symbol: String,
@@ -364,617 +360,53 @@ async fn feed_task(
     let history_pager = HistoryPager::new();
     server_cfg.history_pager = history_pager.clone();
 
+    let mut feed = Mt5Feed {
+        symbol,
+        endpoint,
+        tx,
+        book_tx,
+        notice_tx,
+        caps_tx,
+        latency_tx,
+        bridge_connected,
+        book_capture,
+        history_pager,
+        tape: TapeLedger::default(),
+        candles: CandleShelf::default(),
+        listener: Listener::default(),
+    };
     let (mt5_tx, mut mt5_rx) = mpsc::channel::<Mt5Event>(4096);
     let mut server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
-    // The bind error last reported to the user, so a port that stays taken
-    // produces one attention card rather than one per retry.
-    let mut reported_bind_error: Option<String> = None;
-
-    // Whether any trade reached the UI yet: the first non-empty history block
-    // may be prepended only into an empty chart (see module docs).
-    let mut forwarded_any = false;
-    // Whether the bridge has re-sent an opening block, which only a reconnect
-    // does. Set where the reconnect is already detected, never on the first
-    // block: setting it there made the session's *own* slices look like a
-    // repeat and dropped every one of them.
-    let mut opening_block_resent = false;
-    // Newest trade timestamp forwarded to the UI. Reconnect history overlaps
-    // what was already streamed live; only strictly-newer trades pass.
-    let mut last_forwarded_ms = i64::MIN;
-    let mut pending_gap = None;
-    // Oldest trade timestamp forwarded to the UI: the floor a page's overlap is
-    // trimmed against.
-    //
-    // Tracked here rather than asked of the chart because this is the only
-    // place that sees every trade *before* the UI decides what to keep: a tab
-    // that trimmed its retained window would otherwise page from the trim
-    // point and re-fetch what it just dropped, forever. `None` until something
-    // has been forwarded — there is no "older than nothing".
-    let mut oldest_forwarded_ms: Option<i64> = None;
-    // Where the *next* page is asked from — deliberately not the same number.
-    //
-    // A page can move the search hours and yield no trades at all: a pre-open
-    // stretch is thousands of quote-only ticks that map to nothing, and a
-    // window over a closed market holds none to begin with. Paging from the
-    // oldest *trade* would re-request that identical window on every click and
-    // the trader could never get past it. So this follows whichever is older,
-    // the oldest trade in hand or how far the bridge said it searched.
-    let mut paging_floor_ms: Option<i64> = None;
-    // Whether a request is outstanding with no reply yet.
-    //
-    // The chart counts loads: `Tab::request_older_history` begins one for every
-    // command it queues, and only a `HistoryPrepended` ends one. So every
-    // command must be answered exactly once, including the ones no bridge will
-    // ever serve — a session that died holding one, a listener that never came
-    // back. This flag is what lets those be answered from here.
-    let mut page_outstanding = false;
-    // The candle block the bridge pushed, kept for whoever asks later.
-    //
-    // Every other provider fetches candles when the pane requests them. Nothing
-    // on MetaTrader answers that: the back-channel carries one message and it is
-    // for ticks, the Expert Advisor never reads its socket at all, and no bridge
-    // implements a candle request — so the block arrives when the bridge decides
-    // and simply does. Holding it here is what lets this provider answer the
-    // same `FetchOhlcv` as the others: the request does not reach a venue, it
-    // reads what already arrived.
-    let mut candles: Option<OhlcvBlock> = None;
-    // How many times the candle answer has changed. The boolean capability is a
-    // latch — it rises with the first block and cannot fall — so an empty first
-    // block would otherwise be the last word: a consumer that cached that
-    // emptiness would never see another edge, and the full block from the next
-    // routine reconnect would be held forever behind a pane that stopped
-    // asking. Every block moves this, including a replacement.
-    let mut ohlcv_generation: u64 = 0;
 
     loop {
         tokio::select! {
             maybe_event = mt5_rx.recv() => {
-                match maybe_event {
-                    Some(Mt5Event::Status(status)) => {
-                        // Any status proves the listener is up: a bind failure
-                        // that later repeats deserves a fresh report.
-                        reported_bind_error = None;
-                        // The connection's own story, told where the user is
-                        // looking. A connected bridge clears whatever the
-                        // startup reported; a lost one replaces it.
-                        let notice = match &status {
-                            Mt5Status::Connected {
-                                tape,
-                                book_levels,
-                                history_paging,
-                                deal_counter,
-                                ..
-                            } => {
-                                bridge_connected.store(true, Ordering::Relaxed);
-                                // What this symbol really offers is known only
-                                // now. Publishing it withdraws the affordances
-                                // it cannot back — before the user clicks one.
-                                //
-                                // Candle history reports what is held rather
-                                // than what the hello promised: on a first
-                                // connection nothing is, and on a reconnect the
-                                // previous session's block still is.
-                                let _ = caps_tx.send(session_capabilities(
-                                    *tape,
-                                    *book_levels,
-                                    candles.is_some(),
-                                    ohlcv_generation,
-                                    *history_paging,
-                                    *deal_counter,
-                                ));
-                                FeedNotice::Connected
-                            }
-                            Mt5Status::Waiting { .. } => FeedNotice::working(
-                                "waiting for the MetaTrader bridge to connect",
-                            ),
-                            // Losing the bridge clears the flag as well as
-                            // reporting it. The supervisor reads the flag as
-                            // "is one feeding us *now*", so a terminal that
-                            // restarts mid-session gets picked back up —
-                            // without this, "reconnecting" is a promise
-                            // nobody keeps.
-                            Mt5Status::Lost { .. } => {
-                                if forwarded_any {
-                                    pending_gap = Some(last_forwarded_ms);
-                                }
-                                bridge_connected.store(false, Ordering::Relaxed);
-                                // A click can land in the gap between a session
-                                // clearing its pager and this status arriving:
-                                // `bridge_connected` still reads true, so the
-                                // request is queued against a connection that is
-                                // already gone. Nothing downstream will ever
-                                // answer it, and the chart counts loads — so it
-                                // is answered here.
-                                if page_outstanding {
-                                    page_outstanding = false;
-                                    warn!(
-                                        target: "quantick::app",
-                                        schema_version = 1_u8,
-                                        event_code = "MT5_LOAD_OLDER_REFUSED",
-                                        symbol = %symbol,
-                                        reason = "session_lost",
-                                        action = "answer_empty",
-                                        "the bridge went away with a page request outstanding"
-                                    );
-                                    if tx
-                                        .send(FeedEvent::HistoryPrepended(Vec::new()))
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
-                                    }
-                                }
-                                FeedNotice::reconnecting(
-                                    "the MetaTrader bridge disconnected — reconnecting",
-                                )
-                            }
-                        };
-                        let _ = notice_tx.send(notice).await;
-                        log_status(&symbol, &status);
-                    }
-                    Some(Mt5Event::Backfilled(batch)) => {
-                        if batch.is_empty() {
-                            continue;
+                let flow = match maybe_event {
+                    Some(event) => feed.on_event(event).await,
+                    // The server ended: a bind failure (retry it — ports free
+                    // themselves when the holder goes away), a fatal crash, or
+                    // shutdown. Whatever happens, UI commands keep being served
+                    // so no loader hangs on a dead feed.
+                    None => match feed.on_listener_ended(&mut server, &mut cmd_rx).await {
+                        Relisten::Rebind => {
+                            let (mt5_tx, new_rx) = mpsc::channel::<Mt5Event>(4096);
+                            mt5_rx = new_rx;
+                            server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
+                            EventFlow::Handled
                         }
-                        if forwarded_any {
-                            // Reconnect history: forward only what the UI has
-                            // not already seen. Labelled, not hidden. The
-                            // opening slices that follow this block cover a
-                            // session the chart already holds, so they are
-                            // refused rather than mapped and dropped one at a
-                            // time.
-                            opening_block_resent = true;
-                            let resent = batch.len();
-                            let fresh: Vec<_> = batch
-                                .into_iter()
-                                .filter(|t| t.timestamp_ms > last_forwarded_ms)
-                                .collect();
-                            info!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_RECOVERED_HISTORY_AS_LIVE",
-                                symbol = %symbol,
-                                count = fresh.len(),
-                                overlap_dropped = resent - fresh.len(),
-                                "bridge re-sent history after a reconnect; forwarding the unseen tail as live"
-                            );
-                            for trade in fresh {
-                                last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
-                                oldest_forwarded_ms =
-                                    earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
-                                paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
-                                if let Some(event) = crate::continuity::mt5_reconnect_gap(&trade, &mut pending_gap)
-                                    && tx.send(FeedEvent::Continuity(event)).await.is_err()
-                                {
-                                    break;
-                                }
-                                if tx.send(FeedEvent::Live(trade)).await.is_err() {
-                                    break;
-                                }
-                            }
-                        } else {
-                            forwarded_any = true;
-                            last_forwarded_ms = batch
-                                .iter()
-                                .map(|t| t.timestamp_ms)
-                                .max()
-                                .unwrap_or(last_forwarded_ms);
-                            info!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_HISTORY_READY",
-                                symbol = %symbol,
-                                count = batch.len(),
-                                "bridge history ready"
-                            );
-                            oldest_forwarded_ms = earlier(
-                                oldest_forwarded_ms,
-                                batch.iter().map(|t| t.timestamp_ms).min(),
-                            );
-                            paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
-                            if tx.send(FeedEvent::HistoryPrepended(batch)).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Some(Mt5Event::OpeningPage { trades, remaining }) => {
-                        if opening_block_resent {
-                            // A reconnect re-runs the bridge's whole opening
-                            // block, so these slices cover a session the chart
-                            // already holds. Every trade in them would fail
-                            // the older-than filter below and be dropped one
-                            // at a time, thirty times, after being mapped --
-                            // so they are refused here instead, once, out
-                            // loud. The wire cost is the bridge's to avoid and
-                            // it cannot know where the chart reaches; that is
-                            // recorded as a deferral rather than hidden.
-                            info!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_OPENING_PAGE_AFTER_RESUME",
-                                symbol = %symbol,
-                                count = trades.len(),
-                                remaining = ?remaining,
-                                action = "drop",
-                                "an opening slice arrived for a session the chart already holds"
-                            );
-                            continue;
-                        }
-                        // The rest of the trading session, arriving behind the
-                        // slice the chart opened on. Nobody asked for it, so
-                        // `page_outstanding` is deliberately left alone: a
-                        // trader who pressed *+ older* while the morning was
-                        // still filling in is still owed the answer to *that*.
-                        //
-                        // Everything else is the paged path's reasoning
-                        // unchanged -- only trades strictly older than what the
-                        // chart holds pass, because the bridge answers on whole
-                        // seconds and a slice can carry the far side of the
-                        // boundary's own millisecond.
-                        let served = trades.len();
-                        let floor = oldest_forwarded_ms.unwrap_or(i64::MAX);
-                        let older: Vec<_> = trades
-                            .into_iter()
-                            .filter(|t| t.timestamp_ms < floor)
-                            .collect();
-                        info!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "MT5_OPENING_PAGE_READY",
-                            symbol = %symbol,
-                            count = older.len(),
-                            overlap_dropped = served - older.len(),
-                            remaining = ?remaining,
-                            "a slice of the opening session is ready to prepend"
-                        );
-                        oldest_forwarded_ms = earlier(
-                            oldest_forwarded_ms,
-                            older.iter().map(|t| t.timestamp_ms).min(),
-                        );
-                        // The next *+ older* press starts below the whole
-                        // opening block, not below the slice the chart first
-                        // painted -- otherwise the first press would re-fetch
-                        // the morning that just arrived.
-                        paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
-                        // `OpeningPrepended`, never `HistoryPrepended`: the
-                        // chart must draw these and must not read them as the
-                        // answer to a press.
-                        if tx
-                            .send(FeedEvent::OpeningPrepended {
-                                trades: older,
-                                remaining,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Some(Mt5Event::HistoryPage {
-                        trades,
-                        exhausted,
-                        scanned_to_utc_ms,
-                    }) => {
-                        // The reply this request was owed. Cleared before
-                        // anything can fail, so no later `break` leaves the
-                        // flag set on a task that is ending.
-                        page_outstanding = false;
-                        // The answer to one click. Empty is a legitimate answer
-                        // and still has to be forwarded: `HistoryPrepended` is
-                        // what stops the chart's loading indicator, so an empty
-                        // block swallowed here would be a spinner that never
-                        // stops.
-                        info!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "MT5_HISTORY_PAGE_READY",
-                            symbol = %symbol,
-                            count = trades.len(),
-                            exhausted,
-                            scanned_to_utc_ms = ?scanned_to_utc_ms,
-                            "a page of older ticks is ready to prepend"
-                        );
-                        // Only trades strictly older than the chart's oldest
-                        // pass. The bridge answers on whole-second boundaries
-                        // (`copy_ticks_range` takes no finer unit), so the page
-                        // can carry the far side of the cursor's own
-                        // millisecond — prepending those would draw prints the
-                        // chart already holds a second time.
-                        let served = trades.len();
-                        let floor = oldest_forwarded_ms.unwrap_or(i64::MAX);
-                        let older: Vec<_> = trades
-                            .into_iter()
-                            .filter(|t| t.timestamp_ms < floor)
-                            .collect();
-                        if served != older.len() {
-                            info!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_HISTORY_PAGE_OVERLAP_DROPPED",
-                                symbol = %symbol,
-                                dropped = served - older.len(),
-                                kept = older.len(),
-                                "the page overlapped what the chart already holds"
-                            );
-                        }
-                        oldest_forwarded_ms = earlier(
-                            oldest_forwarded_ms,
-                            older.iter().map(|t| t.timestamp_ms).min(),
-                        );
-                        // The search cursor follows the *search*, so a page that
-                        // crossed hours of quote-only ticks and mapped none of
-                        // them still moves the next click past them. A bridge
-                        // that reports nothing leaves this on the trades, which
-                        // is the old behaviour and no worse than it.
-                        paging_floor_ms = earlier(
-                            earlier(paging_floor_ms, oldest_forwarded_ms),
-                            scanned_to_utc_ms,
-                        );
-                        if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
-                            break;
-                        }
-                        if exhausted {
-                            // The terminal reached its own oldest tick for this
-                            // symbol, so the button has nothing left to fetch.
-                            // Withdrawing it is the same rule every other
-                            // affordance follows: never offer what nothing can
-                            // back. A reconnect re-publishes the capability from
-                            // the fresh hello, which is right — a terminal that
-                            // downloaded more history in the meantime has more
-                            // to give.
-                            info!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_HISTORY_EXHAUSTED",
-                                symbol = %symbol,
-                                action = "withdraw_paging",
-                                "the terminal has no ticks older than the chart now holds"
-                            );
-                            caps_tx.send_modify(|caps| caps.history_paging = false);
-                        }
-                    }
-                    Some(Mt5Event::Depth(event)) => {
-                        // Backpressure rather than dropping: after the opening
-                        // snapshot every event is an absolute delta, and a
-                        // dropped one desynchronizes the book until the next
-                        // generation. A full buffer means the UI is stalled,
-                        // and the trade stream is buffered too.
-                        if book_tx.send(event).await.is_err() {
-                            break; // UI gone
-                        }
-                    }
-                    Some(Mt5Event::SessionBusy {
-                        peer,
-                        peer_symbol,
-                        diagnosis,
-                        advice,
-                    }) => {
-                        // The refusal has always been logged; it has never been
-                        // *seen*. Until now the chart went on saying "waiting
-                        // for the bridge" while the answer sat in a file — and
-                        // the person who needs it is the one who just attached
-                        // a second EA, looking at that window.
-                        warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "MT5_SESSION_BUSY",
-                            symbol = %symbol,
-                            peer = %peer,
-                            peer_symbol = %peer_symbol.as_deref().unwrap_or("-"),
-                            diagnosis,
-                            action = "notify_user",
-                            "another bridge was refused on this port"
-                        );
-                        let headline = match peer_symbol.as_deref() {
-                            Some(other) => format!(
-                                "another MetaTrader bridge tried to use {symbol}'s port (it streams {other})"
-                            ),
-                            None => format!(
-                                "another MetaTrader bridge tried to use {symbol}'s port"
-                            ),
-                        };
-                        // try_send, not send: unlike a connection transition
-                        // this repeats for as long as the mistake lasts — an EA
-                        // retrying on its own timer produces one per attempt.
-                        // Awaiting a full channel would stall the feed itself,
-                        // and losing a duplicate of a message already on screen
-                        // costs nothing.
-                        let _ = notice_tx.try_send(FeedNotice::attention(headline, advice));
-                    }
-                    Some(Mt5Event::Rates {
-                        interval_ms,
-                        bars,
-                        partial,
-                    }) => {
-                        // Not forwarded on arrival: nobody may have asked yet,
-                        // and an unrequested reply would resolve a load the
-                        // pane never started. Held until it does ask.
-                        info!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "MT5_RATES_READY",
-                            symbol = %symbol,
-                            interval_ms,
-                            bars = bars.len(),
-                            partial,
-                            "bridge pushed candle history; holding it for the next request"
-                        );
-                        candles = Some(OhlcvBlock {
-                            interval_ms,
-                            bars,
-                            complete: !partial,
-                        });
-                        // A block is in hand, and — the part the boolean cannot
-                        // say — the answer just changed. A replacement block on
-                        // a reconnect moves the counter even though the flag was
-                        // already true, which is the only way a consumer holding
-                        // an empty first block ever learns to ask again.
-                        ohlcv_generation = ohlcv_generation.saturating_add(1);
-                        caps_tx.send_modify(|caps| {
-                            caps.ohlcv_history = true;
-                            caps.ohlcv_generation = ohlcv_generation;
-                        });
-                    }
-                    Some(Mt5Event::Latency(sample)) => {
-                        // A current reading, not an event: `send_replace` so a
-                        // consumer that missed three samples reads the newest
-                        // one instead of a backlog, and a consumer that has
-                        // gone away does not stop the feed.
-                        latency_tx.send_replace(Some(neutral_latency(&sample)));
-                    }
-                    Some(Mt5Event::SequenceAnomaly { anomaly, from_ms, to_ms }) => {
-                        let event = crate::FeedContinuity::mt5(anomaly, from_ms, to_ms);
-                        if tx.send(FeedEvent::Continuity(event)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Some(Mt5Event::DealCounter(sample)) => {
-                        // Ahead of the prints it stamps, in the same channel,
-                        // so the consumer holds the reading before the print.
-                        if tx.send(FeedEvent::DealCounter(sample)).await.is_err() {
-                            break; // UI gone
-                        }
-                    }
-                    Some(Mt5Event::Live(trade)) => {
-                        forwarded_any = true;
-                        last_forwarded_ms = last_forwarded_ms.max(trade.timestamp_ms);
-                        // A live print sets the floor only on a chart that has
-                        // none: after that the oldest trade is behind, not
-                        // ahead, and `min` keeps it there.
-                        oldest_forwarded_ms =
-                            earlier(oldest_forwarded_ms, Some(trade.timestamp_ms));
-                        paging_floor_ms = earlier(paging_floor_ms, oldest_forwarded_ms);
-                        if let Some(event) = crate::continuity::mt5_reconnect_gap(&trade, &mut pending_gap)
-                            && tx.send(FeedEvent::Continuity(event)).await.is_err()
-                        {
-                            break;
-                        }
-                        if tx.send(FeedEvent::Live(trade)).await.is_err() {
-                            break; // UI gone
-                        }
-                    }
-                    None => {
-                        // The server ended: a bind failure (retry it — ports
-                        // free themselves when the holder goes away), a fatal
-                        // crash, or shutdown. Whatever happens, UI commands
-                        // keep being served so no loader hangs on a dead feed.
-                        //
-                        // Including the one already in the pager. A session that
-                        // ends cleanly answers its own outstanding request; a
-                        // task that *panicked* never reached that code, and the
-                        // pager it left behind is gone with it. Either way the
-                        // chart is still counting a load nobody will end.
-                        if page_outstanding {
-                            page_outstanding = false;
-                            warn!(
-                                target: "quantick::app",
-                                schema_version = 1_u8,
-                                event_code = "MT5_LOAD_OLDER_REFUSED",
-                                symbol = %symbol,
-                                reason = "listener_ended",
-                                action = "answer_empty",
-                                "the bridge listener ended with a page request outstanding"
-                            );
-                            if tx
-                                .send(FeedEvent::HistoryPrepended(Vec::new()))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        match (&mut server).await {
-                            Ok(Err(e)) => {
-                                error!(
-                                    target: "quantick::app",
-                                    schema_version = 1_u8,
-                                    event_code = "MT5_BIND_FAILED",
-                                    symbol = %symbol,
-                                    listen_addr = %endpoint.listen_addr,
-                                    from_ports_map = endpoint.from_ports_map,
-                                    %e,
-                                    retry_in_s = BIND_RETRY.as_secs(),
-                                    "MT5 bridge listener could not bind (another quantick, or \
-                                     another symbol on this port?); retrying until it frees"
-                                );
-                                // A port already taken is the ordinary failure
-                                // once several symbols stream at once, and a
-                                // log line is not where the user is looking.
-                                // Reported once per distinct error, not once
-                                // per retry: the card would otherwise repaint
-                                // every few seconds while the holder lives.
-                                let message = e.to_string();
-                                if reported_bind_error.as_deref() != Some(message.as_str()) {
-                                    reported_bind_error = Some(message);
-                                    let _ = notice_tx.send(bind_failure_notice(&symbol, &e)).await;
-                                }
-                                if !serve_commands_for(
-                                    BIND_RETRY,
-                                    &symbol,
-                                    &tx,
-                                    &mut cmd_rx,
-                                    &book_capture,
-                                    candles.as_ref(),
-                                )
-                                .await
-                                {
-                                    break; // UI gone
-                                }
-                                let (mt5_tx, new_rx) = mpsc::channel::<Mt5Event>(4096);
-                                mt5_rx = new_rx;
-                                server = tokio::spawn(run_bridge_server(server_cfg.clone(), mt5_tx));
-                            }
-                            Ok(Ok(())) => {
-                                idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
-                                return;
-                            }
-                            Err(e) => {
-                                error!(
-                                    target: "quantick::app",
-                                    schema_version = 1_u8,
-                                    event_code = "MT5_SERVER_PANIC",
-                                    symbol = %symbol,
-                                    %e,
-                                    "MT5 bridge listener crashed"
-                                );
-                                idle_serve_commands(&symbol, &tx, &mut cmd_rx, &book_capture, candles.as_ref()).await;
-                                return;
-                            }
-                        }
-                    }
-                }
-                if tx.is_closed() {
-                    break;
+                        Relisten::Dead => return,
+                        Relisten::UiGone => EventFlow::UiGone,
+                    },
+                };
+                match flow {
+                    EventFlow::Handled if feed.tx.is_closed() => break,
+                    EventFlow::Handled | EventFlow::Skipped => {}
+                    EventFlow::UiGone => break,
                 }
             }
             maybe_cmd = cmd_rx.recv() => {
-                match maybe_cmd {
-                    // The one command a live session answers differently from a
-                    // dead one. Everything else is stateless enough for
-                    // `answer_command` to serve from anywhere, which is why the
-                    // bind-retry and dead-listener paths can share it.
-                    Some(FeedCommand::LoadOlder { count }) => {
-                        match request_older_history(
-                            &symbol,
-                            count,
-                            paging_floor_ms,
-                            &history_pager,
-                            bridge_connected.load(Ordering::Relaxed),
-                            &tx,
-                        )
-                        .await
-                        {
-                            RequestOutcome::Asked => page_outstanding = true,
-                            RequestOutcome::AnsweredHere => {}
-                            RequestOutcome::UiGone => break,
-                        }
-                    }
-                    Some(cmd) => {
-                        if !answer_command(&symbol, cmd, &tx, &book_capture, candles.as_ref()).await {
-                            break; // UI gone
-                        }
-                    }
-                    None => break, // UI dropped the command sender: it's gone
+                if feed.on_command(maybe_cmd).await.is_break() {
+                    break;
                 }
             }
         }
@@ -985,6 +417,558 @@ async fn feed_task(
     // feed that wanted it.
     if let Some(autostart) = autostart {
         autostart.abort();
+    }
+}
+
+/// What the loop does after one bridge event.
+enum EventFlow {
+    /// Handled; stop if the UI has gone meanwhile.
+    Handled,
+    /// Nothing was sent (an empty or already-held block); keep going.
+    Skipped,
+    /// A send failed: the UI is gone.
+    UiGone,
+}
+
+/// What the loop does after the listener task ended.
+enum Relisten {
+    /// The retry gap passed; bind the port again.
+    Rebind,
+    /// Nothing will listen again, and the commands were served until the UI
+    /// went away: the feed task is over.
+    Dead,
+    /// The UI went away first.
+    UiGone,
+}
+
+/// The MetaTrader feed's driver: the channels out, the switches shared with
+/// the listener, and the pure state it steps — [`TapeLedger`] for what reaches
+/// the chart, [`CandleShelf`] for the pushed candle block, [`Listener`] for the
+/// listener's lifecycle. Each `on_*` method takes one input, asks the state
+/// what it means, and carries that out.
+struct Mt5Feed {
+    symbol: String,
+    endpoint: Mt5Endpoint,
+    tx: mpsc::Sender<FeedEvent>,
+    book_tx: mpsc::Sender<DepthEvent>,
+    notice_tx: mpsc::Sender<FeedNotice>,
+    caps_tx: watch::Sender<FeedCapabilities>,
+    latency_tx: watch::Sender<Option<FeedLatency>>,
+    /// Whether a bridge is feeding us right now; read by the supervisor.
+    bridge_connected: Arc<AtomicBool>,
+    book_capture: BookCaptureSwitch,
+    history_pager: HistoryPager,
+    tape: TapeLedger,
+    candles: CandleShelf,
+    listener: Listener,
+}
+
+impl Mt5Feed {
+    async fn send(&self, event: FeedEvent) -> EventFlow {
+        if self.tx.send(event).await.is_err() {
+            EventFlow::UiGone
+        } else {
+            EventFlow::Handled
+        }
+    }
+
+    async fn on_event(&mut self, event: Mt5Event) -> EventFlow {
+        match event {
+            Mt5Event::Status(status) => self.on_status(status).await,
+            Mt5Event::Backfilled(batch) => self.on_history_block(batch).await,
+            Mt5Event::OpeningPage { trades, remaining } => {
+                self.on_opening_slice(trades, remaining).await
+            }
+            Mt5Event::HistoryPage {
+                trades,
+                exhausted,
+                scanned_to_utc_ms,
+            } => {
+                self.on_history_page(trades, exhausted, scanned_to_utc_ms)
+                    .await
+            }
+            Mt5Event::Depth(event) => {
+                // Backpressure rather than dropping: after the opening snapshot
+                // every event is an absolute delta, and a dropped one
+                // desynchronizes the book until the next generation. A full
+                // buffer means the UI is stalled, and the trade stream is
+                // buffered too.
+                if self.book_tx.send(event).await.is_err() {
+                    return EventFlow::UiGone;
+                }
+                EventFlow::Handled
+            }
+            Mt5Event::SessionBusy {
+                peer,
+                peer_symbol,
+                diagnosis,
+                advice,
+            } => {
+                self.on_session_busy(&peer, peer_symbol.as_deref(), diagnosis, advice);
+                EventFlow::Handled
+            }
+            Mt5Event::Rates {
+                interval_ms,
+                bars,
+                partial,
+            } => {
+                self.on_rates(interval_ms, bars, partial);
+                EventFlow::Handled
+            }
+            Mt5Event::Latency(sample) => {
+                // A current reading, not an event: `send_replace` so a consumer
+                // that missed three samples reads the newest one instead of a
+                // backlog, and a consumer that has gone away does not stop the
+                // feed.
+                self.latency_tx.send_replace(Some(neutral_latency(&sample)));
+                EventFlow::Handled
+            }
+            Mt5Event::SequenceAnomaly {
+                anomaly,
+                from_ms,
+                to_ms,
+            } => {
+                let event = crate::FeedContinuity::mt5(anomaly, from_ms, to_ms);
+                self.send(FeedEvent::Continuity(event)).await
+            }
+            // Ahead of the prints it stamps, in the same channel, so the
+            // consumer holds the reading before the print.
+            Mt5Event::DealCounter(sample) => self.send(FeedEvent::DealCounter(sample)).await,
+            Mt5Event::Live(trade) => self.forward_live(trade).await,
+        }
+    }
+
+    /// One trade out as live, behind any continuity gap a lost session owes.
+    async fn forward_live(&mut self, trade: quantick_engine::Trade) -> EventFlow {
+        if let Some(event) = self.tape.forward(&trade)
+            && self.tx.send(FeedEvent::Continuity(event)).await.is_err()
+        {
+            return EventFlow::UiGone;
+        }
+        self.send(FeedEvent::Live(trade)).await
+    }
+
+    async fn on_status(&mut self, status: Mt5Status) -> EventFlow {
+        // Any status proves the listener is up: a bind failure that later
+        // repeats deserves a fresh report.
+        self.listener.status_seen();
+        // The connection's own story, told where the user is looking. A
+        // connected bridge clears whatever the startup reported; a lost one
+        // replaces it.
+        let notice = match &status {
+            Mt5Status::Connected {
+                tape,
+                book_levels,
+                history_paging,
+                deal_counter,
+                ..
+            } => {
+                self.bridge_connected.store(true, Ordering::Relaxed);
+                // What this symbol really offers is known only now. Publishing
+                // it withdraws the affordances it cannot back — before the
+                // user clicks one.
+                //
+                // Candle history reports what is held rather than what the
+                // hello promised: on a first connection nothing is, and on a
+                // reconnect the previous session's block still is.
+                let _ = self.caps_tx.send(session_capabilities(
+                    *tape,
+                    *book_levels,
+                    self.candles.block().is_some(),
+                    self.candles.generation(),
+                    *history_paging,
+                    *deal_counter,
+                ));
+                FeedNotice::Connected
+            }
+            Mt5Status::Waiting { .. } => {
+                FeedNotice::working("waiting for the MetaTrader bridge to connect")
+            }
+            // Losing the bridge clears the flag as well as reporting it. The
+            // supervisor reads the flag as "is one feeding us *now*", so a
+            // terminal that restarts mid-session gets picked back up — without
+            // this, "reconnecting" is a promise nobody keeps.
+            Mt5Status::Lost { .. } => {
+                let page_owed = self.tape.session_lost();
+                self.bridge_connected.store(false, Ordering::Relaxed);
+                // A click can land in the gap between a session clearing its
+                // pager and this status arriving: `bridge_connected` still
+                // reads true, so the request is queued against a connection
+                // that is already gone. Nothing downstream will ever answer it,
+                // and the chart counts loads — so it is answered here.
+                if page_owed {
+                    warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_LOAD_OLDER_REFUSED",
+                        symbol = %self.symbol,
+                        reason = "session_lost",
+                        action = "answer_empty",
+                        "the bridge went away with a page request outstanding"
+                    );
+                    if self
+                        .tx
+                        .send(FeedEvent::HistoryPrepended(Vec::new()))
+                        .await
+                        .is_err()
+                    {
+                        return EventFlow::UiGone;
+                    }
+                }
+                FeedNotice::reconnecting("the MetaTrader bridge disconnected — reconnecting")
+            }
+        };
+        let _ = self.notice_tx.send(notice).await;
+        log_status(&self.symbol, &status);
+        EventFlow::Handled
+    }
+
+    async fn on_history_block(&mut self, batch: Vec<quantick_engine::Trade>) -> EventFlow {
+        match self.tape.history_block(batch) {
+            HistoryBlock::Empty => EventFlow::Skipped,
+            HistoryBlock::Opening(batch) => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_HISTORY_READY",
+                    symbol = %self.symbol,
+                    count = batch.len(),
+                    "bridge history ready"
+                );
+                self.send(FeedEvent::HistoryPrepended(batch)).await
+            }
+            // Reconnect history: forward only what the UI has not already
+            // seen. Labelled, not hidden.
+            HistoryBlock::Recovered {
+                fresh,
+                overlap_dropped,
+            } => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_RECOVERED_HISTORY_AS_LIVE",
+                    symbol = %self.symbol,
+                    count = fresh.len(),
+                    overlap_dropped,
+                    "bridge re-sent history after a reconnect; forwarding the unseen tail as live"
+                );
+                for trade in fresh {
+                    if let EventFlow::UiGone = self.forward_live(trade).await {
+                        return EventFlow::UiGone;
+                    }
+                }
+                EventFlow::Handled
+            }
+        }
+    }
+
+    async fn on_opening_slice(
+        &mut self,
+        trades: Vec<quantick_engine::Trade>,
+        remaining: Option<u64>,
+    ) -> EventFlow {
+        match self.tape.opening_slice(trades) {
+            // A reconnect re-runs the bridge's whole opening block, so these
+            // slices cover a session the chart already holds. Every trade in
+            // them would fail the older-than filter and be dropped one at a
+            // time, thirty times, after being mapped -- so they are refused
+            // here instead, once, out loud. The wire cost is the bridge's to
+            // avoid and it cannot know where the chart reaches; that is
+            // recorded as a deferral rather than hidden.
+            OpeningSlice::AlreadyHeld { count } => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_OPENING_PAGE_AFTER_RESUME",
+                    symbol = %self.symbol,
+                    count,
+                    remaining = ?remaining,
+                    action = "drop",
+                    "an opening slice arrived for a session the chart already holds"
+                );
+                EventFlow::Skipped
+            }
+            // The rest of the trading session, arriving behind the slice the
+            // chart opened on.
+            OpeningSlice::Prepend {
+                older,
+                overlap_dropped,
+            } => {
+                info!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_OPENING_PAGE_READY",
+                    symbol = %self.symbol,
+                    count = older.len(),
+                    overlap_dropped,
+                    remaining = ?remaining,
+                    "a slice of the opening session is ready to prepend"
+                );
+                // `OpeningPrepended`, never `HistoryPrepended`: the chart must
+                // draw these and must not read them as the answer to a press.
+                self.send(FeedEvent::OpeningPrepended {
+                    trades: older,
+                    remaining,
+                })
+                .await
+            }
+        }
+    }
+
+    async fn on_history_page(
+        &mut self,
+        trades: Vec<quantick_engine::Trade>,
+        exhausted: bool,
+        scanned_to_utc_ms: Option<i64>,
+    ) -> EventFlow {
+        // The answer to one click. Empty is a legitimate answer and still has
+        // to be forwarded: `HistoryPrepended` is what stops the chart's loading
+        // indicator, so an empty block swallowed here would be a spinner that
+        // never stops.
+        info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_HISTORY_PAGE_READY",
+            symbol = %self.symbol,
+            count = trades.len(),
+            exhausted,
+            scanned_to_utc_ms = ?scanned_to_utc_ms,
+            "a page of older ticks is ready to prepend"
+        );
+        let Trimmed {
+            older,
+            overlap_dropped,
+        } = self.tape.history_page(trades, scanned_to_utc_ms);
+        if overlap_dropped != 0 {
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_HISTORY_PAGE_OVERLAP_DROPPED",
+                symbol = %self.symbol,
+                dropped = overlap_dropped,
+                kept = older.len(),
+                "the page overlapped what the chart already holds"
+            );
+        }
+        if let EventFlow::UiGone = self.send(FeedEvent::HistoryPrepended(older)).await {
+            return EventFlow::UiGone;
+        }
+        if exhausted {
+            // The terminal reached its own oldest tick for this symbol, so the
+            // button has nothing left to fetch. Withdrawing it is the same rule
+            // every other affordance follows: never offer what nothing can
+            // back. A reconnect re-publishes the capability from the fresh
+            // hello, which is right — a terminal that downloaded more history
+            // in the meantime has more to give.
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_HISTORY_EXHAUSTED",
+                symbol = %self.symbol,
+                action = "withdraw_paging",
+                "the terminal has no ticks older than the chart now holds"
+            );
+            self.caps_tx.send_modify(|caps| caps.history_paging = false);
+        }
+        EventFlow::Handled
+    }
+
+    fn on_session_busy(
+        &self,
+        peer: &str,
+        peer_symbol: Option<&str>,
+        diagnosis: &'static str,
+        advice: &'static str,
+    ) {
+        let symbol = &self.symbol;
+        // The refusal has always been logged; it has never been *seen*. Until
+        // now the chart went on saying "waiting for the bridge" while the
+        // answer sat in a file — and the person who needs it is the one who
+        // just attached a second EA, looking at that window.
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_SESSION_BUSY",
+            symbol = %symbol,
+            peer = %peer,
+            peer_symbol = %peer_symbol.unwrap_or("-"),
+            diagnosis,
+            action = "notify_user",
+            "another bridge was refused on this port"
+        );
+        let headline = match peer_symbol {
+            Some(other) => format!(
+                "another MetaTrader bridge tried to use {symbol}'s port (it streams {other})"
+            ),
+            None => format!("another MetaTrader bridge tried to use {symbol}'s port"),
+        };
+        // try_send, not send: unlike a connection transition this repeats for
+        // as long as the mistake lasts — an EA retrying on its own timer
+        // produces one per attempt. Awaiting a full channel would stall the
+        // feed itself, and losing a duplicate of a message already on screen
+        // costs nothing.
+        let _ = self
+            .notice_tx
+            .try_send(FeedNotice::attention(headline, advice));
+    }
+
+    fn on_rates(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>, partial: bool) {
+        // Not forwarded on arrival: nobody may have asked yet, and an
+        // unrequested reply would resolve a load the pane never started. Held
+        // until it does ask.
+        info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_RATES_READY",
+            symbol = %self.symbol,
+            interval_ms,
+            bars = bars.len(),
+            partial,
+            "bridge pushed candle history; holding it for the next request"
+        );
+        let generation = self.candles.store(OhlcvBlock {
+            interval_ms,
+            bars,
+            complete: !partial,
+        });
+        // A block is in hand, and — the part the boolean cannot say — the
+        // answer just changed. A replacement block on a reconnect moves the
+        // counter even though the flag was already true, which is the only way
+        // a consumer holding an empty first block ever learns to ask again.
+        self.caps_tx.send_modify(|caps| {
+            caps.ohlcv_history = true;
+            caps.ohlcv_generation = generation;
+        });
+    }
+
+    async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
+        match cmd {
+            // The one command a live session answers differently from a dead
+            // one. Everything else is stateless enough for `answer_command` to
+            // serve from anywhere, which is why the bind-retry and
+            // dead-listener paths can share it.
+            Some(FeedCommand::LoadOlder { count }) => {
+                match request_older_history(
+                    &self.symbol,
+                    count,
+                    self.tape.paging_floor_ms(),
+                    &self.history_pager,
+                    self.bridge_connected.load(Ordering::Relaxed),
+                    &self.tx,
+                )
+                .await
+                {
+                    RequestOutcome::Asked => self.tape.page_asked(),
+                    RequestOutcome::AnsweredHere => {}
+                    RequestOutcome::UiGone => return ControlFlow::Break(()),
+                }
+            }
+            Some(cmd) => {
+                let candles = self.candles.block();
+                if !answer_command(&self.symbol, cmd, &self.tx, &self.book_capture, candles).await {
+                    return ControlFlow::Break(()); // UI gone
+                }
+            }
+            None => return ControlFlow::Break(()), // UI dropped the command sender
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// The listener task ended: answer what it left owed, then step the
+    /// listener's lifecycle and carry out the step.
+    async fn on_listener_ended(
+        &mut self,
+        server: &mut JoinHandle<Result<(), Mt5Error>>,
+        cmd_rx: &mut mpsc::Receiver<FeedCommand>,
+    ) -> Relisten {
+        // Including the request already in the pager. A session that ends
+        // cleanly answers its own outstanding request; a task that *panicked*
+        // never reached that code, and the pager it left behind is gone with
+        // it. Either way the chart is still counting a load nobody will end.
+        if self.tape.listener_ended() {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_LOAD_OLDER_REFUSED",
+                symbol = %self.symbol,
+                reason = "listener_ended",
+                action = "answer_empty",
+                "the bridge listener ended with a page request outstanding"
+            );
+            if self
+                .tx
+                .send(FeedEvent::HistoryPrepended(Vec::new()))
+                .await
+                .is_err()
+            {
+                return Relisten::UiGone;
+            }
+        }
+        let (exit, bind_error) = match server.await {
+            Ok(Err(e)) => {
+                error!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BIND_FAILED",
+                    symbol = %self.symbol,
+                    listen_addr = %self.endpoint.listen_addr,
+                    from_ports_map = self.endpoint.from_ports_map,
+                    %e,
+                    retry_in_s = BIND_RETRY.as_secs(),
+                    "MT5 bridge listener could not bind (another quantick, or \
+                     another symbol on this port?); retrying until it frees"
+                );
+                let message = e.to_string();
+                (ListenerExit::BindFailed { message }, Some(e))
+            }
+            Ok(Ok(())) => (ListenerExit::Finished, None),
+            Err(e) => {
+                error!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_SERVER_PANIC",
+                    symbol = %self.symbol,
+                    %e,
+                    "MT5 bridge listener crashed"
+                );
+                (ListenerExit::Panicked, None)
+            }
+        };
+        let candles = self.candles.block();
+        match self.listener.exited(exit) {
+            AfterExit::RetryBind { report } => {
+                // A port already taken is the ordinary failure once several
+                // symbols stream at once, and a log line is not where the user
+                // is looking. Reported once per distinct error, not once per
+                // retry: the card would otherwise repaint every few seconds
+                // while the holder lives.
+                if let Some(e) = bind_error.filter(|_| report) {
+                    let _ = self
+                        .notice_tx
+                        .send(bind_failure_notice(&self.symbol, &e))
+                        .await;
+                }
+                let served = serve_commands_for(
+                    BIND_RETRY,
+                    &self.symbol,
+                    &self.tx,
+                    cmd_rx,
+                    &self.book_capture,
+                    candles,
+                )
+                .await;
+                if served {
+                    Relisten::Rebind
+                } else {
+                    Relisten::UiGone
+                }
+            }
+            AfterExit::ServeUntilGone => {
+                idle_serve_commands(&self.symbol, &self.tx, cmd_rx, &self.book_capture, candles)
+                    .await;
+                Relisten::Dead
+            }
+        }
     }
 }
 

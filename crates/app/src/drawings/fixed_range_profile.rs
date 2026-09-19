@@ -19,11 +19,11 @@
 //! - a cap-coarsened profile names its effective row width, like the
 //!   footprint legend does.
 
-use quantick_anchored_studies::{RangeProfile as FrvpCache, FrvpEmpty, ProfileOutput};
-#[cfg(test)]
-use quantick_anchored_studies::FrvpCacheKey;
 use eframe::egui;
 use egui_phosphor::regular as icons;
+#[cfg(test)]
+use quantick_anchored_studies::FrvpCacheKey;
+use quantick_anchored_studies::{ProfileOutput, RangeProfile as FrvpCache};
 use quantick_engine::{ValueArea, VolumeProfile};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -32,15 +32,15 @@ use std::any::Any;
 use super::measure_core::MEASURE_FAMILY;
 use super::{
     Constrain, DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles,
-    PresetHost, drawing_stroke,
+    PresetHost,
 };
 use crate::chart::to_f64;
-use crate::theme;
-use crate::theme::{CASING, CASING_EXTRA_PX};
+use crate::theme::CASING;
 
 mod geometry;
+mod paint;
 
-use geometry::ProfileGeometry;
+use paint::{FrvpPass, paint_body};
 
 pub(super) static TOOL: FixedRangeProfile = FixedRangeProfile;
 
@@ -373,16 +373,6 @@ fn bar_x(points: &[egui::Pos2], anchors: &[super::ChartPoint], bar: f32) -> Opti
     }
     let slot_width = (points[1].x - points[0].x) / span;
     Some(points[0].x + (bar - a.bar) * slot_width)
-}
-
-/// One straight piece of the silhouette, with the value-area membership that
-/// picks its ink weight. Collected first and stroked in two passes — every
-/// casing under every ink — so a corner never has a later casing overpainting
-/// an earlier ink.
-struct SilhouetteSegment {
-    from: egui::Pos2,
-    to: egui::Pos2,
-    in_va: bool,
 }
 
 /// Text with a glyph knockout: the same galley painted four times offset in
@@ -822,314 +812,6 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
     edited
 }
 
-/// Which side of the candles one pass of the profile paints on.
-///
-/// A volume profile is two different kinds of thing wearing one name. Its
-/// histogram is *context* — the shape the price is read against, like the
-/// liquidity map — and painted over the candles it tints every body it
-/// covers. Its edges, value-area lines, POC and status line are *annotation*,
-/// and buried under the price they would simply be lost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrvpPass {
-    /// Before the candles: the histogram.
-    Under,
-    /// After them: everything else.
-    Over,
-}
-
-/// Both halves of the object, from one function.
-///
-/// The two passes share every measurement — the range's edges, the price
-/// extent, the level cap, the value-area test, the row geometry, the
-/// fill/silhouette cut — so they share the code that makes them. Split into
-/// two functions this would have copied thirty lines of arithmetic that must
-/// agree exactly, and the day they stopped agreeing the histogram would sit a
-/// pixel off the outline drawn over it.
-#[allow(clippy::too_many_lines)]
-fn paint_body(
-    painter: &egui::Painter,
-    chart_rect: egui::Rect,
-    style: DrawingStyle,
-    points: &[egui::Pos2],
-    ctxt: &DrawContext<'_>,
-    pass: FrvpPass,
-) {
-    let Some(payload) = ctxt.payload.as_any().downcast_ref::<FrvpPayload>() else {
-        return;
-    };
-    let stroke = drawing_stroke(style);
-    if points.len() < 2 {
-        if pass == FrvpPass::Under {
-            return;
-        }
-        // A one-anchor draft with no hover yet: mark the starting edge.
-        if let Some(point) = points.first() {
-            painter.line_segment(
-                [
-                    egui::pos2(point.x, chart_rect.top()),
-                    egui::pos2(point.x, chart_rect.bottom()),
-                ],
-                stroke,
-            );
-        }
-        return;
-    }
-    let (left, right) = range_edges(payload, points, ctxt);
-    let (top, bottom) = price_extent(payload, points, ctxt);
-
-    // The range's edges — the stroke geometry, which is all the halo
-    // pass paints. Over the candles: an edge is where the object *ends*,
-    // and a boundary buried under the price is one the trader cannot
-    // follow.
-    if pass == FrvpPass::Over {
-        for x in [left, right] {
-            painter.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], stroke);
-        }
-    }
-    if ctxt.halo {
-        return;
-    }
-
-    let cache = payload.cache.as_ref().map(FrvpCache::output);
-    let profile = cache.and_then(|cache| cache.profile);
-
-    // Where the fill gives way to the silhouette: the left boundary of
-    // the liquidity map, expressed in this object's own coordinates. Left
-    // of the cut the profile composes over candles exactly as before;
-    // right of it a fill would compose into the map's cells (worst case
-    // measured at 1.002:1 contrast) — so the shape is drawn instead, and
-    // not one uncovered pixel of the map is altered.
-    let cut_x = geometry::silhouette_cut(payload, points, ctxt);
-    let outline_active = cut_x.is_some_and(|x| x < right);
-
-    if let Some((profile, value_area)) = profile {
-        let geometry = ProfileGeometry::new(profile, *value_area, payload, points, ctxt);
-        let in_va = |bucket: i64| {
-            payload.show_value_area
-                && value_area.is_some_and(|area| bucket >= area.val && bucket <= area.vah)
-        };
-        let fill_limit = if outline_active { cut_x } else { None };
-        // The histogram itself — the one part of this object that is
-        // *context* rather than annotation, and the reason the tool takes
-        // the under-candles pass at all.
-        if pass == FrvpPass::Under {
-            for row in geometry.rows(chart_rect) {
-                let (row_top, row_bottom) = (row.base.min(row.far), row.base.max(row.far));
-                let bucket = row.bucket;
-                let level = row.level;
-                let tip = row.tip;
-                let width = tip - left;
-                // The fill stops at the map's boundary; the silhouette pass
-                // below carries the rest of the row.
-                let fill_tip = fill_limit.map_or(tip, |cut| tip.min(cut));
-                if fill_tip <= left {
-                    continue;
-                }
-                let alpha = if in_va(bucket) {
-                    ROW_ALPHA_IN_VA
-                } else {
-                    ROW_ALPHA_OUT_VA
-                };
-                if payload.delta_coloring {
-                    // The row split by aggressor: buys from the edge, sells
-                    // continuing — the same quantities the footprint shows.
-                    let volume = to_f64(level.volume()).max(f64::MIN_POSITIVE);
-                    #[allow(clippy::cast_possible_truncation)]
-                    let buy_width = ((to_f64(level.buy) / volume) as f32) * width;
-                    let buy_tip = (left + buy_width).min(fill_tip);
-                    painter.rect_filled(
-                        egui::Rect::from_min_max(
-                            egui::pos2(left, row_top),
-                            egui::pos2(buy_tip, row_bottom),
-                        ),
-                        egui::Rounding::ZERO,
-                        theme::BUY.gamma_multiply(alpha),
-                    );
-                    if fill_tip > buy_tip {
-                        painter.rect_filled(
-                            egui::Rect::from_min_max(
-                                egui::pos2(buy_tip, row_top),
-                                egui::pos2(fill_tip, row_bottom),
-                            ),
-                            egui::Rounding::ZERO,
-                            theme::SELL.gamma_multiply(alpha),
-                        );
-                    }
-                } else {
-                    painter.rect_filled(
-                        egui::Rect::from_min_max(
-                            egui::pos2(left, row_top),
-                            egui::pos2(fill_tip, row_bottom),
-                        ),
-                        egui::Rounding::ZERO,
-                        style.color.gamma_multiply(alpha),
-                    );
-                }
-            }
-        }
-
-        // The silhouette: the histogram's staircase envelope right of the
-        // cut, double-stroked — casing under ink, all casings first so a
-        // corner never has a later casing overpainting an earlier ink.
-        // The value area keeps its by-weight reading in the ink's width
-        // and brightness; rows short of the cut hug the boundary, so the
-        // filled and outlined halves read as one object.
-        //
-        // Over the candles, unlike the fill: it is a line, and a line is
-        // read as a shape rather than as a wash, so burying it would only
-        // lose it.
-        if pass == FrvpPass::Over && outline_active {
-            let mut segments: Vec<SilhouetteSegment> = Vec::new();
-            geometry.visit_silhouette(chart_rect, |bucket, from, to| {
-                segments.push(SilhouetteSegment {
-                    from,
-                    to,
-                    in_va: bucket.is_some_and(in_va),
-                });
-                false
-            });
-            let ink_width = |in_va: bool| {
-                if in_va {
-                    style.width_px.max(OUTLINE_IN_VA_PX)
-                } else {
-                    style.width_px.clamp(0.75, OUTLINE_OUT_VA_PX)
-                }
-            };
-            for segment in &segments {
-                painter.line_segment(
-                    [segment.from, segment.to],
-                    egui::Stroke::new(ink_width(segment.in_va) + CASING_EXTRA_PX, CASING),
-                );
-            }
-            for segment in &segments {
-                let color = if segment.in_va {
-                    style.color
-                } else {
-                    style.color.gamma_multiply(OUTLINE_OUT_VA_BRIGHTNESS)
-                };
-                painter.line_segment(
-                    [segment.from, segment.to],
-                    egui::Stroke::new(ink_width(segment.in_va), color),
-                );
-            }
-        }
-
-        // POC and the value-area bounds: levels, and a level is annotation
-        // — it is read *against* the price, so it goes over it.
-        if let Some(area) = value_area.filter(|_| pass == FrvpPass::Over) {
-            if payload.show_poc {
-                let y = ctxt.scale.y(to_f64(
-                    profile
-                        .bucket_price(area.poc)
-                        .saturating_add(profile.group() / Decimal::TWO),
-                ));
-                let width = style.width_px.max(1.0);
-                // The casing carries the POC over the map's yellow band —
-                // #FFD54F against it is the worst number of the scene
-                // (1.05:1); against the casing it is ~21:1. Over plain
-                // canvas the casing is near-invisible, so it simply stays.
-                painter.line_segment(
-                    [egui::pos2(left, y), egui::pos2(right, y)],
-                    egui::Stroke::new(width + CASING_EXTRA_PX, CASING),
-                );
-                painter.line_segment(
-                    [egui::pos2(left, y), egui::pos2(right, y)],
-                    egui::Stroke::new(width, theme::POC),
-                );
-            }
-            if payload.show_value_area {
-                // VAH tops its row, VAL bottoms its row: the dashes hug
-                // the area they bound. Casing dashes share the geometry,
-                // so the phase matches and the map shows through the gaps.
-                let vah_y = ctxt
-                    .scale
-                    .y(to_f64(profile.bucket_price(area.vah.saturating_add(1))));
-                let val_y = ctxt.scale.y(to_f64(profile.bucket_price(area.val)));
-                let width = style.width_px.max(0.75);
-                for y in [vah_y, val_y] {
-                    let ends = [egui::pos2(left, y), egui::pos2(right, y)];
-                    painter.add(egui::Shape::dashed_line(
-                        &ends,
-                        egui::Stroke::new(width + CASING_EXTRA_PX, CASING),
-                        VA_DASH_PX,
-                        VA_GAP_PX,
-                    ));
-                    painter.add(egui::Shape::dashed_line(
-                        &ends,
-                        egui::Stroke::new(width, style.color),
-                        VA_DASH_PX,
-                        VA_GAP_PX,
-                    ));
-                }
-            }
-        }
-    }
-
-    // Everything from here down is words and plates: the status line, the
-    // POC/VAH/VAL prices, the handles. All annotation, none of it legible
-    // under a candle.
-    if pass == FrvpPass::Under || !ctxt.primary_band || !payload.show_labels {
-        return;
-    }
-    // The status line under the range: what the profile is made of, in
-    // the footprint legend's language. Everything honesty demands lives
-    // here — coverage, effective rows, why the range is empty.
-    let mut status = String::new();
-    match (profile, cache) {
-        (Some((profile, value_area)), Some(cache)) => {
-            status.push_str(&status_line(profile, &cache, payload, outline_active));
-            if let Some(area) = value_area {
-                // POC/VAH/VAL price plates at the right edge of the range.
-                let labels = [
-                    ("POC", area.poc, theme::POC),
-                    ("VAH", area.vah.saturating_add(1), theme::TEXT_MUTED),
-                    ("VAL", area.val, theme::TEXT_MUTED),
-                ];
-                for (name, bucket, color) in labels {
-                    if name != "POC" && !payload.show_value_area {
-                        continue;
-                    }
-                    if name == "POC" && !payload.show_poc {
-                        continue;
-                    }
-                    let price = profile.bucket_price(bucket);
-                    knockout_text(
-                        painter,
-                        egui::pos2(right + LABEL_OFFSET_PX, ctxt.scale.y(to_f64(price))),
-                        egui::Align2::LEFT_CENTER,
-                        &format!("{name} {price}"),
-                        color,
-                    );
-                }
-            }
-        }
-        (None, Some(cache)) => status.push_str(&match (cache.folding, cache.empty) {
-            // A fold that has not reached a bar with tape yet has nothing
-            // to draw *yet* — which is not the same as a range with
-            // nothing in it, and must not borrow that sentence.
-            (true, _) => {
-                format!("loading {} of {} bars", cache.bars_folded, cache.bars_total)
-            }
-            (false, Some(FrvpEmpty::Blocked)) => "feed reports no traded volume".to_owned(),
-            (false, _) => "no tape in range".to_owned(),
-        }),
-        // Not refreshed yet (first frame of a fresh object): say nothing
-        // rather than guessing. A profile without a cache cannot exist —
-        // the profile *lives in* the cache — but the tuple can't say so.
-        (_, None) => {}
-    }
-    if !status.is_empty() {
-        knockout_text_within(
-            painter,
-            egui::pos2(left, bottom + LABEL_OFFSET_PX),
-            &status,
-            theme::TEXT_MUTED,
-            chart_rect,
-            (top, bottom),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1164,27 +846,47 @@ mod tests {
     /// A real owner for payload/geometry tests, refreshed through the public domain path.
     fn refreshed_cache(rows: &[(i64, i64)], last_slot: usize) -> FrvpCache {
         use quantick_anchored_studies::{ProfileInputs, ProfileRequest};
-        use quantick_engine::{BarSpec, Trade, Side, bar_registry::BarConfiguration};
+        use quantick_engine::{BarSpec, Side, Trade, bar_registry::BarConfiguration};
         let mut builder = BarConfiguration::from(BarSpec::Tick(1)).build();
         let mut footprint = quantick_engine::FootprintBuilder::new(Decimal::ONE, 4096);
         let mut first = None;
         for &(price, quantity) in rows {
-            let trade = Trade { agg_id: 1, timestamp_ms: 0, price: Decimal::from(price),
-                quantity: Decimal::from(quantity), side: Side::Buy };
+            let trade = Trade {
+                agg_id: 1,
+                timestamp_ms: 0,
+                price: Decimal::from(price),
+                quantity: Decimal::from(quantity),
+                side: Side::Buy,
+            };
             first = builder.push(&trade);
             footprint.push(&trade);
         }
         let bars = vec![first.expect("fixture trade closes a bar"); last_slot + 1];
         let ladder = footprint.close().unwrap();
         let mut owned = None;
-        FrvpCache::refresh(&mut owned, ProfileRequest {
-            min_bar: 0.0, max_bar: f32::MAX, extend_right: true,
-            approximate_history: false, value_area_pct: DEFAULT_VALUE_AREA_PCT,
-        }, &ProfileInputs {
-            closed: &bars, ladders: &[ladder], prefix: &[], partial_ladder: None,
-            group: Decimal::ONE, series_revision: 0, partial_version: 0,
-            blocked: false, side_inferred: false, partial_bucket_slot: None, budget: 1500,
-        });
+        FrvpCache::refresh(
+            &mut owned,
+            ProfileRequest {
+                min_bar: 0.0,
+                max_bar: f32::MAX,
+                extend_right: true,
+                approximate_history: false,
+                value_area_pct: DEFAULT_VALUE_AREA_PCT,
+            },
+            &ProfileInputs {
+                closed: &bars,
+                ladders: &[ladder],
+                prefix: &[],
+                partial_ladder: None,
+                group: Decimal::ONE,
+                series_revision: 0,
+                partial_version: 0,
+                blocked: false,
+                side_inferred: false,
+                partial_bucket_slot: None,
+                budget: 1500,
+            },
+        );
         owned.expect("refresh installs a result")
     }
 
@@ -1213,7 +915,6 @@ mod tests {
             bars_folded: total,
             bars_total: total,
             folding: false,
-
         }
     }
 

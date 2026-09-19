@@ -202,259 +202,186 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
 /// (later) side, where the heat cells have already darkened. `DepthOnly` draws
 /// a calm violet fade, intentionally avoiding the word "cancel": depth alone
 /// does not reveal why displayed liquidity decreased.
+///
+/// Three passes, painted in this order: the holes (every reduction's, then
+/// the carve behind each consuming bubble), the depth-only tails, and the
+/// fronts with their caps on top.
 pub(crate) fn draw_liquidity_events(painter: &egui::Painter, context: &RenderContext<'_>) {
-    let style = context.style.sanitized();
-    let palette = Palette::for_theme(style.theme);
+    let pass = EventPass::new(context);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
+    let event_count = context.projection.liquidity_events.len();
     let mut hole_mesh = egui::Mesh::default();
-    hole_mesh
-        .vertices
-        .reserve(context.projection.liquidity_events.len().saturating_mul(4));
-    hole_mesh
-        .indices
-        .reserve(context.projection.liquidity_events.len().saturating_mul(6));
+    hole_mesh.vertices.reserve(event_count.saturating_mul(4));
+    hole_mesh.indices.reserve(event_count.saturating_mul(6));
+    let mut fronts = Vec::with_capacity(event_count);
 
-    let mut fronts = Vec::with_capacity(context.projection.liquidity_events.len());
-    let right_edge = context.layout.chart_rect.right();
-
-    for event in &context.projection.liquidity_events {
-        // Two questions, both answered here because nowhere else asks.
-        //
-        // Does the pane this mark lands on still draw a book? A reduction is a
-        // statement about the order book, so it goes when the book does — and
-        // *per pane*, because the two switched apart: the candles' map off with
-        // the tape's still on has to clear the candles and leave the tape, which
-        // is exactly the state the report came from.
-        //
-        // And is this kind switched on? The projection filters these events by
-        // *threshold* and never by the trader's choice — deliberately, since
-        // both kinds are factual and the retained history stays complete — so
-        // with nothing checking here, unticking "L2 reduction (unattributed)"
-        // dropped the legend entry and left every violet mark painting. The
-        // legend said the layer was off while the trader looked straight at it.
-        let on_tape = context.layout.in_lane(event.x);
-        let pane_draws_book = if on_tape {
-            style.lane_depth_layer
-        } else {
-            style.depth_layer
-        };
-        let kind_shown = match event.evidence {
-            LiquidityEvidence::AggressionAligned => style.show_aligned,
-            LiquidityEvidence::DepthOnly => style.show_unattributed,
-        };
-        if !pane_draws_book || !kind_shown {
-            continue;
-        }
-        let band = context
-            .layout
-            .event_band(event.x, event.y0, event.y1, style.min_cell_height);
-        if band.x < context.layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
-            continue;
-        }
-        // Every mark below reaches to the *right* of the level it happened at,
-        // so each one stops at the edge of its own pane: a reduction beside the
-        // divider must not bleed its hole and its tail across the tape.
-        let pane = context.layout.pane(event.x);
-
-        let reduction = finite_unit(event.fraction);
-        let full = event.full_removal;
-        let front = marker_band(band, reduction, full);
-
-        // A dark hole across the band's full height marks where liquidity
-        // dropped. On a busy book the level is re-stacked almost immediately;
-        // without the hole the fresh wall abuts the old one and looks
-        // continuous, hiding that it was consumed. The marker colour drawn on
-        // the hole's left edge tells aggression-aligned from unattributed apart.
-        let hole_w = if full { 14.0 } else { 6.0 + 8.0 * reduction };
-        add_gradient_rect(
-            &mut hole_mesh,
-            egui::Rect::from_min_max(
-                egui::pos2(band.x, band.top),
-                egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
-            )
-            .intersect(pane),
-            style.canvas_background,
-            style.canvas_background,
-        );
-
-        match event.evidence {
-            LiquidityEvidence::AggressionAligned => fronts.push(EventFront::Aligned {
-                band: front,
-                matched: finite_unit(event.matched_fraction),
-                full,
-                pane,
-            }),
-            LiquidityEvidence::DepthOnly => fronts.push(EventFront::DepthOnly {
-                band: front,
-                reduction,
-                full,
-                pane,
-            }),
-        }
-    }
-
-    // Carve a gap around each consumption bubble so a re-stacked wall does not
-    // slide through it: the eaten wall ends, the bubble marks the bite, and the
-    // fresh wall only resumes to the bubble's right.
-    for trade in context.bubbles() {
-        if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
-            continue;
-        }
-        let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        let pane = context.layout.pane(trade.x);
-        if !pane.contains(center) {
-            continue;
-        }
-        // Follow the bubble's own vertical nudge, so the carved gap stays
-        // centred on the bubble that will be drawn over it.
-        let center = center
-            + egui::vec2(
-                0.0,
-                side_offset_y(
-                    trade.side,
-                    style.bubbles.side_offset,
-                    context.layout.inverted,
-                ),
-            );
-        let r = bubble_radius(
-            trade.size,
-            style.bubbles.min_radius,
-            style.bubbles.max_radius,
-        );
-        // Carve from the bubble's midriff rightward: the eaten wall still
-        // touches the bubble's left half (the bubble reads as biting into
-        // it), while re-stacked liquidity cannot slide through to the right.
-        add_gradient_rect(
-            &mut hole_mesh,
-            egui::Rect::from_min_max(
-                egui::pos2(center.x - r * 0.4, center.y - r - 2.0),
-                egui::pos2((center.x + r + 4.0).min(pane.right()), center.y + r + 2.0),
-            )
-            .intersect(pane),
-            style.canvas_background,
-            style.canvas_background,
-        );
-    }
-
-    if !hole_mesh.is_empty() {
-        clip.add(egui::Shape::mesh(hole_mesh));
-    }
+    pass.carve_event_holes(&mut hole_mesh, &mut fronts);
+    pass.carve_bubble_gaps(&mut hole_mesh);
+    add_mesh(&clip, hole_mesh);
 
     // A calm violet ghost fading rightward = "the offer was pulled here": the
     // wall's band ends, the fade marks the pull, and the dark canvas after it
     // shows the level stayed empty. Drawn under the cap lines.
     let mut tail_mesh = egui::Mesh::default();
     for front in &fronts {
-        if let EventFront::DepthOnly {
-            band,
-            reduction,
-            full,
-            pane,
-        } = front
-        {
-            let tail = if *full { 22.0 } else { 10.0 + 10.0 * reduction };
-            add_gradient_rect(
-                &mut tail_mesh,
-                egui::Rect::from_min_max(
-                    egui::pos2(band.x, band.top),
-                    egui::pos2((band.x + tail).min(pane.right()), band.bottom),
-                )
-                .intersect(*pane),
-                palette.depth_only.gamma_multiply(if *full {
-                    0.38
-                } else {
-                    0.16 + 0.18 * reduction
-                }),
-                egui::Color32::TRANSPARENT,
-            );
-        }
+        front.add_tail(&pass.palette, &mut tail_mesh);
     }
-    if !tail_mesh.is_empty() {
-        clip.add(egui::Shape::mesh(tail_mesh));
-    }
+    add_mesh(&clip, tail_mesh);
 
     // Fronts and caps as solid mesh quads: hundreds of stroked segments per
     // frame would pay stroke tessellation each; one mesh keeps the per-frame
     // cost flat during storms of reductions.
-    fn add_vline(
-        mesh: &mut egui::Mesh,
-        x: f32,
-        top: f32,
-        bottom: f32,
-        width: f32,
-        color: egui::Color32,
-        pane: egui::Rect,
-    ) {
-        add_gradient_rect(
-            mesh,
-            egui::Rect::from_min_max(
-                egui::pos2(x - width * 0.5, top),
-                egui::pos2(x + width * 0.5, bottom),
-            )
-            .intersect(pane),
-            color,
-            color,
-        );
-    }
     let mut front_mesh = egui::Mesh::default();
     for front in fronts {
-        match front {
-            EventFront::Aligned {
-                band,
-                matched,
-                full,
-                pane,
-            } => {
-                let strength = matched.max(0.25);
-                add_vline(
-                    &mut front_mesh,
-                    band.x,
-                    band.top,
-                    band.bottom,
-                    if full { 2.0 } else { 1.3 },
-                    palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
-                    pane,
-                );
-                if full {
-                    // End caps read as "this band was fully taken here".
-                    for y in [band.top, band.bottom] {
-                        add_gradient_rect(
-                            &mut front_mesh,
-                            egui::Rect::from_min_max(
-                                egui::pos2(band.x - 3.5, y - 0.75),
-                                egui::pos2(band.x + 3.5, y + 0.75),
-                            )
-                            .intersect(pane),
-                            palette.consumption.gamma_multiply(0.8),
-                            palette.consumption.gamma_multiply(0.8),
-                        );
-                    }
-                }
+        front.add_front(&pass.palette, &mut front_mesh);
+    }
+    add_mesh(&clip, front_mesh);
+}
+
+fn add_mesh(clip: &egui::Painter, mesh: egui::Mesh) {
+    if !mesh.is_empty() {
+        clip.add(egui::Shape::mesh(mesh));
+    }
+}
+
+/// What every reduction pass reads, resolved once per frame: the sanitized
+/// style, its palette and the canvas it paints on.
+struct EventPass<'c, 'a> {
+    context: &'c RenderContext<'a>,
+    style: OrderflowRenderStyle,
+    palette: Palette,
+}
+
+impl<'c, 'a> EventPass<'c, 'a> {
+    fn new(context: &'c RenderContext<'a>) -> Self {
+        let style = context.style.sanitized();
+        let palette = Palette::for_theme(style.theme);
+        Self {
+            context,
+            style,
+            palette,
+        }
+    }
+
+    /// The hole every shown reduction leaves, plus the front each one will
+    /// paint later, in projection order.
+    fn carve_event_holes(&self, hole_mesh: &mut egui::Mesh, fronts: &mut Vec<EventFront>) {
+        let layout = &self.context.layout;
+        let style = &self.style;
+        let right_edge = layout.chart_rect.right();
+
+        for event in &self.context.projection.liquidity_events {
+            // Two questions, both answered here because nowhere else asks.
+            //
+            // Does the pane this mark lands on still draw a book? A reduction is a
+            // statement about the order book, so it goes when the book does — and
+            // *per pane*, because the two switched apart: the candles' map off with
+            // the tape's still on has to clear the candles and leave the tape, which
+            // is exactly the state the report came from.
+            //
+            // And is this kind switched on? The projection filters these events by
+            // *threshold* and never by the trader's choice — deliberately, since
+            // both kinds are factual and the retained history stays complete — so
+            // with nothing checking here, unticking "L2 reduction (unattributed)"
+            // dropped the legend entry and left every violet mark painting. The
+            // legend said the layer was off while the trader looked straight at it.
+            let on_tape = layout.in_lane(event.x);
+            let pane_draws_book = if on_tape {
+                style.lane_depth_layer
+            } else {
+                style.depth_layer
+            };
+            let kind_shown = match event.evidence {
+                LiquidityEvidence::AggressionAligned => style.show_aligned,
+                LiquidityEvidence::DepthOnly => style.show_unattributed,
+            };
+            if !pane_draws_book || !kind_shown {
+                continue;
             }
-            EventFront::DepthOnly {
-                band,
-                reduction,
-                full,
-                pane,
-            } => {
-                add_vline(
-                    &mut front_mesh,
-                    band.x,
-                    band.top,
-                    band.bottom,
-                    if full { 1.6 } else { 1.1 },
-                    palette.depth_only.gamma_multiply(if full {
-                        0.9
-                    } else {
-                        0.55 + 0.3 * reduction
-                    }),
+            let band = layout.event_band(event.x, event.y0, event.y1, style.min_cell_height);
+            if band.x < layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
+                continue;
+            }
+            // Every mark below reaches to the *right* of the level it happened at,
+            // so each one stops at the edge of its own pane: a reduction beside the
+            // divider must not bleed its hole and its tail across the tape.
+            let pane = layout.pane(event.x);
+
+            let reduction = finite_unit(event.fraction);
+            let full = event.full_removal;
+            let front = marker_band(band, reduction, full);
+
+            // A dark hole across the band's full height marks where liquidity
+            // dropped. On a busy book the level is re-stacked almost immediately;
+            // without the hole the fresh wall abuts the old one and looks
+            // continuous, hiding that it was consumed. The marker colour drawn on
+            // the hole's left edge tells aggression-aligned from unattributed apart.
+            let hole_w = if full { 14.0 } else { 6.0 + 8.0 * reduction };
+            add_gradient_rect(
+                hole_mesh,
+                egui::Rect::from_min_max(
+                    egui::pos2(band.x, band.top),
+                    egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
+                )
+                .intersect(pane),
+                style.canvas_background,
+                style.canvas_background,
+            );
+
+            match event.evidence {
+                LiquidityEvidence::AggressionAligned => fronts.push(EventFront::Aligned {
+                    band: front,
+                    matched: finite_unit(event.matched_fraction),
+                    full,
                     pane,
-                );
+                }),
+                LiquidityEvidence::DepthOnly => fronts.push(EventFront::DepthOnly {
+                    band: front,
+                    reduction,
+                    full,
+                    pane,
+                }),
             }
         }
     }
-    if !front_mesh.is_empty() {
-        clip.add(egui::Shape::mesh(front_mesh));
+
+    /// Carve a gap around each consumption bubble so a re-stacked wall does not
+    /// slide through it: the eaten wall ends, the bubble marks the bite, and the
+    /// fresh wall only resumes to the bubble's right.
+    fn carve_bubble_gaps(&self, hole_mesh: &mut egui::Mesh) {
+        let layout = &self.context.layout;
+        let bubbles = &self.style.bubbles;
+        for trade in self.context.bubbles() {
+            if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
+                continue;
+            }
+            let center = egui::pos2(layout.x(trade.x), layout.y(trade.y));
+            let pane = layout.pane(trade.x);
+            if !pane.contains(center) {
+                continue;
+            }
+            // Follow the bubble's own vertical nudge, so the carved gap stays
+            // centred on the bubble that will be drawn over it.
+            let center = center
+                + egui::vec2(
+                    0.0,
+                    side_offset_y(trade.side, bubbles.side_offset, layout.inverted),
+                );
+            let r = bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius);
+            // Carve from the bubble's midriff rightward: the eaten wall still
+            // touches the bubble's left half (the bubble reads as biting into
+            // it), while re-stacked liquidity cannot slide through to the right.
+            add_gradient_rect(
+                hole_mesh,
+                egui::Rect::from_min_max(
+                    egui::pos2(center.x - r * 0.4, center.y - r - 2.0),
+                    egui::pos2((center.x + r + 4.0).min(pane.right()), center.y + r + 2.0),
+                )
+                .intersect(pane),
+                self.style.canvas_background,
+                self.style.canvas_background,
+            );
+        }
     }
 }
 
@@ -475,6 +402,108 @@ enum EventFront {
         /// See [`EventFront::Aligned::pane`].
         pane: egui::Rect,
     },
+}
+
+impl EventFront {
+    /// The violet fade a depth-only pull leaves; an aligned bite has none.
+    fn add_tail(&self, palette: &Palette, mesh: &mut egui::Mesh) {
+        let Self::DepthOnly {
+            band,
+            reduction,
+            full,
+            pane,
+        } = *self
+        else {
+            return;
+        };
+        let tail = if full { 22.0 } else { 10.0 + 10.0 * reduction };
+        add_gradient_rect(
+            mesh,
+            egui::Rect::from_min_max(
+                egui::pos2(band.x, band.top),
+                egui::pos2((band.x + tail).min(pane.right()), band.bottom),
+            )
+            .intersect(pane),
+            palette
+                .depth_only
+                .gamma_multiply(if full { 0.38 } else { 0.16 + 0.18 * reduction }),
+            egui::Color32::TRANSPARENT,
+        );
+    }
+
+    /// The front line itself, and a full aligned bite's end caps.
+    fn add_front(self, palette: &Palette, mesh: &mut egui::Mesh) {
+        match self {
+            Self::Aligned {
+                band,
+                matched,
+                full,
+                pane,
+            } => {
+                let strength = matched.max(0.25);
+                add_vline(
+                    mesh,
+                    band,
+                    if full { 2.0 } else { 1.3 },
+                    palette.consumption.gamma_multiply(0.55 + 0.4 * strength),
+                    pane,
+                );
+                if full {
+                    // End caps read as "this band was fully taken here".
+                    for y in [band.top, band.bottom] {
+                        add_gradient_rect(
+                            mesh,
+                            egui::Rect::from_min_max(
+                                egui::pos2(band.x - 3.5, y - 0.75),
+                                egui::pos2(band.x + 3.5, y + 0.75),
+                            )
+                            .intersect(pane),
+                            palette.consumption.gamma_multiply(0.8),
+                            palette.consumption.gamma_multiply(0.8),
+                        );
+                    }
+                }
+            }
+            Self::DepthOnly {
+                band,
+                reduction,
+                full,
+                pane,
+            } => {
+                add_vline(
+                    mesh,
+                    band,
+                    if full { 1.6 } else { 1.1 },
+                    palette.depth_only.gamma_multiply(if full {
+                        0.9
+                    } else {
+                        0.55 + 0.3 * reduction
+                    }),
+                    pane,
+                );
+            }
+        }
+    }
+}
+
+/// One front as a solid quad spanning the band at its `x`, clipped to its pane.
+fn add_vline(
+    mesh: &mut egui::Mesh,
+    band: EventBand,
+    width: f32,
+    color: egui::Color32,
+    pane: egui::Rect,
+) {
+    add_gradient_rect(
+        mesh,
+        egui::Rect::from_min_max(
+            egui::pos2(band.x - width * 0.5, band.top),
+            egui::pos2(band.x + width * 0.5, band.bottom),
+        )
+        .intersect(pane),
+        color,
+        color,
+    );
 }
 
 pub(super) fn marker_band(band: EventBand, reduction: f32, full: bool) -> EventBand {

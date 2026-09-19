@@ -32,13 +32,16 @@ use std::time::Duration;
 
 use quantick_feed_mt5::bridge_log::{BridgeSeverity, report_for_line};
 use quantick_feed_mt5::{BoundedLine, BoundedLineReader, MAX_LINE_BYTES};
-use tokio::process::Command;
+use tokio::process::{Child, ChildStderr, Command};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::{MetaTraderSettings, Mt5Endpoint};
 
 use super::FeedNotice;
+
+mod autostart;
+use autostart::{Action, Autostart};
 
 /// How long the autostart waits for a bridge that is already running before
 /// launching its own. Long enough for an attached Expert Advisor's reconnect
@@ -196,302 +199,44 @@ pub struct Supervision {
 /// after [`AUTOSTART_ATTEMPTS`] *consecutive* failures, which means the setup
 /// is wrong rather than the terminal briefly away, and says so.
 pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
+    let Some(mut launcher) = BridgeLauncher::prepare(&settings, &sup).await else {
+        return;
+    };
     let symbol = sup.symbol.as_str();
-    let Some((host, port)) = sup.endpoint.dial.as_ref() else {
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
-            symbol = %symbol,
-            listen_addr = %sup.endpoint.listen_addr,
-            action = "wait_for_manual_bridge",
-            "cannot derive a dial address from listen_addr; not starting a bridge"
-        );
-        return;
-    };
-    // Named apart from the `port` above rather than shadowing it: this is the
-    // command-line argument, and a reader (or a log field) silently changing
-    // from u16 to String is exactly the kind of thing shadowing hides.
-    let (host, port_arg) = (host.as_str(), port.to_string());
-    let Some((program, extra)) = settings.bridge_command.split_first() else {
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
-            symbol = %symbol,
-            action = "wait_for_manual_bridge",
-            "bridge_command is empty; not starting a bridge"
-        );
-        return;
-    };
-
-    // The script argument is resolved once, up front: a path that does not
-    // exist is a setup problem to report, not something five launch attempts
-    // will fix.
-    let roots = default_search_roots();
-    let mut args: Vec<String> = extra.to_vec();
-    if let Some(first) = args.first_mut() {
-        match resolve_script(first, &roots) {
-            Some(found) => *first = found.to_string_lossy().into_owned(),
-            None => {
-                let looked_in = roots
-                    .iter()
-                    .map(|root| root.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BRIDGE_SCRIPT_NOT_FOUND",
-                    symbol = %symbol,
-                    script = %first,
-                    looked_in = %looked_in,
-                    action = "wait_for_manual_bridge",
-                    "cannot find the bridge script; not starting a bridge"
-                );
-                let _ = sup
-                    .notices
-                    .send(FeedNotice::attention(
-                        "quantick cannot find the MetaTrader bridge script",
-                        format!(
-                            "Looked for {first} under: {looked_in}. Run quantick from its \
-                             folder, or set bridge_command in your configuration."
-                        ),
-                    ))
-                    .await;
-                return;
-            }
-        }
-    }
-
-    let candidates = interpreter_candidates(program);
-    // Which interpreter worked, so a retry does not re-probe the ones that are
-    // not installed on this machine.
-    let mut chosen: Option<String> = None;
-
-    // Consecutive failures, not attempts: the supervisor outlives any single
-    // bridge, because the terminal it depends on can restart at lunchtime and
-    // the chart should come back on its own.
-    let mut failures = 0_u32;
-    let mut watching_logged = false;
-    // The grace period belongs to every *episode* of silence, not just the
-    // first. Someone else's bridge — an Expert Advisor on a chart — reconnects
-    // on its own schedule (five seconds, in the one this repo ships), and
-    // racing it with our own process is what the grace exists to avoid. Losing
-    // a session arms it again.
-    let mut grace_pending = true;
-    while failures < AUTOSTART_ATTEMPTS {
-        let attempt = failures + 1;
-        if sup.connected.load(Ordering::Relaxed) {
-            // Somebody is feeding us — our own bridge, one started by hand, or
-            // an Expert Advisor. Watch rather than return: when that one goes
-            // away, this is what brings the chart back.
-            if !watching_logged {
-                info!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
-                    symbol = %symbol,
-                    action = "watch_running_bridge",
-                    "a bridge is connected; quantick leaves it alone and watches"
-                );
-                watching_logged = true;
-            }
-            failures = 0;
-            grace_pending = true;
-            tokio::time::sleep(WATCH_INTERVAL).await;
-            continue;
-        }
-        watching_logged = false;
-
-        if grace_pending {
-            grace_pending = false;
-            tokio::time::sleep(AUTOSTART_GRACE).await;
-            // Whoever we were waiting for may have arrived while we waited —
-            // which is the point of waiting.
-            if sup.connected.load(Ordering::Relaxed) {
-                continue;
-            }
-        }
-
-        let _ = sup
-            .notices
-            .send(FeedNotice::working("starting the MetaTrader bridge"))
-            .await;
-
-        let try_now: Vec<String> = match &chosen {
-            Some(program) => vec![program.clone()],
-            None => candidates.clone(),
-        };
-        let mut child = None;
-        let clock_cache = clock_cache_path(sup.clock_cache_dir.as_deref());
-        for program in try_now {
-            let mut command = Command::new(&program);
-            command
-                .args(&args)
-                .arg("--symbol")
-                .arg(symbol)
-                .arg("--host")
-                .arg(host)
-                .arg("--port")
-                .arg(&port_arg);
-            // Where to remember the broker clock it measures, so the next
-            // export finds it whatever folder that export runs from.
-            if let Some(cache) = clock_cache.as_ref() {
-                command.arg("--clock-cache").arg(cache);
-            }
-            command
-                .stdin(Stdio::null())
-                // Read rather than inherit: the same lines still reach the log
-                // (one story, one place), and they also become something the
-                // chart can show.
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-            match command.spawn() {
-                Ok(spawned) => {
+    let mut machine = Autostart::new(AUTOSTART_ATTEMPTS);
+    let mut action = machine.poll(sup.connected.load(Ordering::Relaxed));
+    loop {
+        action = match action {
+            Action::Watch { announce } => {
+                if announce {
                     info!(
                         target: "quantick::app",
                         schema_version = 1_u8,
-                        event_code = "MT5_BRIDGE_SPAWNED",
+                        event_code = "MT5_BRIDGE_AUTOSTART_NOT_NEEDED",
                         symbol = %symbol,
-                        program = %program,
-                        pid = spawned.id(),
-                        attempt,
-                        host,
-                        port,
-                        "started a bridge for this feed"
-                    );
-                    chosen = Some(program);
-                    child = Some(spawned);
-                    break;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    info!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "MT5_BRIDGE_INTERPRETER_ABSENT",
-                        symbol = %symbol,
-                        program = %program,
-                        action = "try_next_candidate",
-                        "no such interpreter on PATH"
+                        action = "watch_running_bridge",
+                        "a bridge is connected; quantick leaves it alone and watches"
                     );
                 }
-                Err(error) => {
-                    warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "MT5_BRIDGE_SPAWN_FAILED",
-                        symbol = %symbol,
-                        program = %program,
-                        attempt,
-                        %error,
-                        action = "try_next_candidate",
-                        "could not start the bridge"
-                    );
-                }
+                tokio::time::sleep(WATCH_INTERVAL).await;
+                machine.poll(sup.connected.load(Ordering::Relaxed))
             }
-        }
-
-        let Some(mut child) = child else {
-            let tried = candidates.join(" or ");
-            let _ = sup
-                .notices
-                .send(FeedNotice::attention(
-                    "quantick could not start the MetaTrader bridge",
-                    format!(
-                        "No Python interpreter was found (tried {tried}). Install Python \
-                         and the MetaTrader5 package, then reconnect."
-                    ),
-                ))
-                .await;
-            warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "MT5_BRIDGE_NO_INTERPRETER",
-                symbol = %symbol,
-                tried = %tried,
-                action = "retry_after_backoff",
-                "no interpreter could be started"
-            );
-            failures += 1;
-            tokio::time::sleep(AUTOSTART_RETRY).await;
-            continue;
+            Action::Grace => {
+                tokio::time::sleep(AUTOSTART_GRACE).await;
+                // Whoever we were waiting for may have arrived while we waited
+                // — which is the point of waiting.
+                machine.poll(sup.connected.load(Ordering::Relaxed))
+            }
+            Action::Launch { attempt } => {
+                launcher.run(attempt).await;
+                machine.bridge_down()
+            }
+            Action::Backoff => {
+                tokio::time::sleep(AUTOSTART_RETRY).await;
+                machine.poll(sup.connected.load(Ordering::Relaxed))
+            }
+            Action::GiveUp => break,
         };
-
-        // Whether the bridge explained itself before exiting. When it did, the
-        // exit needs no second message: the reason is already on screen.
-        let mut explained = false;
-        if let Some(stderr) = child.stderr.take() {
-            // Bounded rather than `AsyncBufReadExt::lines`, which buffers a
-            // line with no newline in it forever. The same reader guards the
-            // socket path for the same reason (PR #59); a bridge is a local
-            // process, but `bridge_command` is configuration, and a runaway
-            // one must not be able to grow the chart's memory without limit.
-            let mut lines = BoundedLineReader::new(stderr);
-            loop {
-                match lines.next_line().await {
-                    Ok(BoundedLine::Line(line)) => {
-                        if forward_bridge_line(&line, symbol, &sup.notices).await {
-                            explained = true;
-                        }
-                    }
-                    Ok(BoundedLine::Eof) => break,
-                    // Neither of these ends the reading: the bridge is alive
-                    // and its next line may be the one that matters. They are
-                    // logged rather than dropped, because "every line reaches
-                    // the log" is only true if the unreadable ones say so too.
-                    Ok(BoundedLine::TooLong) => warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "MT5_BRIDGE_LINE_TOO_LONG",
-                        symbol = %symbol,
-                        max_bytes = MAX_LINE_BYTES as u64,
-                        action = "skip_line_keep_reading",
-                        "a bridge log line exceeded the cap and was skipped"
-                    ),
-                    Ok(BoundedLine::NotUtf8 { len }) => warn!(
-                        target: "quantick::app",
-                        schema_version = 1_u8,
-                        event_code = "MT5_BRIDGE_LINE_NOT_UTF8",
-                        symbol = %symbol,
-                        bytes = len,
-                        action = "skip_line_keep_reading",
-                        "a bridge log line was not valid UTF-8 and was skipped"
-                    ),
-                    Err(error) => {
-                        warn!(
-                            target: "quantick::app",
-                            schema_version = 1_u8,
-                            event_code = "MT5_BRIDGE_STDERR_READ_FAILED",
-                            symbol = %symbol,
-                            %error,
-                            action = "stop_reading_wait_for_exit",
-                            "could not read the bridge's output"
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-
-        let status = child.wait().await;
-        warn!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "MT5_BRIDGE_EXITED",
-            symbol = %symbol,
-            attempt,
-            max_attempts = AUTOSTART_ATTEMPTS,
-            status = ?status.as_ref().map(|s| s.code()),
-            explained,
-            action = "retry_after_backoff",
-            "the bridge quantick started has exited"
-        );
-        if let Some(notice) = exit_notice(explained, status.ok().and_then(|s| s.code())) {
-            let _ = sup.notices.send(notice).await;
-        }
-        failures += 1;
-        tokio::time::sleep(AUTOSTART_RETRY).await;
     }
 
     warn!(
@@ -509,6 +254,313 @@ pub async fn supervise(settings: MetaTraderSettings, sup: Supervision) {
             "the MetaTrader bridge would not stay running",
             "quantick stopped retrying after several attempts. Fix what the last \
              message reported, then press Try again.",
+        ))
+        .await;
+}
+
+/// Everything one launch attempt needs, resolved once before the first.
+///
+/// The setup failures — no dial address, no command, no script — are decided
+/// in [`BridgeLauncher::prepare`] and reported there, because five launch
+/// attempts will not fix them. What remains per attempt is spawning an
+/// interpreter and listening to it until it exits.
+struct BridgeLauncher<'a> {
+    symbol: &'a str,
+    host: &'a str,
+    port: u16,
+    /// Named apart from `port` rather than shadowing it: this is the
+    /// command-line argument, and a reader (or a log field) silently changing
+    /// from u16 to String is exactly the kind of thing shadowing hides.
+    port_arg: String,
+    /// The bridge command's arguments, the script already resolved.
+    args: Vec<String>,
+    candidates: Vec<String>,
+    /// Which interpreter worked, so a retry does not re-probe the ones that
+    /// are not installed on this machine.
+    chosen: Option<String>,
+    /// Where to remember the broker clock the bridge measures, so the next
+    /// export finds it whatever folder that export runs from.
+    clock_cache: Option<PathBuf>,
+    notices: &'a mpsc::Sender<FeedNotice>,
+}
+
+impl<'a> BridgeLauncher<'a> {
+    /// Resolve the dial address, the command and the script, or report why
+    /// no bridge can be started and return `None`.
+    async fn prepare(settings: &'a MetaTraderSettings, sup: &'a Supervision) -> Option<Self> {
+        let symbol = sup.symbol.as_str();
+        let Some((host, port)) = sup.endpoint.dial.as_ref() else {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
+                symbol = %symbol,
+                listen_addr = %sup.endpoint.listen_addr,
+                action = "wait_for_manual_bridge",
+                "cannot derive a dial address from listen_addr; not starting a bridge"
+            );
+            return None;
+        };
+        let Some((program, extra)) = settings.bridge_command.split_first() else {
+            warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_BRIDGE_AUTOSTART_SKIPPED",
+                symbol = %symbol,
+                action = "wait_for_manual_bridge",
+                "bridge_command is empty; not starting a bridge"
+            );
+            return None;
+        };
+        // The script argument is resolved once, up front: a path that does not
+        // exist is a setup problem to report, not something five launch
+        // attempts will fix.
+        let roots = default_search_roots();
+        let mut args: Vec<String> = extra.to_vec();
+        if let Some(first) = args.first_mut() {
+            match resolve_script(first, &roots) {
+                Some(found) => *first = found.to_string_lossy().into_owned(),
+                None => {
+                    report_missing_script(symbol, first, &roots, &sup.notices).await;
+                    return None;
+                }
+            }
+        }
+        Some(Self {
+            symbol,
+            host: host.as_str(),
+            port: *port,
+            port_arg: port.to_string(),
+            args,
+            candidates: interpreter_candidates(program),
+            chosen: None,
+            clock_cache: clock_cache_path(sup.clock_cache_dir.as_deref()),
+            notices: &sup.notices,
+        })
+    }
+
+    /// One launch attempt, start to exit. Returns when the bridge could not be
+    /// started or has exited — either way, a failure the supervisor counts.
+    async fn run(&mut self, attempt: u32) {
+        let _ = self
+            .notices
+            .send(FeedNotice::working("starting the MetaTrader bridge"))
+            .await;
+        let Some(mut child) = self.spawn(attempt) else {
+            self.report_no_interpreter().await;
+            return;
+        };
+        // Whether the bridge explained itself before exiting. When it did, the
+        // exit needs no second message: the reason is already on screen.
+        let explained = match child.stderr.take() {
+            Some(stderr) => self.listen(stderr).await,
+            None => false,
+        };
+        let status = child.wait().await;
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_BRIDGE_EXITED",
+            symbol = %self.symbol,
+            attempt,
+            max_attempts = AUTOSTART_ATTEMPTS,
+            status = ?status.as_ref().map(|s| s.code()),
+            explained,
+            action = "retry_after_backoff",
+            "the bridge quantick started has exited"
+        );
+        if let Some(notice) = exit_notice(explained, status.ok().and_then(|s| s.code())) {
+            let _ = self.notices.send(notice).await;
+        }
+    }
+
+    /// Start the bridge with the first interpreter that exists, remembering it.
+    fn spawn(&mut self, attempt: u32) -> Option<Child> {
+        let try_now: Vec<String> = match &self.chosen {
+            Some(program) => vec![program.clone()],
+            None => self.candidates.clone(),
+        };
+        for program in try_now {
+            match self.command(&program).spawn() {
+                Ok(spawned) => {
+                    info!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_SPAWNED",
+                        symbol = %self.symbol,
+                        program = %program,
+                        pid = spawned.id(),
+                        attempt,
+                        host = self.host,
+                        port = self.port,
+                        "started a bridge for this feed"
+                    );
+                    self.chosen = Some(program);
+                    return Some(spawned);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    info!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_INTERPRETER_ABSENT",
+                        symbol = %self.symbol,
+                        program = %program,
+                        action = "try_next_candidate",
+                        "no such interpreter on PATH"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_SPAWN_FAILED",
+                        symbol = %self.symbol,
+                        program = %program,
+                        attempt,
+                        %error,
+                        action = "try_next_candidate",
+                        "could not start the bridge"
+                    );
+                }
+            }
+        }
+        None
+    }
+
+    /// The bridge command line for one interpreter.
+    fn command(&self, program: &str) -> Command {
+        let mut command = Command::new(program);
+        command
+            .args(&self.args)
+            .arg("--symbol")
+            .arg(self.symbol)
+            .arg("--host")
+            .arg(self.host)
+            .arg("--port")
+            .arg(&self.port_arg);
+        if let Some(cache) = self.clock_cache.as_ref() {
+            command.arg("--clock-cache").arg(cache);
+        }
+        command
+            .stdin(Stdio::null())
+            // Read rather than inherit: the same lines still reach the log
+            // (one story, one place), and they also become something the chart
+            // can show.
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        command
+    }
+
+    /// Read the bridge's stderr until it closes, forwarding every line.
+    /// Returns whether a line explained the exit that follows.
+    async fn listen(&self, stderr: ChildStderr) -> bool {
+        let mut explained = false;
+        // Bounded rather than `AsyncBufReadExt::lines`, which buffers a line
+        // with no newline in it forever. The same reader guards the socket
+        // path for the same reason (PR #59); a bridge is a local process, but
+        // `bridge_command` is configuration, and a runaway one must not be
+        // able to grow the chart's memory without limit.
+        let mut lines = BoundedLineReader::new(stderr);
+        loop {
+            match lines.next_line().await {
+                Ok(BoundedLine::Line(line)) => {
+                    if forward_bridge_line(&line, self.symbol, self.notices).await {
+                        explained = true;
+                    }
+                }
+                Ok(BoundedLine::Eof) => break,
+                // Neither of these ends the reading: the bridge is alive and
+                // its next line may be the one that matters. They are logged
+                // rather than dropped, because "every line reaches the log" is
+                // only true if the unreadable ones say so too.
+                Ok(BoundedLine::TooLong) => warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_LINE_TOO_LONG",
+                    symbol = %self.symbol,
+                    max_bytes = MAX_LINE_BYTES as u64,
+                    action = "skip_line_keep_reading",
+                    "a bridge log line exceeded the cap and was skipped"
+                ),
+                Ok(BoundedLine::NotUtf8 { len }) => warn!(
+                    target: "quantick::app",
+                    schema_version = 1_u8,
+                    event_code = "MT5_BRIDGE_LINE_NOT_UTF8",
+                    symbol = %self.symbol,
+                    bytes = len,
+                    action = "skip_line_keep_reading",
+                    "a bridge log line was not valid UTF-8 and was skipped"
+                ),
+                Err(error) => {
+                    warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "MT5_BRIDGE_STDERR_READ_FAILED",
+                        symbol = %self.symbol,
+                        %error,
+                        action = "stop_reading_wait_for_exit",
+                        "could not read the bridge's output"
+                    );
+                    break;
+                }
+            }
+        }
+        explained
+    }
+
+    async fn report_no_interpreter(&self) {
+        let tried = self.candidates.join(" or ");
+        let _ = self
+            .notices
+            .send(FeedNotice::attention(
+                "quantick could not start the MetaTrader bridge",
+                format!(
+                    "No Python interpreter was found (tried {tried}). Install Python \
+                     and the MetaTrader5 package, then reconnect."
+                ),
+            ))
+            .await;
+        warn!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "MT5_BRIDGE_NO_INTERPRETER",
+            symbol = %self.symbol,
+            tried = %tried,
+            action = "retry_after_backoff",
+            "no interpreter could be started"
+        );
+    }
+}
+
+/// Say where the bridge script was looked for, in the log and on the chart.
+async fn report_missing_script(
+    symbol: &str,
+    script: &str,
+    roots: &[PathBuf],
+    notices: &mpsc::Sender<FeedNotice>,
+) {
+    let looked_in = roots
+        .iter()
+        .map(|root| root.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    warn!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "MT5_BRIDGE_SCRIPT_NOT_FOUND",
+        symbol = %symbol,
+        script = %script,
+        looked_in = %looked_in,
+        action = "wait_for_manual_bridge",
+        "cannot find the bridge script; not starting a bridge"
+    );
+    let _ = notices
+        .send(FeedNotice::attention(
+            "quantick cannot find the MetaTrader bridge script",
+            format!(
+                "Looked for {script} under: {looked_in}. Run quantick from its \
+                 folder, or set bridge_command in your configuration."
+            ),
         ))
         .await;
 }
