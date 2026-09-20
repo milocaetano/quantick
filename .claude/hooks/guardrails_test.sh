@@ -1359,6 +1359,21 @@ printf '%s
 ' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"fixture refusal"}}'
 STUB
 run_completion "a readiness denial still blocks completion"     mission fail 'refused this PR'
+# The empty/non-empty test this replaced was also what caught a readiness gate
+# that broke. Unknown is not permission, so both shapes of breakage still fail.
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf 'guardrails.sh: line 12: unexpected EOF
+' >&2
+exit 2
+STUB
+run_completion "a readiness gate that exits non-zero blocks completion"     mission fail 'could not be evaluated'
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf 'Traceback: the readiness gate fell over but exited zero
+'
+STUB
+run_completion "readiness output that is neither decision nor advisory blocks completion"     mission fail 'neither a decision nor an advisory'
 cp "$root/completion/guardrails-real" "$root/hooks/guardrails.sh"
 
 cp "$root/wt/.claude/skills/mission/SKILL.md" "$root/completion/mission-skill"

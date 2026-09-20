@@ -58,10 +58,18 @@ fi
 # that advisory ceiling unable to complete a mission, which is the opposite
 # of what `docs/quality/read-cost/ledger.md` states the ceiling is for.
 payload=$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"gh pr ready %s"}}' "$worktree" "$pr")
-readiness=$(printf '%s' "$payload" | sh "$script_dir/guardrails.sh" pr-gate 2>&1)
+readiness=$(printf '%s' "$payload" | sh "$script_dir/guardrails.sh" pr-gate 2>&1) ||
+    fail "The shared readiness gate could not be evaluated: $readiness"
 case "$readiness" in
+    '') ;;
     *'"permissionDecision":"deny"'*)
         fail "The shared readiness gate refused this PR: $readiness"
+        ;;
+    *'"hookEventName":"PreToolUse"'*) ;;
+    *)
+        # Neither a decision nor an advisory: the gate broke while exiting
+        # zero, and unknown is not permission.
+        fail "The shared readiness gate returned neither a decision nor an advisory: $readiness"
         ;;
 esac
 
