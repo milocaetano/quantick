@@ -454,11 +454,11 @@ jobs:
 
   # `cargo test --workspace` was 8m 53s of the Windows job's 15m 08s, and one
   # crate owns most of it. The three jobs below are a partition of the
-  # workspace — the six crates that own half its test binaries, everything else
-  # but quantick-app, and quantick-app — so together they run exactly what the
+  # workspace — the ten crates that carry most of its cost, everything else but
+  # quantick-app, and quantick-app — so together they run exactly what the
   # single `--workspace` run ran, each crate once.
   #
-  # The `--exclude` list and the `-p` list are the same six names, read in
+  # The `--exclude` list and the `-p` list are the same ten names, read in
   # opposite directions, which is exactly the pair that rots when one side is
   # edited. Nothing in a workflow file checks that, so
   # `tools/ci/windows_test_coverage.py` reads the selectors back out of this
@@ -467,9 +467,15 @@ jobs:
   # which is why `windows` above may run one crate again under a step named for
   # the diagnostic it is. The guard runs in `ci`.
   #
-  # The six were chosen by test-binary count — 57 of the 113 the non-app half
-  # builds — because the time is in linking those binaries, not in running
-  # them. Rebalancing the lists is a one-line edit the guard re-proves.
+  # The ten were chosen by measurement, and the first guess was wrong. Test
+  # binary count looked like the cost — 57 of the 113 the non-app half builds —
+  # and dealing on it gave 138s against 369s, because linking is only half the
+  # story: the four feed crates are the only ones outside `app` that pull
+  # tokio, reqwest and tungstenite, and compiling that stack cost the half
+  # holding them more than all its linking. They sit with the six crates that
+  # own the test binaries, so one job compiles the network stack and the other
+  # compiles none of it. Rebalancing is a one-line edit on each side, which the
+  # guard re-proves.
   windows-heavy-tests:
     if: *full-ci
     runs-on: windows-latest
@@ -482,7 +488,7 @@ jobs:
           desktop-deps: "false"
           cache-key: windows
       - name: Test
-        run: cargo test -p quantick-engine -p quantick-control -p quantick-pine -p quantick-indicators -p quantick-workspace -p quantick-guards
+        run: cargo test -p quantick-engine -p quantick-control -p quantick-pine -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 
   windows-tests:
     if: *full-ci
@@ -496,7 +502,7 @@ jobs:
           desktop-deps: "false"
           cache-key: windows
       - name: Test
-        run: cargo test --workspace --exclude quantick-app --exclude quantick-engine --exclude quantick-control --exclude quantick-pine --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards
+        run: cargo test --workspace --exclude quantick-app --exclude quantick-engine --exclude quantick-control --exclude quantick-pine --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
 
   windows-app-tests:
     if: *full-ci
