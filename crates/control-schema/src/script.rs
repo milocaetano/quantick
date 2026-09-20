@@ -38,6 +38,8 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::{Value, json};
 
+use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use quantick_control::registry::IdempotencyPolicy::Forbidden;
 use quantick_control_host::admission::known_error;
 
 // The module both script capabilities belong to — the same module the
@@ -210,3 +212,27 @@ pub fn compile_error(errors: &[quantick_pine::PineError], source: &str) -> Contr
     control_error.context.next_steps = vec!["Fix the reported spans and attach again.".to_owned()];
     control_error
 }
+
+pub const SCRIPT_TEST: &str = "an_interrupted_script_attach_or_detach_is_resolved_by_its_readback";
+/// How a client reconciles an interrupted script attach or detach.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        "indicator.script.attach",
+        Forbidden,
+        SCRIPT_ATTACHED_EVENT_KIND,
+        "payload.script.slot_id",
+        "an event after the pre-call cursor names a new `slot_id`",
+        &[SCRIPT_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    journal(
+        "indicator.script.detach",
+        Forbidden,
+        SCRIPT_DETACHED_EVENT_KIND,
+        "payload.script.slot_id",
+        "an event after the pre-call cursor names the `slot_id` asked for",
+        &[SCRIPT_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+];

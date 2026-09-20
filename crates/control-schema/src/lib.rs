@@ -20,6 +20,7 @@ pub mod layout;
 pub mod layout_v2;
 pub mod notify;
 pub mod orderflow;
+pub mod readback;
 pub mod recovery;
 pub mod retry_matrix;
 pub mod scene;

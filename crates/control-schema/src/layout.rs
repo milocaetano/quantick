@@ -12,7 +12,6 @@
 //! under a grant whose own words deny it would be a trust bug with no surface
 //! to find it on.
 
-use crate::retry_matrix::Readback;
 use quantick_control_host::authority::{
     CAPABILITY_VERSION, COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID,
     NO_CONFIRMATION_ID, SNAPSHOT_CAPABILITY_ID, UI_BOUNDED_COST_ID,
@@ -36,6 +35,9 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::Value;
 
+use crate::readback::{EVERY_OPTIONAL_TEST, Readback, UNKNOWN_OUTCOME_TEST, snapshot};
+use crate::{chart, workspace};
+use quantick_control::registry::IdempotencyPolicy::Optional;
 /// The module every layout capability belongs to.
 pub use quantick_control_host::authority::LAYOUT_MODULE_ID;
 
@@ -306,3 +308,120 @@ pub const READBACK: Readback = Readback {
     applied_when: "the addressed context divider's bounds reflect the applied vertical position",
     proven_by: &["every_reachable_optional_row_replays_a_dropped_answer_and_begins_once"],
 };
+
+pub const LAYOUT_TEST: &str = "a_dropped_layout_answer_is_replayed_and_the_layout_is_made_once";
+
+/// Version 2 of the layout calls answers through the gateway, exactly.
+pub const LAYOUT_V2_TEST: &str = "layout_v2_answers_with_the_exact_share_and_v1_is_still_there";
+
+/// A version-1 answer the wire refuses says the call may have acted.
+pub const LAYOUT_V1_REFUSAL_TEST: &str =
+    "a_v1_layout_answer_the_wire_refuses_says_the_call_may_have_acted";
+
+pub const LAYOUT_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST];
+
+/// Collapse is also the call the v1 refusal test drives.
+pub const LAYOUT_COLLAPSE_PROOF: &[&str] =
+    &[EVERY_OPTIONAL_TEST, LAYOUT_V2_TEST, LAYOUT_V1_REFUSAL_TEST];
+
+/// The layout-tab calls have one version and are not called by the v2 test.
+pub const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+
+/// `layout.pane.set_bar_spec` has a v2, which the every-optional-row test
+/// drives; the v2 test predates it and does not call it.
+pub const BAR_SPEC_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+/// How a client reconciles an interrupted call that rearranges the cockpit.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    READBACK,
+    snapshot(
+        "layout.focus.set",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].panes[].focused",
+        "the pane at the address asked for is the focused one, per pane since two context charts share a side; the flag is reported for the active tab only, and a collapsed column reports the flow pane, so reconcile a background or collapsed tab once it is shown",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.collapse",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].context_collapsed",
+        "the tab's context column reads collapsed",
+        LAYOUT_COLLAPSE_PROOF,
+    ),
+    snapshot(
+        "layout.pane.expand",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].context_collapsed",
+        "the tab's context column no longer reads collapsed",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.move",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].panes[].pane_id",
+        "the moved pane's `pane_id` is listed at the address asked for",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.resize",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].split_fraction",
+        "the tab's split is the share asked for",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.set_interval",
+        Optional,
+        chart::SCOPE_ID,
+        "panes[].bar_spec",
+        "the pane's bar spec is the interval asked for; it is the spec the bars were built with, which follows a new interval within two frames on the active tab and when a background tab is next shown, so read until it settles",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.pane.set_bar_spec",
+        Optional,
+        chart::SCOPE_ID,
+        "panes[].bar_spec",
+        "the pane's bar spec is the rule asked for; it is the spec the bars were built with, which follows the call once the pane is re-cut, so read until it settles",
+        BAR_SPEC_PROOF,
+    ),
+    snapshot(
+        "layout.preset.apply",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].layout",
+        "the tab's layout is the preset asked for",
+        LAYOUT_PROOF,
+    ),
+    snapshot(
+        "layout.tab.create",
+        Optional,
+        workspace::SCOPE_ID,
+        "layouts[].name",
+        "one more layout than the pre-call reading listed",
+        &[LAYOUT_TEST, EVERY_OPTIONAL_TEST, UNKNOWN_OUTCOME_TEST],
+    ),
+    snapshot(
+        "layout.tab.rename",
+        Optional,
+        workspace::SCOPE_ID,
+        "layouts[].name",
+        "the layout carries the name asked for",
+        LAYOUT_TAB_PROOF,
+    ),
+    snapshot(
+        "layout.tab.switch",
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].panes[].layout_id",
+        "the pane the call named (the active tab's focused pane unless `tab_id`/`pane` say otherwise) carries the layout asked for",
+        LAYOUT_TAB_PROOF,
+    ),
+];

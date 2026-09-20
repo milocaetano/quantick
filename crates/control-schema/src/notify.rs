@@ -32,6 +32,8 @@ use quantick_control::{
 
 use schemars::JsonSchema;
 
+use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use quantick_control::registry::IdempotencyPolicy::Forbidden;
 use serde::{Deserialize, Serialize};
 
 // The module the notification capabilities belong to.
@@ -170,3 +172,35 @@ pub fn notify_descriptor(
         pagination: None,
     }
 }
+
+pub const NOTIFY_TEST: &str = "an_interrupted_notification_is_resolved_by_its_readback";
+/// How a client reconciles an interrupted notification.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        "notify.popup",
+        Forbidden,
+        NOTIFICATION_EVENT_KIND,
+        "payload.message",
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    journal(
+        "notify.sound",
+        Forbidden,
+        NOTIFICATION_EVENT_KIND,
+        "payload.message",
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    journal(
+        "notify.toast",
+        Forbidden,
+        NOTIFICATION_EVENT_KIND,
+        "payload.message",
+        "an event after the pre-call cursor carries the call's own `message`; send one unique to the call",
+        &[NOTIFY_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+];

@@ -39,6 +39,8 @@ use quantick_indicators::{InputSpec, InputValue, PlotSpec, PlotStyle, Rgba8, Sou
 
 use schemars::JsonSchema;
 
+use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, snapshot};
+use quantick_control::registry::IdempotencyPolicy::Forbidden;
 use serde::{Deserialize, Serialize};
 
 pub const INDICATORS_SCOPE_ID: &str = "analysis.indicators";
@@ -358,3 +360,69 @@ pub fn colour(value: Rgba8) -> String {
         value.r, value.g, value.b, value.a
     )
 }
+
+pub const ANNOTATION_TEST: &str = "an_interrupted_annotation_is_resolved_by_its_readback";
+
+pub const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
+/// How a client reconciles an interrupted call that puts a drawing on the chart, or takes one off.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    snapshot(
+        "annotate.arrow.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fixed_range_profile.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_projection.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.fib_retracement.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.label.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.remove",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].drawing_id",
+        "the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened",
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.zone.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+];

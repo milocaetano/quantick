@@ -10,6 +10,8 @@
 //! permissions are not in the observer ceiling, so a remote invocation is
 //! refused before dispatch.
 
+use crate::readback::{EVERY_FORBIDDEN_TEST, Readback, journal};
+use quantick_control::registry::IdempotencyPolicy::Forbidden;
 use quantick_control_host::authority::CAPABILITY_VERSION;
 
 /// The first registered action: a human (or, later, an agent) points at what
@@ -22,3 +24,17 @@ pub const MARK_EVENT_KIND: &str = "attention.mark.created";
 
 /// The version of `attention.mark.create` the hotkey and the hook invoke.
 pub const MARK_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+
+pub const MARK_TEST: &str = "an_interrupted_attention_mark_is_resolved_by_its_readback";
+/// How a client reconciles an interrupted attention mark.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[journal(
+    "attention.mark.create",
+    Forbidden,
+    MARK_EVENT_KIND,
+    "payload.note",
+    "an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other",
+    &[MARK_TEST, EVERY_FORBIDDEN_TEST],
+)];
