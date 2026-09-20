@@ -59,7 +59,7 @@ pub struct ChartPane {
     /// and deliberately leaves this unchanged. Anything that can rewrite,
     /// prepend, remove, or re-cut a closed bar advances it, so a cursor can
     /// reject a mixed view instead of silently continuing over changed data.
-    pub(super) pagination_revision: u64,
+    pagination_revision: u64,
     /// The tape, and everything read off it: the live lane, the heatmap, the
     /// bubbles, the live strip.
     ///
