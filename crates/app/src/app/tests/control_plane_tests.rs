@@ -5133,11 +5133,6 @@ fn captures_parked_behind_the_first_ask_for_the_next_frame_when_the_budget_is_sp
     std::fs::remove_dir_all(directory).unwrap();
 }
 
-/// A bundle always carries a page of the journal and the effective
-/// configuration, so it always requires the scopes those belong to —
-/// whatever scopes were named.
-///
-/// This is the aggregation hole the tier exists not to have: without it, a
 /// Asking for the analyst tier does not reach it: the trader's grant caps it.
 ///
 /// The handshake intersects the requested ceiling with the granted one and
@@ -5222,6 +5217,11 @@ fn asking_for_the_analyst_ceiling_against_an_observer_grant_lands_on_observer() 
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// A bundle always carries a page of the journal and the effective
+/// configuration, so it always requires the scopes those belong to —
+/// whatever scopes were named.
+///
+/// This is the aggregation hole the tier exists not to have: without it, a
 /// connection refused `observe.events` reads the journal by asking for a
 /// bundle of `system.info`, and because the manifest would not record the
 /// scope either, the read-time recheck could never notice.
