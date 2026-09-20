@@ -23,6 +23,8 @@ use crate::control::contract::ObserverContract;
 const CONTROL_PANEL_DEFAULT_WIDTH_PX: f32 = 520.0;
 /// The gap between the panel's sections.
 const CONTROL_PANEL_SECTION_SPACING_PX: f32 = 6.0;
+/// How much of the screen the panel's body may take before it scrolls.
+const CONTROL_PANEL_MAX_SCREEN_FRACTION: f32 = 0.8;
 
 /// One section of scope checkboxes: every selectable permission the filter
 /// admits, ticked into the grant for the next connection.
@@ -78,11 +80,30 @@ impl ControlAccess {
             return;
         }
         let mut open = self.show_panel;
+        // The body is four consent sections, a button and the client list, and
+        // it grew past the window the analyst tier was added to it: on a
+        // 1009-point screen the enabled state reached the bottom edge with the
+        // client list under it. An auto-sized window does not scroll by
+        // itself, so the trader could not reach the list or the disable
+        // button at all. The scroll area keeps the panel inside the screen
+        // whatever tier is added next.
+        // The whole window, not `available_rect`: by the time the panel draws,
+        // the chart and the dock have already claimed their space, and a
+        // fraction of what is left is a fraction of the wrong rectangle — it
+        // made the panel a third of its own content tall.
+        let max_height = ctx.screen_rect().height() * CONTROL_PANEL_MAX_SCREEN_FRACTION;
         eframe::egui::Window::new("Local agent access")
             .id(eframe::egui::Id::new("control_access_panel"))
             .open(&mut open)
             .default_width(CONTROL_PANEL_DEFAULT_WIDTH_PX)
             .resizable(true)
+            // A scrolling window stops sizing itself to its content, so the
+            // default height has to be asked for as well: without it egui
+            // opens the panel at its own default and clips the consent text a
+            // third of the way in.
+            .default_height(max_height)
+            .max_height(max_height)
+            .vscroll(true)
             .show(ctx, |ui| self.draw_panel_body(ui));
         self.show_panel = open;
     }
