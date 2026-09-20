@@ -9,6 +9,8 @@
 
 use super::*;
 
+use crate::chart::PriceScale;
+
 mod handle_policy;
 
 fn tool(id: &str) -> DrawingTool {
