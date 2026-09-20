@@ -155,6 +155,61 @@ class Shares(unittest.TestCase):
             any("quantick-engine" in line and "twice" in line for line in problems)
         )
 
+    def test_a_crate_only_a_diagnostic_runs_is_reported_as_unshared(self):
+        # The middle case between the two obvious ones: the crate is tested,
+        # so nothing is silently unverified, but no share owns it, so the
+        # first rebalance that reads the shares would budget as if it did not
+        # exist — and deleting the diagnostic would drop it outright.
+        diagnostic_only = (
+            THREE_WAY.replace(
+                "--exclude quantick-app --exclude quantick-engine",
+                "--exclude quantick-app --exclude quantick-engine --exclude quantick-chart",
+            )
+            + """
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Test Windows descriptor authority and local transport
+        run: cargo test -p quantick-chart -- --nocapture
+"""
+        )
+        problems = guard.problems(diagnostic_only, MEMBERS)
+        self.assertEqual(MEMBERS, guard.covered(diagnostic_only, MEMBERS))
+        self.assertTrue(
+            any("quantick-chart" in line and "no Windows share owns" in line for line in problems)
+        )
+
+    def test_an_unnamed_step_does_not_inherit_the_share_above_it(self):
+        # Steps may be written without a name. Carrying the previous step's
+        # name forward would make the second run a second share and report a
+        # crate tested twice, reddening a workflow that is correct.
+        unnamed = (
+            THREE_WAY
+            + """
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Test
+        run: cargo test -p quantick-chart -- --nocapture
+      - run: cargo test -p quantick-chart -- --nocapture
+"""
+        )
+        self.assertEqual(
+            [("Test", "cargo test -p quantick-chart -- --nocapture"),
+             (None, "cargo test -p quantick-chart -- --nocapture")],
+            guard.test_steps(guard.windows_jobs(unnamed)["windows"]),
+        )
+
+    def test_an_unnamed_step_still_counts_as_coverage(self):
+        # It is a real run of those tests, so it must not read as a crate
+        # nothing tests; it is simply not a share anyone budgeted for.
+        unnamed = THREE_WAY.replace(
+            "      - name: Test\n        run: cargo test -p quantick-app",
+            "      - run: cargo test -p quantick-app",
+        )
+        self.assertIn("quantick-app", guard.covered(unnamed, MEMBERS))
+        self.assertNotIn("quantick-app", guard.shares(unnamed, MEMBERS))
+
     def test_a_workspace_partition_has_no_problems(self):
         self.assertEqual([], guard.problems(THREE_WAY, MEMBERS))
 

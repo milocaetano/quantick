@@ -55,15 +55,24 @@ def windows_jobs(workflow_text):
 
 
 def test_steps(body):
-    """Return (step name, command) for every `cargo test` step in a job."""
+    """Return (step name, command) for every `cargo test` step in a job.
+
+    A step's name decides whether it is a share, so an unnamed step must come
+    back unnamed rather than inheriting the name of the step above it: a
+    diagnostic written without a name would otherwise be counted as a second
+    share and report a crate tested twice. A step may also be written with its
+    `run:` on the item line itself, and that is still a run of the tests.
+    """
     found = []
     step_name = None
     for line in body.splitlines():
+        if re.match(r"^\s*-\s", line):
+            step_name = None
         named = re.match(r"^\s*- name: (.+?)\s*$", line)
         if named:
             step_name = named.group(1)
             continue
-        command = re.match(r"^\s*run: (cargo test .*?)\s*$", line)
+        command = re.match(r"^\s*(?:- )?run: (cargo test .*?)\s*$", line)
         if command:
             found.append((step_name, command.group(1)))
     return found
