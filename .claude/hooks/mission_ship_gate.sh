@@ -51,9 +51,19 @@ fi
 # Reuse the exact readiness policy rather than reimplementing markers, tier
 # exemptions, campaign keys or thread counting here. A hook decision is a
 # failure even though hooks themselves exit zero by design.
+#
+# A refusal is a `deny` decision, and only that. The same gate also carries
+# advisories on stdout — the read-cost ceiling says "Nothing is blocked" in
+# its own text — and reading any output as a refusal made every branch over
+# that advisory ceiling unable to complete a mission, which is the opposite
+# of what `docs/quality/read-cost/ledger.md` states the ceiling is for.
 payload=$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"gh pr ready %s"}}' "$worktree" "$pr")
 readiness=$(printf '%s' "$payload" | sh "$script_dir/guardrails.sh" pr-gate 2>&1)
-[ -z "$readiness" ] || fail "The shared readiness gate refused this PR: $readiness"
+case "$readiness" in
+    *'"permissionDecision":"deny"'*)
+        fail "The shared readiness gate refused this PR: $readiness"
+        ;;
+esac
 
 branch=$(git -C "$worktree" symbolic-ref --quiet --short HEAD) || fail 'A named task branch is required.'
 head=$(git -C "$worktree" rev-parse HEAD) || fail 'Cannot read the current task head.'
