@@ -1974,15 +1974,20 @@ done
 # drops skipped ones and takes the newest.
 full_ci_root="$root/full-ci"
 mkdir -p "$full_ci_root/bin"
+# The stub answers whatever check name the URL asks for, from a fixture file
+# of that name. It used to answer `ci` and `windows` by name and exit 64 for
+# anything else, which meant splitting the verification across more jobs turned
+# every case here into "GitHub could not list" — a suite failing for a reason
+# having nothing to do with what it grades. The names come from full_ci.sh now,
+# the same place the script itself reads them.
 cat > "$full_ci_root/bin/gh" <<'STUB'
 #!/bin/sh
 fixture=${QUANTICK_FULL_CI_FIXTURE:?}
 [ "${1:-}" = api ] || exit 64
-case "$2" in
-    *check_name=ci\&*) answer=$(cat "$fixture/ci") ;;
-    *check_name=windows\&*) answer=$(cat "$fixture/windows") ;;
-    *) exit 64 ;;
-esac
+check=${2##*check_name=}
+check=${check%%&*}
+[ -f "$fixture/$check" ] || exit 64
+answer=$(cat "$fixture/$check")
 case "$answer" in
     unknown-commit) echo 'gh: No commit found for SHA: 0 (HTTP 422)' >&2; exit 1 ;;
     offline) echo 'gh: connection refused' >&2; exit 1 ;;
@@ -1991,7 +1996,13 @@ printf '%s\n' "$answer"
 STUB
 chmod +x "$full_ci_root/bin/gh"
 
+# Every job green unless a case says otherwise: the cases below are about the
+# Linux verdict and the Windows verdict, and none of them should have to name
+# each harness job to say "and the rest passed".
 full_ci_case() {
+    for full_ci_check in $full_ci_checks; do
+        printf 'completed:success\n' > "$full_ci_root/$full_ci_check"
+    done
     printf '%s\n' "$2" > "$full_ci_root/ci"
     printf '%s\n' "$3" > "$full_ci_root/windows"
     full_ci_out=$(QUANTICK_FULL_CI_FIXTURE="$full_ci_root" PATH="$full_ci_root/bin:$PATH" \
@@ -2014,6 +2025,27 @@ full_ci_case "a running ci is not green" in_progress:none completed:success 1 "s
 full_ci_case "an unpushed head has no CI" unknown-commit completed:success 1 "is not on GitHub"
 full_ci_case "an unreachable GitHub is unknown, not red" offline completed:success 2 "could not list"
 full_ci_case "an unreadable answer is unknown" "" completed:success 2 "unreadable"
+
+# Every name in FULL_CI_CHECKS is required, not only the two platforms the
+# cases above vary. Redden each one in turn: a name that can go red without
+# this loop going red is a name the gate does not really require.
+for full_ci_check in $full_ci_checks; do
+    for full_ci_other in $full_ci_checks; do
+        printf 'completed:success\n' > "$full_ci_root/$full_ci_other"
+    done
+    printf 'completed:failure\n' > "$full_ci_root/$full_ci_check"
+    full_ci_out=$(QUANTICK_FULL_CI_FIXTURE="$full_ci_root" PATH="$full_ci_root/bin:$PATH" \
+        sh "$script_dir/full_ci.sh" verify "$root/wt" 2>&1)
+    full_ci_status=$?
+    case "$full_ci_status:$full_ci_out" in
+        1:*"$full_ci_check run at"*) passed=$((passed + 1)) ;;
+        *)
+            printf 'FAIL full_ci.sh a red %s fails: got %s: %s\n' \
+                "$full_ci_check" "$full_ci_status" "$full_ci_out"
+            failed=$((failed + 1))
+            ;;
+    esac
+done
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

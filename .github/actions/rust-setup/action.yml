@@ -82,3 +82,11 @@ runs:
       with:
         shared-key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache == 'true' }}
+        # A red job still saves what it compiled. One serial job could afford
+        # not to: a cold cache cost it one dependency build. Several parallel
+        # jobs cannot — each pays that build in full, so a failure that saved
+        # nothing would leave every job on the next run cold as well, and a
+        # branch that went red once would stay slow until it went green. The
+        # dependency graph a red run compiled is the same graph the next run
+        # needs; nothing about a failing test makes those artifacts wrong.
+        cache-on-failure: ${{ inputs.save-cache }}
