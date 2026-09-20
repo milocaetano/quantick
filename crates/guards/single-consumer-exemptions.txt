@@ -8,14 +8,25 @@
 # crate that is gone, or no longer has exactly one consumer, is itself a
 # finding: delete the line.
 #
-# The five below were recorded when the guard landed, at main bcfb5f19, so the
-# change could land green. They are the finding, not a verdict that each is
-# fine: every one is a crate that left `app`'s line count without yet giving a
-# second consumer anything to link. A line leaves when its crate gains a
-# consumer or folds back into the one it has.
+# The three below are what remains of the five recorded when the guard landed,
+# at main bcfb5f19, so that change could land green. They are the finding, not
+# a verdict that each is fine: every one is a crate that left `app`'s line
+# count without yet giving a second consumer anything to link. A line leaves
+# when its crate gains a consumer or folds back into the one it has.
+#
+# The five after them were recorded when campaign #542 (outside-eight) and the
+# guard (#544) met on main at 712180fb: each crate left `app` in the campaign
+# and the guard had not seen it. `control-host` and `orderflow` left the list
+# the same day, having gained a second consumer: `control-schema` in both
+# cases. What their lines said was still open stays open — neither `mcp` nor
+# `backtest` consumes them yet, and that, not a sibling of `app`, is what the
+# split is for.
 
-control-host consumed by `app` only; the host machinery (projection registry, admission, idempotency store, event journal) moved out of `app` in #452 so the headless guard scans it. Open: `mcp` and `backtest` do not host a control plane yet.
 feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
-orderflow consumed by `app` only; the headless order-flow engine the chart draws. Open: AGENTS.md names `backtest` as its next consumer.
 paper consumed by `app` only in shipped code; `backtest` links it as a dev-dependency to prove the paper account in a test, which the rule does not count. Open: a backtest report built on the paper account would make it a second consumer.
 trading consumed by `sim` only; the venue-neutral `TradingVenue` port a broker adapter docks against beside the simulator. Open: no second venue implements it yet.
+anchored-studies consumed by `app` only; resumable profile and anchored-average state moved out of `app` in #542 so the headless guard scans it. Open: `backtest` does not draw anchored studies yet.
+backpressure consumed by `app` only; the owner-to-worker admission discipline (park, fold, never drop) moved out of `app` in #542, told the time. Open: `feed` workers still use their own channels.
+control-schema consumed by `app` only; the wire shapes of every projection and action, so a client, a generator or a test reads them without the window (#542). Open: `mcp` still speaks through `control` and `control-local` alone.
+indicator-session consumed by `app` only; deterministic indicator sessions over the host and the Pine frontend moved out of `app` in #542. Open: `backtest` drives indicators directly, not through a session.
+operability consumed by `app` only; the behaviour-to-capability table and its drift check, pure data by design (#542). Open: a generator or `mcp` could read it without the window.
