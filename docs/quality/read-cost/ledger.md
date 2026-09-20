@@ -80,3 +80,4 @@ a bound.
 | 544 | 2026-09-19 | feat/architecture-ratchets | main | 4146 | 9 | `crates/guards/src/generated.rs` (524) |
 | 547 | 2026-09-19 | feat/fast-draft-ci | main | 0 | 0 | — |
 | 550 | 2026-09-19 | feat/read-cost-ledger | main | 0 | 0 | — |
+| 553 | 2026-09-20 | perf/ci-under-seven-minutes | main | 0 | 0 | — |
