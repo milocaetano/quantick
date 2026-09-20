@@ -18,6 +18,41 @@ use crate::{
     tools::{self, ANALYST_PROFILE, ANNOTATOR_PROFILE, COCKPIT_PROFILE, OBSERVER_PROFILE},
 };
 
+/// Opt back into publishing every tool's `outputSchema` in `tools/list`.
+///
+/// Those schemas are four fifths of that frame's bytes, and a client that
+/// forwards the tool list to a model pays for them again on every request it
+/// makes for the rest of the session. Nothing is hidden by leaving them out:
+/// each result still carries its `structured_content`, `quantick_describe`
+/// reports the registry entry that answered, and the contract fixes the
+/// envelope. So the frame omits them, and a client that validates against
+/// them sets this variable to `1`.
+pub const PUBLISH_OUTPUT_SCHEMAS_ENV: &str = "QUANTICK_MCP_OUTPUT_SCHEMAS";
+
+/// Whether this process publishes output schemas. Read once, when the server
+/// is built, so one connection's tool list cannot change shape mid-session.
+fn publish_output_schemas() -> bool {
+    matches!(
+        std::env::var(PUBLISH_OUTPUT_SCHEMAS_ENV).as_deref(),
+        Ok("1")
+    )
+}
+
+/// The tool list as the wire carries it. `tools::tools` stays the single
+/// owner of what each schema *is*; this decides only what a frame repeats.
+fn published_tools(tools: Vec<Tool>, with_output_schemas: bool) -> Vec<Tool> {
+    if with_output_schemas {
+        return tools;
+    }
+    tools
+        .into_iter()
+        .map(|tool| Tool {
+            output_schema: None,
+            ..tool
+        })
+        .collect()
+}
+
 /// The instructions a client shows its model. ADR 0001 §7: the connection
 /// rule, the read-before-act rule, the instance-selection rule and the
 /// authority boundary all sit inside the first 512 characters, because that
@@ -79,7 +114,7 @@ impl McpServer {
         Self {
             link,
             profile_ceiling,
-            tools: tools::tools(profile_ceiling),
+            tools: published_tools(tools::tools(profile_ceiling), publish_output_schemas()),
             protocol_version: None,
             initialized: false,
         }
@@ -749,5 +784,61 @@ mod tests {
         let garbage: Value = serde_json::from_str(lines[1]).unwrap();
         assert!(garbage["id"].is_null());
         assert_eq!(garbage["error"]["code"], jsonrpc::PARSE_ERROR);
+    }
+
+    /// The tool list is repeated into a model's context on every request a
+    /// client makes, so the frame carries what a caller needs and not the
+    /// schema of what it will get back and can already see.
+    #[test]
+    fn the_published_tool_list_leaves_its_output_schemas_behind() {
+        let published = published_tools(tools::tools(COCKPIT_PROFILE), false);
+        assert!(!published.is_empty(), "the cockpit ceiling offers tools");
+        for tool in &published {
+            assert!(
+                tool.output_schema.is_none(),
+                "{} publishes no output schema",
+                tool.name
+            );
+            assert!(
+                !tool.description.is_empty(),
+                "{} still says what it does",
+                tool.name
+            );
+            assert!(
+                tool.input_schema["properties"].is_object(),
+                "{} still says what it takes",
+                tool.name
+            );
+        }
+    }
+
+    /// A client that validates against the schemas asks for them, and gets
+    /// exactly what `tools::tools` owns - not a trimmed copy of it.
+    #[test]
+    fn a_client_that_asks_for_output_schemas_gets_them_unchanged() {
+        let owned = tools::tools(COCKPIT_PROFILE);
+        let published = published_tools(owned.clone(), true);
+        assert_eq!(published, owned);
+        assert!(
+            published.iter().any(|tool| tool.output_schema.is_some()),
+            "the ceiling has schemas to publish in the first place"
+        );
+    }
+
+    /// The reason the schemas left: a ceiling on the frame every client pays
+    /// for. Raising it is a deliberate act, not a schema quietly growing.
+    #[test]
+    fn the_cockpit_tool_list_frame_stays_under_its_ceiling() {
+        let owned = tools::tools(COCKPIT_PROFILE);
+        let with_schemas = serde_json::to_string(&json!({ "tools": owned.clone() }))
+            .unwrap()
+            .len();
+        let frame = json!({ "tools": published_tools(owned, false) });
+        let bytes = serde_json::to_string(&frame).unwrap().len();
+        println!("cockpit tools/list: {with_schemas} bytes with schemas, {bytes} without");
+        assert!(
+            bytes <= 26_000,
+            "the cockpit tools/list frame is {bytes} bytes, over its 26,000 ceiling"
+        );
     }
 }
