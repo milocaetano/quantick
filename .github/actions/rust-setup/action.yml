@@ -1,0 +1,92 @@
+name: Rust setup
+description: >-
+  The desktop link dependencies, the pinned toolchain and the shared Rust
+  cache, in the order every job in ci.yml needs them. Seven jobs would
+  otherwise carry these steps as copies; a copy is where they drift, and a job
+  that installs a different toolchain than the one that saved the cache
+  rebuilds the world without saying so.
+
+inputs:
+  desktop-deps:
+    description: >-
+      Whether to install the Linux desktop link dependencies. quantick-app
+      (egui/eframe + winit) needs them to build and link on Linux; the Windows
+      runner has no use for them.
+    required: false
+    default: "true"
+  cache-key:
+    description: >-
+      The `shared-key` the Rust cache uses. One key per platform: the jobs on a
+      platform compile the same dependency graph with the same toolchain, so a
+      second key would buy nothing but a second cold build.
+    required: false
+    default: linux
+  save-cache:
+    description: >-
+      Whether this job writes its platform's cache. Exactly one job per key
+      may: the rest restore what it saved, and a job holding a partial build
+      must never overwrite a complete one.
+    required: false
+    default: "false"
+  verbose-toolchain:
+    description: >-
+      Whether to print the full toolchain summary. The job that owns its
+      platform's cache prints everything, because its log is where a future
+      reader checks which toolchain a given run actually used, and because a
+      missing component should fail here, by name, rather than four steps later
+      inside `cargo fmt`. The other jobs print the versions alone.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install desktop GUI dependencies
+      # Unconditional on Linux: which crates link a window system is a fact of
+      # the dependency graph, and naming them per job would be a hand list in
+      # workflows that otherwise derive everything. About 25 s.
+      if: inputs.desktop-deps == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libxkbcommon-dev libwayland-dev \
+          libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+    - name: Install the pinned toolchain
+      # `rust-toolchain.toml` at the repository root names the exact version
+      # and the two components, so nothing is installed by name here. This
+      # step used to be `dtolnay/rust-toolchain@stable`, which fetched
+      # whatever `stable` meant on the morning the job ran: a toolchain
+      # release could turn a pull request red without a line of its code
+      # changing, and the session that inherited the red went looking for the
+      # bug in a diff that never had one.
+      #
+      # `rustc --version` comes first and is what does the installing: it goes
+      # through the rustup shim, which reads the toolchain file and fetches the
+      # pinned version if the runner does not have it. Newer rustup releases
+      # changed whether `rustup show` installs on its own, so the step does not
+      # depend on that either way — it runs afterwards, for the summary, once
+      # the toolchain is certainly present.
+      shell: bash
+      env:
+        VERBOSE: ${{ inputs.verbose-toolchain }}
+      run: |
+        rustc --version
+        if [ "$VERBOSE" = "true" ]; then rustup show; fi
+        cargo --version
+        cargo clippy --version
+        cargo fmt --version
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.save-cache == 'true' }}
+        # A red job still saves what it compiled. One serial job could afford
+        # not to: a cold cache cost it one dependency build. Several parallel
+        # jobs cannot — each pays that build in full, so a failure that saved
+        # nothing would leave every job on the next run cold as well, and a
+        # branch that went red once would stay slow until it went green. The
+        # dependency graph a red run compiled is the same graph the next run
+        # needs; nothing about a failing test makes those artifacts wrong.
+        cache-on-failure: ${{ inputs.save-cache }}

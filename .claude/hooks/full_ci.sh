@@ -4,12 +4,21 @@
 #
 #   full_ci.sh verify <worktree> [<sha>]
 #
-# Exit 0: the latest non-skipped `ci` and `windows` check runs at <sha>
-# (default: the worktree's HEAD) both concluded success. Exit 1: they did not;
+# Exit 0: the latest non-skipped check run at <sha> (default: the worktree's
+# HEAD) concluded success for every job in FULL_CI_CHECKS. Exit 1: one did not;
 # the reason is on stderr. Exit 2: GitHub could not answer, which is not the
 # same answer as "red".
 #
-# Draft pushes run only the `fast` job, so `ci` and `windows` are *skipped* on
+# The list is every job that carries part of the full verification, not a
+# summary of it. Linux runs as four parallel jobs so the app's harness feature
+# builds overlap instead of queueing, and Windows as three so its workspace
+# test run does; each one is named here, because a job nothing requires is a
+# job that can be dropped without anyone noticing. `guardrails_test.sh` fails
+# when a name here has no job in ci.yml, and
+# `tools/ci/windows_test_coverage.py` fails when the Windows test jobs stop
+# being complements.
+#
+# Draft pushes run only the `fast` job, so these are *skipped* on
 # them. A skipped run carries no verdict and is ignored rather than counted as
 # passing; a commit with nothing but skipped runs has no full CI at all. The
 # check runs are read per commit rather than through `gh pr checks`, because
@@ -19,7 +28,7 @@
 
 set -u
 
-FULL_CI_CHECKS='ci windows'
+FULL_CI_CHECKS='ci harness-app harness-combined harness-scenario windows windows-tests windows-app-tests'
 
 operation=${1:-}
 worktree=${2:-}

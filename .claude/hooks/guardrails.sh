@@ -31,7 +31,7 @@
 #                     Threads are counted by the sibling script
 #                     that posts them — so the reviewer and the gate share
 #                     one definition of an open finding. Both also want
-#                     full CI (`ci` and `windows`) green at the exact HEAD,
+#                     full CI (every job in FULL_CI_CHECKS) green at the exact HEAD,
 #                     read by the sibling `full_ci.sh`: draft pushes run
 #                     only the fast job, so readiness is where it is owed.
 #   commit-reminder   PostToolUse on Bash. Cannot block (the commit
@@ -811,7 +811,7 @@ pr_gate() {
     fi
 
     # Draft pushes run only the fast job, so readiness is where full CI is
-    # owed: the `ci` and `windows` verdicts at the exact reviewed HEAD. The
+    # owed: every FULL_CI_CHECKS verdict at the exact reviewed HEAD. The
     # sibling script is the one definition the final verifier reads too.
     full_ci_script="$(dirname "$0")/full_ci.sh"
     [ -f "$full_ci_script" ] ||
@@ -821,7 +821,7 @@ pr_gate() {
     if [ "$full_ci_status" -eq 2 ]; then
         ask "\"Full CI at the exact head could not be read from GitHub; unknown is not green. $full_ci_reason\""
     elif [ "$full_ci_status" -ne 0 ]; then
-        deny "\"Full final-head CI gates \`gh pr $gate_action\`: $full_ci_reason The draft's fast job is a signal, not the verdict. Run full CI on this head with \`gh pr edit $gate_pr --add-label full-ci\`, wait for \`ci\` and \`windows\` to pass, then retry.\""
+        deny "\"Full final-head CI gates \`gh pr $gate_action\`: $full_ci_reason The draft's fast job is a signal, not the verdict. Run full CI on this head with \`gh pr edit $gate_pr --add-label full-ci\`, wait for every full-CI job to pass, then retry.\""
     fi
 
     if [ "$gate_action" = merge ]; then

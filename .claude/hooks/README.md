@@ -178,17 +178,36 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run — the Linux `ci` job and the `windows` job in
-`.github/workflows/ci.yml` — takes about 43 minutes. An agent iterating on a
-draft needs a signal sooner than that, and readiness needs the full verdict
-anyway, so the two are separated rather than one being traded for the other.
+One full CI run is seven jobs in `.github/workflows/ci.yml`: `ci`,
+`harness-app`, `harness-combined` and `harness-scenario` on Linux, `windows`,
+`windows-tests` and `windows-app-tests` on Windows. They run in parallel. An
+agent iterating on a draft still needs a signal sooner than the full verdict,
+and readiness needs the full verdict anyway, so the two are separated rather
+than one being traded for the other.
+
+It was two serial jobs, 43 minutes on Linux and 15 on Windows, and the time sat
+in work nothing could overlap inside one runner. Eighteen Linux minutes were a
+single Python step that scanned the debug binary once per registry name; it
+reads the binary once now (`tools/ci/binary_hook_scan.py`). Fifteen more were
+the app's harness feature builds — every feature set relinks `quantick-app`,
+and eleven of them end to end is eleven relinks — now three jobs beside `ci`.
+On Windows, `cargo test --workspace` was 8m 53s of 15m 08s, and one crate owns
+most of it, so it became two complementary selectors:
+`--workspace --exclude quantick-app` and `-p quantick-app`.
+
+Every command is the one it was; only where it runs changed. The split that
+could rot silently is the Windows one — `cargo test --workspace` found new
+crates by itself, and two selectors do not — so
+`tools/ci/windows_test_coverage.py` reads the selectors back out of `ci.yml`,
+takes the member list from `cargo metadata`, and fails when the halves stop
+being complements. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
 | Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus `ci` and `windows` |
-| Draft flipped to ready | `ci` and `windows`, always |
-| Push to a ready PR, push to `main` | `ci` and `windows` |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the seven full jobs |
+| Draft flipped to ready | the seven full jobs, always |
+| Push to a ready PR, push to `main` | the seven full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
@@ -209,9 +228,13 @@ untested.
 
 **The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
 It reads the check runs GitHub Actions posted for the exact commit, drops
-skipped ones, and requires the newest `ci` and the newest `windows` to have
-concluded `success`. Skipped is no verdict: a head with nothing but skipped
-full jobs has no full CI. It reads per commit, not through `gh pr checks`,
+skipped ones, and requires the newest run of every job in `FULL_CI_CHECKS` to
+have concluded `success`. The list names each job rather than summarising them,
+so splitting the work across runners cannot quietly drop a check: a job
+nothing requires is a job that can disappear without anyone noticing, and
+`guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
+Skipped is no verdict: a head with nothing but skipped full jobs has no full
+CI. It reads per commit, not through `gh pr checks`,
 because a later skipped run for the same head (adding an unrelated label
 posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was
@@ -219,12 +242,12 @@ never pushed, which is a known answer: not green.
 
 `pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the reviews and
 the thread count, against the reviewed local HEAD. The denial names the way
-through: `gh pr edit <pr> --add-label full-ci`, wait for both jobs, retry.
+through: `gh pr edit <pr> --add-label full-ci`, wait for the full jobs, retry.
 `mission_ship_gate.sh` calls it again beside its all-checks rule, twice like
 that rule, so completion cannot pass on the fast job alone. That rule and the
 campaign merge check now accept `skipping` as well as `pass`: the draft-only
-`fast` job is skipped on every ready head, and without the named `ci`/`windows`
-requirement beside it that tolerance would be a hole.
+`fast` job is skipped on every ready head, and without the named
+`FULL_CI_CHECKS` requirement beside it that tolerance would be a hole.
 
 Nothing in GitHub's ruleset requires a status check today, so these two gates
 are where full CI is enforced for agents, and a human merge still sees the
