@@ -641,10 +641,11 @@ else
         "$root/readcost/docs/quality/read-cost" \
         "$root/readcost/tools/read_cost" \
         "$root/readcost/tools/outside_score"
-    cp "$script_dir/../../tools/read_cost/measure.py" \
-        "$script_dir/../../tools/read_cost/ledger.py" \
-        "$script_dir/../../tools/read_cost/report.py" \
-        "$root/readcost/tools/read_cost/"
+    # Every module, not the three the advisory needed on the day this was
+    # written: a fourth one arriving makes the copied calculator fail to
+    # import, the advisory fall silent, and these cases fail for a reason
+    # that has nothing to do with the hook.
+    cp "$script_dir/../../tools/read_cost/"*.py "$root/readcost/tools/read_cost/"
     cp "$script_dir/../../tools/outside_score/measure.py" \
         "$root/readcost/tools/outside_score/"
     printf '[package]\nname = "core"\n' > "$root/readcost/crates/core/Cargo.toml"
