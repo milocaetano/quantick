@@ -83,8 +83,9 @@ cannot be merged — so nothing is lost by letting it open.
 Phase two closes those threads, and the gate moved to where work actually
 leaves the branch: `gh pr ready` and `gh pr merge`. Both want what
 `gh pr create` always wanted — the applicable review projections, for the exact
-diff being shipped — plus their durable current-review PR reports and
-independently zero unresolved AI threads.
+diff being shipped — plus their durable current-review PR reports,
+independently zero unresolved AI threads, and full CI green at the exact
+HEAD (see *Full CI at the exact head*).
 
 The tier is read, never required, exactly as before.
 
@@ -175,6 +176,60 @@ the honest command denied is one keystroke from a spelling nothing inspects.
 Running `gh pr merge` or `gh pr ready` through that tool is prohibited: a
 denial is reported to the coordinator, never routed around.
 
+## Full CI at the exact head
+
+One full CI run — the Linux `ci` job and the `windows` job in
+`.github/workflows/ci.yml` — takes about 43 minutes. An agent iterating on a
+draft needs a signal sooner than that, and readiness needs the full verdict
+anyway, so the two are separated rather than one being traded for the other.
+
+| Event | Runs |
+| --- | --- |
+| Push to a draft PR | `fast` only |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus `ci` and `windows` |
+| Draft flipped to ready | `ci` and `windows`, always |
+| Push to a ready PR, push to `main` | `ci` and `windows` |
+
+`fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
+and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
+crates owning a changed file or naming it by path, every crate depending on
+those through normal, dev or build edges, and always `quantick-guards`. The
+graph is read from `cargo metadata`, never a hand list; a workspace-wide cargo
+input (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`)
+selects everything. The script's log line for each crate says why it ran. Its
+tests compare the closure for every crate with `cargo tree --invert`, and run
+in the `ci` job. `fast` covers no hook suite, Python tool or Windows build:
+those are the full jobs' work.
+
+The flip re-runs full CI even when the labelled draft already has it at that
+head. Skipping it was tried: the flip's run then posted skipped `ci` and
+`windows`, and GitHub's check list showed only those, hiding the green run
+from whoever merges. One duplicate run is cheaper than a PR that reads as
+untested.
+
+**The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
+It reads the check runs GitHub Actions posted for the exact commit, drops
+skipped ones, and requires the newest `ci` and the newest `windows` to have
+concluded `success`. Skipped is no verdict: a head with nothing but skipped
+full jobs has no full CI. It reads per commit, not through `gh pr checks`,
+because a later skipped run for the same head (adding an unrelated label
+posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
+gate turns that into `ask`, never a pass. A commit GitHub has never seen was
+never pushed, which is a known answer: not green.
+
+`pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the reviews and
+the thread count, against the reviewed local HEAD. The denial names the way
+through: `gh pr edit <pr> --add-label full-ci`, wait for both jobs, retry.
+`mission_ship_gate.sh` calls it again beside its all-checks rule, twice like
+that rule, so completion cannot pass on the fast job alone. That rule and the
+campaign merge check now accept `skipping` as well as `pass`: the draft-only
+`fast` job is skipped on every ready head, and without the named `ci`/`windows`
+requirement beside it that tolerance would be a hole.
+
+Nothing in GitHub's ruleset requires a status check today, so these two gates
+are where full CI is enforced for agents, and a human merge still sees the
+checks on the PR.
+
 ## Publishing and recording the reviews
 
 Each review skill writes its verdict to a scratch report and calls the one
@@ -224,8 +279,9 @@ sh .claude/hooks/mission_ship_gate.sh ship <pr>
 The caller names only its audit role; both modes execute the same policy. The
 command synthesizes the normal readiness check, then independently requires an
 open non-draft PR matching the clean worktree's branch/head/base, a mergeable
-GitHub state, at least one registered CI check and every bucket
-passing, current durable reports, and an empty literal thread list. It first
+GitHub state, at least one registered CI check with every one that ran
+passing, full CI green at the exact head, current durable reports, and an
+empty literal thread list. It first
 requires one concise mission-summary block for mission and synchronization
 PRs. The PR kind comes from facts the PR identity then verifies, never a caller
 flag. A consolidated `campaign/*` PR into main has no single goal: its body

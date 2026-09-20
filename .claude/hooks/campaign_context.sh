@@ -62,7 +62,9 @@ case "$operation" in
             git merge-base --is-ancestor "$context_base" HEAD || fail 'Update the task from the campaign base and validate again.'
             context_checks=$(gh pr checks "$context_pr" --json bucket --jq '.[].bucket') || fail 'Campaign PR checks are not green.'
             [ -n "$context_checks" ] || fail 'No CI evidence is registered for the campaign PR.'
-            [ -z "$(printf '%s\n' "$context_checks" | grep -v '^pass$')" ] || fail 'Campaign PR checks are not all passing.'
+            # `skipping` carries no verdict (the draft-only fast job); pr-gate
+            # has already required full CI at this head through full_ci.sh.
+            [ -z "$(printf '%s\n' "$context_checks" | grep -v -e '^pass$' -e '^skipping$')" ] || fail 'Campaign PR checks are not all passing.'
         fi
         ;;
     *) fail 'Usage: campaign_context.sh base|key|check-pr WORKTREE [PR ready|merge]' ;;

@@ -39,6 +39,12 @@ cat > "$fixture/hooks/review_report.sh" <<'STUB'
 printf 'https://example.test/%s-report\n' "$2"
 STUB
 printf '0\n' > "$fixture/hooks/threads"
+# Full CI at the exact head is pr-gate's own requirement, covered by
+# guardrails_test.sh; here it is green so the campaign boundaries are isolated.
+cat > "$fixture/hooks/full_ci.sh" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
 cat > "$fixture/bin/gh" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
@@ -106,6 +112,11 @@ printf 'pending\n' > "$fixture/bin/checks"
 reject 'pending CI blocks merge' sh "$helper" check-pr "$fixture/repo" 42 merge
 : > "$fixture/bin/checks"
 reject 'absent CI is not green' sh "$helper" check-pr "$fixture/repo" 42 merge
+printf 'pass\nfail\n' > "$fixture/bin/checks"
+reject 'a failed check blocks merge' sh "$helper" check-pr "$fixture/repo" 42 merge
+# The draft-only fast job is skipped on every ready head; skipped is no verdict.
+printf 'pass\nskipping\n' > "$fixture/bin/checks"
+allow 'a skipped fast job does not block merge' sh "$helper" check-pr "$fixture/repo" 42 merge
 printf 'pass\n' > "$fixture/bin/checks"
 old_key=$(sh "$helper" key "$fixture/repo")
 old_diff=$(git -C "$fixture/repo" diff origin/campaign/test...HEAD)

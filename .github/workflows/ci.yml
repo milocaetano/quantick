@@ -4,11 +4,77 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `ready_for_review` and `labeled` are not in the default set. The first
+    # runs full CI when a draft becomes ready; the second lets a draft ask for
+    # it with the `full-ci` label before that. See the `if:` on each job.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 env:
   CARGO_TERM_COLOR: always
 
+# Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
+# tests of the crates the diff reaches, a signal in minutes rather than the
+# ~43 the full jobs take. `ci` and `windows` are the verdict, and run on every
+# push to main, every push to a ready PR, the flip to ready, and on a draft
+# carrying the `full-ci` label. `pr-gate` refuses `gh pr ready` until both are
+# green at the exact head, and the final verifier requires the same, so a
+# skipped full job never stands in for a passing one. The rules live in
+# .claude/hooks/README.md, "Full CI at the exact head".
 jobs:
+  fast:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft &&
+      github.event.action != 'labeled'
+    runs-on: ubuntu-latest
+    # A newer push to the same draft makes an older signal worthless.
+    concurrency:
+      group: fast-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The affected set diffs the PR's base against its head, and both
+          # must be in the clone.
+          fetch-depth: 0
+      - name: Install the pinned toolchain
+        # Same reasoning as the `ci` job below.
+        run: |
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+      - name: Affected crates
+        # Derived from `cargo metadata` and the diff, never a list kept here;
+        # the script's stderr says why each crate was selected.
+        id: affected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 tools/ci/affected_crates.py --base "$BASE_SHA" --head "$HEAD_SHA" > affected.txt
+          echo "packages=$(sed 's/^/-p /' affected.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+      - name: Install desktop GUI dependencies
+        # Unconditional, as in `ci`: which crates link a window system is a
+        # fact of the dependency graph, and naming them here would be the one
+        # hand list in a job that otherwise derives everything. About 25 s.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Restores what the `ci` job saved; a partial build never saves over
+          # it.
+          shared-key: linux
+          save-if: false
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy ${{ steps.affected.outputs.packages }} --all-targets
+      - name: Test
+        run: cargo test ${{ steps.affected.outputs.packages }}
+
   read-cost:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -40,6 +106,12 @@ jobs:
           if-no-files-found: error
 
   ci:
+    if: &full-ci >-
+      github.event_name != 'pull_request' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
+      (github.event.action != 'labeled' &&
+       (!github.event.pull_request.draft ||
+        contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +219,15 @@ jobs:
           cargo --version
           cargo clippy --version
           cargo fmt --version
+      - name: Affected-crates tests
+        # The fast draft job's crate selection. Its workspace cases compare the
+        # reverse-dependency closure with `cargo tree --invert`, so they run
+        # after the toolchain is installed.
+        run: python3 tools/ci/test_affected_crates.py
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Shared with the fast draft job, which restores it and never saves.
+          shared-key: linux
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint
@@ -224,6 +304,7 @@ jobs:
   # named control-local diagnostic for real Windows owner/ACL/junction cases.
   # These tests need no GPU, window or MetaTrader terminal.
   windows:
+    if: *full-ci
     runs-on: windows-latest
     env:
       QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
