@@ -1,4 +1,5 @@
-//! The window, its tabs, and the chrome around the chart: what an operator reaches that is not the chart, a drawing or a trade.
+//! The window, its tabs, and the chrome around the chart: what an operator
+//! reaches that is not the chart, a drawing or a trade.
 //!
 //! Read [`super`] first: it says why the rows are written, how they are
 //! joined, and what the drift guard does with them.

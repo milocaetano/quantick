@@ -3,8 +3,7 @@
 //! Read [`super`] first: it says why the rows are written, how they are
 //! joined, and what the drift guard does with them.
 
-use super::PENDING_SURFACE;
-use super::{Mapping, Source, UiBehaviour};
+use super::{Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
 /// A chart layer switch: the toolbar button and the pane's layer menu both set
 /// one pane's layer, which `layers.visibility.set` does by stable pane ID.

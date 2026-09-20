@@ -1,4 +1,5 @@
-//! What the trader does to the chart itself: the canvas under the cursor, and reading further back than the window holds.
+//! What the trader does to the chart itself: the canvas under the
+//! cursor, and reading further back than the window holds.
 //!
 //! Read [`super`] first: it says why the rows are written, how they are
 //! joined, and what the drift guard does with them.
