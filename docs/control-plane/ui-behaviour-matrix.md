@@ -15,9 +15,10 @@ cargo run -p quantick-app -- --dump-ui-behaviour-matrix \
   > docs/control-plane/ui-behaviour-matrix.md
 ```
 
-The table lives in `crates/operability/src/registry.rs`; the guard
-that compares it against the interface and against the capability
-registry lives beside it, and runs as
+The rows live one file per family under
+`crates/operability/src/registry/`, joined by `FAMILIES` in
+`registry.rs`; the guard that compares them against the interface
+and against the capability registry lives beside them, and runs as
 `cargo test -p quantick-app operability`.
 
 **Reach** names every door into the behaviour — a toolbar button, a menu

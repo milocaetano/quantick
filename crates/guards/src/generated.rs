@@ -187,8 +187,8 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                      which {INVENTORY_PATH} does not register"
                 ),
                 "A read was renamed or withdrawn while the row kept the old identifier, or the \
-                 inventory is stale. Regenerate both, then fix the row in \
-                 crates/control-schema/src/retry_matrix.rs.",
+                 inventory is stale. Regenerate both, then fix the row in the \
+                 family module that declares it, under crates/control-schema/src/.",
             ));
         }
         if !mutable.contains(&id) {
@@ -208,9 +208,9 @@ fn check_retry_matrix(root: &Path, findings: &mut Vec<Finding>) {
                 "{RETRY_MATRIX_PATH}: `{id}` can change state and has no row saying how a client \
                  reconciles a call to it"
             ),
-            "Add its readback to READBACKS in crates/control-schema/src/retry_matrix.rs, then \
-             regenerate: `cargo run -p quantick-app -- --dump-retry-matrix > \
-             docs/control-plane/retry-matrix.md`.",
+            "Add its readback to the READBACKS table in the family module that declares \
+             the capability, under crates/control-schema/src/, then regenerate: `cargo \
+             run -p quantick-app -- --dump-retry-matrix > docs/control-plane/retry-matrix.md`.",
         ));
     }
 }

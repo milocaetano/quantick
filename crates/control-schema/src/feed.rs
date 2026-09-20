@@ -4,6 +4,8 @@ use quantick_control::wire::WireU64;
 
 use schemars::JsonSchema;
 
+use crate::readback::{EVERY_OPTIONAL_TEST, Readback, snapshot};
+use quantick_control::registry::IdempotencyPolicy::Optional;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "feed.status";
@@ -170,3 +172,39 @@ pub struct FeedNoticeSnapshot {
 pub fn no_feed_generation() -> WireU64 {
     WireU64::new(0)
 }
+
+pub const FEED_TEST: &str = "a_dropped_feed_recovery_answer_is_replayed_and_the_recovery_runs_once";
+
+/// The feed generation moves on every respawn.
+pub const FEED_GENERATION_TEST: &str =
+    "the_feed_generation_advances_on_every_respawn_and_reads_back";
+/// How a client reconciles an interrupted call that respawns a feed or arms its recorder.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    snapshot(
+        "feed.reconnect",
+        Optional,
+        SCOPE_ID,
+        "tabs[].feed_generation",
+        "the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation)",
+        &[FEED_TEST, EVERY_OPTIONAL_TEST, FEED_GENERATION_TEST],
+    ),
+    snapshot(
+        "feed.reload",
+        Optional,
+        SCOPE_ID,
+        "tabs[].feed_generation",
+        "the tab's generation is past the pre-call reading: it took over a new feed session (a tab with nothing to respawn answers `respawned: false` and keeps its generation)",
+        &[FEED_TEST, EVERY_OPTIONAL_TEST, FEED_GENERATION_TEST],
+    ),
+    snapshot(
+        "feed.deal_recording.set",
+        Optional,
+        SCOPE_ID,
+        "tabs[].deal_recording.state",
+        "the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there",
+        &[EVERY_OPTIONAL_TEST],
+    ),
+];

@@ -4,6 +4,8 @@ use quantick_control::wire::WireU64;
 
 use schemars::JsonSchema;
 
+use crate::readback::{EVERY_OPTIONAL_TEST, Readback, journal};
+use quantick_control::registry::IdempotencyPolicy::Optional;
 use serde::{Deserialize, Serialize};
 
 pub const SCOPE_ID: &str = "layers.visibility";
@@ -62,3 +64,16 @@ pub struct VisibilityResult {
     pub layer: LayerSnapshot,
     pub changed: bool,
 }
+
+/// How a client reconciles an interrupted layer switch.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[journal(
+    "layers.visibility.set",
+    Optional,
+    EVENT_KIND,
+    "payload.result",
+    "an event after the pre-call cursor matches connection_id and request_id, stable tab/pane IDs, layer ID and requested boolean; emitted even for a no-op, including panes omitted from the bounded snapshot; a retention gap leaves the outcome unknown",
+    &[EVERY_OPTIONAL_TEST],
+)];

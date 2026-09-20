@@ -57,6 +57,9 @@ use schemars::JsonSchema;
 
 use serde::{Deserialize, Serialize};
 
+use crate::readback::{Readback, journal, snapshot};
+use crate::session::PAPER_SCOPE_ID;
+use quantick_control::registry::IdempotencyPolicy::{Forbidden, Optional};
 use serde_json::Value;
 
 /// The journal kinds each action appends. An order that something other
@@ -491,3 +494,71 @@ pub fn set_instrument_money_descriptor() -> CapabilityDescriptor {
         "The call answers with what the ticket now makes of the entry it is holding, so a caller can see the instrument turn from unknown into sized. It changes nothing that is already working, and it never converts between currencies.",
     ))
 }
+
+pub const TRADE_SHAPING_TEST: &str =
+    "a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once";
+
+pub const TRADE_UNREACHABLE_TEST: &str =
+    "no_production_grant_reaches_a_trade_capability_keyed_or_not";
+/// How a client reconciles an interrupted call on the paper ticket.
+///
+/// `retry_matrix` joins every family's rows into one table; a row belongs
+/// here, beside the capability it reconciles.
+pub const READBACKS: &[Readback] = &[
+    journal(
+        "trade.instrument.set_money",
+        Optional,
+        TICKET_EVENT_KIND,
+        "payload.asked",
+        "an event after the pre-call cursor carries the caller's input as `asked`",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.bracket",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].stop_loss",
+        "the named order carries the stop and target asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.cancel",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].order_id",
+        "the named order is no longer working",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.order.place",
+        Forbidden,
+        PAPER_SCOPE_ID,
+        "tabs[].working_orders[].order_id",
+        "an order the pre-call reading lacked is working, or a position opened",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.risk.set",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].risk_state",
+        "the ticket's risk state follows the basis asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.ruler.set",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].ruler_ticks",
+        "the ruler stands at the distance the call answered with",
+        &[TRADE_SHAPING_TEST, TRADE_UNREACHABLE_TEST],
+    ),
+    snapshot(
+        "trade.strategy.select",
+        Optional,
+        PAPER_SCOPE_ID,
+        "tabs[].armed_strategy",
+        "the ticket is armed with the strategy asked for",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+];

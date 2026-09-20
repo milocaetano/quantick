@@ -348,8 +348,8 @@ impl Drift {
         match self {
             Self::Unclaimed { source, key } => format!(
                 "`{}` registers `{key}`, and no row in `UI_BEHAVIOURS` claims it. Add a row \
-                 mapping it to a capability, or to a recorded exclusion, in \
-                 crates/operability/src/registry.rs",
+                 mapping it to a capability, or to a recorded exclusion, in its \
+                 family file under crates/operability/src/registry/",
                 source.as_str()
             ),
             Self::Orphan {
