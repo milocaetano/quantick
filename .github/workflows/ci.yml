@@ -11,6 +11,26 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Debug info, not optimisation, is what the runners spend their time on.
+  # `[profile.dev]` in the root `Cargo.toml` sets `opt-level = 1` for the
+  # workspace and 2 for its dependencies so the chart runs at a usable frame
+  # rate under `cargo run`, and it leaves `debug` at cargo's default: full
+  # DWARF on Linux, a full PDB on Windows. A CI runner never opens a debugger.
+  # It needs one thing out of debug info — the file and line in a failing
+  # test's backtrace — and `line-tables-only` is exactly that and nothing
+  # else, so the compiler stops emitting, and the linker stops writing, the
+  # variable and type tables nobody here reads.
+  #
+  # Set here rather than in `Cargo.toml` or `.cargo/config.toml` deliberately:
+  # both of those would follow the repository onto the trader's machine and
+  # take the local debugging experience with them. A workflow-level `env` is
+  # read by cargo as a profile override on these runners alone, and the file
+  # that defines the dev profile stays as 5e423c55 left it.
+  #
+  # One variable covers both builds the jobs do: the built-in `test` profile
+  # inherits `dev`, and a workspace member's dependencies are dev-profile
+  # units too, so the override reaches every unit every job compiles.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 # Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
 # tests of the crates the diff reaches. The full verdict is seven jobs — `ci`,
