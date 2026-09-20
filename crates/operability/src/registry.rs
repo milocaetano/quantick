@@ -1,18 +1,17 @@
 //! The table: one row per supported UI behaviour.
 //!
 //! Read [`super`] first for why the rows are written and the drift guard is
-//! mechanical. This file is the data.
+//! mechanical. This file joins the data; each family file holds its own.
 //!
-//! Adding a behaviour is a row here. The guard tells you when one is missing —
-//! it names the registry entry nothing claims — and it will not tell you what
-//! the row should say, because that is the decision the table exists to
-//! record: either a capability performs the behaviour, or somebody has
-//! written down why none does.
-
+//! Adding a behaviour is a row in the family it belongs to — `drawings`,
+//! `layers`, `workspace`, `replay`, `indicators`, `trading`, `chart`,
+//! `control` — and [`UI_BEHAVIOURS`] is [`FAMILIES`] joined at compile time,
+//! in the order the matrix renders. Adding a family is one line in that list.
 //!
-//! The rows live one file per family, and [`UI_BEHAVIOURS`] is the families
-//! joined in the order the matrix renders. Adding a behaviour is a row in
-//! one family's file; adding a family is one line in [`FAMILIES`].
+//! The guard tells you when a row is missing — it names the registry entry
+//! nothing claims — and it will not tell you what the row should say, because
+//! that is the decision the table exists to record: either a capability
+//! performs the behaviour, or somebody has written down why none does.
 
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
@@ -79,8 +78,7 @@ pub const FAMILIES: &[&[UiBehaviour]] = &[
 ];
 
 /// How many rows the declared families hold between them.
-#[must_use]
-pub const fn total(families: &[&[UiBehaviour]]) -> usize {
+const fn total(families: &[&[UiBehaviour]]) -> usize {
     let mut counted = 0;
     let mut family = 0;
     while family < families.len() {
@@ -91,8 +89,10 @@ pub const fn total(families: &[&[UiBehaviour]]) -> usize {
 }
 
 /// The declared families as one table, at compile time.
-#[must_use]
-pub const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N] {
+///
+/// The seed row is the first family's first, so a family declared empty and
+/// listed first fails compilation rather than silently shortening the table.
+const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N] {
     let mut joined = [families[0][0]; N];
     let mut next = 0;
     let mut family = 0;
@@ -115,9 +115,9 @@ const JOINED: [UiBehaviour; TOTAL] = flatten(FAMILIES);
 /// Every supported UI behaviour, in identifier order within its group.
 ///
 /// The order here is the order the matrix renders and therefore the order a
-/// reviewer reads. Grouped by what the trader is doing rather than by which
-/// registry registered it, because "what can I not do without a mouse" is the
-/// question this answers.
+/// reviewer reads: [`FAMILIES`] declares it once. Grouped by what the trader
+/// is doing rather than by which registry registered it, because "what can I
+/// not do without a mouse" is the question this answers.
 pub const UI_BEHAVIOURS: &[UiBehaviour] = &JOINED;
 
 /// Registry entries that are deliberately **not** behaviours.

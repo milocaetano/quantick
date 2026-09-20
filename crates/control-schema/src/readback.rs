@@ -19,7 +19,7 @@ pub struct Readback {
     /// The policy the descriptor is expected to publish. Not a second source
     /// of truth — the matrix renders the descriptor's own — but the tripwire:
     /// a descriptor whose policy moves without this row being revisited is
-    /// [`Drift::PolicyMoved`], because the readback that suited a retryable
+    /// [`crate::retry_matrix::Drift::PolicyMoved`], because the readback that suited a retryable
     /// call rarely suits one that is not.
     pub policy: IdempotencyPolicy,
     /// The read capability that shows the effect.
@@ -93,8 +93,7 @@ pub const fn journal(
 }
 
 /// How many rows the declared families hold between them.
-#[must_use]
-pub const fn total(families: &[&[Readback]]) -> usize {
+pub(crate) const fn total(families: &[&[Readback]]) -> usize {
     let mut counted = 0;
     let mut family = 0;
     while family < families.len() {
@@ -106,8 +105,10 @@ pub const fn total(families: &[&[Readback]]) -> usize {
 
 /// The declared families as one table, at compile time: the joined array is
 /// `const` data, exactly as the single written array was.
-#[must_use]
-pub const fn flatten<const N: usize>(families: &[&[Readback]]) -> [Readback; N] {
+///
+/// The seed row is the first family's first, so a family declared empty and
+/// listed first fails compilation rather than silently shortening the table.
+pub(crate) const fn flatten<const N: usize>(families: &[&[Readback]]) -> [Readback; N] {
     let mut joined = [families[0][0]; N];
     let mut next = 0;
     let mut family = 0;

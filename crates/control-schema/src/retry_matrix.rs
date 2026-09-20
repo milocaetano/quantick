@@ -9,21 +9,25 @@
 //! `annotate.label.create` landed was written in prose beside the capability,
 //! if anywhere, and nothing failed when a new capability arrived without one.
 //!
-//! This module is that home. [`READBACKS`] holds one row per mutable
-//! capability: the policy it is expected to declare, the read capability (and
-//! the snapshot scope or journal event kind) that shows its effect, the field
-//! in that read, what that field says when the call applied, and the transport
+//! This module is that home, and each family module is where a row is
+//! written: `analysis` declares the drawings' rows beside `DRAWINGS_SCOPE_ID`,
+//! `trade` the ticket's beside `TICKET_EVENT_KIND`, and [`FAMILIES`] is the
+//! declared list [`READBACKS`] joins at compile time. A row states the policy
+//! its capability is expected to declare, the read capability (and the
+//! snapshot scope or journal event kind) that shows its effect, the field in
+//! that read, what that field says when the call applied, and the transport
 //! test that proves the row. `docs/control-plane/retry-matrix.md` is the
 //! registry rendered through those rows by `quantick-app --dump-retry-matrix`,
-//! the way the capability inventory beside it is rendered.
+//! the way the capability inventory beside it is rendered. Row order never
+//! reaches that document: the renderer walks the registry and asks each
+//! capability for its row.
 //!
 //! # What is derived and what is written
 //!
-//! Derived from the registry, never written here: which capabilities are
+//! Derived from the registry, never written by hand: which capabilities are
 //! mutable, the policy each declares, what the gateway therefore does with a
-//! key, and whether any grant reaches the capability at all
-//! ([`GRANTABLE_PROFILE_IDS`]). Written here, because no registry knows it:
-//! which read reconciles a call. [`drift`] is what keeps the written half
+//! key, and whether any grant reaches the capability at all. Written in the
+//! family module, because no registry knows it: which read reconciles a call. [`drift`] is what keeps the written half
 //! honest against the derived half — a mutable capability with no row, a row
 //! for nothing, a declared policy the descriptor no longer publishes, a
 //! readback capability or scope the registry does not carry or that can
