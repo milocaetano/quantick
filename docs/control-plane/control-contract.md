@@ -521,6 +521,16 @@ Clients may cache the MCP tool list. They must not cache dynamic availability.
 `quantick_describe` and `quantick_search_capabilities` report availability and
 the blocking reason from the current application state.
 
+`tools/list` carries each tool's name, title, description, input schema and
+annotations. It does not carry an output schema. A client that forwards the
+tool list to a model repeats that frame on every request for the rest of the
+session, and the output schemas were four fifths of its bytes while describing
+what the caller is about to receive and can read directly: every result carries
+its `structured_content`, and the envelope is fixed by this contract. A client
+that validates responses against the published schemas sets
+`QUANTICK_MCP_OUTPUT_SCHEMAS=1` on the adapter process and gets them unchanged.
+The schemas themselves are unaffected either way; only the frame is smaller.
+
 Every instance-bound MCP tool accepts an optional routing `instance_id` that
 the adapter removes before validating the capability payload. With exactly one
 live instance, omission selects it. With zero instances, the call returns
