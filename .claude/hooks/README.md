@@ -178,17 +178,26 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run — the Linux `ci` job and the `windows` job in
-`.github/workflows/ci.yml` — takes about 43 minutes. An agent iterating on a
-draft needs a signal sooner than that, and readiness needs the full verdict
+One full CI run is five jobs in `.github/workflows/ci.yml`: `ci`,
+`harness-app`, `harness-combined` and `harness-scenario` on Linux, and
+`windows`. They run in parallel. An agent iterating on a draft still needs a
+signal sooner than the full verdict, and readiness needs the full verdict
 anyway, so the two are separated rather than one being traded for the other.
+
+The Linux work was one serial job that took 43 minutes. Fifteen of those were
+the app's harness feature builds — every feature set relinks `quantick-app`,
+and eleven of them end to end is eleven relinks nothing can overlap inside a
+single runner — and eighteen were a single Python step that scanned the debug
+binary once per registry name. The scan now reads the binary once
+(`tools/ci/binary_hook_scan.py`), and the harness builds run as three jobs
+beside `ci`. Every command is the one it was; only where it runs changed.
 
 | Event | Runs |
 | --- | --- |
 | Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus `ci` and `windows` |
-| Draft flipped to ready | `ci` and `windows`, always |
-| Push to a ready PR, push to `main` | `ci` and `windows` |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the five full jobs |
+| Draft flipped to ready | the five full jobs, always |
+| Push to a ready PR, push to `main` | the five full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
@@ -209,9 +218,13 @@ untested.
 
 **The verdict.** `full_ci.sh verify <worktree> [<sha>]` is the one definition.
 It reads the check runs GitHub Actions posted for the exact commit, drops
-skipped ones, and requires the newest `ci` and the newest `windows` to have
-concluded `success`. Skipped is no verdict: a head with nothing but skipped
-full jobs has no full CI. It reads per commit, not through `gh pr checks`,
+skipped ones, and requires the newest run of every job in `FULL_CI_CHECKS` to
+have concluded `success`. The list names each job rather than summarising them,
+so splitting the Linux work across runners cannot quietly drop a check: a job
+nothing requires is a job that can disappear without anyone noticing, and
+`guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
+Skipped is no verdict: a head with nothing but skipped full jobs has no full
+CI. It reads per commit, not through `gh pr checks`,
 because a later skipped run for the same head (adding an unrelated label
 posts one) must not hide the green one. Exit 2 means GitHub could not answer, and the
 gate turns that into `ask`, never a pass. A commit GitHub has never seen was
@@ -219,12 +232,12 @@ never pushed, which is a known answer: not green.
 
 `pr-gate` calls it for `gh pr ready` and `gh pr merge`, after the reviews and
 the thread count, against the reviewed local HEAD. The denial names the way
-through: `gh pr edit <pr> --add-label full-ci`, wait for both jobs, retry.
+through: `gh pr edit <pr> --add-label full-ci`, wait for the full jobs, retry.
 `mission_ship_gate.sh` calls it again beside its all-checks rule, twice like
 that rule, so completion cannot pass on the fast job alone. That rule and the
 campaign merge check now accept `skipping` as well as `pass`: the draft-only
-`fast` job is skipped on every ready head, and without the named `ci`/`windows`
-requirement beside it that tolerance would be a hole.
+`fast` job is skipped on every ready head, and without the named
+`FULL_CI_CHECKS` requirement beside it that tolerance would be a hole.
 
 Nothing in GitHub's ruleset requires a status check today, so these two gates
 are where full CI is enforced for agents, and a human merge still sees the

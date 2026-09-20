@@ -1,0 +1,73 @@
+name: Linux Rust setup
+description: >-
+  The desktop link dependencies, the pinned toolchain and the shared Rust
+  cache, in the order every Linux job in ci.yml needs them. Four jobs used to
+  carry these three steps as copies; a copy is where they drift, and a job that
+  installs a different toolchain than the one that saved the cache rebuilds the
+  world without saying so.
+
+inputs:
+  save-cache:
+    description: >-
+      Whether this job writes the shared `linux` cache. Exactly one job may:
+      the rest restore what it saved, and a partial build must never overwrite
+      a complete one.
+    required: false
+    default: "false"
+  verbose-toolchain:
+    description: >-
+      Whether to print the full toolchain summary. The job that owns the
+      verdict prints everything, because its log is where a future reader
+      checks which toolchain a given run actually used, and because a missing
+      component should fail here, by name, rather than four steps later inside
+      `cargo fmt`. The other jobs print the versions alone.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install desktop GUI dependencies
+      # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
+      # Unconditional: which crates link a window system is a fact of the
+      # dependency graph, and naming them per job would be a hand list in
+      # workflows that otherwise derive everything. About 25 s.
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libxkbcommon-dev libwayland-dev \
+          libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+    - name: Install the pinned toolchain
+      # `rust-toolchain.toml` at the repository root names the exact version
+      # and the two components, so nothing is installed by name here. This
+      # step used to be `dtolnay/rust-toolchain@stable`, which fetched
+      # whatever `stable` meant on the morning the job ran: a toolchain
+      # release could turn a pull request red without a line of its code
+      # changing, and the session that inherited the red went looking for the
+      # bug in a diff that never had one.
+      #
+      # `rustc --version` comes first and is what does the installing: it goes
+      # through the rustup shim, which reads the toolchain file and fetches the
+      # pinned version if the runner does not have it. Newer rustup releases
+      # changed whether `rustup show` installs on its own, so the step does not
+      # depend on that either way — it runs afterwards, for the summary, once
+      # the toolchain is certainly present.
+      shell: bash
+      env:
+        VERBOSE: ${{ inputs.verbose-toolchain }}
+      run: |
+        rustc --version
+        if [ "$VERBOSE" = "true" ]; then rustup show; fi
+        cargo --version
+        cargo clippy --version
+        cargo fmt --version
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        # One key for every Linux job. They compile the same dependency graph
+        # with the same toolchain, so a second key would buy nothing but a
+        # second cold build.
+        shared-key: linux
+        save-if: ${{ inputs.save-cache == 'true' }}

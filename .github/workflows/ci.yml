@@ -13,13 +13,23 @@ env:
   CARGO_TERM_COLOR: always
 
 # Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches, a signal in minutes rather than the
-# ~43 the full jobs take. `ci` and `windows` are the verdict, and run on every
-# push to main, every push to a ready PR, the flip to ready, and on a draft
-# carrying the `full-ci` label. `pr-gate` refuses `gh pr ready` until both are
-# green at the exact head, and the final verifier requires the same, so a
-# skipped full job never stands in for a passing one. The rules live in
+# tests of the crates the diff reaches. The full verdict is `ci`,
+# `harness-app`, `harness-combined`, `harness-scenario` and `windows`, and they
+# run on every push to main, every push to a ready PR, the flip to ready, and
+# on a draft carrying the `full-ci` label. `pr-gate` refuses `gh pr ready`
+# until every one of them is green at the exact head, and the final verifier
+# requires the same, so a skipped full job never stands in for a passing one.
+# The names are `FULL_CI_CHECKS` in .claude/hooks/full_ci.sh, and
+# guardrails_test.sh fails when a name there has no job here. The rules live in
 # .claude/hooks/README.md, "Full CI at the exact head".
+#
+# The four Linux jobs run in parallel and share one cache. They were one serial
+# job that took 43 minutes, of which 15 were the app's harness feature builds:
+# every feature set relinks quantick-app, and eleven of them end to end is
+# eleven relinks nothing can overlap inside a single runner. Split three ways
+# they overlap, and each job carries the same steps it carried before, with the
+# same commands. `ci` keeps every check that is not a harness feature build,
+# and is the only job that saves the cache.
 jobs:
   fast:
     if: >-
@@ -37,12 +47,7 @@ jobs:
           # The affected set diffs the PR's base against its head, and both
           # must be in the clone.
           fetch-depth: 0
-      - name: Install the pinned toolchain
-        # Same reasoning as the `ci` job below.
-        run: |
-          rustc --version
-          cargo clippy --version
-          cargo fmt --version
+      - uses: ./.github/actions/linux-rust
       - name: Affected crates
         # Derived from `cargo metadata` and the diff, never a list kept here;
         # the script's stderr says why each crate was selected.
@@ -53,21 +58,6 @@ jobs:
         run: |
           python3 tools/ci/affected_crates.py --base "$BASE_SHA" --head "$HEAD_SHA" > affected.txt
           echo "packages=$(sed 's/^/-p /' affected.txt | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-      - name: Install desktop GUI dependencies
-        # Unconditional, as in `ci`: which crates link a window system is a
-        # fact of the dependency graph, and naming them here would be the one
-        # hand list in a job that otherwise derives everything. About 25 s.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Restores what the `ci` job saved; a partial build never saves over
-          # it.
-          shared-key: linux
-          save-if: false
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint
@@ -151,6 +141,11 @@ jobs:
         # Exercises explicit Git revisions, Rust module layouts, direct-only
         # reference scope, deduplication, and delete/rename pre-images.
         run: python3 tools/read_cost/test_measure.py
+      - name: Binary hook scan tests
+        # The scan below reads a half-gigabyte binary, so its own cases run
+        # against fixtures instead: the boundary rule, the prose exemption, and
+        # both failure directions.
+        run: python3 tools/ci/test_binary_hook_scan.py
       - name: Edit-loop safety fixtures
         run: python3 -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Bridge tests
@@ -186,48 +181,18 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
         with:
           command: check bans licenses
-      - name: Install desktop GUI dependencies
-        # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libwayland-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-      - name: Install the pinned toolchain
-        # `rust-toolchain.toml` at the repository root names the exact version
-        # and the two components, so nothing is installed by name here. This
-        # step used to be `dtolnay/rust-toolchain@stable`, which fetched
-        # whatever `stable` meant on the morning the job ran: a toolchain
-        # release could turn a pull request red without a line of its code
-        # changing, and the session that inherited the red went looking for the
-        # bug in a diff that never had one.
-        #
-        # `rustc --version` comes first and is what does the installing: it
-        # goes through the rustup shim, which reads the toolchain file and
-        # fetches the pinned version if the runner does not have it. Newer
-        # rustup releases changed whether `rustup show` installs on its own, so
-        # the step does not depend on that either way — it runs afterwards, for
-        # the summary, once the toolchain is certainly present.
-        #
-        # Every version is echoed because the log is where a future reader
-        # checks which toolchain a given run actually used, and because a
-        # missing component should fail here, by name, rather than four steps
-        # later inside `cargo fmt`.
-        run: |
-          rustc --version
-          rustup show
-          cargo --version
-          cargo clippy --version
-          cargo fmt --version
+      - uses: ./.github/actions/linux-rust
+        with:
+          # The job that builds the whole workspace is the job that saves the
+          # cache: its target directory is the complete one, and a harness job
+          # holding only the app's feature builds must never overwrite it.
+          save-cache: "true"
+          verbose-toolchain: "true"
       - name: Affected-crates tests
         # The fast draft job's crate selection. Its workspace cases compare the
         # reverse-dependency closure with `cargo tree --invert`, so they run
         # after the toolchain is installed.
         run: python3 tools/ci/test_affected_crates.py
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Shared with the fast draft job, which restores it and never saves.
-          shared-key: linux
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint
@@ -242,45 +207,56 @@ jobs:
         run: cargo build --workspace
       - name: Default binary names no harness hook
         # The shipped bytes, not the source: `Build` just made the default
-        # binary, and nothing has rebuilt it with a feature yet. The composition root's declared configuration must be
-        # present — the control that proves the scan can see a name at all;
-        # every other registry name is a harness hook and must be absent.
-        run: |
-          python3 - <<'PY'
-          import pathlib, re
-          root = pathlib.Path("crates/app/src/launch.rs").read_text(encoding="utf-8")
-          declared = root[root.index("declare_hooks!["):]
-          config = set(re.findall(r"QUANTICK_[A-Z0-9_]+", declared[:declared.index("];")]))
-          rows = pathlib.Path(".claude/skills/ui-harness/references/hook-registry.md").read_text(encoding="utf-8")
-          hooks = {n for line in rows.splitlines() if line.startswith("| `QUANTICK_")
-                   for n in re.findall(r"QUANTICK_[A-Z0-9_]+", line.split(" | ")[0])} - config
-          binary = pathlib.Path("target/debug/quantick-app").read_bytes()
-          missing = sorted(n for n in config if n.encode() not in binary)
-          # Prose, not a read: a published control-schema description names the
-          # hook a capture drives the button with.
-          prose = {"QUANTICK_LOAD_OLDER"}
-          # Compiled strings sit packed end to end, so a name is bounded only
-          # by what cannot continue it, not by a word boundary.
-          present = sorted(n for n in hooks - prose
-                           if re.search(rb"(?<![A-Z0-9_])" + n.encode() + rb"(?![A-Z0-9_])", binary))
-          assert config and not missing, f"configuration missing from the binary: {missing}"
-          assert not present, f"harness hooks in the default binary: {present}"
-          print(f"{len(config)} configuration names present, {len(hooks)} harness hooks absent")
-          PY
+        # binary, and nothing has rebuilt it with a feature yet. The
+        # composition root's declared configuration must be present — the
+        # control that proves the scan can see a name at all; every other
+        # registry name is a harness hook and must be absent.
+        run: python3 tools/ci/binary_hook_scan.py
       - name: Test
         run: cargo test --workspace
+
+  # The app's harness feature sets, split across three jobs so the relinks
+  # overlap. Every one of them is a check the serial job ran before, with the
+  # same command; the split changes where they run, never whether. Which job
+  # carries which set is a balancing decision and nothing more — the sets are
+  # independent, so any partition runs the same eleven builds.
+  harness-app:
+    if: *full-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-rust
       - name: Test opt-in quick-range harness
         run: cargo test -p quantick-app --features quick-range-harness
       - name: Test opt-in drawing harness
         run: cargo test -p quantick-app --features drawing-harness
+      - name: Test opt-in control harness
+        run: cargo test -p quantick-app --features control-harness
+
+  harness-combined:
+    if: *full-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-rust
       - name: Test combined drawing harnesses
         run: cargo test -p quantick-app --features drawing-harness,quick-range-harness
       - name: Check control and quick-range harnesses
         run: cargo check -p quantick-app --all-targets --features control-harness,quick-range-harness
       - name: Check control and drawing harnesses
         run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
-      - name: Test opt-in control harness
-        run: cargo test -p quantick-app --features control-harness
+      - name: Test all app harness families
+        run: cargo test -p quantick-app --features harness
+      - name: Build the capture binary
+        # What `ui-harness` launches: every family, outside `cfg(test)`.
+        run: cargo build -p quantick-app --features harness
+
+  harness-scenario:
+    if: *full-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-rust
       - name: Test opt-in scenario harness
         run: cargo test -p quantick-app --features scenario-harness
       - name: Check scenario and control harnesses
@@ -289,11 +265,6 @@ jobs:
         run: cargo check -p quantick-app --all-targets --features scenario-harness,drawing-harness
       - name: Check scenario and quick-range harnesses
         run: cargo check -p quantick-app --all-targets --features scenario-harness,quick-range-harness
-      - name: Test all app harness families
-        run: cargo test -p quantick-app --features harness
-      - name: Build the capture binary
-        # What `ui-harness` launches: every family, outside `cfg(test)`.
-        run: cargo build -p quantick-app --features harness
 
   # The second operating system the README is allowed to claim. It exists so
   # that sentence is backed by a workflow file rather than by memory: the
@@ -313,9 +284,10 @@ jobs:
       - name: Edit-loop Windows safety fixtures
         run: python -m unittest discover -s tools/edit_loop -p 'test_*.py'
       - name: Install the pinned toolchain
-        # Same reasoning as the Linux job: `rust-toolchain.toml` names the
+        # Same reasoning as the Linux jobs: `rust-toolchain.toml` names the
         # version, and `rustc --version` through the rustup shim is what
-        # installs it.
+        # installs it. Not the composite action, which also installs the Linux
+        # desktop link dependencies this runner has no use for.
         run: |
           rustc --version
           rustup show
