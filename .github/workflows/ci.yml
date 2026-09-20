@@ -454,11 +454,12 @@ jobs:
 
   # `cargo test --workspace` was 8m 53s of the Windows job's 15m 08s, and one
   # crate owns most of it. The three jobs below are a partition of the
-  # workspace — the ten crates that carry most of its cost, everything else but
-  # quantick-app, and quantick-app — so together they run exactly what the
-  # single `--workspace` run ran, each crate once.
+  # workspace — the crates that pull the network stack plus enough small ones
+  # to fill the job, everything else but quantick-app, and quantick-app — so
+  # together they run exactly what the single `--workspace` run ran, each crate
+  # once.
   #
-  # The `--exclude` list and the `-p` list are the same ten names, read in
+  # The `--exclude` list and the `-p` list are the same seven names, read in
   # opposite directions, which is exactly the pair that rots when one side is
   # edited. Nothing in a workflow file checks that, so
   # `tools/ci/windows_test_coverage.py` reads the selectors back out of this
@@ -467,15 +468,17 @@ jobs:
   # which is why `windows` above may run one crate again under a step named for
   # the diagnostic it is. The guard runs in `ci`.
   #
-  # The ten were chosen by measurement, and the first guess was wrong. Test
-  # binary count looked like the cost — 57 of the 113 the non-app half builds —
-  # and dealing on it gave 138s against 369s, because linking is only half the
-  # story: the four feed crates are the only ones outside `app` that pull
-  # tokio, reqwest and tungstenite, and compiling that stack cost the half
-  # holding them more than all its linking. They sit with the six crates that
-  # own the test binaries, so one job compiles the network stack and the other
-  # compiles none of it. Rebalancing is a one-line edit on each side, which the
-  # guard re-proves.
+  # The seven were chosen by measurement, over two wrong guesses. A Windows
+  # test job spends its time in two places: compiling the crates a selector
+  # reaches, and linking one executable per test target. Dealing on binary
+  # count alone gave 138s against 369s, because the four feed crates are the
+  # only ones outside `app` that pull tokio, reqwest and tungstenite, and that
+  # stack costs about 135s to compile whichever share holds it. Moving them
+  # across with six link-heavy crates then gave 416s against 245s, because the
+  # same share was paying both costs. So the feed crates keep the compile and
+  # take only the small crates with them, while every link-heavy crate sits in
+  # the share that compiles no network at all. Rebalancing is a one-line edit
+  # on each side, which the guard re-proves.
   windows-heavy-tests:
     if: *full-ci
     runs-on: windows-latest
@@ -488,7 +491,7 @@ jobs:
           desktop-deps: "false"
           cache-key: windows
       - name: Test
-        run: cargo test -p quantick-engine -p quantick-control -p quantick-pine -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
+        run: cargo test -p quantick-indicators -p quantick-workspace -p quantick-guards -p quantick-feed -p quantick-feed-binance -p quantick-feed-hyperliquid -p quantick-feed-mt5
 
   windows-tests:
     if: *full-ci
@@ -502,7 +505,7 @@ jobs:
           desktop-deps: "false"
           cache-key: windows
       - name: Test
-        run: cargo test --workspace --exclude quantick-app --exclude quantick-engine --exclude quantick-control --exclude quantick-pine --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
+        run: cargo test --workspace --exclude quantick-app --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards --exclude quantick-feed --exclude quantick-feed-binance --exclude quantick-feed-hyperliquid --exclude quantick-feed-mt5
 
   windows-app-tests:
     if: *full-ci
