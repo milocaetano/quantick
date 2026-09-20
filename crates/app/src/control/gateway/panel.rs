@@ -81,16 +81,15 @@ impl ControlAccess {
         }
         let mut open = self.show_panel;
         // The body is four consent sections, a button and the client list, and
-        // it grew past the window the analyst tier was added to it: on a
+        // it grew past the window when the analyst tier was added to it: on a
         // 1009-point screen the enabled state reached the bottom edge with the
-        // client list under it. An auto-sized window does not scroll by
-        // itself, so the trader could not reach the list or the disable
-        // button at all. The scroll area keeps the panel inside the screen
-        // whatever tier is added next.
+        // client list under it, and an auto-sized egui window does not scroll
+        // by itself, so the disable button could not be reached at all.
+        //
         // The whole window, not `available_rect`: by the time the panel draws,
-        // the chart and the dock have already claimed their space, and a
-        // fraction of what is left is a fraction of the wrong rectangle — it
-        // made the panel a third of its own content tall.
+        // the chart and the dock have claimed their space, and a fraction of
+        // what is left is a fraction of the wrong rectangle — it made the
+        // panel a third of its own content tall.
         let max_height = ctx.screen_rect().height() * CONTROL_PANEL_MAX_SCREEN_FRACTION;
         eframe::egui::Window::new("Local agent access")
             .id(eframe::egui::Id::new("control_access_panel"))
@@ -116,6 +115,13 @@ impl ControlAccess {
         let status = match self.state {
             AccessState::Disabled => "Off",
             AccessState::Enabling => "Enabling…",
+            // One arm per tier the button below offers, in the same order:
+            // the status line said "reading only" over a connection that
+            // could rearrange the trader's charts, because the two ladders
+            // had drifted apart. A tier added to one belongs in both.
+            AccessState::Enabled(_) if self.grants_cockpit() => {
+                "On — reading, answering and rearranging your charts"
+            }
             AccessState::Enabled(_) if self.grants_annotate() => {
                 "On — reading, and answering on the chart"
             }

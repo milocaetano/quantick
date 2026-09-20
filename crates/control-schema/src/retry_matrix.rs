@@ -617,7 +617,7 @@ impl fmt::Display for Drift {
     }
 }
 
-/// Every profile, lowest ceiling first: the three a grant can hand out, then
+/// Every profile, lowest ceiling first: the ones a grant can hand out, then
 /// the one nothing hands out. The first whose ceiling holds a capability's
 /// permissions is the one that reaches it.
 pub fn profiles_in_ceiling_order() -> impl Iterator<Item = &'static str> {

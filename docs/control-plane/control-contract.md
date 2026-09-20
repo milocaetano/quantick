@@ -505,6 +505,7 @@ server starts, so `quantick_invoke` uses conservative hints for that ceiling:
 | Profile ceiling | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 | --- | --- | --- | --- | --- |
 | `observer` | `true` | `false` | `false` | `false` |
+| `analyst` | `true` | `false` | `false` | `false` |
 | `annotator` | `false` | `false` | `false` | `false` |
 | `developer` or `paper` | `false` | `true` | `false` | `true` |
 

@@ -14,7 +14,8 @@ use quantick_control::{
 };
 use quantick_control_host::authority::{
     ANALYST_PROFILE_ID, ANNOTATOR_PROFILE_ID, COCKPIT_PROFILE_ID, GRANTABLE_PROFILE_IDS,
-    OBSERVER_PROFILE_ID, OBSERVER_SCOPE_IDS, TRADER_PROFILE_ID, permissions, profiles,
+    OBSERVE_EFFECT_ID, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, OBSERVER_SCOPE_IDS,
+    TRADER_PROFILE_ID, effects, permissions, profiles,
 };
 
 /// The registry the application builds its authority from: the published
@@ -111,29 +112,37 @@ fn the_sensitive_reads_are_the_analyst_tier_and_the_rest_stay_at_the_floor() {
     }
 }
 
-/// A3: the tier reads and does not write. Stated against the ceilings rather
-/// than against a list of prefixes, so a write permission invented tomorrow
-/// under a name nobody predicted still fails here if it drifts down.
+/// A3: the tier reads and does not write.
+///
+/// Stated against the permission floor of every effect that is not `observe`,
+/// which is where a write permission is declared in this contract. An earlier
+/// version of this test compared the analyst ceiling against the *difference*
+/// between it and the write tiers, which is disjoint from it by construction
+/// and so could never fail — it would have passed with `trade` ceilinged at
+/// `analyst`.
 #[test]
 fn nothing_the_analyst_tier_reaches_can_write() {
     let registry = authority();
     let analyst = ceiling(&registry, ANALYST_PROFILE_ID);
-    let annotator = ceiling(&registry, ANNOTATOR_PROFILE_ID);
-    let cockpit = ceiling(&registry, COCKPIT_PROFILE_ID);
-    let trader = ceiling(&registry, TRADER_PROFILE_ID);
-    let writes: BTreeSet<PermissionId> = trader
-        .difference(&analyst)
-        .chain(annotator.difference(&analyst))
-        .chain(cockpit.difference(&analyst))
-        .cloned()
+    let writing_floors: BTreeSet<PermissionId> = effects()
+        .into_iter()
+        .filter(|policy| policy.id.as_str() != OBSERVE_EFFECT_ID)
+        .map(|policy| policy.permission_floor)
         .collect();
+    assert!(
+        !writing_floors.is_empty(),
+        "this contract declares effects that write, or the test proves nothing"
+    );
+    for floor in &writing_floors {
+        assert!(
+            !analyst.contains(floor),
+            "`{floor}` is the floor of an effect that writes, so the analyst tier must not hold it"
+        );
+    }
     for permission in &analyst {
         assert!(
-            !writes.contains(permission),
-            "`{permission}` writes, so the analyst tier must not reach it"
-        );
-        assert!(
-            permission.as_str() == "observe" || permission.as_str().starts_with("observe."),
+            permission.as_str() == OBSERVE_PERMISSION_ID
+                || permission.as_str().starts_with("observe."),
             "`{permission}` is not a read, so it does not belong to the analyst tier"
         );
     }
