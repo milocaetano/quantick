@@ -1,26 +1,40 @@
-name: Linux Rust setup
+name: Rust setup
 description: >-
   The desktop link dependencies, the pinned toolchain and the shared Rust
-  cache, in the order every Linux job in ci.yml needs them. Four jobs used to
-  carry these three steps as copies; a copy is where they drift, and a job that
-  installs a different toolchain than the one that saved the cache rebuilds the
-  world without saying so.
+  cache, in the order every job in ci.yml needs them. Seven jobs would
+  otherwise carry these steps as copies; a copy is where they drift, and a job
+  that installs a different toolchain than the one that saved the cache
+  rebuilds the world without saying so.
 
 inputs:
+  desktop-deps:
+    description: >-
+      Whether to install the Linux desktop link dependencies. quantick-app
+      (egui/eframe + winit) needs them to build and link on Linux; the Windows
+      runner has no use for them.
+    required: false
+    default: "true"
+  cache-key:
+    description: >-
+      The `shared-key` the Rust cache uses. One key per platform: the jobs on a
+      platform compile the same dependency graph with the same toolchain, so a
+      second key would buy nothing but a second cold build.
+    required: false
+    default: linux
   save-cache:
     description: >-
-      Whether this job writes the shared `linux` cache. Exactly one job may:
-      the rest restore what it saved, and a partial build must never overwrite
-      a complete one.
+      Whether this job writes its platform's cache. Exactly one job per key
+      may: the rest restore what it saved, and a job holding a partial build
+      must never overwrite a complete one.
     required: false
     default: "false"
   verbose-toolchain:
     description: >-
-      Whether to print the full toolchain summary. The job that owns the
-      verdict prints everything, because its log is where a future reader
-      checks which toolchain a given run actually used, and because a missing
-      component should fail here, by name, rather than four steps later inside
-      `cargo fmt`. The other jobs print the versions alone.
+      Whether to print the full toolchain summary. The job that owns its
+      platform's cache prints everything, because its log is where a future
+      reader checks which toolchain a given run actually used, and because a
+      missing component should fail here, by name, rather than four steps later
+      inside `cargo fmt`. The other jobs print the versions alone.
     required: false
     default: "false"
 
@@ -28,10 +42,10 @@ runs:
   using: composite
   steps:
     - name: Install desktop GUI dependencies
-      # quantick-app (egui/eframe + winit) needs these to build/link on Linux.
-      # Unconditional: which crates link a window system is a fact of the
-      # dependency graph, and naming them per job would be a hand list in
+      # Unconditional on Linux: which crates link a window system is a fact of
+      # the dependency graph, and naming them per job would be a hand list in
       # workflows that otherwise derive everything. About 25 s.
+      if: inputs.desktop-deps == 'true'
       shell: bash
       run: |
         sudo apt-get update
@@ -66,8 +80,5 @@ runs:
 
     - uses: Swatinem/rust-cache@v2
       with:
-        # One key for every Linux job. They compile the same dependency graph
-        # with the same toolchain, so a second key would buy nothing but a
-        # second cold build.
-        shared-key: linux
+        shared-key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save-cache == 'true' }}

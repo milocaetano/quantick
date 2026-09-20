@@ -178,26 +178,36 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is five jobs in `.github/workflows/ci.yml`: `ci`,
-`harness-app`, `harness-combined` and `harness-scenario` on Linux, and
-`windows`. They run in parallel. An agent iterating on a draft still needs a
-signal sooner than the full verdict, and readiness needs the full verdict
-anyway, so the two are separated rather than one being traded for the other.
+One full CI run is seven jobs in `.github/workflows/ci.yml`: `ci`,
+`harness-app`, `harness-combined` and `harness-scenario` on Linux, `windows`,
+`windows-tests` and `windows-app-tests` on Windows. They run in parallel. An
+agent iterating on a draft still needs a signal sooner than the full verdict,
+and readiness needs the full verdict anyway, so the two are separated rather
+than one being traded for the other.
 
-The Linux work was one serial job that took 43 minutes. Fifteen of those were
+It was two serial jobs, 43 minutes on Linux and 15 on Windows, and the time sat
+in work nothing could overlap inside one runner. Eighteen Linux minutes were a
+single Python step that scanned the debug binary once per registry name; it
+reads the binary once now (`tools/ci/binary_hook_scan.py`). Fifteen more were
 the app's harness feature builds — every feature set relinks `quantick-app`,
-and eleven of them end to end is eleven relinks nothing can overlap inside a
-single runner — and eighteen were a single Python step that scanned the debug
-binary once per registry name. The scan now reads the binary once
-(`tools/ci/binary_hook_scan.py`), and the harness builds run as three jobs
-beside `ci`. Every command is the one it was; only where it runs changed.
+and eleven of them end to end is eleven relinks — now three jobs beside `ci`.
+On Windows, `cargo test --workspace` was 8m 53s of 15m 08s, and one crate owns
+most of it, so it became two complementary selectors:
+`--workspace --exclude quantick-app` and `-p quantick-app`.
+
+Every command is the one it was; only where it runs changed. The split that
+could rot silently is the Windows one — `cargo test --workspace` found new
+crates by itself, and two selectors do not — so
+`tools/ci/windows_test_coverage.py` reads the selectors back out of `ci.yml`,
+takes the member list from `cargo metadata`, and fails when the halves stop
+being complements. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
 | Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the five full jobs |
-| Draft flipped to ready | the five full jobs, always |
-| Push to a ready PR, push to `main` | the five full jobs |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the seven full jobs |
+| Draft flipped to ready | the seven full jobs, always |
+| Push to a ready PR, push to `main` | the seven full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the
@@ -220,7 +230,7 @@ untested.
 It reads the check runs GitHub Actions posted for the exact commit, drops
 skipped ones, and requires the newest run of every job in `FULL_CI_CHECKS` to
 have concluded `success`. The list names each job rather than summarising them,
-so splitting the Linux work across runners cannot quietly drop a check: a job
+so splitting the work across runners cannot quietly drop a check: a job
 nothing requires is a job that can disappear without anyone noticing, and
 `guardrails_test.sh` fails when a name in that list has no job in `ci.yml`.
 Skipped is no verdict: a head with nothing but skipped full jobs has no full

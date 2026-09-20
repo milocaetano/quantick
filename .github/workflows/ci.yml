@@ -13,23 +13,27 @@ env:
   CARGO_TERM_COLOR: always
 
 # Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches. The full verdict is `ci`,
-# `harness-app`, `harness-combined`, `harness-scenario` and `windows`, and they
-# run on every push to main, every push to a ready PR, the flip to ready, and
-# on a draft carrying the `full-ci` label. `pr-gate` refuses `gh pr ready`
-# until every one of them is green at the exact head, and the final verifier
-# requires the same, so a skipped full job never stands in for a passing one.
-# The names are `FULL_CI_CHECKS` in .claude/hooks/full_ci.sh, and
-# guardrails_test.sh fails when a name there has no job here. The rules live in
+# tests of the crates the diff reaches. The full verdict is seven jobs — `ci`,
+# `harness-app`, `harness-combined` and `harness-scenario` on Linux, `windows`,
+# `windows-tests` and `windows-app-tests` on Windows — and they run on every
+# push to main, every push to a ready PR, the flip to ready, and on a draft
+# carrying the `full-ci` label. `pr-gate` refuses `gh pr ready` until every one
+# of them is green at the exact head, and the final verifier requires the same,
+# so a skipped full job never stands in for a passing one. The names are
+# `FULL_CI_CHECKS` in .claude/hooks/full_ci.sh, and guardrails_test.sh fails
+# when a name there has no job here. The rules live in
 # .claude/hooks/README.md, "Full CI at the exact head".
 #
-# The four Linux jobs run in parallel and share one cache. They were one serial
-# job that took 43 minutes, of which 15 were the app's harness feature builds:
-# every feature set relinks quantick-app, and eleven of them end to end is
-# eleven relinks nothing can overlap inside a single runner. Split three ways
-# they overlap, and each job carries the same steps it carried before, with the
-# same commands. `ci` keeps every check that is not a harness feature build,
-# and is the only job that saves the cache.
+# They were two serial jobs, 43 minutes on Linux and 15 on Windows, and the
+# time was in work nothing could overlap inside a single runner: eleven harness
+# feature sets each relinking quantick-app, one `cargo test --workspace` per
+# platform, and — on Linux — eighteen minutes of a Python step that scanned the
+# debug binary once per registry name. The scan reads the binary once now
+# (tools/ci/binary_hook_scan.py); the rest is split across runners. Every job
+# carries the steps it carried before, with the same commands.
+#
+# One cache per platform, written by the job that builds the whole workspace on
+# it — `ci` on Linux, `windows` on Windows — and restored by the rest.
 jobs:
   fast:
     if: >-
@@ -47,7 +51,7 @@ jobs:
           # The affected set diffs the PR's base against its head, and both
           # must be in the clone.
           fetch-depth: 0
-      - uses: ./.github/actions/linux-rust
+      - uses: ./.github/actions/rust-setup
       - name: Affected crates
         # Derived from `cargo metadata` and the diff, never a list kept here;
         # the script's stderr says why each crate was selected.
@@ -181,13 +185,20 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2.1.1
         with:
           command: check bans licenses
-      - uses: ./.github/actions/linux-rust
+      - uses: ./.github/actions/rust-setup
         with:
           # The job that builds the whole workspace is the job that saves the
           # cache: its target directory is the complete one, and a harness job
           # holding only the app's feature builds must never overwrite it.
           save-cache: "true"
           verbose-toolchain: "true"
+      - name: Windows test coverage
+        # The two Windows test jobs must still be complements. Both the guard
+        # and its own cases read `cargo metadata` for the member list, so they
+        # run after the toolchain rather than beside the cargo-free suites.
+        run: |
+          python3 tools/ci/test_windows_test_coverage.py
+          python3 tools/ci/windows_test_coverage.py
       - name: Affected-crates tests
         # The fast draft job's crate selection. Its workspace cases compare the
         # reverse-dependency closure with `cargo tree --invert`, so they run
@@ -225,7 +236,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/linux-rust
+      - uses: ./.github/actions/rust-setup
       - name: Test opt-in quick-range harness
         run: cargo test -p quantick-app --features quick-range-harness
       - name: Test opt-in drawing harness
@@ -238,7 +249,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/linux-rust
+      - uses: ./.github/actions/rust-setup
       - name: Test combined drawing harnesses
         run: cargo test -p quantick-app --features drawing-harness,quick-range-harness
       - name: Check control and quick-range harnesses
@@ -256,7 +267,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/linux-rust
+      - uses: ./.github/actions/rust-setup
       - name: Test opt-in scenario harness
         run: cargo test -p quantick-app --features scenario-harness
       - name: Check scenario and control harnesses
@@ -283,26 +294,55 @@ jobs:
       - uses: actions/checkout@v4
       - name: Edit-loop Windows safety fixtures
         run: python -m unittest discover -s tools/edit_loop -p 'test_*.py'
-      - name: Install the pinned toolchain
-        # Same reasoning as the Linux jobs: `rust-toolchain.toml` names the
-        # version, and `rustc --version` through the rustup shim is what
-        # installs it. Not the composite action, which also installs the Linux
-        # desktop link dependencies this runner has no use for.
-        run: |
-          rustc --version
-          rustup show
-          cargo --version
-          cargo clippy --version
-          cargo fmt --version
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-setup
+        with:
+          # No apt on this runner, and this is the Windows job that builds the
+          # whole workspace, so it is the one that saves the Windows cache.
+          desktop-deps: "false"
+          cache-key: windows
+          save-cache: "true"
+          verbose-toolchain: "true"
       - name: Format
         run: cargo fmt --all -- --check
       - name: Lint
         run: cargo clippy --workspace --all-targets
       - name: Build
         run: cargo build --workspace
-      - name: Test
-        run: cargo test --workspace
       - name: Test Windows descriptor authority and local transport
         # Keep test names and token-free fixture prerequisites in exact-head logs.
         run: cargo test -p quantick-control-local -- --nocapture
+
+  # `cargo test --workspace` was 8m 53s of the Windows job's 15m 08s, and one
+  # crate owns most of it. The two jobs below are complements — everything but
+  # quantick-app, and quantick-app — so together they run exactly what the
+  # single `--workspace` run ran. Nothing in a workflow file checks that two
+  # selectors are complements, so `tools/ci/windows_test_coverage.py` reads
+  # them back out of this file and compares them with `cargo metadata`; it runs
+  # in `ci`.
+  windows-tests:
+    if: *full-ci
+    runs-on: windows-latest
+    env:
+      QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          desktop-deps: "false"
+          cache-key: windows
+      - name: Test
+        run: cargo test --workspace --exclude quantick-app
+
+  windows-app-tests:
+    if: *full-ci
+    runs-on: windows-latest
+    env:
+      QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          desktop-deps: "false"
+          cache-key: windows
+      - name: Test
+        run: cargo test -p quantick-app
