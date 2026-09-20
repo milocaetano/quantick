@@ -521,13 +521,21 @@ impl RiskState {
 
 impl BudgetRefusal {
     /// A sentence for the trader, saying what to do instead.
+    ///
+    /// The same two readers the risk lock's refusal reaches: the ticket's
+    /// toast and the control plane's error. A lost line continuation once
+    /// left a run of spaces in the currency mismatch wording, as it had in
+    /// [`crate::account::RiskRefusal::sentence`]; both were tidied together,
+    /// and `no_refusal_sentence_carries_a_run_of_spaces` walks every variant
+    /// here so the next one cannot arrive carrying the same defect.
     pub fn sentence(&self) -> String {
         match self {
             Self::NotSet => "set a risk per trade to size the entry from your stop".to_owned(),
             Self::AmountNotPositive => "set a risk per trade above zero".to_owned(),
             Self::PercentNotPositive => "set a risk percentage above zero".to_owned(),
             Self::AmountInAnotherCurrency { amount, instrument } => format!(
-                "your risk per trade is {} and this instrument trades in {} - nothing here                  converts between currencies. Set a risk in {} to size on it.",
+                "your risk per trade is {} and this instrument trades in {} - nothing here \
+                 converts between currencies. Set a risk in {} to size on it.",
                 amount.code(),
                 instrument.code(),
                 instrument.code()

@@ -36,8 +36,10 @@ impl RiskRefusal {
     /// carried since before the account left `app`. A lost line continuation
     /// once left a run of spaces before "turn"; the move out of `app` kept
     /// them byte for byte rather than change a sentence mid-move, and they
-    /// were tidied afterwards, on their own. The tidied wording is pinned by
-    /// `the_refusal_sentence_has_no_stray_spaces`.
+    /// were tidied afterwards, on their own, together with the same accident
+    /// in [`crate::risk_sizing::BudgetRefusal::sentence`]. The tidied wording
+    /// is pinned by `the_refusal_sentence_has_no_stray_spaces`, and
+    /// `no_refusal_sentence_carries_a_run_of_spaces` guards the whole class.
     #[must_use]
     pub fn sentence(&self) -> String {
         format!(
