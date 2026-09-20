@@ -31,7 +31,7 @@ use crate::{app::ControlWindow, metrics};
 use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
-    contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID, OBSERVER_SCOPE_IDS},
+    contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
         DeferredActionResult, OBSERVER_PROFILE_ID, ObserverContract, PreparedDispatch,
         PreparedRequest, UiReadContext, UiReadExecution,
@@ -417,18 +417,9 @@ fn is_annotate_scope(permission: &PermissionId) -> bool {
     permission.as_str().starts_with(concat!("annotate", "."))
 }
 
-/// Whether a permission belongs to the analyst tier: a private read.
-///
-/// Answered from the published scope table rather than from a prefix, because
-/// the tier *is* "the reads marked sensitive" — every one of them starts with
-/// `observe.` exactly like the ordinary reads do, and a scope added tomorrow
-/// joins the tier the moment the table marks it, with no second list to
-/// remember.
-pub(super) fn is_analyst_permission(permission: &PermissionId) -> bool {
-    OBSERVER_SCOPE_IDS
-        .iter()
-        .any(|(id, _, sensitive)| *sensitive && *id == permission.as_str())
-}
+/// Whether a permission belongs to the analyst tier: a private read. The
+/// answer is the published scope table's, read where the table lives.
+pub(super) use quantick_control_host::authority::is_private_read as is_analyst_permission;
 
 /// Who a connection is, as the handshake proved it. Every action that
 /// connection asks for is signed with this: the payload never names an actor.

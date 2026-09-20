@@ -121,11 +121,9 @@ observe.indicators
 observe.drawings
 observe.orderflow
 observe.replay
-observe.paper
 observe.health
 observe.attention
 observe.events
-observe.evidence
 ```
 
 The following sensitive or aggregate additions are off by default, require a

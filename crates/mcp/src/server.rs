@@ -27,7 +27,9 @@ use crate::{
 /// beside a tool list that writes is a guardrail pointing the wrong way.
 #[must_use]
 pub fn instructions(profile_ceiling: &str) -> String {
-    let authority = if profile_ceiling == ANNOTATOR_PROFILE {
+    let authority = if profile_ceiling == COCKPIT_PROFILE {
+        "Authority: this connection holds the cockpit profile - it reads, it may add labels, arrows and zones to the chart, raise a notification and attach a compiled indicator, and it may rearrange the window: which charts are on screen, where they sit and how wide they are. Nothing it does deletes the trader's own work or touches an order, and a chart put away keeps its drawings, its indicators and its bars. The window grants each scope: a capability the trader did not grant is refused."
+    } else if profile_ceiling == ANNOTATOR_PROFILE {
         "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
     } else if profile_ceiling == ANALYST_PROFILE {
         "Authority: the analyst profile is read-only - no tool changes the chart, orders or settings, and write capability IDs are refused. It reads what the observer may not: the paper account, the trader's own text, redacted diagnostic logs, evidence bundles and screenshots. The window grants each of those scopes separately: one the trader did not grant is refused."
@@ -448,6 +450,15 @@ mod tests {
                 writes,
                 ceiling != tools::ANALYST_PROFILE,
                 "`{ceiling}` is offered the annotate tier only if it writes"
+            );
+            // The tool list and the instructions are built from the same
+            // normalized ceiling, and they have to *say* the same thing: a
+            // client told "read-only" while holding `quantick_annotate` has
+            // a guardrail pointing the wrong way.
+            let told_read_only = instructions(ceiling).contains("is read-only");
+            assert_eq!(
+                told_read_only, !writes,
+                "`{ceiling}` is told it is read-only only if it is"
             );
         }
     }

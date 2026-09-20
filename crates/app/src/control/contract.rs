@@ -48,7 +48,7 @@ pub(crate) use quantick_control_host::authority::DESCRIBE_CAPABILITY_ID;
 pub(crate) use quantick_control_host::authority::{
     ANALYST_PROFILE_ID, COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID,
     COCKPIT_PROFILE_ID, DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
-    OBSERVER_SCOPE_IDS, SnapshotReadInput,
+    SnapshotReadInput,
 };
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};

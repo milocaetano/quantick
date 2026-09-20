@@ -11,7 +11,7 @@ Launch with local access and the scopes the read needs. The scope IDs are the
 
 ```powershell
 $env:QUANTICK_CONTROL_ACCESS = "1"
-$env:QUANTICK_CONTROL_SCOPES = "all-reads,observe.evidence,observe.screenshot"
+$env:QUANTICK_CONTROL_SCOPES = "all-reads,analyst-tier"
 ```
 
 ## The client
@@ -39,7 +39,7 @@ a child's stdin the moment `Process.StandardInput` is touched; it lands on line
 
 ```powershell
 $psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $mcp; $psi.Arguments = "--profile observer"
+$psi.FileName = $mcp; $psi.Arguments = "--profile analyst"
 $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true
 $psi.UseShellExecute = $false
 $m = [System.Diagnostics.Process]::Start($psi)

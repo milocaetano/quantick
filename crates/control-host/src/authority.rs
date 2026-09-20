@@ -226,6 +226,21 @@ pub const OBSERVER_SCOPE_IDS: &[(&str, &str, bool)] = &[
     ),
 ];
 
+/// Whether a permission is one of the private reads — the analyst tier.
+///
+/// Answered from the published scope table rather than from a prefix, because
+/// the tier *is* "the reads marked sensitive": every one of them starts with
+/// `observe.` exactly like the ordinary reads do, and a scope added tomorrow
+/// joins the tier the moment the table marks it, with no second list to
+/// remember. It lives here, beside the table, so the window and a headless
+/// host answer the question the same way.
+#[must_use]
+pub fn is_private_read(permission: &PermissionId) -> bool {
+    OBSERVER_SCOPE_IDS
+        .iter()
+        .any(|(id, _, sensitive)| *sensitive && *id == permission.as_str())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyInput {}
