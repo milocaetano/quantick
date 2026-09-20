@@ -170,9 +170,9 @@ the work — never shrink a diff to evade review.
    with the model named at the call: the strong default for judgement and
    repair, `sonnet` for checklist application. Each agent publishes its durable
    report through the producer exactly as today and answers in one line,
-   `PASS|FAIL <review-key>`, or the new head where it commits. The main thread
-   opens no report body, diff, log or thread; needing one is a finding against
-   this skill, filed as one.
+   `PASS|FAIL <review-key> <open-threads>`, or the new head where it commits.
+   The main thread opens no report body, diff, log or thread; needing one is a
+   finding against this skill, filed as one.
 
    2. **`Skill(arch-review)`** — every tier; its producer records
       `arch-review-ok`. Never write a marker directly.
@@ -182,10 +182,12 @@ the work — never shrink a diff to evade review.
       `delivery-review-ok`. Skipped only at `small`.
    5. **CI watch** — a `sonnet` agent on `gh pr checks <pr> --watch`; it
       returns `GREEN|RED <head>` and the failing job names, never a log.
-   6. **Repair, two rounds at most** — a strong-model agent given the open
-      threads and the delivery contract; it edits, runs the applicable checks,
-      commits and returns the new head. What it cannot resolve for want of
-      author context becomes a delta follow-up, never a main-thread fix.
+   6. **Repair, two of the contract's batches at most** — a strong-model agent
+      given the open threads and the delivery contract. It owns its own record:
+      `progress-check` passes and `progress-record` reserves the batch before
+      it edits; the disposition is appended after. It runs the applicable
+      checks, commits and returns the new head. What it cannot resolve for want
+      of author context becomes a delta follow-up, never a main-thread fix.
    7. **Final completion** — after exact-head CI and any ready transition, from
       the task worktree, even for an already-ready PR:
       `sh .claude/hooks/mission_ship_gate.sh mission <pr>`. No PASS, no
