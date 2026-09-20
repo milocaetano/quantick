@@ -2,7 +2,7 @@
 // lock's refusal, the symbol switch, and the journal golden - the money
 // path's byte-for-byte record, moved here from `app` with the account.
 
-use quantick_sim::{Currency, InstrumentMoney, MoneySource};
+use quantick_sim::{Currency, InstrumentMoney, Money, MoneySource};
 
 use super::*;
 use crate::report::HistoryRow;
@@ -119,6 +119,30 @@ fn the_lock_refuses_through_the_outbox() {
     assert!(
         account.peek_toast().is_some(),
         "and the refusal is waiting in the outbox, not on a lane"
+    );
+}
+
+/// The refusal sentence the trader reads carries no run of stray spaces.
+///
+/// A lost line continuation once left eighteen of them before "turn", and the
+/// move out of `app` kept them byte for byte rather than change a sentence
+/// mid-move. The whole wording is pinned here so they cannot come back.
+#[test]
+fn the_refusal_sentence_has_no_stray_spaces() {
+    let brl = Currency::new("BRL").expect("BRL");
+    let refusal = RiskRefusal {
+        risk: Money::new(Decimal::new(1980, 2), brl.clone()),
+        budget: Money::new(Decimal::ONE, brl),
+    };
+
+    assert_eq!(
+        refusal.sentence(),
+        "this order risks 19.8 BRL - over your 1 BRL risk per trade. Raise the risk, or turn the lock off."
+    );
+    assert!(
+        !refusal.sentence().contains("  "),
+        "no run of two spaces survives: {}",
+        refusal.sentence()
     );
 }
 
