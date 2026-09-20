@@ -6,7 +6,7 @@ use quantick_sim::{Currency, InstrumentMoney, Money, MoneySource};
 
 use super::*;
 use crate::report::HistoryRow;
-use crate::risk_sizing::RiskBasis;
+use crate::risk_sizing::{BudgetRefusal, RiskBasis};
 use crate::scratch::ScratchDir;
 
 /// A form with a quantity typed and no protective offsets — the state a
@@ -144,6 +144,78 @@ fn the_refusal_sentence_has_no_stray_spaces() {
         "no run of two spaces survives: {}",
         refusal.sentence()
     );
+}
+
+/// One of every [`BudgetRefusal`], so a sentence walk covers the class.
+///
+/// Listed by hand and then checked: the `match` below stops compiling the
+/// moment a variant is added, so the list cannot quietly fall behind the
+/// enum it claims to cover.
+fn every_budget_refusal(amount: &Currency, instrument: &Currency) -> Vec<BudgetRefusal> {
+    let all = vec![
+        BudgetRefusal::NotSet,
+        BudgetRefusal::AmountNotPositive,
+        BudgetRefusal::PercentNotPositive,
+        BudgetRefusal::NoCapital(amount.clone()),
+        BudgetRefusal::AmountInAnotherCurrency {
+            amount: amount.clone(),
+            instrument: instrument.clone(),
+        },
+    ];
+    for refusal in &all {
+        match refusal {
+            BudgetRefusal::NotSet
+            | BudgetRefusal::AmountNotPositive
+            | BudgetRefusal::PercentNotPositive
+            | BudgetRefusal::NoCapital(_)
+            | BudgetRefusal::AmountInAnotherCurrency { .. } => {}
+        }
+    }
+    all
+}
+
+/// No refusal sentence this crate hands a reader carries a run of spaces.
+///
+/// The same lost line continuation that left eighteen spaces in the risk
+/// lock's sentence left a run in `BudgetRefusal::AmountInAnotherCurrency`
+/// too, and both reach the same two readers - the ticket's toast and the
+/// control plane's error. So the guard is per class and not per literal: it
+/// walks every `BudgetRefusal` variant beside [`RiskRefusal::sentence`], and
+/// a variant added later is covered by this test instead of needing a
+/// hand-written literal beside it.
+#[test]
+fn no_refusal_sentence_carries_a_run_of_spaces() {
+    let brl = Currency::new("BRL").expect("BRL");
+    let usd = Currency::new("USD").expect("USD");
+
+    let risk_refusal = RiskRefusal {
+        risk: Money::new(Decimal::new(1980, 2), brl.clone()),
+        budget: Money::new(Decimal::ONE, brl.clone()),
+    };
+
+    let mismatch = BudgetRefusal::AmountInAnotherCurrency {
+        amount: brl.clone(),
+        instrument: usd.clone(),
+    };
+    assert_eq!(
+        mismatch.sentence(),
+        "your risk per trade is BRL and this instrument trades in USD - nothing here converts \
+         between currencies. Set a risk in USD to size on it.",
+        "the currency mismatch wording is pinned, tidied"
+    );
+
+    let budget_refusals = every_budget_refusal(&brl, &usd);
+    let sentences = std::iter::once(("RiskRefusal", risk_refusal.sentence())).chain(
+        budget_refusals
+            .iter()
+            .map(|refusal| ("BudgetRefusal", refusal.sentence())),
+    );
+    for (owner, sentence) in sentences {
+        assert!(
+            !sentence.contains("  "),
+            "{owner} hands the reader a run of two spaces: {sentence}"
+        );
+    }
 }
 
 /// Leaving an instrument is a switch; arriving at the first one is not.
