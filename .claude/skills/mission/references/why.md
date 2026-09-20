@@ -15,3 +15,19 @@ Closing steps are separate because a delivery review cannot prove its own
 future verdict or a merge it must unblock. They are still required before final
 delivery. Campaign missions return to their coordinator so this handoff does
 not become another prompt the trader must write.
+
+## Moved from `SKILL.md`
+
+- **Why `/goal` and this skill are separate.** Claude's built-in `/goal`
+  repeats turns until its evaluator accepts a condition, with no repository
+  knowledge; this skill supplies the condition, so the two never compete.
+- **Why a tier never goes down.** Lowering one mid-mission cannot be told apart
+  from dodging a review that was about to fail.
+- **Why the tier table is a narrower reading, never a different one.** `small`
+  buys less ceremony *on the record*, with a gate that knows it did; a tier
+  lowers what is asked, never what is recorded.
+- **Saying the objective back in the trader's language** is welcome; only the
+  English sentence is written down.
+- **Why `GOAL.md` must be on the branch.** `delivery-review` looks for the
+  checklist in the task worktree, so a goal written into the main checkout
+  reads as absent and the review returns NOT GRADEABLE.

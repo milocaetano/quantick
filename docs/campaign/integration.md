@@ -37,7 +37,7 @@ repository rules to obtain access.
    `origin/campaign/<slug>`, its own mission and review evidence, and a PR whose
    base is exactly `campaign/<slug>`. Do not work directly in the shared
    integration branch. The coordinator serializes merges.
-3. Use the base and key procedure below in `new-task`, `mission`, `ship`,
+3. Use the base and key procedure below in `issue start`, `mission`, `ship`,
    `arch-review`, `delivery-review` and `ai-review`. It supersedes their
    main-only examples for campaign children; normal tasks still use main.
 4. Before a child merge, read the authorization source again, fetch, rebase
@@ -108,7 +108,7 @@ git -C "$WT" log "$BASE..HEAD" --oneline
 Before task worktree creation, take the initial base from the verified parent;
 after creation, this helper validates the branch-bound record. Use
 `git worktree add -b <child> <isolated-path> <verified-base>` and arm the guards
-as `new-task` requires. `gh pr create` must specify `--base <campaign-branch>`.
+as `mission` step 6 requires. `gh pr create` must specify `--base <campaign-branch>`.
 Native reviewers receive that same explicit base/diff, never an implicit main
 comparison. Full final-campaign reviews instead compare the entire campaign
 against current main. `delivery-review` reads the child mission for child PRs

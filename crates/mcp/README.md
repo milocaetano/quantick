@@ -58,6 +58,24 @@ paper position and disarms every strategy. `main.rs` asks for `cockpit` and
 invoke it — the contract comment on `COCKPIT_RECOVER_PERMISSION_ID` is the
 reason it is a separate permission at all.
 
+The contract chains a fourth profile, `trader` (place, bracket and cancel
+orders). Its `trade` permission is sensitive with `default_grant: Denied`, the
+access panel filters it out, and `quantick-mcp` never requests it, so no
+connection reaches it today. A capability the trader did not grant is refused
+with `control.permission_denied` whatever the connection asked for and
+whichever tool it came through — `quantick_invoke` is checked exactly like a
+named tool.
+
+Two things worth knowing before writing a client:
+
+- **Park, do not poll.** A trader pressing the mark hotkey puts the resolved
+  thing under the pointer into the journal, so the intended loop is *wait
+  (`quantick_wait_for_change`), read the mark, answer about that bar* — not a
+  screenshot every second.
+- **The scene and the cursor share IDs.** The cursor scope answers with the
+  scene's control IDs. Canvas rectangles are logical points: apply the display
+  scale factor before composing them with a screenshot.
+
 Every instance-bound tool takes an optional routing `instance_id`, removed
 before the payload reaches the instance. With one live instance it is
 selected; with several and no choice the call fails with
