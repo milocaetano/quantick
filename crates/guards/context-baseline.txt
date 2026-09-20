@@ -18,7 +18,14 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 12917
+.claude/skills/mission/SKILL.md 14098
+# +1,181 for phase two: after the draft PR the main thread dispatches a fresh
+# agent per review, per CI watch and per repair round and reads one-line
+# verdicts, because 96-99% of the billed tokens in this project's five largest
+# sessions fell after `gh pr create` and none of that tail was reading the
+# conversation. Paid for in the same change by deleting the skill's
+# `references/why.md`, 1,922 tracked bytes, into `docs/agentic-development.md`,
+# which no session loads up front.
 # +51 for the `Read cost:` line in the mission summary template.
 # The template is the only place a mission is told to carry the number
 # `tools/read_cost/measure.py` has produced on every pull request since #487,

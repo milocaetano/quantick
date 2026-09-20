@@ -17,3 +17,6 @@ done. Translate only these host mechanics:
   commands, so Codex runs the canonical scripts through `exec_command` exactly
   as written. Host goal status and local marker writes never substitute for
   their successful current-PR receipts.
+- The mission skill's phase two dispatches: after the draft PR, each review,
+  the CI watch and each repair round is a fresh Codex subagent given the same
+  PR-only prompt and answering in the same one line.
