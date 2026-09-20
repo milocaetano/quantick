@@ -81,3 +81,4 @@ a bound.
 | 547 | 2026-09-19 | feat/fast-draft-ci | main | 0 | 0 | — |
 | 550 | 2026-09-19 | feat/read-cost-ledger | main | 0 | 0 | — |
 | 553 | 2026-09-20 | perf/ci-under-seven-minutes | main | 0 | 0 | — |
+| 554 | 2026-09-20 | feat/capability-family-registries | main | 6129 | 28 | `crates/control-schema/src/evidence.rs` (665) |
