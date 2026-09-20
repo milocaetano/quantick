@@ -259,18 +259,20 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             annotations: invoke_annotations,
         },
     ];
+    // Every ceiling that contains the analyst, which is every ceiling above
+    // the floor — said as "not the floor" rather than as a list, because a
+    // tier added above this one must not silently lose a tool: that is how
+    // the cockpit ceiling once dropped `quantick_annotate`. Both tools reach
+    // a capability the observer's ceiling no longer holds, and a tool certain
+    // to answer `control.scope_denied` reads to a client as broken rather
+    // than withheld.
+    if profile_ceiling != OBSERVER_PROFILE {
+        tools.extend(private_read_tools());
+    }
     // Every ceiling that *contains* the annotator, not the annotator alone.
     // The profiles are a chain, so a client that moves up a tier must never
     // lose a tool it had — matched by name, the cockpit ceiling silently
     // dropped `quantick_annotate` and the rest of the write tier.
-    // Every ceiling that contains the analyst, which is every ceiling above
-    // the floor: both of these tools reach a capability the observer's
-    // ceiling no longer holds, and a tool that is certain to answer
-    // `control.scope_denied` reads to a client as broken rather than
-    // withheld.
-    if profile_ceiling != OBSERVER_PROFILE {
-        tools.extend(private_read_tools());
-    }
     if matches!(profile_ceiling, ANNOTATOR_PROFILE | COCKPIT_PROFILE) {
         tools.extend(annotate_tools());
     }

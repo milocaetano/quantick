@@ -96,6 +96,9 @@ const CONSTRUCTOR_CASES: &[(&str, Env)] = &[
         &[("QUANTICK_CONTROL_SCOPES", "observe.chart,not.a.scope")],
     ),
     ("C20", &[("QUANTICK_CONTROL_SCOPES", " , ")]),
+    // The analyst tier, granted the way an agent grants it: the hook token,
+    // and the ceiling the description reports back.
+    ("C23", &[("QUANTICK_CONTROL_SCOPES", "analyst-tier")]),
     (
         "C22",
         &[
@@ -122,6 +125,16 @@ const DEFAULT_GRANT: &[&str] = &[
     "observe.replay",
     "observe.system",
     "observe.workspace",
+];
+/// What `analyst-tier` grants: the private reads, on the floor every grant
+/// carries. No annotate scope, because the tier writes nothing.
+const ANALYST_GRANT: &[&str] = &[
+    "observe",
+    "observe.diagnostic_logs",
+    "observe.evidence",
+    "observe.paper",
+    "observe.screenshot",
+    "observe.user_text",
 ];
 const ANNOTATE_GRANT: &[&str] = &[
     "annotate",
@@ -179,15 +192,16 @@ fn constructor_case(case: &str, env: Env) {
         let grant = match case {
             "C18" => ANNOTATE_GRANT,
             "C20" => &["observe"],
+            "C23" => ANALYST_GRANT,
             _ => DEFAULT_GRANT,
         };
         assert_eq!(described["effective_scopes"], json!(grant));
         assert_eq!(
             described["effective_profile"],
-            if case == "C18" {
-                "annotator"
-            } else {
-                "observer"
+            match case {
+                "C18" => "annotator",
+                "C23" => "analyst",
+                _ => "observer",
             }
         );
         assert_eq!(
