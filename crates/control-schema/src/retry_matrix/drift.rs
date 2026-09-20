@@ -127,7 +127,8 @@ impl fmt::Display for Drift {
 
 /// Every disagreement between `rows` and the registry `contract` serves.
 ///
-/// Takes the rows as a parameter rather than reading [`READBACKS`] so a test
+/// Takes the rows as a parameter rather than reading
+/// [`crate::retry_matrix::READBACKS`] so a test
 /// can hand it a mutated table and watch each check bite.
 pub fn drift<P>(rows: &[Readback], contract: &CapabilityContract<P>) -> Vec<Drift> {
     let registry = contract.registry();

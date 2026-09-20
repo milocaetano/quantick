@@ -45,8 +45,8 @@ pub struct RenderedRow<'a> {
 }
 
 /// Render the committed contents of `docs/control-plane/retry-matrix.md`
-/// for the registry `contract` serves; [`drift`] says first whether the rows
-/// and that registry agree.
+/// for the registry `contract` serves; [`super::drift::drift`] says first
+/// whether the rows and that registry agree.
 #[must_use]
 pub fn render<P>(contract: &CapabilityContract<P>) -> String {
     // The registry iterates by `(id, version)`, so the last descriptor seen
@@ -97,9 +97,12 @@ pub const PREAMBLE: &str = concat!(
     "capabilities change nothing and need no reconciling.\n",
     "\n",
     "This file is generated; a hand edit is a guard failure, not a correction.\n",
-    "The rows live in `crates/control-schema/src/retry_matrix.rs`, and the\n",
-    "generator refuses to render while any of them disagrees with the registry.\n",
-    "To change a row, change the table or the capability and regenerate:\n",
+    "Each row lives beside the capability it reconciles, in that family's own\n",
+    "module under `crates/control-schema/src/` — the drawings in `analysis.rs`,\n",
+    "the ticket in `trade.rs` — and `retry_matrix::rows::FAMILIES` is the list\n",
+    "that joins them. The generator refuses to render while any row disagrees\n",
+    "with the registry. To change a row, change it in its family module, or\n",
+    "change the capability, and regenerate:\n",
     "\n",
     "```sh\n",
     "cargo run -p quantick-app -- --dump-retry-matrix \\\n",

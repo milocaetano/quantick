@@ -93,6 +93,10 @@ const fn total(families: &[&[UiBehaviour]]) -> usize {
 /// The seed row is the first family's first, so a family declared empty and
 /// listed first fails compilation rather than silently shortening the table.
 const fn flatten<const N: usize>(families: &[&[UiBehaviour]]) -> [UiBehaviour; N] {
+    assert!(
+        N == total(families),
+        "the joined table is as long as the declared families, and no longer"
+    );
     let mut joined = [families[0][0]; N];
     let mut next = 0;
     let mut family = 0;

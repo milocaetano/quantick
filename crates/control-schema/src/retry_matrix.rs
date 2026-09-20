@@ -4,7 +4,8 @@
 //! support safe retry and deduplication, or does it declare that it cannot be
 //! retried and give enough readback to reconcile an uncertain outcome? The
 //! descriptors answer half of that — each publishes an
-//! [`IdempotencyPolicy`] — and `gateway/idempotency.rs` enforces it. The other
+//! [`quantick_control::registry::IdempotencyPolicy`] — and
+//! `gateway/idempotency.rs` enforces it. The other
 //! half had no home: *which read* tells a client whether its lost
 //! `annotate.label.create` landed was written in prose beside the capability,
 //! if anywhere, and nothing failed when a new capability arrived without one.
