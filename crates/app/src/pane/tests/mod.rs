@@ -21,8 +21,8 @@ use crate::state::BarSpec;
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
-use super::*;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
+use super::*;
 
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without

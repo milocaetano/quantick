@@ -23,5 +23,13 @@
 # tier's own logic did not land here: the profile, its ceilings and the test
 # for what belongs to it are in `control-host`, and the four scope sections
 # now share one checkbox loop where a fifth copy would have gone.
-!budget 103687
-crates/app 103687
+# Raised by 328 lines for the hub split (`feat/slim-hub-modules`): the
+# drawings, indicators, pane, theme, candle-view and crate-root hubs became
+# facades over leaf modules, so a feature that names one type no longer reads
+# the whole file. A split cannot pay for itself in lines — each leaf costs a
+# module declaration, its own import preamble and a re-export line in the
+# facade — and no line of logic was added: the three measured representatives
+# read 72%, 51% and 41% fewer lines (PR body, `tools/read_cost/measure.py`).
+# The lines bought read cost, which the size ratchet does not measure.
+!budget 104015
+crates/app 104015

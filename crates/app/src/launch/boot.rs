@@ -100,7 +100,9 @@ fn run_dump_subcommand(argument: &str) -> bool {
             true
         }
         "--dump-ui-behaviour-matrix" => {
-            emit(Ok(crate::operability::matrix::ui_behaviour_matrix_markdown()));
+            emit(Ok(
+                crate::operability::matrix::ui_behaviour_matrix_markdown(),
+            ));
             true
         }
         _ => false,
@@ -127,7 +129,9 @@ pub(crate) fn run() -> eframe::Result {
     #[cfg(feature = "scenario-harness")]
     let scenario = crate::hooks::ScenarioInputs::capture(|name| std::env::var_os(name));
     #[cfg(feature = "scenario-harness")]
-    crate::hooks::captured::install(crate::hooks::scenario_names(), |name| std::env::var_os(name));
+    crate::hooks::captured::install(crate::hooks::scenario_names(), |name| {
+        std::env::var_os(name)
+    });
     #[cfg(feature = "drawing-harness")]
     let toolrail = crate::toolrail::ToolRailLaunch::capture(|name| std::env::var_os(name));
     #[cfg(feature = "control-harness")]
@@ -136,8 +140,9 @@ pub(crate) fn run() -> eframe::Result {
     let quick_range =
         crate::surfaces::drawing_chrome::QuickRangeLaunch::capture(|name| std::env::var_os(name));
     #[cfg(feature = "drawing-harness")]
-    let drawing_chrome =
-        crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| std::env::var_os(name));
+    let drawing_chrome = crate::surfaces::drawing_chrome::DrawingChromeLaunch::capture(|name| {
+        std::env::var_os(name)
+    });
     init_tracing(startup.log_format);
 
     // Immediately after the subscriber exists, so a mistyped hook is the first

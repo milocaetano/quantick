@@ -71,14 +71,14 @@ pub use payload::{DrawingPayload, NoPayload};
 pub use store::Drawings;
 use store::{UNDO_HISTORY_LIMIT, UndoEntry};
 pub(crate) use style::{CLAMPED_OPACITY, painted_color};
+pub use style::{
+    DEFAULT_DRAWING_COLOR, DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX,
+};
 pub(super) use style::{
     FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX,
     drawing_fill, drawing_stroke,
-};
-pub use style::{
-    DEFAULT_DRAWING_COLOR, DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
-    MIN_DRAWING_WIDTH_PX,
 };
 
 macro_rules! register_drawing_tools {

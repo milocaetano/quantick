@@ -1,7 +1,6 @@
 //! The pointer's grip on a drawing: what a drag is holding, how far it
 //! has to travel to count, and how far a magnet reaches.
 
-
 // Only the parked-hand value names the UI library, and it exists only for
 // the harness and the tests.
 #[cfg(any(feature = "drawing-harness", test))]

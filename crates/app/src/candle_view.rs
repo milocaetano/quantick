@@ -10,8 +10,8 @@
 mod candles;
 mod style_window;
 
-pub use candles::{BarSlot, draw_candle, is_bullish};
 use candles::color32;
+pub use candles::{BarSlot, draw_candle, is_bullish};
 pub use style_window::draw_style_window;
 
 #[cfg(test)]

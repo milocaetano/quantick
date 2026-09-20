@@ -6,12 +6,10 @@
 //! forming bars in real time. The feed and symbol can be switched live from the
 //! chart. Frame time and feed lag are surfaced on screen and in structured logs.
 
-
 use quantick_feed as feed;
 // The kept exit ladders moved into the paper account's crate; the name stays
 // at the crate root so every `crate::order_strategies::…` still resolves.
 use quantick_paper::order_strategies;
-
 
 #[cfg(test)]
 #[path = "../../engine/tests/support/seventh_bar.rs"]

@@ -283,7 +283,11 @@ impl ChartPane {
     }
 
     /// One pane's side of the quick range — see [`quick_range::QuickRangeView`].
-    pub(super) fn quick_range_view(&self, tab: u64, side: PaneSide) -> quick_range::QuickRangeView<'_> {
+    pub(super) fn quick_range_view(
+        &self,
+        tab: u64,
+        side: PaneSide,
+    ) -> quick_range::QuickRangeView<'_> {
         quick_range::QuickRangeView {
             owner: crate::surfaces::drawing_chrome::QuickRangeOwner {
                 tab,

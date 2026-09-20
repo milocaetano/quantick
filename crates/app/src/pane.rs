@@ -21,13 +21,13 @@ use crate::bands::BandLabel;
 #[cfg(test)]
 use crate::drawings;
 #[cfg(test)]
-use crate::theme;
-#[cfg(test)]
 use crate::drawings::{ChartPoint, DrawingBand};
 #[cfg(test)]
 use crate::indicator_render;
 #[cfg(test)]
 use crate::plot_area::split_time_strip;
+#[cfg(test)]
+use crate::theme;
 #[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 #[cfg(test)]
@@ -102,26 +102,24 @@ mod price_axis;
 pub use chart_pane::ChartPane;
 use chart_pane::DrawPass;
 pub use chrome::PaneChrome;
-pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 #[cfg(any(feature = "drawing-harness", test))]
 pub use drag::ParkedHand;
+pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 use drag::{
     DRAWING_DRAG_COMPLETES_PX, DRAWING_DRAG_THRESHOLD_PX, DRAWING_SELECT_RADIUS_PX,
     FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
     region_pause,
 };
-use hint::{
-    magnet_price_of, paint_placement_hint, snap_bar_to_tape,
-};
-pub use painting::{background_color, grid_color};
+use hint::{magnet_price_of, paint_placement_hint, snap_bar_to_tape};
 use painting::{
-    LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX,
-    LAST_PRICE_CHIP_TEXT, LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,
+    LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,
+    LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,
     SEAM_GAP_PX, SEAM_LABEL_INSET_PX, SEAM_LABEL_PT, draw_dashed_vertical, draw_live_chip,
     lane_rungs, live_chip_rect, prefix_differs,
 };
-pub(crate) use price_axis::PriceAxisLevel;
+pub use painting::{background_color, grid_color};
 use price_axis::PriceAxisClaims;
+pub(crate) use price_axis::PriceAxisLevel;
 
 // The compass is painted by several of the leaves and by the axes registry,
 // which all reach it as `pane::PointerCompass`.

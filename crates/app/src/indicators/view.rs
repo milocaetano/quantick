@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use quantick_indicators::{EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8};
+use quantick_indicators::{
+    EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
+};
 
 use crate::indicator_style::ResolvedPlot;
 use crate::indicator_worker::{LaneSample, SlotId};

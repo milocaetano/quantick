@@ -100,7 +100,11 @@ pub fn draw_candle(
     }
 }
 
-pub fn draw_vertical_segment(painter: &egui::Painter, segment: VerticalSegment, stroke: egui::Stroke) {
+pub fn draw_vertical_segment(
+    painter: &egui::Painter,
+    segment: VerticalSegment,
+    stroke: egui::Stroke,
+) {
     if segment.length() > 0.0 {
         painter.line_segment(
             [

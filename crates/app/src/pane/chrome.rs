@@ -1,10 +1,9 @@
 //! Everything around the plot area a pane is handed for one frame.
 
-
 use quantick_layers::LayerActions;
 
-use crate::drawings;
 use crate::config::FeedCapabilities;
+use crate::drawings;
 use crate::paper_trading::PaperTrading;
 use crate::style::ChartStyle;
 use crate::timezone::TzOffset;

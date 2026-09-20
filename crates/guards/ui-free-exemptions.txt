@@ -12,3 +12,14 @@ crates/app/src/scratch.rs test scratch directories; the scratch guard requires e
 crates/app/src/app/layout_wiring/indicators/guide.rs app-owned indicator pane, layout and workspace wiring cannot live in a headless crate.
 crates/app/src/control/indicator_guide.rs the registered action mutates app-owned panes and journals through the app control host.
 crates/app/src/control/analysis.rs snapshots live app panes and indicator views, which no headless crate owns.
+crates/app/src/candle_view.rs a facade of re-exports: it names no library because every leaf it addresses does.
+crates/app/src/drawings/defaults.rs the preset-host port: what a new mark opens with, stated in `DrawingStyle` and `DrawingTool`, the tool registry's own types.
+crates/app/src/drawings/object.rs the drawn object's model; every mark holds the `DrawingTool` that paints it, so the model cannot leave the registry behind.
+crates/app/src/drawings/payload.rs the port each drawing tool implements for its own state; the implementations are the tools, and the tools are `app`.
+crates/app/src/drawings/store.rs the per-pane collection of `Drawing`s, whose behaviour is the pane's gestures beside it.
+crates/app/src/indicators/mod.rs a facade of re-exports: it names no library because every leaf it addresses does.
+crates/app/src/indicators/view.rs one indicator as the UI sees it, keyed on the `indicator_worker` slot ids `app` owns and sized against its own pane.
+crates/app/src/indicators/views.rs the UI's copy of indicator state, applied from `indicator_worker` events that only `app` produces. Moving this pair into `indicator-session` is a named follow-up, not a line this change can move.
+crates/app/src/pane.rs a facade of re-exports: it names no library because every leaf it addresses does.
+crates/app/src/pane/chrome.rs what one frame hands a pane around its plot area: the tool rail, the drawings and the paper account, all app-owned.
+crates/app/src/theme.rs a facade of re-exports: it names no library because every leaf it addresses does.
