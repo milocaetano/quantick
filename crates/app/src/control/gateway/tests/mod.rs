@@ -437,6 +437,38 @@ mod cockpit_tier_tests {
         }
     }
 
+    /// The other direction, and the one the layout tier was shipped broken
+    /// by: every ceiling the list says a grant can hand out is a ceiling some
+    /// grant actually produces. A tier added to `GRANTABLE_PROFILE_IDS` and
+    /// not to `configured_profile` is registered, catalogued and unreachable,
+    /// and the test above cannot see it because it only checks that nothing
+    /// *extra* comes out.
+    #[test]
+    fn every_grantable_ceiling_is_reached_by_some_grant() {
+        let grants = [
+            "",
+            "analyst-tier",
+            "annotate-tier",
+            "annotate-tier,cockpit,cockpit.layout",
+        ];
+        let reached: std::collections::BTreeSet<String> = grants
+            .iter()
+            .map(|scopes| {
+                let mut access = ControlAccess::new();
+                access
+                    .configure_scopes(scopes)
+                    .expect("registered permissions");
+                access.configured_profile().as_str().to_owned()
+            })
+            .collect();
+        for ceiling in GRANTABLE_PROFILE_IDS {
+            assert!(
+                reached.contains(ceiling),
+                "`{ceiling}` is listed as grantable and no grant produces it"
+            );
+        }
+    }
+
     /// D17: the seam that starts a gateway under a named ceiling — how the
     /// trade-shaping dedup test reaches the `trader` ceiling no grant hands
     /// out — exists in the test build only. Its module is declared under

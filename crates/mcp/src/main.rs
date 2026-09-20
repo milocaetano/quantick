@@ -265,11 +265,63 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
 
 #[cfg(test)]
 mod tests {
-    use super::{ANALYST_SCOPES, OBSERVER_SCOPES};
+    use super::{ANALYST_SCOPES, AVAILABLE_PROFILES, OBSERVER_SCOPES};
 
     /// The committed capability catalog, as the application publishes it.
     const CATALOG: &str =
         include_str!("../../../schemas/control/observer-capability-catalog-v1.json");
+
+    /// The ceilings this adapter offers are the ceilings the instance
+    /// registers, and every one a grant can reach is offered.
+    ///
+    /// `analyst` is spelled three times across the workspace — in the
+    /// registry, in the client and here — because the adapter depends on
+    /// `control-local` and not on the host. Three spellings with nothing
+    /// pinning them means a tier renamed in the registry leaves the adapter
+    /// offering a ceiling the handshake answers "unknown profile" to, which
+    /// reads to a client as the window being broken. The committed catalog is
+    /// what both sides publish, so it is what they are held against.
+    #[test]
+    fn the_adapter_offers_exactly_the_ceilings_a_grant_can_reach() {
+        let catalog: serde_json::Value = serde_json::from_str(CATALOG).expect("the catalog parses");
+        let registered: std::collections::BTreeSet<&str> = catalog["profiles"]
+            .as_array()
+            .expect("the catalog lists profiles")
+            .iter()
+            .filter_map(|profile| profile["id"].as_str())
+            .collect();
+        for profile in AVAILABLE_PROFILES {
+            assert!(
+                registered.contains(profile),
+                "the adapter offers `{profile}`, which the instance does not register"
+            );
+        }
+        // The other direction: a tier the trader can grant and the adapter
+        // cannot ask for is a tier no client can use. "Can be granted" is
+        // read from the catalog rather than imported — a profile that
+        // ceilings a permission nothing hands out (`trade`, `denied`) is the
+        // carve-out no grant reaches; every other registered profile is one
+        // this adapter must offer.
+        let ungrantable: std::collections::BTreeSet<&str> = catalog["permissions"]
+            .as_array()
+            .expect("the catalog lists permissions")
+            .iter()
+            .filter(|permission| permission["default_grant"] == "denied")
+            .filter_map(|permission| permission["profile_ceilings"].as_array())
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert!(
+            !ungrantable.is_empty(),
+            "the catalog still carves out a tier nothing grants, or this half proves nothing"
+        );
+        for profile in registered.difference(&ungrantable) {
+            assert!(
+                AVAILABLE_PROFILES.contains(profile),
+                "the trader can grant `{profile}` and the adapter cannot ask for it"
+            );
+        }
+    }
 
     /// Every read this adapter can reach is a read it asked the scopes for.
     ///
