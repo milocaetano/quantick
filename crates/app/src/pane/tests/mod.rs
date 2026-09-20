@@ -5,9 +5,24 @@
 // so the move costs no widened visibility in production code, and the one
 // `use super::*` below is the same line the module had inline.
 
+use eframe::egui;
 use rust_decimal::Decimal;
 
+use quantick_layers::{ChartLayer, LayerActions};
+
+use crate::bands;
+use crate::chart::PriceScale;
+use crate::indicator_worker::{MAX_LANE_RUNGS, SlotId};
+use crate::indicators::PaneSizing;
+use crate::orderflow_view::OrderflowView;
+use crate::plot_area::PlotAreas;
+use crate::pointer_compass;
+use crate::state::BarSpec;
+use crate::toolrail::Tool;
+use crate::viewport::Viewport;
+
 use super::*;
+use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
 
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without
