@@ -10,13 +10,13 @@
 # same answer as "red".
 #
 # The list is every job that carries part of the full verification, not a
-# summary of it. Linux runs as four parallel jobs so the app's harness feature
-# builds overlap instead of queueing, and Windows as three so its workspace
-# test run does; each one is named here, because a job nothing requires is a
-# job that can be dropped without anyone noticing. `guardrails_test.sh` fails
-# when a name here has no job in ci.yml, and
-# `tools/ci/windows_test_coverage.py` fails when the Windows test jobs stop
-# being complements.
+# summary of it. Linux runs as five parallel jobs so the app's harness feature
+# builds and its workspace test run overlap instead of queueing, and Windows as
+# four so its workspace test run is dealt across two; each one is named here,
+# because a job nothing requires is a job that can be dropped without anyone
+# noticing. `guardrails_test.sh` fails when a name here has no job in ci.yml,
+# and `tools/ci/windows_test_coverage.py` fails when the three Windows test
+# selectors stop being exactly the workspace.
 #
 # Draft pushes run only the `fast` job, so these are *skipped* on
 # them. A skipped run carries no verdict and is ignored rather than counted as
@@ -28,7 +28,7 @@
 
 set -u
 
-FULL_CI_CHECKS='ci harness-app harness-combined harness-scenario windows windows-tests windows-app-tests'
+FULL_CI_CHECKS='ci linux-tests harness-app harness-combined harness-scenario windows windows-tests windows-heavy-tests windows-app-tests'
 
 operation=${1:-}
 worktree=${2:-}

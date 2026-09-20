@@ -178,12 +178,13 @@ denial is reported to the coordinator, never routed around.
 
 ## Full CI at the exact head
 
-One full CI run is seven jobs in `.github/workflows/ci.yml`: `ci`,
-`harness-app`, `harness-combined` and `harness-scenario` on Linux, `windows`,
-`windows-tests` and `windows-app-tests` on Windows. They run in parallel. An
-agent iterating on a draft still needs a signal sooner than the full verdict,
-and readiness needs the full verdict anyway, so the two are separated rather
-than one being traded for the other.
+One full CI run is nine jobs in `.github/workflows/ci.yml`: `ci`,
+`linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
+Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
+`windows-app-tests` on Windows. They run in parallel. An agent iterating on a
+draft still needs a signal sooner than the full verdict, and readiness needs
+the full verdict anyway, so the two are separated rather than one being traded
+for the other.
 
 It was two serial jobs, 43 minutes on Linux and 15 on Windows, and the time sat
 in work nothing could overlap inside one runner. Eighteen Linux minutes were a
@@ -192,22 +193,37 @@ reads the binary once now (`tools/ci/binary_hook_scan.py`). Fifteen more were
 the app's harness feature builds — every feature set relinks `quantick-app`,
 and eleven of them end to end is eleven relinks — now three jobs beside `ci`.
 On Windows, `cargo test --workspace` was 8m 53s of 15m 08s, and one crate owns
-most of it, so it became two complementary selectors:
-`--workspace --exclude quantick-app` and `-p quantick-app`.
+most of it, so it became complementary selectors.
+
+That left a 10m 39s critical path, and its cost was debug info rather than
+optimisation: cargo's default emits a full PDB or full DWARF for every unit,
+and a runner needs one thing out of it, the file and line in a failing test's
+backtrace. `CARGO_PROFILE_DEV_DEBUG: line-tables-only` in the workflow's `env`
+emits exactly that and took the longest job to 6m 08s. It is set there rather
+than in `Cargo.toml` so the profile the chart runs under is untouched.
+
+What remained was one shape: a job is as long as the longest single `cargo`
+run inside it. So `ci` handed `cargo test --workspace` to `linux-tests`, the
+non-app Windows run was dealt across `windows-tests` and
+`windows-heavy-tests`, and the eleven harness builds were dealt again across
+the same three jobs, which is why a feature set sometimes sits in a job not
+named after it.
 
 Every command is the one it was; only where it runs changed. The split that
 could rot silently is the Windows one — `cargo test --workspace` found new
-crates by itself, and two selectors do not — so
+crates by itself, and three selectors do not — so
 `tools/ci/windows_test_coverage.py` reads the selectors back out of `ci.yml`,
-takes the member list from `cargo metadata`, and fails when the halves stop
-being complements. It runs in `ci`.
+takes the member list from `cargo metadata`, and fails on a crate no share
+tests and on a crate two shares both test. A share is a step named `Test`, so
+the named Windows diagnostic that runs one crate again under `--nocapture`
+counts as coverage without counting as a share. It runs in `ci`.
 
 | Event | Runs |
 | --- | --- |
 | Push to a draft PR | `fast` only |
-| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the seven full jobs |
-| Draft flipped to ready | the seven full jobs, always |
-| Push to a ready PR, push to `main` | the seven full jobs |
+| Push to a draft labelled `full-ci`, or adding that label | `fast` (push only) plus the nine full jobs |
+| Draft flipped to ready | the nine full jobs, always |
+| Push to a ready PR, push to `main` | the nine full jobs |
 
 `fast` runs `cargo fmt --all -- --check`, then `cargo clippy --all-targets`
 and `cargo test` over the crates `tools/ci/affected_crates.py` selects: the

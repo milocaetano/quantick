@@ -33,16 +33,17 @@ env:
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 # Which jobs run where. A draft push runs `fast` alone: fmt, clippy and the
-# tests of the crates the diff reaches. The full verdict is seven jobs — `ci`,
-# `harness-app`, `harness-combined` and `harness-scenario` on Linux, `windows`,
-# `windows-tests` and `windows-app-tests` on Windows — and they run on every
-# push to main, every push to a ready PR, the flip to ready, and on a draft
-# carrying the `full-ci` label. `pr-gate` refuses `gh pr ready` until every one
-# of them is green at the exact head, and the final verifier requires the same,
-# so a skipped full job never stands in for a passing one. The names are
-# `FULL_CI_CHECKS` in .claude/hooks/full_ci.sh, and guardrails_test.sh fails
-# when a name there has no job here. The rules live in
-# .claude/hooks/README.md, "Full CI at the exact head".
+# tests of the crates the diff reaches. The full verdict is nine jobs — `ci`,
+# `linux-tests`, `harness-app`, `harness-combined` and `harness-scenario` on
+# Linux, `windows`, `windows-tests`, `windows-heavy-tests` and
+# `windows-app-tests` on Windows — and they run on every push to main, every
+# push to a ready PR, the flip to ready, and on a draft carrying the `full-ci`
+# label. `pr-gate` refuses `gh pr ready` until every one of them is green at
+# the exact head, and the final verifier requires the same, so a skipped full
+# job never stands in for a passing one. The names are `FULL_CI_CHECKS` in
+# .claude/hooks/full_ci.sh, and guardrails_test.sh fails when a name there has
+# no job here. The rules live in .claude/hooks/README.md, "Full CI at the exact
+# head".
 #
 # They were two serial jobs, 43 minutes on Linux and 15 on Windows, and the
 # time was in work nothing could overlap inside a single runner: eleven harness
@@ -52,8 +53,20 @@ env:
 # (tools/ci/binary_hook_scan.py); the rest is split across runners. Every job
 # carries the steps it carried before, with the same commands.
 #
+# What is left after the debug-info cut above is one shape: a job is as long as
+# the longest single run of `cargo` inside it, so the remaining reductions come
+# from putting two such runs on two runners rather than one. `ci` handed its
+# `cargo test --workspace` to `linux-tests`, `windows-tests` handed half its
+# crates to `windows-heavy-tests`, and the eleven harness builds were dealt
+# again across the same three jobs so no one of them owns three long relinks.
+# None of that changes a command or its arguments.
+#
 # One cache per platform, written by the job that builds the whole workspace on
-# it — `ci` on Linux, `windows` on Windows — and restored by the rest.
+# it — `ci` on Linux, `windows` on Windows — and restored by the rest. The
+# cache action prunes the workspace's own artifacts before saving, so a job
+# recompiles this repository's crates either way; what it restores is the
+# dependency graph, which is why a second test job costs a relink and not a
+# cold build.
 jobs:
   fast:
     if: >-
@@ -325,6 +338,21 @@ jobs:
         # control that proves the scan can see a name at all; every other
         # registry name is a harness hook and must be absent.
         run: python3 tools/ci/binary_hook_scan.py
+
+  # `cargo test --workspace` was 263s of the 508s `ci` took, and it is one
+  # command: nothing inside `ci` could overlap with it, and everything else in
+  # that job — the hook suite, the Python tool suites, the supply-chain check,
+  # fmt, clippy, the workspace build and the binary scan — adds up to less.
+  # Handing the run its own runner makes both halves shorter than the job they
+  # came from. It is the same command with the same arguments, and it is still
+  # `--workspace`, so a crate added on Monday is tested on Monday with no guard
+  # needed; the Windows side has three selectors and therefore has one.
+  linux-tests:
+    if: *full-ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
       - name: Test
         run: cargo test --workspace
 
@@ -333,6 +361,13 @@ jobs:
   # same command; the split changes where they run, never whether. Which job
   # carries which set is a balancing decision and nothing more — the sets are
   # independent, so any partition runs the same eleven builds.
+  #
+  # The deal was made again once the debug-info cut changed what each build
+  # costs. Every `cargo test` here relinks quantick-app under a feature set it
+  # has not linked before, at roughly 110s to 170s, and the `cargo check` steps
+  # cost a tenth of that; three long relinks in one job was 430s while another
+  # job sat at 251s. Each job now owns two long relinks and some change, which
+  # is why a set sometimes sits beside a family it is not named after.
   harness-app:
     if: *full-ci
     runs-on: ubuntu-latest
@@ -343,8 +378,10 @@ jobs:
         run: cargo test -p quantick-app --features quick-range-harness
       - name: Test opt-in drawing harness
         run: cargo test -p quantick-app --features drawing-harness
-      - name: Test opt-in control harness
-        run: cargo test -p quantick-app --features control-harness
+      - name: Check control and quick-range harnesses
+        run: cargo check -p quantick-app --all-targets --features control-harness,quick-range-harness
+      - name: Check control and drawing harnesses
+        run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
 
   harness-combined:
     if: *full-ci
@@ -354,14 +391,13 @@ jobs:
       - uses: ./.github/actions/rust-setup
       - name: Test combined drawing harnesses
         run: cargo test -p quantick-app --features drawing-harness,quick-range-harness
-      - name: Check control and quick-range harnesses
-        run: cargo check -p quantick-app --all-targets --features control-harness,quick-range-harness
-      - name: Check control and drawing harnesses
-        run: cargo check -p quantick-app --all-targets --features control-harness,drawing-harness
       - name: Test all app harness families
         run: cargo test -p quantick-app --features harness
       - name: Build the capture binary
-        # What `ui-harness` launches: every family, outside `cfg(test)`.
+        # What `ui-harness` launches: every family, outside `cfg(test)`. It
+        # stays beside the step above because both are `--features harness`:
+        # the test run has just compiled that feature set, so the build is a
+        # link and not a second compile.
         run: cargo build -p quantick-app --features harness
 
   harness-scenario:
@@ -372,6 +408,8 @@ jobs:
       - uses: ./.github/actions/rust-setup
       - name: Test opt-in scenario harness
         run: cargo test -p quantick-app --features scenario-harness
+      - name: Test opt-in control harness
+        run: cargo test -p quantick-app --features control-harness
       - name: Check scenario and control harnesses
         run: cargo check -p quantick-app --all-targets --features scenario-harness,control-harness
       - name: Check scenario and drawing harnesses
@@ -415,12 +453,37 @@ jobs:
         run: cargo test -p quantick-control-local -- --nocapture
 
   # `cargo test --workspace` was 8m 53s of the Windows job's 15m 08s, and one
-  # crate owns most of it. The two jobs below are complements — everything but
-  # quantick-app, and quantick-app — so together they run exactly what the
-  # single `--workspace` run ran. Nothing in a workflow file checks that two
-  # selectors are complements, so `tools/ci/windows_test_coverage.py` reads
-  # them back out of this file and compares them with `cargo metadata`; it runs
-  # in `ci`.
+  # crate owns most of it. The three jobs below are a partition of the
+  # workspace — the six crates that own half its test binaries, everything else
+  # but quantick-app, and quantick-app — so together they run exactly what the
+  # single `--workspace` run ran, each crate once.
+  #
+  # The `--exclude` list and the `-p` list are the same six names, read in
+  # opposite directions, which is exactly the pair that rots when one side is
+  # edited. Nothing in a workflow file checks that, so
+  # `tools/ci/windows_test_coverage.py` reads the selectors back out of this
+  # file and compares them with `cargo metadata`: it fails on a crate no share
+  # tests and on a crate two shares both test. A share is a step named `Test`,
+  # which is why `windows` above may run one crate again under a step named for
+  # the diagnostic it is. The guard runs in `ci`.
+  #
+  # The six were chosen by test-binary count — 57 of the 113 the non-app half
+  # builds — because the time is in linking those binaries, not in running
+  # them. Rebalancing the lists is a one-line edit the guard re-proves.
+  windows-heavy-tests:
+    if: *full-ci
+    runs-on: windows-latest
+    env:
+      QUANTICK_BUBBLES: ${{ github.workspace }}/crates/app/config/bubbles.toml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          desktop-deps: "false"
+          cache-key: windows
+      - name: Test
+        run: cargo test -p quantick-engine -p quantick-control -p quantick-pine -p quantick-indicators -p quantick-workspace -p quantick-guards
+
   windows-tests:
     if: *full-ci
     runs-on: windows-latest
@@ -433,7 +496,7 @@ jobs:
           desktop-deps: "false"
           cache-key: windows
       - name: Test
-        run: cargo test --workspace --exclude quantick-app
+        run: cargo test --workspace --exclude quantick-app --exclude quantick-engine --exclude quantick-control --exclude quantick-pine --exclude quantick-indicators --exclude quantick-workspace --exclude quantick-guards
 
   windows-app-tests:
     if: *full-ci
