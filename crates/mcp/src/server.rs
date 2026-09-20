@@ -415,6 +415,43 @@ mod tests {
         assert_eq!(missing["error"]["code"], METHOD_NOT_FOUND);
     }
 
+    /// Normalizing an unrecognised ceiling to the read-only floor is right;
+    /// doing it to a ceiling the adapter accepts takes tools away from a
+    /// grant that reaches them. `cockpit` fell through that way and was
+    /// served nine observer tools: no evidence capture, no chart capture and
+    /// no annotate tier, against a grant that held all three.
+    #[test]
+    fn every_accepted_ceiling_keeps_the_tools_its_grant_reaches() {
+        for ceiling in [
+            tools::ANALYST_PROFILE,
+            tools::ANNOTATOR_PROFILE,
+            tools::COCKPIT_PROFILE,
+        ] {
+            let mut server = initialized(McpServer::new(Box::new(FakeLink::default()), ceiling));
+            let reply = server
+                .handle_line(&request(2, "tools/list", json!({})))
+                .unwrap();
+            let names = reply["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            for tool in [tools::CAPTURE_EVIDENCE, tools::CAPTURE_CHART] {
+                assert!(
+                    names.contains(&tool.to_owned()),
+                    "`{ceiling}` reaches {tool} and must be offered it"
+                );
+            }
+            let writes = names.contains(&tools::ANNOTATE.to_owned());
+            assert_eq!(
+                writes,
+                ceiling != tools::ANALYST_PROFILE,
+                "`{ceiling}` is offered the annotate tier only if it writes"
+            );
+        }
+    }
+
     #[test]
     fn describe_lists_instances_and_forwards_to_one_when_named() {
         let id = InstanceId::from_bytes([9; 16]);
