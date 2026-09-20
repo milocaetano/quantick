@@ -15,7 +15,7 @@ use crate::{
     jsonrpc::{self, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, RpcError},
     link::ControlLink,
     protocol::{LATEST_PROTOCOL_VERSION, SERVER_NAME, SERVER_TITLE, Tool, negotiate},
-    tools::{self, ANNOTATOR_PROFILE, OBSERVER_PROFILE},
+    tools::{self, ANALYST_PROFILE, ANNOTATOR_PROFILE, COCKPIT_PROFILE, OBSERVER_PROFILE},
 };
 
 /// The instructions a client shows its model. ADR 0001 §7: the connection
@@ -27,8 +27,12 @@ use crate::{
 /// beside a tool list that writes is a guardrail pointing the wrong way.
 #[must_use]
 pub fn instructions(profile_ceiling: &str) -> String {
-    let authority = if profile_ceiling == ANNOTATOR_PROFILE {
+    let authority = if profile_ceiling == COCKPIT_PROFILE {
+        "Authority: this connection holds the cockpit profile - it reads, it may add labels, arrows and zones to the chart, raise a notification and attach a compiled indicator, and it may rearrange the window: which charts are on screen, where they sit and how wide they are. Nothing it does deletes the trader's own work or touches an order, and a chart put away keeps its drawings, its indicators and its bars. The window grants each scope: a capability the trader did not grant is refused."
+    } else if profile_ceiling == ANNOTATOR_PROFILE {
         "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
+    } else if profile_ceiling == ANALYST_PROFILE {
+        "Authority: the analyst profile is read-only - no tool changes the chart, orders or settings, and write capability IDs are refused. It reads what the observer may not: the paper account, the trader's own text, redacted diagnostic logs, evidence bundles and screenshots. The window grants each of those scopes separately: one the trader did not grant is refused."
     } else {
         "Authority: the observer profile is read-only; no tool changes the chart, orders or settings, and write capability IDs are refused."
     };
@@ -55,17 +59,22 @@ impl McpServer {
     /// A server over one link, advertising the tool list for one profile
     /// ceiling. The ceiling is known when the adapter starts (contract §8).
     pub fn new(link: Box<dyn ControlLink>, profile_ceiling: &str) -> Self {
-        // The ceiling decides what the client is offered and what it is told;
-        // only the two the adapter can request are meaningful, and anything
-        // else is treated as the read-only floor. The tool list is built from
-        // the *same* normalized value as the instructions: an unrecognised
-        // ceiling that produced a destructive, open-world `quantick_invoke`
-        // beside instructions promising read-only would point the guardrail
-        // the wrong way.
-        let profile_ceiling = if profile_ceiling == ANNOTATOR_PROFILE {
-            ANNOTATOR_PROFILE
-        } else {
-            OBSERVER_PROFILE
+        // The ceiling decides what the client is offered and what it is told,
+        // and anything the adapter cannot request is treated as the read-only
+        // floor. The tool list is built from the *same* normalized value as
+        // the instructions: an unrecognised ceiling that produced a
+        // destructive, open-world `quantick_invoke` beside instructions
+        // promising read-only would point the guardrail the wrong way.
+        //
+        // Every ceiling the adapter accepts is named here, or normalizing
+        // takes tools away from a grant that reaches them: `cockpit` fell
+        // through to the floor and lost the annotate tier, and would now lose
+        // the private reads as well.
+        let profile_ceiling = match profile_ceiling {
+            COCKPIT_PROFILE => COCKPIT_PROFILE,
+            ANNOTATOR_PROFILE => ANNOTATOR_PROFILE,
+            ANALYST_PROFILE => ANALYST_PROFILE,
+            _ => OBSERVER_PROFILE,
         };
         Self {
             link,
@@ -394,16 +403,64 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(names.len(), 11);
+        assert_eq!(names.len(), 9);
         assert_eq!(names[0], tools::DESCRIBE);
         assert!(names.contains(&tools::WAIT_FOR_CHANGE.to_owned()));
         assert!(names.contains(&tools::GET_SCENE.to_owned()));
-        assert!(names.contains(&tools::CAPTURE_EVIDENCE.to_owned()));
-        assert!(names.contains(&tools::CAPTURE_CHART.to_owned()));
+        // The two evidence tools belong to the analyst ceiling: this server
+        // is the read-only floor, and both need a scope it does not hold.
+        assert!(!names.contains(&tools::CAPTURE_EVIDENCE.to_owned()));
+        assert!(!names.contains(&tools::CAPTURE_CHART.to_owned()));
         let missing = server
             .handle_line(&request(3, "resources/list", json!({})))
             .unwrap();
         assert_eq!(missing["error"]["code"], METHOD_NOT_FOUND);
+    }
+
+    /// Normalizing an unrecognised ceiling to the read-only floor is right;
+    /// doing it to a ceiling the adapter accepts takes tools away from a
+    /// grant that reaches them. `cockpit` fell through that way and was
+    /// served nine observer tools: no evidence capture, no chart capture and
+    /// no annotate tier, against a grant that held all three.
+    #[test]
+    fn every_accepted_ceiling_keeps_the_tools_its_grant_reaches() {
+        for ceiling in [
+            tools::ANALYST_PROFILE,
+            tools::ANNOTATOR_PROFILE,
+            tools::COCKPIT_PROFILE,
+        ] {
+            let mut server = initialized(McpServer::new(Box::new(FakeLink::default()), ceiling));
+            let reply = server
+                .handle_line(&request(2, "tools/list", json!({})))
+                .unwrap();
+            let names = reply["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            for tool in [tools::CAPTURE_EVIDENCE, tools::CAPTURE_CHART] {
+                assert!(
+                    names.contains(&tool.to_owned()),
+                    "`{ceiling}` reaches {tool} and must be offered it"
+                );
+            }
+            let writes = names.contains(&tools::ANNOTATE.to_owned());
+            assert_eq!(
+                writes,
+                ceiling != tools::ANALYST_PROFILE,
+                "`{ceiling}` is offered the annotate tier only if it writes"
+            );
+            // The tool list and the instructions are built from the same
+            // normalized ceiling, and they have to *say* the same thing: a
+            // client told "read-only" while holding `quantick_annotate` has
+            // a guardrail pointing the wrong way.
+            let told_read_only = instructions(ceiling).contains("is read-only");
+            assert_eq!(
+                told_read_only, !writes,
+                "`{ceiling}` is told it is read-only only if it is"
+            );
+        }
     }
 
     #[test]

@@ -121,15 +121,16 @@ observe.indicators
 observe.drawings
 observe.orderflow
 observe.replay
-observe.paper
 observe.health
 observe.attention
 observe.events
-observe.evidence
 ```
 
-The following sensitive or aggregate additions are off by default and require
-a visible scope grant:
+The following sensitive or aggregate additions are off by default, require a
+visible scope grant, and are ceilinged at the `analyst` profile rather than at
+`observer`: a connection capped at the read-only floor cannot reach one even
+after the grant, so asking for the deep reads is a decision the client states
+and the connected-clients list shows:
 
 ```text
 observe.paper

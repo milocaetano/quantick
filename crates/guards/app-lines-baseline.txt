@@ -14,5 +14,14 @@
 # Recorded at main bcfb5f19 when the guard landed: 121,743 lines, the same
 # number `--report` prints as `crate.lines.app`. Tightened to 103,598 after
 # campaign #542 moved code out of `app` into eleven new crates.
-!budget 103598
-crates/app 103598
+#
+# Raised by 89 lines for the analyst tier, all of it drawing and consent code
+# in the surface that owns consent: a fifth section of scope checkboxes in the
+# access panel, the status and button arms that name the tier, and the window
+# scrolling that the taller body needed — on a 1009-point screen the enabled
+# panel reached the bottom edge and left the disable button unreachable. The
+# tier's own logic did not land here: the profile, its ceilings and the test
+# for what belongs to it are in `control-host`, and the four scope sections
+# now share one checkbox loop where a fifth copy would have gone.
+!budget 103687
+crates/app 103687

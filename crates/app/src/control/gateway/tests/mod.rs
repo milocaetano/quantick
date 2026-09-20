@@ -305,6 +305,75 @@ mod gateway_tests {
     }
 }
 
+mod analyst_tier_tests {
+    use super::*;
+
+    /// A private read granted is the analyst ceiling handed out. Ticking one
+    /// is the whole condition: the scope is ceilinged at the tier, so a
+    /// connection capped at the floor is refused every call that needs it,
+    /// however loudly the trader ticked the box.
+    #[test]
+    fn granting_a_private_read_reaches_the_analyst_profile() {
+        for scopes in [
+            "analyst-tier",
+            "observe.paper",
+            "observe.evidence,observe.screenshot",
+        ] {
+            let mut access = ControlAccess::new();
+            access
+                .configure_scopes(scopes)
+                .expect("the private reads are registered permissions");
+            assert!(access.grants_analyst(), "`{scopes}` opens the tier");
+            assert_eq!(
+                access.configured_profile().as_str(),
+                ANALYST_PROFILE_ID,
+                "`{scopes}` is refused under the read-only floor"
+            );
+        }
+    }
+
+    /// The safe defaults are the ordinary reads, and they stay at the floor:
+    /// enabling access the way the panel's own button does hands out no
+    /// private read and no tier above the observer.
+    #[test]
+    fn the_safe_default_grant_stays_at_the_observer_floor() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("all-reads")
+            .expect("the safe defaults are registered permissions");
+        assert!(
+            !access.grants_analyst(),
+            "no private read is granted by omission"
+        );
+        assert_eq!(access.configured_profile().as_str(), OBSERVER_PROFILE_ID);
+    }
+
+    /// The tier reads and does not write: a trader who ticks every private
+    /// read gets no annotate or cockpit grant out of it.
+    #[test]
+    fn the_analyst_tier_carries_no_write_grant() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("analyst-tier")
+            .expect("the private reads are registered permissions");
+        assert!(!access.grants_annotate(), "the analyst writes nothing");
+        assert!(!access.grants_cockpit(), "the analyst rearranges nothing");
+    }
+
+    /// A write tier already contains the private reads, so a grant holding
+    /// both names the higher ceiling — the one that covers both — exactly as
+    /// the cockpit does over the annotator.
+    #[test]
+    fn a_write_grant_beside_a_private_read_names_the_higher_ceiling() {
+        let mut access = ControlAccess::new();
+        access
+            .configure_scopes("analyst-tier,annotate,annotate.chart")
+            .expect("registered permissions");
+        assert!(access.grants_analyst());
+        assert_eq!(access.configured_profile().as_str(), ANNOTATOR_PROFILE_ID);
+    }
+}
+
 mod cockpit_tier_tests {
     use super::*;
 
@@ -349,6 +418,7 @@ mod cockpit_tier_tests {
         for scopes in [
             "",
             "all-reads",
+            "analyst-tier",
             "annotate-tier",
             "cockpit,cockpit.layout",
             "trade",
@@ -363,6 +433,38 @@ mod cockpit_tier_tests {
                 GRANTABLE_PROFILE_IDS.contains(&ceiling.as_str()),
                 "granting `{scopes}` handed out `{ceiling}`, which the retry matrix \
                  believes no grant reaches"
+            );
+        }
+    }
+
+    /// The other direction, and the one the layout tier was shipped broken
+    /// by: every ceiling the list says a grant can hand out is a ceiling some
+    /// grant actually produces. A tier added to `GRANTABLE_PROFILE_IDS` and
+    /// not to `configured_profile` is registered, catalogued and unreachable,
+    /// and the test above cannot see it because it only checks that nothing
+    /// *extra* comes out.
+    #[test]
+    fn every_grantable_ceiling_is_reached_by_some_grant() {
+        let grants = [
+            "",
+            "analyst-tier",
+            "annotate-tier",
+            "annotate-tier,cockpit,cockpit.layout",
+        ];
+        let reached: std::collections::BTreeSet<String> = grants
+            .iter()
+            .map(|scopes| {
+                let mut access = ControlAccess::new();
+                access
+                    .configure_scopes(scopes)
+                    .expect("registered permissions");
+                access.configured_profile().as_str().to_owned()
+            })
+            .collect();
+        for ceiling in GRANTABLE_PROFILE_IDS {
+            assert!(
+                reached.contains(ceiling),
+                "`{ceiling}` is listed as grantable and no grant produces it"
             );
         }
     }

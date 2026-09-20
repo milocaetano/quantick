@@ -33,6 +33,20 @@ use crate::catalogue::SnapshotScopeDescriptor;
 use crate::contract::ContractBuilder;
 
 pub const OBSERVER_PROFILE_ID: &str = "observer";
+/// The tier that reads what the observer may not.
+///
+/// The observer floor is the reading every assistant starts with: bars,
+/// layout, health, the tape. The private reads — the paper account, the
+/// trader's own words, redacted logs, an evidence bundle, a picture of the
+/// window — are a different decision, and they used to be ticked at the same
+/// ceiling as the framing of a chart. `analyst` is where they live now: still
+/// read-only, still one tick each, but asked for by a client that says which
+/// tier it wants, and named in the connected-clients panel as the authority
+/// the connection actually holds.
+///
+/// It sits below every tier that writes, so an assistant that analyses deeply
+/// is not thereby an assistant that can put something on the chart.
+pub const ANALYST_PROFILE_ID: &str = "analyst";
 /// The tier that may rearrange the trader's window.
 ///
 /// Its own profile rather than a permission inside `annotator`, because the
@@ -128,8 +142,9 @@ pub use crate::events::{EVENTS_MODULE_ID, EVENTS_PERMISSION_ID};
 
 /// The profiles a grant can hand out, lowest ceiling first. `trader` is
 /// registered and never handed out: nothing constructs it as a ceiling.
-pub const GRANTABLE_PROFILE_IDS: [&str; 3] = [
+pub const GRANTABLE_PROFILE_IDS: [&str; 4] = [
     OBSERVER_PROFILE_ID,
+    ANALYST_PROFILE_ID,
     ANNOTATOR_PROFILE_ID,
     COCKPIT_PROFILE_ID,
 ];
@@ -211,6 +226,21 @@ pub const OBSERVER_SCOPE_IDS: &[(&str, &str, bool)] = &[
     ),
 ];
 
+/// Whether a permission is one of the private reads — the analyst tier.
+///
+/// Answered from the published scope table rather than from a prefix, because
+/// the tier *is* "the reads marked sensitive": every one of them starts with
+/// `observe.` exactly like the ordinary reads do, and a scope added tomorrow
+/// joins the tier the moment the table marks it, with no second list to
+/// remember. It lives here, beside the table, so the window and a headless
+/// host answer the question the same way.
+#[must_use]
+pub fn is_private_read(permission: &PermissionId) -> bool {
+    OBSERVER_SCOPE_IDS
+        .iter()
+        .any(|(id, _, sensitive)| *sensitive && *id == permission.as_str())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EmptyInput {}
@@ -242,6 +272,7 @@ pub struct DescribeResult {
 #[must_use]
 pub fn permissions() -> Vec<PermissionDescriptor> {
     let observer = profile(OBSERVER_PROFILE_ID);
+    let analyst = profile(ANALYST_PROFILE_ID);
     let annotator = profile(ANNOTATOR_PROFILE_ID);
     let cockpit = profile(COCKPIT_PROFILE_ID);
     let trader = profile(TRADER_PROFILE_ID);
@@ -369,7 +400,18 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
                 } else {
                     DefaultGrant::Granted
                 },
-                profile_ceilings: BTreeSet::from([observer.clone()]),
+                // The sensitive reads are the analyst tier: the paper
+                // account, the trader's own words, redacted logs, evidence
+                // bundles and screenshots. Ceilinged there rather than at
+                // the floor, so "let this tool read my charts" and "let this
+                // tool read my account" are two different grants, asked for
+                // by two different profiles. The ordinary reads stay at the
+                // floor; the analyst inherits them.
+                profile_ceilings: BTreeSet::from([if *sensitive {
+                    analyst.clone()
+                } else {
+                    observer.clone()
+                }]),
             }),
     );
     permissions.sort_by(|left, right| left.id.cmp(&right.id));
@@ -380,6 +422,7 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
 #[must_use]
 pub fn profiles() -> Vec<ProfileDescriptor> {
     let observer = profile(OBSERVER_PROFILE_ID);
+    let analyst = profile(ANALYST_PROFILE_ID);
     let annotator = profile(ANNOTATOR_PROFILE_ID);
     let cockpit = profile(COCKPIT_PROFILE_ID);
     let trader = profile(TRADER_PROFILE_ID);
@@ -391,9 +434,24 @@ pub fn profiles() -> Vec<ProfileDescriptor> {
             permissions: BTreeSet::new(),
         },
         ProfileDescriptor {
+            id: analyst.clone(),
+            label: "Analyst".to_owned(),
+            // Directly above the floor: everything an observer reads, plus
+            // the private reads ceilinged here. Nothing it holds writes.
+            inherits: BTreeSet::from([observer.clone()]),
+            permissions: BTreeSet::new(),
+        },
+        ProfileDescriptor {
             id: annotator.clone(),
             label: "Annotator".to_owned(),
-            inherits: BTreeSet::from([observer.clone()]),
+            // Above the analyst rather than beside it, for the reason the
+            // cockpit sits above the annotator: the handshake names a
+            // connection's authority by comparing two ceilings, and two
+            // tiers that merely overlap are refused outright. A trader who
+            // ticks a private read and an annotate scope gets the annotator
+            // ceiling, which contains both — inheriting is not granting, so
+            // this hands nobody a scope they did not tick.
+            inherits: BTreeSet::from([analyst.clone()]),
             permissions: BTreeSet::new(),
         },
         ProfileDescriptor {
@@ -502,6 +560,7 @@ pub fn modules() -> Vec<ModuleDescriptor> {
 #[must_use]
 pub fn effects() -> Vec<EffectPolicy> {
     let observer = profile(OBSERVER_PROFILE_ID);
+    let analyst = profile(ANALYST_PROFILE_ID);
     let annotator = profile(ANNOTATOR_PROFILE_ID);
     let cockpit = profile(COCKPIT_PROFILE_ID);
     let trader = profile(TRADER_PROFILE_ID);
@@ -627,7 +686,13 @@ pub fn effects() -> Vec<EffectPolicy> {
         EffectPolicy {
             id: effect(OBSERVE_EFFECT_ID),
             permission_floor: permission(OBSERVE_PERMISSION_ID),
-            profile_ceilings: BTreeSet::from([observer]),
+            // Both read-only tiers: a read whose scopes are all ordinary is
+            // reachable from the floor, and one that names a private scope
+            // only from the analyst. The registry checks that *some* listed
+            // ceiling grants every permission a capability declares, so
+            // leaving the analyst out would fail `evidence.capture` at
+            // startup rather than at the gate.
+            profile_ceilings: BTreeSet::from([observer, analyst]),
             confirmation_class: confirmation(NO_CONFIRMATION_ID),
             risk_reducing_confirmation_class: None,
             mcp_hint_floor: McpHintFloor {

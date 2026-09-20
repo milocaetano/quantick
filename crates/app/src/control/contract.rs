@@ -46,8 +46,9 @@ pub(crate) use reads::EventsReadInvocation;
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::DESCRIBE_CAPABILITY_ID;
 pub(crate) use quantick_control_host::authority::{
-    COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID,
-    DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID, SnapshotReadInput,
+    ANALYST_PROFILE_ID, COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID,
+    COCKPIT_PROFILE_ID, DescribeResult, EmptyInput, OBSERVE_PERMISSION_ID, OBSERVER_PROFILE_ID,
+    SnapshotReadInput,
 };
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::{SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
@@ -541,10 +542,23 @@ mod tests {
             .registry()
             .permission_ceiling(&profile(OBSERVER_PROFILE_ID))
             .expect("the observer profile has a ceiling");
+        // The analyst ceiling is the whole of the reading: the observer's
+        // scopes plus the private ones. Every read sits inside it and no
+        // write does, which is the property that makes it a read-only tier.
+        let analyst_ceiling = contract
+            .registry()
+            .permission_ceiling(&profile(ANALYST_PROFILE_ID))
+            .expect("the analyst profile has a ceiling");
         for capability in &capabilities {
             let reachable = capability.required_permissions.is_subset(&observer_ceiling);
             assert_eq!(
-                reachable, capability.read_only,
+                capability.required_permissions.is_subset(&analyst_ceiling),
+                capability.read_only,
+                "{}: the analyst ceiling holds every read and nothing else",
+                capability.id
+            );
+            assert!(
+                !reachable || capability.read_only,
                 "{}: only read-only capabilities sit inside the observer ceiling",
                 capability.id
             );

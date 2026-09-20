@@ -31,7 +31,7 @@ use crate::{app::ControlWindow, metrics};
 use super::contract::OBSERVE_PERMISSION_ID;
 use super::{
     actions::{ANNOTATE_PERMISSION_ID, ANNOTATOR_PROFILE_ID, ActionRegistry, standard_actions},
-    contract::{COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
+    contract::{ANALYST_PROFILE_ID, COCKPIT_PERMISSION_ID, COCKPIT_PROFILE_ID},
     contract::{
         DeferredActionResult, OBSERVER_PROFILE_ID, ObserverContract, PreparedDispatch,
         PreparedRequest, UiReadContext, UiReadExecution,
@@ -417,6 +417,10 @@ fn is_annotate_scope(permission: &PermissionId) -> bool {
     permission.as_str().starts_with(concat!("annotate", "."))
 }
 
+/// Whether a permission belongs to the analyst tier: a private read. The
+/// answer is the published scope table's, read where the table lives.
+pub(super) use quantick_control_host::authority::is_private_read as is_analyst_permission;
+
 /// Who a connection is, as the handshake proved it. Every action that
 /// connection asks for is signed with this: the payload never names an actor.
 #[derive(Clone, Debug)]
@@ -790,10 +794,11 @@ impl ControlAccess {
     /// behind them, so a scripted run, a test and a later operator reach the
     /// grant without a mouse.
     ///
-    /// Two shorthands, and nothing else is special: `all-reads` is the safe
-    /// default grant, and `annotate-tier` is every scope of the annotate
-    /// tier, because a trader who says "let it answer on the chart" means the
-    /// tier rather than a list of IDs. Every other token is a registered
+    /// Three shorthands, and nothing else is special: `all-reads` is the safe
+    /// default grant, `annotate-tier` is every scope of the annotate tier,
+    /// and `analyst-tier` every private read — because a trader who says "let
+    /// it answer on the chart", or "let it read my account", means the tier
+    /// rather than a list of IDs. Every other token is a registered
     /// permission ID granting exactly itself — `annotate` included, which is
     /// the tier's floor and opens nothing on its own. An unknown ID is refused
     /// loudly rather than silently dropped: a typo that quietly grants less is
@@ -816,6 +821,16 @@ impl ControlAccess {
                     known
                         .values()
                         .filter(|permission| is_annotate_permission(permission))
+                        .cloned(),
+                ),
+                // The private reads as one token, for the same reason the
+                // annotate tier has one: a harness or a trader granting "the
+                // analyst tier" means the tier, not five scope IDs they have
+                // to keep in step with the table.
+                "analyst-tier" => granted.extend(
+                    known
+                        .values()
+                        .filter(|permission| is_analyst_permission(permission))
                         .cloned(),
                 ),
                 id => match known.get(id) {
@@ -863,6 +878,15 @@ impl ControlAccess {
                 .any(|permission| permission.as_str() == ANNOTATE_PERMISSION_ID)
     }
 
+    /// Whether any private read is granted for the next connection.
+    ///
+    /// No floor of its own to check: every analyst scope stands on `observe`,
+    /// which every grant carries. One ticked private read is the whole tier's
+    /// condition, because one is already more than the observer floor may see.
+    pub(crate) fn grants_analyst(&self) -> bool {
+        self.configured_scopes.iter().any(is_analyst_permission)
+    }
+
     /// The ceiling every connection of the next run is capped at. It follows
     /// the scopes the human ticked: no annotate scope, no annotator profile,
     /// however loudly a client asks for one.
@@ -887,12 +911,16 @@ impl ControlAccess {
     /// refused at the gate because this function knew only two profiles. The
     /// cockpit tier is checked first because it is the higher ceiling — it
     /// inherits the observer's reads, and a connection granted both tiers
-    /// needs the one that covers both.
+    /// needs the one that covers both. The analyst tier is checked last of
+    /// the three for the same reason: it is the lowest of them, and each of
+    /// the two above it already contains the private reads.
     fn configured_profile(&self) -> ProfileId {
         let id = if self.grants_cockpit() {
             COCKPIT_PROFILE_ID
         } else if self.grants_annotate() {
             ANNOTATOR_PROFILE_ID
+        } else if self.grants_analyst() {
+            ANALYST_PROFILE_ID
         } else {
             OBSERVER_PROFILE_ID
         };

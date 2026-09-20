@@ -2473,7 +2473,11 @@ fn evidence_test_options() -> quantick_control_local::client::ConnectOptions {
     for id in ["observe.evidence", "observe.screenshot"] {
         scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
     }
-    quantick_control_local::client::ConnectOptions::observer(
+    // The analyst ceiling, because that is where `observe.evidence` and
+    // `observe.screenshot` sit: an observer connection asking for them is
+    // capped back to the floor and refused, which is the tier working.
+    quantick_control_local::client::ConnectOptions::for_profile(
+        quantick_control_local::client::ANALYST_PROFILE_ID,
         "quantick integration test",
         env!("CARGO_PKG_VERSION"),
         scopes,

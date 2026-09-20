@@ -5133,6 +5133,90 @@ fn captures_parked_behind_the_first_ask_for_the_next_frame_when_the_budget_is_sp
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Asking for the analyst tier does not reach it: the trader's grant caps it.
+///
+/// The handshake intersects the requested ceiling with the granted one and
+/// then names the result, so a client that asks for `analyst` against a
+/// window that granted only the ordinary reads has to come back `observer` —
+/// with the private scopes dropped rather than refused, so the connection
+/// still works for everything the trader did allow. Asking is not granting is
+/// the whole rule of this tier; it is worth a test that a client cannot talk
+/// its way past a panel nobody ticked.
+#[test]
+fn asking_for_the_analyst_ceiling_against_an_observer_grant_lands_on_observer() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("analyst-capped-to-observer");
+    // The safe defaults: every ordinary read, not one private one.
+    grant_annotate_for_test(&mut app, "all-reads");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+
+    let mut scopes = gateway_test_scopes();
+    for id in ["observe.paper", "observe.evidence", "observe.screenshot"] {
+        scopes.insert(quantick_control::id::PermissionId::new(id).unwrap());
+    }
+    let options = quantick_control_local::client::ConnectOptions::for_profile(
+        quantick_control_local::client::ANALYST_PROFILE_ID,
+        "quantick integration test",
+        env!("CARGO_PKG_VERSION"),
+        scopes,
+    );
+    let mut client = quantick_control_local::client::discover_in(&directory, &options)
+        .unwrap()
+        .select(None)
+        .unwrap();
+
+    let described = success_result(&remote_call(
+        &mut app,
+        &ctx,
+        &mut client,
+        "control.describe",
+        serde_json::json!({}),
+    ));
+    assert_eq!(
+        described["effective_profile"], "observer",
+        "the grant caps the ceiling, whatever the client asked for"
+    );
+    let effective = described["effective_scopes"]
+        .as_array()
+        .expect("the description lists the effective scopes")
+        .iter()
+        .map(|scope| scope.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    for private in ["observe.paper", "observe.evidence", "observe.screenshot"] {
+        assert!(
+            !effective.contains(&private.to_owned()),
+            "{private} is outside the observer ceiling and must be dropped"
+        );
+    }
+    assert!(
+        effective.contains(&"observe.chart".to_owned()),
+        "the reads the trader did grant still arrive"
+    );
+
+    let refused = remote_call(
+        &mut app,
+        &ctx,
+        &mut client,
+        "evidence.capture",
+        serde_json::json!({ "scopes": ["system.info"] }),
+    );
+    match &refused.outcome {
+        quantick_control::wire::ResponseOutcome::Failure { error } => assert_eq!(
+            error.code.as_str(),
+            "control.permission_denied",
+            "the capped connection cannot reach the tier's capabilities"
+        ),
+        quantick_control::wire::ResponseOutcome::Success { .. } => {
+            panic!("an observer-capped connection captured an evidence bundle")
+        }
+    }
+
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 /// A bundle always carries a page of the journal and the effective
 /// configuration, so it always requires the scopes those belong to —
 /// whatever scopes were named.
@@ -5156,7 +5240,10 @@ fn a_bundle_requires_the_scopes_it_always_carries_however_few_were_named() {
     let mut scopes = gateway_test_scopes();
     scopes.remove(&quantick_control::id::PermissionId::new("observe.events").unwrap());
     scopes.insert(quantick_control::id::PermissionId::new("observe.evidence").unwrap());
-    let options = quantick_control_local::client::ConnectOptions::observer(
+    // The analyst ceiling: `observe.evidence` lives there, and this test is
+    // about a missing *scope*, not a ceiling that never held the tier.
+    let options = quantick_control_local::client::ConnectOptions::for_profile(
+        quantick_control_local::client::ANALYST_PROFILE_ID,
         "quantick integration test",
         env!("CARGO_PKG_VERSION"),
         scopes,
