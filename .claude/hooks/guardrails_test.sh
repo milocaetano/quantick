@@ -605,6 +605,99 @@ run "an unbalanced quote is never a draft" \
 run "a draft flag in a neighbouring statement is not this PR's" \
     pr-gate "$(json_bash "$root/wt" "echo --draft && gh pr create --fill")" deny "arch-review-ok"
 
+# --- pr-gate: the read-cost advisory ----------------------------------------
+#
+# The one thing `pr-gate` says that is not a decision. It has to reach a draft
+# creation, which is the point where detaching a reference is still cheap, and
+# it must never become a refusal, nor noise on a branch the ceiling was never
+# about.
+#
+# Its own repository, because the fixture has to hold a file the branch
+# *references without touching* — that is the whole number the warning offers
+# to lower, and a crate added wholesale on the branch has none. The real
+# `tools/read_cost/` and the frozen production lexer it loads are copied in,
+# so nothing here tests a stub of the thing under test. Only the ledger is
+# fixture-written: the ceiling is what each case varies.
+advisory_python=
+for advisory_candidate in python3 python; do
+    if command -v "$advisory_candidate" >/dev/null 2>&1; then
+        advisory_python=$advisory_candidate
+        break
+    fi
+done
+
+if [ -z "$advisory_python" ]; then
+    # Honest silence rather than a vacuous pass: the advisory cannot run
+    # without an interpreter, and a case that asserts nothing is worse than a
+    # line saying so.
+    printf 'SKIP the read-cost advisory cases: no python3 or python on PATH\n'
+else
+    git init -b main -q "$root/readcost"
+    git -C "$root/readcost" config user.email t@t
+    git -C "$root/readcost" config user.name t
+    git -C "$root/readcost" config core.autocrlf false
+    git -C "$root/readcost" config core.safecrlf false
+    mkdir -p "$root/readcost/crates/core/src" \
+        "$root/readcost/docs/quality/read-cost" \
+        "$root/readcost/tools/read_cost" \
+        "$root/readcost/tools/outside_score"
+    # Every module, not the three the advisory needed on the day this was
+    # written: a fourth one arriving makes the copied calculator fail to
+    # import, the advisory fall silent, and these cases fail for a reason
+    # that has nothing to do with the hook.
+    cp "$script_dir/../../tools/read_cost/"*.py "$root/readcost/tools/read_cost/"
+    cp "$script_dir/../../tools/outside_score/measure.py" \
+        "$root/readcost/tools/outside_score/"
+    printf '[package]\nname = "core"\n' > "$root/readcost/crates/core/Cargo.toml"
+    printf 'pub fn helper() {}\n' > "$root/readcost/crates/core/src/helper.rs"
+    printf 'mod helper;\npub fn before() {}\n' > "$root/readcost/crates/core/src/lib.rs"
+    git -C "$root/readcost" add -A
+    git -C "$root/readcost" commit -qm "a crate to measure"
+    git -C "$root/readcost" update-ref refs/remotes/origin/main HEAD
+    git -C "$root/readcost" checkout -q -b feat/readcost
+    printf 'mod helper;\npub fn before() {}\npub fn after() {}\n' \
+        > "$root/readcost/crates/core/src/lib.rs"
+    git -C "$root/readcost" add -A
+    git -C "$root/readcost" commit -qm "touch one file that reads another"
+
+    # set_ceiling <number> — the whole ledger the advisory reads.
+    set_ceiling() {
+        printf '<!-- read-cost-ceiling:v1 %s -->\n' "$1" \
+            > "$root/readcost/docs/quality/read-cost/ledger.md"
+    }
+
+    set_ceiling 1
+    run "a feature branch over the ceiling is told, on a draft, what it pulls in" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" \
+        context "crates/core/src/helper.rs"
+
+    # The same case, one assertion deeper: it names the ceiling it is measured
+    # against, and it arrives as news rather than as a refusal.
+    run "the advisory names the ceiling it measured against" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" \
+        context "over the 1 ceiling"
+
+    set_ceiling 100000
+    run "a feature branch under the ceiling hears nothing" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" silent
+
+    set_ceiling 1
+    git -C "$root/readcost" checkout -q -b docs/readcost
+    run "a branch the ceiling was never about hears nothing" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" silent
+    git -C "$root/readcost" checkout -q feat/readcost
+
+    rm -f "$root/readcost/docs/quality/read-cost/ledger.md"
+    run "no recorded ceiling is silence, not a finding" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --draft --fill")" silent
+
+    set_ceiling 1
+    # The gate's own verdict is never softened by the advisory: a real PR on a
+    # branch with no review is still denied, and denied about the review.
+    run "an over-ceiling branch is still denied for the review it skipped" \
+        pr-gate "$(json_bash "$root/readcost" "gh pr create --fill")" deny "arch-review-ok"
+fi
+
 # Order matters: an unreviewed branch is told about the review it skipped, not
 # about threads. The markers are the older rule and the cheaper check.
 run "gh pr ready wants the reviews before it wants a thread count" \
@@ -702,6 +795,26 @@ done
 
 run "all required reviews and no open thread makes the branch ready" \
     pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" silent
+
+# The advisory rides a pass rather than replacing a decision, and the pull
+# request it asks about is the one the command named. A stub calculator here
+# on purpose: what is under test is the wiring — that `gh pr ready 42` arrives
+# as `--pr 42` and a creation arrives without one — and the real calculator
+# answers about a diff instead of about its arguments. The cases above cover
+# what it says.
+mkdir -p "$root/wt/tools/read_cost"
+cat > "$root/wt/tools/read_cost/report.py" <<'STUB'
+import json
+import sys
+
+print(json.dumps("read-cost stub saw " + " ".join(sys.argv[1:])))
+STUB
+run "the advisory rides a passing gate and names the pull request" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 42")" context "--pr 42"
+# No `--pr` at all, not an empty one: the argument ends the stub's line.
+run "a creation names no pull request to the advisory" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" context '--branch feat/x"'
+rm -rf "$root/wt/tools"
 
 # Draft pushes run only the fast job, so readiness is where full CI is owed.
 # Every review is recorded here; only the full-CI verdict moves.

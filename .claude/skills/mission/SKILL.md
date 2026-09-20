@@ -156,6 +156,7 @@ the work — never shrink a diff to evade review.
       Source: <linked issue or retained user-request reference>
       Criteria: <IDs and delivered/deferred/open disposition>
       Validation: <commands/scenarios and results; link external raw artifacts>
+      Read cost: <from the PR's read-cost comment>
       <!-- end quantick-mission-summary:v1 -->
       ```
 

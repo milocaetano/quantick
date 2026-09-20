@@ -72,6 +72,11 @@ jobs:
   read-cost:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The measurement's whole point is to reach the author, and it reaches
+      # them as a comment on the pull request they are already reading.
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,6 +103,79 @@ jobs:
           name: read-cost-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: artifacts/read-cost.json
           if-no-files-found: error
+      - name: Post the sticky read-cost comment
+        # One comment per pull request, updated in place. The marker in the
+        # rendered body is the key: a comment per push would bury the number
+        # it exists to show, and the artifact above is already the evidence
+        # nobody opens.
+        #
+        # Failing here would redden a pull request over a comment, so the step
+        # reports and continues. The artifact and the ledger are unaffected.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 tools/read_cost/report.py comment \
+            --json artifacts/read-cost.json --pr "$PR" \
+            --ledger docs/quality/read-cost/ledger.md > artifacts/read-cost.md
+          python3 - <<'PY' > artifacts/read-cost-comment.json
+          import json, pathlib
+          body = pathlib.Path("artifacts/read-cost.md").read_text(encoding="utf-8")
+          print(json.dumps({"body": body}))
+          PY
+          # The key comes from the renderer, never from a copy spelled here:
+          # a stale copy stops matching and every build posts a new comment.
+          MARKER=$(python3 tools/read_cost/report.py marker)
+          export MARKER
+          # Written out and then read, rather than piped into `head`: closing
+          # the pipe early kills `gh` with SIGPIPE, and under a pipefail shell
+          # that turns "the comment exists" into "the step failed".
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq '.[] | select(.body | startswith(env.MARKER)) | .id' \
+            > artifacts/read-cost-comment-ids.txt
+          existing=$(head -n 1 artifacts/read-cost-comment-ids.txt)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$existing" \
+              --input artifacts/read-cost-comment.json > /dev/null
+            echo "updated comment $existing"
+          else
+            gh api --method POST \
+              "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+              --input artifacts/read-cost-comment.json > /dev/null
+            echo "posted a new comment"
+          fi
+
+  # The ledger is the half of this that outlives the pull request. A comment
+  # expires with the branch; `docs/quality/read-cost/ledger.md` is where the
+  # trend lives, and where the ceiling the warning cites comes from.
+  #
+  # Each pull request carries its own row, written on the branch before the
+  # merge, so this job checks rather than writes. Writing it here would mean a
+  # push to `main`, which the repository's ruleset allows no bot to do: the
+  # Actions app cannot be a bypass actor on a personal repository, and the
+  # alternative is a long-lived write credential in CI to work around a rule
+  # the repository chose on purpose.
+  read-cost-ledger:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the merged pull request left its row
+        # An annotation, never a failure. The row can no longer be added by
+        # the pull request that owed it, and reddening `main` over a line of
+        # Markdown would punish the next branch for the last one's omission.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/read_cost/ledger.py \
+            --ledger docs/quality/read-cost/ledger.md \
+            verify --commit "$GITHUB_SHA"
 
   ci:
     if: &full-ci >-
@@ -141,10 +219,14 @@ jobs:
         # lexer. A regression in it moves scores without any code changing, so
         # its fixtures run here, beside the other offline tool suites.
         run: python3 tools/outside_score/test_measure.py
-      - name: Read-cost measurement tests
-        # Exercises explicit Git revisions, Rust module layouts, direct-only
-        # reference scope, deduplication, and delete/rename pre-images.
-        run: python3 tools/read_cost/test_measure.py
+      - name: Read-cost tests
+        # The calculator: explicit Git revisions, Rust module layouts,
+        # direct-only reference scope, deduplication, and delete/rename
+        # pre-images. Then what is done with its answer - the sticky comment,
+        # the ledger rows, the median the ceiling came from, and the advisory
+        # `pr-gate` prints. Discovered rather than named, so a suite added
+        # beside these runs the moment it exists.
+        run: python3 -m unittest discover -s tools/read_cost -p 'test_*.py'
       - name: Binary hook scan tests
         # The scan below reads a half-gigabyte binary, so its own cases run
         # against fixtures instead: the boundary rule, the prose exemption, and

@@ -18,7 +18,14 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 12866
+.claude/skills/mission/SKILL.md 12917
+# +51 for the `Read cost:` line in the mission summary template.
+# The template is the only place a mission is told to carry the number
+# `tools/read_cost/measure.py` has produced on every pull request since #487,
+# and a measurement no artifact records is the gap that whole tool existed to
+# close. Written as short as it can be and still name where the number comes
+# from; nothing else in this file is this change's to cut, and the tracked
+# tree stays under the budget line below without it being moved.
 .claude/skills/arch-review/SKILL.md 12209
 .claude/skills/delivery-review/SKILL.md 8686
 
