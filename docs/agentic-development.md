@@ -372,3 +372,50 @@ trigger: `visual-qa` launched and captured the app exactly as `ui-harness`
 taught, and `new-task` duplicated the worktree recipe `CLAUDE.md` and `mission`
 own while sharing the board with `issue`. One skill per trigger means one place
 a rule can drift.
+
+### Why the mission skill reads the way it does
+
+These reasons were the `mission` skill's own `references/why.md` until the
+change that made the PR the context needed the tracked bytes they were using.
+
+Paraphrasing a request can omit outcomes before implementation begins. Retained
+source spans and a reconciled map make that loss visible. Independent preflight
+for complex work catches it before a late archive repair invalidates reviews.
+Equivalent clauses may share an outcome; operational instructions remain in
+applicable gates and closing steps instead of multiplying product asks.
+
+The tier controls review breadth, not permission or correctness. A small task
+still has a source, evidence and applicable verification. Proportional local
+validation avoids recompiling unchanged runtime inputs for a documentary fix;
+full final-head CI and exact-diff review gates remain integration proof.
+
+Closing steps are separate because a delivery review cannot prove its own
+future verdict or a merge it must unblock. They are still required before final
+delivery. Campaign missions return to their coordinator so this handoff does
+not become another prompt the trader must write.
+
+- **Why `/goal` and this skill are separate.** Claude's built-in `/goal`
+  repeats turns until its evaluator accepts a condition, with no repository
+  knowledge; this skill supplies the condition, so the two never compete.
+- **Why a tier never goes down.** Lowering one mid-mission cannot be told apart
+  from dodging a review that was about to fail.
+- **Why the tier table is a narrower reading, never a different one.** `small`
+  buys less ceremony *on the record*, with a gate that knows it did; a tier
+  lowers what is asked, never what is recorded.
+- **Saying the objective back in the trader's language** is welcome; only the
+  English sentence is written down.
+- **Why `GOAL.md` must be on the branch.** `delivery-review` looks for the
+  checklist in the task worktree, so a goal written into the main checkout
+  reads as absent and the review returns NOT GRADEABLE.
+
+**Why phase two dispatches instead of continuing.** Across this project's five
+largest sessions, 96-99% of the billed tokens fell after `gh pr create`, and
+the context carrying them had grown to 300-550k. Nothing in that tail was
+reading the conversation: every review reads the PR, the branch and `GOAL.md`,
+all of which are durable without it. So phase two names its inputs — the PR
+number, the worktree, the goal path, the tier — and a fresh agent per review,
+per CI watch and per repair round pays for those inputs alone. The one-line
+answer is the load-bearing half: a verdict the main thread can act on without
+opening the report keeps the dispatcher's context flat across a whole review
+round, and wanting more than one line is the signal that a rule went missing
+from this skill rather than a reason to read the artifact.

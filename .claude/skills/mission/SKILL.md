@@ -19,7 +19,8 @@ A mission owns one branch, worktree and PR, and picks the skills done needs. [Th
 requirement reconciliation, gate mapping and proportional validation; apply its
 source-preserving preflight before implementation. A campaign child returns
 completion to its coordinator. This skill defines done; the built-in `/goal`
-supplies continuation (step 9). Rationale: `references/why.md`.
+supplies continuation (step 9). Rationale:
+[`docs/agentic-development.md`](../../../docs/agentic-development.md).
 
 ## Tiers
 
@@ -121,13 +122,12 @@ the work — never shrink a diff to evade review.
    - [ ] **G-AI4** — `ai-review-complete` is valid for the current review key.
    <!-- end required-ai-review-goal-gates:v1 -->
 
-6. **Ground.** Check `git worktree list` for an existing worktree or branch for
-   this goal and a live writer; reuse, never duplicate. Otherwise cut a fresh
-   worktree from updated `main` per `CLAUDE.md` (from an issue, `/issue start
-   <N>` first). Before the first edit, record the tier and arm it — per-branch,
-   in the worktree's git dir, never committed, rewritten whenever raised;
-   `guardrails.sh` accepts only `<current-branch> <tier>` and `pr-gate` reads
-   this `mission-tier` file, not `GOAL.md`. Replace every placeholder:
+6. **Ground.** Check `git worktree list` for this goal's worktree or branch and
+   a live writer; reuse, never duplicate. Otherwise cut a fresh worktree from
+   updated `main` per `CLAUDE.md` (from an issue, `/issue start <N>` first).
+   Before the first edit, record the tier in the exact shape below and arm the
+   guards — per-branch, in the worktree's git dir, never committed, rewritten
+   whenever raised; `pr-gate` reads this `mission-tier` file, not `GOAL.md`:
 
    ```sh
    WT=/path/to/worktree
@@ -136,17 +136,17 @@ the work — never shrink a diff to evade review.
    cd "$WT" &&
      printf '%s %s\n' "$(git rev-parse --abbrev-ref HEAD)" "$TIER" \
        > "$(git rev-parse --absolute-git-dir)/mission-tier" &&
-     cargo build -p quantick-guards
-   cd "$WT" && cargo check -p "$CRATE" --all-targets
+     cargo build -p quantick-guards &&
+     cargo check -p "$CRATE" --all-targets
    ```
 
 7. **Stay on track.** Refuse scope creep; state a necessary detour and tie it
    to the mission, or take it to the user. Narrowing stated scope is a step 3
    question whenever it surfaces. Keep the checklist in the todos.
 
-8. **Verify, then be graded.** Each criterion checked off with its own
-   evidence; none without. Results and links go in the PR; raw evidence stays
-   outside Git per the delivery contract.
+8. **Verify, then be graded — from here the PR is the context.** Each
+   criterion checked off with its own evidence; none without. Results and links
+   go in the PR; raw evidence stays outside Git per the delivery contract.
    1. **Draft PR** (if `ship` has not), carrying every field filled:
 
       ```text
@@ -162,21 +162,41 @@ the work — never shrink a diff to evade review.
 
       and below it the whole `GOAL.md` in `<details>`, kept current. Never
       track `GOAL*` or evidence.
+
+   **From here the main thread only dispatches.** Everything below needs the PR
+   and the branch, not this conversation, so each review, the CI watch and each
+   repair round runs as a fresh `Agent` whose whole prompt is the PR number,
+   the worktree, its `GOAL.md` path and the tier — never the conversation —
+   with the model named at the call: the strong default for judgement and
+   repair, `sonnet` for checklist application. Each agent publishes its durable
+   report through the producer exactly as today and answers in one line,
+   `PASS|FAIL <review-key> <open-threads>`, or the new head where it commits.
+   The main thread opens no report body, diff, log or thread; needing one is a
+   finding against this skill, filed as one.
+
    2. **`Skill(arch-review)`** — every tier; its producer records
       `arch-review-ok`. Never write a marker directly.
    3. **`Skill(ai-review)`** — every tier, same PR/key; its producer records
       `ai-review-complete`. Close every thread `list` returns.
    4. **`Skill(delivery-review)`** — last; its producer records
       `delivery-review-ok`. Skipped only at `small`.
-   5. **Final completion** — after exact-head CI and any ready transition, from
+   5. **CI watch** — a `sonnet` agent on `gh pr checks <pr> --watch`; it
+      returns `GREEN|RED <head>` and the failing job names, never a log.
+   6. **Repair, two of the contract's batches at most** — a strong-model agent
+      given the open threads and the delivery contract. It owns its own record:
+      `progress-check` passes and `progress-record` reserves the batch before
+      it edits; the disposition is appended after. It runs the applicable
+      checks, commits and returns the new head. What it cannot resolve for want
+      of author context becomes a delta follow-up, never a main-thread fix.
+   7. **Final completion** — after exact-head CI and any ready transition, from
       the task worktree, even for an already-ready PR:
       `sh .claude/hooks/mission_ship_gate.sh mission <pr>`. No PASS, no
       completion.
-   6. After PASS, delete the local `.claude/GOAL.md`; the PR and reports are
+   8. After PASS, delete the local `.claude/GOAL.md`; the PR and reports are
       the record.
 
-   After repairs, get current verdicts under the delivery contract's delta
-   follow-up rules before replacing stale markers. Reviewers never edit.
+   A stale marker is replaced only after a fresh verdict under the delivery
+   contract's delta follow-up rules. Reviewers never edit.
 
 9. **`/goal`** (not at `small`; campaign children return their condition to
    the coordinator instead). Right after step 4, print for the user to paste,
