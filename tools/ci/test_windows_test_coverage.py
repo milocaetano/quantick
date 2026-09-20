@@ -8,9 +8,13 @@ cases read the real `ci.yml`, because a guard that passes on fixtures and
 disagrees with the workflow it guards is worse than none.
 """
 
+import contextlib
+import io
 import pathlib
 import sys
+import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -212,6 +216,47 @@ class Shares(unittest.TestCase):
 
     def test_a_workspace_partition_has_no_problems(self):
         self.assertEqual([], guard.problems(THREE_WAY, MEMBERS))
+
+
+class TheCommandCiRuns(unittest.TestCase):
+    """`main()` is the whole contract with the `ci` job, so it has cases too.
+
+    Without them, a `main()` edited to print its problems and fall through to
+    `return 0` leaves every other case passing while the guard stops
+    guarding — the exact silent failure this file exists to prevent.
+    """
+
+    @contextlib.contextmanager
+    def _guarding(self, workflow_text):
+        with tempfile.TemporaryDirectory() as directory:
+            workflow = pathlib.Path(directory, "ci.yml")
+            workflow.write_text(workflow_text, encoding="utf-8")
+            with unittest.mock.patch.object(guard, "WORKFLOW", str(workflow)), \
+                 unittest.mock.patch.object(guard, "workspace_members", lambda: MEMBERS):
+                yield
+
+    def test_a_broken_partition_exits_non_zero_and_says_so_on_stderr(self):
+        overlapping = THREE_WAY.replace(
+            "--exclude quantick-app --exclude quantick-engine",
+            "--exclude quantick-app",
+        )
+        stderr = io.StringIO()
+        with self._guarding(overlapping), contextlib.redirect_stderr(stderr):
+            status = guard.main()
+        self.assertEqual(1, status)
+        self.assertIn("quantick-engine", stderr.getvalue())
+
+    def test_a_whole_partition_exits_zero(self):
+        with self._guarding(THREE_WAY), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, guard.main())
+
+    def test_a_selector_naming_no_member_is_a_problem_not_a_traceback(self):
+        typo = THREE_WAY.replace("-p quantick-engine", "-p quantick-engin")
+        stderr = io.StringIO()
+        with self._guarding(typo), contextlib.redirect_stderr(stderr):
+            status = guard.main()
+        self.assertEqual(1, status)
+        self.assertIn("quantick-engin", stderr.getvalue())
 
 
 class AgainstTheRealWorkflow(unittest.TestCase):

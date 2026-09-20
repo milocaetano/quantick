@@ -124,10 +124,21 @@ def shares(workflow_text, members):
 
 
 def problems(workflow_text, members):
-    """Every way the Windows shares fail to be exactly the workspace."""
+    """Every way the Windows shares fail to be exactly the workspace.
+
+    A selector naming no workspace member is one of those ways, so it comes
+    back as a problem rather than as a traceback: a caller that asks what is
+    wrong should get one answer shape for every kind of wrong. Nothing else
+    is reported alongside it, because the counts are meaningless once a
+    selector does not resolve.
+    """
     found = []
-    claimed = shares(workflow_text, members)
-    missed = sorted(members - set(covered(workflow_text, members)))
+    try:
+        claimed = shares(workflow_text, members)
+        reached = covered(workflow_text, members)
+    except ValueError as error:
+        return [str(error)]
+    missed = sorted(members - set(reached))
     if missed:
         found.append(f"the Windows jobs run no tests for: {missed}")
     unshared = sorted(members - set(claimed) - set(missed))
