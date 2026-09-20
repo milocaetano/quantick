@@ -15,7 +15,7 @@ use crate::{
     jsonrpc::{self, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, Message, RpcError},
     link::ControlLink,
     protocol::{LATEST_PROTOCOL_VERSION, SERVER_NAME, SERVER_TITLE, Tool, negotiate},
-    tools::{self, ANNOTATOR_PROFILE, OBSERVER_PROFILE},
+    tools::{self, ANALYST_PROFILE, ANNOTATOR_PROFILE, OBSERVER_PROFILE},
 };
 
 /// The instructions a client shows its model. ADR 0001 §7: the connection
@@ -29,6 +29,8 @@ use crate::{
 pub fn instructions(profile_ceiling: &str) -> String {
     let authority = if profile_ceiling == ANNOTATOR_PROFILE {
         "Authority: this connection holds the annotator profile - it reads, and it may add labels, arrows and zones to the chart, raise a notification, and attach a compiled indicator. Everything it adds is visibly attributed to this client and removable in one action by the trader; nothing can delete the trader's own work, change the layout, or touch an order. The window grants each scope: a capability the trader did not grant is refused."
+    } else if profile_ceiling == ANALYST_PROFILE {
+        "Authority: the analyst profile is read-only - no tool changes the chart, orders or settings, and write capability IDs are refused. It reads what the observer may not: the paper account, the trader's own text, redacted diagnostic logs, evidence bundles and screenshots. The window grants each of those scopes separately: one the trader did not grant is refused."
     } else {
         "Authority: the observer profile is read-only; no tool changes the chart, orders or settings, and write capability IDs are refused."
     };
@@ -64,6 +66,8 @@ impl McpServer {
         // the wrong way.
         let profile_ceiling = if profile_ceiling == ANNOTATOR_PROFILE {
             ANNOTATOR_PROFILE
+        } else if profile_ceiling == ANALYST_PROFILE {
+            ANALYST_PROFILE
         } else {
             OBSERVER_PROFILE
         };
@@ -394,12 +398,14 @@ mod tests {
             .iter()
             .map(|tool| tool["name"].as_str().unwrap().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(names.len(), 11);
+        assert_eq!(names.len(), 9);
         assert_eq!(names[0], tools::DESCRIBE);
         assert!(names.contains(&tools::WAIT_FOR_CHANGE.to_owned()));
         assert!(names.contains(&tools::GET_SCENE.to_owned()));
-        assert!(names.contains(&tools::CAPTURE_EVIDENCE.to_owned()));
-        assert!(names.contains(&tools::CAPTURE_CHART.to_owned()));
+        // The two evidence tools belong to the analyst ceiling: this server
+        // is the read-only floor, and both need a scope it does not hold.
+        assert!(!names.contains(&tools::CAPTURE_EVIDENCE.to_owned()));
+        assert!(!names.contains(&tools::CAPTURE_CHART.to_owned()));
         let missing = server
             .handle_line(&request(3, "resources/list", json!({})))
             .unwrap();

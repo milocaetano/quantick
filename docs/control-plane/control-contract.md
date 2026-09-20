@@ -396,8 +396,9 @@ Profiles grant permissions:
 
 | Profile | Permissions |
 | --- | --- |
-| `observer` | `observe` plus the user-granted `observe.*` scopes; no write permission |
-| `annotator` | Observer permissions plus `annotate` |
+| `observer` | `observe` plus the user-granted ordinary `observe.*` scopes; no private read, no write permission |
+| `analyst` | Observer permissions plus the user-granted sensitive `observe.*` scopes — the paper account, user text, diagnostic logs, evidence bundles and screenshots. Read-only |
+| `annotator` | Analyst permissions plus `annotate` |
 | `developer` | Annotator permissions plus `cockpit` |
 | `paper` | Developer permissions plus `paper` |
 
@@ -411,7 +412,11 @@ though the ID type itself is extensible.
 
 The profile is an authority ceiling. A capability also requires its declared
 scope, such as `observe.chart` or `observe.user_text`. Selecting `observer`
-does not silently grant every sensitive read scope.
+does not silently grant every sensitive read scope — a sensitive scope is not
+even inside that ceiling: the sensitive reads are ceilinged at `analyst`, so
+reaching one takes both the tier and the tick. The two read-only profiles are
+what the `observe` effect policy names as its ceilings; every other tier
+reaches them by inheritance.
 
 The host also owns a `PermissionRegistry`. Each permission descriptor supplies
 an ID, label, explanation of data or authority granted, sensitivity, default
@@ -434,8 +439,9 @@ define cockpit and paper subscopes before those profiles ship.
 
 A `risk_reducing` descriptor flag may select a lighter confirmation policy, but
 does not lower the capability's effect. A paper or live safety action requires
-an explicit `paper.safety` or future `live.safety` grant. Observer, annotator,
-and developer profiles never receive financial authority through this flag.
+an explicit `paper.safety` or future `live.safety` grant. Observer, analyst,
+annotator and developer profiles never receive financial authority through this
+flag.
 
 ### 7.1 Marks and the observer boundary
 

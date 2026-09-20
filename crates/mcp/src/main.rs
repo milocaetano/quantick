@@ -24,6 +24,7 @@ use quantick_mcp::{
 /// observer and every write is refused.
 const AVAILABLE_PROFILES: &[&str] = &[
     quantick_control_local::client::OBSERVER_PROFILE_ID,
+    quantick_control_local::client::ANALYST_PROFILE_ID,
     quantick_control_local::client::ANNOTATOR_PROFILE_ID,
     quantick_control_local::client::COCKPIT_PROFILE_ID,
 ];
@@ -61,34 +62,37 @@ const OBSERVER_SCOPES: &[&str] = &[
     "observe.drawings",
     "observe.orderflow",
     "observe.replay",
-    // Asked for and rarely granted: `observe.paper` is not one of the safe
-    // defaults, so the panel starts with it off. Not asking at all would leave
-    // `session.paper` refused even after the trader ticks it, which reads to a
-    // client as the scope being broken rather than withheld.
-    "observe.paper",
-    // Asking is not granting: the trader still ticks it, and without the ask
-    // the scope is refused even after they do.
-    "observe.user_text",
     "observe.health",
     "observe.attention",
     "observe.events",
-    // The evidence tier, for exactly the reason the two comments above give:
-    // both are off in the panel until the trader ticks them, and a connection
-    // that never asked is refused even after they do — which reads to a client
-    // as `quantick_capture_evidence` being broken rather than withheld.
+];
+
+/// The scopes an analyst connection asks for on top of the observer's: the
+/// private reads.
+///
+/// Asked for and rarely granted — every one is off in the panel until the
+/// trader ticks it — but asked for all the same, because a connection that
+/// never asked is refused even after they do, which reads to a client as
+/// `quantick_capture_evidence` being broken rather than withheld.
+const ANALYST_SCOPES: &[&str] = &[
+    "observe.paper",
+    "observe.user_text",
+    "observe.diagnostic_logs",
     "observe.evidence",
     "observe.screenshot",
 ];
 
 const USAGE: &str = "usage:
-  quantick-mcp [serve] [--profile <observer|annotator|cockpit>] [--instance <instance_id>] [--instances-dir <path>]
-  quantick-mcp setup --client <codex|claude> [--profile <observer|annotator|cockpit>]
+  quantick-mcp [serve] [--profile <observer|analyst|annotator|cockpit>] [--instance <instance_id>] [--instances-dir <path>]
+  quantick-mcp setup --client <codex|claude> [--profile <observer|analyst|annotator|cockpit>]
   quantick-mcp --help
 
 serve (default)  run the MCP server over standard input/output; stdout carries
                  MCP frames only, diagnostics go to stderr.
-  --profile      the authority ceiling to request: `observer` reads, `annotator`
-                 also answers on the chart. The window grants it or it does not.
+  --profile      the authority ceiling to request: `observer` reads the charts,
+                 `analyst` also reads private session data without writing
+                 anything, `annotator` also answers on the chart. The window
+                 grants it or it does not.
   --instance     pin every call to one running instance by its instance_id.
   --instances-dir
                  read descriptors from this directory instead of the platform's
@@ -226,8 +230,10 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
     // meets a read-only grant connects as an observer.
     let cockpit = profile == quantick_control_local::client::COCKPIT_PROFILE_ID;
     let annotator = cockpit || profile == quantick_control_local::client::ANNOTATOR_PROFILE_ID;
+    let analyst = annotator || profile == quantick_control_local::client::ANALYST_PROFILE_ID;
     let scopes: BTreeSet<PermissionId> = OBSERVER_SCOPES
         .iter()
+        .chain(if analyst { ANALYST_SCOPES } else { &[] })
         .chain(if annotator { ANNOTATOR_SCOPES } else { &[] })
         .chain(if cockpit { COCKPIT_SCOPES } else { &[] })
         .map(|id| PermissionId::new(*id).expect("static scope IDs are valid"))
@@ -259,7 +265,7 @@ fn serve(profile: &str, instance: Option<InstanceId>, instances_dir: Option<Path
 
 #[cfg(test)]
 mod tests {
-    use super::OBSERVER_SCOPES;
+    use super::{ANALYST_SCOPES, OBSERVER_SCOPES};
 
     /// The committed capability catalog, as the application publishes it.
     const CATALOG: &str =
@@ -274,51 +280,98 @@ mod tests {
     /// draft of this branch: registered, advertised, and permanently answering
     /// `control.scope_denied`.
     ///
-    /// So the list is held against the registry rather than against memory. A
-    /// module that registers a capability inside the observer ceiling and
-    /// forgets to widen this list fails here, and is told which capability
-    /// needs which scope.
+    /// So the lists are held against the registry rather than against memory,
+    /// per read-only ceiling: a module that registers a capability inside one
+    /// of them and forgets to widen the matching list fails here, and is told
+    /// which capability needs which scope.
     #[test]
-    fn the_adapter_asks_for_every_scope_an_observer_capability_needs() {
+    fn the_adapter_asks_for_every_scope_a_read_only_capability_needs() {
         let catalog: serde_json::Value = serde_json::from_str(CATALOG).expect("the catalog parses");
-        let observer_ceiling = catalog["permissions"]
+        // The analyst inherits the observer, so the scopes it asks for are
+        // both lists — exactly as `serve` chains them.
+        let analyst_scopes: Vec<&str> = OBSERVER_SCOPES
+            .iter()
+            .chain(ANALYST_SCOPES.iter())
+            .copied()
+            .collect();
+        for (profile, asked) in [
+            ("observer", OBSERVER_SCOPES.to_vec()),
+            ("analyst", analyst_scopes),
+        ] {
+            let ceiling = ceiling_of(&catalog, profile);
+            let mut missing = std::collections::BTreeSet::new();
+            for capability in catalog["capabilities"]
+                .as_array()
+                .expect("the catalog lists capabilities")
+            {
+                let required = capability["required_permissions"]
+                    .as_array()
+                    .expect("a capability declares its permissions")
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>();
+                // Only the reads this ceiling could ever reach: an annotate
+                // action is outside both of these profiles by design.
+                if !required.iter().all(|id| ceiling.contains(id)) {
+                    continue;
+                }
+                for id in required {
+                    if !asked.contains(&id) {
+                        missing.insert(format!("{id} (needed by {})", capability["id"]));
+                    }
+                }
+            }
+            assert!(
+                missing.is_empty(),
+                "the `{profile}` connection never asks for these, so the gateway refuses them                  whatever the trader grants: {missing:?}"
+            );
+        }
+    }
+
+    /// Every permission a profile reaches, as the catalog publishes it: the
+    /// ones ceilinged there, plus everything the tiers below it hold, because
+    /// a profile inherits its ancestors' ceilings.
+    fn ceiling_of<'a>(
+        catalog: &'a serde_json::Value,
+        profile: &str,
+    ) -> std::collections::BTreeSet<&'a str> {
+        let profiles = catalog["profiles"]
+            .as_array()
+            .expect("the catalog lists profiles");
+        let mut wanted = std::collections::BTreeSet::from([profile.to_owned()]);
+        // The chain is shallow and the catalog lists it in full, so one pass
+        // per profile is enough to close over `inherits`.
+        for _ in 0..profiles.len() {
+            for descriptor in profiles {
+                let id = descriptor["id"].as_str().expect("a profile has an ID");
+                if !wanted.contains(id) {
+                    continue;
+                }
+                for parent in descriptor["inherits"]
+                    .as_array()
+                    .expect("a profile lists what it inherits")
+                {
+                    if let Some(parent) = parent.as_str() {
+                        wanted.insert(parent.to_owned());
+                    }
+                }
+            }
+        }
+        catalog["permissions"]
             .as_array()
             .expect("the catalog lists permissions")
             .iter()
             .filter(|permission| {
                 permission["profile_ceilings"]
                     .as_array()
-                    .is_some_and(|ceilings| ceilings.iter().any(|id| id == "observer"))
+                    .is_some_and(|ceilings| {
+                        ceilings
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .any(|id| wanted.contains(id))
+                    })
             })
             .filter_map(|permission| permission["id"].as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-
-        let mut missing = std::collections::BTreeSet::new();
-        for capability in catalog["capabilities"]
-            .as_array()
-            .expect("the catalog lists capabilities")
-        {
-            let required = capability["required_permissions"]
-                .as_array()
-                .expect("a capability declares its permissions")
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>();
-            // Only the reads an observer connection could ever reach: an
-            // annotate action is outside this profile's ceiling by design.
-            if !required.iter().all(|id| observer_ceiling.contains(id)) {
-                continue;
-            }
-            for id in required {
-                if !OBSERVER_SCOPES.contains(&id) {
-                    missing.insert(format!("{id} (needed by {})", capability["id"]));
-                }
-            }
-        }
-        assert!(
-            missing.is_empty(),
-            "the adapter never asks for these, so the gateway refuses them whatever the \
-             trader grants: {missing:?}"
-        );
+            .collect()
     }
 }

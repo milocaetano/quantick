@@ -5156,7 +5156,10 @@ fn a_bundle_requires_the_scopes_it_always_carries_however_few_were_named() {
     let mut scopes = gateway_test_scopes();
     scopes.remove(&quantick_control::id::PermissionId::new("observe.events").unwrap());
     scopes.insert(quantick_control::id::PermissionId::new("observe.evidence").unwrap());
-    let options = quantick_control_local::client::ConnectOptions::observer(
+    // The analyst ceiling: `observe.evidence` lives there, and this test is
+    // about a missing *scope*, not a ceiling that never held the tier.
+    let options = quantick_control_local::client::ConnectOptions::for_profile(
+        quantick_control_local::client::ANALYST_PROFILE_ID,
         "quantick integration test",
         env!("CARGO_PKG_VERSION"),
         scopes,

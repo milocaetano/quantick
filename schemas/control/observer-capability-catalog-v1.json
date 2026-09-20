@@ -11116,7 +11116,7 @@
       "id": "observe.diagnostic_logs",
       "label": "observe diagnostic_logs",
       "profile_ceilings": [
-        "observer"
+        "analyst"
       ],
       "sensitive": true
     },
@@ -11146,7 +11146,7 @@
       "id": "observe.evidence",
       "label": "observe evidence",
       "profile_ceilings": [
-        "observer"
+        "analyst"
       ],
       "sensitive": true
     },
@@ -11196,7 +11196,7 @@
       "id": "observe.paper",
       "label": "observe paper",
       "profile_ceilings": [
-        "observer"
+        "analyst"
       ],
       "sensitive": true
     },
@@ -11216,7 +11216,7 @@
       "id": "observe.screenshot",
       "label": "observe screenshot",
       "profile_ceilings": [
-        "observer"
+        "analyst"
       ],
       "sensitive": true
     },
@@ -11236,7 +11236,7 @@
       "id": "observe.user_text",
       "label": "observe user_text",
       "profile_ceilings": [
-        "observer"
+        "analyst"
       ],
       "sensitive": true
     },
@@ -11270,9 +11270,17 @@
       "permissions": []
     },
     {
-      "id": "annotator",
+      "id": "analyst",
       "inherits": [
         "observer"
+      ],
+      "label": "Analyst",
+      "permissions": []
+    },
+    {
+      "id": "annotator",
+      "inherits": [
+        "analyst"
       ],
       "label": "Annotator",
       "permissions": []

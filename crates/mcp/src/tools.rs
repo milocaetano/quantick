@@ -71,6 +71,10 @@ pub const ANNOTATOR_PROFILE: &str = "annotator";
 pub const COCKPIT_PROFILE: &str = "cockpit";
 /// The read-only floor every other ceiling is treated as.
 pub const OBSERVER_PROFILE: &str = "observer";
+/// The read-only ceiling above the floor: it also reads the trader's private
+/// session data — the paper account, their own words, redacted logs, evidence
+/// bundles and screenshots — and writes nothing.
+pub const ANALYST_PROFILE: &str = "analyst";
 /// The routing property that picks which object an annotation places, and
 /// which channel a notification arrives on. Removed before the payload is
 /// validated, exactly as `instance_id` is.
@@ -144,7 +148,9 @@ const DETACH_RESULT_SCHEMA: &str =
 /// less caution than the strongest capability it could reach.
 pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
     let invoke_annotations = match profile_ceiling {
-        "observer" => ToolAnnotations {
+        // Both read-only ceilings answer the same way: the analyst reads
+        // more, and reading more is still reading.
+        "observer" | "analyst" => ToolAnnotations {
             title: Some("Invoke a registered capability".to_owned()),
             read_only_hint: true,
             destructive_hint: false,
@@ -221,15 +227,6 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             annotations: ToolAnnotations::observer_read("Scene"),
         },
         Tool {
-            name: CAPTURE_EVIDENCE.to_owned(),
-            title: "Capture an investigation bundle".to_owned(),
-            description: "Freeze the named snapshot scopes, the semantic events around them and the effective configuration into one hashed, redacted bundle held in memory for a bounded time, and answer with its manifest: an evidence_id, an integrity digest, how many chunks it takes, what it covers and — as codes, never prose — what it does not. Ask for screenshot: true (needs the observe.screenshot scope) to include a picture of the window stamped with the same capture revision as the scene, so every named control maps to a rectangle of that image; the window tells the trader when one is taken. Read the bundle back with quantick_invoke on evidence.capture's companion capability evidence.read, page by page, concatenating the chunks into the canonical JSON the digest attests. Nothing is written to disk.".to_owned(),
-            input_schema: with_instance_routing(parse_schema(EVIDENCE_CAPTURE_INPUT_SCHEMA)),
-            output_schema: Some(capability_output_schema(parse_schema(EVIDENCE_MANIFEST_SCHEMA))),
-            annotations: ToolAnnotations::observer_read("Capture evidence"),
-        },
-        crate::capture_chart::tool(instance_only_schema()),
-        Tool {
             name: READ_EVENTS.to_owned(),
             title: "Read the semantic event journal".to_owned(),
             description: "A page of the bounded semantic event journal — tab, focus and selection changes, feed connection and market changes, replay state, human marks — after a cursor or from an explicit start (oldest or latest). Each page returns the next cursor and says when older events were dropped. Marks carry the fully resolved target the user pointed at.".to_owned(),
@@ -266,10 +263,35 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
     // The profiles are a chain, so a client that moves up a tier must never
     // lose a tool it had — matched by name, the cockpit ceiling silently
     // dropped `quantick_annotate` and the rest of the write tier.
+    // Every ceiling that contains the analyst, which is every ceiling above
+    // the floor: both of these tools reach a capability the observer's
+    // ceiling no longer holds, and a tool that is certain to answer
+    // `control.scope_denied` reads to a client as broken rather than
+    // withheld.
+    if profile_ceiling != OBSERVER_PROFILE {
+        tools.extend(private_read_tools());
+    }
     if matches!(profile_ceiling, ANNOTATOR_PROFILE | COCKPIT_PROFILE) {
         tools.extend(annotate_tools());
     }
     tools
+}
+
+/// The reads the analyst ceiling adds: an evidence bundle, and a picture of
+/// the window. Both require scopes ceilinged at the analyst tier, so neither
+/// is offered to a connection that asked for the read-only floor.
+fn private_read_tools() -> Vec<Tool> {
+    vec![
+        Tool {
+            name: CAPTURE_EVIDENCE.to_owned(),
+            title: "Capture an investigation bundle".to_owned(),
+            description: "Freeze the named snapshot scopes, the semantic events around them and the effective configuration into one hashed, redacted bundle held in memory for a bounded time, and answer with its manifest: an evidence_id, an integrity digest, how many chunks it takes, what it covers and — as codes, never prose — what it does not. Ask for screenshot: true (needs the observe.screenshot scope) to include a picture of the window stamped with the same capture revision as the scene, so every named control maps to a rectangle of that image; the window tells the trader when one is taken. Read the bundle back with quantick_invoke on evidence.capture's companion capability evidence.read, page by page, concatenating the chunks into the canonical JSON the digest attests. Nothing is written to disk.".to_owned(),
+            input_schema: with_instance_routing(parse_schema(EVIDENCE_CAPTURE_INPUT_SCHEMA)),
+            output_schema: Some(capability_output_schema(parse_schema(EVIDENCE_MANIFEST_SCHEMA))),
+            annotations: ToolAnnotations::observer_read("Capture evidence"),
+        },
+        crate::capture_chart::tool(instance_only_schema()),
+    ]
 }
 
 /// The tools a connection holding the annotator profile also gets: the half
@@ -1170,14 +1192,55 @@ mod tests {
                 GET_CHART_WINDOW,
                 GET_DIAGNOSTICS,
                 GET_SCENE,
-                CAPTURE_EVIDENCE,
-                CAPTURE_CHART,
                 READ_EVENTS,
                 WAIT_FOR_CHANGE,
                 SEARCH_CAPABILITIES,
                 INVOKE
             ]
         );
+    }
+
+    /// The two evidence tools moved up a tier with the scopes they need:
+    /// `observe.evidence` and `observe.screenshot` are ceilinged at the
+    /// analyst profile, so offering them to a connection that asked for the
+    /// read-only floor would advertise a tool certain to answer
+    /// `control.scope_denied` — withheld, reading as broken.
+    #[test]
+    fn the_private_reads_are_offered_to_the_analyst_ceiling_and_not_below_it() {
+        let observer: Vec<String> = tools(OBSERVER_PROFILE)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        let analyst: Vec<String> = tools(ANALYST_PROFILE)
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        for name in [CAPTURE_EVIDENCE, CAPTURE_CHART] {
+            assert!(
+                !observer.contains(&name.to_owned()),
+                "{name} needs a scope the observer ceiling does not hold"
+            );
+            assert!(
+                analyst.contains(&name.to_owned()),
+                "{name} is what the analyst ceiling is for"
+            );
+        }
+        for name in &observer {
+            assert!(
+                analyst.contains(name),
+                "the analyst ceiling dropped {name}, which the tier below it has"
+            );
+        }
+        let invoke = tools(ANALYST_PROFILE)
+            .into_iter()
+            .find(|tool| tool.name == INVOKE)
+            .expect("every ceiling reaches the long tail");
+        assert!(
+            invoke.annotations.read_only_hint,
+            "the analyst ceiling reads and does not write"
+        );
+        assert!(!invoke.annotations.destructive_hint);
+        assert!(!invoke.annotations.open_world_hint);
     }
 
     /// The half of the evidence tier that has no named tool still has to be

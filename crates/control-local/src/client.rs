@@ -90,6 +90,11 @@ impl ConnectOptions {
 
 /// The profile every client may ask for, and the floor of every other.
 pub const OBSERVER_PROFILE_ID: &str = "observer";
+/// The read-only ceiling above the observer: it also reads the trader's
+/// private session data — the paper account, their own words on the chart,
+/// redacted diagnostic logs, evidence bundles and screenshots. It writes
+/// nothing, which is what keeps it below the annotator in the chain.
+pub const ANALYST_PROFILE_ID: &str = "analyst";
 /// The profile that may also answer on the chart.
 pub const ANNOTATOR_PROFILE_ID: &str = "annotator";
 /// The ceiling that may rearrange the trader's canvas: which charts are on
