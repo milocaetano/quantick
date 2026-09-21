@@ -330,13 +330,15 @@ a reading from this harness is allowed to claim.
   it counts against `MAX_UNPLACED_SHARE` for every group whose window it
   touches. A campaign that declares the children and not the coordinator is
   measuring the children exactly and the campaign loosely, on purpose.
-- **E14 — A context claim under-counts its own tail.** A mission writes its
-  `ended_at` when it publishes its evidence, so the requests it makes after
-  that — the final verifier, the handback, a late repair — fall outside the
-  claim and outside the transcripts the claim resolves to. It is a handful of
-  requests against a mission's hundreds, and it errs downward rather than
-  upward, so a cost measured this way is never flattered by it. The remedy, if
-  one is ever wanted, is a second claim rather than a wider window.
+- **E14 — A context claim can under-count its own tail.** A mission writes its
+  `ended_at` when it publishes its evidence, and keeps working afterwards: the
+  final verifier, the handback, a late repair. Where that tail stays in a
+  context the claim already resolved to, nothing is lost, because a resolved
+  transcript is counted whole. Where it lands somewhere else — a context handed
+  off to after `ended_at`, or an agent dispatched after it — that cost is
+  outside the reading. It errs downward rather than upward, so a saving
+  measured this way is never flattered by it, and the remedy is a second claim
+  rather than a wider window.
 
 ## 9. Amendments
 
