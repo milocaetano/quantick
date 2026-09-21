@@ -21,6 +21,11 @@ Two subcommands:
     session it ran in and two instants of its own work, and this turns that
     claim into the exact paths the registry's ``transcripts`` field wants.
 
+``contexts``
+    How many requests the context running the command has already made, against
+    the cap in ``docs/quality/velocity/context-cap.md``. A context cannot see
+    its own length from the inside; this is how it checks.
+
 Transcripts live on the trader's machine and are never committed; see
 ``README.md``. Run ``python tools/mission_cost/measure.py --help``.
 """
@@ -61,12 +66,17 @@ def _bootstrap():
 TRANSCRIPTS = _bootstrap()
 
 ATTRIBUTION = TRANSCRIPTS.load("attribution")
+SHAPE = TRANSCRIPTS.load("shape")
 DISPERSION = TRANSCRIPTS.load("dispersion")
 DELIVERY = TRANSCRIPTS.load("delivery")
 CANONICAL = TRANSCRIPTS.load("canonical")
 
 WALL_CLOCK = ("agent_seconds", "elapsed_seconds", "span_seconds")
 DELIVERY_METRICS = ("pr_open_seconds", "ci_seconds", "ci_wall_seconds", "ci_runs")
+# The environment variable a Claude Code context can read its own session id
+# from. Section 9 of the experiment protocol allows exactly this: it is the
+# environment, not a transcript, so error mode E2's boundary is untouched.
+SESSION_ENV = "CLAUDE_CODE_SESSION_ID"
 
 # Bound here, never redefined here. `canonical.py` owns section 7's byte
 # contract and `transcripts.py` owns where this host keeps its transcripts, so
@@ -474,6 +484,126 @@ def identify(roots, session, start, end, role="subagent"):
     }
 
 
+def session_roots(repo):
+    """Where to look for the contexts of a session running in ``repo``.
+
+    This host keeps one transcript directory per working directory, and a
+    mission runs in a worktree, so the worktree's own directory comes first.
+    But a campaign child is dispatched from the main checkout and writes
+    there, and a worktree that has never held a session of its own has no
+    directory at all -- so the main checkout is offered too. It is found by
+    reading the ``.git`` file a worktree carries, which names the common git
+    directory, rather than by shelling out; nothing here runs a command to
+    answer a question a file already answers.
+
+    Only directories that exist are returned, in order, without duplicates.
+    """
+    found = [default_transcripts(repo)]
+    pointer = os.path.join(repo, ".git")
+    if os.path.isfile(pointer):
+        with open(pointer, "r", encoding="utf-8") as handle:
+            line = handle.readline().strip()
+        prefix = "gitdir:"
+        if line.startswith(prefix):
+            common = line[len(prefix):].strip()
+            # .../<main checkout>/.git/worktrees/<name>
+            main = os.path.dirname(os.path.dirname(os.path.dirname(common)))
+            if os.path.basename(os.path.dirname(common)) == "worktrees" and main:
+                found.append(default_transcripts(main))
+    ordered = []
+    for root in found:
+        if root not in ordered and os.path.isdir(root):
+            ordered.append(root)
+    return ordered
+
+
+def contexts(roots, session, cap, role=None, since=None):
+    """How far the context running this command already is through the cap.
+
+    The cap lives in ``docs/quality/velocity/context-cap.md`` and the operative
+    rule in ``.claude/skills/mission/SKILL.md``. The rule exists because a
+    context's bill is quadratic in its turns; the reason it needs a command at
+    all is that nothing inside a context answers "how many requests have I
+    made", and a cap nobody can observe is prose rather than a rule.
+
+    **Which transcript is the running one** has two answers, and which one this
+    gives is always stated in ``resolution``:
+
+    ``containment``
+        Given ``since`` -- the ``started_at`` the context wrote into its own
+        claim -- the running context is the one of the caller's ``role`` whose
+        span contains that instant. This is section 9's containment rule and it
+        is exact. More than one is a real overlap, reported as ``contested``
+        with nothing resolved, exactly as ``identify`` does.
+
+    ``newest_write``
+        Without ``since``, the newest writer in the session. It is a heuristic
+        and it is wrong whenever a sibling agent is running beside the caller,
+        which is ordinary in a campaign: the sibling may have written last.
+        Every context is listed with its count either way, so a reader can see
+        what the guess was made from, and a tie is ``ambiguous``.
+
+    Reads ``usage`` and timestamps only, like everything else here. ``cwd`` and
+    ``sessionId`` would name the running context outright and are still not
+    touched.
+    """
+    rows = []
+    for root in roots:
+        located, _ = TRANSCRIPTS.locate(root)
+        for item in located:
+            if item.session != session:
+                continue
+            if role is not None and item.kind != role:
+                continue
+            folded = TRANSCRIPTS.read(
+                item.path, item.relative, item.session, item.kind, item.root
+            )
+            first, last = folded.first(), folded.last()
+            if first is None or last is None:
+                continue
+            rows.append(
+                {
+                    "relative": item.relative,
+                    "root": item.root,
+                    "kind": item.kind,
+                    "requests": folded.requests,
+                    "first": first.isoformat(),
+                    "last": last.isoformat(),
+                }
+            )
+    rows.sort(key=lambda row: (row["root"], row["relative"]))
+    if since is not None:
+        resolution = "containment"
+        candidates = [
+            row
+            for row in rows
+            if row["first"] <= since.isoformat() <= row["last"]
+        ]
+    else:
+        resolution = "newest_write"
+        newest = max((row["last"] for row in rows), default=None)
+        candidates = [row for row in rows if row["last"] == newest]
+    running = candidates[0] if len(candidates) == 1 else None
+    report = {
+        "method": METHOD,
+        "cap_policy": "docs/quality/velocity/context-cap.md",
+        "session": session,
+        "role": role,
+        "cap": cap,
+        "since": None if since is None else since.isoformat(),
+        "resolution": resolution,
+        "contexts": rows,
+        "candidates": candidates,
+        "running": running,
+        "ambiguous": len(candidates) != 1,
+    }
+    if running is not None:
+        report["requests"] = running["requests"]
+        report["remaining"] = cap - running["requests"]
+        report["over_cap"] = running["requests"] > cap
+    return report
+
+
 def add_common(parser):
     parser.add_argument("--repo", default=".", help="the repository to measure from")
     parser.add_argument(
@@ -535,16 +665,76 @@ def main(argv=None):
         help="did this mission run as a dispatched agent or as the main thread",
     )
     named.add_argument("--out", default="-", help="where to write; - is stdout")
+    running = modes.add_parser(
+        "contexts", help="how long the context running this command has run"
+    )
+    running.add_argument("--repo", default=".", help="the repository to measure from")
+    running.add_argument(
+        "--transcripts", action="append", default=None, metavar="DIR",
+        help="a session transcript directory; repeatable",
+    )
+    running.add_argument(
+        "--session", default=None,
+        help=f"the session UUID (default: ${SESSION_ENV} from the environment)",
+    )
+    running.add_argument(
+        "--role", default=None, choices=("subagent", "main"),
+        help="only contexts of this kind",
+    )
+    running.add_argument(
+        "--since", default=None,
+        help=(
+            "the started_at this context claimed; resolves it exactly by "
+            "containment instead of guessing the newest writer"
+        ),
+    )
+    running.add_argument(
+        "--cap", type=int, default=SHAPE.POLICY_CAP,
+        help=f"requests after which a context hands off (default {SHAPE.POLICY_CAP})",
+    )
+    running.add_argument("--out", default="-", help="where to write; - is stdout")
     options = parser.parse_args(argv)
 
-    roots = options.transcripts or [default_transcripts(options.repo)]
-    for root in roots:
-        if not os.path.isdir(root):
+    if options.mode == "contexts" and not options.transcripts:
+        # A context asking how long it has run is asking about the session it
+        # is in, which may have started in this worktree or in the checkout
+        # that dispatched it. Both are searched, and an absent one is not an
+        # error the way it is for a report over a named root.
+        roots = session_roots(options.repo)
+        if not roots:
             parser.error(
-                f"no transcript directory at {root}. Transcripts are local to "
-                "the trader's machine and are not in the repository; see "
-                "tools/mission_cost/README.md"
+                "no transcript directory for this repository or its main "
+                "checkout. Transcripts are local to the trader's machine and "
+                "are not in the repository; see tools/mission_cost/README.md"
             )
+    else:
+        roots = options.transcripts or [default_transcripts(options.repo)]
+        for root in roots:
+            if not os.path.isdir(root):
+                parser.error(
+                    f"no transcript directory at {root}. Transcripts are local to "
+                    "the trader's machine and are not in the repository; see "
+                    "tools/mission_cost/README.md"
+                )
+    if options.mode == "contexts":
+        session = options.session or os.environ.get(SESSION_ENV)
+        if not session:
+            parser.error(
+                f"no --session and no ${SESSION_ENV} in the environment. A "
+                "context reads its own session id from the environment, never "
+                "from a transcript; see docs/quality/velocity/context-cap.md"
+            )
+        since = None
+        if options.since:
+            try:
+                since = TRANSCRIPTS.require_instant(options.since, "--since")
+            except TRANSCRIPTS.InstantError as problem:
+                parser.error(str(problem))
+        emit(
+            render(contexts(roots, session, options.cap, options.role, since)),
+            options.out,
+        )
+        return 0
     if options.mode == "identify":
         try:
             start = TRANSCRIPTS.require_instant(options.start, "--from")

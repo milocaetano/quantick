@@ -18,7 +18,17 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 14278
+.claude/skills/mission/SKILL.md 15059
+# +781 for the context cap: the rule that no one agent context runs a whole
+# mission, the number 80, the structural phase boundaries a context can act on,
+# and where the handoff brief is defined. The arithmetic that chose 80 stays
+# out of this tree, in `docs/quality/velocity/context-cap.md`, which no session
+# loads; the skill pays for the number and the pointer only. Priced there
+# against what it buys: about 250 tokens a request, ~75,000 over a 300-request
+# mission, against a modelled ~45% of a 106,365,437-token mission. Paid for in
+# the same change by 206 bytes off the step 8 paragraph this rule makes partly
+# redundant, and by 473 bytes of illustrative prose deleted from
+# `docs/campaign/workflow.md`, so the `!budget` line below does not move.
 # +1,361 for phase two: after the draft PR the main thread dispatches a fresh
 # agent per review, per CI watch and per repair round and reads one-line
 # verdicts, because 96-99% of the billed tokens in this project's five largest
@@ -231,7 +241,14 @@ docs/campaign/workflow.md 11554
 # Authorized continuation: standing process delegation and finite stall
 # allowances add 445 bytes. Paid by condensing duplicated initial validation
 # commentary; its original evaluator responses remain intact. Budget unchanged.
-docs/workflow/delivery.md 11361
+docs/workflow/delivery.md 11943
+# +584 for the handoff section: what a fresh context is given when one is
+# handed off, and the rule that an observation the closing context did not
+# write down does not survive. The contract already owned phase two's "the PR
+# is the context"; the context cap makes that every phase's rule, so this is
+# where the brief belongs rather than restated in each skill that hands off.
+# Paid for in the same change by the deletions recorded above; the `!budget`
+# line does not move.
 
 # The instruction diet (2026-09-19) halved CLAUDE.md + AGENTS.md (23,142
 # -> 11,527 bytes) and the SKILL.md files (105,235 -> 62,657): reasoning moved

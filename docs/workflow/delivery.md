@@ -140,6 +140,17 @@ into a pass or silently relabel prior evidence as current execution. Report
 `reused from <tree>` separately from `run at <tree>`. Evidence reuse is not review
 reuse: current review keys, independent verdicts and final-head CI are still due.
 
+## Hand off before a context accumulates
+
+Phase two's rule — the pull request is the context — is every phase's rule, under
+[the context cap](../../.claude/skills/mission/SKILL.md#the-context-cap). A
+handoff closes one agent context and opens another, giving it exactly: the
+branch, the worktree path, `GOAL.md`'s path, the pull request number if one
+is open, the tier, and the next action. Never the conversation, nor a
+summary of it. What a closing context noticed and did not write into the goal
+file, the branch or the pull request does not survive, so write it
+there first.
+
 ## Finish work before starting more
 
 Campaign coordinators first reconcile active PRs and merge authorized ones
