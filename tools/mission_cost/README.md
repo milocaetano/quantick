@@ -280,6 +280,25 @@ it dispatched. `--role` is not decoration: a coordinator's main thread spans
 every child it dispatched, so without it every campaign child would look
 contested and none would be gradeable.
 
+A context cannot see its own length from the inside, and
+[the context cap](../../docs/quality/velocity/context-cap.md) is a rule about
+exactly that number. This is how a running context reads it:
+
+```sh
+python tools/mission_cost/measure.py contexts \
+  --since 2026-09-21T10:06:00Z --role subagent
+```
+
+`--since` is the `started_at` that context claimed, and it names the running
+context by the same containment rule, exactly; `resolved` then says so. Left
+off, the command can only offer the session's newest writer, which a sibling
+agent breaks -- so that answer carries `resolution: newest_write` and never
+`resolved`. Two containing contexts are `contested` and name nothing, as in
+`identify`. The session id comes from `$CLAUDE_CODE_SESSION_ID` unless
+`--session` overrides it, and without `--transcripts` the roots are this
+worktree's own and, through the `.git` pointer it carries, the checkout that
+dispatched it.
+
 ## Tests
 
 ```sh

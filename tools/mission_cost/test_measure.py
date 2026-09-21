@@ -5,6 +5,7 @@
 runner below, so nothing here touches the network or the trader's machine.
 """
 
+import datetime
 import importlib.util
 import json
 import os
@@ -855,22 +856,74 @@ class Contexts(unittest.TestCase):
         """The claimed `started_at` names the context exactly, not by guess."""
         found = self.contexts("--since", "2026-01-01T00:11:30Z", "--role", "subagent")
         self.assertEqual(found["resolution"], "containment")
-        self.assertFalse(found["ambiguous"])
+        self.assertTrue(found["resolved"])
+        self.assertFalse(found["contested"])
         self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
         self.assertEqual(found["requests"], 2)
+
+    def test_containment_compares_instants_and_not_their_spelling(self):
+        """The same instant spelled in another offset is the same instant.
+
+        `transcripts.require_instant` owns this rule for the package and the
+        README states it: `Z` sorts after `+`, so one moment spelled two legal
+        ways must never be compared as text. The command line normalises every
+        instant to UTC, which is exactly why a text comparison survives there;
+        the function takes a `datetime` and must not lean on it. `01:11:30`
+        at `+01:00` is `00:11:30Z`, inside the child's span -- but its text
+        sorts after the span's `00:12:00+00:00` end.
+        """
+        offset = datetime.timezone(datetime.timedelta(hours=1))
+        since = datetime.datetime(2026, 1, 1, 1, 11, 30, tzinfo=offset)
+        found = measure.contexts([TRANSCRIPTS], ALPHA, 80, "subagent", since)
+        self.assertTrue(found["resolved"])
+        self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
+
+    def test_an_instant_on_the_span_end_is_still_contained(self):
+        """A fractional spelling of the boundary second is the boundary second.
+
+        The child's last request is `00:12:00.000Z`, which prints without a
+        fraction. A claim spelling the same instant with one must land inside
+        the span, not beside it.
+        """
+        found = self.contexts(
+            "--since", "2026-01-01T00:12:00.000Z", "--role", "subagent"
+        )
+        self.assertTrue(found["resolved"])
+        self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
 
     def test_without_since_the_answer_says_it_is_the_newest_writer(self):
         """A guess has to be readable as a guess.
 
         Without a claimed instant the command can only offer whoever wrote
         last, which a sibling agent running beside the caller will often be.
-        `resolution` carries that word so a reader can tell the heuristic from
-        the measurement instead of reading the same number twice.
+        `resolution` carries that word and `resolved` stays false however few
+        candidates there are, so a reader can tell the heuristic from the
+        measurement instead of reading the same number twice.
         """
         found = self.contexts()
         self.assertEqual(found["resolution"], "newest_write")
+        self.assertFalse(found["resolved"])
+        self.assertFalse(found["contested"])
         self.assertEqual(found["running"]["relative"], self.ALPHA_MAIN)
         self.assertEqual(found["requests"], 4)
+
+    def test_no_containing_context_is_not_the_same_state_as_an_overlap(self):
+        """Nothing matched and two matched are different answers.
+
+        A claim that missed its own context has to read differently from two
+        siblings spanning it: the first is a wrong claim, the second a real
+        contest. `identify` keeps them apart with `contested` and `resolved`,
+        and this report says it the same way.
+        """
+        missed = self.contexts("--since", "2020-01-01T00:00:00Z")
+        overlap = self.contexts("--since", "2026-01-01T00:11:30Z")
+        self.assertFalse(missed["contested"])
+        self.assertFalse(missed["resolved"])
+        self.assertEqual(missed["candidates"], [])
+        self.assertIsNone(missed["running"])
+        self.assertNotIn("requests", missed)
+        self.assertTrue(overlap["contested"])
+        self.assertFalse(overlap["resolved"])
 
     def test_role_keeps_the_main_thread_from_competing_with_a_child(self):
         """The same reason `identify` has the flag, one layer along.
@@ -882,14 +935,16 @@ class Contexts(unittest.TestCase):
         window = ("--since", "2026-01-01T00:11:30Z")
         both = self.contexts(*window)
         child = self.contexts(*window, "--role", "subagent")
-        self.assertTrue(both["ambiguous"])
+        self.assertTrue(both["contested"])
+        self.assertFalse(both["resolved"])
         self.assertIsNone(both["running"])
         self.assertNotIn("requests", both)
         self.assertEqual(
             sorted(row["relative"] for row in both["candidates"]),
             [self.ALPHA_MAIN, self.ALPHA_ONE],
         )
-        self.assertFalse(child["ambiguous"])
+        self.assertTrue(child["resolved"])
+        self.assertFalse(child["contested"])
         self.assertEqual(child["running"]["relative"], self.ALPHA_ONE)
 
     def test_remaining_and_over_cap_are_the_caps_arithmetic(self):
@@ -925,6 +980,145 @@ class Contexts(unittest.TestCase):
         complaint = result.stderr.decode("utf-8")
         self.assertEqual(result.returncode, 2)
         self.assertIn("CLAUDE_CODE_SESSION_ID", complaint)
+        self.assertNotIn("Traceback", complaint)
+        self.assertEqual(result.stdout, b"")
+
+
+class SessionRoots(unittest.TestCase):
+    """Where a context asking about itself is looked for.
+
+    This is the path every real caller takes: a context reading its own
+    request count passes no `--transcripts`, so `session_roots` resolves the
+    directories instead. It reads the `.git` file a worktree carries to reach
+    the checkout that dispatched it, which is a parse with two ways to be
+    wrong -- a pointer that is not a worktree's, and a directory that is not
+    there. Each case builds its own shapes under a temporary home, so nothing
+    here depends on where this host actually keeps its transcripts.
+    """
+
+    def setUp(self):
+        room = tempfile.TemporaryDirectory()
+        self.addCleanup(room.cleanup)
+        self.room = room.name
+        self.home = os.path.join(self.room, "home")
+        os.makedirs(os.path.join(self.home, ".claude", "projects"))
+        saved = {name: os.environ.get(name) for name in ("HOME", "USERPROFILE")}
+        self.addCleanup(self.restore, saved)
+        for name in saved:
+            os.environ[name] = self.home
+
+    @staticmethod
+    def restore(saved):
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def checkout(self, name, pointer=None, transcripts=True):
+        """A repository directory, with or without a `.git` pointer file.
+
+        `pointer` absent makes `.git` a directory, which is a plain checkout.
+        `transcripts` says whether this host has ever held a session rooted
+        there, because a worktree that has not is exactly the case the second
+        root exists for.
+        """
+        repo = os.path.join(self.room, name)
+        os.makedirs(repo, exist_ok=True)
+        if pointer is None:
+            os.makedirs(os.path.join(repo, ".git"), exist_ok=True)
+        else:
+            with open(os.path.join(repo, ".git"), "w", encoding="utf-8") as handle:
+                handle.write(f"gitdir: {pointer}\n")
+        if transcripts:
+            os.makedirs(measure.default_transcripts(repo), exist_ok=True)
+        return repo
+
+    def worktree_pointer(self, main, name):
+        return os.path.join(main, ".git", "worktrees", name)
+
+    def test_a_plain_checkout_has_one_root(self):
+        """`.git` as a directory is the main checkout: nothing to follow."""
+        repo = self.checkout("solo")
+        self.assertEqual(
+            measure.session_roots(repo), [measure.default_transcripts(repo)]
+        )
+
+    def test_a_worktree_offers_the_main_checkout_after_its_own(self):
+        """Order is the claim: the worktree's own directory answers first.
+
+        A mission runs in a worktree and writes there, but a campaign child is
+        dispatched from the main checkout and writes there instead. Both are
+        searched, and the worktree comes first because it is the likelier one.
+        """
+        main = self.checkout("main")
+        worktree = self.checkout(
+            "worktree", pointer=self.worktree_pointer(main, "worktree")
+        )
+        self.assertEqual(
+            measure.session_roots(worktree),
+            [
+                measure.default_transcripts(worktree),
+                measure.default_transcripts(main),
+            ],
+        )
+
+    def test_a_pointer_outside_a_worktrees_directory_is_not_followed(self):
+        """A submodule's `.git` points at `modules/`, and is not a worktree.
+
+        The same three `dirname` steps would walk a submodule pointer up to
+        the superproject and offer its transcripts as this repository's. The
+        basename check is what stops it, and this is the case that proves it.
+        """
+        main = self.checkout("main")
+        submodule = self.checkout(
+            "submodule", pointer=os.path.join(main, ".git", "modules", "submodule")
+        )
+        self.assertEqual(
+            measure.session_roots(submodule),
+            [measure.default_transcripts(submodule)],
+        )
+
+    def test_only_directories_that_exist_are_returned(self):
+        """A root is offered because it holds sessions, not because it parses."""
+        main = self.checkout("main")
+        fresh = self.checkout(
+            "fresh",
+            pointer=self.worktree_pointer(main, "fresh"),
+            transcripts=False,
+        )
+        self.assertEqual(
+            measure.session_roots(fresh), [measure.default_transcripts(main)]
+        )
+        self.assertEqual(measure.session_roots(self.checkout("bare", transcripts=False)), [])
+
+    def test_a_pointer_back_into_the_same_checkout_is_not_listed_twice(self):
+        """Both ways of naming one directory still name one root."""
+        pointer = self.worktree_pointer(os.path.join(self.room, "same"), "same")
+        repo = self.checkout("same", pointer=pointer)
+        self.assertEqual(
+            measure.session_roots(repo), [measure.default_transcripts(repo)]
+        )
+
+    def test_the_command_refuses_cleanly_when_no_root_exists(self):
+        """The second failure a real context can hit, and it must read as advice.
+
+        Transcripts are local to the trader's machine, so a checkout this host
+        has never run a session in has no directory at all. The refusal names
+        the README rather than printing a traceback about an empty list.
+        """
+        bare = self.checkout("bare", transcripts=False)
+        room = dict(os.environ)
+        room["CLAUDE_CODE_SESSION_ID"] = ALPHA
+        result = subprocess.run(
+            [sys.executable, MEASURE, "contexts", "--repo", bare],
+            env=room,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        complaint = result.stderr.decode("utf-8")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("tools/mission_cost/README.md", complaint)
         self.assertNotIn("Traceback", complaint)
         self.assertEqual(result.stdout, b"")
 

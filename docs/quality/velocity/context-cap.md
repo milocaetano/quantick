@@ -74,8 +74,10 @@ to it. That trade is taken deliberately:
   saving. The number is not delicate, which is the real finding: pick a
   boundary the work already has rather than the optimum of a smooth curve.
 
-**To change it**, move `POLICY_CAP` in `tools/mission_cost/shape.py`, rerun
-`python tools/mission_cost/shape.py report`, and regenerate the tables in
+**To change it**, start with the copy agents obey: the literal **80** in the
+context-cap rule of `.claude/skills/mission/SKILL.md`, which is the number a
+mission actually reads. Then move `POLICY_CAP` in `tools/mission_cost/shape.py`,
+rerun `python tools/mission_cost/shape.py report`, and regenerate the tables in
 [the ranking](ranking.md). `FRAME_TRIM_TOKENS` and `REQUEST_SCALE` beside it are
 the other two levers' knobs. The cap is also a registered constant of ledger
 entry L1: changing it invalidates any verdict taken under the old value, and
@@ -103,11 +105,17 @@ split it there rather than let it run.
 For the cases where a context wants the number,
 
 ```sh
-python tools/mission_cost/measure.py contexts
+python tools/mission_cost/measure.py contexts --since <the claim's started_at>
 ```
 
 reads `CLAUDE_CODE_SESSION_ID` from the environment and prints the request count
-of the context that is running it, against the cap. It reads `usage` fields and
+of the context that is running it, against the cap. `--since` is what makes the
+answer exact: the context's own `started_at` names it by containment, and the
+report says `resolved: true`. Without it the command can only offer the newest
+writer in the session, which a sibling agent often is; that answer carries
+`resolution: newest_write` and `resolved: false`, because a guess must not read
+as a measurement. Two contexts containing the instant are `contested`, with
+nothing named. It reads `usage` fields and
 timestamps only, which is the same boundary the rest of the harness keeps
 (method error mode E2); it never reads transcript content.
 

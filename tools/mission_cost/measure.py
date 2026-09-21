@@ -541,13 +541,26 @@ def contexts(roots, session, cap, role=None, since=None):
         and it is wrong whenever a sibling agent is running beside the caller,
         which is ordinary in a campaign: the sibling may have written last.
         Every context is listed with its count either way, so a reader can see
-        what the guess was made from, and a tie is ``ambiguous``.
+        what the guess was made from, and a tie leaves two ``candidates`` and
+        is ``contested``.
+
+    **Three report states, and a reader branches on two flags.** ``contested``
+    is more than one candidate -- a real overlap, and nothing is named.
+    ``resolved`` is the exact answer: one containing context, under
+    ``containment`` only. Neither flag set with a candidate named is the
+    ``newest_write`` guess; neither flag set with ``running`` null is no
+    candidate at all. ``resolved`` is never true under ``newest_write``,
+    because a guess must not read as a measurement.
+
+    Instants are compared as instants, never as the text they print as:
+    ``transcripts.require_instant`` owns that rule for this package, and
+    ``since`` may legally arrive spelled in any offset.
 
     Reads ``usage`` and timestamps only, like everything else here. ``cwd`` and
     ``sessionId`` would name the running context outright and are still not
     touched.
     """
-    rows = []
+    spans = []
     for root in roots:
         located, _ = TRANSCRIPTS.locate(root)
         for item in located:
@@ -561,28 +574,29 @@ def contexts(roots, session, cap, role=None, since=None):
             first, last = folded.first(), folded.last()
             if first is None or last is None:
                 continue
-            rows.append(
-                {
-                    "relative": item.relative,
-                    "root": item.root,
-                    "kind": item.kind,
-                    "requests": folded.requests,
-                    "first": first.isoformat(),
-                    "last": last.isoformat(),
-                }
+            spans.append(
+                (
+                    first,
+                    last,
+                    {
+                        "relative": item.relative,
+                        "root": item.root,
+                        "kind": item.kind,
+                        "requests": folded.requests,
+                        "first": first.isoformat(),
+                        "last": last.isoformat(),
+                    },
+                )
             )
-    rows.sort(key=lambda row: (row["root"], row["relative"]))
+    spans.sort(key=lambda span: (span[2]["root"], span[2]["relative"]))
+    rows = [row for _, _, row in spans]
     if since is not None:
         resolution = "containment"
-        candidates = [
-            row
-            for row in rows
-            if row["first"] <= since.isoformat() <= row["last"]
-        ]
+        candidates = [row for first, last, row in spans if first <= since <= last]
     else:
         resolution = "newest_write"
-        newest = max((row["last"] for row in rows), default=None)
-        candidates = [row for row in rows if row["last"] == newest]
+        newest = max((last for _, last, _ in spans), default=None)
+        candidates = [row for _, last, row in spans if last == newest]
     running = candidates[0] if len(candidates) == 1 else None
     report = {
         "method": METHOD,
@@ -595,8 +609,13 @@ def contexts(roots, session, cap, role=None, since=None):
         "contexts": rows,
         "candidates": candidates,
         "running": running,
-        "ambiguous": len(candidates) != 1,
+        "contested": len(candidates) > 1,
+        "resolved": resolution == "containment" and len(candidates) == 1,
     }
+    # The arithmetic is the named context's, whichever way it was named. What
+    # `newest_write` guesses is *which* context, not how many requests it made,
+    # so the count is exact and `resolved: false` beside it says the identity
+    # is not. A caller that needs certainty passes `--since`.
     if running is not None:
         report["requests"] = running["requests"]
         report["remaining"] = cap - running["requests"]
