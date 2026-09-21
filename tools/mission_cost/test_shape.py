@@ -686,11 +686,102 @@ class LeverTable(unittest.TestCase):
         self.assertIn("main, subagent", rendered)
         self.assertIn("Modelled tokens (not a reading)", rendered)
 
-    def test_a_policy_block_with_no_verdict_renders_as_before(self):
-        """An older committed document carries no `validity`; it still renders."""
-        older = self.policy()
+    def test_a_usable_policy_is_not_called_ungraded(self):
+        self.assertNotIn("Not graded", SHAPE.lever_table(self.policy()))
+
+    def test_a_policy_block_with_no_verdict_is_ungraded_not_sound(self):
+        """An older document still renders -- but is not claimed to have passed.
+
+        `c8a0c33a:docs/quality/velocity/shape.json` is exactly such a file, and
+        it carries a negative `modelled_tokens`. Rendering it rather than
+        crashing is right; asserting it was graded and passed is not.
+        """
+        older = self.policy(usable=False)
         del older["policy"]["validity"]
-        self.assertNotIn("Not a reading", SHAPE.lever_table(older))
+        rendered = SHAPE.lever_table(older)
+        self.assertIn("Not graded", rendered)
+        self.assertIn(SHAPE.UNGRADED_NOTE, rendered)
+        # Not known to be wrong either, so the columns stay unmarked.
+        self.assertNotIn("Not a reading", rendered)
+        self.assertIn(
+            "| Levers applied | Cost law | Modelled tokens | Change |", rendered
+        )
+
+    def test_a_malformed_verdict_is_ungraded_rather_than_trusted(self):
+        """`validity` present but not a verdict is still an ungraded document."""
+        for broken in ({}, {"usable": "yes"}, {"degenerate_because": []}, None):
+            with self.subTest(validity=broken):
+                older = self.policy()
+                older["policy"]["validity"] = broken
+                self.assertIn("Not graded", SHAPE.lever_table(older))
+
+
+class OneVerdictRule(unittest.TestCase):
+    """Both generated blocks answer the three-state question the same way.
+
+    The finding this closes is that they drifted apart inside a single commit:
+    `_truncation_figure` kept *absent*, *zero* and *non-zero* apart, while the
+    lever table read *absent* as sound. This is the test that makes a second
+    divergence impossible rather than merely unlikely, so it is written over
+    the surfaces rather than over one of them.
+    """
+
+    def test_verdict_is_the_one_owner_of_the_three_states(self):
+        self.assertEqual(SHAPE.verdict({"validity": {"usable": True}})[0], SHAPE.GRADED)
+        self.assertEqual(
+            SHAPE.verdict({"validity": {"usable": False,
+                                        "degenerate_because": []}})[0],
+            SHAPE.DEGENERATE,
+        )
+        self.assertEqual(SHAPE.verdict({})[0], SHAPE.UNGRADED)
+        self.assertEqual(SHAPE.verdict({"validity": None})[0], SHAPE.UNGRADED)
+
+    def surfaces(self, state):
+        """Each generated block rendered over a document in ``state``."""
+        shape = Figures().shape()
+        shape["policy"] = LeverTable().policy(usable=state != SHAPE.DEGENERATE)["policy"]
+        if state == SHAPE.UNGRADED:
+            del shape["policy"]["validity"]
+            for group in shape["populations"].values():
+                group["cost_law"] = dict(group["cost_law"])
+                group["cost_law"].pop("validity", None)
+        elif state == SHAPE.DEGENERATE:
+            rows = synthetic(-1000, 500, [10, 25, 50, 100])
+            law = SHAPE.fit(rows)
+            term = SHAPE.terms(rows, law)
+            for group in shape["populations"].values():
+                group["cost_law"] = dict(law, validity=SHAPE.validity(law, term))
+                group["terms"] = term
+        return {
+            name: block.render(shape, Figures().ceremony())
+            for name, block in SHAPE.BLOCKS.items()
+        }
+
+    def test_no_block_calls_an_ungraded_document_sound(self):
+        """The rule, stated once, asserted over every block in the registry."""
+        for name, rendered in self.surfaces(SHAPE.UNGRADED).items():
+            with self.subTest(block=name):
+                self.assertIn(SHAPE.UNGRADED_NOTE, rendered)
+
+    def test_every_block_is_silent_when_the_document_is_graded_and_sound(self):
+        for name, rendered in self.surfaces(SHAPE.GRADED).items():
+            with self.subTest(block=name):
+                self.assertNotIn(SHAPE.UNGRADED_NOTE, rendered)
+                self.assertNotIn("degenerate", rendered)
+
+    def test_every_block_labels_a_degenerate_document(self):
+        for name, rendered in self.surfaces(SHAPE.DEGENERATE).items():
+            with self.subTest(block=name):
+                self.assertIn("degenerate", rendered.lower())
+                self.assertNotIn(SHAPE.UNGRADED_NOTE, rendered)
+
+    def test_ungraded_and_degenerate_are_never_the_same_words(self):
+        """Two different claims must not read alike on any surface."""
+        ungraded = self.surfaces(SHAPE.UNGRADED)
+        degenerate = self.surfaces(SHAPE.DEGENERATE)
+        for name in SHAPE.BLOCKS:
+            with self.subTest(block=name):
+                self.assertNotEqual(ungraded[name], degenerate[name])
 
 
 class BlockBytes(unittest.TestCase):

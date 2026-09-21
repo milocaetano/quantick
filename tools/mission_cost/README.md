@@ -116,7 +116,12 @@ What each document says about itself, because a number nobody can grade is
 worse than no number. The rule throughout is that **the judgement travels with
 the number**: every surface rendered off a graded value carries the same
 verdict, so the JSON and the report can never disagree about whether a figure
-is real.
+is real. `verdict()` is the one owner of the three states a graded block can be
+in — **graded**, **degenerate** and **ungraded** — and a document carrying no
+`validity` field is the third, never the first: it still renders, but no block
+claims it was graded and passed. `test_shape.OneVerdictRule` asserts that over
+every block in the registry, because the two blocks drifted apart on exactly
+this question once.
 
 - **`cost_law.validity`.** The fit is an unconstrained least squares, so a
   narrow population — a short window, one campaign's contexts, a main-only run

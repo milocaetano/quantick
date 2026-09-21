@@ -943,26 +943,59 @@ def _thousands(value):
     return f"{round(value):,}"
 
 
+# The three states a graded block can be in, for every renderer at once.
+# "Was it graded" and "did it pass" are two questions, and collapsing them is
+# the same mistake as reading an absent `truncated_pulls` as "nothing was
+# missed": a document that predates the field says nothing either way, and a
+# block reporting that silence as a pass has invented the reading this whole
+# mechanism exists to prevent.
+GRADED = "graded"
+UNGRADED = "ungraded"
+DEGENERATE = "degenerate"
+
+UNGRADED_NOTE = "verdict not recorded; this document predates the check"
+
+
+def verdict(block):
+    """Which of three states a block carrying a ``validity`` field is in.
+
+    The single owner of that question. The two generated blocks drifted apart
+    on it inside one commit -- :func:`_truncation_figure` kept *absent* and
+    *zero* apart while the lever table read *absent* as sound, and the table is
+    the surface #573 is scheduled on. Rendering an older document rather than
+    crashing is right; asserting it was graded and passed is not.
+
+    Returns ``(state, judged)``, so a caller can name the reasons without
+    reaching for the field a second time.
+    """
+    judged = block.get("validity")
+    if not isinstance(judged, dict) or not isinstance(judged.get("usable"), bool):
+        return UNGRADED, {}
+    return (GRADED if judged["usable"] else DEGENERATE), judged
+
+
 def _warning(law):
-    """The label a degenerate law earns, or nothing at all.
+    """What a law's cell is labelled with: nothing, ungraded, or degenerate.
 
     One owner, because every cell rendered off a law has to carry the same
     verdict. A document that grades a law and a report that prints its numbers
     unmarked are two surfaces disagreeing about whether a number is real.
     """
-    judged = law.get("validity") or {}
-    if judged.get("usable", True):
+    state, judged = verdict(law)
+    if state == GRADED:
         return ""
+    if state == UNGRADED:
+        return f" *— {UNGRADED_NOTE}*"
     return " **— degenerate: " + ", ".join(judged["degenerate_because"]) + "**"
 
 
-def _degenerate_populations(shape):
-    """The populations whose law the document itself grades as degenerate."""
-    return sorted(
-        name
-        for name, group in shape["populations"].items()
-        if not ((group["cost_law"].get("validity") or {}).get("usable", True))
-    )
+def _population_states(shape):
+    """Each population's verdict state, so one row can speak for all of them."""
+    found = {}
+    for name, group in shape["populations"].items():
+        state, _ = verdict(group["cost_law"])
+        found.setdefault(state, []).append(name)
+    return {state: sorted(names) for state, names in found.items()}
 
 
 def figures(shape, ceremony):
@@ -1011,11 +1044,14 @@ def figures(shape, ceremony):
         )
     both = _combined(shape)
     # The headline row sums every population, so one degenerate population is
-    # enough to make it arithmetic rather than a reading.
-    at_fault = _degenerate_populations(shape)
-    combined_warning = (
-        f" **— degenerate: {', '.join(at_fault)}**" if at_fault else ""
-    )
+    # enough to make it arithmetic rather than a reading -- and one ungraded
+    # population is enough to make the sum ungraded.
+    states = _population_states(shape)
+    combined_warning = ""
+    if states.get(DEGENERATE):
+        combined_warning = f" **— degenerate: {', '.join(states[DEGENERATE])}**"
+    elif states.get(UNGRADED):
+        combined_warning = f" *— {UNGRADED_NOTE}: {', '.join(states[UNGRADED])}*"
     lines.append(
         f"| **All contexts, standing frame / accumulation** | "
         f"**{both['standing_frame_share']:.1%} / {both['accumulation_share']:.1%}**"
@@ -1121,9 +1157,22 @@ def lever_table(shape, ceremony=None):
     policy = shape["policy"]
     baseline = policy["baseline_modelled_tokens"]
     lines = [LEVERS_BEGIN, ""]
-    judged = policy.get("validity") or {}
+    state, judged = verdict(policy)
     columns = "Modelled tokens | Change"
-    if not judged.get("usable", True):
+    if state == UNGRADED:
+        # The third state, in the same voice as the degenerate one and with the
+        # same standard as the truncation row: a document that predates the
+        # check was not graded, which is not the same claim as graded and
+        # sound. The columns stay unmarked, because nothing here is known to
+        # be wrong either.
+        lines.append(
+            f"> **Not graded.** This table carries no verdict at all — "
+            f"{UNGRADED_NOTE} — so nothing here is claimed either way: not "
+            f"that its numbers can be true, and not that they cannot. Re-run "
+            f"`shape.py measure` to grade it."
+        )
+        lines.append("")
+    elif state == DEGENERATE:
         # The numbers stay, because the arithmetic has to remain inspectable;
         # what changes is that nothing here is offered as a reading. A row of
         # this table is the number #573 is scheduled on.
