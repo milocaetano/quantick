@@ -44,6 +44,23 @@ bigger and rewrite the tier file (step 6). `pr-gate` exempts `small` from
 stay within `SMALL_TIER_MAX_CHANGED_LINES`; past it, raise the tier or split
 the work — never shrink a diff to evade review.
 
+## The context cap
+
+A bill is quadratic in a context's turns (subagent `64,224·N + 530.98·N²`), so
+**no context runs a whole mission**: cap one at **80 requests** and hand off to
+a fresh dispatch. Caps from 40 to 120 model within 8 points, so the number is
+not delicate; below 40 the handoff charge eats the saving. Why, and how to move
+it: [the context cap](../../../docs/quality/velocity/context-cap.md).
+
+A request is a billed call, not a turn, and a turn costs several — 80 requests
+is nearer 25 turns. Read it, never guess:
+`python tools/mission_cost/measure.py contexts --role subagent --since <the claim's started_at>`.
+The boundaries are structural: steps **1–6**, **7 to the draft PR**, then step 8,
+which already dispatches per review, watch and repair; split either at a
+commit-sized seam rather than run long. A handoff carries only what [the
+delivery contract](../../../docs/workflow/delivery.md#hand-off-before-a-context-accumulates)
+lists, never the conversation.
+
 ## Steps
 
 1. **Capture.** Restate the objective in one English sentence — it becomes
@@ -163,16 +180,13 @@ the work — never shrink a diff to evade review.
       and below it the whole `GOAL.md` in `<details>`, kept current. Never
       track `GOAL*` or evidence.
 
-   **From here the main thread only dispatches.** Everything below needs the PR
-   and the branch, not this conversation, so each review, the CI watch and each
-   repair round runs as a fresh `Agent` whose whole prompt is the PR number,
-   the worktree, its `GOAL.md` path and the tier — never the conversation —
-   with the model named at the call: the strong default for judgement and
-   repair, `sonnet` for checklist application. Each agent publishes its durable
-   report through the producer exactly as today and answers in one line,
-   `PASS|FAIL <review-key> <open-threads>`, or the new head where it commits.
-   The main thread opens no report body, diff, log or thread; needing one is a
-   finding against this skill, filed as one.
+   **From here this context only dispatches.** Each review, the CI watch and
+   each repair round is its own `Agent` under the context cap, with the model
+   named at the call: the strong default for judgement and repair, `sonnet` for
+   checklist application. Each publishes its durable report through the producer
+   and answers in one line, `PASS|FAIL <review-key> <open-threads>`, or the new
+   head where it commits. This context opens no report body, diff, log or
+   thread; needing one is a finding against this skill, filed as one.
 
    2. **`Skill(arch-review)`** — every tier; its producer records
       `arch-review-ok`. Never write a marker directly.

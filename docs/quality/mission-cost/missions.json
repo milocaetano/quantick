@@ -822,6 +822,33 @@
       "ended_at": null,
       "group": null,
       "note": "T4 of #563, recording itself while it ran, under section 9 of docs/quality/velocity/experiment-protocol.md. `claim` is the audit trail for `transcripts`: the session came from CLAUDE_CODE_SESSION_ID, the instants are this mission's own work, and `measure.py identify` resolves the two into the paths above. Nothing in the harness reads `claim`; it is there because E12's only defence is that a reader can check the claim a mission made against the commit times of the branch it made it on. Claim one closed at the draft pull request; claim two reaches the bug pass this mission dispatched. Its own context is counted whole, so the work after claim two is in the reading; the review agents dispatched after it are not, which is E14 read off the mission that wrote E14."
+    },
+    {
+      "branch": "perf/cap-agent-context",
+      "pr": 580,
+      "sessions": [],
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a5a25505f12780ff8.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-aa49c0aa114d448ee.jsonl"
+      ],
+      "claim": [
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T11:14:22Z",
+          "ended_at": "2026-09-21T11:25:39Z"
+        },
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T11:27:15Z",
+          "ended_at": "2026-09-21T11:45:38Z"
+        }
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "T7 of #563, the graded mission of ledger entry L1. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff, because the point of this lever is that there will be several and a later context cannot recover an earlier one's identity. Claim one closed at the first handoff, at 111 requests: the context that wrote the rule measured itself with the command the rule adds and found it already past the cap, which is the finding the rule is reported with. At the draft pull request both claims resolved by containment, uncontested, to one transcript each; the union is the transcripts field."
     }
   ]
 }

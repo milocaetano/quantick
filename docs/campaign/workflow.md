@@ -89,7 +89,9 @@ For each cycle:
 3. Claim the task, [route it](#routing) and persist the intended action
    before mutating. `mission` step 6 owns duplicate checks and the isolated
    worktree from the integration base. `mission` owns the task ledger and
-   gates: one child mission per implementation/PR, never one giant
+   gates and the context cap, which binds the coordinator too: dispatch each
+   phase of a child as its own agent, keeping this one for reconciliation.
+   One child mission per implementation/PR, never one giant
    mission/worktree for the campaign. Reuse an existing branch
    only after checking its owner and cleanliness; never reset another writer.
 4. Implement and validate according to affected behavior. `ship` owns commits,
@@ -135,7 +137,6 @@ Roles, mapped per host by [Codex compatibility](../../.agents/references/codex-c
 Record each child's validation plan using the delivery contract's single
 classification and evidence-reuse table. `mission` selects the tier from the
 actual task risks; do not inherit the parent campaign's tier automatically.
-#324 owns the broader tier redesign; this change does not lower existing gates.
 
 Reassess integration after each merged dependency group, before a high-risk
 dependent, and at campaign close. Run extra local integration checks when
@@ -171,18 +172,8 @@ publish, spend or make irreversible changes by implication.
 
 ## Examples
 
-After this skill merges, a user can authorize execution and invoke:
-
-```text
-$campaign create Raise Quantick to the A+ criteria of $quantick-score, resolving the highest-impact gaps and preparing for issue #314.
-$campaign status https://github.com/milocaetano/quantick/issues/123
-$campaign human-tasks https://github.com/milocaetano/quantick/issues/123
-$campaign resume https://github.com/milocaetano/quantick/issues/123
-```
-
-The number above is illustrative. Discover actual state before writing: #322
-was delivered by #323; #314 and its PR #315 describe architecture preparation;
-#324 concerns risk-based mission tiers and overlaps orchestration. These are
-leads, not permanent status facts or orders to close them. This implementation
-does not execute that A+ campaign. For a small exercise use
+Every invocation is in the Operations table; a parent URL follows the operation
+word. Discover actual state before writing, and treat whatever an older
+checkpoint names as a lead, never a status fact or an order to close something.
+For a small exercise use
 `$campaign create Verify campaign handoff using documentation evidence only`.
