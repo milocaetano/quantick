@@ -87,3 +87,4 @@ a bound.
 | 569 | 2026-09-21 | feat/mission-cost-harness | campaign/mission-velocity | 0 | 0 | — |
 | 571 | 2026-09-21 | docs/mission-cost-baseline | campaign/mission-velocity | 0 | 0 | — |
 | 572 | 2026-09-21 | docs/mission-cost-ranking | campaign/mission-velocity | 0 | 0 | — |
+| 578 | 2026-09-21 | fix/mission-registry-transcripts | campaign/mission-velocity | 0 | 0 | — |
