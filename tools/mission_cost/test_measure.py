@@ -108,10 +108,32 @@ class Determinism(unittest.TestCase):
         )["inputs"]["digest"]
         self.assertNotEqual(whole, alone)
 
-    def test_the_root_is_named_without_its_absolute_path(self):
+    def test_the_roots_are_named_without_their_absolute_paths(self):
+        # An absolute path here would put the trader's user name into a
+        # committed aggregate. The basename is enough to tell two roots apart.
         found = json.loads(report_bytes())
-        self.assertEqual(found["inputs"]["root"], "transcripts")
-        self.assertNotIn(os.sep, found["inputs"]["root"])
+        self.assertEqual(found["inputs"]["roots"], ["transcripts"])
+        for root in found["inputs"]["roots"]:
+            self.assertNotIn(os.sep, root)
+            self.assertNotIn("/", root)
+
+    def test_several_roots_are_measured_together(self):
+        found = json.loads(
+            run(
+                "report",
+                "--transcripts",
+                TRANSCRIPTS,
+                "--transcripts",
+                os.path.join(
+                    TRANSCRIPTS, "cccccccc-0000-4000-8000-000000000003", "subagents"
+                ),
+                "--registry",
+                REGISTRY,
+                "--no-gh",
+            )
+        )
+        self.assertEqual(found["inputs"]["roots"], ["subagents", "transcripts"])
+        self.assertEqual(found["inputs"]["transcripts"], 8)
 
     def test_the_output_ends_in_exactly_one_newline(self):
         raw = report_bytes()
@@ -198,8 +220,8 @@ class Shape(unittest.TestCase):
 
 
 class Compare(unittest.TestCase):
-    def test_the_fixture_groups_are_too_small_and_say_so(self):
-        found = json.loads(
+    def comparison(self):
+        return json.loads(
             run(
                 "compare",
                 "--transcripts",
@@ -211,23 +233,21 @@ class Compare(unittest.TestCase):
                 "billable_tokens",
             )
         )
-        self.assertEqual(found["metric"], "billable_tokens")
-        self.assertEqual(found["result"]["verdict"], "inconclusive")
 
-    def test_overlapping_fixture_windows_are_reported(self):
-        found = json.loads(
-            run(
-                "compare",
-                "--transcripts",
-                TRANSCRIPTS,
-                "--registry",
-                REGISTRY,
-                "--no-gh",
-                "--metric",
-                "billable_tokens",
-            )
-        )
+    def test_the_metric_and_both_groups_are_named(self):
+        found = self.comparison()
+        self.assertEqual(found["metric"], "billable_tokens")
+        self.assertEqual(found["missions"]["before"], ["feat/fixture-alpha"])
+        self.assertEqual(found["missions"]["after"], ["feat/fixture-beta"])
+
+    def test_overlapping_fixture_windows_outrank_every_other_verdict(self):
+        # The fixture's two windows overlap on purpose. The method grades that
+        # first, ahead of the small n, because a comparison whose groups share
+        # a window is not a comparison at all.
+        found = self.comparison()
         self.assertTrue(found["windows_overlap"])
+        self.assertEqual(found["result"]["verdict"], "cannot_be_attributed")
+        self.assertIn("overlap", found["result"]["reason"])
 
 
 class FakeRunner:
@@ -346,6 +366,29 @@ class Delivery(unittest.TestCase):
         self.assertEqual(facts["ci_runs"], 2)
         self.assertEqual(facts["ci_seconds"], 1020.0)
         self.assertEqual(facts["ci_wall_seconds"], 720.0)
+
+    def test_the_window_starts_at_the_earliest_commit_not_the_listed_first(self):
+        runner = FakeRunner(
+            {
+                ("gh", "pr", "view"): json.dumps(
+                    {
+                        "commits": [
+                            {"committedDate": "2026-01-01T09:00:00Z"},
+                            {"committedDate": "2026-01-01T07:00:00Z"},
+                            {"committedDate": "2026-01-01T11:00:00Z"},
+                        ]
+                    }
+                )
+            }
+        )
+        self.assertEqual(
+            delivery.first_commit_instant(9001, runner=runner),
+            "2026-01-01T07:00:00Z",
+        )
+
+    def test_a_pull_request_with_no_commits_has_no_first_instant(self):
+        runner = FakeRunner({("gh", "pr", "view"): json.dumps({"commits": []})})
+        self.assertIsNone(delivery.first_commit_instant(9001, runner=runner))
 
     def test_the_read_cost_row_is_reused_rather_than_recomputed(self):
         ledger = os.path.join(FIXTURES, "read-cost-ledger.md")

@@ -29,7 +29,9 @@ request number, base ref, head SHA, and the work window `[started_at, ended_at)`
 The **work window** is, by default:
 
 - `started_at` — the committer date of the earliest commit reachable from the
-  pull request's head but not from its merge base with its base ref;
+  pull request's head but not from its merge base with its base ref, read from
+  GitHub's own commit list for that pull request: once the branch is merged its
+  head is an ancestor of the base ref and a local merge base collapses onto it;
 - `ended_at` — `mergedAt` if the pull request merged, else `closedAt` if it
   closed, else the report's `--as-of` instant.
 
@@ -127,8 +129,10 @@ Delivery wall clock comes from `gh`, not from transcripts:
 
 - **`pr_open_seconds`** — `mergedAt` (else `closedAt`, else `--as-of`) minus
   `createdAt`.
-- **`ci_seconds`** — summed over completed workflow runs whose head SHA belongs
-  to the mission: `updatedAt` minus `startedAt`.
+- **`ci_seconds`** — summed over the completed workflow runs on the mission's
+  branch: `updatedAt` minus `startedAt`. The branch rather than one head SHA,
+  because a mission pays for every run it triggered, including the ones on the
+  heads it pushed over.
 - **`ci_wall_seconds`** — the union of those same run intervals, so parallel
   workflows on one head count once.
 - **`ci_runs`** — how many.

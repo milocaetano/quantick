@@ -56,6 +56,7 @@ not a claim that those features have shipped.
 | [`agentic-development.md`](agentic-development.md) | The skills, the review gates and the hooks that enforce them — how work actually moves from objective to merged PR here |
 | [`campaign/workflow.md`](campaign/workflow.md) | Multi-issue campaigns, durable GitHub checkpoints, human tasks and recovery across agents |
 | [`quality/quantick-score-rubric.md`](quality/quantick-score-rubric.md) | The versioned evidence and scoring rules for sustainable growth, scalability and AI readiness |
+| [`quality/mission-cost/method.md`](quality/mission-cost/method.md) | How a mission's tokens and wall clock are measured - registered before the first reading, with its thresholds and its error modes |
 | [`../CLAUDE.md`](../CLAUDE.md) | The working rules, authoritative for any agent changing this repository |
 | [`../.claude/hooks/README.md`](../.claude/hooks/README.md) | The guardrail hooks — the four modes, which three are gates and which one only reports, why they fail open, and how to override them |
 
