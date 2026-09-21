@@ -449,12 +449,16 @@ def identify(roots, session, start, end, role="subagent"):
     for rows in (own, within, beside):
         rows.sort(key=lambda row: (row["root"], row["relative"]))
     contested = len(own) > 1
-    # A contested claim resolves to nothing at all. Listing the candidates in
-    # `transcripts` would hand a caller that reads the field without reading
-    # the flag a sibling's context folded into this mission's cost, which is
-    # the failure this whole rule exists to avoid. The candidates stay
-    # readable under `own` so a person can see what the contest was.
-    resolved = [] if contested else sorted(row["relative"] for row in own + within)
+    # `transcripts` is the field a registry record copies, so it says nothing
+    # unless exactly one context contained the window. Two is a contest and
+    # would fold a sibling's cost into this mission; none means the claim
+    # missed its own context, and then the contained agents are unanchored --
+    # they might belong to anybody. Both stay readable under `own` and
+    # `within` so a person can see what happened, and neither can be copied
+    # into a registry by a caller that read the list and not the flag.
+    resolved = (
+        sorted(row["relative"] for row in own + within) if len(own) == 1 else []
+    )
     return {
         "method": METHOD,
         "protocol": "docs/quality/velocity/experiment-protocol.md",
