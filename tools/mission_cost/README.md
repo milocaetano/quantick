@@ -98,6 +98,18 @@ point of the bucket.
 | `dispersion.py` | quartiles, and the registered rule for when a fall counts as a reduction |
 | `delivery.py` | `gh` timings and the read-cost row, every call through an injectable runner |
 | `measure.py` | the command, the report and the comparison |
+| `group_registry.py` | one registry, regrouped `before`/`after` around an instant |
+| `opening_frame.py` | how big the prompt is on a session's first request |
+
+`group_registry.py` exists because the method gives each mission one `group`
+field, so grading seven merged changes needs seven groupings of one population.
+It reads and writes registries and never touches a transcript.
+
+`opening_frame.py` answers the question a mission comparison cannot when no
+session can be placed on a mission: how big is the standing frame a session
+opens with. It needs no attribution, it reuses the registered thresholds
+unchanged, and it marks its own output `registered_comparison: false` because
+it is post-hoc — corroboration beside a method verdict, never one.
 
 ## Tests
 
