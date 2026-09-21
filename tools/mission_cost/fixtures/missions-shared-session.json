@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "missions": [
+    {
+      "branch": "feat/child-one",
+      "pr": 9101,
+      "sessions": [],
+      "transcripts": [
+        "aaaaaaaa-0000-4000-8000-000000000001/subagents/agent-1111.jsonl"
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "One child dispatched under a coordinator session: its own context and nothing else."
+    },
+    {
+      "branch": "feat/child-two",
+      "pr": 9102,
+      "sessions": ["eeeeeeee-0000-4000-8000-000000000005"],
+      "transcripts": [
+        "aaaaaaaa-0000-4000-8000-000000000001/subagents/agent-2222.jsonl"
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "Its sibling, which also owned a whole session: sessions and transcripts on one record."
+    }
+  ]
+}
