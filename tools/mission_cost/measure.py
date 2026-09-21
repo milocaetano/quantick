@@ -172,8 +172,8 @@ def resolve_windows(missions, pulls):
                 _note(
                     mission.branch,
                     "no_window" if both else "partial_window",
-                    "no usable window, so only declared sessions reach this "
-                    "mission: a window needs both of its ends",
+                    "no usable window, so only what this mission declares "
+                    "reaches it: a window needs both of its ends",
                 )
             )
     return resolved, notes
