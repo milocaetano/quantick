@@ -90,3 +90,4 @@ a bound.
 | 578 | 2026-09-21 | fix/mission-registry-transcripts | campaign/mission-velocity | 0 | 0 | — |
 | 579 | 2026-09-21 | feat/velocity-experiment-protocol | campaign/mission-velocity | 0 | 0 | — |
 | 580 | 2026-09-21 | perf/cap-agent-context | campaign/mission-velocity | 0 | 0 | — |
+| 588 | 2026-09-21 | perf/prune-review-rounds | campaign/mission-velocity | 0 | 0 | — |
