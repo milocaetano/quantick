@@ -285,6 +285,14 @@ request's merge instant. A mission whose window straddles the pivot joins
 neither group, and so does the mission that delivered the change, whose window
 ends *at* the pivot. That is why #547's before-group is 74 and not 75.
 
+Those seven files are derived: each is exactly
+`group_registry.py --registry docs/quality/mission-cost/missions.json --pivot
+<merge instant>`, and they cost 168 KB in a repository separately working to
+shrink its clone. They are committed anyway, because a reader reconciling a
+table should not have to re-run a tool to see what it was grouped by. If the
+trade goes the other way later, the seven merge instants in the verdict table
+are enough to regenerate all of them.
+
 The figures are `dispersion.summary` over the `delivery` values already in
 [`baseline-report.json`](baseline-report.json), which is three lines a reader
 can run against the committed files:
@@ -508,7 +516,11 @@ claimed "6m 10s to 6m 35s"; the measured median across 39 subsequent runs is
 
 **Per mission, they did not.** Around #553's pivot, `ci_wall_seconds` median
 1,412.5 → 1,794 (n = 80 / n = 6) and `ci_runs` median 3 → 6: `no_reduction` on
-both. The runs are 3.6× faster and there are twice as many of them.
+both. A run is **2.9×** shorter — the R1 → R3 median ratio from the regime
+table above, 1,164 ÷ 401 — and a mission triggers twice as many of them. The
+other reading of the same pair is the CI wall clock a mission pays *per run*:
+471 s before, 299 s after, a 36% fall that the doubled run count more than
+spends.
 
 **This is the one place where the two axes disagree, and it is the finding.**
 A CI run got much cheaper; a mission's total CI bill did not, because the
