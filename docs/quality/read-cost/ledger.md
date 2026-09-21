@@ -90,3 +90,4 @@ a bound.
 | 578 | 2026-09-21 | fix/mission-registry-transcripts | campaign/mission-velocity | 0 | 0 | — |
 | 579 | 2026-09-21 | feat/velocity-experiment-protocol | campaign/mission-velocity | 0 | 0 | — |
 | 580 | 2026-09-21 | perf/cap-agent-context | campaign/mission-velocity | 0 | 0 | — |
+| 589 | 2026-09-21 | fix/poc-plate-price | campaign/mission-velocity | 2740 | 5 | `crates/app/src/drawings/mod.rs` (412) |

@@ -196,23 +196,16 @@ pub(super) fn hit_profile(
         return false;
     };
     if let Some(area) = area {
+        let levels = LevelPrices::of(profile, *area);
         let horizontal = |price| {
             let y = ctxt.scale.y(to_f64(price));
             near(egui::pos2(left, y), egui::pos2(right, y))
         };
-        if payload.show_poc
-            && horizontal(
-                profile
-                    .bucket_price(area.poc)
-                    .saturating_add(profile.group() / Decimal::TWO),
-            )
-        {
+        if payload.show_poc && horizontal(levels.poc) {
             return true;
         }
         if payload.show_value_area
-            && [area.val, area.vah.saturating_add(1)]
-                .into_iter()
-                .any(|bucket| horizontal(profile.bucket_price(bucket)))
+            && [levels.val, levels.vah].into_iter().any(horizontal)
         {
             return true;
         }

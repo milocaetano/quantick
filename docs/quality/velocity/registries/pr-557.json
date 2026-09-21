@@ -848,6 +848,33 @@
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a5a25505f12780ff8.jsonl",
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-aa49c0aa114d448ee.jsonl"
       ]
+    },
+    {
+      "branch": "fix/poc-plate-price",
+      "claim": [
+        {
+          "ended_at": "2026-09-21T19:14:26Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T18:35:00Z"
+        },
+        {
+          "ended_at": "2026-09-21T19:35:00Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T19:16:39Z"
+        }
+      ],
+      "ended_at": null,
+      "group": null,
+      "note": "Mission for issue #157 (POC price plate names a different price than the POC line marks), dispatched under campaign #563 as the first comparable product-code datapoint for the mission-velocity reading: real Rust work in crates/app, run with lever 1 (the context cap) merged. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff. This mission grades no lever; the coordinator places the number.",
+      "pr": 589,
+      "sessions": [],
+      "started_at": null,
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab4879516208c61bc.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a059764f419a173e8.jsonl"
+      ]
     }
   ],
   "schema": 1

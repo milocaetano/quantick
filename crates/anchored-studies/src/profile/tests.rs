@@ -125,3 +125,38 @@ fn covered_slots_rejects_a_range_that_reaches_no_candle() {
     assert_eq!(covered_slots(298.0, 450.0, Some(300)), Some((298, 300)));
     assert_eq!(covered_slots(0.0, 10.0, None), None, "no slots exist yet");
 }
+
+/// The three levels are one reading, made once. Issue #157: the POC line was
+/// drawn at the centre of its row while the POC plate printed the row's low
+/// edge, so the chart named a price it had not marked. POC is the centre;
+/// VAH tops its row and VAL bottoms its, so a bound hugs the area it bounds.
+#[test]
+fn level_prices_read_poc_at_the_centre_of_its_row() {
+    let mut footprint = quantick_engine::FootprintBuilder::new(dec("10"), DEFAULT_LEVEL_CAP);
+    for (price, quantity) in [("95010", "10"), ("95020", "8"), ("95000", "7")] {
+        footprint.push(&quantick_engine::Trade {
+            agg_id: 1,
+            timestamp_ms: 0,
+            price: dec(price),
+            quantity: dec(quantity),
+            side: quantick_engine::Side::Buy,
+        });
+    }
+    let ladder = footprint.close().expect("the fixture traded");
+    let profile = VolumeProfile::merge(vec![&ladder], DEFAULT_LEVEL_CAP).expect("one ladder folds");
+    let levels = LevelPrices::of(
+        &profile,
+        ValueArea {
+            poc: 9501,
+            vah: 9502,
+            val: 9500,
+        },
+    );
+    assert_eq!(
+        levels.poc,
+        dec("95015"),
+        "the POC row's centre, not its low edge"
+    );
+    assert_eq!(levels.vah, dec("95030"), "the top edge of the VAH row");
+    assert_eq!(levels.val, dec("95000"), "the bottom edge of the VAL row");
+}
