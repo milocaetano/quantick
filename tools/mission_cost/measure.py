@@ -15,6 +15,12 @@ Two subcommands:
     One metric across the registry's ``before`` and ``after`` groups, graded by
     the registered reduction rule.
 
+``identify``
+    Which transcripts a mission's own context claim resolves to. Section 9 of
+    ``docs/quality/velocity/experiment-protocol.md``: a mission records the
+    session it ran in and two instants of its own work, and this turns that
+    claim into the exact paths the registry's ``transcripts`` field wants.
+
 Transcripts live on the trader's machine and are never committed; see
 ``README.md``. Run ``python tools/mission_cost/measure.py --help``.
 """
@@ -384,6 +390,90 @@ def build_comparison(report, metric):
     }
 
 
+def identify(roots, session, start, end, role="subagent"):
+    """Resolve a mission's context claim to exact transcript paths.
+
+    Section 9 of ``docs/quality/velocity/experiment-protocol.md``. A mission
+    records the session it ran in, two instants of its own work, and whether it
+    ran as a dispatched agent or as the session's main thread. Two rules turn
+    that into paths:
+
+    **Containment finds the mission's own context**, and needs no tolerance
+    constant. The mission issued a request at ``start`` and another at ``end``,
+    so both instants lie inside its own transcript by construction. ``role``
+    is what keeps the answer from always being contested: the coordinator's
+    main thread spans every child it dispatched, so without it every child
+    would find two containing transcripts and none would be gradeable.
+
+    **Being contained finds the mission's descendants** -- the reviewers and
+    helpers it dispatched, whose whole lives sit inside its window and whose
+    cost is the mission's own.
+
+    Two containing transcripts of the mission's own kind is real overlap: a
+    sibling that ran across the whole of this mission's life. Then this refuses
+    to choose and says ``contested``, because a mission that cannot be graded
+    beats one graded wrong.
+
+    Nothing but the five values of ``method.md`` section 3 is read. ``cwd`` and
+    ``sessionId`` would answer this outright and are still not touched: E2's
+    boundary does not bend because bending it would be convenient here.
+    """
+    own = []
+    within = []
+    beside = []
+    for root in roots:
+        located, _ = TRANSCRIPTS.locate(root)
+        for item in located:
+            if item.session != session:
+                continue
+            folded = TRANSCRIPTS.read(
+                item.path, item.relative, item.session, item.kind, item.root
+            )
+            first, last = folded.first(), folded.last()
+            if first is None or last is None:
+                continue
+            row = {
+                "relative": item.relative,
+                "root": item.root,
+                "kind": item.kind,
+                "requests": folded.requests,
+                "first": first.isoformat(),
+                "last": last.isoformat(),
+            }
+            if item.kind == role and first <= start and last >= end:
+                own.append(row)
+            elif first >= start and last <= end:
+                within.append(row)
+            else:
+                beside.append(row)
+    for rows in (own, within, beside):
+        rows.sort(key=lambda row: (row["root"], row["relative"]))
+    contested = len(own) > 1
+    # `transcripts` is the field a registry record copies, so it says nothing
+    # unless exactly one context contained the window. Two is a contest and
+    # would fold a sibling's cost into this mission; none means the claim
+    # missed its own context, and then the contained agents are unanchored --
+    # they might belong to anybody. Both stay readable under `own` and
+    # `within` so a person can see what happened, and neither can be copied
+    # into a registry by a caller that read the list and not the flag.
+    resolved = (
+        sorted(row["relative"] for row in own + within) if len(own) == 1 else []
+    )
+    return {
+        "method": METHOD,
+        "protocol": "docs/quality/velocity/experiment-protocol.md",
+        "session": session,
+        "role": role,
+        "window": {"started_at": start.isoformat(), "ended_at": end.isoformat()},
+        "transcripts": resolved,
+        "own": own,
+        "within": within,
+        "beside": beside,
+        "contested": contested,
+        "resolved": len(own) == 1,
+    }
+
+
 def add_common(parser):
     parser.add_argument("--repo", default=".", help="the repository to measure from")
     parser.add_argument(
@@ -429,6 +519,22 @@ def main(argv=None):
             "ci_seconds, ci_wall_seconds or ci_runs"
         ),
     )
+    named = modes.add_parser(
+        "identify", help="resolve a mission's context claim to transcript paths"
+    )
+    named.add_argument("--repo", default=".", help="the repository to measure from")
+    named.add_argument(
+        "--transcripts", action="append", default=None, metavar="DIR",
+        help="a session transcript directory; repeatable",
+    )
+    named.add_argument("--session", required=True, help="the claimed session UUID")
+    named.add_argument("--from", dest="start", required=True, help="started_at")
+    named.add_argument("--to", dest="end", required=True, help="ended_at")
+    named.add_argument(
+        "--role", default="subagent", choices=("subagent", "main"),
+        help="did this mission run as a dispatched agent or as the main thread",
+    )
+    named.add_argument("--out", default="-", help="where to write; - is stdout")
     options = parser.parse_args(argv)
 
     roots = options.transcripts or [default_transcripts(options.repo)]
@@ -439,6 +545,20 @@ def main(argv=None):
                 "the trader's machine and are not in the repository; see "
                 "tools/mission_cost/README.md"
             )
+    if options.mode == "identify":
+        try:
+            start = TRANSCRIPTS.require_instant(options.start, "--from")
+            end = TRANSCRIPTS.require_instant(options.end, "--to")
+        except TRANSCRIPTS.InstantError as problem:
+            parser.error(str(problem))
+        if end < start:
+            parser.error("--to is before --from")
+        emit(
+            render(identify(roots, options.session, start, end, options.role)),
+            options.out,
+        )
+        return 0
+
     registry = options.registry or os.path.join(options.repo, DEFAULT_REGISTRY)
     try:
         report = build_report(

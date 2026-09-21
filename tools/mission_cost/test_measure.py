@@ -673,5 +673,164 @@ class MissingDeclaredTranscriptNote(unittest.TestCase):
         self.assertIn("declared_transcript_missing", measure.NOTE_KINDS)
 
 
+class Identify(unittest.TestCase):
+    """The context claim, resolved. Section 9 of the experiment protocol.
+
+    The fixture session is the exact shape the campaign runs in: a main thread
+    that spans the whole session and dispatched agents living inside it. That
+    is why `--role` exists, and these cases are what stops it being dropped as
+    a redundant flag by someone who has not hit the problem.
+    """
+
+    ALPHA_MAIN = f"{ALPHA}.jsonl"
+    ALPHA_ONE = f"{ALPHA}/subagents/agent-1111.jsonl"
+    ALPHA_TWO = f"{ALPHA}/subagents/agent-2222.jsonl"
+
+    def identify(self, start, end, role):
+        return json.loads(
+            run(
+                "identify",
+                "--transcripts",
+                TRANSCRIPTS,
+                "--session",
+                ALPHA,
+                "--from",
+                start,
+                "--to",
+                end,
+                "--role",
+                role,
+            )
+        )
+
+    def test_a_dispatched_mission_finds_its_own_context(self):
+        found = self.identify(
+            "2026-01-01T00:11:10Z", "2026-01-01T00:11:50Z", "subagent"
+        )
+        self.assertTrue(found["resolved"])
+        self.assertFalse(found["contested"])
+        self.assertEqual(found["transcripts"], [self.ALPHA_ONE])
+
+    def test_role_is_what_keeps_a_child_from_being_contested(self):
+        """The main thread contains the same window and must not compete.
+
+        Without `--role` every campaign child would find two containing
+        transcripts -- its own and the coordinator's -- and none of them would
+        ever be gradeable.
+        """
+        window = ("2026-01-01T00:11:10Z", "2026-01-01T00:11:50Z")
+        child = self.identify(*window, "subagent")
+        parent = self.identify(*window, "main")
+        self.assertEqual([row["relative"] for row in child["own"]], [self.ALPHA_ONE])
+        self.assertEqual([row["relative"] for row in parent["own"]], [self.ALPHA_MAIN])
+        self.assertFalse(child["contested"])
+        self.assertFalse(parent["contested"])
+
+    def test_a_mission_owns_the_agents_it_dispatched(self):
+        """Being contained finds the descendants, whose cost is the mission's."""
+        found = self.identify("2026-01-01T00:10:30Z", "2026-01-01T00:58:00Z", "main")
+        self.assertEqual(found["transcripts"], [self.ALPHA_MAIN, self.ALPHA_ONE, self.ALPHA_TWO])
+        self.assertEqual(
+            sorted(row["relative"] for row in found["within"]),
+            [self.ALPHA_ONE, self.ALPHA_TWO],
+        )
+
+    def test_a_window_nobody_contains_resolves_to_nothing(self):
+        found = self.identify(
+            "2026-01-01T00:00:00Z", "2026-01-01T00:05:00Z", "subagent"
+        )
+        self.assertFalse(found["resolved"])
+        self.assertFalse(found["contested"])
+        self.assertEqual(found["transcripts"], [])
+
+    def test_two_siblings_spanning_the_window_are_contested(self):
+        """Real overlap refuses to choose rather than choosing wrong.
+
+        A contested claim is `void` under the protocol, which is the honest
+        outcome: a mission nobody can attribute beats one attributed to the
+        wrong context.
+        """
+        session = "ffffffff-0000-4000-8000-000000000006"
+        line = (
+            '{{"timestamp": "{when}", "message": {{"usage": '
+            '{{"input_tokens": 1, "cache_creation_input_tokens": 0, '
+            '"cache_read_input_tokens": 10, "output_tokens": 1}}}}}}\n'
+        )
+        with tempfile.TemporaryDirectory() as room:
+            beneath = os.path.join(room, session, "subagents")
+            os.makedirs(beneath)
+            for name in ("agent-aaaa.jsonl", "agent-bbbb.jsonl"):
+                with open(os.path.join(beneath, name), "w", encoding="utf-8") as out:
+                    out.write(line.format(when="2026-03-01T00:00:00.000Z"))
+                    out.write(line.format(when="2026-03-01T01:00:00.000Z"))
+            found = json.loads(
+                run(
+                    "identify",
+                    "--transcripts",
+                    room,
+                    "--session",
+                    session,
+                    "--from",
+                    "2026-03-01T00:10:00Z",
+                    "--to",
+                    "2026-03-01T00:20:00Z",
+                    "--role",
+                    "subagent",
+                )
+            )
+        self.assertTrue(found["contested"])
+        self.assertFalse(found["resolved"])
+        self.assertEqual(len(found["own"]), 2)
+
+    def test_a_claim_that_missed_its_own_context_resolves_to_nothing(self):
+        """No containing context means the contained agents are unanchored.
+
+        They ran inside the window, but nothing says the window belongs to the
+        mission that claimed it, so `transcripts` -- the field a registry
+        record copies -- stays empty and the candidates stay under `within`.
+        """
+        found = self.identify(
+            "2026-01-01T00:05:00Z", "2026-01-01T00:59:30Z", "subagent"
+        )
+        self.assertFalse(found["resolved"])
+        self.assertEqual(found["own"], [])
+        self.assertTrue(found["within"])
+        self.assertEqual(found["transcripts"], [])
+
+    def test_a_contested_claim_resolves_to_nothing_either(self):
+        session = "ffffffff-0000-4000-8000-000000000007"
+        line = (
+            '{{"timestamp": "{when}", "message": {{"usage": '
+            '{{"input_tokens": 1, "cache_creation_input_tokens": 0, '
+            '"cache_read_input_tokens": 10, "output_tokens": 1}}}}}}\n'
+        )
+        with tempfile.TemporaryDirectory() as room:
+            beneath = os.path.join(room, session, "subagents")
+            os.makedirs(beneath)
+            for name in ("agent-cccc.jsonl", "agent-dddd.jsonl"):
+                with open(os.path.join(beneath, name), "w", encoding="utf-8") as out:
+                    out.write(line.format(when="2026-04-01T00:00:00.000Z"))
+                    out.write(line.format(when="2026-04-01T01:00:00.000Z"))
+            found = json.loads(
+                run(
+                    "identify", "--transcripts", room, "--session", session,
+                    "--from", "2026-04-01T00:10:00Z", "--to", "2026-04-01T00:20:00Z",
+                    "--role", "subagent",
+                )
+            )
+        self.assertTrue(found["contested"])
+        self.assertEqual(found["transcripts"], [])
+
+    def test_identify_reads_no_transcript_content(self):
+        found = self.identify(
+            "2026-01-01T00:11:10Z", "2026-01-01T00:11:50Z", "subagent"
+        )
+        rendered = json.dumps(found)
+        for bait in BAIT:
+            self.assertNotIn(bait, rendered)
+        for forbidden in ("cwd", "gitBranch", "sessionId"):
+            self.assertNotIn(forbidden, rendered)
+
+
 if __name__ == "__main__":
     unittest.main()
