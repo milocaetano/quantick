@@ -82,13 +82,54 @@ VERDICTS = ("pending", "proven", "refuted", "unproven", "void")
 ATTRIBUTIONS = ("declared", "window")
 QUALITY_GUARDS = ("identical", "improved")
 
+# Why a ledger or a reading is refused, as stable names beside the sentence.
+# `shape.py` already publishes its defects this way -- `NEGATIVE_FRAME`,
+# `DEGENERATE_LAW` -- and for the same reason: a caller that has to act on
+# *which* refusal fired should not be matching on prose that a reword breaks.
+# A coordinator reverting on a spent probation and only warning on a missing
+# honesty field is the case this exists for.
+UNREGISTERED_FORM = "unregistered_proof_form"
+REFUSED_PROOF_FORM = "refused_proof_form"
+FORM_VARIABLE_MISMATCH = "form_and_variable_disagree"
+BAD_PREDICTION = "predicted_saving_outside_unit_interval"
+BAD_REGISTRATION_INSTANT = "registered_at_is_not_an_instant"
+BAD_PROBATION = "probation_is_not_a_positive_count"
+PROBATION_OVEREXTENDED = "probation_extended_past_the_limit"
+PROBATION_SPENT = "probation_spent_without_a_verdict"
+MISSING_HONESTY = "review_reduction_missing_its_honesty_fields"
+MISSING_REVERT = "refuted_lever_without_a_recorded_revert"
+BAD_VERDICT = "verdict_outside_the_registered_set"
+DUPLICATE_ID = "experiment_declared_twice"
+DUPLICATE_BRANCH = "one_mission_grades_one_lever"
+BAD_REFERENCE = "reference_without_removed_requests"
+BAD_ATTRIBUTION = "attribution_outside_the_registered_set"
+READING_WITHOUT_BRANCH = "reading_without_a_branch"
+READING_WITHOUT_CONTEXTS = "reading_without_a_context_vector"
+READING_WITHOUT_TOTAL = "reading_without_a_measured_total"
+BAD_READING_INSTANT = "taken_at_is_not_an_instant"
+READING_PRECEDES_REGISTRATION = "reading_precedes_its_registration"
+CONCURRENT_VARIABLE = "two_open_probations_on_one_variable"
+CONCURRENT_REQUEST_TERM = "context_shape_and_request_count_are_not_disjoint"
+BAD_SCHEMA = "unknown_ledger_schema"
+BAD_EXPERIMENTS = "experiments_is_not_a_list"
+NO_ID = "experiment_without_an_id"
+UNKNOWN_LEVER = "no_such_lever_in_the_ledger"
+DEGENERATE_TRIM = "trim_at_or_past_the_fitted_frame"
+
+
+def refusal(code, message):
+    """One refusal: a stable name for a machine, a sentence for a person."""
+    return {"code": code, "message": message}
+
 
 class LedgerError(ValueError):
     """A ledger that cannot be graded, with every refusal it earned."""
 
     def __init__(self, refusals):
         self.refusals = list(refusals)
-        super().__init__("; ".join(self.refusals))
+        self.codes = [item["code"] for item in self.refusals]
+        self.messages = [item["message"] for item in self.refusals]
+        super().__init__("; ".join(self.messages))
 
 
 def load_ledger(path):
@@ -164,7 +205,14 @@ def counterfactual_rows(entry, reading):
         return [{"requests": max(before, 0.0), "kind": _population(entry, rows)}]
     if form == "removal":
         return rows + removed_rows(entry, rows)
-    raise LedgerError([f"{entry['id']}: unregistered proof form {form!r}"])
+    raise LedgerError(
+        [
+            refusal(
+                UNREGISTERED_FORM,
+                f"{entry['id']}: unregistered proof form {form!r}",
+            )
+        ]
+    )
 
 
 def smallest_reference(entry):
@@ -214,9 +262,12 @@ def _frame_trim(entry, reading, laws, rows):
     if trim >= smallest:
         raise LedgerError(
             [
-                f"{entry['id']}: a trim of {trim:.0f} tokens is at or past the "
-                f"fitted frame of {smallest:.0f}; the row would be priced on a "
-                "degenerate law"
+                refusal(
+                    DEGENERATE_TRIM,
+                    f"{entry['id']}: a trim of {trim:.0f} tokens is at or past "
+                    f"the fitted frame of {smallest:.0f}; the row would be "
+                    "priced on a degenerate law",
+                )
             ]
         )
     return trim
@@ -400,29 +451,38 @@ def _reading_refusals(entry, reading, index):
     found = []
     where = f"{entry['id']} reading {index}"
     if reading.get("attribution") not in ATTRIBUTIONS:
-        found.append(f"{where}: attribution must be one of {ATTRIBUTIONS}")
+        found.append(
+            refusal(BAD_ATTRIBUTION, f"{where}: attribution must be one of {ATTRIBUTIONS}")
+        )
     if not reading.get("branch"):
-        found.append(f"{where}: no branch")
+        found.append(refusal(READING_WITHOUT_BRANCH, f"{where}: no branch"))
     if not isinstance(reading.get("contexts"), list) or not reading["contexts"]:
-        found.append(f"{where}: no context vector")
+        found.append(refusal(READING_WITHOUT_CONTEXTS, f"{where}: no context vector"))
     else:
         for item in reading["contexts"]:
             if float(item.get("requests", 0)) <= 0:
-                found.append(f"{where}: a context with no requests")
+                found.append(
+                    refusal(READING_WITHOUT_CONTEXTS, f"{where}: a context with no requests")
+                )
                 break
             if item.get("kind") not in ("main", "subagent"):
-                found.append(f"{where}: a context with no population")
+                found.append(
+                    refusal(READING_WITHOUT_CONTEXTS, f"{where}: a context with no population")
+                )
                 break
     if float(reading.get("measured_billable", 0)) <= 0:
-        found.append(f"{where}: no measured total")
+        found.append(refusal(READING_WITHOUT_TOTAL, f"{where}: no measured total"))
     taken = _instant(reading.get("taken_at"))
     registered = _instant(entry.get("registered_at"))
     if taken is None:
-        found.append(f"{where}: taken_at is not an instant")
+        found.append(refusal(BAD_READING_INSTANT, f"{where}: taken_at is not an instant"))
     elif registered is not None and taken < registered:
         found.append(
-            f"{where}: taken before the lever was registered; a rule written "
-            "after its reading proves nothing"
+            refusal(
+                READING_PRECEDES_REGISTRATION,
+                f"{where}: taken before the lever was registered; a rule "
+                "written after its reading proves nothing",
+            )
         )
     return found
 
@@ -431,35 +491,52 @@ def _entry_refusals(entry, seen_ids, seen_branches):
     found = []
     identifier = entry.get("id")
     if not identifier:
-        return ["an experiment with no id"]
+        return [refusal(NO_ID, "an experiment with no id")]
     if identifier in seen_ids:
-        found.append(f"{identifier}: declared twice")
+        found.append(refusal(DUPLICATE_ID, f"{identifier}: declared twice"))
     seen_ids.add(identifier)
     form = entry.get("form")
     if form == REFUSED_FORM:
         found.append(
-            f"{identifier}: proof form 'totals' is refused. A pair of mission "
-            "totals certifies noise at this n; protocol section 3 names one of "
-            f"{sorted(FORMS)}"
+            refusal(
+                REFUSED_PROOF_FORM,
+                f"{identifier}: proof form 'totals' is refused. A pair of "
+                "mission totals certifies noise at this n; protocol section 3 "
+                f"names one of {sorted(FORMS)}",
+            )
         )
     elif form not in FORMS:
-        found.append(f"{identifier}: form must be one of {sorted(FORMS)}")
+        found.append(
+            refusal(UNREGISTERED_FORM, f"{identifier}: form must be one of {sorted(FORMS)}")
+        )
     elif entry.get("variable") != FORMS[form]:
         found.append(
-            f"{identifier}: form {form} measures {FORMS[form]!r}, "
-            f"not {entry.get('variable')!r}"
+            refusal(
+                FORM_VARIABLE_MISMATCH,
+                f"{identifier}: form {form} measures {FORMS[form]!r}, "
+                f"not {entry.get('variable')!r}",
+            )
         )
     predicted = entry.get("predicted_saving")
     if not isinstance(predicted, (int, float)) or not 0 < predicted < 1:
-        found.append(f"{identifier}: predicted_saving must be a share in (0, 1)")
+        found.append(
+            refusal(BAD_PREDICTION, f"{identifier}: predicted_saving must be a share in (0, 1)")
+        )
     if _instant(entry.get("registered_at")) is None:
-        found.append(f"{identifier}: registered_at is not an instant")
+        found.append(
+            refusal(BAD_REGISTRATION_INSTANT, f"{identifier}: registered_at is not an instant")
+        )
     probation = entry.get("probation") or {}
     if int(probation.get("missions", 0)) < 1:
-        found.append(f"{identifier}: probation must be at least one mission")
+        found.append(
+            refusal(BAD_PROBATION, f"{identifier}: probation must be at least one mission")
+        )
     if int(probation.get("extensions_used", 0)) > MAX_UNPROVEN_EXTENSIONS:
         found.append(
-            f"{identifier}: probation extended past MAX_UNPROVEN_EXTENSIONS"
+            refusal(
+                PROBATION_OVEREXTENDED,
+                f"{identifier}: probation extended past MAX_UNPROVEN_EXTENSIONS",
+            )
         )
     # The honesty triple is owed by the mission that runs the lever, not by the
     # coordinator who registered it, so it is required from the moment a
@@ -475,29 +552,40 @@ def _entry_refusals(entry, seen_ids, seen_branches):
         ]
         if missing:
             found.append(
-                f"{identifier}: a lever that reduces review depth must name "
-                + ", ".join(missing)
+                refusal(
+                    MISSING_HONESTY,
+                    f"{identifier}: a lever that reduces review depth must name "
+                    + ", ".join(missing),
+                )
             )
     if form == "removal":
         for reference in entry.get("references") or []:
             if float(reference.get("removed_requests", 0)) <= 0:
-                found.append(f"{identifier}: a reference with no removed requests")
+                found.append(
+                    refusal(BAD_REFERENCE, f"{identifier}: a reference with no removed requests")
+                )
                 break
     verdict = entry.get("verdict")
     if verdict is not None and verdict not in VERDICTS:
-        found.append(f"{identifier}: verdict must be one of {VERDICTS}")
+        found.append(refusal(BAD_VERDICT, f"{identifier}: verdict must be one of {VERDICTS}"))
     if verdict in ("refuted", "void") and not entry.get("reverted_in"):
         found.append(
-            f"{identifier}: a {verdict} lever comes out of the campaign branch; "
-            "record the revert commit in reverted_in"
+            refusal(
+                MISSING_REVERT,
+                f"{identifier}: a {verdict} lever comes out of the campaign "
+                "branch; record the revert commit in reverted_in",
+            )
         )
     readings = entry.get("readings") or []
     graded_branch = probation.get("graded_branch")
     if graded_branch:
         if graded_branch in seen_branches:
             found.append(
-                f"{identifier}: branch {graded_branch} already grades another "
-                "lever; one mission grades one lever"
+                refusal(
+                    DUPLICATE_BRANCH,
+                    f"{identifier}: branch {graded_branch} already grades "
+                    "another lever; one mission grades one lever",
+                )
             )
         else:
             seen_branches.add(graded_branch)
@@ -508,8 +596,11 @@ def _entry_refusals(entry, seen_ids, seen_branches):
             continue
         if branch in seen_branches:
             found.append(
-                f"{identifier}: branch {branch} already grades another lever; "
-                "one reading grades one lever"
+                refusal(
+                    DUPLICATE_BRANCH,
+                    f"{identifier}: branch {branch} already grades another "
+                    "lever; one reading grades one lever",
+                )
             )
         elif branch:
             seen_branches.add(branch)
@@ -518,8 +609,11 @@ def _entry_refusals(entry, seen_ids, seen_branches):
     )
     if len(readings) >= allowed and verdict in (None, "pending"):
         found.append(
-            f"{identifier}: probation is spent and no verdict is recorded; "
-            "grade it or revert it"
+            refusal(
+                PROBATION_SPENT,
+                f"{identifier}: probation is spent and no verdict is recorded; "
+                "grade it or revert it",
+            )
         )
     return found
 
@@ -533,10 +627,12 @@ def verify(ledger):
     """
     refusals = []
     if ledger.get("schema") != VERSION:
-        refusals.append(f"schema must be {VERSION}")
+        refusals.append(refusal(BAD_SCHEMA, f"schema must be {VERSION}"))
     experiments = ledger.get("experiments")
     if not isinstance(experiments, list):
-        raise LedgerError(refusals + ["experiments must be a list"])
+        raise LedgerError(
+            refusals + [refusal(BAD_EXPERIMENTS, "experiments must be a list")]
+        )
     seen_ids = set()
     seen_branches = set()
     for entry in experiments:
@@ -583,18 +679,29 @@ def _concurrency_refusals(experiments):
     for variable, identifiers in sorted(by_variable.items()):
         if len(identifiers) > 1:
             found.append(
-                f"{', '.join(sorted(identifiers))}: two open probations on "
-                f"{variable!r}; protocol section 8 serializes them"
+                refusal(
+                    CONCURRENT_VARIABLE,
+                    f"{', '.join(sorted(identifiers))}: two open probations on "
+                    f"{variable!r}; protocol section 8 serializes them",
+                )
             )
     contexts = by_variable.get(FORMS["reshape"], [])
     requests = by_variable.get(FORMS["removal"], [])
     if contexts and requests:
         found.append(
-            f"{', '.join(sorted(contexts + requests))}: context shape and "
-            "request count are not disjoint; both enter N and a joint reading "
-            "cannot be disentangled"
+            refusal(
+                CONCURRENT_REQUEST_TERM,
+                f"{', '.join(sorted(contexts + requests))}: context shape and "
+                "request count are not disjoint; both enter N and a joint "
+                "reading cannot be disentangled",
+            )
         )
     return found
+
+
+def _refused(error):
+    """One refusal document, whichever command produced it."""
+    return {"ok": False, "codes": error.codes, "refusals": error.refusals}
 
 
 def main(argv=None):
@@ -618,10 +725,7 @@ def main(argv=None):
     try:
         report = verify(ledger)
     except LedgerError as refused:
-        CANONICAL.emit(
-            CANONICAL.render({"ok": False, "refusals": refused.refusals}),
-            parsed.out,
-        )
+        CANONICAL.emit(CANONICAL.render(_refused(refused)), parsed.out)
         return 1
     if parsed.mode == "verify":
         CANONICAL.emit(CANONICAL.render(report), parsed.out)
@@ -635,17 +739,16 @@ def main(argv=None):
     ]
     if not wanted:
         CANONICAL.emit(
-            CANONICAL.render({"ok": False, "refusals": [f"no lever {parsed.id!r}"]}),
+            CANONICAL.render(
+                _refused(LedgerError([refusal(UNKNOWN_LEVER, f"no lever {parsed.id!r}")]))
+            ),
             parsed.out,
         )
         return 1
     try:
         verdicts = [grade(entry, laws) for entry in wanted]
     except LedgerError as refused:
-        CANONICAL.emit(
-            CANONICAL.render({"ok": False, "refusals": refused.refusals}),
-            parsed.out,
-        )
+        CANONICAL.emit(CANONICAL.render(_refused(refused)), parsed.out)
         return 1
     # No instant of its own: section 7 of the method wants the same bytes from
     # the same inputs, and a verdict stamped with the clock would differ every

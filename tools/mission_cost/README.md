@@ -257,7 +257,11 @@ python tools/mission_cost/experiment.py grade --id L1
 
 `verify` reads no transcript at all -- it is arithmetic over the ledger -- so
 CI runs it on every pull request, which is the only part of the protocol a
-later session cannot decline to read. `grade` prices each lever's
+later session cannot decline to read. `test_experiment.VerifyStaysOffline`
+asserts that property rather than trusting it, because this module loads
+`shape.py`, which loads the module that shells out to `gh`. A refusal carries
+a stable `code` beside its sentence, the way `shape.py` publishes its
+degenerate-law names, so a caller can act on *which* refusal fired. `grade` prices each lever's
 counterfactual through `shape.modelled` on the coefficients `shape.json`
 already publishes, never on a law re-fitted over the mission being graded.
 

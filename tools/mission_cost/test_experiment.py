@@ -14,6 +14,7 @@ import copy
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 
@@ -351,7 +352,7 @@ class TheRefusedForm(unittest.TestCase):
         }
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(ledger)
-        joined = "; ".join(refused.exception.refusals)
+        joined = "; ".join(refused.exception.messages)
         self.assertIn("totals", joined)
         self.assertIn("certifies noise", joined)
 
@@ -380,20 +381,20 @@ class LedgerRefusals(unittest.TestCase):
             EXPERIMENT.verify(self._ledger(entry))
         self.assertIn(
             "taken before the lever was registered",
-            "; ".join(refused.exception.refusals),
+            "; ".join(refused.exception.messages),
         )
 
     def test_a_spent_probation_without_a_verdict_is_refused(self):
         entry = reshape_entry(readings=[reshape_reading()])
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(entry))
-        self.assertIn("grade it or revert it", "; ".join(refused.exception.refusals))
+        self.assertIn("grade it or revert it", "; ".join(refused.exception.messages))
 
     def test_a_refuted_lever_must_record_its_revert(self):
         entry = reshape_entry(readings=[reshape_reading()], verdict="refuted")
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(entry))
-        self.assertIn("comes out of the campaign branch", "; ".join(refused.exception.refusals))
+        self.assertIn("comes out of the campaign branch", "; ".join(refused.exception.messages))
         entry["reverted_in"] = "deadbeef"
         self.assertTrue(EXPERIMENT.verify(self._ledger(entry))["ok"])
 
@@ -420,7 +421,7 @@ class LedgerRefusals(unittest.TestCase):
         )
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(first, second))
-        self.assertIn("serializes them", "; ".join(refused.exception.refusals))
+        self.assertIn("serializes them", "; ".join(refused.exception.messages))
 
     def test_context_shape_and_request_count_are_not_disjoint(self):
         shape = reshape_entry(
@@ -434,7 +435,7 @@ class LedgerRefusals(unittest.TestCase):
         )
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(shape, count))
-        self.assertIn("both enter N", "; ".join(refused.exception.refusals))
+        self.assertIn("both enter N", "; ".join(refused.exception.messages))
 
     def test_a_trim_is_disjoint_from_both(self):
         shape = reshape_entry(
@@ -461,7 +462,7 @@ class LedgerRefusals(unittest.TestCase):
         )
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(first, second))
-        self.assertIn("one mission grades one lever", "; ".join(refused.exception.refusals))
+        self.assertIn("one mission grades one lever", "; ".join(refused.exception.messages))
 
     def test_a_form_and_a_variable_that_disagree_are_refused(self):
         entry = reshape_entry(variable="frame_tokens_per_request")
@@ -480,7 +481,7 @@ class LedgerRefusals(unittest.TestCase):
         entry["probation"]["graded_branch"] = "feat/fewer-rounds"
         with self.assertRaises(EXPERIMENT.LedgerError) as refused:
             EXPERIMENT.verify(self._ledger(entry))
-        self.assertIn("must name", "; ".join(refused.exception.refusals))
+        self.assertIn("must name", "; ".join(refused.exception.messages))
 
 
 class LedgerIsCommitted(unittest.TestCase):
@@ -520,6 +521,64 @@ class LedgerIsCommitted(unittest.TestCase):
         laws = EXPERIMENT.load_laws(self.LAWS)
         for entry in ledger["experiments"]:
             self.assertEqual(EXPERIMENT.grade(entry, laws)["verdict"], "pending")
+
+
+class RefusalsCarryACode(unittest.TestCase):
+    """A refusal a caller can act on, not only a sentence it can print.
+
+    `shape.py` already publishes its defects as named constants; these are the
+    same pattern for the same reason. A coordinator that reverts on a spent
+    probation and only warns on a missing honesty field would otherwise be
+    matching on prose that a reword breaks silently.
+    """
+
+    def test_every_refusal_names_its_kind(self):
+        ledger = {
+            "schema": 1,
+            "experiments": [
+                reshape_entry(readings=[reshape_reading()], verdict="refuted")
+            ],
+        }
+        with self.assertRaises(EXPERIMENT.LedgerError) as refused:
+            EXPERIMENT.verify(ledger)
+        self.assertIn(EXPERIMENT.MISSING_REVERT, refused.exception.codes)
+        for item in refused.exception.refusals:
+            self.assertEqual(sorted(item), ["code", "message"])
+            self.assertTrue(item["code"] and item["message"])
+
+    def test_the_refused_form_has_its_own_code(self):
+        ledger = {"schema": 1, "experiments": [reshape_entry(form="totals")]}
+        with self.assertRaises(EXPERIMENT.LedgerError) as refused:
+            EXPERIMENT.verify(ledger)
+        self.assertIn(EXPERIMENT.REFUSED_PROOF_FORM, refused.exception.codes)
+
+
+class VerifyStaysOffline(unittest.TestCase):
+    """The property CI depends on, enforced rather than believed.
+
+    The `Velocity experiment ledger` step runs on a runner with no transcript
+    and no reason to reach the network. This module loads `shape.py`, which
+    loads the module that shells out to `gh`, so "offline" is true today by
+    nothing stronger than nobody having called it. This is what says so.
+    """
+
+    def test_verify_runs_no_subprocess(self):
+        ledger = os.path.join(REPO, "docs", "quality", "velocity", "experiments.json")
+        if not os.path.isfile(ledger):
+            self.skipTest("the committed ledger is not in this tree")
+        calls = []
+        original = subprocess.run
+
+        def refuse(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("verify reached a subprocess")
+
+        subprocess.run = refuse
+        try:
+            EXPERIMENT.verify(EXPERIMENT.load_ledger(ledger))
+        finally:
+            subprocess.run = original
+        self.assertEqual(calls, [])
 
 
 class TheCommandLine(unittest.TestCase):
