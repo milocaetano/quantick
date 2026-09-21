@@ -84,4 +84,5 @@ a bound.
 | 554 | 2026-09-20 | feat/capability-family-registries | main | 6129 | 28 | `crates/control-schema/src/evidence.rs` (665) |
 | 557 | 2026-09-20 | feat/pr-is-the-context | main | 0 | 0 | — |
 | 558 | 2026-09-20 | fix/risk-lock-refusal-spacing | main | 1363 | 2 | `crates/paper/src/account.rs` (497) |
+| 561 | 2026-09-20 | feat/slim-hub-modules | main | 27148 | 31 | `crates/app/src/replay_get_data.rs` (996) |
 | 562 | 2026-09-20 | fix/ship-gate-reads-advisories | main | 0 | 0 | — |

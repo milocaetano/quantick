@@ -259,7 +259,8 @@ impl DrawingToolImpl for Rectangle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawings::{ChartPoint, Constrain, PriceScale, ValueUnit};
+    use crate::chart::PriceScale;
+    use crate::drawings::{ChartPoint, Constrain, ValueUnit};
 
     fn context<'a>(
         payload: &'a RectanglePayload,
