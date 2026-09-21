@@ -340,7 +340,7 @@ existed, which are repairs by construction.
 | **step 0**, the bug pass inside `arch-review` | 66 rounds that stated a count | **86 findings**; 35 rounds found nothing | inside the arch window; not separable | best in the chain, ~1.3 findings per round that reports |
 | **`arch-review`** shape pass | 112 reports | not machine-countable; ≥ 39 findings by marker, the rest in prose | #569 one window of 38,564,504 (42.3%); #571 rounds 2 and 3 at 21,814,359 and 3,473,132 | **~3.5–38 M per round** |
 | **`ai-review`** | 114 reports | **75 threads over 87 missions** (0.86 per mission, median 0), 1 still open, no Blocker marker in any report | #571's three rounds at 4,235,468 + 4,982,946 + 4,696,530 = **13,914,944, 11.5% of the mission** | **~14 M per round, ~12–16 M per catch** |
-| **`delivery-review`** | 57 reports | **zero refusals on the published record** | #569 **8,311,845 (9.1%)**, #571 **3,519,404 (2.9%)** | **undefined — 57 runs, 0 gating catches** |
+| **`delivery-review`** | 57 reports | **no refusal on the published record — which is a record that could not show one**, since a report is published only once the round has converged | #569 **8,311,845 (9.1%)**, #571 **3,519,404 (2.9%)** | **unmeasured, not zero** — corrected by the mission of #575, on pull request 588; below |
 | **repair rounds** | 334 repair commits against 248 implementation commits | this is the *effect* of the chain, not a separate catcher | the windows above | **57.4% of all commits on this repository are made after the pull request exists** |
 | **guard ratchets and hooks** | every write and every Bash call | unmeasured; the hooks keep no log | `cargo run -p quantick-guards -- --report` runs in **6.1 s** and the hooks are silent on pass, so **~0 tokens** | not a sink at any price |
 
@@ -358,7 +358,22 @@ the measurement cannot justify is *three rounds*: #571's rounds 2 and 3 cost
 summary records that round's findings as Considers. One round plus thread
 closure keeps the catch and drops most of the cost.
 
-**`delivery-review` is named removable at `medium`.** 57 runs, no refusal ever
+**`delivery-review` is named removable at `medium`.** *Corrected by the mission
+of #575, which ran on branch `perf/prune-review-rounds` as pull request 588: it
+carried this recommendation, refused it on the evidence below, and was itself
+graded `void`. One mission, one reading, named here by its issue and by its
+pull request because the rest of this note refers to both. The reading below
+treats an unmeasured catch rate as a zero, and the row above now says so: a
+refusal raised and repaired inside a round never reached the published record,
+because this document's own prose says the report is published only once the
+round has converged. #580 then dispatched the review as its own context, and
+the first mission measured that way returned a correct FAIL. The removal is
+therefore not supported by the evidence cited for it. The lever itself is
+`void` and did not land — entry `L3` of
+[`experiments.json`](experiments.json) carries the verdict and the two causes
+of it; the working paper that argued the removal was published on pull request
+588, a draft that will not be merged, and is not committed here. What follows
+is the original entry.* 57 runs, no refusal ever
 published, 8.3 M and 3.5 M tokens on the two missions measured exactly, and it
 is the one ceremony `medium` has that `small` does not. *Escaped-defect risk,
 stated:* delivery-review is the only reader that reconciles the shipped work
@@ -471,7 +486,7 @@ rather than for whichever reads better.
 | --- | ---: | --- | --- |
 | Cap the context and hand off (L1) | **−45.9%** | **worse.** 8 requests per extra context, ~9% more requests on a 365-request mission, and each handoff serialises: the new context cannot start until the old one has written its brief | Take it. The token axis wins. |
 | Trim the standing frame (L2) | −5.1% at −10,000/request | neutral | Take it. It is free on the second axis and it composes: after L1 the frame is the larger term. |
-| Fewer review and repair rounds (L3) | −29.5% alone, −62.0% stacked | **better** — fewer rounds is less CI and less turnaround | Take it. The only lever that wins on both axes, as #566's second comment predicted. |
+| Fewer review and repair rounds (L3) | −29.5% alone, −62.0% stacked | **better** — fewer rounds is less CI and less turnaround | Take it. The only lever that wins on both axes, as #566's second comment predicted. *Outcome: graded `void` on 2026-09-21 and not landed — see entry `L3` of [`experiments.json`](experiments.json). The projection stands as a projection; the lever was refused on measurement.* |
 | More concurrency | slightly **worse** — each concurrent agent loads the pull request independently | better | **Forbidden by D7.** Not proposed. |
 | Faster CI | 0 | better, bounded by 12.7% of `pr_open` | Not a token lever; #552 and #553 already took most of it, and #565 showed runs per mission rose to meet it. |
 | Cut the coordinator's turnaround | 0 | better — 71% of #569's open life | Not a token lever. Listed so it is not mistaken for one. |

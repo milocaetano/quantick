@@ -875,6 +875,64 @@
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab4879516208c61bc.jsonl",
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a059764f419a173e8.jsonl"
       ]
+    },
+    {
+      "branch": "perf/prune-review-rounds",
+      "claim": [
+        {
+          "ended_at": "2026-09-21T18:05:35Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T17:50:59Z"
+        },
+        {
+          "ended_at": "2026-09-21T18:49:39Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T18:06:14Z"
+        },
+        {
+          "ended_at": "2026-09-21T19:33:29Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T18:52:45Z"
+        }
+      ],
+      "ended_at": null,
+      "group": null,
+      "note": "T8 of #563, the graded mission of ledger entry L3. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. started_at is this context first request instant, so containment resolves it; the claim is appended at every handoff. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes agent-ab4879516208c61bc, a sibling mission of the same session. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes agent-ab4879516208c61bc, a sibling mission of the same session. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes the six contexts of sibling mission fix/poc-plate-price, pull request 589. -- Added by the record-only follow-up on pull request 591, which carried this note verbatim rather than editing a measurement it did not take. The paragraph above appears three times: an append-three-times authoring artifact on pull request 588, not three separate readings. Its repetitions close on two different exclusion statements, agent-ab4879516208c61bc and the six contexts of sibling mission fix/poc-plate-price, pull request 589. They are not two exclusion sets but one, named twice: this registry now carries fix/poc-plate-price at pull request 589, its transcripts include agent-ab4879516208c61bc, and they are disjoint from the seven paths listed above. Whichever sentence a reader takes, the excluded set and the attributed set do not overlap, so no reading depends on telling the two apart.",
+      "pr": 588,
+      "sessions": [],
+      "started_at": null,
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a21cb591d71bc9eaa.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a3fc9f0042f1de781.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a6ad949d8cfcfa6f9.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-aab6b60cefb512957.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab9ad6fe3745fb1a8.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ada0f9c0897d11277.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-adbeb2fdc0023dc4d.jsonl"
+      ]
+    },
+    {
+      "branch": "perf/record-l3-void",
+      "claim": [
+        {
+          "ended_at": "2026-09-21T20:05:00.000Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T19:41:48.112Z"
+        }
+      ],
+      "ended_at": null,
+      "group": null,
+      "note": "The record-only follow-up to T8 of #563, dispatched after L3 was graded void. It carries L3's verdict and T8's context claims onto campaign/mission-velocity and none of the lever. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. started_at is the instant the claim was written, with sub-second precision so that containment does not fail the way T8's first two claims did. Resolved at the draft pull request with measure.py identify --role subagent: one containing transcript, agent-abd067bf0761c261e, contested false, and no dispatched context inside the window. Two honesty points. The claim's ended_at is 20:05:00Z rather than the instant of resolution, because the transcript is still being written while the claim is resolved and an ended_at later than the last flushed line fails containment outright; the few minutes between that instant and the handback are error mode E14 of docs/quality/mission-cost/method.md, as is every request the reviews this mission then dispatched. And this context, agent-abd067bf0761c261e, ran 140 requests against L1's cap of 80, read from its own transcript at the instant the claim resolved. The figure coincides with the 140 experiments.json records for T8's context 2 and is not copied from it: the two are different transcripts, and this one is the single path in the transcripts field above. The overrun is recorded rather than smoothed: it is the orchestrating-context case decision D16 named, where a context absorbs an open-ended tail -- here a tier raise, a coordinator correction applied mid-flight and the review chain -- instead of being given one bounded job.",
+      "pr": 591,
+      "sessions": [],
+      "started_at": null,
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-abd067bf0761c261e.jsonl"
+      ]
     }
   ],
   "schema": 1

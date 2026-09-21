@@ -499,20 +499,28 @@ class LedgerIsCommitted(unittest.TestCase):
         report = EXPERIMENT.verify(EXPERIMENT.load_ledger(self.LEDGER))
         self.assertTrue(report["ok"])
 
-    def test_every_ranked_lever_is_registered_and_only_L1_is_read(self):
+    # Each ranked lever whose probation mission has run, with the verdict the
+    # ledger ships. L2 is absent because it has not been read yet. A lever that
+    # has been read carries exactly one reading and the verdict computed from
+    # it; a refuted or void one also carries the record of its removal, so the
+    # state cannot be left ambiguous by being left alone.
+    READ = {"L1": "proven", "L3": "void"}
+
+    def test_every_ranked_lever_is_registered_with_its_probation_state(self):
         ledger = EXPERIMENT.load_ledger(self.LEDGER)
         issues = sorted(entry["issue"] for entry in ledger["experiments"])
         self.assertEqual(issues, [573, 574, 575])
         for entry in ledger["experiments"]:
-            if entry["id"] == "L1":
-                # L1's probation mission has run, so the entry carries exactly
-                # one reading and the verdict computed from it.
-                self.assertEqual(len(entry["readings"]), 1)
-                self.assertEqual(entry["readings"][0]["attribution"], "declared")
-                self.assertEqual(entry["verdict"], "proven")
+            verdict = self.READ.get(entry["id"])
+            if verdict is None:
+                self.assertEqual(entry["readings"], [])
+                self.assertIsNone(entry["verdict"])
                 continue
-            self.assertEqual(entry["readings"], [])
-            self.assertIsNone(entry["verdict"])
+            self.assertEqual(len(entry["readings"]), 1)
+            self.assertEqual(entry["readings"][0]["attribution"], "declared")
+            self.assertEqual(entry["verdict"], verdict)
+            if verdict in ("refuted", "void"):
+                self.assertTrue(str(entry["reverted_in"] or "").strip())
 
     def test_the_laws_come_from_the_published_shape(self):
         laws = EXPERIMENT.load_laws(self.LAWS)
