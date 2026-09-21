@@ -219,9 +219,7 @@ class EdgeCases(unittest.TestCase):
 class MainVersusSubagent(unittest.TestCase):
     def setUp(self):
         self.sessions, self.missions, self.placed = fixture_assignment()
-        self.totals = attribution.totals_by_mission(
-            self.sessions, self.missions, self.placed
-        )
+        self.totals = attribution.totals_by_mission(self.missions, self.placed)
 
     def test_the_two_threads_are_reported_separately(self):
         alpha = self.totals["feat/fixture-alpha"]
@@ -383,9 +381,7 @@ class SharedSessionDivided(unittest.TestCase):
 
     def setUp(self):
         self.sessions, self.missions, self.placed = placement_over(SHARED_SESSION)
-        self.totals = attribution.totals_by_mission(
-            self.sessions, self.missions, self.placed
-        )
+        self.totals = attribution.totals_by_mission(self.missions, self.placed)
 
     def test_each_child_owns_the_transcript_it_declared(self):
         self.assertEqual(self.placed.transcripts[ONE], "feat/child-one")
@@ -434,10 +430,10 @@ class SharedSessionDivided(unittest.TestCase):
     def test_every_transcript_lands_in_exactly_one_place(self):
         placed = []
         for mission in self.missions:
-            for parcel in self.placed.parcels_of(mission.branch, self.sessions):
+            for parcel in self.placed.parcels_of(mission.branch):
                 placed.extend(item.relative for item in parcel.transcripts)
         for uuid in list(self.placed.shared) + self.placed.unassigned:
-            parcel = self.placed.parcel_for(self.sessions, uuid)
+            parcel = self.placed.parcel_for(uuid)
             placed.extend(item.relative for item in parcel.transcripts)
         every = [
             item.relative
@@ -451,7 +447,7 @@ class SharedSessionDivided(unittest.TestCase):
 class DeclaredTranscriptsPlaceEverything(unittest.TestCase):
     def test_nothing_is_left_for_a_bucket_to_hold(self):
         sessions, missions, placed = placement_over(DECLARED_ALL)
-        totals = attribution.totals_by_mission(sessions, missions, placed)
+        totals = attribution.totals_by_mission(missions, placed)
         self.assertEqual(placed.unassigned, [])
         self.assertEqual(dict(placed.shared), {})
         self.assertEqual(totals["<unassigned>"]["total"]["billable_tokens"], 0)
@@ -492,7 +488,7 @@ class NoTranscriptsDeclaredChangesNothing(unittest.TestCase):
         self.assertEqual(dict(placed.transcripts), {})
         self.assertEqual(placed.missing, [])
         for uuid in sessions:
-            self.assertIs(placed.parcel_for(sessions, uuid), sessions[uuid])
+            self.assertIs(placed.parcel_for(uuid), sessions[uuid])
 
 class DeclarationOutranksTheWindow(unittest.TestCase):
     """Rule one runs before rule three, and takes the transcript with it."""
@@ -519,7 +515,7 @@ class DeclarationOutranksTheWindow(unittest.TestCase):
         # The rest of the coordinator session still lands by its own
         # timestamps, on the mission whose window covers it.
         self.assertEqual(placed.assigned[ALPHA], ("feat/by-window", "window"))
-        totals = attribution.totals_by_mission(sessions, missions, placed)
+        totals = attribution.totals_by_mission(missions, placed)
         self.assertEqual(totals["feat/by-name"]["total"]["billable_tokens"], 2030)
         # The coordinator remainder's 2170 plus agent-2222's 23, and session
         # beta's 8, which the same window also covers -- but not agent-1111's
@@ -550,6 +546,27 @@ class OnePathUnderTwoRoots(unittest.TestCase):
         )
         with self.assertRaises(attribution.RegistryError):
             attribution.assign(sessions, missions)
+
+class PlacementOwnsWhatItPlaced(unittest.TestCase):
+    def test_a_placement_carries_the_sessions_it_was_built_from(self):
+        # So no caller can hand it a second map that disagrees with the one
+        # the rules were applied to.
+        sessions, _, placed = fixture_assignment()
+        self.assertIs(placed.sessions, sessions)
+
+    def test_a_branch_index_is_built_while_placing_not_scanned_after(self):
+        sessions, missions, placed = placement_over(SHARED_SESSION)
+        self.assertEqual(placed.transcripts_of("feat/child-one"), [ONE])
+        self.assertEqual(placed.transcripts_of("feat/child-two"), [TWO])
+        self.assertEqual(placed.sessions_of("feat/child-two"), [EPSILON])
+        self.assertEqual(placed.sessions_of("feat/child-one"), [])
+        # An unknown branch answers empty without being recorded.
+        self.assertEqual(placed.sessions_of("feat/never-ran"), [])
+        self.assertEqual(placed.transcripts_of("feat/never-ran"), [])
+        self.assertEqual(
+            sorted(placed.transcripts_of(m.branch) for m in missions),
+            sorted([[ONE], [TWO]]),
+        )
 
 
 if __name__ == "__main__":

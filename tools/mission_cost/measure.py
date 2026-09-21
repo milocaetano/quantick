@@ -198,7 +198,7 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
     pulls = Pulls(use_gh, as_of)
     missions, notes = resolve_windows(missions, pulls)
     placement = ATTRIBUTION.assign(sessions, missions)
-    totals = ATTRIBUTION.totals_by_mission(sessions, missions, placement)
+    totals = ATTRIBUTION.totals_by_mission(missions, placement)
     # E6: a host prunes transcripts and a committed registry outlives them, so
     # a declared path that no root holds is said rather than refused.
     notes.extend(
@@ -242,14 +242,14 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
     shared = dict(totals[ATTRIBUTION.SHARED])
     shared["sessions"] = [
         dict(
-            ATTRIBUTION.session_totals(placement.parcel_for(sessions, uuid)),
+            ATTRIBUTION.session_totals(placement.parcel_for(uuid)),
             candidates=candidates,
         )
         for uuid, candidates in placement.shared.items()
     ]
     unassigned = dict(totals[ATTRIBUTION.UNASSIGNED])
     unassigned["sessions"] = [
-        ATTRIBUTION.session_totals(placement.parcel_for(sessions, uuid))
+        ATTRIBUTION.session_totals(placement.parcel_for(uuid))
         for uuid in placement.unassigned
     ]
 

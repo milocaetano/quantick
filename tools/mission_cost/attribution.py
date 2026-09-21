@@ -263,7 +263,8 @@ class Placement:
     whole of it counted twice.
     """
 
-    def __init__(self):
+    def __init__(self, sessions):
+        self.sessions = sessions
         self.assigned = collections.OrderedDict()
         self.shared = collections.OrderedDict()
         self.unassigned = []
@@ -271,6 +272,13 @@ class Placement:
         self.remainders = collections.OrderedDict()
         self.missing = []
         self._claimed = collections.OrderedDict()
+        self._owned_sessions = {}
+        self._owned_transcripts = {}
+
+    def give(self, uuid, branch, method):
+        """Give one whole session to one mission, by whichever rule placed it."""
+        self.assigned[uuid] = (branch, method)
+        self._owned_sessions.setdefault(branch, []).append(uuid)
 
     def claim(self, branch, uuid, item):
         """Give one named transcript to one mission, keeping its session.
@@ -290,20 +298,26 @@ class Placement:
         parcels = self._claimed.setdefault(branch, collections.OrderedDict())
         parcels.setdefault(uuid, Session(uuid)).add(item)
         self.transcripts[item.relative] = branch
+        self._owned_transcripts.setdefault(branch, []).append(item.relative)
 
+    # `give` and `claim` already know the branch, so what one mission owns is
+    # recorded while it is placed rather than filtered out of every placement
+    # afterwards. A report asks these once per mission, and the registry grows
+    # by a record per mission and never shrinks.
     def sessions_of(self, branch):
-        return [uuid for uuid, (found, _) in self.assigned.items() if found == branch]
+        return list(self._owned_sessions.get(branch, ()))
 
     def transcripts_of(self, branch):
-        return [path for path, found in self.transcripts.items() if found == branch]
+        return list(self._owned_transcripts.get(branch, ()))
 
-    def parcel_for(self, sessions, uuid):
+    def parcel_for(self, uuid):
         """The part of one session that is in play: its remainder, or all of it."""
-        return self.remainders.get(uuid, sessions[uuid])
+        found = self.remainders.get(uuid)
+        return self.sessions[uuid] if found is None else found
 
-    def parcels_of(self, branch, sessions):
+    def parcels_of(self, branch):
         """Every session-shaped parcel this mission owns, whole or in part."""
-        found = [self.parcel_for(sessions, uuid) for uuid in self.sessions_of(branch)]
+        found = [self.parcel_for(uuid) for uuid in self.sessions_of(branch)]
         found.extend(self._claimed.get(branch, {}).values())
         return found
 
@@ -341,7 +355,7 @@ def assign(sessions, missions):
     declared_paths = {
         path: mission.branch for mission in missions for path in mission.transcripts
     }
-    placement = Placement()
+    placement = Placement(sessions)
     for uuid, session in sessions.items():
         whole = session.transcripts
         remainder = Session(uuid)
@@ -357,13 +371,13 @@ def assign(sessions, missions):
         if not left:
             continue
         if uuid in declared_sessions:
-            placement.assigned[uuid] = (declared_sessions[uuid], DECLARED)
+            placement.give(uuid, declared_sessions[uuid], DECLARED)
             continue
         candidates = [
             mission.branch for mission in missions if _overlaps(remainder, mission)
         ]
         if len(candidates) == 1:
-            placement.assigned[uuid] = (candidates[0], WINDOW)
+            placement.give(uuid, candidates[0], WINDOW)
         elif candidates:
             placement.shared[uuid] = sorted(candidates)
         else:
@@ -441,17 +455,17 @@ def session_totals(session):
     }
 
 
-def totals_by_mission(sessions, missions, placement):
-    """Per-mission aggregates, plus the two unplaced buckets, keyed by branch."""
+def totals_by_mission(missions, placement):
+    """Per-mission aggregates, plus the two unplaced buckets, keyed by branch.
+
+    The placement carries the sessions it was built from, so there is no
+    second map for a caller to hand in and no way for the two to disagree.
+    """
     found = collections.OrderedDict()
     for mission in missions:
-        found[mission.branch] = bucket(
-            placement.parcels_of(mission.branch, sessions)
-        )
-    found[SHARED] = bucket(
-        [placement.parcel_for(sessions, uuid) for uuid in placement.shared]
-    )
+        found[mission.branch] = bucket(placement.parcels_of(mission.branch))
+    found[SHARED] = bucket([placement.parcel_for(uuid) for uuid in placement.shared])
     found[UNASSIGNED] = bucket(
-        [placement.parcel_for(sessions, uuid) for uuid in placement.unassigned]
+        [placement.parcel_for(uuid) for uuid in placement.unassigned]
     )
     return found
