@@ -1,0 +1,788 @@
+{
+  "missions": [
+    {
+      "branch": "docs/campaign-model-routing",
+      "ended_at": "2026-09-11T22:20:18Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 366,
+      "sessions": [],
+      "started_at": "2026-09-11T19:00:26Z"
+    },
+    {
+      "branch": "fix/load-sensitive-tests",
+      "ended_at": "2026-09-12T05:04:26Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 382,
+      "sessions": [],
+      "started_at": "2026-09-12T00:03:19Z"
+    },
+    {
+      "branch": "fix/campaign-gate-cd-prefix",
+      "ended_at": "2026-09-12T04:58:20Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 387,
+      "sessions": [],
+      "started_at": "2026-09-12T01:17:06Z"
+    },
+    {
+      "branch": "refactor/paper-trading-under-1500",
+      "ended_at": "2026-09-12T05:31:44Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 384,
+      "sessions": [],
+      "started_at": "2026-09-12T05:05:13Z"
+    },
+    {
+      "branch": "refactor/pane-under-1500",
+      "ended_at": "2026-09-12T05:42:13Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 383,
+      "sessions": [],
+      "started_at": "2026-09-12T05:33:06Z"
+    },
+    {
+      "branch": "refactor/orderflow-render-under-1500",
+      "ended_at": "2026-09-12T05:51:44Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 388,
+      "sessions": [],
+      "started_at": "2026-09-12T05:42:55Z"
+    },
+    {
+      "branch": "refactor/drawings-mod-under-1500",
+      "ended_at": "2026-09-12T07:53:35Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 390,
+      "sessions": [],
+      "started_at": "2026-09-12T05:52:30Z"
+    },
+    {
+      "branch": "fix/mission-review-completion-gates",
+      "ended_at": "2026-09-12T17:59:28Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 393,
+      "sessions": [],
+      "started_at": "2026-09-12T06:39:59Z"
+    },
+    {
+      "branch": "refactor/chrome-under-1500",
+      "ended_at": "2026-09-12T08:26:26Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 392,
+      "sessions": [],
+      "started_at": "2026-09-12T08:17:21Z"
+    },
+    {
+      "branch": "refactor/mt5-stream-under-1500",
+      "ended_at": "2026-09-12T09:12:04Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 395,
+      "sessions": [],
+      "started_at": "2026-09-12T09:03:25Z"
+    },
+    {
+      "branch": "refactor/pine-under-1500",
+      "ended_at": "2026-09-12T09:42:35Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 399,
+      "sessions": [],
+      "started_at": "2026-09-12T09:33:31Z"
+    },
+    {
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "ended_at": "2026-09-12T14:47:35Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 402,
+      "sessions": [],
+      "started_at": "2026-09-12T10:47:35Z"
+    },
+    {
+      "branch": "fix/gateway-load-sensitive-tests",
+      "ended_at": "2026-09-12T15:04:56Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 400,
+      "sessions": [],
+      "started_at": "2026-09-12T14:47:56Z"
+    },
+    {
+      "branch": "refactor/control-plane-under-1500",
+      "ended_at": "2026-09-12T15:15:31Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 391,
+      "sessions": [],
+      "started_at": "2026-09-12T15:05:22Z"
+    },
+    {
+      "branch": "refactor/orderflow-crate-under-1500",
+      "ended_at": "2026-09-12T15:25:42Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 396,
+      "sessions": [],
+      "started_at": "2026-09-12T15:16:02Z"
+    },
+    {
+      "branch": "fix/layers-test-load-sensitive",
+      "ended_at": "2026-09-12T16:12:03Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 404,
+      "sessions": [],
+      "started_at": "2026-09-12T16:03:14Z"
+    },
+    {
+      "branch": "feat/size-baseline-no-exceptions",
+      "ended_at": "2026-09-12T16:39:51Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 406,
+      "sessions": [],
+      "started_at": "2026-09-12T16:14:21Z"
+    },
+    {
+      "branch": "feat/live-workload-envelope",
+      "ended_at": "2026-09-12T18:22:23Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 405,
+      "sessions": [],
+      "started_at": "2026-09-12T18:12:47Z"
+    },
+    {
+      "branch": "feat/retry-readback-matrix",
+      "ended_at": "2026-09-12T21:10:47Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 421,
+      "sessions": [],
+      "started_at": "2026-09-12T18:50:08Z"
+    },
+    {
+      "branch": "feat/copy-paste-drawings",
+      "ended_at": "2026-09-13T02:22:57Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 420,
+      "sessions": [],
+      "started_at": "2026-09-12T20:45:26Z"
+    },
+    {
+      "branch": "perf/hot-path-session-length",
+      "ended_at": "2026-09-13T02:38:43Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 419,
+      "sessions": [],
+      "started_at": "2026-09-13T02:28:08Z"
+    },
+    {
+      "branch": "feat/mcp-newest-version-default",
+      "ended_at": "2026-09-13T03:24:25Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 424,
+      "sessions": [],
+      "started_at": "2026-09-13T02:57:04Z"
+    },
+    {
+      "branch": "fix/contention-listed-tests",
+      "ended_at": "2026-09-13T07:18:53Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 426,
+      "sessions": [],
+      "started_at": "2026-09-13T04:41:52Z"
+    },
+    {
+      "branch": "feat/right-drag-volume-profile",
+      "ended_at": "2026-09-13T14:48:10Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 433,
+      "sessions": [],
+      "started_at": "2026-09-13T07:12:29Z"
+    },
+    {
+      "branch": "perf/chunked-trade-tape",
+      "ended_at": "2026-09-13T07:32:29Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 431,
+      "sessions": [],
+      "started_at": "2026-09-13T07:22:11Z"
+    },
+    {
+      "branch": "fix/gateway-request-id-ordering",
+      "ended_at": "2026-09-13T13:15:07Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 436,
+      "sessions": [],
+      "started_at": "2026-09-13T09:05:31Z"
+    },
+    {
+      "branch": "docs/gate6-remeasure",
+      "ended_at": "2026-09-13T14:43:16Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 440,
+      "sessions": [],
+      "started_at": "2026-09-13T14:31:20Z"
+    },
+    {
+      "branch": "fix/campaign-aware-ship-gate",
+      "ended_at": "2026-09-13T16:27:15Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 446,
+      "sessions": [],
+      "started_at": "2026-09-13T15:43:21Z"
+    },
+    {
+      "branch": "docs/gate6-remeasure-2",
+      "ended_at": "2026-09-13T18:25:43Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 448,
+      "sessions": [],
+      "started_at": "2026-09-13T18:11:33Z"
+    },
+    {
+      "branch": "fix/mcp-describe-refusal",
+      "ended_at": "2026-09-13T19:48:44Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 451,
+      "sessions": [],
+      "started_at": "2026-09-13T19:09:10Z"
+    },
+    {
+      "branch": "fix/mcp-describe-test-name",
+      "ended_at": "2026-09-13T20:15:40Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 454,
+      "sessions": [],
+      "started_at": "2026-09-13T20:04:14Z"
+    },
+    {
+      "branch": "refactor/paper-account-headless",
+      "ended_at": "2026-09-14T00:06:14Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 453,
+      "sessions": [],
+      "started_at": "2026-09-13T20:18:28Z"
+    },
+    {
+      "branch": "refactor/control-host-headless",
+      "ended_at": "2026-09-14T00:48:37Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 452,
+      "sessions": [],
+      "started_at": "2026-09-14T00:07:37Z"
+    },
+    {
+      "branch": "feat/app-ui-free-ratchet",
+      "ended_at": "2026-09-14T01:14:17Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 450,
+      "sessions": [],
+      "started_at": "2026-09-14T00:49:12Z"
+    },
+    {
+      "branch": "docs/outside-score",
+      "ended_at": "2026-09-14T17:54:08Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 457,
+      "sessions": [],
+      "started_at": "2026-09-14T01:14:55Z"
+    },
+    {
+      "branch": "fix/session-length-test-cheap",
+      "ended_at": "2026-09-14T01:43:27Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 458,
+      "sessions": [],
+      "started_at": "2026-09-14T01:22:56Z"
+    },
+    {
+      "branch": "fix/volume-profile-precise-hit",
+      "ended_at": "2026-09-14T04:38:49Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 461,
+      "sessions": [],
+      "started_at": "2026-09-14T03:24:26Z"
+    },
+    {
+      "branch": "fix/native-drawing-clipboard",
+      "ended_at": "2026-09-14T04:25:35Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 462,
+      "sessions": [],
+      "started_at": "2026-09-14T03:48:22Z"
+    },
+    {
+      "branch": "fix/rectangle-four-corners",
+      "ended_at": "2026-09-14T17:54:22Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 463,
+      "sessions": [],
+      "started_at": "2026-09-14T04:14:19Z"
+    },
+    {
+      "branch": "docs/gate6-remeasure-3",
+      "ended_at": "2026-09-14T04:49:14Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 464,
+      "sessions": [],
+      "started_at": "2026-09-14T04:24:30Z"
+    },
+    {
+      "branch": "docs/gate6-remeasure-4",
+      "ended_at": "2026-09-14T06:58:35Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 467,
+      "sessions": [],
+      "started_at": "2026-09-14T06:36:49Z"
+    },
+    {
+      "branch": "fix/paper-report-same-frame",
+      "ended_at": "2026-09-14T07:58:23Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 469,
+      "sessions": [],
+      "started_at": "2026-09-14T07:33:35Z"
+    },
+    {
+      "branch": "docs/gate6-remeasure-5",
+      "ended_at": "2026-09-14T08:37:48Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "pr": 470,
+      "sessions": [],
+      "started_at": "2026-09-14T08:17:13Z"
+    },
+    {
+      "branch": "refactor/one-bar-spec",
+      "ended_at": "2026-09-14T21:41:17Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 484,
+      "sessions": [],
+      "started_at": "2026-09-14T18:13:10Z"
+    },
+    {
+      "branch": "feat/sync-main-bars",
+      "ended_at": "2026-09-15T00:43:37Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 494,
+      "sessions": [],
+      "started_at": "2026-09-14T18:13:10Z"
+    },
+    {
+      "branch": "fix/mutation-retry-truth",
+      "ended_at": "2026-09-14T20:02:02Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 486,
+      "sessions": [],
+      "started_at": "2026-09-14T19:35:06Z"
+    },
+    {
+      "branch": "feat/pr-read-cost",
+      "ended_at": "2026-09-14T20:53:34Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 487,
+      "sessions": [],
+      "started_at": "2026-09-14T20:02:21Z"
+    },
+    {
+      "branch": "fix/feed-gap-honesty",
+      "ended_at": "2026-09-14T21:34:21Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 488,
+      "sessions": [],
+      "started_at": "2026-09-14T20:55:22Z"
+    },
+    {
+      "branch": "fix/resize-stacked-panes",
+      "ended_at": "2026-09-15T00:47:27Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 489,
+      "sessions": [],
+      "started_at": "2026-09-14T21:45:31Z"
+    },
+    {
+      "branch": "feat/sync-main-chart-layout",
+      "ended_at": "2026-09-16T03:50:31Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 511,
+      "sessions": [],
+      "started_at": "2026-09-14T21:45:31Z"
+    },
+    {
+      "branch": "feat/chart-context-menu-layers",
+      "ended_at": "2026-09-15T00:46:12Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 493,
+      "sessions": [],
+      "started_at": "2026-09-14T22:34:50Z"
+    },
+    {
+      "branch": "feat/evidence-resources",
+      "ended_at": "2026-09-15T02:00:12Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 497,
+      "sessions": [],
+      "started_at": "2026-09-15T01:23:36Z"
+    },
+    {
+      "branch": "feat/per-pane-layout-strips",
+      "ended_at": "2026-09-15T03:46:22Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 485,
+      "sessions": [],
+      "started_at": "2026-09-15T01:24:03Z"
+    },
+    {
+      "branch": "feat/edit-loop-windows",
+      "ended_at": "2026-09-17T06:15:57Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 499,
+      "sessions": [],
+      "started_at": "2026-09-15T02:07:36Z"
+    },
+    {
+      "branch": "feat/show-drawing-all-charts-toggle",
+      "ended_at": "2026-09-15T02:33:07Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 498,
+      "sessions": [],
+      "started_at": "2026-09-15T02:22:10Z"
+    },
+    {
+      "branch": "feat/right-drag-fibonacci-actions",
+      "ended_at": "2026-09-15T03:45:07Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 500,
+      "sessions": [],
+      "started_at": "2026-09-15T02:58:17Z"
+    },
+    {
+      "branch": "feat/mouse-vertical-line",
+      "ended_at": "2026-09-15T04:54:07Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 506,
+      "sessions": [],
+      "started_at": "2026-09-15T04:03:13Z"
+    },
+    {
+      "branch": "feat/sync-main-current",
+      "ended_at": "2026-09-17T03:50:38Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 524,
+      "sessions": [],
+      "started_at": "2026-09-15T04:03:13Z"
+    },
+    {
+      "branch": "chore/stop-tracking-agent-evidence",
+      "ended_at": "2026-09-16T21:48:33Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 507,
+      "sessions": [],
+      "started_at": "2026-09-15T04:20:47Z"
+    },
+    {
+      "branch": "fix/context-column-divider-drag",
+      "ended_at": "2026-09-15T12:15:46Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 510,
+      "sessions": [],
+      "started_at": "2026-09-15T06:01:44Z"
+    },
+    {
+      "branch": "fix/stale-control-descriptors",
+      "ended_at": "2026-09-15T12:15:27Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 508,
+      "sessions": [],
+      "started_at": "2026-09-15T06:14:56Z"
+    },
+    {
+      "branch": "fix/paste-without-text-clipboard",
+      "ended_at": "2026-09-16T21:46:21Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 516,
+      "sessions": [],
+      "started_at": "2026-09-16T02:22:43Z"
+    },
+    {
+      "branch": "feat/bar-selection-registry",
+      "ended_at": "2026-09-16T17:09:48Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 514,
+      "sessions": [],
+      "started_at": "2026-09-16T04:15:57Z"
+    },
+    {
+      "branch": "feat/mcp-native-chart-image",
+      "ended_at": "2026-09-16T21:49:28Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 519,
+      "sessions": [],
+      "started_at": "2026-09-16T12:12:11Z"
+    },
+    {
+      "branch": "feat/layer-policy-registry",
+      "ended_at": "2026-09-16T21:22:55Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 515,
+      "sessions": [],
+      "started_at": "2026-09-16T17:18:04Z"
+    },
+    {
+      "branch": "feat/capability-admission-owner",
+      "ended_at": "2026-09-17T01:44:22Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 522,
+      "sessions": [],
+      "started_at": "2026-09-17T01:07:56Z"
+    },
+    {
+      "branch": "feat/app-owner-landing",
+      "ended_at": "2026-09-18T21:31:05Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 529,
+      "sessions": [],
+      "started_at": "2026-09-17T06:40:41Z"
+    },
+    {
+      "branch": "feat/mvu-app-owners",
+      "ended_at": "2026-09-19T07:00:30Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 530,
+      "sessions": [],
+      "started_at": "2026-09-18T15:19:27Z"
+    },
+    {
+      "branch": "feat/long-fn-commands",
+      "ended_at": "2026-09-19T01:05:05Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 533,
+      "sessions": [],
+      "started_at": "2026-09-18T15:57:04Z"
+    },
+    {
+      "branch": "feat/declared-stage-registry",
+      "ended_at": "2026-09-18T23:49:21Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 531,
+      "sessions": [],
+      "started_at": "2026-09-18T16:15:02Z"
+    },
+    {
+      "branch": "feat/headless-app-core",
+      "ended_at": "2026-09-19T10:50:50Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 532,
+      "sessions": [],
+      "started_at": "2026-09-18T17:04:37Z"
+    },
+    {
+      "branch": "feat/harness-composition-root",
+      "ended_at": "2026-09-19T05:52:39Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 534,
+      "sessions": [],
+      "started_at": "2026-09-18T17:42:19Z"
+    },
+    {
+      "branch": "fix/final-review-repairs",
+      "ended_at": "2026-09-19T13:26:31Z",
+      "group": "before",
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "pr": 543,
+      "sessions": [],
+      "started_at": "2026-09-19T11:34:46Z"
+    },
+    {
+      "branch": "feat/architecture-ratchets",
+      "ended_at": "2026-09-19T20:49:38Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 544,
+      "sessions": [],
+      "started_at": "2026-09-19T12:35:41Z"
+    },
+    {
+      "branch": "docs/halve-agent-instructions",
+      "ended_at": "2026-09-20T01:43:13Z",
+      "group": null,
+      "note": "graded by #565: halve always-loaded agent instructions",
+      "pr": 546,
+      "sessions": [],
+      "started_at": "2026-09-19T12:39:26Z"
+    },
+    {
+      "branch": "feat/fast-draft-ci",
+      "ended_at": "2026-09-19T21:42:46Z",
+      "group": "before",
+      "note": "graded by #565: fast affected-crates job on drafts",
+      "pr": 547,
+      "sessions": [],
+      "started_at": "2026-09-19T13:31:37Z"
+    },
+    {
+      "branch": "fix/guards-after-outside-eight",
+      "ended_at": "2026-09-20T00:08:11Z",
+      "group": "before",
+      "note": "baseline population of #565; base main",
+      "pr": 549,
+      "sessions": [],
+      "started_at": "2026-09-19T21:44:07Z"
+    },
+    {
+      "branch": "feat/ci-under-fifteen-minutes",
+      "ended_at": "2026-09-20T01:55:27Z",
+      "group": "after",
+      "note": "graded by #565: full Linux verdict from 43 minutes to parallel jobs",
+      "pr": 552,
+      "sessions": [],
+      "started_at": "2026-09-20T01:44:18Z"
+    },
+    {
+      "branch": "feat/read-cost-ledger",
+      "ended_at": "2026-09-20T03:40:45Z",
+      "group": "after",
+      "note": "graded by #565: per-pull-request read cost visible and bounded",
+      "pr": 550,
+      "sessions": [],
+      "started_at": "2026-09-20T02:05:07Z"
+    },
+    {
+      "branch": "feat/analyst-authority-tier",
+      "ended_at": "2026-09-20T03:41:09Z",
+      "group": "after",
+      "note": "baseline population of #565; base main",
+      "pr": 551,
+      "sessions": [],
+      "started_at": "2026-09-20T02:12:06Z"
+    },
+    {
+      "branch": "perf/ci-under-seven-minutes",
+      "ended_at": "2026-09-20T10:12:23Z",
+      "group": "after",
+      "note": "graded by #565: full CI critical path under seven minutes",
+      "pr": 553,
+      "sessions": [],
+      "started_at": "2026-09-20T03:42:54Z"
+    },
+    {
+      "branch": "fix/mcp-trim-tool-list",
+      "ended_at": "2026-09-20T15:41:43Z",
+      "group": "after",
+      "note": "graded by #565: stop publishing MCP output schemas",
+      "pr": 556,
+      "sessions": [],
+      "started_at": "2026-09-20T10:49:12Z"
+    },
+    {
+      "branch": "feat/capability-family-registries",
+      "ended_at": "2026-09-20T19:06:52Z",
+      "group": "after",
+      "note": "baseline population of #565; base main",
+      "pr": 554,
+      "sessions": [],
+      "started_at": "2026-09-20T15:45:02Z"
+    },
+    {
+      "branch": "feat/pr-is-the-context",
+      "ended_at": "2026-09-20T21:45:30Z",
+      "group": "after",
+      "note": "graded by #565: phase two into a fresh pull-request-only context",
+      "pr": 557,
+      "sessions": [],
+      "started_at": "2026-09-20T19:53:47Z"
+    },
+    {
+      "branch": "fix/ship-gate-reads-advisories",
+      "ended_at": "2026-09-21T00:26:56Z",
+      "group": "after",
+      "note": "baseline population of #565; base main",
+      "pr": 562,
+      "sessions": [],
+      "started_at": "2026-09-20T23:32:59Z"
+    },
+    {
+      "branch": "fix/risk-lock-refusal-spacing",
+      "ended_at": "2026-09-21T00:50:43Z",
+      "group": "after",
+      "note": "baseline population of #565; base main",
+      "pr": 558,
+      "sessions": [],
+      "started_at": "2026-09-21T00:37:35Z"
+    },
+    {
+      "branch": "feat/mission-cost-harness",
+      "ended_at": "2026-09-21T03:12:41Z",
+      "group": "after",
+      "note": "baseline population of #565; base campaign/mission-velocity",
+      "pr": 569,
+      "sessions": [],
+      "started_at": "2026-09-21T01:00:12Z"
+    }
+  ],
+  "schema": 1
+}

@@ -93,11 +93,32 @@ point of the bucket.
 
 | File | What it owns |
 | --- | --- |
-| `transcripts.py` | the privacy boundary: discovery, the five-field record, the 300-second idle bound |
+| `transcripts.py` | the privacy boundary: discovery, the five-field record, the 300-second idle bound, and the one rule for reading an instant |
+| `canonical.py` | section 7's byte contract: sorted keys, ASCII, LF, one trailing newline |
 | `attribution.py` | the registry, the two assignment rules, and the main/subagent split |
 | `dispersion.py` | quartiles, and the registered rule for when a fall counts as a reduction |
 | `delivery.py` | `gh` timings and the read-cost row, every call through an injectable runner |
 | `measure.py` | the command, the report and the comparison |
+| `group_registry.py` | one registry, regrouped `before`/`after` around an instant |
+| `opening_frame.py` | how big the prompt is on a session's first request |
+
+`group_registry.py` exists because the method gives each mission one `group`
+field, so grading seven merged changes needs seven groupings of one population.
+It reads and writes registries and never touches a transcript.
+
+`opening_frame.py` answers the question a mission comparison cannot when no
+session can be placed on a mission: how big is the standing frame a session
+opens with. It needs no attribution, it reuses the registered thresholds
+unchanged, and it marks its own output `registered_comparison: false` because
+it is post-hoc — corroboration beside a method verdict, never one. Like
+`measure.py`, it stamps every document with the `inputs.digest` of the openings
+it read.
+
+Two rules the package keeps to one owner each, both with a test that fails if a
+second copy appears (`test_canonical.OneOwner`): the byte contract in
+`canonical.py`, and `transcripts.require_instant`, which every command that
+puts a mission on one side of a pivot goes through. `Z` sorts after `+`, so one
+moment spelled two legal ways must never be compared as text.
 
 ## Tests
 
@@ -105,5 +126,10 @@ point of the bucket.
 python -m unittest discover -s tools/mission_cost -p 'test_*.py'
 ```
 
-Offline, every one of them: the fixture is the only input and the `gh` calls
-answer from a table.
+Offline, every one of them: the `gh` calls answer from a table and no test
+reads a transcript outside `fixtures/`. Two read committed repository data
+rather than the fixture — `test_group_registry.CommittedRegistries` re-derives
+each of `docs/quality/velocity/registries/pr-*.json` from
+`docs/quality/mission-cost/missions.json` and fails if a copy has gone stale,
+which is what keeps a published reconciliation honest when the population
+grows. They skip when those files are absent.

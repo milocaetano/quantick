@@ -19,6 +19,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,19 @@ def load(name, path=None):
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
+
+
+def default_transcripts(repo):
+    """Where this host keeps the transcripts of sessions rooted at ``repo``.
+
+    The directory name is the absolute repository path with every character
+    outside ``[A-Za-z0-9]`` replaced by a dash, which is how the projects
+    directory is laid out. It lives beside `discover` because both answer the
+    same question -- where the transcripts are -- and a second copy in a second
+    command is a second place for the host's layout to be spelled wrong.
+    """
+    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.abspath(repo))
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
 
 
 # Section 4 of the method. A gap longer than this is idle, not work.
@@ -81,6 +95,27 @@ def parse_timestamp(value):
     if found.tzinfo is None:
         found = found.replace(tzinfo=datetime.timezone.utc)
     return found.astimezone(datetime.timezone.utc)
+
+
+class InstantError(ValueError):
+    """Something this package was asked to treat as an instant is not one."""
+
+
+def require_instant(value, what):
+    """Parse an ISO-8601 instant, or refuse rather than compare its spelling.
+
+    The one owner of that rule, for the same reason `canonical.py` owns the byte
+    contract. ``Z`` sorts after ``+`` in ASCII, so ``2026-09-20T01:43:13Z`` and
+    ``2026-09-20T01:43:13+00:00`` -- one moment, two legal spellings -- land on
+    opposite sides of each other when compared as text. Every module that puts a
+    mission on one side of a pivot goes through here, so a fifth command cannot
+    invent a fifth rule, and a caller catches one exception type rather than one
+    per module.
+    """
+    found = parse_timestamp(value)
+    if found is None:
+        raise InstantError(f"{what} is not an ISO-8601 instant: {value!r}")
+    return found
 
 
 def _counter(usage, name):

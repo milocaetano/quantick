@@ -94,13 +94,20 @@ def sessions_from(found):
 
 
 def _instant(entry, field):
+    """One registry window end, through the package's one instant rule.
+
+    The rule lives in `transcripts.require_instant`. The failure is re-raised as
+    a `RegistryError` because here it is a fault in the registry document, which
+    is what this module's callers already catch. The message now ends with the
+    offending value, which the shared rule appends and this one did not.
+    """
     value = entry.get(field)
     if value is None:
         return None
-    found = TRANSCRIPTS.parse_timestamp(value)
-    if found is None:
-        raise RegistryError(f"{entry.get('branch')}: {field} is not an ISO-8601 instant")
-    return found
+    try:
+        return TRANSCRIPTS.require_instant(value, f"{entry.get('branch')}: {field}")
+    except TRANSCRIPTS.InstantError as problem:
+        raise RegistryError(str(problem)) from problem
 
 
 def parse_registry(data):

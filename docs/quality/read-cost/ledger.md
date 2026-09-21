@@ -85,3 +85,4 @@ a bound.
 | 557 | 2026-09-20 | feat/pr-is-the-context | main | 0 | 0 | — |
 | 562 | 2026-09-20 | fix/ship-gate-reads-advisories | main | 0 | 0 | — |
 | 569 | 2026-09-21 | feat/mission-cost-harness | campaign/mission-velocity | 0 | 0 | — |
+| 571 | 2026-09-21 | docs/mission-cost-baseline | campaign/mission-velocity | 0 | 0 | — |

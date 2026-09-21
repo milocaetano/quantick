@@ -22,9 +22,7 @@ Transcripts live on the trader's machine and are never committed; see
 import argparse
 import hashlib
 import importlib.util
-import json
 import os
-import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,20 +57,19 @@ TRANSCRIPTS = _bootstrap()
 ATTRIBUTION = TRANSCRIPTS.load("attribution")
 DISPERSION = TRANSCRIPTS.load("dispersion")
 DELIVERY = TRANSCRIPTS.load("delivery")
+CANONICAL = TRANSCRIPTS.load("canonical")
 
 WALL_CLOCK = ("agent_seconds", "elapsed_seconds", "span_seconds")
 DELIVERY_METRICS = ("pr_open_seconds", "ci_seconds", "ci_wall_seconds", "ci_runs")
 
-
-def default_transcripts(repo):
-    """Where this host keeps the transcripts of sessions rooted at ``repo``.
-
-    The directory name is the absolute repository path with every character
-    outside ``[A-Za-z0-9]`` replaced by a dash, which is how the projects
-    directory is laid out.
-    """
-    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.abspath(repo))
-    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
+# Bound here, never redefined here. `canonical.py` owns section 7's byte
+# contract and `transcripts.py` owns where this host keeps its transcripts, so
+# every command in this package reaches one implementation of each -- while
+# `measure.render` and `measure.default_transcripts` still name them for the
+# callers and tests that already did.
+render = CANONICAL.render
+emit = CANONICAL.emit
+default_transcripts = TRANSCRIPTS.default_transcripts
 
 
 def collect(roots):
@@ -365,11 +362,6 @@ def build_comparison(report, metric):
     }
 
 
-def render(document):
-    """Canonical JSON: sorted keys, ASCII, one trailing newline."""
-    return json.dumps(document, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
-
-
 def add_common(parser):
     parser.add_argument("--repo", default=".", help="the repository to measure from")
     parser.add_argument(
@@ -396,26 +388,6 @@ def add_common(parser):
         help="skip every gh and git lookup; transcripts and the registry only",
     )
     parser.add_argument("--out", default="-", help="where to write; - is stdout")
-
-
-def emit(text, where):
-    """Write the report with LF endings, whichever way it leaves.
-
-    Through the text layer, Windows turns every newline into CRLF on the way to
-    standard output while `--out` writes LF, so the same report would hash two
-    ways depending on how it was captured. The bytes go out as bytes.
-    """
-    raw = text.encode("utf-8")
-    if where == "-":
-        stream = getattr(sys.stdout, "buffer", None)
-        if stream is None:
-            sys.stdout.write(text)
-            return
-        stream.write(raw)
-        stream.flush()
-        return
-    with open(where, "wb") as stream:
-        stream.write(raw)
 
 
 def main(argv=None):
