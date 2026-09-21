@@ -1340,6 +1340,42 @@ for tier in medium high max; do
     run_completion "$tier completes through the same final gate" mission pass
 done
 
+# A readiness advisory is not a refusal (#561). The same gate that denies also
+# carries advisories on stdout — the read-cost ceiling prints one whose own
+# text says "Nothing is blocked" — so reading any output as a refusal left
+# every branch over that advisory ceiling unable to complete a mission.
+set_tier "$root/wt" high
+cp "$root/hooks/guardrails.sh" "$root/completion/guardrails-real"
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf '%s
+' '{"systemMessage":"Read cost: over the ceiling. Nothing is blocked.","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Read cost: over the ceiling. Nothing is blocked."}}'
+STUB
+rm -f "$root/completion/published-report"
+run_completion "a readiness advisory carrying no decision does not block completion"     mission pass
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf '%s
+' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"fixture refusal"}}'
+STUB
+run_completion "a readiness denial still blocks completion"     mission fail 'refused this PR'
+# The empty/non-empty test this replaced was also what caught a readiness gate
+# that broke. Unknown is not permission, so both shapes of breakage still fail.
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf 'guardrails.sh: line 12: unexpected EOF
+' >&2
+exit 2
+STUB
+run_completion "a readiness gate that exits non-zero blocks completion"     mission fail 'could not be evaluated'
+cat > "$root/hooks/guardrails.sh" <<'STUB'
+#!/bin/sh
+printf 'Traceback: the readiness gate fell over but exited zero
+'
+STUB
+run_completion "readiness output that is neither decision nor advisory blocks completion"     mission fail 'neither a decision nor an advisory'
+cp "$root/completion/guardrails-real" "$root/hooks/guardrails.sh"
+
 cp "$root/wt/.claude/skills/mission/SKILL.md" "$root/completion/mission-skill"
 sed -i '/<!-- end what-done-means:v1 -->/i\- **D9** -- An unmapped completion clause.' \
     "$root/wt/.claude/skills/mission/SKILL.md"
