@@ -57,8 +57,35 @@ def _counter(usage, name):
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def record_from(parsed):
+    """Reduce one parsed transcript line to a :class:`Record`, or ``None``.
+
+    This is the filter. It is a named function rather than five lines inside
+    the read loop so that it can be tested on its own: give it a line carrying
+    message content, `cwd` and `gitBranch`, and what comes back has five
+    fields and no room for a sixth.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    message = parsed.get("message")
+    usage = message.get("usage") if isinstance(message, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    stamp = parse_timestamp(parsed.get("timestamp"))
+    if stamp is None:
+        return None
+    return Record(stamp, *(_counter(usage, name) for name in COUNTERS))
+
+
 class Transcript:
-    """One transcript file, reduced to records and the counts around them."""
+    """One transcript file, folded into counters and work intervals.
+
+    Nothing per-request is retained. A projects directory that has not been
+    pruned holds hundreds of thousands of requests, and this harness is meant
+    to be re-run across a growing window all campaign long, so what it keeps
+    is proportional to the number of work blocks rather than to the number of
+    requests ever made.
+    """
 
     def __init__(self, path, relative, session, kind, root=""):
         self.path = path
@@ -66,25 +93,53 @@ class Transcript:
         self.root = root
         self.session = session
         self.kind = kind
-        self.records = []
+        self.requests = 0
+        self.counters = {name: 0 for name in COUNTERS}
+        self.spans = []
         self.lines_seen = 0
         self.unparsed = 0
         self.undated = 0
+        self.out_of_order = 0
+        self._first = None
+        self._last = None
+
+    def add(self, record):
+        """Fold one record in, then forget it."""
+        self.requests += 1
+        for name in COUNTERS:
+            self.counters[name] += getattr(record, name)
+        if self._first is None or record.timestamp < self._first:
+            self._first = record.timestamp
+        if self._last is None:
+            self._last = record.timestamp
+            return
+        gap = (record.timestamp - self._last).total_seconds()
+        if gap < 0:
+            # A transcript is an append-only log, so this should not happen.
+            # Counting it beats folding a negative gap into the wall clock and
+            # reporting a number nobody can explain.
+            self.out_of_order += 1
+            return
+        if gap <= IDLE_GAP_SECONDS:
+            if self.spans and self.spans[-1][1] == self._last:
+                self.spans[-1] = (self.spans[-1][0], record.timestamp)
+            else:
+                self.spans.append((self._last, record.timestamp))
+        self._last = record.timestamp
 
     def totals(self):
         found = dict(EMPTY_TOTALS)
-        found["requests"] = len(self.records)
-        for record in self.records:
-            for name in COUNTERS:
-                found[name] += getattr(record, name)
+        found["requests"] = self.requests
+        for name in COUNTERS:
+            found[name] = self.counters[name]
         found["billable_tokens"] = sum(found[name] for name in COUNTERS)
         return found
 
     def first(self):
-        return self.records[0].timestamp if self.records else None
+        return self._first
 
     def last(self):
-        return self.records[-1].timestamp if self.records else None
+        return self._last
 
     def intervals(self):
         """The bounded work intervals of this transcript, in order.
@@ -92,23 +147,19 @@ class Transcript:
         Consecutive requests closer together than ``IDLE_GAP_SECONDS`` are one
         interval; a longer gap contributes nothing at all.
         """
-        spans = []
-        for earlier, later in zip(self.records, self.records[1:]):
-            gap = (later.timestamp - earlier.timestamp).total_seconds()
-            if 0 <= gap <= IDLE_GAP_SECONDS:
-                spans.append((earlier.timestamp, later.timestamp))
-        return spans
+        return list(self.spans)
 
     def active_seconds(self):
         return float(
-            sum((end - start).total_seconds() for start, end in self.intervals())
+            sum((end - start).total_seconds() for start, end in self.spans)
         )
 
 
 def read(path, relative, session, kind, root=""):
     """Read one transcript into a :class:`Transcript`.
 
-    Nothing but a timestamp and four integers crosses out of this function.
+    Nothing but a timestamp and four integers crosses out of this function,
+    and even those are folded away rather than kept.
     """
     item = Transcript(path, relative, session, kind, root)
     with open(path, "r", encoding="utf-8", errors="replace") as stream:
@@ -121,22 +172,16 @@ def read(path, relative, session, kind, root=""):
             except ValueError:
                 item.unparsed += 1
                 continue
-            if not isinstance(parsed, dict):
+            record = record_from(parsed)
+            if record is None:
+                if isinstance(parsed, dict) and isinstance(
+                    parsed.get("message"), dict
+                ) and isinstance(parsed["message"].get("usage"), dict):
+                    item.undated += 1
                 continue
-            message = parsed.get("message")
-            usage = message.get("usage") if isinstance(message, dict) else None
-            if not isinstance(usage, dict):
-                continue
-            stamp = parse_timestamp(parsed.get("timestamp"))
-            if stamp is None:
-                item.undated += 1
-                continue
-            item.records.append(
-                Record(stamp, *(_counter(usage, name) for name in COUNTERS))
-            )
-            # `parsed`, `message` and `usage` go out of scope here; only the
-            # five-field record survives the loop.
-    item.records.sort(key=lambda record: record.timestamp)
+            item.add(record)
+            # `parsed` and `record` go out of scope here. What the transcript
+            # keeps is four integers, two instants and a span list.
     return item
 
 

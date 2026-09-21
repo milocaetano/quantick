@@ -223,7 +223,7 @@ def bucket(owned):
     has_main = False
     for session in owned:
         for item in session.main:
-            has_main = has_main or bool(item.records)
+            has_main = has_main or item.requests > 0
             _add(main, item.totals())
         for item in session.subagents:
             _add(subagents, item.totals())

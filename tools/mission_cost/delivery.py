@@ -10,7 +10,6 @@ Every call goes through an injectable ``runner`` so the tests answer from a
 table rather than the network.
 """
 
-import datetime
 import importlib.util
 import json
 import os
@@ -23,7 +22,34 @@ LEDGER = os.path.join("docs", "quality", "read-cost", "ledger.md")
 PULL_FIELDS = (
     "number,headRefName,baseRefName,headRefOid,createdAt,mergedAt,closedAt,state"
 )
+COMMIT_FIELDS = "commits"
 RUN_FIELDS = "status,conclusion,headSha,startedAt,updatedAt,workflowName"
+
+
+# Every command this module sends, in one place. Three functions building three
+# argument vectors inline is three places to edit when a field `gh pr view` does
+# not expose forces a drop to `gh api`, and three places to miss one.
+def pull_command(number):
+    return ["gh", "pr", "view", str(number), "--json", PULL_FIELDS]
+
+
+def commits_command(number):
+    return ["gh", "pr", "view", str(number), "--json", COMMIT_FIELDS]
+
+
+def runs_command(branch, limit):
+    return [
+        "gh",
+        "run",
+        "list",
+        "--branch",
+        branch,
+        "--limit",
+        str(limit),
+        "--json",
+        RUN_FIELDS,
+    ]
+
 
 # How many workflow runs to ask `gh` for. A busy campaign branch can have
 # hundreds, and a listing cut off at the limit undercounts CI time without
@@ -89,7 +115,7 @@ def _seconds(start, end):
 
 def pull_facts(number, runner=shell, as_of=None):
     """The timings of one pull request, and nothing else it carries."""
-    raw = runner(["gh", "pr", "view", str(number), "--json", PULL_FIELDS])
+    raw = runner(pull_command(number))
     try:
         found = json.loads(raw)
     except ValueError as problem:
@@ -124,19 +150,7 @@ def ci_facts(branch, runner=shell, limit=CI_RUN_LIMIT):
     how a branch with more runs than ``CI_RUN_LIMIT`` announces that its CI
     time is a floor rather than a total.
     """
-    raw = runner(
-        [
-            "gh",
-            "run",
-            "list",
-            "--branch",
-            branch,
-            "--limit",
-            str(limit),
-            "--json",
-            RUN_FIELDS,
-        ]
-    )
+    raw = runner(runs_command(branch, limit))
     try:
         runs = json.loads(raw)
     except ValueError as problem:
@@ -171,7 +185,7 @@ def first_commit_instant(number, runner=shell):
     Error mode E3: a rebase rewrites committer dates, so the registry's
     explicit ``started_at`` overrides whatever this says.
     """
-    raw = runner(["gh", "pr", "view", str(number), "--json", "commits"])
+    raw = runner(commits_command(number))
     try:
         commits = json.loads(raw).get("commits") or []
     except (ValueError, AttributeError):
@@ -197,6 +211,3 @@ def read_cost_row(path, pr):
             return row["read_cost"]
     return None
 
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()

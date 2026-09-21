@@ -120,6 +120,18 @@ class Pulls:
         return self._facts[pr]
 
 
+# The kinds a note can have. A closed, documented set, so a consumer -- the
+# baseline run of #565 above all -- can exclude the missions whose window never
+# resolved instead of reading prose and guessing. A mission with an unresolved
+# window otherwise reports near-zero cost and quietly drags a group median down.
+NOTE_KINDS = ("gh_lookup_failed", "no_window")
+
+
+def _note(branch, kind, detail):
+    assert kind in NOTE_KINDS, kind
+    return {"branch": branch, "kind": kind, "detail": detail}
+
+
 def resolve_windows(missions, pulls):
     """Fill in the default window of any mission the registry left open.
 
@@ -140,11 +152,15 @@ def resolve_windows(missions, pulls):
                         first or facts["created_at"] or ""
                     )
             except DELIVERY.DeliveryError as problem:
-                notes.append(f"{mission.branch}: {problem}")
+                notes.append(_note(mission.branch, "gh_lookup_failed", str(problem)))
         resolved.append(mission._replace(started_at=started, ended_at=ended))
         if started is None and ended is None:
             notes.append(
-                f"{mission.branch}: no window, so only declared sessions reach it"
+                _note(
+                    mission.branch,
+                    "no_window",
+                    "no window, so only declared sessions reach this mission",
+                )
             )
     return resolved, notes
 
@@ -227,6 +243,7 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
             "skipped": skipped,
             "unparsed_lines": sum(item.unparsed for item in found),
             "undated_usage_lines": sum(item.undated for item in found),
+            "out_of_order_lines": sum(item.out_of_order for item in found),
             "digest": digest(found),
         },
         "notes": notes,

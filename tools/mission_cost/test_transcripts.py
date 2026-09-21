@@ -105,13 +105,48 @@ class Discovery(unittest.TestCase):
             self.assertEqual(skipped, ["session-x/notes/stray.jsonl"])
 
 
+LOADED = {
+    "type": "assistant",
+    "sessionId": "SHOULD-NOT-BE-READ",
+    "cwd": "C:/src/SHOULD-NOT-BE-READ",
+    "gitBranch": "feat/SHOULD-NOT-BE-READ",
+    "timestamp": "2026-01-01T00:10:00.000Z",
+    "message": {
+        "role": "assistant",
+        "model": "SHOULD-NOT-BE-READ",
+        "content": "FIXTURE-ANSWER-MUST-NOT-APPEAR",
+        "usage": {
+            "input_tokens": 100,
+            "cache_creation_input_tokens": 200,
+            "cache_read_input_tokens": 300,
+            "output_tokens": 40,
+            "service_tier": "SHOULD-NOT-BE-READ",
+            "speed": "SHOULD-NOT-BE-READ",
+            "iterations": 7,
+        },
+    },
+}
+
+USAGE_LINE = (
+    '{"timestamp":"%s","message":{"usage":{"output_tokens":%d}}}\n'
+)
+
+
+def write_lines(root, *lines):
+    path = os.path.join(root, "s.jsonl")
+    with open(path, "w", encoding="utf-8", newline="\n") as stream:
+        for line in lines:
+            stream.write(line)
+    return path
+
+
 class FieldFilter(unittest.TestCase):
     def setUp(self):
         self.found, _ = transcripts.discover(FIXTURES)
         self.index = by_relative(self.found)
 
     def test_a_record_carries_exactly_the_five_registered_values(self):
-        record = self.index[f"{ALPHA}.jsonl"].records[0]
+        record = transcripts.record_from(LOADED)
         self.assertEqual(
             record._fields,
             (
@@ -124,62 +159,84 @@ class FieldFilter(unittest.TestCase):
         )
         self.assertEqual(len(record), 5)
 
-    def test_no_bait_string_survives_into_any_record(self):
+    def test_the_filter_leaves_no_trace_of_the_line_it_read(self):
+        text = repr(transcripts.record_from(LOADED))
+        for bait in BAIT:
+            self.assertNotIn(bait, text)
+
+    def test_nothing_a_transcript_retains_carries_a_bait_string(self):
+        # Stronger than checking the records, because there are no records to
+        # check: this reads everything the object still holds after the fold.
         for item in self.found:
-            for record in item.records:
-                text = repr(record)
-                for bait in BAIT:
-                    self.assertNotIn(bait, text, item.relative)
+            text = repr(vars(item))
+            for bait in BAIT:
+                self.assertNotIn(bait, text, item.relative)
 
     def test_uncounted_usage_keys_are_discarded(self):
-        # The first fixture line carries service_tier, speed and iterations
-        # inside usage. The method counts four counters and nothing else.
-        record = self.index[f"{ALPHA}.jsonl"].records[0]
+        # The line carries service_tier, speed and iterations inside usage.
+        # The method counts four counters and nothing else.
+        record = transcripts.record_from(LOADED)
         self.assertEqual(record.input_tokens, 100)
         self.assertEqual(record.cache_creation_input_tokens, 200)
         self.assertEqual(record.cache_read_input_tokens, 300)
         self.assertEqual(record.output_tokens, 40)
 
+    def test_a_line_without_usage_is_not_a_record(self):
+        self.assertIsNone(
+            transcripts.record_from({"timestamp": "2026-01-01T00:00:00Z"})
+        )
+        self.assertIsNone(transcripts.record_from({"message": {"role": "user"}}))
+        self.assertIsNone(transcripts.record_from("not an object"))
+
     def test_a_line_without_usage_is_seen_but_contributes_nothing(self):
         item = self.index[f"{ALPHA}.jsonl"]
         self.assertEqual(item.lines_seen, 5)
-        self.assertEqual(len(item.records), 4)
+        self.assertEqual(item.requests, 4)
 
     def test_a_missing_counter_reads_as_zero(self):
         with tempfile.TemporaryDirectory() as root:
-            path = os.path.join(root, "s.jsonl")
-            with open(path, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write(
-                    '{"timestamp":"2026-01-01T00:00:00.000Z",'
-                    '"message":{"usage":{"output_tokens":3}}}\n'
-                )
+            path = write_lines(root, USAGE_LINE % ("2026-01-01T00:00:00.000Z", 3))
             item = transcripts.read(path, "s.jsonl", "s", "main")
-            self.assertEqual(item.records[0].input_tokens, 0)
-            self.assertEqual(item.records[0].output_tokens, 3)
+            self.assertEqual(item.totals()["input_tokens"], 0)
+            self.assertEqual(item.totals()["output_tokens"], 3)
 
     def test_an_unparsable_line_is_counted_rather_than_raised(self):
         with tempfile.TemporaryDirectory() as root:
-            path = os.path.join(root, "s.jsonl")
-            with open(path, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write("not json at all\n")
-                stream.write(
-                    '{"timestamp":"2026-01-01T00:00:00.000Z",'
-                    '"message":{"usage":{"output_tokens":3}}}\n'
-                )
+            path = write_lines(
+                root,
+                "not json at all\n",
+                USAGE_LINE % ("2026-01-01T00:00:00.000Z", 3),
+            )
             item = transcripts.read(path, "s.jsonl", "s", "main")
             self.assertEqual(item.unparsed, 1)
-            self.assertEqual(len(item.records), 1)
+            self.assertEqual(item.requests, 1)
 
     def test_a_usage_line_without_a_timestamp_is_not_counted(self):
         # The method takes a timestamp and four counters. A usage object with
         # no timestamp cannot be placed in a window, so it is not a record.
         with tempfile.TemporaryDirectory() as root:
-            path = os.path.join(root, "s.jsonl")
-            with open(path, "w", encoding="utf-8", newline="\n") as stream:
-                stream.write('{"message":{"usage":{"output_tokens":3}}}\n')
+            path = write_lines(root, '{"message":{"usage":{"output_tokens":3}}}\n')
             item = transcripts.read(path, "s.jsonl", "s", "main")
-            self.assertEqual(item.records, [])
+            self.assertEqual(item.requests, 0)
             self.assertEqual(item.undated, 1)
+
+    def test_a_line_out_of_order_is_counted_rather_than_folded(self):
+        # A transcript is an append-only log, so this should not happen. If it
+        # ever does, a negative gap must not reach the wall clock.
+        with tempfile.TemporaryDirectory() as root:
+            path = write_lines(
+                root,
+                USAGE_LINE % ("2026-01-01T00:05:00.000Z", 1),
+                USAGE_LINE % ("2026-01-01T00:00:00.000Z", 1),
+            )
+            item = transcripts.read(path, "s.jsonl", "s", "main")
+            self.assertEqual(item.out_of_order, 1)
+            self.assertEqual(item.requests, 2)
+            self.assertEqual(item.active_seconds(), 0.0)
+            self.assertEqual(
+                item.first(),
+                transcripts.parse_timestamp("2026-01-01T00:00:00.000Z"),
+            )
 
 
 class Totals(unittest.TestCase):
@@ -240,7 +297,7 @@ class IdleBound(unittest.TestCase):
         # 00:59:00 is 2,640 seconds after 00:15:00, so the bound drops that gap
         # whole. The request itself still counts: four requests, 300 seconds.
         item = self.index[f"{ALPHA}.jsonl"]
-        self.assertEqual(len(item.records), 4)
+        self.assertEqual(item.requests, 4)
         self.assertEqual(item.active_seconds(), 300.0)
         self.assertEqual(
             (item.last() - item.first()).total_seconds(), 2940.0

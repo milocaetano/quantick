@@ -294,6 +294,49 @@ class Shape(unittest.TestCase):
         self.assertIsNone(self.missions["feat/fixture-alpha"]["delivery"])
 
 
+class Notes(unittest.TestCase):
+    def test_a_note_is_typed_so_a_consumer_can_branch_on_it(self):
+        missions = [
+            measure.ATTRIBUTION.Mission(
+                branch="feat/no-window",
+                pr=None,
+                sessions=(),
+                started_at=None,
+                ended_at=None,
+                group=None,
+                note=None,
+            )
+        ]
+        _, notes = measure.resolve_windows(missions, measure.Pulls(False, None))
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(sorted(notes[0]), ["branch", "detail", "kind"])
+        self.assertEqual(notes[0]["kind"], "no_window")
+        self.assertIn(notes[0]["kind"], measure.NOTE_KINDS)
+
+    def test_a_resolved_window_leaves_no_note(self):
+        missions = measure.ATTRIBUTION.load_registry(REGISTRY)
+        _, notes = measure.resolve_windows(missions, measure.Pulls(False, None))
+        self.assertEqual(notes, [])
+
+
+class Commands(unittest.TestCase):
+    def test_every_forge_command_is_built_in_one_place(self):
+        self.assertEqual(
+            delivery.pull_command(7)[:4], ["gh", "pr", "view", "7"]
+        )
+        self.assertEqual(
+            delivery.commits_command(7)[-1], delivery.COMMIT_FIELDS
+        )
+        self.assertEqual(
+            delivery.runs_command("feat/x", 5)[:6],
+            ["gh", "run", "list", "--branch", "feat/x", "--limit"],
+        )
+
+    def test_the_run_limit_is_a_named_constant(self):
+        self.assertEqual(delivery.CI_RUN_LIMIT, 300)
+        self.assertIn(str(delivery.CI_RUN_LIMIT), delivery.runs_command("b", 300))
+
+
 class Compare(unittest.TestCase):
     def comparison(self):
         return json.loads(
