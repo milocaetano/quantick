@@ -6,7 +6,11 @@ campaign [#563](https://github.com/milocaetano/quantick/issues/563). Graded unde
 mechanism variable `removed_context_requests`.
 
 This file holds the measurement and the reasoning. It is deliberately outside
-the context ratchet's tracked set — the instruction trees pay only for the rule.
+the context ratchet's tracked set — the instruction trees pay only for the
+rule. Four instruction files link here as the justification for what they
+state, so a session can follow the link and load this file on demand. The
+point of keeping it out of the trees is that none of them has to: the rule
+reads and decides without it, and only a reader asking *why* pays for this.
 
 ## 1. What the ranking asked for, and what the evidence now supports
 
@@ -97,6 +101,23 @@ state and cannot price what they never ran. Including them would put a zero
 into `min(removed_requests)`, and a zero pre-lever value is `void` under
 protocol section 5 rather than generous.
 
+### The unit, stated
+
+"Priced at the smallest" is per **reference mission**, not per removed pass.
+The unit is not chosen here: `experiment.py`'s `smallest_reference` selects
+`min(references, key=removed_requests)`, and `removed_requests` is a
+per-mission field of the reference record — the same field this table's fourth
+column fills. `removed_rows` then divides it by `removed_contexts` to price
+the counterfactual, so the per-pass figure is derived from the per-mission one
+rather than competing with it.
+
+Read per removed pass instead, the ordering changes: **#571 is smaller at 15.5
+requests** against #578's 21, with #572 at 22.3 and #580 at 57.5. That is a
+stricter number in one axis, and it is recorded here rather than hidden. It is
+not the one the protocol's schema carries, and this document does not switch
+to it — a lever cannot pick the unit it is graded in. The `removed_requests`
+values above and in `experiments.json` stand as measured.
+
 **The smallest reference is PR 578, at 21 requests over 1 removed context.**
 That is what the counterfactual is priced at, and #578 is also the reference
 with the smallest total, so the ordinal half of K1 is judged against **317
@@ -114,8 +135,15 @@ is visible.
 
 ## 4. The rule that ships
 
-At `medium` and below, `arch-review` and `ai-review` each get **two passes**:
-one at the draft head, one at the final head after the last repair.
+At `medium` and below, `arch-review` and `ai-review` each get **two passes per
+head-freezing round**: one at the draft head, one at the final head after the
+last repair.
+
+The unit matters, because `mission_ship_gate.sh` reads each marker at the
+exact head. Red CI after the second pass, a rebase onto a moved campaign tip
+or an in-branch delta fix all move the head and invalidate a marker that was
+current. The pass that re-stamps it is a **refresh**, not a new round, and it
+is outside the budget — a budget that forbade it would forbid the gate.
 
 1. Repairs are consolidated. Every repair batch completes before the second
    pass, so the second pass is the refresh and there is no third.
@@ -125,11 +153,13 @@ one at the draft head, one at the final head after the last repair.
    second pair of refreshes.
 3. Anything the second pass raises that is not a Blocker becomes a delta
    follow-up issue under the delivery contract.
-4. A Blocker at the second pass is repaired and re-read. That is the one
-   authorised third pass, and the pull request records it. A budget that could
-   suppress a Blocker would be a blindfold, not a budget.
-5. **Step 0 runs in every `arch-review` dispatch, at every tier.** 86 findings
-   over 66 rounds is the best yield in the chain and nothing here touches it.
+4. A Blocker at the second pass is repaired and re-read. It opens a new round,
+   with its own two passes, and the pull request records it. A budget that
+   could suppress a Blocker would be a blindfold, not a budget.
+5. **Step 0 is outside the budget.** The rule's single owner is the step 0
+   section of `arch-review`'s own skill, which states that it runs in every
+   dispatch at every tier; this line records why nothing here touches it — 86
+   findings over 66 rounds is the best yield in the chain.
 6. `ai_review_threads.sh list` still gates on zero open threads, unchanged.
 7. Green CI and `cargo run -p quantick-guards -- --report` are untouched.
 

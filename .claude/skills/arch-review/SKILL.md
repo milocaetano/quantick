@@ -25,16 +25,20 @@ Skill(code-review), args: "<effort> <target>"      one string, effort FIRST
 ```
 
 - **Level from the tier**, one notch below its name: `low` for `small` and
-  `medium`, `medium` for `high`, `high` for `max`. No tier, or one the hook
-  would not honour: `high` for a branch or PR, `medium` for a working diff. Read the tier from the file `pr-gate` reads, and report a disagreement
-  with `GOAL.md`'s `**Tier:**` line as a finding:
+  `medium`, `medium` for `high`, `high` for `max` — at `max`, say in the header
+  that `/code-review ultra` exists; only the trader triggers it. No tier, or
+  one the hook would not honour: `high` for a branch or PR, `medium` for a
+  working diff. Read the tier from the file `pr-gate` reads, and report a
+  disagreement with `GOAL.md`'s `**Tier:**` line as a finding:
 
   ```sh
   WT=/path/to/worktree
   cd "$WT" && cat "$(git rev-parse --absolute-git-dir)/mission-tier"
   ```
 
-- **Never re-run a level that ran clean**; when to stop follows [the delivery
+- **Step 0 runs in every dispatch, at every tier**, outside any round budget —
+  this bullet is that rule's only statement. Within one dispatch never re-run a
+  level that ran clean; when to stop follows [the delivery
   contract](../../../docs/workflow/delivery.md).
 - **The bug pass keeps the strong model.**
 - **Prove the level** — effort-first by construction, and no reuse notice in
@@ -104,10 +108,10 @@ full; three or more applying means say the branch outgrew its tier. Every other
 tier reads all nine. A branch over the `small` ceiling in `guardrails.sh` gets
 all nine whatever the tier file says.
 
-**Round budget.** At `medium` and below the shape pass runs twice per PR: the
-third and later passes are removed. Step 0 is outside the budget at every
-tier. The risk: a defect a repair batch introduces that only a third full
-reading catches.
+**Round budget.** At `medium` and below the shape pass runs twice per
+head-freezing round: the third and later passes go. A pass a moved head forces
+is a refresh, not a round. The risk: a defect a repair batch introduces that
+only a third full reading catches.
 [The round budget](../../../docs/quality/velocity/round-budget.md) measures it.
 
 ## The nine dimensions

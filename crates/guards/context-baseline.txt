@@ -18,16 +18,19 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-# +330 for the review round budget (L3, issue #575): the tier row, the two-pass
-# rule with its consolidation and Blocker exception, the sentence putting step 0
-# outside the budget at every tier, and the `Reviews:` line in the mission
-# summary. The measurement and the reasoning stay out of this tree, in
-# `docs/quality/velocity/round-budget.md`, which no session loads. Paid for in
-# the same change: the context cap's arithmetic, the `/mission` example, a
-# restated marker rule and a restated dispatch clause left this file, and the
-# three ceilings tightened below give back 1,037 bytes, so the `!budget` line
-# does not move.
-.claude/skills/mission/SKILL.md 15389
+# +531 for the review round budget (L3, issue #575): the tier row, the two-pass
+# rule stated in the unit `mission_ship_gate.sh` reads — two passes per
+# head-freezing round, a pass a moved head forces being a refresh rather than a
+# new round — its position in step 8's sequence, the Blocker exception, and the
+# `Reviews:` line in the mission summary with the unit its count is in. The
+# measurement and the reasoning stay out of this tree, in
+# `docs/quality/velocity/round-budget.md`, which a session loads only by
+# following the link. Partly paid inside the file: the context cap's
+# arithmetic, the `/mission` example, a restated marker rule, a restated
+# dispatch clause and the `/code-review ultra` note (which moved to the skill
+# that performs it) left this file. The remainder is in the `!budget` raise at
+# the end, which states the whole of it.
+.claude/skills/mission/SKILL.md 15590
 # +781 for the context cap: the rule that no one agent context runs a whole
 # mission, the number 80, the structural phase boundaries a context can act on,
 # and where the handoff brief is defined. The arithmetic that chose 80 stays
@@ -57,12 +60,16 @@
 # close. Written as short as it can be and still name where the number comes
 # from; nothing else in this file is this change's to cut, and the tracked
 # tree stays under the budget line below without it being moved.
-# +22 for the round budget's recorded entry: what it removes (the third and
-# later shape passes at `medium` and below), that step 0 is outside it at every
-# tier, and the escaped-defect risk that names. Almost all of it was paid inside
-# the file, by a restated delivery-contract parenthetical and a restated
-# severity clause.
-.claude/skills/arch-review/SKILL.md 12231
+# +280 for the round budget's recorded entry: what it removes (the third and
+# later shape passes at `medium` and below), that a pass a moved head forces is
+# a refresh rather than a round, and the escaped-defect risk that names. The
+# step 0 bullet became the single owner of "step 0 runs in every dispatch, at
+# every tier, outside any round budget", so no other line in the repository
+# states it as a rule. The `/code-review ultra` note returned here, to the skill
+# that performs the bug pass, from `mission`'s tier table, which a direct
+# `/arch-review` never loads. Partly paid inside the file, by a restated
+# delivery-contract parenthetical and a restated severity clause.
+.claude/skills/arch-review/SKILL.md 12489
 # +256 to record that this review is kept at `medium`, and why: the "57 runs,
 # zero refusals" that named it removable is an unmeasured rate rather than a
 # zero, because the durable report is published only once a round converges.
@@ -284,22 +291,42 @@ docs/workflow/delivery.md 12109
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
 
-# Raised by 1,018 for the review round budget (L3, issue #575), and this is the
-# whole of that raise. It is the net weight of the rule: 3,514 bytes of line
-# were written into the five files that own the review chain and 2,496 were
-# rewritten or deleted there, the deletions being the restatements, the
-# arithmetic and the one illustration the rule made redundant. What the 1,020 buys is measured rather than argued: the budget removes
-# the third and later `arch-review` and `ai-review` passes at `medium` and below,
+# Raised by 1,552 for the review round budget (L3, issue #575), 250,150 ->
+# 251,702, and this is the whole of that raise. It is the net weight of the
+# rule in the five files that own the review chain, after everything the rule
+# made redundant was deleted from them. Every byte of it is accounted for:
+#
+#   .claude/skills/mission/SKILL.md          15,059 -> 15,590   +531
+#   .claude/skills/arch-review/SKILL.md      12,209 -> 12,489   +280
+#   .claude/skills/ai-review/SKILL.md         5,197 ->  5,516   +319
+#   .claude/skills/delivery-review/SKILL.md   8,686 ->  8,942   +256
+#   docs/workflow/delivery.md                11,943 -> 12,109   +166
+#                                                              ------
+#                                                              +1,552
+#
+# Four of those five carry a signed ceiling above. `ai-review/SKILL.md` does
+# not: at 5,516 bytes it is under the 10,000-byte entry threshold, so it has no
+# ceiling of its own, and its +319 is named here because it still counts
+# against this line. That is the 1,552 minus the 1,233 the four ceilings record.
+#
+# The budget is set to the measured tracked total exactly, so this raise buys
+# no permission it does not spend: `ratchet.context.measured` equals
+# `ratchet.context.budget` and the headroom is zero, as it was before.
+#
+# What the 1,552 buys is measured rather than argued: the budget removes the
+# third and later `arch-review` and `ai-review` passes at `medium` and below,
 # priced over four reference missions at the smallest of them - 21 requests and
 # 7,027,952 tokens on PR 578, up to 115 requests on PR 580. A session pays about
-# 260 tokens for the rule; a mission that loses one refresh pass saves four
+# 375 tokens for the rule; a mission that loses one refresh pass saves four
 # orders of magnitude more. `docs/quality/velocity/round-budget.md` holds the
 # measurement and the accepted escaped-defect risk and is deliberately outside
 # this scope, so the instruction trees pay for the rule only.
 #
-# The three ceilings above were tightened to their measured bytes in the same
-# change (-1,037 of recorded permission: the generated hook registry, and the
-# two campaign contracts). That lowers what this tree is allowed to weigh but
-# not what it weighs, so it does not pay this raise; it is recorded as the
-# lowering CLAUDE.md asks for beside a raise, not as the payment.
-!budget 251168
+# Separately, three ceilings above were tightened to their measured bytes in
+# the same change (-1,037 of recorded permission: the generated hook registry,
+# and the two campaign contracts). That lowers what this tree is allowed to
+# weigh but not what it weighs, so it does not pay this raise; it is the
+# lowering CLAUDE.md asks for beside a raise, not the payment. Recorded
+# permission therefore moves 166,213 -> 166,409, +196 net: +1,233 raised
+# against -1,037 tightened.
+!budget 251702

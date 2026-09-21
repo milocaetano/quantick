@@ -65,9 +65,10 @@ severity first, anchored at `file:line`, one per finding, body on stdin to
 `sh .claude/hooks/ai_review_threads.sh post <pr> <file> <line>`. Never apply a
 fix.
 
-**Round budget.** At `medium` and below this review runs twice per PR, the
-draft head then the final head; `list` still gates on zero open threads. The
-risk: a defect a repair batch introduces that only a third reading catches.
+**Round budget.** At `medium` and below this review runs twice per
+head-freezing round, the draft head then the final head; a pass a moved head
+forces is a refresh, not a round, and `list` still gates on zero open threads.
+The risk: a defect a repair batch introduces that only a third reading catches.
 [The round budget](../../../docs/quality/velocity/round-budget.md) measures it.
 
 **Round one reviews the whole diff.** Missing prior report, changed base or

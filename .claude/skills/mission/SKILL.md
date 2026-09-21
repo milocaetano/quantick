@@ -11,9 +11,8 @@ Campaign children override the main-based examples via the
 Argument: an optional tier, then the objective. No objective: ask for it
 before anything else. The first word selects `small`, `medium`, `high` or
 `max`, bare or flagged (`--small`); otherwise keep the whole objective and
-default to `small`. Use a
-flagged tier when the objective itself starts with a tier word. Step 1 echoes
-the parse.
+default to `small`. Use a flagged tier when the objective itself starts with a
+tier word. Step 1 echoes the parse.
 
 A mission owns one branch, worktree and PR, and picks the skills done needs. [The delivery contract](../../../docs/workflow/delivery.md) owns
 requirement reconciliation, gate mapping and proportional validation; apply its
@@ -30,10 +29,10 @@ supplies continuation (step 9). Rationale:
 | **3** questions | none; doubts become `S`, bar the exception below | ≤ 2, only where a wrong guess throws work away | ≤ 4 | ≤ 4, re-checked against the plan before code |
 | **4** gates | English and *Any code change* whole; other rows only where the diff reaches that territory | full table | full table | full table; UI rows apply to a surface touched even indirectly |
 | **5** `GOAL.md` | short: objective, `**Tier:**` line, ledger, `S`, criteria, verbatim request | full | full | full |
-| **8** bug pass (`arch-review` step 0) | `code-review` at `low` | `low` | `medium` | `high`; tell the trader `/code-review ultra` exists |
+| **8** bug pass (`arch-review` step 0) | `code-review` at `low` | `low` | `medium` | `high` |
 | **8** shape pass | dimensions the diff touches; **8 always** | full | full | full |
 | **8** `delivery-review` | **not run** | **completeness pass only**, inline | full | full |
-| **8** review passes | two each; step 0 in each | two each | unbounded | unbounded |
+| **8** review passes | two per round each | two per round each | unbounded | unbounded |
 | **9** `/goal` line | skipped | printed | printed | printed |
 
 No tier removes `arch-review`, the bug pass, applicable validation, final-head
@@ -56,9 +55,9 @@ A request is a billed call, not a turn; 80 of them is nearer 25 turns. Read
 it, never guess:
 `python tools/mission_cost/measure.py contexts --role subagent --since <the claim's started_at>`.
 The boundaries are structural: steps **1–6**, **7 to the draft PR**, then step
-8; split either at a commit-sized seam rather than run long. A handoff
-carries only what [the
-delivery contract](../../../docs/workflow/delivery.md#hand-off-before-a-context-accumulates)
+8; split either at a commit-sized seam rather than run long. A handoff carries
+only what [the delivery
+contract](../../../docs/workflow/delivery.md#hand-off-before-a-context-accumulates)
 lists, never the conversation.
 
 ## Steps
@@ -174,7 +173,7 @@ lists, never the conversation.
       Criteria: <IDs and delivered/deferred/open disposition>
       Validation: <commands/scenarios and results; link external raw artifacts>
       Read cost: <from the PR's read-cost comment>
-      Reviews: <passes per review>
+      Reviews: arch <n>, ai <n>, delivery <n> - one per durable report
       <!-- end quantick-mission-summary:v1 -->
       ```
 
@@ -193,8 +192,9 @@ lists, never the conversation.
       `arch-review-ok`.
    3. **`Skill(ai-review)`** — every tier, same PR/key; its producer records
       `ai-review-complete`. Close every thread `list` returns.
-   4. **`Skill(delivery-review)`** — before their second passes; its producer
-      records `delivery-review-ok`. Skipped only at `small`.
+   4. **`Skill(delivery-review)`** — after 6's last batch, before 2 and 3
+      re-read it; its producer records `delivery-review-ok`. Skipped at
+      `small`.
    5. **CI watch** — a `sonnet` agent on `gh pr checks <pr> --watch`; it
       returns `GREEN|RED <head>` and the failing job names, never a log.
    6. **Repair, two of the contract's batches at most** — a strong-model agent
@@ -210,12 +210,14 @@ lists, never the conversation.
    8. After PASS, delete the local `.claude/GOAL.md`; the PR and reports are
       the record.
 
-   **Two passes at `medium` and below.** `arch-review` and `ai-review` each
-   read the draft head, then the final head after the last repair. Consolidate
-   repairs so the second is that refresh and no third is owed; a non-Blocker it
-   raises is a delta follow-up, a Blocker is repaired, re-read and that third
-   pass recorded on the PR. Step 0 runs in every `arch-review` dispatch at
-   every tier, outside the budget.
+   **Two passes at `medium` and below.** Two per review **per head-freezing
+   round**: 2 and 3 read the draft head, then re-read once after 6's
+   consolidated batch and 4. Consolidate repairs so that re-read is the last.
+   A pass a moved head forces — red CI, a rebase, an in-branch delta fix —
+   re-stamps the marker `mission_ship_gate.sh` reads at the exact head: a
+   refresh, outside the budget, not a new round. A Blocker opens a new round;
+   anything lesser is a delta follow-up. Step 0 runs in every `arch-review`
+   dispatch at every tier, outside the budget; `arch-review` owns that rule.
    [The round budget](../../../docs/quality/velocity/round-budget.md).
 
    A stale marker is replaced only after a fresh verdict under the delivery
