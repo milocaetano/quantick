@@ -32,7 +32,7 @@ What *can* be measured without attribution says this:
   **1,376 s → 2,956 s**. The runs got faster and there are nearly three times
   as many of them.
 - The **session-opening frame did not shrink** after #546 halved the
-  always-loaded instructions: median 58,146 → 58,795 tokens, which is
+  always-loaded instructions: median 58,146 → 59,489 tokens, which is
   `no_reduction` under the registered rule. The arithmetic explains why: what
   #546 removed from the frame a Claude Code session actually loads is about
   1,000 bytes, roughly 0.15% of a request.
@@ -80,11 +80,13 @@ The CI figures come from one `gh` call, recorded in
 
 **The transcript directory is live and append-only.** A later run reads a
 larger directory and produces different totals, which is why every committed
-artifact carries `inputs.digest`. The baseline report's digest is
-`sha256:3797ff9123d3ec131536ceebdf3aa8c7f85d56ae4fda95e147945baadd573597`. The
-verdict and frame files were produced minutes apart from the same directory and
-carry their own digests; the session that ran this measurement is itself in the
-data, and grew while it ran.
+artifact carries `inputs.digest`, and each one carries its own. The baseline report's is
+`sha256:3797ff91...`, the four frame readings share
+`sha256:fc97b464...`, and the verdict files carry theirs. They were taken hours
+apart from one growing directory, which is why the frame readings cover 40
+sessions where the baseline report covers 39: the session that ran this
+measurement is itself in the data, and grew while it ran. A figure is quoted
+from the file that carries it and nowhere else.
 
 ## What the instrument saw
 
@@ -417,9 +419,9 @@ in the coverage period:
 | | n | p25 | median | p75 |
 | --- | ---: | ---: | ---: | ---: |
 | before | 32 | 56,383 | **58,146** | 59,547 |
-| after | 7 | 58,081 | **58,795** | 60,556 |
+| after | 8 | 58,308 | **59,489** | 60,959 |
 
-Verdict `no_reduction`: the after median did not fall. It rose 1.1%.
+Verdict `no_reduction`: the after median did not fall. It rose 2.3%.
 
 **The arithmetic says it could not have shown up.** In a Claude Code session
 only `CLAUDE.md` is loaded up front — the frame this measuring session itself
@@ -556,16 +558,16 @@ drops them before building a request.
 | | n | p25 | median | p75 | range |
 | --- | ---: | ---: | ---: | ---: | --- |
 | before | 36 | 56,559 | 58,219 | 59,800 | 43,203 – 66,558 |
-| after | 3 | 58,076 | 58,534 | 59,731 | 57,618 – 60,928 |
+| after | 4 | 58,305 | 59,731 | 60,959 | 57,618 – 61,052 |
 
-The registered rule returns `inconclusive`: n = 3 after, and the minimum is 5.
+The registered rule returns `inconclusive`: n = 4 after, and the minimum is 5.
 But the effect size matters more than the count here. 63,973 bytes is roughly
 16,000–21,000 tokens. Had those schemas been reaching the model, the opening
 frame would have fallen by about a quarter — six times the interquartile range
-of 3,241 tokens — and all three post-merge sessions would sit near 38,000
-rather than near 58,500. None does. **A drop of the size #556 would have caused
-is excluded by the data even at n = 3; a drop of zero is exactly what is
-observed.**
+of 3,241 tokens — and all four post-merge sessions would sit near 40,000
+rather than near 59,000. None does; the lowest is 57,618. **A drop of the size
+#556 would have caused is excluded by the data even at n = 4; a drop of zero is
+what is observed.**
 
 This is agreement, not disagreement: #556 was right about itself, and right to
 put it in writing. Its value is the 26,000-byte ceiling test it leaves behind,
@@ -688,11 +690,11 @@ report can explain it.
 - **These readings expire.** The transcript directory is pruned by the host and
   grows while it is read. Re-running any command in this report on a later day
   gives different totals and a different digest; that is the input moving, not
-  the harness. It happened during this mission: re-running the #546 opening
-  frame after two more sessions had opened gave n = 8 after instead of 7 and a
-  median of 59,489 instead of 58,795 -- the same `no_reduction` verdict, and
-  further from a reduction, not nearer. The committed files are the readings as
-  taken, at the digests they carry.
+  the harness. It happened twice during this mission: an earlier run of the
+  #546 opening frame, two sessions before the committed one, gave n = 7 after
+  and a median of 58,795 where the committed reading gives n = 8 and 59,489 --
+  the same `no_reduction` verdict, and further from a reduction, not nearer.
+  The committed files are the readings as taken, each at the digest it carries.
 
 ## Baseline figures for the charter
 

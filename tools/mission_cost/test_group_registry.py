@@ -73,9 +73,9 @@ class GroupFor(unittest.TestCase):
         self.assertIsNone(group_registry.group_for(mission("d", None, PIVOT), offset))
 
     def test_an_instant_that_is_not_one_is_refused_rather_than_compared(self):
-        with self.assertRaises(group_registry.GroupingError):
+        with self.assertRaises(group_registry.InstantError):
             group_registry.group_for(mission("a", "yesterday", None), PIVOT)
-        with self.assertRaises(group_registry.GroupingError):
+        with self.assertRaises(group_registry.InstantError):
             group_registry.group_for(mission("a", None, None), "soon")
 
 
@@ -155,6 +155,113 @@ class Command(unittest.TestCase):
             json.dump({"schema": 99, "missions": []}, stream)
         with self.assertRaises(SystemExit):
             group_registry.main(["--registry", broken, "--pivot", PIVOT])
+
+
+class NotARegistry(unittest.TestCase):
+    """A document that is not a registry is refused, not grouped to all-null.
+
+    A measurement report also carries `schema: 1` and a `missions` list, and its
+    entries keep their window under a nested `window` key. Grouped, every one of
+    them would come back `null` -- a well-formed document that reads exactly
+    like an honest "every mission straddled the pivot". That is the worst
+    available failure mode for a campaign whose output is verdicts, and it is
+    one mistyped `--registry` away.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+
+    def write(self, document):
+        path = os.path.join(self.directory.name, "document.json")
+        with open(path, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(document, stream)
+        return path
+
+    def test_a_measurement_report_is_refused(self):
+        report = self.write(
+            {
+                "schema": 1,
+                "missions": [
+                    {
+                        "branch": "feat/example",
+                        "pr": 1,
+                        "group": None,
+                        "sessions": [{"session": "8f14e45f", "method": "window"}],
+                        "window": {
+                            "started_at": "2026-09-19T00:00:00+00:00",
+                            "ended_at": "2026-09-19T12:00:00+00:00",
+                        },
+                    }
+                ],
+            }
+        )
+        with self.assertRaises(group_registry.RegistryError):
+            group_registry.load(report)
+
+    def test_the_committed_baseline_report_is_refused(self):
+        here = os.path.dirname(os.path.dirname(HERE))
+        report = os.path.join(here, "docs", "quality", "velocity", "baseline-report.json")
+        if not os.path.isfile(report):
+            self.skipTest("the committed baseline report is not in this tree")
+        with self.assertRaises(group_registry.RegistryError):
+            group_registry.load(report)
+
+    def test_a_document_with_no_missions_list_is_refused(self):
+        path = self.write({"schema": 1, "metric": "opening_prompt_tokens"})
+        with self.assertRaises(group_registry.RegistryError):
+            group_registry.load(path)
+
+
+class CommittedRegistries(unittest.TestCase):
+    """The seven grouped registries still re-derive from the one registry.
+
+    `docs/quality/velocity/baseline.md` states that each of them is exactly this
+    tool run at that pull request's merge instant, and the report's four
+    wall-clock tables are reconciled through them. The population is defined by
+    a rule over a window that grows, so the day an 88th mission joins
+    `missions.json` the seven copies go stale and the tables quietly grade a
+    different population than the registry holds. This is what notices.
+    """
+
+    PIVOTS = {
+        546: "2026-09-20T01:43:13Z",
+        547: "2026-09-19T21:42:46Z",
+        550: "2026-09-20T03:40:45Z",
+        552: "2026-09-20T01:55:27Z",
+        553: "2026-09-20T10:12:23Z",
+        556: "2026-09-20T15:41:43Z",
+        557: "2026-09-20T21:45:30Z",
+    }
+
+    def setUp(self):
+        self.repo = os.path.dirname(os.path.dirname(HERE))
+        self.registry = os.path.join(
+            self.repo, "docs", "quality", "mission-cost", "missions.json"
+        )
+        self.grouped = os.path.join(self.repo, "docs", "quality", "velocity", "registries")
+        if not os.path.isfile(self.registry) or not os.path.isdir(self.grouped):
+            self.skipTest("the committed registries are not in this tree")
+
+    def test_each_committed_registry_is_byte_identical_to_a_fresh_grouping(self):
+        document = group_registry.load(self.registry)
+        for pr, pivot in sorted(self.PIVOTS.items()):
+            path = os.path.join(self.grouped, f"pr-{pr}.json")
+            with self.subTest(pr=pr):
+                self.assertTrue(os.path.isfile(path), path)
+                fresh = group_registry.render(
+                    group_registry.regroup(document, pivot)
+                ).encode("utf-8")
+                with open(path, "rb") as stream:
+                    self.assertEqual(stream.read(), fresh)
+
+    def test_each_committed_registry_covers_the_whole_population(self):
+        document = group_registry.load(self.registry)
+        expected = len(document["missions"])
+        for pr in sorted(self.PIVOTS):
+            path = os.path.join(self.grouped, f"pr-{pr}.json")
+            with self.subTest(pr=pr), open(path, encoding="utf-8") as stream:
+                self.assertEqual(len(json.load(stream)["missions"]), expected)
 
 
 if __name__ == "__main__":

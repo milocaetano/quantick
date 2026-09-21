@@ -55,6 +55,27 @@ class OneOwner(unittest.TestCase):
             self.assertIs(module.render, canonical.render, name)
             self.assertIs(module.emit, canonical.emit, name)
 
+    def test_every_command_that_compares_instants_uses_the_one_rule(self):
+        """The older contract, and the more load-bearing one.
+
+        Which side of a pivot an instant falls on decides every verdict this
+        package produces. A second implementation that tolerated a naive
+        timestamp, or compared before normalising to UTC, would group a mission
+        the opposite way from `measure.py` over the same registry and nothing
+        would notice. So the rule has one owner, like the byte contract.
+        """
+        transcripts = load("transcripts")
+        for name in ("group_registry", "opening_frame"):
+            module = load(name)
+            self.assertIs(module.instant, transcripts.require_instant, name)
+            self.assertIs(module.InstantError, transcripts.InstantError, name)
+
+    def test_the_registry_reader_refuses_a_bad_instant_through_the_same_rule(self):
+        """`attribution` re-raises it as a registry fault, and says so."""
+        attribution = load("attribution")
+        with self.assertRaises(attribution.RegistryError):
+            attribution._instant({"branch": "feat/x", "ended_at": "soon"}, "ended_at")
+
 
 if __name__ == "__main__":
     unittest.main()

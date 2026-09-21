@@ -1,17 +1,24 @@
 {
+  "inputs": {
+    "digest": "sha256:fc97b4644b33c577ef8923512907bad82031ffe5e4445400f3735bebf2690bc1",
+    "roots": [
+      "C--src-quantick"
+    ],
+    "transcripts": 50
+  },
   "method": "docs/quality/mission-cost/method.md",
   "metric": "opening_prompt_tokens",
-  "pivot": "2026-09-20T15:41:43+00:00",
+  "pivot": "2026-09-20T15:41:43Z",
   "registered_comparison": false,
   "result": {
     "after": {
-      "max": 60928.0,
-      "mean": 59026.666666666664,
-      "median": 58534.0,
+      "max": 61052.0,
+      "mean": 59533.0,
+      "median": 59731.0,
       "min": 57618.0,
-      "n": 3,
-      "p25": 58076.0,
-      "p75": 59731.0
+      "n": 4,
+      "p25": 58305.0,
+      "p75": 60959.0
     },
     "before": {
       "max": 66558.0,
@@ -22,7 +29,7 @@
       "p25": 56558.5,
       "p75": 59800.25
     },
-    "reason": "n is 36 before and 3 after; the registered minimum is 5 in each group",
+    "reason": "n is 36 before and 4 after; the registered minimum is 5 in each group",
     "relative_change": null,
     "thresholds": {
       "max_unplaced_share": 0.2,
@@ -266,16 +273,22 @@
       "prompt_tokens": 60928,
       "root": "C--src-quantick",
       "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6"
+    },
+    {
+      "at": "2026-09-21T03:47:30.936000+00:00",
+      "prompt_tokens": 61052,
+      "root": "C--src-quantick",
+      "session": "b421d777-14f4-4ae9-9f9c-7d34120f3a7c"
     }
   ],
-  "since": "2026-09-11T15:16:00+00:00",
+  "since": "2026-09-11T15:16:00Z",
   "summary": {
     "max": 66558.0,
-    "mean": 57991.282051282054,
-    "median": 58236.0,
+    "mean": 58067.8,
+    "median": 58237.0,
     "min": 43203.0,
-    "n": 39,
-    "p25": 56869.5,
-    "p75": 59836.5
+    "n": 40,
+    "p25": 57004.25,
+    "p75": 59977.5
   }
 }

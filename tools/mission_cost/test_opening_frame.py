@@ -87,15 +87,54 @@ class Build(unittest.TestCase):
         self.assertEqual([r["session"] for r in kept["sessions"]], ["b", "c"])
 
     def test_an_instant_that_is_not_one_is_refused_rather_than_compared(self):
-        with self.assertRaises(opening_frame.ReadingError):
+        with self.assertRaises(opening_frame.InstantError):
             opening_frame.build(self.rows(), "yesterday", None)
-        with self.assertRaises(opening_frame.ReadingError):
+        with self.assertRaises(opening_frame.InstantError):
             opening_frame.build(self.rows(), None, "soon")
 
     def test_the_report_says_it_is_not_the_registered_comparison(self):
         found = opening_frame.build(self.rows(), None, None)
         self.assertIs(found["registered_comparison"], False)
         self.assertEqual(found["metric"], "opening_prompt_tokens")
+
+    def test_the_reading_carries_the_input_set_it_came_from(self):
+        found = opening_frame.build(self.rows(), None, None)
+        self.assertEqual(found["inputs"]["roots"], ["r"])
+        self.assertEqual(found["inputs"]["transcripts"], 3)
+        self.assertTrue(found["inputs"]["digest"].startswith("sha256:"))
+
+    def test_the_digest_covers_every_opening_found_not_only_the_kept_ones(self):
+        """`--since` narrows the reading; it must not narrow its provenance.
+
+        The transcript directory is live and append-only. A digest taken after
+        the filter would be blind to a session that opened before the floor,
+        and two runs over a directory that grew would agree while the reading
+        behind them had changed.
+        """
+        whole = opening_frame.build(self.rows(), None, None)
+        narrowed = opening_frame.build(self.rows(), "2026-01-02T00:00:00+00:00", None)
+        self.assertEqual(narrowed["summary"]["n"], 2)
+        self.assertEqual(narrowed["inputs"]["digest"], whole["inputs"]["digest"])
+        self.assertEqual(narrowed["inputs"]["transcripts"], 3)
+
+    def test_one_more_session_changes_the_digest(self):
+        rows = self.rows()
+        before = opening_frame.build(rows, None, None)["inputs"]["digest"]
+        rows.append(
+            {
+                "root": "r",
+                "session": "d",
+                "at": "2026-01-04T00:00:00+00:00",
+                "prompt_tokens": 40,
+            }
+        )
+        self.assertNotEqual(opening_frame.build(rows, None, None)["inputs"]["digest"], before)
+
+    def test_the_digest_does_not_depend_on_the_order_rows_arrive_in(self):
+        rows = self.rows()
+        forwards = opening_frame.build(rows, None, None)["inputs"]["digest"]
+        backwards = opening_frame.build(list(reversed(rows)), None, None)["inputs"]["digest"]
+        self.assertEqual(forwards, backwards)
 
 
 class Command(unittest.TestCase):

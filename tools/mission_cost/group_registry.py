@@ -19,16 +19,23 @@ it from the output:
   delivered the change lands here by construction: its window ends at the
   pivot, not before it.
 
-Instants are **parsed and compared as instants**, through the one parser in
-``transcripts.py``. Comparing them as strings would let the spelling decide the
-group: ``2026-09-20T01:43:13Z`` sorts *after* ``2026-09-20T01:43:13+00:00``
-because ``Z`` sorts after ``+``, so the same moment written two ways would land
-on two sides of the same pivot. A registry instant or a pivot that is not an
-ISO-8601 instant is refused rather than silently misgrouped.
-
 A mission that straddles the pivot is excluded rather than assigned, for the
 same reason section 2 never divides a session: there is no honest way to say
 which side of the change its cost belongs to.
+
+Instants are **parsed and compared as instants**, through
+``transcripts.require_instant``, the package's one owner of that rule. Comparing
+them as strings would let the spelling decide the group: ``2026-09-20T01:43:13Z``
+sorts *after* ``2026-09-20T01:43:13+00:00`` because ``Z`` sorts after ``+``, so
+the same moment written two ways would land on two sides of one pivot.
+
+**What is read is a registry, not merely some JSON.** The document goes through
+``attribution.parse_registry`` — the same reader ``measure.py`` uses — before
+anything is grouped, so a document that is not a registry is refused instead of
+being grouped silently to all-``null``, which would read exactly like an honest
+"every mission straddled the pivot". The *output* is built from the original
+entries rather than from the parsed ones, so a window keeps the spelling the
+registry gave it and a regrouping stays byte-comparable with the one before it.
 
 This tool reads and writes registries. It never touches a transcript.
 """
@@ -54,9 +61,10 @@ def _bootstrap():
     key = "quantick_mission_cost_transcripts"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(
-        key, os.path.join(HERE, "transcripts.py")
-    )
+    path = os.path.join(HERE, "transcripts.py")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"cannot load transcripts.py: no file at {path}")
+    spec = importlib.util.spec_from_file_location(key, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load transcripts.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
@@ -66,31 +74,27 @@ def _bootstrap():
 
 
 TRANSCRIPTS = _bootstrap()
+ATTRIBUTION = TRANSCRIPTS.load("attribution")
 CANONICAL = TRANSCRIPTS.load("canonical")
 
+# Bound, never redefined: one byte contract, one instant rule, one registry
+# reader for the whole package.
 render = CANONICAL.render
 emit = CANONICAL.emit
-
-
-class GroupingError(RuntimeError):
-    """An instant this tool was given is not an instant."""
-
-
-def instant(value, what):
-    """Parse an ISO-8601 instant, or refuse rather than compare its spelling."""
-    found = TRANSCRIPTS.parse_timestamp(value)
-    if found is None:
-        raise GroupingError(f"{what} is not an ISO-8601 instant: {value!r}")
-    return found
+instant = TRANSCRIPTS.require_instant
+InstantError = TRANSCRIPTS.InstantError
+RegistryError = ATTRIBUTION.RegistryError
 
 
 def load(path):
+    """Read a registry and validate it through the package's registry reader.
+
+    ``parse_registry``'s result is discarded on purpose: it is here for the
+    refusal, and the document that goes out is the one that came in.
+    """
     with open(path, encoding="utf-8") as stream:
         document = json.load(stream)
-    if not isinstance(document, dict) or document.get("schema") != SCHEMA:
-        raise ValueError(f"{path}: not a schema {SCHEMA} mission registry")
-    if not isinstance(document.get("missions"), list):
-        raise ValueError(f"{path}: the registry needs a `missions` list")
+    ATTRIBUTION.parse_registry(document)
     return document
 
 
@@ -141,7 +145,12 @@ def main(argv=None):
     try:
         document = load(options.registry)
         grouped = regroup(document, options.pivot)
-    except (OSError, ValueError, json.JSONDecodeError, GroupingError) as problem:
+    except (
+        OSError,
+        json.JSONDecodeError,
+        InstantError,
+        RegistryError,
+    ) as problem:
         parser.error(str(problem))
     emit(render(grouped), options.out)
     return 0

@@ -29,12 +29,20 @@ What moves it besides the instructions, and therefore bounds any claim:
 - a resumed session does not open on a fresh frame, and nothing in the five
   fields this reader takes can tell a resumption from a fresh start.
 
+Every document it writes carries an ``inputs`` block with the roots it read,
+how many main-thread transcripts it found and a digest over all of them, for the
+same reason ``measure.py`` does: the transcript directory is live and
+append-only, so a number taken from it is only checkable against the directory
+state that produced it. The digest covers every opening found, before ``--since``
+drops any of them -- narrowing a reading must not narrow its provenance.
+
 The privacy boundary is ``transcripts.py``'s: this program calls
 ``record_from`` and reads the five fields it returns. It opens no line any other
 way.
 """
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -48,9 +56,10 @@ def _bootstrap():
     key = "quantick_mission_cost_transcripts"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(
-        key, os.path.join(HERE, "transcripts.py")
-    )
+    path = os.path.join(HERE, "transcripts.py")
+    if not os.path.isfile(path):
+        raise RuntimeError(f"cannot load transcripts.py: no file at {path}")
+    spec = importlib.util.spec_from_file_location(key, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load transcripts.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
@@ -67,29 +76,32 @@ VERSION = 1
 METHOD = "docs/quality/mission-cost/method.md"
 
 # Bound here, never redefined here: `canonical.py` owns section 7's byte
-# contract and `transcripts.py` owns where this host keeps its transcripts.
+# contract, and `transcripts.py` owns where this host keeps its transcripts and
+# the one rule for turning text into an instant. A session's own instant comes
+# from `datetime.isoformat`; a `--since` or a `--pivot` comes from whoever typed
+# it, and the two are compared as instants or not at all.
 render = CANONICAL.render
 emit = CANONICAL.emit
 default_transcripts = TRANSCRIPTS.default_transcripts
+instant = TRANSCRIPTS.require_instant
+InstantError = TRANSCRIPTS.InstantError
 
 
-class ReadingError(RuntimeError):
-    """An instant this tool was given is not an instant."""
+def digest(rows):
+    """A stable fingerprint of what this reading was taken from.
 
-
-def instant(value, what):
-    """Parse an ISO-8601 instant, or refuse rather than compare its spelling.
-
-    ``Z`` sorts after ``+`` in ASCII, so ``2026-09-20T01:43:13Z`` and
-    ``2026-09-20T01:43:13+00:00`` -- the same moment -- land on opposite sides
-    of each other when compared as strings. A session's own instant comes from
-    ``datetime.isoformat``; a ``--since`` or ``--pivot`` comes from whoever
-    typed it. They are compared as instants or not at all.
+    The transcript directory is live and append-only, so a number from it is
+    only checkable against the directory state that produced it -- which is why
+    `measure.py` stamps every document it writes. This tool reads one line per
+    main-thread transcript, so its input set is exactly those openings: every
+    row found, before `--since` drops any of them.
     """
-    found = TRANSCRIPTS.parse_timestamp(value)
-    if found is None:
-        raise ReadingError(f"{what} is not an ISO-8601 instant: {value!r}")
-    return found
+    lines = sorted(
+        f"{row['root']}/{row['session']}|{row['at']}|{row['prompt_tokens']}"
+        for row in rows
+    )
+    text = "\n".join(lines)
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def first_record(path):
@@ -160,6 +172,11 @@ def build(rows, since, pivot):
         "registered_comparison": False,
         "since": since,
         "pivot": pivot,
+        "inputs": {
+            "roots": sorted({row["root"] for row in rows}),
+            "transcripts": len(rows),
+            "digest": digest(rows),
+        },
         "sessions": [row for _, row in kept],
         "summary": DISPERSION.summary([row["prompt_tokens"] for _, row in kept]),
     }
@@ -203,7 +220,7 @@ def main(argv=None):
             )
     try:
         document = build(openings(roots), options.since, options.pivot)
-    except ReadingError as problem:
+    except InstantError as problem:
         parser.error(str(problem))
     emit(render(document), options.out)
     return 0
