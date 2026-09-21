@@ -832,5 +832,102 @@ class Identify(unittest.TestCase):
             self.assertNotIn(forbidden, rendered)
 
 
+class Contexts(unittest.TestCase):
+    """How long the running context already is, against the cap.
+
+    The rule lives in `.claude/skills/mission/SKILL.md` and its arithmetic in
+    `docs/quality/velocity/context-cap.md`. A context cannot count its own
+    turns from the inside, so the command is the only way it sees the number,
+    and these cases pin down what it is allowed to claim about which context
+    it found. The fixture session is the campaign shape again: a main thread
+    spanning the session and two dispatched agents living inside it.
+    """
+
+    ALPHA_MAIN = f"{ALPHA}.jsonl"
+    ALPHA_ONE = f"{ALPHA}/subagents/agent-1111.jsonl"
+
+    def contexts(self, *extra):
+        return json.loads(
+            run("contexts", "--transcripts", TRANSCRIPTS, "--session", ALPHA, *extra)
+        )
+
+    def test_since_resolves_the_running_context_by_containment(self):
+        """The claimed `started_at` names the context exactly, not by guess."""
+        found = self.contexts("--since", "2026-01-01T00:11:30Z", "--role", "subagent")
+        self.assertEqual(found["resolution"], "containment")
+        self.assertFalse(found["ambiguous"])
+        self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
+        self.assertEqual(found["requests"], 2)
+
+    def test_without_since_the_answer_says_it_is_the_newest_writer(self):
+        """A guess has to be readable as a guess.
+
+        Without a claimed instant the command can only offer whoever wrote
+        last, which a sibling agent running beside the caller will often be.
+        `resolution` carries that word so a reader can tell the heuristic from
+        the measurement instead of reading the same number twice.
+        """
+        found = self.contexts()
+        self.assertEqual(found["resolution"], "newest_write")
+        self.assertEqual(found["running"]["relative"], self.ALPHA_MAIN)
+        self.assertEqual(found["requests"], 4)
+
+    def test_role_keeps_the_main_thread_from_competing_with_a_child(self):
+        """The same reason `identify` has the flag, one layer along.
+
+        The coordinator's thread contains every instant its children claimed,
+        so a child asking by containment alone finds two contexts and gets no
+        number at all. With `--role` it finds its own.
+        """
+        window = ("--since", "2026-01-01T00:11:30Z")
+        both = self.contexts(*window)
+        child = self.contexts(*window, "--role", "subagent")
+        self.assertTrue(both["ambiguous"])
+        self.assertIsNone(both["running"])
+        self.assertNotIn("requests", both)
+        self.assertEqual(
+            sorted(row["relative"] for row in both["candidates"]),
+            [self.ALPHA_MAIN, self.ALPHA_ONE],
+        )
+        self.assertFalse(child["ambiguous"])
+        self.assertEqual(child["running"]["relative"], self.ALPHA_ONE)
+
+    def test_remaining_and_over_cap_are_the_caps_arithmetic(self):
+        """`remaining` is cap minus requests, and it is allowed to go negative.
+
+        A context over the cap has to be told so, not shown a floor at zero:
+        the number is how far past the handoff it already is.
+        """
+        window = ("--since", "2026-01-01T00:11:30Z", "--role", "subagent")
+        under = self.contexts(*window)
+        over = self.contexts(*window, "--cap", "1")
+        self.assertEqual(under["remaining"], under["cap"] - under["requests"])
+        self.assertFalse(under["over_cap"])
+        self.assertEqual(over["cap"], 1)
+        self.assertEqual(over["remaining"], -1)
+        self.assertTrue(over["over_cap"])
+
+    def test_a_missing_session_id_is_an_error_naming_the_variable(self):
+        """The one failure a real context will hit, and it must read as advice.
+
+        The session id comes from the environment and nowhere else, so a
+        context started outside Claude Code has to be told which variable is
+        missing. A traceback would say only that a string was None.
+        """
+        room = dict(os.environ)
+        room.pop("CLAUDE_CODE_SESSION_ID", None)
+        result = subprocess.run(
+            [sys.executable, MEASURE, "contexts", "--transcripts", TRANSCRIPTS],
+            env=room,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        complaint = result.stderr.decode("utf-8")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("CLAUDE_CODE_SESSION_ID", complaint)
+        self.assertNotIn("Traceback", complaint)
+        self.assertEqual(result.stdout, b"")
+
+
 if __name__ == "__main__":
     unittest.main()
