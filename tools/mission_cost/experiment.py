@@ -150,7 +150,7 @@ def counterfactual_rows(entry, reading):
     never on a comparison between two missions that are not interchangeable.
     """
     rows = _rows(reading["contexts"])
-    form = entry["form"]
+    form = entry.get("form")
     if form == "frame":
         # The same contexts. Only the per-request frame differs, and that is
         # applied as a trim at pricing time rather than as a different vector.
@@ -230,8 +230,11 @@ def _void_reasons(entry, reading):
     refuted one rather than given the benefit of the doubt.
     """
     found = []
-    if entry["form"] == REFUSED_FORM:
+    form = entry.get("form")
+    if form == REFUSED_FORM:
         found.append("proof form totals is refused by protocol section 3")
+    elif form not in FORMS:
+        found.append(f"unregistered proof form {form!r}")
     if reading.get("attribution") != "declared":
         found.append("attribution is not declared; a window-inferred reading is void")
     if reading.get("contested"):
@@ -256,11 +259,23 @@ def _void_reasons(entry, reading):
     return found
 
 
-def _mechanism_move(reading):
-    """How far the declared variable moved, as a share of its pre-lever value."""
+def _mechanism_move(entry, reading):
+    """How far the declared variable moved, as a share of its pre-lever value.
+
+    For a `removal` the pre-lever value is **derived**, not read: it is the
+    smallest reference mission's removed-request count. A lever that could
+    write its own `before` could make any `after` look like a fall, which is
+    the one place a hand-written reading would have been able to grade itself.
+    """
     mechanism = reading.get("mechanism") or {}
-    before = float(mechanism.get("before", 0.0))
     after = float(mechanism.get("after", 0.0))
+    if entry.get("form") == "removal":
+        reference = smallest_reference(entry)
+        if reference is None:
+            return None
+        before = float(reference["removed_requests"])
+    else:
+        before = float(mechanism.get("before", 0.0))
     if before <= 0:
         return None
     return (before - after) / before
@@ -320,14 +335,21 @@ def grade(entry, laws):
 
     rows = _rows(reading["contexts"])
     measured = float(reading["measured_billable"])
-    trim = _frame_trim(entry, reading, laws, rows) if entry["form"] == "frame" else 0.0
+    trim = _frame_trim(entry, reading, laws, rows) if entry.get("form") == "frame" else 0.0
     observed = price(rows, laws, trim=trim)
     counter = price(counterfactual_rows(entry, reading), laws, trim=0.0)
 
-    moved = _mechanism_move(reading)
-    first_key = moved is not None and moved >= MIN_MECHANISM_CHANGE
+    moved = _mechanism_move(entry, reading)
+    if moved is None:
+        result["verdict"] = "void"
+        result["void_because"] = [
+            "the mechanism reading is missing or has no pre-lever value, so "
+            "the lever cannot be graded in either direction"
+        ]
+        return result
+    first_key = moved >= MIN_MECHANISM_CHANGE
     removal = None
-    if entry["form"] == "removal":
+    if entry.get("form") == "removal":
         removal = _removal_keys(entry, reading)
         first_key = (
             first_key
@@ -356,7 +378,7 @@ def grade(entry, laws):
     result.update(
         {
             "verdict": verdict,
-            "mechanism_moved": None if moved is None else round(moved, 4),
+            "mechanism_moved": round(moved, 4),
             "mechanism_key": bool(first_key),
             "model_key": bool(second_key),
             "measured_billable": measured,

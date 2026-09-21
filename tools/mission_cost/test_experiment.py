@@ -275,6 +275,21 @@ class RemovalVerdicts(unittest.TestCase):
         rows = EXPERIMENT.removed_rows(entry, [{"requests": 100, "kind": "subagent"}])
         self.assertEqual([row["requests"] for row in rows], [60.0, 60.0])
 
+    def test_the_pre_lever_value_cannot_be_written_by_the_lever(self):
+        """A removal grades against its references, not against its own claim.
+
+        The reading says the removed contexts held 10,000 requests; the
+        references say the smallest of them held 120. If the claim were taken
+        at face value the mechanism would look like a 100% fall either way, so
+        it is derived instead, and a reading that does not match the references
+        cannot flatter itself.
+        """
+        entry = self._entry(readings=[self._reading()])
+        entry["readings"][0]["mechanism"] = {"before": 10000, "after": 60}
+        verdict = EXPERIMENT.grade(entry, LAWS)
+        # 60 of the smallest reference's 120, not 60 of a self-declared 10,000.
+        self.assertEqual(verdict["mechanism_moved"], 0.5)
+
     def test_a_reduction_without_its_honesty_triple_is_void(self):
         entry = self._entry(readings=[self._reading()])
         entry["reduction"]["justified_by"] = "  "

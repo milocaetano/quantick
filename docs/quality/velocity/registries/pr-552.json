@@ -794,6 +794,26 @@
       "transcripts": [
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a43fda0a4f1148516.jsonl"
       ]
+    },
+    {
+      "branch": "feat/velocity-experiment-protocol",
+      "claim": [
+        {
+          "ended_at": "2026-09-21T10:30:00Z",
+          "role": "subagent",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "started_at": "2026-09-21T10:10:00Z"
+        }
+      ],
+      "ended_at": null,
+      "group": null,
+      "note": "T4 of #563, recording itself while it ran, under section 9 of docs/quality/velocity/experiment-protocol.md. `claim` is the audit trail for `transcripts`: the session came from CLAUDE_CODE_SESSION_ID, the instants are this mission's own work, and `measure.py identify` resolves the two into the paths below. Nothing in the harness reads `claim`; it is there because E12's only defence is that a reader can check the claim a mission made against the commit times of the branch it made it on. Claim one covers the work up to the draft pull request and resolved to one context, uncontested. A second claim is appended after the reviews, because the reviewers this mission dispatches after `ended_at` are its cost and E14 would otherwise drop them.",
+      "pr": 579,
+      "sessions": [],
+      "started_at": null,
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a02f1c22c8e9b5881.jsonl"
+      ]
     }
   ],
   "schema": 1

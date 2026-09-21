@@ -448,17 +448,24 @@ def identify(roots, session, start, end, role="subagent"):
                 beside.append(row)
     for rows in (own, within, beside):
         rows.sort(key=lambda row: (row["root"], row["relative"]))
+    contested = len(own) > 1
+    # A contested claim resolves to nothing at all. Listing the candidates in
+    # `transcripts` would hand a caller that reads the field without reading
+    # the flag a sibling's context folded into this mission's cost, which is
+    # the failure this whole rule exists to avoid. The candidates stay
+    # readable under `own` so a person can see what the contest was.
+    resolved = [] if contested else sorted(row["relative"] for row in own + within)
     return {
         "method": METHOD,
         "protocol": "docs/quality/velocity/experiment-protocol.md",
         "session": session,
         "role": role,
         "window": {"started_at": start.isoformat(), "ended_at": end.isoformat()},
-        "transcripts": sorted(row["relative"] for row in own + within),
+        "transcripts": resolved,
         "own": own,
         "within": within,
         "beside": beside,
-        "contested": len(own) > 1,
+        "contested": contested,
         "resolved": len(own) == 1,
     }
 

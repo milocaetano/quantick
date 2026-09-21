@@ -169,7 +169,10 @@ from one graded mission's reading, and **both keys must turn**:
 - **K1 — the mechanism moved.** The declared variable moved in the declared
   direction by at least `MIN_MECHANISM_CHANGE` of its pre-lever value, measured
   on the graded mission's own record. A lever whose variable did not move did
-  not cause anything, whatever the total says.
+  not cause anything, whatever the total says. For a `removal` the pre-lever
+  value is **derived from the references, never read from the reading** — a
+  lever that could write its own starting point could make any ending point
+  look like a fall.
 - **K2 — the model describes this mission.** The registered law predicts the
   graded mission's measured billable total within `MAX_MODEL_RESIDUAL`, the
   modelled saving is at least `MIN_MODELLED_SAVING`, and the measured total is
