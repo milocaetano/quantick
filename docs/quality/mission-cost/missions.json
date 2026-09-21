@@ -855,7 +855,8 @@
       "pr": 589,
       "sessions": [],
       "transcripts": [
-        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab4879516208c61bc.jsonl"
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab4879516208c61bc.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a059764f419a173e8.jsonl"
       ],
       "claim": [
         {
@@ -868,7 +869,7 @@
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "role": "subagent",
           "started_at": "2026-09-21T19:16:39Z",
-          "ended_at": null
+          "ended_at": "2026-09-21T19:35:00Z"
         }
       ],
       "started_at": null,
