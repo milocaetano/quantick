@@ -25,8 +25,39 @@
         "graded_branch": "perf/cap-agent-context"
       },
       "references": [],
-      "readings": [],
-      "verdict": null,
+      "readings": [
+        {
+          "branch": "perf/cap-agent-context",
+          "pr": 580,
+          "taken_at": "2026-09-21T13:10:00Z",
+          "attribution": "declared",
+          "contested": false,
+          "contexts": [
+            {
+              "requests": 133,
+              "kind": "subagent"
+            },
+            {
+              "requests": 82,
+              "kind": "subagent"
+            }
+          ],
+          "measured_billable": 24619472,
+          "requests": {
+            "measured": 215
+          },
+          "mechanism": {
+            "before": 207,
+            "after": 133
+          },
+          "quality": {
+            "ci": "green",
+            "guards_report": "identical"
+          },
+          "note": "Two declared transcripts, both resolved by containment and uncontested: the design and authoring context (agent-aa49c0aa114d448ee, 133 requests, 17930749 billable tokens) and the tests, validation and draft-pull-request context (agent-a5a25505f12780ff8, 82 requests, 6688723 billable tokens). The guards report is byte-identical to the merge base 00cd59ddaade07ceb0571f63559387c376adf0b2, measured by running the branch's own quantick-guards binary in both trees. Excluded, and the exclusion is error mode E14 of docs/quality/mission-cost/method.md: the ai-review and code-review contexts dispatched after the second claim closed, and the ledger context that took this reading, all of which start after the last claim's ended_at and so are outside the claimed window. The same under-count #567 recorded on itself. It makes both the measured total and the counterfactual smaller; it does not favour the lever, because the counterfactual is reconstructed from the same under-counted vector."
+        }
+      ],
+      "verdict": "proven",
       "reverted_in": null,
       "escaped_defects": [],
       "note": "The -45.9% is #566's population-level arithmetic over 520 subagent contexts, not a per-mission figure. The graded mission is priced on its own context vector; the prediction is here so that a reading that comes out far from it is visible as a surprise rather than quietly renamed the expectation."

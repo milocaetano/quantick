@@ -499,11 +499,18 @@ class LedgerIsCommitted(unittest.TestCase):
         report = EXPERIMENT.verify(EXPERIMENT.load_ledger(self.LEDGER))
         self.assertTrue(report["ok"])
 
-    def test_every_ranked_lever_is_registered_before_any_reading(self):
+    def test_every_ranked_lever_is_registered_and_only_L1_is_read(self):
         ledger = EXPERIMENT.load_ledger(self.LEDGER)
         issues = sorted(entry["issue"] for entry in ledger["experiments"])
         self.assertEqual(issues, [573, 574, 575])
         for entry in ledger["experiments"]:
+            if entry["id"] == "L1":
+                # L1's probation mission has run, so the entry carries exactly
+                # one reading and the verdict computed from it.
+                self.assertEqual(len(entry["readings"]), 1)
+                self.assertEqual(entry["readings"][0]["attribution"], "declared")
+                self.assertEqual(entry["verdict"], "proven")
+                continue
             self.assertEqual(entry["readings"], [])
             self.assertIsNone(entry["verdict"])
 
@@ -516,11 +523,21 @@ class LedgerIsCommitted(unittest.TestCase):
             round(laws["main"]["frame_tokens_per_request"]), 150062
         )
 
-    def test_grading_the_committed_ledger_is_all_pending(self):
+    def test_grading_the_committed_ledger_agrees_with_its_verdicts(self):
+        """Recomputing every verdict reproduces what the ledger records.
+
+        An unread lever grades `pending`; a lever whose probation mission has
+        run must grade to exactly the verdict written into its entry, or the
+        ledger is telling a story the arithmetic does not support.
+        """
         ledger = EXPERIMENT.load_ledger(self.LEDGER)
         laws = EXPERIMENT.load_laws(self.LAWS)
         for entry in ledger["experiments"]:
-            self.assertEqual(EXPERIMENT.grade(entry, laws)["verdict"], "pending")
+            computed = EXPERIMENT.grade(entry, laws)["verdict"]
+            if entry["readings"]:
+                self.assertEqual(computed, entry["verdict"])
+            else:
+                self.assertEqual(computed, "pending")
 
 
 class RefusalsCarryACode(unittest.TestCase):
