@@ -156,6 +156,28 @@ class Assignment(unittest.TestCase):
         )
 
 
+class EdgeCases(unittest.TestCase):
+    def test_a_session_with_no_usage_lines_is_unassigned_not_a_crash(self):
+        # A transcript opened and abandoned has no timestamps to place it by.
+        empty = transcripts.Transcript("nowhere.jsonl", "nowhere.jsonl", "n", "main")
+        sessions = attribution.sessions_from([empty])
+        missions = attribution.load_registry(os.path.join(FIXTURES, "missions.json"))
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.unassigned, ["n"])
+
+    def test_a_mission_with_no_window_at_all_claims_nothing_by_time(self):
+        # An unbounded window would claim every session in the directory,
+        # which is a worse answer than saying the mission has no window.
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        missions = attribution.parse_registry(
+            {"schema": 1, "missions": [{"branch": "feat/no-window", "pr": 1}]}
+        )
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.assigned, {})
+        self.assertEqual(len(placed.unassigned), len(sessions))
+
+
 class MainVersusSubagent(unittest.TestCase):
     def setUp(self):
         self.sessions, self.missions, self.placed = fixture_assignment()
