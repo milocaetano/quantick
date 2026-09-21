@@ -849,6 +849,24 @@
       "ended_at": null,
       "group": null,
       "note": "T7 of #563, the graded mission of ledger entry L1. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff, because the point of this lever is that there will be several and a later context cannot recover an earlier one's identity. Claim one closed at the first handoff, at 111 requests: the context that wrote the rule measured itself with the command the rule adds and found it already past the cap, which is the finding the rule is reported with. At the draft pull request both claims resolved by containment, uncontested, to one transcript each; the union is the transcripts field."
+    },
+    {
+      "branch": "perf/prune-review-rounds",
+      "pr": null,
+      "sessions": [],
+      "transcripts": [],
+      "claim": [
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T17:50:58Z",
+          "ended_at": null
+        }
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "T8 of #563, the graded mission of ledger entry L3. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. started_at is this context first request instant, so containment resolves it; the claim is appended at every handoff."
     }
   ]
 }
