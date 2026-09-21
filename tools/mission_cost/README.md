@@ -61,6 +61,93 @@ And to grade one metric across the registry's two groups:
 python tools/mission_cost/measure.py compare --repo . --metric billable_tokens
 ```
 
+`shape.py` answers the question a mission comparison cannot: what one **agent
+context** costs as it lengthens, and what the review chain around it caught. It
+has three subcommands.
+
+```sh
+# the cost shape, from local transcripts; the window cuts requests, not files
+python tools/mission_cost/shape.py measure --repo . \
+  --since 2026-09-11T15:16:05Z --until 2026-09-21T06:20:00Z \
+  --out docs/quality/velocity/shape.json
+
+# what the review chain produced, from `gh`, over the registry's pull requests
+python tools/mission_cost/shape.py ceremony --out docs/quality/velocity/ceremony.json
+
+# the report's generated blocks, offline, out of those two committed documents
+python tools/mission_cost/shape.py table --block figures \
+  --shape docs/quality/velocity/shape.json \
+  --ceremony docs/quality/velocity/ceremony.json
+python tools/mission_cost/shape.py table --block levers \
+  --shape docs/quality/velocity/shape.json
+```
+
+`table` is the answer to a drift class rather than a convenience. A report that
+retypes a figure out of a file that already holds it goes stale silently, and a
+checker over prose goes stale the same way; a **generator** does not, because
+`test_shape.ReportFigures` fails the moment
+`docs/quality/velocity/ranking.md`'s blocks stop matching the JSON. Every row
+of the lever table carries the cost law it was priced on, because the first
+version of that table priced one row on a law its own baseline did not use.
+`--block` takes its choices from the `BLOCKS` registry, so a third generated
+block is one entry there rather than five edits in five places.
+
+The policy assumptions the lever table is priced on are **assumptions, not
+measurements**, so each is a flag on `measure` rather than a source edit, and
+the `policy` block records what the run used:
+
+| Flag | Default | Domain | What it supposes |
+| --- | --- | --- | --- |
+| `--cap` | 80 | at least 1 | requests after which a context hands off to a fresh dispatch |
+| `--handoff` | 8 | not negative | requests a handed-off context spends re-reading its brief |
+| `--frame-trim` | 10000 | not negative, and below the smallest *usable* fitted frame | tokens cut from the standing frame |
+| `--request-scale` | 0.8 | greater than 0 | fraction of today's requests that remain |
+
+Outside those domains the command **refuses by name**, the way it refuses a
+missing transcript directory. A flag added so an operator can vary a stated
+assumption must not also let them publish a document that cannot mean anything:
+`--cap 0` is a division by zero, `--cap -5` prices as no cap at all and reports
+a plausible number that means nothing, and a trim above the fitted frame prices
+a request at less than nothing. The `--frame-trim` bound is the one that needs
+the fit, so it is checked after it rather than by `argparse`, and a *degenerate*
+law does not bound it — refusing there would blame the flag for the fit.
+
+What each document says about itself, because a number nobody can grade is
+worse than no number. The rule throughout is that **the judgement travels with
+the number**: every surface rendered off a graded value carries the same
+verdict, so the JSON and the report can never disagree about whether a figure
+is real. `verdict()` is the one owner of the three states a graded block can be
+in — **graded**, **degenerate** and **ungraded** — and a document carrying no
+`validity` field is the third, never the first: it still renders, but no block
+claims it was graded and passed. `test_shape.OneVerdictRule` asserts that over
+every block in the registry, because the two blocks drifted apart on exactly
+this question once.
+
+- **`cost_law.validity`.** The fit is an unconstrained least squares, so a
+  narrow population — a short window, one campaign's contexts, a main-only run
+  — can put its minimum at a negative coefficient, which is arithmetic rather
+  than a measurement. Every law carries `usable` and, when it is not,
+  `degenerate_because`. The figures block labels the law row, the shares row
+  and the **All contexts** headline that sums them. The committed fixture is
+  one of those populations on purpose, and `test_shape.Command` pins it.
+- **`policy.validity`.** The same question one surface on, and it has to be
+  asked separately: a lever row is arithmetic *over* a law, so it can fail when
+  the law is sound (`negative_modelled_tokens`) and it inherits the law's
+  defect when it is not (`priced_on_a_degenerate_law`, with
+  `degenerate_populations` naming which). `lever_table` leads with **Not a
+  reading** and marks both numeric columns rather than printing the L1 figure —
+  the one #573 is scheduled on — as a measurement.
+- **`totals.truncated_pulls` and each pull's `truncated`.** Every `gh`
+  connection is asked for its `totalCount` and the document records what it did
+  not see. Above zero, every ceremony total is a floor rather than a number, and
+  the figures block says so. Three claims are kept apart there and never
+  collapsed: a recorded zero, a recorded shortfall, and an **absent** field,
+  which says only that completeness is unknown to the document.
+  `ceremony` also stamps an `inputs` block — the registry it read, the pull
+  requests in it and a digest over their facts — for the reason `measure` and
+  `opening_frame.py` do. The committed `ceremony.json` predates those fields
+  and is the reading taken at the time; the next run writes them.
+
 `--metric` takes a token kind, `billable_tokens`, `main_thread.<kind>`,
 `subagents.<kind>`, `agent_seconds`, `elapsed_seconds`, `span_seconds`,
 `pr_open_seconds`, `ci_seconds`, `ci_wall_seconds` or `ci_runs`.
@@ -94,6 +181,7 @@ point of the bucket.
 | File | What it owns |
 | --- | --- |
 | `transcripts.py` | the privacy boundary: discovery, the five-field record, the 300-second idle bound, and the one rule for reading an instant |
+| | `locate` walks and classifies without opening a file; `discover` is `locate` plus the fold. A caller with its own fold — `shape.py`'s windowed one — takes `locate`, so no transcript is parsed twice |
 | `canonical.py` | section 7's byte contract: sorted keys, ASCII, LF, one trailing newline |
 | `attribution.py` | the registry, the two assignment rules, and the main/subagent split |
 | `dispersion.py` | quartiles, and the registered rule for when a fall counts as a reduction |
@@ -101,6 +189,7 @@ point of the bucket.
 | `measure.py` | the command, the report and the comparison |
 | `group_registry.py` | one registry, regrouped `before`/`after` around an instant |
 | `opening_frame.py` | how big the prompt is on a session's first request |
+| `shape.py` | what one agent context costs as it lengthens, what the review chain caught, and the report blocks generated from both |
 
 `group_registry.py` exists because the method gives each mission one `group`
 field, so grading seven merged changes needs seven groupings of one population.
