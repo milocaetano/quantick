@@ -192,10 +192,11 @@ spelled the way the harness addresses it — `<uuid>.jsonl` or
 `<uuid>/subagents/<name>.jsonl`, relative to a transcript root and never
 carrying the root's own name.
 
-Two missions claiming one transcript, or one claiming a transcript whose
-session another claims, is a registry error and the run is refused. A declared
-transcript no root holds is a `declared_transcript_missing` note instead,
-because the host prunes transcripts and a committed registry outlives them.
+Two missions claiming one transcript, one claiming a transcript whose session
+another claims, and a path that more than one of the run's transcript roots
+holds are each a registry error and the run is refused. A declared transcript
+*no* root holds is a `declared_transcript_missing` note instead, because the
+host prunes transcripts and a committed registry outlives them.
 
 What nobody declared is placed by its timestamps, and a session two missions
 could claim goes to the shared bucket with both names on it — never divided,

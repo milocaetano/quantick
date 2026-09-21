@@ -228,7 +228,7 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
                     for uuid in placement.sessions_of(mission.branch)
                 ],
                 "transcripts": [
-                    {"transcript": path, "method": "declared"}
+                    {"transcript": path, "method": ATTRIBUTION.DECLARED}
                     for path in placement.transcripts_of(mission.branch)
                 ],
                 "delivery": delivery_for(mission, repo, pulls),

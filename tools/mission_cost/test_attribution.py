@@ -494,6 +494,63 @@ class NoTranscriptsDeclaredChangesNothing(unittest.TestCase):
         for uuid in sessions:
             self.assertIs(placed.parcel_for(sessions, uuid), sessions[uuid])
 
+class DeclarationOutranksTheWindow(unittest.TestCase):
+    """Rule one runs before rule three, and takes the transcript with it."""
+
+    def test_a_named_transcript_leaves_a_window_that_covers_its_session(self):
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        missions = attribution.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {
+                        "branch": "feat/by-window",
+                        "pr": 1,
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "ended_at": "2026-01-01T01:00:00Z",
+                    },
+                    {"branch": "feat/by-name", "pr": 2, "transcripts": [ONE]},
+                ],
+            }
+        )
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.transcripts[ONE], "feat/by-name")
+        # The rest of the coordinator session still lands by its own
+        # timestamps, on the mission whose window covers it.
+        self.assertEqual(placed.assigned[ALPHA], ("feat/by-window", "window"))
+        totals = attribution.totals_by_mission(sessions, missions, placed)
+        self.assertEqual(totals["feat/by-name"]["total"]["billable_tokens"], 2030)
+        # The coordinator remainder's 2170 plus agent-2222's 23, and session
+        # beta's 8, which the same window also covers -- but not agent-1111's
+        # 2030, which rule one took before the window was ever consulted.
+        self.assertEqual(totals["feat/by-window"]["total"]["billable_tokens"], 2201)
+
+
+class OnePathUnderTwoRoots(unittest.TestCase):
+    def test_a_path_two_roots_hold_is_refused_rather_than_summed(self):
+        # A run may be given several transcript roots, and a declared path is
+        # relative to one of them. Summing both would charge the mission twice
+        # and read exactly like a mission that worked twice as long.
+        relative = f"{ALPHA}/subagents/agent-1111.jsonl"
+        twice = [
+            transcripts.Transcript(
+                f"{root}/{relative}", relative, ALPHA, "subagent", root
+            )
+            for root in ("C--src-quantick", "C--src-quantick-worktrees-one")
+        ]
+        sessions = attribution.sessions_from(twice)
+        missions = attribution.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {"branch": "feat/x", "pr": 1, "transcripts": [relative]}
+                ],
+            }
+        )
+        with self.assertRaises(attribution.RegistryError):
+            attribution.assign(sessions, missions)
+
 
 if __name__ == "__main__":
     unittest.main()

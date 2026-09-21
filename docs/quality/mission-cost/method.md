@@ -59,9 +59,11 @@ Three rules, applied in order, each to what the rule before it left:
    A transcript declared by two missions is a registry error and the harness
    refuses the run, exactly as a session declared twice is; so is a transcript
    whose session a *different* mission declares, and so is a path the layout
-   above cannot address. A declared transcript that no transcript root holds is
-   reported as a note rather than refused: a host prunes transcripts (E6) and a
-   committed registry outlives them.
+   above cannot address, and so is a path that more than one of the run's
+   transcript roots holds, since the declaration cannot say which of them it
+   meant and summing both would charge the mission twice. A declared transcript
+   that *no* transcript root holds is reported as a note rather than refused: a
+   host prunes transcripts (E6) and a committed registry outlives them.
 2. **Declared session.** A registry record may list `sessions: ["<uuid>", …]`.
    Every listed session — its root `<uuid>.jsonl` and every
    `<uuid>/subagents/agent-*.jsonl` beneath it that rule 1 did not already

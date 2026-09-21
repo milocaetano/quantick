@@ -56,6 +56,11 @@ GROUPS = (None, "before", "after")
 SHARED = "<shared>"
 UNASSIGNED = "<unassigned>"
 
+# The two assignment methods a report can name, owned here because the report
+# prints them at the other end of the boundary and the two must agree.
+DECLARED = "declared"
+WINDOW = "window"
+
 
 class RegistryError(RuntimeError):
     """The mission registry could not be read as the method describes it."""
@@ -268,7 +273,20 @@ class Placement:
         self._claimed = collections.OrderedDict()
 
     def claim(self, branch, uuid, item):
-        """Give one named transcript to one mission, keeping its session."""
+        """Give one named transcript to one mission, keeping its session.
+
+        A path is declared relative to *a* transcript root and the run may be
+        given several. Two roots holding the same path is refused rather than
+        summed: the declaration cannot say which of them it meant, and adding
+        both would charge the mission twice while reading exactly like a
+        mission that worked twice as long.
+        """
+        if item.relative in self.transcripts:
+            raise RegistryError(
+                f"{item.relative}: declared by {self.transcripts[item.relative]}"
+                f", and more than one transcript root holds it -- the "
+                "declaration cannot say which"
+            )
         parcels = self._claimed.setdefault(branch, collections.OrderedDict())
         parcels.setdefault(uuid, Session(uuid)).add(item)
         self.transcripts[item.relative] = branch
@@ -325,25 +343,27 @@ def assign(sessions, missions):
     }
     placement = Placement()
     for uuid, session in sessions.items():
+        whole = session.transcripts
         remainder = Session(uuid)
-        for item in session.transcripts:
+        for item in whole:
             branch = declared_paths.get(item.relative)
             if branch is None:
                 remainder.add(item)
             else:
                 placement.claim(branch, uuid, item)
-        if len(remainder.transcripts) != len(session.transcripts):
+        left = remainder.transcripts
+        if len(left) != len(whole):
             placement.remainders[uuid] = remainder
-        if not remainder.transcripts:
+        if not left:
             continue
         if uuid in declared_sessions:
-            placement.assigned[uuid] = (declared_sessions[uuid], "declared")
+            placement.assigned[uuid] = (declared_sessions[uuid], DECLARED)
             continue
         candidates = [
             mission.branch for mission in missions if _overlaps(remainder, mission)
         ]
         if len(candidates) == 1:
-            placement.assigned[uuid] = (candidates[0], "window")
+            placement.assigned[uuid] = (candidates[0], WINDOW)
         elif candidates:
             placement.shared[uuid] = sorted(candidates)
         else:
