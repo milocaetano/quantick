@@ -1,0 +1,208 @@
+{
+  "inputs": {
+    "billable_tokens": 9469075889,
+    "contexts": 560,
+    "digest": "a0e6920672039b1d5b132b175fb27d4ed2e972b2ee21e0e662658a5ec1d4e918",
+    "requests": 48825
+  },
+  "method": "docs/quality/mission-cost/method.md",
+  "metric": "context_cost_shape",
+  "populations": {
+    "main": {
+      "active_seconds": 104361,
+      "billable_per_context": {
+        "max": 578455324.0,
+        "mean": 56016119.275,
+        "median": 16423112.0,
+        "min": 242442.0,
+        "n": 40,
+        "p25": 7199520.5,
+        "p75": 65033874.5
+      },
+      "billable_tokens": 2240644771,
+      "concentration": [
+        {
+          "contexts": 4,
+          "share_of_tokens": 0.4948,
+          "smallest_request_count": 565,
+          "top_fraction_of_contexts": 0.1
+        },
+        {
+          "contexts": 10,
+          "share_of_tokens": 0.7903,
+          "smallest_request_count": 367,
+          "top_fraction_of_contexts": 0.25
+        },
+        {
+          "contexts": 20,
+          "share_of_tokens": 0.9421,
+          "smallest_request_count": 143,
+          "top_fraction_of_contexts": 0.5
+        }
+      ],
+      "contexts": 40,
+      "cost_law": {
+        "contexts": 40,
+        "frame_tokens_per_request": 150062.2,
+        "linear_only_r_squared": 0.8826,
+        "r_squared": 0.9937,
+        "slope_tokens_per_request_squared": 233.14
+      },
+      "counterfactual": {
+        "baseline_modelled_tokens": 2341163890,
+        "caps": [
+          {
+            "cap_requests": 40,
+            "change": -0.2643,
+            "modelled_tokens": 1722505917
+          },
+          {
+            "cap_requests": 60,
+            "change": -0.2871,
+            "modelled_tokens": 1669061015
+          },
+          {
+            "cap_requests": 80,
+            "change": -0.2949,
+            "modelled_tokens": 1650867933
+          },
+          {
+            "cap_requests": 120,
+            "change": -0.2897,
+            "modelled_tokens": 1662902135
+          },
+          {
+            "cap_requests": 150,
+            "change": -0.2806,
+            "modelled_tokens": 1684120229
+          },
+          {
+            "cap_requests": 200,
+            "change": -0.2618,
+            "modelled_tokens": 1728292141
+          }
+        ],
+        "handoff_requests": 8
+      },
+      "requests": 8861,
+      "requests_per_context": {
+        "max": 1297.0,
+        "mean": 221.525,
+        "median": 137.5,
+        "min": 4.0,
+        "n": 40,
+        "p25": 64.0,
+        "p75": 304.0
+      },
+      "terms": {
+        "accumulation_share": 0.432,
+        "accumulation_tokens": 1011462736,
+        "actual_tokens": 2240644771,
+        "modelled_tokens": 2341163890,
+        "standing_frame_share": 0.568,
+        "standing_frame_tokens": 1329701154
+      }
+    },
+    "subagent": {
+      "active_seconds": 424466,
+      "billable_per_context": {
+        "max": 416669518.0,
+        "mean": 13900829.073076922,
+        "median": 3457568.5,
+        "min": 91433.0,
+        "n": 520,
+        "p25": 927380.5,
+        "p75": 9275495.0
+      },
+      "billable_tokens": 7228431118,
+      "concentration": [
+        {
+          "contexts": 52,
+          "share_of_tokens": 0.6849,
+          "smallest_request_count": 193,
+          "top_fraction_of_contexts": 0.1
+        },
+        {
+          "contexts": 130,
+          "share_of_tokens": 0.8445,
+          "smallest_request_count": 71,
+          "top_fraction_of_contexts": 0.25
+        },
+        {
+          "contexts": 260,
+          "share_of_tokens": 0.9551,
+          "smallest_request_count": 47,
+          "top_fraction_of_contexts": 0.5
+        }
+      ],
+      "contexts": 520,
+      "cost_law": {
+        "contexts": 520,
+        "frame_tokens_per_request": 64226.8,
+        "linear_only_r_squared": 0.8087,
+        "r_squared": 0.9664,
+        "slope_tokens_per_request_squared": 530.97
+      },
+      "counterfactual": {
+        "baseline_modelled_tokens": 7251371155,
+        "caps": [
+          {
+            "cap_requests": 40,
+            "change": -0.4273,
+            "modelled_tokens": 4152991620
+          },
+          {
+            "cap_requests": 60,
+            "change": -0.4195,
+            "modelled_tokens": 4209211071
+          },
+          {
+            "cap_requests": 80,
+            "change": -0.4022,
+            "modelled_tokens": 4334765615
+          },
+          {
+            "cap_requests": 120,
+            "change": -0.3593,
+            "modelled_tokens": 4645867118
+          },
+          {
+            "cap_requests": 150,
+            "change": -0.3281,
+            "modelled_tokens": 4872485302
+          },
+          {
+            "cap_requests": 200,
+            "change": -0.2803,
+            "modelled_tokens": 5218617836
+          }
+        ],
+        "handoff_requests": 8
+      },
+      "requests": 39964,
+      "requests_per_context": {
+        "max": 822.0,
+        "mean": 76.85384615384615,
+        "median": 42.0,
+        "min": 2.0,
+        "n": 520,
+        "p25": 16.0,
+        "p75": 87.25
+      },
+      "terms": {
+        "accumulation_share": 0.646,
+        "accumulation_tokens": 4684611320,
+        "actual_tokens": 7228431118,
+        "modelled_tokens": 7251371155,
+        "standing_frame_share": 0.354,
+        "standing_frame_tokens": 2566759835
+      }
+    }
+  },
+  "registered_comparison": false,
+  "schema": 1,
+  "window": {
+    "since": "2026-09-11T15:16:05Z",
+    "until": "2026-09-21T06:20:00Z"
+  }
+}

@@ -1,0 +1,1493 @@
+{
+  "method": "docs/quality/mission-cost/method.md",
+  "metric": "ceremony_cost_per_catch",
+  "missions": 87,
+  "pulls": [
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 107,
+      "commits_after_pr": 0,
+      "commits_before_pr": 3,
+      "pr": 366,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 482,
+      "commits_after_pr": 3,
+      "commits_before_pr": 2,
+      "pr": 382,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 9773,
+      "commits_after_pr": 11,
+      "commits_before_pr": 0,
+      "pr": 383,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 15567,
+      "commits_after_pr": 4,
+      "commits_before_pr": 0,
+      "pr": 384,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 325,
+      "commits_after_pr": 3,
+      "commits_before_pr": 2,
+      "pr": 387,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 11134,
+      "commits_after_pr": 4,
+      "commits_before_pr": 0,
+      "pr": 388,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 3087,
+      "commits_after_pr": 4,
+      "commits_before_pr": 0,
+      "pr": 390,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 4110,
+      "commits_after_pr": 7,
+      "commits_before_pr": 0,
+      "pr": 391,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 5249,
+      "commits_after_pr": 8,
+      "commits_before_pr": 0,
+      "pr": 392,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1524,
+      "commits_after_pr": 1,
+      "commits_before_pr": 1,
+      "pr": 393,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 2
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 7402,
+      "commits_after_pr": 6,
+      "commits_before_pr": 0,
+      "pr": 395,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 6119,
+      "commits_after_pr": 6,
+      "commits_before_pr": 0,
+      "pr": 396,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 4112,
+      "commits_after_pr": 4,
+      "commits_before_pr": 0,
+      "pr": 399,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 263,
+      "commits_after_pr": 4,
+      "commits_before_pr": 0,
+      "pr": 400,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 4,
+      "ai_review_threads_open": 0,
+      "churn": 3343,
+      "commits_after_pr": 5,
+      "commits_before_pr": 2,
+      "pr": 402,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 150,
+      "commits_after_pr": 2,
+      "commits_before_pr": 0,
+      "pr": 404,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 3240,
+      "commits_after_pr": 7,
+      "commits_before_pr": 0,
+      "pr": 405,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 1247,
+      "commits_after_pr": 1,
+      "commits_before_pr": 3,
+      "pr": 406,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 2504,
+      "commits_after_pr": 19,
+      "commits_before_pr": 0,
+      "pr": 419,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 544,
+      "commits_after_pr": 0,
+      "commits_before_pr": 3,
+      "pr": 420,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 5747,
+      "commits_after_pr": 0,
+      "commits_before_pr": 14,
+      "pr": 421,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 620,
+      "commits_after_pr": 2,
+      "commits_before_pr": 2,
+      "pr": 424,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 697,
+      "commits_after_pr": 8,
+      "commits_before_pr": 0,
+      "pr": 426,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 2782,
+      "commits_after_pr": 9,
+      "commits_before_pr": 0,
+      "pr": 431,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1704,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 433,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 764,
+      "commits_after_pr": 3,
+      "commits_before_pr": 4,
+      "pr": 436,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 439,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 440,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 470,
+      "commits_after_pr": 2,
+      "commits_before_pr": 4,
+      "pr": 446,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 2,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 408,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 448,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 1175,
+      "commits_after_pr": 10,
+      "commits_before_pr": 0,
+      "pr": 450,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 2
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 1,
+      "step_zero_rounds": 3,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 212,
+      "commits_after_pr": 1,
+      "commits_before_pr": 3,
+      "pr": 451,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 7,
+      "ai_review_threads_open": 0,
+      "churn": 2861,
+      "commits_after_pr": 8,
+      "commits_before_pr": 0,
+      "pr": 452,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 2
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 4,
+      "ai_review_threads_open": 0,
+      "churn": 10265,
+      "commits_after_pr": 12,
+      "commits_before_pr": 0,
+      "pr": 453,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 4,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 98,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 454,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 5,
+      "ai_review_threads_open": 1,
+      "churn": 1104,
+      "commits_after_pr": 2,
+      "commits_before_pr": 5,
+      "pr": 457,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 294,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 458,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 25550,
+      "commits_after_pr": 2,
+      "commits_before_pr": 2,
+      "pr": 461,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 205,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 462,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 269,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 463,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 431,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 464,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 426,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 467,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 285,
+      "commits_after_pr": 0,
+      "commits_before_pr": 3,
+      "pr": 469,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 417,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 470,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 2263,
+      "commits_after_pr": 4,
+      "commits_before_pr": 5,
+      "pr": 484,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 876,
+      "commits_after_pr": 11,
+      "commits_before_pr": 0,
+      "pr": 485,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 3,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1925,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 486,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1596,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 487,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1977,
+      "commits_after_pr": 6,
+      "commits_before_pr": 0,
+      "pr": 488,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 332,
+      "commits_after_pr": 3,
+      "commits_before_pr": 0,
+      "pr": 489,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 2,
+      "step_zero_rounds": 2,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 556,
+      "commits_after_pr": 4,
+      "commits_before_pr": 2,
+      "pr": 493,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 2,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 5730,
+      "commits_after_pr": 1,
+      "commits_before_pr": 12,
+      "pr": 494,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1519,
+      "commits_after_pr": 0,
+      "commits_before_pr": 1,
+      "pr": 497,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 205,
+      "commits_after_pr": 0,
+      "commits_before_pr": 2,
+      "pr": 498,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 2196,
+      "commits_after_pr": 3,
+      "commits_before_pr": 2,
+      "pr": 499,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 2071,
+      "commits_after_pr": 1,
+      "commits_before_pr": 2,
+      "pr": 500,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 2,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1035,
+      "commits_after_pr": 5,
+      "commits_before_pr": 0,
+      "pr": 506,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 2,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 77852,
+      "commits_after_pr": 3,
+      "commits_before_pr": 1,
+      "pr": 507,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 404,
+      "commits_after_pr": 4,
+      "commits_before_pr": 1,
+      "pr": 508,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 2,
+      "step_zero_rounds": 1,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 395,
+      "commits_after_pr": 0,
+      "commits_before_pr": 3,
+      "pr": 510,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 10734,
+      "commits_after_pr": 3,
+      "commits_before_pr": 32,
+      "pr": 511,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 3918,
+      "commits_after_pr": 1,
+      "commits_before_pr": 1,
+      "pr": 514,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 6234,
+      "commits_after_pr": 2,
+      "commits_before_pr": 0,
+      "pr": 515,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 119,
+      "commits_after_pr": 0,
+      "commits_before_pr": 1,
+      "pr": 516,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 1069,
+      "commits_after_pr": 0,
+      "commits_before_pr": 1,
+      "pr": 519,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 2277,
+      "commits_after_pr": 1,
+      "commits_before_pr": 2,
+      "pr": 522,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 89942,
+      "commits_after_pr": 0,
+      "commits_before_pr": 26,
+      "pr": 524,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 6,
+      "ai_review_threads_open": 0,
+      "churn": 42772,
+      "commits_after_pr": 20,
+      "commits_before_pr": 28,
+      "pr": 529,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 1,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 3,
+      "ai_review_threads_open": 0,
+      "churn": 5991,
+      "commits_after_pr": 8,
+      "commits_before_pr": 3,
+      "pr": 530,
+      "reports": {
+        "ai-review": 4,
+        "arch-review": 3,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 2878,
+      "commits_after_pr": 5,
+      "commits_before_pr": 2,
+      "pr": 531,
+      "reports": {
+        "ai-review": 4,
+        "arch-review": 4,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 4,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 4,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 47279,
+      "commits_after_pr": 16,
+      "commits_before_pr": 1,
+      "pr": 532,
+      "reports": {
+        "ai-review": 5,
+        "arch-review": 4,
+        "delivery-review": 4
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 7,
+      "step_zero_rounds": 4,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 19016,
+      "commits_after_pr": 4,
+      "commits_before_pr": 22,
+      "pr": 533,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 1,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 5863,
+      "commits_after_pr": 10,
+      "commits_before_pr": 2,
+      "pr": 534,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 6,
+      "step_zero_rounds": 3,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 917,
+      "commits_after_pr": 0,
+      "commits_before_pr": 5,
+      "pr": 543,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 1,
+      "step_zero_rounds": 1,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 1900,
+      "commits_after_pr": 2,
+      "commits_before_pr": 2,
+      "pr": 544,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 2,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 1,
+      "ai_review_threads_open": 0,
+      "churn": 3020,
+      "commits_after_pr": 3,
+      "commits_before_pr": 4,
+      "pr": 546,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 2,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 2,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 758,
+      "commits_after_pr": 4,
+      "commits_before_pr": 1,
+      "pr": 547,
+      "reports": {
+        "ai-review": 4,
+        "arch-review": 4,
+        "delivery-review": 3,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 1,
+      "step_zero_rounds": 1,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 41,
+      "commits_after_pr": 2,
+      "commits_before_pr": 1,
+      "pr": 549,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 2
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 9,
+      "step_zero_rounds": 2,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 3,
+      "ai_review_threads_open": 0,
+      "churn": 1805,
+      "commits_after_pr": 9,
+      "commits_before_pr": 0,
+      "pr": 550,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 3,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 9,
+      "step_zero_rounds": 3,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 1178,
+      "commits_after_pr": 9,
+      "commits_before_pr": 0,
+      "pr": 551,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 4,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 20,
+      "step_zero_rounds": 4,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 862,
+      "commits_after_pr": 3,
+      "commits_before_pr": 0,
+      "pr": 552,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 555,
+      "commits_after_pr": 9,
+      "commits_before_pr": 0,
+      "pr": 553,
+      "reports": {
+        "ai-review": 2,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 9,
+      "step_zero_rounds": 3,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 4659,
+      "commits_after_pr": 6,
+      "commits_before_pr": 0,
+      "pr": 554,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 15,
+      "step_zero_rounds": 3,
+      "tier": "high"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 103,
+      "commits_after_pr": 0,
+      "commits_before_pr": 1,
+      "pr": 556,
+      "reports": {},
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": null
+    },
+    {
+      "ai_review_threads": 3,
+      "ai_review_threads_open": 0,
+      "churn": 152,
+      "commits_after_pr": 2,
+      "commits_before_pr": 1,
+      "pr": 557,
+      "reports": {
+        "ai-review": 3,
+        "arch-review": 3,
+        "delivery-review": 2,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 1,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 1,
+      "tier": "medium"
+    },
+    {
+      "ai_review_threads": 2,
+      "ai_review_threads_open": 0,
+      "churn": 125,
+      "commits_after_pr": 5,
+      "commits_before_pr": 0,
+      "pr": 558,
+      "reports": {
+        "ai-review": 5,
+        "arch-review": 5,
+        "mission-completion": 3
+      },
+      "step_zero_empty_rounds": 4,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 4,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 0,
+      "ai_review_threads_open": 0,
+      "churn": 59,
+      "commits_after_pr": 2,
+      "commits_before_pr": 1,
+      "pr": 562,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 1,
+      "step_zero_rounds": 1,
+      "tier": "small"
+    },
+    {
+      "ai_review_threads": 3,
+      "ai_review_threads_open": 0,
+      "churn": 3169,
+      "commits_after_pr": 5,
+      "commits_before_pr": 3,
+      "pr": 569,
+      "reports": {
+        "ai-review": 1,
+        "arch-review": 1,
+        "delivery-review": 1,
+        "mission-completion": 1
+      },
+      "step_zero_empty_rounds": 0,
+      "step_zero_findings": 0,
+      "step_zero_rounds": 0,
+      "tier": "medium"
+    }
+  ],
+  "registered_comparison": false,
+  "schema": 1,
+  "tiers": {
+    "high": {
+      "ai_review_threads": 11,
+      "ai_review_threads_per_mission": 0.733,
+      "arch_review_reports": 17,
+      "churn": {
+        "max": 89942.0,
+        "mean": 9456.266666666666,
+        "median": 3240.0,
+        "min": 697.0,
+        "n": 15,
+        "p25": 1857.5,
+        "p75": 5738.5
+      },
+      "delivery_review_reports": 12,
+      "missions": 15,
+      "repair_commits_per_mission": 4.733,
+      "step_zero_findings": 35
+    },
+    "medium": {
+      "ai_review_threads": 32,
+      "ai_review_threads_per_mission": 1.455,
+      "arch_review_reports": 40,
+      "churn": {
+        "max": 77852.0,
+        "mean": 5517.227272727273,
+        "median": 1475.5,
+        "min": 152.0,
+        "n": 22,
+        "p25": 654.5,
+        "p75": 2984.5
+      },
+      "delivery_review_reports": 23,
+      "missions": 22,
+      "repair_commits_per_mission": 4.182,
+      "step_zero_findings": 27
+    },
+    "small": {
+      "ai_review_threads": 2,
+      "ai_review_threads_per_mission": 0.133,
+      "arch_review_reports": 20,
+      "churn": {
+        "max": 439.0,
+        "mean": 265.3333333333333,
+        "median": 285.0,
+        "min": 41.0,
+        "n": 15,
+        "p25": 137.5,
+        "p75": 412.5
+      },
+      "delivery_review_reports": 0,
+      "missions": 15,
+      "repair_commits_per_mission": 1.267,
+      "step_zero_findings": 12
+    },
+    "unrecorded": {
+      "ai_review_threads": 30,
+      "ai_review_threads_per_mission": 0.857,
+      "arch_review_reports": 35,
+      "churn": {
+        "max": 47279.0,
+        "mean": 6532.257142857143,
+        "median": 1977.0,
+        "min": 103.0,
+        "n": 35,
+        "p25": 550.0,
+        "p75": 5684.0
+      },
+      "delivery_review_reports": 22,
+      "missions": 35,
+      "repair_commits_per_mission": 4.343,
+      "step_zero_findings": 12
+    }
+  },
+  "totals": {
+    "ai_review_reports": 114,
+    "ai_review_threads": 75,
+    "ai_review_threads_open": 1,
+    "arch_review_reports": 112,
+    "commits_after_pr": 334,
+    "commits_before_pr": 248,
+    "delivery_review_reports": 57,
+    "step_zero_empty_rounds": 35,
+    "step_zero_findings": 86,
+    "step_zero_rounds": 66
+  }
+}
