@@ -53,12 +53,15 @@ and the full current diff. It verifies affected findings, source/map changes,
 evidence validity and new regressions; it explicitly carries forward unaffected
 conclusions and issues a new verdict for the current key. Missing prior report,
 changed base, changed scope or uncertain impact requires the applicable full
-review. A full final campaign review remains mandatory. A follow-up is a real
-review, never a blessing of old evidence over unread change.
+review. A full final campaign review remains mandatory.
 
 Batch compatible corrections before freezing the branch for review. A report
-on a moving head is not final evidence. Do not repeatedly rebuild dossiers or
-restart successful reviews while the reviewed inputs remain unchanged.
+on a moving head is not final evidence. Where a tier budgets review passes,
+consolidate repairs into one batch and take the conformance review before the
+second passes, so a gap it names is repaired inside that batch; what a second
+pass raises is a delta follow-up unless it is a Blocker. Do not repeatedly
+rebuild dossiers or restart successful reviews while the reviewed inputs
+remain unchanged.
 
 ## Finding identity and bounded progress
 

@@ -8,10 +8,10 @@ Campaign children override the main-based examples via the
 
 # Mission
 
-Argument: an optional tier, then the objective — `/mission small the axis
-labels overlap at low zoom`. No objective: ask for it before anything else. The
-first word selects `small`, `medium`, `high` or `max`, bare or flagged
-(`--small`); otherwise keep the whole objective and default to `small`. Use a
+Argument: an optional tier, then the objective. No objective: ask for it
+before anything else. The first word selects `small`, `medium`, `high` or
+`max`, bare or flagged (`--small`); otherwise keep the whole objective and
+default to `small`. Use a
 flagged tier when the objective itself starts with a tier word. Step 1 echoes
 the parse.
 
@@ -33,6 +33,7 @@ supplies continuation (step 9). Rationale:
 | **8** bug pass (`arch-review` step 0) | `code-review` at `low` | `low` | `medium` | `high`; tell the trader `/code-review ultra` exists |
 | **8** shape pass | dimensions the diff touches; **8 always** | full | full | full |
 | **8** `delivery-review` | **not run** | **completeness pass only**, inline | full | full |
+| **8** review passes | two each; step 0 in each | two each | unbounded | unbounded |
 | **9** `/goal` line | skipped | printed | printed | printed |
 
 No tier removes `arch-review`, the bug pass, applicable validation, final-head
@@ -46,18 +47,17 @@ the work — never shrink a diff to evade review.
 
 ## The context cap
 
-A bill is quadratic in a context's turns (subagent `64,224·N + 530.98·N²`), so
-**no context runs a whole mission**: cap one at **80 requests** and hand off to
-a fresh dispatch. Caps from 40 to 120 model within 8 points, so the number is
-not delicate; below 40 the handoff charge eats the saving. Why, and how to move
-it: [the context cap](../../../docs/quality/velocity/context-cap.md).
+A context's bill is quadratic in its turns, so **no context runs a whole
+mission**: cap one at **80 requests** and hand off to a fresh dispatch. The
+arithmetic, and how to move the number:
+[the context cap](../../../docs/quality/velocity/context-cap.md).
 
-A request is a billed call, not a turn, and a turn costs several — 80 requests
-is nearer 25 turns. Read it, never guess:
+A request is a billed call, not a turn; 80 of them is nearer 25 turns. Read
+it, never guess:
 `python tools/mission_cost/measure.py contexts --role subagent --since <the claim's started_at>`.
-The boundaries are structural: steps **1–6**, **7 to the draft PR**, then step 8,
-which already dispatches per review, watch and repair; split either at a
-commit-sized seam rather than run long. A handoff carries only what [the
+The boundaries are structural: steps **1–6**, **7 to the draft PR**, then step
+8; split either at a commit-sized seam rather than run long. A handoff
+carries only what [the
 delivery contract](../../../docs/workflow/delivery.md#hand-off-before-a-context-accumulates)
 lists, never the conversation.
 
@@ -174,6 +174,7 @@ lists, never the conversation.
       Criteria: <IDs and delivered/deferred/open disposition>
       Validation: <commands/scenarios and results; link external raw artifacts>
       Read cost: <from the PR's read-cost comment>
+      Reviews: <passes per review>
       <!-- end quantick-mission-summary:v1 -->
       ```
 
@@ -189,11 +190,11 @@ lists, never the conversation.
    thread; needing one is a finding against this skill, filed as one.
 
    2. **`Skill(arch-review)`** — every tier; its producer records
-      `arch-review-ok`. Never write a marker directly.
+      `arch-review-ok`.
    3. **`Skill(ai-review)`** — every tier, same PR/key; its producer records
       `ai-review-complete`. Close every thread `list` returns.
-   4. **`Skill(delivery-review)`** — last; its producer records
-      `delivery-review-ok`. Skipped only at `small`.
+   4. **`Skill(delivery-review)`** — before their second passes; its producer
+      records `delivery-review-ok`. Skipped only at `small`.
    5. **CI watch** — a `sonnet` agent on `gh pr checks <pr> --watch`; it
       returns `GREEN|RED <head>` and the failing job names, never a log.
    6. **Repair, two of the contract's batches at most** — a strong-model agent
@@ -208,6 +209,14 @@ lists, never the conversation.
       completion.
    8. After PASS, delete the local `.claude/GOAL.md`; the PR and reports are
       the record.
+
+   **Two passes at `medium` and below.** `arch-review` and `ai-review` each
+   read the draft head, then the final head after the last repair. Consolidate
+   repairs so the second is that refresh and no third is owed; a non-Blocker it
+   raises is a delta follow-up, a Blocker is repaired, re-read and that third
+   pass recorded on the PR. Step 0 runs in every `arch-review` dispatch at
+   every tier, outside the budget.
+   [The round budget](../../../docs/quality/velocity/round-budget.md).
 
    A stale marker is replaced only after a fresh verdict under the delivery
    contract's delta follow-up rules. Reviewers never edit.

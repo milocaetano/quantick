@@ -100,16 +100,45 @@
       "registered_at": "2026-09-21T12:00:00Z",
       "reduces_review": true,
       "reduction": {
-        "removes": "",
-        "risk": "",
-        "justified_by": ""
+        "removes": "The third and later arch-review and ai-review passes at medium and below. Every diff still gets one full reading per review at the draft head and one at the final head; what goes is the extra projection refresh a repair in more than one wave forces. Step 0, delivery-review at medium, the zero-open-threads gate and full-head CI are untouched.",
+        "risk": "A defect introduced by a repair batch and visible only to a reader who re-read the whole diff a third time; under the budget that reader does not run. The honest claim is not measured to catch, not proven not to catch. Bounded by two full readings per review, the second at the final head, by the Blocker exception that authorises a third pass, by step 0 running in every pass, and by the unchanged thread, ship-gate and CI gates.",
+        "justified_by": "docs/quality/velocity/round-budget.md: durable quantick-review-report:v1 counts per pull request over six missions, each removed pass measured inside the reviewing context and windowed by its own report timestamps, priced over four references at the smallest of them, PR 578 at 21 requests."
       },
       "probation": {
         "missions": 1,
         "extensions_used": 0,
-        "graded_branch": null
+        "graded_branch": "perf/prune-review-rounds"
       },
-      "references": [],
+      "references": [
+        {
+          "branch": "docs/mission-cost-baseline",
+          "pr": 571,
+          "removed_contexts": 2,
+          "removed_requests": 31,
+          "total_requests": 884
+        },
+        {
+          "branch": "docs/mission-cost-ranking",
+          "pr": 572,
+          "removed_contexts": 4,
+          "removed_requests": 89,
+          "total_requests": 2838
+        },
+        {
+          "branch": "fix/mission-registry-transcripts",
+          "pr": 578,
+          "removed_contexts": 1,
+          "removed_requests": 21,
+          "total_requests": 317
+        },
+        {
+          "branch": "perf/cap-agent-context",
+          "pr": 580,
+          "removed_contexts": 2,
+          "removed_requests": 115,
+          "total_requests": 1604
+        }
+      ],
       "readings": [],
       "verdict": null,
       "reverted_in": null,

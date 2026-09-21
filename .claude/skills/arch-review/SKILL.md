@@ -13,9 +13,8 @@ Step 0 runs the bundled bug review; then grade shape. Read a dimension's
 
 ## Step 0 — the bug pass runs first, always
 
-Correctness outranks architecture, so the review never closes without it. Run
-the bundled `code-review` — never the plugin `code-review:code-review`, which
-posts to the PR by itself:
+Run the bundled `code-review` — never the plugin `code-review:code-review`,
+which posts to the PR by itself:
 
 ```
 Skill(code-review), args: "<effort> <target>"      one string, effort FIRST
@@ -26,10 +25,8 @@ Skill(code-review), args: "<effort> <target>"      one string, effort FIRST
 ```
 
 - **Level from the tier**, one notch below its name: `low` for `small` and
-  `medium`, `medium` for `high`, `high` for `max` (say in the header that
-  `/code-review ultra` exists; only the trader triggers it). No tier, or one
-  the hook would not honour: `high` for a branch or PR, `medium` for a working
-  diff. Read the tier from the file `pr-gate` reads, and report a disagreement
+  `medium`, `medium` for `high`, `high` for `max`. No tier, or one the hook
+  would not honour: `high` for a branch or PR, `medium` for a working diff. Read the tier from the file `pr-gate` reads, and report a disagreement
   with `GOAL.md`'s `**Tier:**` line as a finding:
 
   ```sh
@@ -38,8 +35,7 @@ Skill(code-review), args: "<effort> <target>"      one string, effort FIRST
   ```
 
 - **Never re-run a level that ran clean**; when to stop follows [the delivery
-  contract](../../../docs/workflow/delivery.md) (finding IDs, bounded repairs,
-  delta follow-up when inputs qualify, else the full diff).
+  contract](../../../docs/workflow/delivery.md).
 - **The bug pass keeps the strong model.**
 - **Prove the level** — effort-first by construction, and no reuse notice in
   the report (one present means the invocation failed). Ran **below** the
@@ -101,12 +97,18 @@ gh pr diff <n>                         # PR
 
 Never `main...HEAD` — a stale local `main` credits other PRs' files to the
 branch. Read neighbouring code first; the repo's existing pattern is the
-standard, and a second way to do a solved thing is a finding.
+standard.
 
 At `small`, read only the dimensions the diff reaches — **8 always**, step 0 in
 full; three or more applying means say the branch outgrew its tier. Every other
 tier reads all nine. A branch over the `small` ceiling in `guardrails.sh` gets
 all nine whatever the tier file says.
+
+**Round budget.** At `medium` and below the shape pass runs twice per PR: the
+third and later passes are removed. Step 0 is outside the budget at every
+tier. The risk: a defect a repair batch introduces that only a third full
+reading catches.
+[The round budget](../../../docs/quality/velocity/round-budget.md) measures it.
 
 ## The nine dimensions
 

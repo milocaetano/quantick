@@ -340,7 +340,7 @@ existed, which are repairs by construction.
 | **step 0**, the bug pass inside `arch-review` | 66 rounds that stated a count | **86 findings**; 35 rounds found nothing | inside the arch window; not separable | best in the chain, ~1.3 findings per round that reports |
 | **`arch-review`** shape pass | 112 reports | not machine-countable; ≥ 39 findings by marker, the rest in prose | #569 one window of 38,564,504 (42.3%); #571 rounds 2 and 3 at 21,814,359 and 3,473,132 | **~3.5–38 M per round** |
 | **`ai-review`** | 114 reports | **75 threads over 87 missions** (0.86 per mission, median 0), 1 still open, no Blocker marker in any report | #571's three rounds at 4,235,468 + 4,982,946 + 4,696,530 = **13,914,944, 11.5% of the mission** | **~14 M per round, ~12–16 M per catch** |
-| **`delivery-review`** | 57 reports | **zero refusals on the published record** | #569 **8,311,845 (9.1%)**, #571 **3,519,404 (2.9%)** | **undefined — 57 runs, 0 gating catches** |
+| **`delivery-review`** | 57 reports | **no refusal on the published record — which is a record that could not show one**, since a report is published only once the round has converged | #569 **8,311,845 (9.1%)**, #571 **3,519,404 (2.9%)** | **unmeasured, not zero** — see [the round budget](round-budget.md), section 1 |
 | **repair rounds** | 334 repair commits against 248 implementation commits | this is the *effect* of the chain, not a separate catcher | the windows above | **57.4% of all commits on this repository are made after the pull request exists** |
 | **guard ratchets and hooks** | every write and every Bash call | unmeasured; the hooks keep no log | `cargo run -p quantick-guards -- --report` runs in **6.1 s** and the hooks are silent on pass, so **~0 tokens** | not a sink at any price |
 
@@ -358,9 +358,17 @@ the measurement cannot justify is *three rounds*: #571's rounds 2 and 3 cost
 summary records that round's findings as Considers. One round plus thread
 closure keeps the catch and drops most of the cost.
 
-**`delivery-review` is named removable at `medium`.** 57 runs, no refusal ever
-published, 8.3 M and 3.5 M tokens on the two missions measured exactly, and it
-is the one ceremony `medium` has that `small` does not. *Escaped-defect risk,
+**`delivery-review` is named removable at `medium`.** *Corrected by #575: the
+reading below treats an unmeasured catch rate as a zero, and the row above now
+says so. A refusal raised and repaired inside a round never reached the
+published record, because this document's own prose says the report is
+published only once the round has converged; #580 then dispatched the review as
+its own context, and the first mission measured that way returned a correct
+FAIL. The removal was refused on that evidence — see [the round
+budget](round-budget.md), section 1. What follows is the original entry.* 57
+runs, no refusal ever published, 8.3 M and 3.5 M tokens on the two missions
+measured exactly, and it is the one ceremony `medium` has that `small` does
+not. *Escaped-defect risk,
 stated:* delivery-review is the only reader that reconciles the shipped work
 against the retained request line by line, so removing it raises the chance a
 mission ships having quietly dropped an ask. Two things bound that risk. The

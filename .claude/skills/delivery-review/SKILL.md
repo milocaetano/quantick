@@ -20,6 +20,12 @@ the mission's decision, never this skill's. Invoked at all, this skill grades
 and records exactly as at any tier; a gate that refused a branch means it owes
 this review.
 
+**Kept at `medium`.** "57 runs, zero refusals" is an unmeasured rate, not a
+zero: the durable report is published only once a round converges, so a
+refusal repaired inside one never reached the record; #580's FAIL is the
+counterexample.
+[The round budget](../../../docs/quality/velocity/round-budget.md), section 1.
+
 ## Modes and models
 
 - **Full** (`high`, `max`, any direct invocation): steps 1–6, a fresh subagent,
@@ -35,7 +41,7 @@ this review.
   The re-grade is the verdict on those lines (record both when they differ); a
   line it did not answer keeps the first grade; an escalation returning more
   lines than it was given is discarded.
-- The reviewer always gets the **full diff** — current files alone let a
+- The reviewer always gets the **full diff**: current files alone let a
   sentence already on `origin/main` pass as this branch's work.
 
 ## Step 1 — Find the checklist
@@ -51,7 +57,7 @@ Say which source was used:
 No third source — commit messages and PR prose are the author's account.
 Return **NOT GRADEABLE**, record nothing, and stop when neither source exists,
 the goal has no criteria in the documented format, or it has no verbatim
-request. An absent input makes every check over it vacuously true.
+request.
 
 ## Step 2 — Dossier, then dispatch
 
