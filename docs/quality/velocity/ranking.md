@@ -95,6 +95,7 @@ disagree. Both are regenerated, never edited by hand.
 | step-0 findings over reported rounds | 86 over 66 (35 empty) |
 | AI-review threads, of which open | 75 / 1 |
 | Commits before / after the pull request existed | 248 / 334 (57.4% repair) |
+| Pull requests whose ceremony facts arrived short | not recorded — this reading predates the check, so completeness is unknown |
 
 <!-- end shape-figures:v1 -->
 

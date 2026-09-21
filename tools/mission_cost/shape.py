@@ -153,6 +153,12 @@ NEGATIVE_FRAME = "negative_frame_tokens_per_request"
 NEGATIVE_SLOPE = "negative_slope_tokens_per_request_squared"
 SHARE_OUTSIDE_UNIT = "share_outside_unit_interval"
 
+# Why a *priced* table can fail, which is not the same question. A lever row is
+# arithmetic over a fitted law, so it inherits that law's defects, and the
+# policy assumptions can add one of their own.
+DEGENERATE_LAW = "priced_on_a_degenerate_law"
+NEGATIVE_MODELLED = "negative_modelled_tokens"
+
 
 def validity(coefficients, term=None):
     """Whether a fitted law can be true, and if not, in which way.
@@ -178,6 +184,41 @@ def validity(coefficients, term=None):
     ):
         reasons.append(SHARE_OUTSIDE_UNIT)
     return {"usable": not reasons, "degenerate_because": reasons}
+
+
+def policy_validity(policy, graded):
+    """Whether the lever table's numbers can be true.
+
+    The same question as :func:`validity`, one surface further on, and it has
+    to be asked separately: a lever row is arithmetic *over* a fitted law, so
+    the law can be sound and the row still come out impossible, or the law can
+    be degenerate and every row inherit it while looking exactly like the real
+    table. #573 is scheduled on the L1 row, so that row is the one place a
+    verdict may not be left implicit.
+
+    ``graded`` maps each population name to its graded law. The returned block
+    carries the same ``usable`` / ``degenerate_because`` pair a ``cost_law``
+    does -- one shape to branch on, whichever surface an agent reached -- plus
+    the names of the populations at fault, because "which one" is the first
+    thing a reader asks next.
+    """
+    reasons = []
+    unusable = sorted(
+        name
+        for name, law in graded.items()
+        if not (law.get("validity") or {}).get("usable", True)
+    )
+    if unusable:
+        reasons.append(DEGENERATE_LAW)
+    modelled_tokens = [policy["baseline_modelled_tokens"]]
+    modelled_tokens += [row["modelled_tokens"] for row in policy["levers"]]
+    if any(value < 0 for value in modelled_tokens):
+        reasons.append(NEGATIVE_MODELLED)
+    return {
+        "usable": not reasons,
+        "degenerate_because": reasons,
+        "degenerate_populations": unusable,
+    }
 
 
 def _r_squared(rows, frame, slope):
@@ -358,18 +399,25 @@ def levers(rows, laws, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
     reader never has to infer it.
     """
     baseline = modelled(rows, laws, cap=None, handoff=0)
+    # A scale above 1 is a legal question -- "what if we made more requests?" --
+    # and "-20% fewer requests" is not the way to ask it.
+    fewer = (
+        f"{1 - scale:.0%} fewer requests"
+        if scale <= 1
+        else f"{scale - 1:.0%} more requests"
+    )
     plans = (
         ("L1", f"cap every context at {cap} requests, handing off to a fresh "
                "dispatch", dict(cap=cap, law="subagent")),
         ("L1+L2", f"the same, and {trim:,} tokens off the standing frame",
          dict(cap=cap, law="subagent", trim=trim)),
-        ("L1+L3", f"the same as L1, and {1 - scale:.0%} fewer requests",
+        ("L1+L3", f"the same as L1, and {fewer}",
          dict(cap=cap, law="subagent", scale=scale)),
         ("L1+L2+L3", "all three together",
          dict(cap=cap, law="subagent", trim=trim, scale=scale)),
         ("L2", f"{trim:,} tokens off the standing frame, no cap",
          dict(trim=trim)),
-        ("L3", f"{1 - scale:.0%} fewer requests, no cap", dict(scale=scale)),
+        ("L3", f"{fewer}, no cap", dict(scale=scale)),
     )
     found = []
     for name, description, plan in plans:
@@ -518,6 +566,37 @@ def digest(rows):
     return hasher.hexdigest()
 
 
+class PolicyError(ValueError):
+    """A policy assumption that cannot be priced on the population measured."""
+
+
+def check_policy(laws, trim):
+    """Refuse a frame trim the fitted population cannot absorb.
+
+    The cheap domains of the four flags are ``argparse``'s, because they need
+    nothing but the value. This one needs the fit, so it lives here: trimming
+    more than a request costs before its context has grown prices that request
+    at nothing or less, and the lever table would then report a saving larger
+    than the whole bill.
+
+    Only *usable* laws bound the trim. A degenerate law has a negative frame
+    already, and refusing the run over it would blame the flag for the fit;
+    :func:`validity` and :func:`policy_validity` label that case instead, which
+    is the honest answer rather than a refusal aimed at the wrong thing.
+    """
+    frames = [
+        law["frame_tokens_per_request"]
+        for law in laws.values()
+        if (law.get("validity") or {}).get("usable", True)
+    ]
+    if frames and trim >= min(frames):
+        raise PolicyError(
+            f"--frame-trim {trim} is not below the smallest fitted frame "
+            f"({min(frames)} tokens per request); trimming that much prices a "
+            "request at nothing or less"
+        )
+
+
 def build_shape(rows, since, until, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
                 trim=FRAME_TRIM_TOKENS, scale=REQUEST_SCALE):
     """The whole shape document: population, fit, terms, concentration, caps.
@@ -548,19 +627,33 @@ def build_shape(rows, since, until, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
     laws = {
         name: fit(group) for name, group in population.items() if group
     }
+    # Grade every law before anything is priced on one. The republished law
+    # carries the judgement the shares complete: a negative coefficient and a
+    # share outside [0, 1] are the same defect seen twice, so they are graded
+    # in one field rather than two a reader would have to find.
+    graded = {}
+    for name, group in population.items():
+        if not group:
+            continue
+        term = terms(group, laws[name])
+        graded[name] = (
+            dict(laws[name], validity=validity(laws[name], term)),
+            term,
+        )
+    judged = {name: law for name, (law, _) in graded.items()}
+    check_policy(judged, trim)
     if "subagent" in laws:
         document["policy"] = levers(
             rows, laws, cap=cap, handoff=handoff, trim=trim, scale=scale
         )
+        # The verdict has to reach the table the campaign acts on, not stop at
+        # the coefficients it came from. Two surfaces reading one document must
+        # not disagree about whether its numbers are real.
+        document["policy"]["validity"] = policy_validity(document["policy"], judged)
     for name, group in population.items():
         if not group:
             continue
-        coefficients = laws[name]
-        term = terms(group, coefficients)
-        # The law is republished with the judgement the shares complete: a
-        # negative coefficient and a share outside [0, 1] are the same defect
-        # seen twice, so they are graded in one field rather than two.
-        coefficients = dict(coefficients, validity=validity(coefficients, term))
+        coefficients, term = graded[name]
         document["populations"][name] = {
             "contexts": len(group),
             "requests": sum(row["requests"] for row in group),
@@ -764,7 +857,11 @@ def ceremony_digest(rows):
             f"{row['step_zero_rounds']}:{row['step_zero_findings']}:"
             f"{row['step_zero_empty_rounds']}:{row['ai_review_threads']}:"
             f"{row['ai_review_threads_open']}:{row['commits_before_pr']}:"
-            f"{row['commits_after_pr']}:{sorted(row['truncated'])}\n".encode(
+            # The counts, not only the connection names: a pull request whose
+            # commits grow 176 -> 300 stays truncated on the same connection,
+            # and a digest over names alone would not move although the input
+            # did.
+            f"{row['commits_after_pr']}:{sorted(row['truncated'].items())}\n".encode(
                 "ascii", "replace"
             )
         )
@@ -846,6 +943,28 @@ def _thousands(value):
     return f"{round(value):,}"
 
 
+def _warning(law):
+    """The label a degenerate law earns, or nothing at all.
+
+    One owner, because every cell rendered off a law has to carry the same
+    verdict. A document that grades a law and a report that prints its numbers
+    unmarked are two surfaces disagreeing about whether a number is real.
+    """
+    judged = law.get("validity") or {}
+    if judged.get("usable", True):
+        return ""
+    return " **— degenerate: " + ", ".join(judged["degenerate_because"]) + "**"
+
+
+def _degenerate_populations(shape):
+    """The populations whose law the document itself grades as degenerate."""
+    return sorted(
+        name
+        for name, group in shape["populations"].items()
+        if not ((group["cost_law"].get("validity") or {}).get("usable", True))
+    )
+
+
 def figures(shape, ceremony):
     """The load-bearing figures, rendered from the committed JSON.
 
@@ -874,12 +993,7 @@ def figures(shape, ceremony):
         # A law the document itself calls degenerate says so in the report too.
         # Rendering `-112.6% / 212.6%` as though it were a reading is the exact
         # data-honesty failure the `validity` field exists to make impossible.
-        judged = law.get("validity") or {}
-        warning = (
-            ""
-            if judged.get("usable", True)
-            else " **— degenerate: " + ", ".join(judged["degenerate_because"]) + "**"
-        )
+        warning = _warning(law)
         lines.append(
             f"| {name.capitalize()} cost law, tokens | "
             f"{_thousands(law['frame_tokens_per_request'])}·N + "
@@ -887,14 +1001,25 @@ def figures(shape, ceremony):
             f"(R² {law['r_squared']}, linear-only R² {law['linear_only_r_squared']})"
             f"{warning} |"
         )
+        # The shares are the same law seen from the other end, so a warning on
+        # the line above does not cover them: `-112.6% / 212.6%` has to carry
+        # its own, or a reader skimming this row alone takes it for a reading.
         lines.append(
             f"| {name.capitalize()} standing frame / accumulation | "
-            f"{term['standing_frame_share']:.1%} / {term['accumulation_share']:.1%} |"
+            f"{term['standing_frame_share']:.1%} / {term['accumulation_share']:.1%}"
+            f"{warning} |"
         )
     both = _combined(shape)
+    # The headline row sums every population, so one degenerate population is
+    # enough to make it arithmetic rather than a reading.
+    at_fault = _degenerate_populations(shape)
+    combined_warning = (
+        f" **— degenerate: {', '.join(at_fault)}**" if at_fault else ""
+    )
     lines.append(
         f"| **All contexts, standing frame / accumulation** | "
-        f"**{both['standing_frame_share']:.1%} / {both['accumulation_share']:.1%}** |"
+        f"**{both['standing_frame_share']:.1%} / {both['accumulation_share']:.1%}**"
+        f"{combined_warning} |"
     )
     opening = shape["populations"]["subagent"]["opening"]
     lines.append(
@@ -936,9 +1061,31 @@ def figures(shape, ceremony):
         f"{totals['commits_before_pr']} / {totals['commits_after_pr']} "
         f"({repair:.1%} repair) |"
     )
+    lines.append(
+        f"| Pull requests whose ceremony facts arrived short | "
+        f"{_truncation_figure(ceremony)} |"
+    )
     lines.append("")
     lines.append(FIGURES_END)
     return "\n".join(lines) + "\n"
+
+
+def _truncation_figure(ceremony):
+    """What the ceremony document says about its own completeness.
+
+    Three different claims, and the report may not collapse them. A count of
+    zero says the reading was checked and nothing was missed. A count above
+    zero says every ceremony total above is a floor rather than a number. An
+    **absent** field says neither -- the document predates the check, so its
+    completeness is simply unknown, and printing that as "none" would be the
+    invention this whole block exists to prevent.
+    """
+    short = ceremony["totals"].get("truncated_pulls")
+    if short is None:
+        return "not recorded — this reading predates the check, so completeness is unknown"
+    if short:
+        return f"{short} of {ceremony['missions']:,} — **every ceremony total above is a floor**"
+    return f"0 of {ceremony['missions']:,}"
 
 
 def _combined(shape):
@@ -974,7 +1121,23 @@ def lever_table(shape, ceremony=None):
     policy = shape["policy"]
     baseline = policy["baseline_modelled_tokens"]
     lines = [LEVERS_BEGIN, ""]
-    lines.append("| Levers applied | Cost law | Modelled tokens | Change |")
+    judged = policy.get("validity") or {}
+    columns = "Modelled tokens | Change"
+    if not judged.get("usable", True):
+        # The numbers stay, because the arithmetic has to remain inspectable;
+        # what changes is that nothing here is offered as a reading. A row of
+        # this table is the number #573 is scheduled on.
+        at_fault = ", ".join(judged.get("degenerate_populations") or ()) or "unknown"
+        lines.append(
+            f"> **Not a reading.** This table is priced on a cost law the "
+            f"document itself grades as degenerate ({at_fault}: "
+            f"{', '.join(judged['degenerate_because'])}), so every number below "
+            f"is arithmetic over a law that cannot be true. Read "
+            f"`policy.validity` before quoting any of it."
+        )
+        lines.append("")
+        columns = "Modelled tokens (not a reading) | Change (not a reading)"
+    lines.append(f"| Levers applied | Cost law | {columns} |")
     lines.append("| --- | --- | ---: | ---: |")
     lines.append(
         f"| Baseline (modelled) | {policy['baseline_law']} | "
@@ -1028,6 +1191,36 @@ def extract(markdown, name):
 
 
 # --------------------------------------------------------------- commands ---
+
+# The domain of each policy flag that can be checked from the value alone,
+# lowest legal value first. A flag added to let an operator vary a stated
+# assumption must not also let them drive the published document to a value
+# that cannot mean anything -- or, for `--cap 0`, to a traceback. The bound
+# that needs the fit is `check_policy`'s, not argparse's.
+POLICY_DOMAINS = (
+    ("cap", 1, "at least 1 request"),
+    ("handoff", 0, "not negative"),
+    ("frame_trim", 0, "not negative"),
+)
+
+
+def check_domains(parser, options):
+    """Refuse a policy flag outside its domain, by name and by bound.
+
+    A named refusal, the way ``measure`` already refuses a missing transcript
+    directory. A traceback tells an operator only that something broke; a
+    document quietly priced at ``--cap -5`` tells them nothing at all, because
+    ``max(1, ceil(negative))`` is one piece and the row then reports a
+    plausible number that means nothing.
+    """
+    for name, lowest, described in POLICY_DOMAINS:
+        value = getattr(options, name)
+        if value < lowest:
+            parser.error(f"--{name.replace('_', '-')} must be {described}; got {value}")
+    if options.request_scale <= 0:
+        parser.error(
+            f"--request-scale must be greater than 0; got {options.request_scale}"
+        )
 
 
 def main(argv=None):
@@ -1106,6 +1299,7 @@ def main(argv=None):
     options = parser.parse_args(argv)
 
     if options.mode == "measure":
+        check_domains(parser, options)
         roots = options.transcripts or [
             TRANSCRIPTS.default_transcripts(options.repo)
         ]
@@ -1129,15 +1323,20 @@ def main(argv=None):
         rows = contexts(roots, since, until)
         if not rows:
             parser.error("no transcript fell inside the window")
-        document = build_shape(
-            rows,
-            options.since,
-            options.until,
-            cap=options.cap,
-            handoff=options.handoff,
-            trim=options.frame_trim,
-            scale=options.request_scale,
-        )
+        try:
+            document = build_shape(
+                rows,
+                options.since,
+                options.until,
+                cap=options.cap,
+                handoff=options.handoff,
+                trim=options.frame_trim,
+                scale=options.request_scale,
+            )
+        except PolicyError as refused:
+            # The one bound that is only knowable after the fit, refused in the
+            # same voice as the rest rather than as a traceback.
+            parser.error(str(refused))
         CANONICAL.emit(CANONICAL.render(document), options.out)
         return 0
 

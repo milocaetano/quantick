@@ -93,6 +93,92 @@ class Validity(unittest.TestCase):
         self.assertTrue(judged["usable"])
 
 
+class PolicyValidity(unittest.TestCase):
+    """The verdict has to reach the table the campaign acts on.
+
+    A lever row is arithmetic *over* a fitted law, so grading the law is not
+    grading the row: the law can be sound and the row still come out
+    impossible, and a degenerate law makes every row look exactly like the real
+    table. #573 is scheduled on the L1 row.
+    """
+
+    SOUND = {
+        "subagent": {"frame_tokens_per_request": 60000,
+                     "slope_tokens_per_request_squared": 500,
+                     "validity": {"usable": True, "degenerate_because": []}},
+    }
+
+    def policy(self, baseline=1000, levers=(1000,)):
+        return {
+            "baseline_modelled_tokens": baseline,
+            "levers": [{"modelled_tokens": value} for value in levers],
+        }
+
+    def test_a_sound_law_and_positive_totals_are_usable(self):
+        judged = SHAPE.policy_validity(self.policy(), self.SOUND)
+        self.assertTrue(judged["usable"])
+        self.assertEqual(judged["degenerate_because"], [])
+        self.assertEqual(judged["degenerate_populations"], [])
+
+    def test_a_degenerate_law_condemns_the_table_priced_on_it(self):
+        laws = {
+            "main": {"validity": {"usable": False,
+                                  "degenerate_because": [SHAPE.NEGATIVE_FRAME]}},
+            "subagent": self.SOUND["subagent"],
+        }
+        judged = SHAPE.policy_validity(self.policy(), laws)
+        self.assertFalse(judged["usable"])
+        self.assertIn(SHAPE.DEGENERATE_LAW, judged["degenerate_because"])
+        self.assertEqual(judged["degenerate_populations"], ["main"])
+
+    def test_a_negative_modelled_total_condemns_the_table_on_its_own(self):
+        judged = SHAPE.policy_validity(self.policy(levers=(-9545,)), self.SOUND)
+        self.assertFalse(judged["usable"])
+        self.assertIn(SHAPE.NEGATIVE_MODELLED, judged["degenerate_because"])
+        self.assertEqual(judged["degenerate_populations"], [])
+
+    def test_the_baseline_is_graded_too_not_only_the_rows(self):
+        judged = SHAPE.policy_validity(self.policy(baseline=-1), self.SOUND)
+        self.assertIn(SHAPE.NEGATIVE_MODELLED, judged["degenerate_because"])
+
+    def test_it_carries_the_same_pair_a_cost_law_does(self):
+        """One shape to branch on, whichever surface an agent reached."""
+        law = SHAPE.fit(synthetic(60000, 500, [10, 25, 50, 100]))
+        judged = SHAPE.policy_validity(self.policy(), self.SOUND)
+        self.assertLessEqual(set(law["validity"]), set(judged))
+
+
+class CheckPolicy(unittest.TestCase):
+    """The one flag bound that is only knowable after the fit."""
+
+    def laws(self, frame, usable=True):
+        return {
+            "subagent": {
+                "frame_tokens_per_request": frame,
+                "slope_tokens_per_request_squared": 1.0,
+                "validity": {"usable": usable, "degenerate_because": []},
+            }
+        }
+
+    def test_a_trim_below_the_fitted_frame_is_allowed(self):
+        SHAPE.check_policy(self.laws(64223.5), 10000)
+
+    def test_a_trim_at_or_above_the_fitted_frame_is_refused(self):
+        with self.assertRaises(SHAPE.PolicyError) as refused:
+            SHAPE.check_policy(self.laws(64223.5), 200000)
+        self.assertIn("--frame-trim", str(refused.exception))
+        self.assertIn("64223.5", str(refused.exception))
+
+    def test_a_degenerate_law_does_not_bound_the_trim(self):
+        """Refusing there would blame the flag for the fit.
+
+        A degenerate law has a negative frame already; `validity` and
+        `policy_validity` label that case. A refusal would aim at the wrong
+        thing, and would make the committed fixture unmeasurable.
+        """
+        SHAPE.check_policy(self.laws(-471.5, usable=False), 10000)
+
+
 class Terms(unittest.TestCase):
     def test_the_two_shares_are_the_whole_modelled_cost(self):
         rows = synthetic(60000, 500, [10, 50, 200])
@@ -483,14 +569,149 @@ class Figures(unittest.TestCase):
     def test_a_sound_law_carries_no_warning(self):
         self.assertNotIn("degenerate", SHAPE.figures(self.shape(), self.ceremony()))
 
-    def test_it_ends_in_one_newline_and_carries_no_carriage_return(self):
-        # Markdown, not canonical JSON, so `canonical.py`'s ASCII rule does not
-        # apply; what has to hold is that the bytes compared against the
-        # committed document are the same bytes on either platform.
-        rendered = SHAPE.figures(self.shape(), self.ceremony())
-        rendered.encode("utf-8")
-        self.assertNotIn("\r", rendered)
-        self.assertFalse(rendered.endswith("\n\n"))
+    def degenerate(self):
+        """A shape whose subagent law the document itself condemns."""
+        shape = self.shape()
+        rows = synthetic(-1000, 500, [10, 25, 50, 100])
+        law = SHAPE.fit(rows)
+        term = SHAPE.terms(rows, law)
+        shape["populations"]["subagent"]["cost_law"] = dict(
+            law, validity=SHAPE.validity(law, term)
+        )
+        shape["populations"]["subagent"]["terms"] = term
+        return shape
+
+    def test_the_shares_row_carries_its_own_warning(self):
+        """`-112.6% / 212.6%` must not rely on the line above it."""
+        rendered = SHAPE.figures(self.degenerate(), self.ceremony())
+        shares = [
+            line
+            for line in rendered.splitlines()
+            if "standing frame / accumulation" in line and not line.startswith("| **")
+        ]
+        self.assertTrue(shares)
+        for line in shares:
+            if line.startswith("| Subagent"):
+                self.assertIn("degenerate", line)
+
+    def test_the_all_contexts_headline_row_is_labelled_too(self):
+        """One degenerate population makes the sum arithmetic, not a reading."""
+        rendered = SHAPE.figures(self.degenerate(), self.ceremony())
+        headline = next(
+            line for line in rendered.splitlines() if line.startswith("| **All contexts")
+        )
+        self.assertIn("degenerate", headline)
+        self.assertIn("subagent", headline)
+
+    def test_the_headline_row_is_clean_when_every_population_is_usable(self):
+        headline = next(
+            line
+            for line in SHAPE.figures(self.shape(), self.ceremony()).splitlines()
+            if line.startswith("| **All contexts")
+        )
+        self.assertNotIn("degenerate", headline)
+
+
+class TruncationFigure(unittest.TestCase):
+    """Three different claims the report may not collapse into one.
+
+    "Nothing was missed", "this reading is a floor" and "completeness is
+    unknown" are distinct, and the committed `ceremony.json` predates the
+    check, so the third is a real case rather than a hypothetical.
+    """
+
+    def row(self, ceremony):
+        rendered = SHAPE.figures(Figures().shape(), ceremony)
+        return next(
+            line
+            for line in rendered.splitlines()
+            if line.startswith("| Pull requests whose ceremony facts arrived short")
+        )
+
+    def ceremony(self, **totals):
+        found = Figures().ceremony()
+        found["totals"].update(totals)
+        return found
+
+    def test_a_checked_and_complete_reading_says_zero(self):
+        line = self.row(self.ceremony(truncated_pulls=0))
+        self.assertIn("0 of 3", line)
+        self.assertNotIn("floor", line)
+        self.assertNotIn("not recorded", line)
+
+    def test_a_truncated_reading_says_every_total_is_a_floor(self):
+        line = self.row(self.ceremony(truncated_pulls=2))
+        self.assertIn("2 of 3", line)
+        self.assertIn("floor", line)
+
+    def test_a_document_predating_the_check_says_so_rather_than_none(self):
+        line = self.row(self.ceremony())
+        self.assertIn("not recorded", line)
+        self.assertNotIn("floor", line)
+        self.assertNotIn("0 of", line)
+
+
+class LeverTable(unittest.TestCase):
+    """The table #573 is scheduled on says whether it is a reading."""
+
+    def policy(self, usable=True):
+        return {
+            "policy": {
+                "handoff_requests": 8,
+                "baseline_modelled_tokens": 1000,
+                "baseline_law": "each population's own",
+                "levers": [
+                    {"lever": "L1", "description": "cap", "law": "subagent",
+                     "modelled_tokens": 800 if usable else -129788,
+                     "change": -0.2 if usable else -16.033},
+                ],
+                "validity": {
+                    "usable": usable,
+                    "degenerate_because": [] if usable else [SHAPE.DEGENERATE_LAW],
+                    "degenerate_populations": [] if usable else ["main", "subagent"],
+                },
+            }
+        }
+
+    def test_a_usable_policy_renders_the_ordinary_table(self):
+        rendered = SHAPE.lever_table(self.policy())
+        self.assertIn("| Levers applied | Cost law | Modelled tokens | Change |", rendered)
+        self.assertNotIn("Not a reading", rendered)
+
+    def test_a_degenerate_policy_says_so_before_any_number(self):
+        rendered = SHAPE.lever_table(self.policy(usable=False))
+        warning = rendered.index("Not a reading")
+        self.assertLess(warning, rendered.index("-129,788"))
+        self.assertIn(SHAPE.DEGENERATE_LAW, rendered)
+        self.assertIn("main, subagent", rendered)
+        self.assertIn("Modelled tokens (not a reading)", rendered)
+
+    def test_a_policy_block_with_no_verdict_renders_as_before(self):
+        """An older committed document carries no `validity`; it still renders."""
+        older = self.policy()
+        del older["policy"]["validity"]
+        self.assertNotIn("Not a reading", SHAPE.lever_table(older))
+
+
+class BlockBytes(unittest.TestCase):
+    """Every renderer in the registry, held to the same byte contract.
+
+    Markdown, not canonical JSON, so `canonical.py`'s ASCII rule does not
+    apply; what has to hold is that the bytes compared against the committed
+    document are the same bytes on either platform.
+    """
+
+    def test_every_block_ends_in_one_newline_and_carries_no_carriage_return(self):
+        shape = Figures().shape()
+        shape["policy"] = LeverTable().policy()["policy"]
+        for name, block in sorted(SHAPE.BLOCKS.items()):
+            with self.subTest(block=name):
+                rendered = block.render(shape, Figures().ceremony())
+                rendered.encode("utf-8")
+                self.assertTrue(rendered.startswith(block.begin))
+                self.assertTrue(rendered.endswith(block.end + "\n"))
+                self.assertNotIn("\r", rendered)
+                self.assertFalse(rendered.endswith("\n\n"))
 
 
 class ReportFigures(unittest.TestCase):
@@ -695,6 +916,53 @@ class Command(unittest.TestCase):
         self.assertEqual(policy["handoff_requests"], SHAPE.HANDOFF_REQUESTS)
         self.assertEqual(policy["frame_trim_tokens"], SHAPE.FRAME_TRIM_TOKENS)
         self.assertEqual(policy["request_scale"], SHAPE.REQUEST_SCALE)
+
+    def test_a_flag_outside_its_domain_is_refused_by_name(self):
+        """A named refusal, not a traceback and not a plausible wrong number.
+
+        `--cap 0` used to raise `ZeroDivisionError`; `--cap -5` was accepted in
+        silence and priced as no cap at all; `--request-scale -2` published a
+        210% saving.
+        """
+        for flag, value in (
+            ("--cap", "0"),
+            ("--cap", "-5"),
+            ("--handoff", "-1"),
+            ("--frame-trim", "-1"),
+            ("--request-scale", "0"),
+            ("--request-scale", "-2"),
+        ):
+            with self.subTest(flag=flag, value=value):
+                with self.assertRaises(SystemExit):
+                    SHAPE.main(["measure", "--transcripts", FIXTURES, flag, value])
+
+    def test_the_smallest_legal_value_of_each_flag_is_accepted(self):
+        for flag, value in (("--cap", "1"), ("--handoff", "0"),
+                            ("--frame-trim", "0")):
+            with self.subTest(flag=flag, value=value):
+                self.measure(flag, value)
+
+    def test_a_frame_trim_above_the_fitted_frame_is_refused_after_the_fit(self):
+        rows = [{"requests": n, "billable_tokens": 60000 * n + 500 * n * n,
+                 "kind": kind, "root": "r", "relative": f"{kind}-{n}.jsonl",
+                 "active_seconds": 1,
+                 "opening_cache_reads": 40000 * min(n, 10),
+                 "opening_requests": min(n, 10)}
+                for kind in ("subagent", "main")
+                for n in (10, 25, 50, 100)]
+        with self.assertRaises(SHAPE.PolicyError) as refused:
+            SHAPE.build_shape(rows, None, None, trim=200000)
+        self.assertIn("--frame-trim", str(refused.exception))
+        # And the same population trims fine below its frame.
+        SHAPE.build_shape(rows, None, None, trim=10000)
+
+    def test_the_policy_block_carries_the_verdict_the_table_needs(self):
+        document = json.loads(self.measure().decode("ascii"))
+        judged = document["policy"]["validity"]
+        self.assertFalse(judged["usable"])
+        self.assertEqual(judged["degenerate_populations"], ["main", "subagent"])
+        rendered = SHAPE.lever_table(document)
+        self.assertIn("Not a reading", rendered)
 
     def test_a_missing_transcript_directory_is_refused(self):
         with self.assertRaises(SystemExit):

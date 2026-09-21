@@ -75,7 +75,12 @@
         "request_scale": 0.8
       }
     ],
-    "request_scale": 0.8
+    "request_scale": 0.8,
+    "validity": {
+      "degenerate_because": [],
+      "degenerate_populations": [],
+      "usable": true
+    }
   },
   "populations": {
     "main": {
