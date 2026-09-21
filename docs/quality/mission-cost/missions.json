@@ -825,7 +825,7 @@
     },
     {
       "branch": "perf/cap-agent-context",
-      "pr": null,
+      "pr": 580,
       "sessions": [],
       "transcripts": [
         "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a5a25505f12780ff8.jsonl",
