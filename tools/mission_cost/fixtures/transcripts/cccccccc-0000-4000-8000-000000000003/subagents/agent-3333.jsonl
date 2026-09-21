@@ -1,0 +1,2 @@
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T03:00:00.000Z","message":{"role":"assistant","content":"FIXTURE-SUBAGENT-MUST-NOT-APPEAR","usage":{"input_tokens":5,"cache_creation_input_tokens":5,"cache_read_input_tokens":5,"output_tokens":5}}}
+{"type":"assistant","isSidechain":true,"timestamp":"2026-01-01T03:04:00.000Z","message":{"role":"assistant","content":"FIXTURE-SUBAGENT-MUST-NOT-APPEAR","usage":{"input_tokens":5,"cache_creation_input_tokens":5,"cache_read_input_tokens":5,"output_tokens":5}}}

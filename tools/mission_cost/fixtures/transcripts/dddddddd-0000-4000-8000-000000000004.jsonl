@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-01-02T10:00:00.000Z","message":{"role":"assistant","content":"FIXTURE-ANSWER-MUST-NOT-APPEAR","usage":{"input_tokens":2,"cache_creation_input_tokens":2,"cache_read_input_tokens":2,"output_tokens":2}}}
