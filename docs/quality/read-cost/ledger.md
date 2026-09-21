@@ -83,4 +83,5 @@ a bound.
 | 553 | 2026-09-20 | perf/ci-under-seven-minutes | main | 0 | 0 | — |
 | 554 | 2026-09-20 | feat/capability-family-registries | main | 6129 | 28 | `crates/control-schema/src/evidence.rs` (665) |
 | 557 | 2026-09-20 | feat/pr-is-the-context | main | 0 | 0 | — |
+| 558 | 2026-09-20 | fix/risk-lock-refusal-spacing | main | 1363 | 2 | `crates/paper/src/account.rs` (497) |
 | 562 | 2026-09-20 | fix/ship-gate-reads-advisories | main | 0 | 0 | — |
