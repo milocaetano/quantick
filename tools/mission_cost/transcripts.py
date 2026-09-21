@@ -16,8 +16,39 @@ is reported as skipped rather than guessed at.
 
 import collections
 import datetime
+import importlib.util
 import json
 import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load(name, path=None):
+    """Load a module by path under a stable key, the way `tools/read_cost` does.
+
+    The one implementation in this package. It lives in the leaf module because
+    the leaf is the only one that imports nothing local, so every other module
+    can reach it after a small bootstrap and none of them needs a copy.
+    """
+    key = f"quantick_mission_cost_{name}"
+    if key in sys.modules:
+        return sys.modules[key]
+    path = path or os.path.join(HERE, f"{name}.py")
+    # `spec_from_file_location` happily builds a spec for a path that is not
+    # there, and the failure then surfaces from deep inside importlib as a
+    # FileNotFoundError naming a half-joined path. Check first, say which
+    # module and where it was looked for.
+    if not os.path.isfile(path):
+        raise RuntimeError(f"cannot load {name}: no file at {path}")
+    spec = importlib.util.spec_from_file_location(key, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {name} at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 # Section 4 of the method. A gap longer than this is idle, not work.
 IDLE_GAP_SECONDS = 300

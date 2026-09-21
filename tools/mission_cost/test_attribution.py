@@ -156,6 +156,44 @@ class Assignment(unittest.TestCase):
         )
 
 
+class Windows(unittest.TestCase):
+    def mission(self, **fields):
+        entry = {"branch": "feat/half", "pr": 1}
+        entry.update(fields)
+        return attribution.parse_registry({"schema": 1, "missions": [entry]})[0]
+
+    def test_a_window_needs_both_of_its_ends(self):
+        whole = self.mission(
+            started_at="2026-01-01T00:00:00Z", ended_at="2026-01-01T02:00:00Z"
+        )
+        self.assertTrue(attribution.has_window(whole))
+        for half in (
+            self.mission(started_at="2026-01-01T00:00:00Z"),
+            self.mission(ended_at="2026-01-01T02:00:00Z"),
+            self.mission(),
+        ):
+            self.assertFalse(attribution.has_window(half))
+
+    def test_a_half_resolved_window_claims_nothing_by_time(self):
+        # Half a window is not a narrower window, it is an unbounded one. A
+        # mission whose started_at never resolved would otherwise claim every
+        # session that ended before its ended_at -- weeks of work done before
+        # the branch existed, charged to it in silence.
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        missions = [self.mission(ended_at="2026-06-01T00:00:00Z")]
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.assigned, {})
+        self.assertEqual(len(placed.unassigned), len(sessions))
+
+    def test_a_declared_session_still_reaches_a_mission_with_no_window(self):
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        missions = [self.mission(sessions=[ALPHA])]
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.assigned[ALPHA], ("feat/half", "declared"))
+
+
 class EdgeCases(unittest.TestCase):
     def test_a_session_with_no_usage_lines_is_unassigned_not_a_crash(self):
         # A transcript opened and abandoned has no timestamps to place it by.

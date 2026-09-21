@@ -62,31 +62,33 @@ class DeliveryError(RuntimeError):
     """A delivery timing could not be read."""
 
 
-def load(name, path=None):
-    """Load a module by path under a stable key, the way `tools/read_cost` does.
+def _bootstrap():
+    """Load `transcripts.py` beside this file, once, under a stable key.
 
-    One helper, the same shape in every module of this package, so a missing
-    file is one error rather than three different ones.
+    Repeated in each module that needs it and nowhere else: the shared loader
+    lives in `transcripts.load`, and something has to load the module that
+    holds it. Everything past this line goes through that one implementation.
     """
-    key = f"quantick_mission_cost_{name}"
+    key = "quantick_mission_cost_transcripts"
     if key in sys.modules:
         return sys.modules[key]
-    path = path or os.path.join(HERE, f"{name}.py")
-    spec = importlib.util.spec_from_file_location(key, path)
+    spec = importlib.util.spec_from_file_location(
+        key, os.path.join(HERE, "transcripts.py")
+    )
     if spec is None or spec.loader is None:
-        raise DeliveryError(f"cannot load {name} at {path}")
+        raise RuntimeError(f"cannot load transcripts.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 
 
-TRANSCRIPTS = load("transcripts")
+TRANSCRIPTS = _bootstrap()
 
 
 def load_read_cost_ledger():
     """Reuse `tools/read_cost/ledger.py`'s parser rather than a second one."""
-    return load(
+    return TRANSCRIPTS.load(
         "read_cost_ledger", os.path.join(HERE, "..", "read_cost", "ledger.py")
     )
 

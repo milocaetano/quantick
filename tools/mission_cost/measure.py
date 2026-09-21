@@ -33,23 +33,32 @@ METHOD = "docs/quality/mission-cost/method.md"
 DEFAULT_REGISTRY = os.path.join("docs", "quality", "mission-cost", "missions.json")
 
 
-def load(name):
-    key = f"quantick_mission_cost_{name}"
+def _bootstrap():
+    """Load `transcripts.py` beside this file, once, under a stable key.
+
+    Repeated in each module that needs it and nowhere else: the shared loader
+    lives in `transcripts.load`, and something has to load the module that
+    holds it. Everything past this line goes through that one implementation.
+    """
+    key = "quantick_mission_cost_transcripts"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, os.path.join(HERE, f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(
+        key, os.path.join(HERE, "transcripts.py")
+    )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {name}.py beside {__file__}")
+        raise RuntimeError(f"cannot load transcripts.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 
 
-TRANSCRIPTS = load("transcripts")
-ATTRIBUTION = load("attribution")
-DISPERSION = load("dispersion")
-DELIVERY = load("delivery")
+TRANSCRIPTS = _bootstrap()
+
+ATTRIBUTION = TRANSCRIPTS.load("attribution")
+DISPERSION = TRANSCRIPTS.load("dispersion")
+DELIVERY = TRANSCRIPTS.load("delivery")
 
 WALL_CLOCK = ("agent_seconds", "elapsed_seconds", "span_seconds")
 DELIVERY_METRICS = ("pr_open_seconds", "ci_seconds", "ci_wall_seconds", "ci_runs")
@@ -124,7 +133,7 @@ class Pulls:
 # baseline run of #565 above all -- can exclude the missions whose window never
 # resolved instead of reading prose and guessing. A mission with an unresolved
 # window otherwise reports near-zero cost and quietly drags a group median down.
-NOTE_KINDS = ("gh_lookup_failed", "no_window")
+NOTE_KINDS = ("gh_lookup_failed", "no_window", "partial_window")
 
 
 def _note(branch, kind, detail):
@@ -153,13 +162,16 @@ def resolve_windows(missions, pulls):
                     )
             except DELIVERY.DeliveryError as problem:
                 notes.append(_note(mission.branch, "gh_lookup_failed", str(problem)))
-        resolved.append(mission._replace(started_at=started, ended_at=ended))
-        if started is None and ended is None:
+        found = mission._replace(started_at=started, ended_at=ended)
+        resolved.append(found)
+        if not ATTRIBUTION.has_window(found):
+            both = started is None and ended is None
             notes.append(
                 _note(
                     mission.branch,
-                    "no_window",
-                    "no window, so only declared sessions reach this mission",
+                    "no_window" if both else "partial_window",
+                    "no usable window, so only declared sessions reach this "
+                    "mission: a window needs both of its ends",
                 )
             )
     return resolved, notes

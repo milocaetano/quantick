@@ -21,21 +21,28 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def load(name):
-    """Load a sibling module by path, the way `tools/read_cost` does."""
-    key = f"quantick_mission_cost_{name}"
+def _bootstrap():
+    """Load `transcripts.py` beside this file, once, under a stable key.
+
+    Repeated in each module that needs it and nowhere else: the shared loader
+    lives in `transcripts.load`, and something has to load the module that
+    holds it. Everything past this line goes through that one implementation.
+    """
+    key = "quantick_mission_cost_transcripts"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(key, os.path.join(HERE, f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(
+        key, os.path.join(HERE, "transcripts.py")
+    )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {name}.py beside {__file__}")
+        raise RuntimeError(f"cannot load transcripts.py beside {__file__}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 
 
-TRANSCRIPTS = load("transcripts")
+TRANSCRIPTS = _bootstrap()
 
 SCHEMA = 1
 GROUPS = (None, "before", "after")
@@ -168,23 +175,23 @@ class Placement:
         return [uuid for uuid, (found, _) in self.assigned.items() if found == branch]
 
 
-def _overlaps(session, mission):
-    """Does this session's timestamp interval touch this mission's window?
+def has_window(mission):
+    """A window is `[started_at, ended_at)`, so it needs both of its ends.
 
-    A mission with no window at either end matches nothing here: an unbounded
-    window would claim every session in the directory, which is worse than
-    saying the mission has no measurable window.
+    Half of one is not a narrower window, it is an unbounded one: a mission
+    whose `started_at` never resolved would otherwise claim every session in
+    the directory that ended before its `ended_at`, silently inflating its
+    cost with work done weeks before the branch existed.
     """
+    return mission.started_at is not None and mission.ended_at is not None
+
+
+def _overlaps(session, mission):
+    """Does this session's timestamp interval touch this mission's window?"""
     first, last = session.first(), session.last()
-    if first is None:
+    if first is None or not has_window(mission):
         return False
-    if mission.started_at is None and mission.ended_at is None:
-        return False
-    if mission.started_at is not None and last < mission.started_at:
-        return False
-    if mission.ended_at is not None and first > mission.ended_at:
-        return False
-    return True
+    return not (last < mission.started_at or first > mission.ended_at)
 
 
 def assign(sessions, missions):

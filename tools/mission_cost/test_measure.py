@@ -313,10 +313,41 @@ class Notes(unittest.TestCase):
         self.assertEqual(notes[0]["kind"], "no_window")
         self.assertIn(notes[0]["kind"], measure.NOTE_KINDS)
 
+    def test_a_half_resolved_window_is_its_own_kind_of_note(self):
+        missions = measure.ATTRIBUTION.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {
+                        "branch": "feat/half",
+                        "pr": None,
+                        "ended_at": "2026-01-01T02:00:00Z",
+                    }
+                ],
+            }
+        )
+        _, notes = measure.resolve_windows(missions, measure.Pulls(False, None))
+        self.assertEqual([note["kind"] for note in notes], ["partial_window"])
+        self.assertIn("partial_window", measure.NOTE_KINDS)
+
     def test_a_resolved_window_leaves_no_note(self):
         missions = measure.ATTRIBUTION.load_registry(REGISTRY)
         _, notes = measure.resolve_windows(missions, measure.Pulls(False, None))
         self.assertEqual(notes, [])
+
+
+class OneLoader(unittest.TestCase):
+    def test_every_module_shares_the_single_loader_and_its_result(self):
+        # Three verbatim copies of one loader is three things to keep in step.
+        # The implementation lives in the leaf; everything else bootstraps it.
+        attribution = measure.ATTRIBUTION
+        self.assertIs(measure.TRANSCRIPTS, attribution.TRANSCRIPTS)
+        self.assertIs(measure.TRANSCRIPTS, delivery.TRANSCRIPTS)
+        self.assertIs(measure.TRANSCRIPTS.load, attribution.TRANSCRIPTS.load)
+
+    def test_the_loader_reports_a_missing_file_rather_than_failing_oddly(self):
+        with self.assertRaises(RuntimeError):
+            measure.TRANSCRIPTS.load("not_a_module", "no/such/file.py")
 
 
 class Commands(unittest.TestCase):
