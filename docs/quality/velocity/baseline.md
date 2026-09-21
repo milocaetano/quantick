@@ -27,9 +27,10 @@ What *can* be measured without attribution says this:
 - The **CI critical path really did fall** — median 1,164 s in the regime before
   #552 to **401 s** after #553, and below the 505 s that preceded the whole
   slowdown. That is #552 and #553 doing what they said.
-- But **CI time per mission went up, not down**: median CI runs per mission
-  3 → 7 and median CI wall clock per mission 1,382 s → 2,956 s. The runs got
-  faster and there are more than twice as many of them.
+- But **CI time per mission went up, not down**: across #547's pivot, median
+  CI runs per mission **2.5 → 7** and median CI wall clock per mission
+  **1,376 s → 2,956 s**. The runs got faster and there are nearly three times
+  as many of them.
 - The **session-opening frame did not shrink** after #546 halved the
   always-loaded instructions: median 58,146 → 58,795 tokens, which is
   `no_reduction` under the registered rule. The arithmetic explains why: what
@@ -60,9 +61,11 @@ python tools/mission_cost/measure.py report --repo . \
 # one verdict: the registry regrouped around that pull request's merge instant
 python tools/mission_cost/group_registry.py \
   --registry docs/quality/mission-cost/missions.json \
-  --pivot 2026-09-20T01:43:13Z --out /tmp/pr-546.json
+  --pivot 2026-09-20T01:43:13Z \
+  --out docs/quality/velocity/registries/pr-546.json
 python tools/mission_cost/measure.py compare --repo . --no-gh \
-  --registry /tmp/pr-546.json --metric billable_tokens \
+  --registry docs/quality/velocity/registries/pr-546.json \
+  --metric billable_tokens \
   --transcripts ~/.claude/projects/C--src-quantick \
   --transcripts ~/.claude/projects/C--src-quantick-worktrees-fix-control-review-followups
 
@@ -273,6 +276,35 @@ Secondary to tokens (D7), but exact where tokens are not: a CI run and a pull
 request belong to one branch by construction, so `gh`-derived timings need no
 attribution at all.
 
+### How the wall-clock tables are grouped
+
+Every per-pull-request wall-clock table below is grouped by **the same rule as
+the token verdicts**, from the same committed registries: the seven files under
+[`registries/`](registries/), each produced by `group_registry.py` at that pull
+request's merge instant. A mission whose window straddles the pivot joins
+neither group, and so does the mission that delivered the change, whose window
+ends *at* the pivot. That is why #547's before-group is 74 and not 75.
+
+The figures are `dispersion.summary` over the `delivery` values already in
+[`baseline-report.json`](baseline-report.json), which is three lines a reader
+can run against the committed files:
+
+```python
+report = json.load(open("docs/quality/velocity/baseline-report.json"))
+registry = json.load(open("docs/quality/velocity/registries/pr-547.json"))
+by_branch = {entry["branch"]: entry for entry in report["missions"]}
+for side in ("before", "after"):
+    values = [by_branch[m["branch"]]["delivery"]["ci_runs"]
+              for m in registry["missions"] if m["group"] == side]
+    print(side, dispersion.summary(values))
+```
+
+An earlier draft of this report grouped these four tables by comparing the
+instants as strings, which put each delivering mission in `before` instead of
+neither and moved #547's `ci_runs` median from 2.5 to 3. The architecture
+review of #571 caught it; the tool now refuses to compare an instant's
+spelling, and the figures below are the corrected ones. No verdict changed.
+
 ### Per mission, from `gh` (n = 87, every registered mission)
 
 | Metric | min | p25 | median | p75 | max | mean |
@@ -313,7 +345,7 @@ saving.
 | PR | What it claimed | Token verdict | Wall-clock verdict | Disagree? |
 | --- | --- | --- | --- | --- |
 | [#546](https://github.com/milocaetano/quantick/pull/546) | halve the always-loaded agent instructions | `cannot_be_attributed`; opening frame `no_reduction` | `no_reduction` | no |
-| [#547](https://github.com/milocaetano/quantick/pull/547) | fast affected-crates job on drafts | `cannot_be_attributed` | `no_reduction` | no |
+| [#547](https://github.com/milocaetano/quantick/pull/547) | fast affected-crates job on drafts | `cannot_be_attributed` | `no_reduction` (runs per mission 2.5 → 7) | no |
 | [#550](https://github.com/milocaetano/quantick/pull/550) | per-PR read cost visible and bounded | `cannot_be_attributed` | `no_reduction` | no |
 | [#552](https://github.com/milocaetano/quantick/pull/552) | full Linux verdict, 43 min to parallel jobs | `cannot_be_attributed` | **per run: reduced. Per mission: `no_reduction`** | **yes** |
 | [#553](https://github.com/milocaetano/quantick/pull/553) | full CI critical path under 7 minutes | `cannot_be_attributed` | **per run: reduced. Per mission: `no_reduction`** | **yes** |
@@ -404,14 +436,15 @@ to find in the bill.
 
 Merged 2026-09-19T21:42:46Z.
 
-Per mission, from `gh`:
+Per mission, from `gh`, grouped by
+[`registries/pr-547.json`](registries/pr-547.json):
 
-| Metric | before (n = 75) | after (n = 11) | |
+| Metric | before (n = 74) | after (n = 11) | |
 | --- | ---: | ---: | --- |
-| `ci_runs` median | 3 | **7** | +133% |
-| `ci_wall_seconds` median | 1,382 | **2,956** | +114% |
-| `ci_seconds` median | 1,448 | **3,723** | +157% |
-| `pr_open_seconds` median | 11,813 | 13,206 | +12% |
+| `ci_runs` median | 2.5 | **7** | +180% |
+| `ci_wall_seconds` median | 1,376 | **2,956** | +115% |
+| `ci_seconds` median | 1,440 | **3,723** | +159% |
+| `pr_open_seconds` median | 10,839 | 13,206 | +22% |
 
 `no_reduction` on all four.
 
@@ -428,15 +461,15 @@ made ready runs full CI anyway.
 fault.** The 11 missions after the pivot are the CI-tuning missions themselves
 plus this campaign's children, which re-run CI by their nature, and #547's own
 follow-up `78c2c37f` ("always run full CI when a draft becomes ready") adds a
-run by design. n = 11 against n = 75 across 29 hours.
+run by design. n = 11 against n = 74 across 29 hours.
 
 **Verdict.** Token axis: `cannot_be_attributed`. Wall clock: `no_reduction`,
 with the caveat above.
 
 ### #550 — per-PR read cost visible and bounded
 
-Merged 2026-09-20T03:40:45Z. Per mission, `ci_wall_seconds` median 1,393 →
-1,819, `ci_runs` median 3 → 7: `no_reduction`, n = 7 after.
+Merged 2026-09-20T03:40:45Z. Per mission, `ci_wall_seconds` median 1,389 →
+1,819 and `ci_runs` median 3 → 7: `no_reduction`, n = 78 before and 7 after.
 
 **It did not claim a reduction and was never going to produce one.** #550 adds
 a measurement — a sticky comment, a ledger row, a bounded `pr-gate` advisory.
@@ -474,7 +507,7 @@ claimed "6m 10s to 6m 35s"; the measured median across 39 subsequent runs is
 6m 41s, with p75 at 6m 51s. The claim holds, slightly optimistically.
 
 **Per mission, they did not.** Around #553's pivot, `ci_wall_seconds` median
-1,432 → 1,794 (n = 81 / n = 6) and `ci_runs` median 3 → 6: `no_reduction` on
+1,412.5 → 1,794 (n = 80 / n = 6) and `ci_runs` median 3 → 6: `no_reduction` on
 both. The runs are 3.6× faster and there are twice as many of them.
 
 **This is the one place where the two axes disagree, and it is the finding.**
@@ -671,5 +704,6 @@ Agent time (period): agent 513,368 s | elapsed 250,066 s | span 821,069 s
 Verdicts on #546 #547 #550 #552 #553 #556 #557: cannot_be_attributed on the
   token axis, all seven. Wall clock: reduction per CI run for #552+#553
   (median 1,164 s -> 401 s in regime; 505 s -> 401 s against the pre-slowdown
-  regime), no_reduction per mission for all seven.
+  regime), no_reduction per mission for all seven -- at #547's pivot, median
+  ci_runs 2.5 -> 7 (n 74/11) and ci_wall_seconds 1,376 -> 2,956.
 ```
