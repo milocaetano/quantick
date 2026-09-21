@@ -38,7 +38,7 @@ What *can* be measured without attribution says this:
   1,000 bytes, roughly 0.15% of a request.
 - **#556's own self-report is right.** Its 63,973 bytes never reached a model.
   The opening frame does not move, and a drop of that size would have been six
-  interquartile ranges — unmissable even at n = 3.
+  interquartile ranges — unmissable even at n = 4.
 
 The measured population-level trend across the whole optimization window is an
 **8.7% fall** in tokens per merged mission — *below* the registered 10%
