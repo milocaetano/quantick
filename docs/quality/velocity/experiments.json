@@ -100,21 +100,101 @@
       "registered_at": "2026-09-21T12:00:00Z",
       "reduces_review": true,
       "reduction": {
-        "removes": "",
-        "risk": "",
-        "justified_by": ""
+        "removes": "The third and later arch-review and ai-review passes at medium and below. Every diff still gets one full reading per review at the draft head and one at the final head; what goes is the extra projection refresh a repair in more than one wave forces. Step 0, delivery-review at medium, the zero-open-threads gate and full-head CI are untouched.",
+        "risk": "A defect introduced by a repair batch and visible only to a reader who re-read the whole diff a third time; under the budget that reader does not run. The honest claim is not measured to catch, not proven not to catch. Bounded by two full readings per review, the second at the final head, by the Blocker exception that authorises a third pass, by step 0 running in every pass, and by the unchanged thread, ship-gate and CI gates.",
+        "justified_by": "Durable quantick-review-report:v1 counts per pull request over six missions, each removed pass measured inside the reviewing context and windowed by its own report timestamps, priced over the four references in this entry at the smallest of them, pull request 578 at 21 requests. The working paper that held the full derivation was published on pull request 588 and is not committed here: the lever is void, so none of its instruction weight lands."
       },
       "probation": {
         "missions": 1,
         "extensions_used": 0,
-        "graded_branch": null
+        "graded_branch": "perf/prune-review-rounds"
       },
-      "references": [],
-      "readings": [],
-      "verdict": null,
-      "reverted_in": null,
+      "references": [
+        {
+          "branch": "docs/mission-cost-baseline",
+          "pr": 571,
+          "removed_contexts": 2,
+          "removed_requests": 31,
+          "total_requests": 884
+        },
+        {
+          "branch": "docs/mission-cost-ranking",
+          "pr": 572,
+          "removed_contexts": 4,
+          "removed_requests": 89,
+          "total_requests": 2838
+        },
+        {
+          "branch": "fix/mission-registry-transcripts",
+          "pr": 578,
+          "removed_contexts": 1,
+          "removed_requests": 21,
+          "total_requests": 317
+        },
+        {
+          "branch": "perf/cap-agent-context",
+          "pr": 580,
+          "removed_contexts": 2,
+          "removed_requests": 115,
+          "total_requests": 1604
+        }
+      ],
+      "readings": [
+        {
+          "branch": "perf/prune-review-rounds",
+          "pr": 588,
+          "taken_at": "2026-09-21T19:33:29Z",
+          "attribution": "declared",
+          "contested": true,
+          "contexts": [
+            {
+              "requests": 94,
+              "kind": "subagent"
+            },
+            {
+              "requests": 140,
+              "kind": "subagent"
+            },
+            {
+              "requests": 99,
+              "kind": "subagent"
+            },
+            {
+              "requests": 46,
+              "kind": "subagent"
+            },
+            {
+              "requests": 47,
+              "kind": "subagent"
+            },
+            {
+              "requests": 9,
+              "kind": "subagent"
+            },
+            {
+              "requests": 141,
+              "kind": "subagent"
+            }
+          ],
+          "measured_billable": 64279674,
+          "requests": {
+            "measured": 576
+          },
+          "mechanism": {
+            "before": 21,
+            "after": 0
+          },
+          "quality": {
+            "ci": "green",
+            "guards_report": "explained"
+          },
+          "note": "CONTESTED, and the reading says so rather than hiding it. This mission's second context claim resolves to two containing transcripts of its own role -- its own context 2 (agent-adbeb2fdc0023dc4d) and its own context 1 (agent-aab6b60cefb512957), whose transcript kept receiving lines until 2026-09-21T18:53:53Z, after context 2 had finished. Section 9's containment rule cannot tell a predecessor context whose tail outlives the handoff from a spanning sibling, so `identify --role subagent` names both and refuses to choose. Under section 5 a contested mission is void, and nothing may be concluded from this reading in either direction. The cause is the same tail E14 already records as an under-count; what is new is that the tail also contests the successor's claim. Two further facts the claim procedure surfaced: the first two claims were written with their instants truncated down to the second, which put each one a fraction of a second BEFORE its own context's first request and made containment fail outright until the instants were corrected upward; and context 1 ran 94 requests and context 2 ran 140 against L1's cap of 80. The vector below is the whole attributed set -- three own contexts plus every agent this mission dispatched -- measured from the transcripts directly, not from the claim windows. Excluded: agent-ab4879516208c61bc, a sibling mission of the same session dispatched against the main checkout at 18:35:29Z, identified by its own first user message. Also excluded, and this is error mode E14 of docs/quality/mission-cost/method.md: every request any context issued after this reading was taken, including the second review passes, the ship gate and the handbacks."
+        }
+      ],
+      "verdict": "void",
+      "reverted_in": "not-landed: no commit carrying L3 ever reached campaign/mission-velocity. It lived only on pull request 588, a draft that will not be merged, so the section 7 revert is a non-event rather than a commit. This entry, landed by the pull request that carries this line, is the removal record.",
       "escaped_defects": [],
-      "note": "Not disjoint from L1: both move N. Whichever runs second is graded against the state the first left, never against the original baseline. `reduces_review` is true, so the three honesty fields are owed by the mission that runs it and `verify` refuses the ledger once a probation branch is named with any of them empty. Needs MIN_REFERENCE_N = 3 reference missions with the removed contexts measured before a verdict is reachable; #566 measured one (#571's three AI-review rounds at 11.5%) and two delivery-review shares at 9.1% and 2.9%, which is the honest starting point and not yet the three this form requires."
+      "note": "Not disjoint from L1: both move N. Whichever runs second is graded against the state the first left, never against the original baseline. `reduces_review` is true, so the three honesty fields are owed by the mission that runs it and `verify` refuses the ledger once a probation branch is named with any of them empty. Needs MIN_REFERENCE_N = 3 reference missions with the removed contexts measured before a verdict is reachable; #566 measured one (#571's three AI-review rounds at 11.5%) and two delivery-review shares at 9.1% and 2.9%, which is the honest starting point and not yet the three this form requires. Graded void on 2026-09-21 from the reading below. Two causes, each sufficient on its own: the mission's transcript claim came back contested, which is void under section 5; and `cargo run -p quantick-guards -- --report` neither held nor improved, the context ratchet measuring 251,702 against 250,150 at d9ad1b21, so the lever spent in instruction weight part of what it promised to cut in rounds. K1 split, and the record should not say it failed whole: its mechanism half HELD -- before 21, after 0, a move of 1.0 against the 0.10 floor, with `before` derived from the smallest reference rather than from the reading -- while its ordinal half failed, the mission's 576 total requests not falling below the smallest reference's 317. The requests moved and the tokens fell: at 64,279,674 billable this mission was the cheapest of all four references, the smallest of which, pull request 578, cost 68,748,795. The references are the four recorded above; pull requests 569 and 579 were excluded because neither ran a third pass of anything, and a zero pre-lever value is void rather than generous. The mission also refused one of the lever's three edits on its own evidence: removing `delivery-review` at `medium` rested on the ranking's \"57 runs, 0 gating catches\", which is an unmeasured rate and not a catch rate of zero, because a durable report is published only once the round has converged, so a refusal raised and repaired inside a round never reached the record; #580 was the first mission measured the new way and returned a correct FAIL. That correction is carried into docs/quality/velocity/ranking.md on this branch, because it is a measurement fix and not part of the lever. Section 7 reverts a void lever like a refuted one; here the lever never merged, so the revert is a non-event and `reverted_in` records that rather than naming a commit that does not exist."
     }
   ]
 }
