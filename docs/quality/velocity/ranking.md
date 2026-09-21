@@ -35,16 +35,23 @@ attribution to a branch, so it is countable where a mission is not.
 What a context costs is not proportional to the work it does. Every request
 re-reads the whole context, so the standing prompt grows as the agent works and
 each new turn is billed against everything the agent has already seen. Fitting
-`billable = frame·N + slope·N²` over 560 contexts and 48,825 requests gives
-R² 0.966 for subagents against 0.809 for the linear model, and R² 0.994 against
-0.883 for main threads. **The second term is not a refinement; it is the
+`billable = frame·N + slope·N²` separately over each population — 560 contexts
+and 48,772 requests in all — gives R² 0.966 for subagents against 0.809 for the
+linear model, and R² 0.994 against 0.883 for main threads. **The second term is not a refinement; it is the
 majority of the bill.**
 
-The quadratic coefficient is what that costs, stated per turn: 2 × 530.97 =
+The quadratic coefficient is what that costs, stated per turn: 2 × 530.98 =
 about **1,062 tokens added to the standing prompt by each turn, paid again by
 every turn after it**. The raw curve corroborates it — a subagent request
 carries a mean of 42,178 cache-read tokens across the first ten requests of its
-context, against a period-wide mean of 180,873.
+context, against a period-wide mean of 180,922.
+
+**Two populations, two laws, and the ranking needs both.** A main thread carries
+a larger standing frame and a shallower slope than a dispatched agent. Nothing
+below compares one population's cost against the other's law without saying so:
+the generated lever table carries a *Cost law* column for exactly that reason,
+after this report's first version got it wrong and #572's architecture review
+caught it.
 
 ## Figures
 
@@ -52,28 +59,35 @@ Everything load-bearing below is generated from the committed JSON beside this
 file, not retyped out of it. Regenerate with:
 
 ```sh
-python tools/mission_cost/shape.py table \
+python tools/mission_cost/shape.py table --block figures \
   --shape docs/quality/velocity/shape.json \
   --ceremony docs/quality/velocity/ceremony.json
+python tools/mission_cost/shape.py table --block levers \
+  --shape docs/quality/velocity/shape.json
 ```
 
-`test_shape.ReportFigures` fails if this block and that JSON ever disagree.
+`test_shape.ReportFigures` fails if either generated block and that JSON ever
+disagree. Both are regenerated, never edited by hand.
 
 <!-- shape-figures:v1 -->
 
 | Figure | Value |
 | --- | ---: |
 | Agent contexts read | 560 |
-| Requests | 48,825 |
-| Billable tokens | 9,469,075,889 |
-| Subagent contexts | 520 (39,964 requests, 7,228,431,118 tokens) |
-| Subagent cost law, tokens | 64,227·N + 530.97·N² (R² 0.9664, linear-only R² 0.8087) |
+| Requests | 48,772 |
+| Billable tokens | 9,461,418,611 |
+| Subagent contexts | 520 (39,911 requests, 7,220,773,840 tokens) |
+| Subagent cost law, tokens | 64,224·N + 530.98·N² (R² 0.9664, linear-only R² 0.8089) |
 | Subagent standing frame / accumulation | 35.4% / 64.6% |
 | Main contexts | 40 (8,861 requests, 2,240,644,771 tokens) |
 | Main cost law, tokens | 150,062·N + 233.14·N² (R² 0.9937, linear-only R² 0.8826) |
 | Main standing frame / accumulation | 56.8% / 43.2% |
 | **All contexts, standing frame / accumulation** | **40.6% / 59.4%** |
-| Top 10% of subagent contexts (52) hold | 68.5% |
+| Mean cache reads per request over a subagent context's first 10 requests | 42,178 |
+| Subagent contexts over 60 requests | 196 of 520, holding 91.3% |
+| Subagent contexts over 100 requests | 106 of 520, holding 80.4% |
+| Subagent contexts over 150 requests | 58 of 520, holding 69.7% |
+| Top 10% of subagent contexts (52) hold | 68.6% |
 | Top 25% of subagent contexts (130) hold | 84.5% |
 | Top 50% of subagent contexts (260) hold | 95.5% |
 | Missions read for ceremony | 87 |
@@ -85,32 +99,38 @@ python tools/mission_cost/shape.py table \
 <!-- end shape-figures:v1 -->
 
 Window `2026-09-11T15:16:05Z .. 2026-09-21T06:20:00Z`, closed at the instant
-checkpoint 4 dispatched this task so that this mission's own unfinished context
-does not bias the population. Digest
-`a0e6920672039b1d5b132b175fb27d4ed2e972b2ee21e0e662658a5ec1d4e918`. The totals
-agree with #565's independently taken baseline to within one point on the
-main-thread share (23.7% here against 23.6% there),
-which is the cross-check that this reading and that one saw the same machine.
-The token totals differ by 2.2%, which is the four hours of extra window this
-reading carries.
+checkpoint 4 dispatched this task. Digest
+`c5e51be429b2e852bdb2c2422e98e5a00e96737e903ea002312328c50b9d3135`.
+
+**The window cuts requests, not files.** The transcript directory is live and
+append-only, so a context still running when a reading is taken keeps growing
+afterwards; keeping or dropping whole files either way makes the reading
+unrepeatable. Counting only the requests inside the window makes it stable, and
+two runs of the command above over this window are byte-identical even while a
+session is open.
+
+The totals agree with #565's independently taken baseline to within one point
+on the main-thread share — 23.7% here against 23.6% there — which is the
+cross-check that this reading and that one saw the same machine. The token
+totals differ by 2.1%, which is the extra window this reading carries.
 
 ## The ranking — tokens
 
-Ordered by measured share of the period's 9.47 B billable tokens. The phase
+Ordered by measured share of the period's 9.46 B billable tokens. The phase
 column answers #566's second criterion; "both" means the sink is a property of
 how any context is run, main thread or subagent alike.
 
 | # | Sink | Share of tokens | Phase | Thread | What would have to change |
 | --- | --- | ---: | --- | --- | --- |
-| 1 | **Context accumulation** — every request re-reading everything its own agent already did | **59.4%** (5.70 B) | all phases | both; 82% of it subagent | Cap an agent context and hand off to a fresh one. Capping at 80 requests, with 8 requests charged per handoff for re-reading the pull request, models at **−44.0%**. |
-| 2 | **The standing frame** — system prompt, tool definitions, skill catalogue, always-loaded instructions, paid on every request | **40.6%** (3.90 B) | all phases | both; 56.8% of main-thread cost | Make the frame smaller. Median opening frame is **58,237 tokens** (p25 57,004, p75 59,978, n = 40). Of that, the installed skill catalogue is ~47 KB of frontmatter across **158 skills, 12 of them this repository's** — about 11,800 tokens. `CLAUDE.md` + `AGENTS.md` are 13,062 bytes, ~3,300 tokens. Taking 10,000 tokens off every request is **−5.1%**. |
-| 3 | **Phase two — review rounds and the repairs they cause** | **75.1% and 81.8%** of the two missions measured exactly | reviews, repair, CI watch | subagent (campaign children) or main thread (trader-launched) | Fewer rounds. 20% fewer requests overall models at **−27.2%** alone and **−60.6%** stacked on ranks 1 and 2. |
+| 1 | **Context accumulation** — every request re-reading everything its own agent already did | **59.4%** (5.70 B) | all phases | both; 82% of it subagent | Cap an agent context and hand off to a fresh one. Capping at 80 requests, each piece running as a fresh dispatch on the subagent law and 8 requests charged per *extra* context, models at **−45.9%**. |
+| 2 | **The standing frame** — system prompt, tool definitions, skill catalogue, always-loaded instructions, paid on every request | **40.6%** (3.89 B) | all phases | both; 56.8% of main-thread cost | Make the frame smaller. Median opening frame is **58,237 tokens** (p25 57,004, p75 59,978, n = 40). Of that, the installed skill catalogue is ~47 KB of frontmatter across **158 skills, 12 of them this repository's** — about 11,800 tokens. `CLAUDE.md` + `AGENTS.md` are 13,062 bytes, ~3,300 tokens. Taking 10,000 tokens off every request is **−5.1%**. |
+| 3 | **Phase two — review rounds and the repairs they cause** | **75.1% and 81.8%** of the two missions measured exactly | reviews, repair, CI watch | subagent (campaign children) or main thread (trader-launched) | Fewer rounds. 20% fewer requests overall models at **−29.5%** alone and **−62.0%** stacked on ranks 1 and 2. |
 | 4 | **Phase one — ledger, questions, grounding, implementation, draft PR** | **24.9% and 18.2%** of the same two missions | mission setup, implementation | main thread for a trader-launched mission; already subagent for a campaign child | See *Candidate #570* below. It is the cheapest quarter of a mission because it runs at the bottom of the accumulation curve. |
 | 5 | **Campaign coordination** — checkpoints, charter edits, board writes, child briefs | **9.5%** on top of the children it dispatched | coordination | main thread | The coordinator context spent 20,175,810 tokens over 152 requests while dispatching three children whose own cost was 212,730,874. It is real but it is not where the money is. |
-| 6 | **Guard ratchets and hook gates** | **not measurable against 9.47 B** | any code change | neither | Nothing. See *Guards and hooks*. |
+| 6 | **Guard ratchets and hook gates** | **not measurable against 9.46 B** | any code change | neither | Nothing. See *Guards and hooks*. |
 | 7 | **CI** | **0 tokens** | CI watch | neither | Nothing on this axis. CI costs wall clock only. |
 
-Ranks 1 and 2 are the same 9.47 B split two ways, not two different pots: rank
+Ranks 1 and 2 are the same 9.46 B split two ways, not two different pots: rank
 1 is the part of the bill that scales with how long an agent runs and rank 2 is
 the part that does not. Rank 3 and rank 4 are that same money again, split by
 *when* it was spent. The ranking is deliberately presented twice because the
@@ -118,45 +138,64 @@ two cuts imply different fixes, and #566 asks for both.
 
 ### Rank 1 in detail: the concentration
 
-Long contexts are not the common case; they are the expensive case.
+Long contexts are not the common case; they are the expensive case. The
+length bands and the concentration rows are in the generated figures block
+above: **196 of 520 subagent contexts run past 60 requests and hold 91.3% of
+subagent tokens; 58 run past 150 and hold 69.7%.** The median subagent context
+is 42 requests and the median main thread is 137.5.
 
-| | |
-| --- | ---: |
-| Subagent contexts over 60 requests | 197 of 520, holding **91.4%** of subagent tokens |
-| Subagent contexts over 100 requests | 107 of 520, holding **80.5%** |
-| Subagent contexts over 150 requests | 58 of 520, holding **69.6%** |
-| The 25 most expensive subagent contexts | hold **50%**, each ≥ 330 requests |
-| Median subagent context | 42 requests |
-| Median main-thread context | 137.5 requests |
-
-At the fitted law, a context's *average* request costs 74,846 tokens at 20
-requests, 106,704 at 80, 149,182 at 160, 234,137 at 320 and 303,163 at 450. An
-agent that works four times as long does not cost four times as much; it costs
-about eleven times as much.
+Divide the subagent law by `N` and the same fact reads as a price per request:
+at 20 requests the average request costs **74,843** tokens, at 80 **106,702**,
+at 160 **149,180**, at 320 **234,137** and at 450 **303,164**. An agent that
+works four times as long does not cost four times as much; it costs about
+eleven times as much. Those five numbers are
+`(64,223.5 × N + 530.98 × N²) / N` at the coefficients the figures block
+publishes, so a reader can check them without rerunning anything.
 
 ### The counterfactual, and how the 60% is reached
 
 Arithmetic over the fitted coefficients, not an experiment — turning it into
 something a real mission proves is [#567](https://github.com/milocaetano/quantick/issues/567)'s
-job, not this one's.
+job, not this one's. Generated from the same committed JSON as the figures
+block, and every row states the cost law it used.
 
-| Levers applied | Modelled tokens | Change |
-| --- | ---: | ---: |
-| Baseline (modelled) | 9,595,944,544 | — |
-| **L1** cap every context at 80 requests, handing off to a fresh dispatch | 5,375,810,430 | **−44.0%** |
-| **L1 + L2** and 10,000 tokens off the standing frame | 4,843,210,430 | **−49.5%** |
-| **L1 + L3** and 20% fewer requests, frame untouched | 4,199,977,431 | **−56.2%** |
-| **L1 + L2 + L3** | **3,776,585,431** | **−60.6%** |
-| **L3** alone — 20% fewer requests, no cap | 6,983,517,834 | −27.2% |
-| **L2** alone — 10,000 tokens off the frame | — | −5.1% |
+<!-- shape-levers:v1 -->
+
+| Levers applied | Cost law | Modelled tokens | Change |
+| --- | --- | ---: | ---: |
+| Baseline (modelled) | each population's own | 9,585,006,964 | — |
+| **L1** — cap every context at 80 requests, handing off to a fresh dispatch | subagent | 5,181,488,395 | **-45.9%** |
+| **L1+L2** — the same, and 10,000 tokens off the standing frame | subagent | 4,663,288,395 | **-51.3%** |
+| **L1+L3** — the same as L1, and 20% fewer requests | subagent | 4,050,176,840 | **-57.7%** |
+| **L1+L2+L3** — all three together | subagent | 3,638,000,840 | **-62.0%** |
+| **L2** — 10,000 tokens off the standing frame, no cap | each population's own | 9,097,286,964 | **-5.1%** |
+| **L3** — 20% fewer requests, no cap | each population's own | 6,757,272,499 | **-29.5%** |
+
+Handoff charged at 8 requests per *extra* context, once per handoff rather than once per piece.
+
+<!-- end shape-levers:v1 -->
+
+Three assumptions are stated in that table rather than buried: the cap is 80
+requests, the frame trim is 10,000 tokens per request, and L3 supposes 20%
+fewer requests. They live in `shape.py` as `POLICY_CAP`, `FRAME_TRIM_TOKENS`
+and `REQUEST_SCALE`, so a reader who disagrees with one can redo the whole
+table with another number.
+
+**Why the capped rows use the subagent law.** Capping a context *means* handing
+off to a fresh dispatch, and a fresh dispatch is a subagent by construction:
+frame 64,224 rather than the main thread's 150,062. Pricing the capped rows any
+other way would model a policy nobody is proposing. The rows that do not cap —
+L2 and L3 — keep each population on its own law, because trimming the frame or
+asking for fewer requests does not move where an agent runs.
 
 The campaign's *about 60%* is reachable, and it needs all three levers. No
 single one of them gets there, and the largest one is structural rather than
 editorial: it is a rule about how long an agent is allowed to run, not a
 smaller file.
 
-Caps between 40 and 120 requests are all within four points of each other
-(−42.7%, −42.0%, −40.2%, −35.9% for subagents at the fitted law), so the exact
+Within the subagent population alone — no law substitution, the view
+`shape.json` carries per population — caps between 40 and 120 requests are all
+within four points of each other (−45.9%, −44.6%, −42.4%, −37.5%), so the exact
 number is not delicate. Below 40 the handoff charge starts eating the saving.
 
 ## The ranking — wall clock
@@ -175,8 +214,8 @@ the two conflict the token ranking wins.
 
 #566's third criterion. Period scale. These four are #565's registered figures,
 quoted rather than re-derived so that the campaign carries one wall-clock
-reading and not two; this reading's own agent-seconds over a four-hour longer
-window come to 147.0 h, which corroborates them.
+reading and not two; this reading's own agent-seconds over its own window come
+to 146.7 h, which corroborates them.
 
 | | |
 | --- | ---: |
@@ -385,9 +424,9 @@ one is a fraction of what a main thread does, the rest being coordination,
 conversation and work that is not a mission at all.
 
 **A tighter bound.** Main-thread requests cost 252,866 each and subagent
-requests 180,873. If every main-thread request had been issued from a
-subagent-grade context, the period would have saved 8,861 × 71,993 = 638 M
-tokens, **6.7% of 9.47 B** — and that is the ceiling for moving *all*
+requests 180,922. If every main-thread request had been issued from a
+subagent-grade context, the period would have saved 8,861 × 71,944 = 638 M
+tokens, **6.7% of 9.46 B** — and that is the ceiling for moving *all*
 main-thread work, of which #570 targets one phase.
 
 **And it is already subsumed.** A campaign child runs phase one in a fresh
@@ -407,9 +446,9 @@ rather than for whichever reads better.
 
 | Lever | Tokens | Wall clock | Verdict under D7 |
 | --- | ---: | --- | --- |
-| Cap the context and hand off (L1) | **−44.0%** | **worse.** 8 requests per handoff, ~9% more requests on a 365-request mission, and each handoff serialises: the new context cannot start until the old one has written its brief | Take it. The token axis wins. |
+| Cap the context and hand off (L1) | **−45.9%** | **worse.** 8 requests per extra context, ~9% more requests on a 365-request mission, and each handoff serialises: the new context cannot start until the old one has written its brief | Take it. The token axis wins. |
 | Trim the standing frame (L2) | −5.1% at −10,000/request | neutral | Take it. It is free on the second axis and it composes: after L1 the frame is the larger term. |
-| Fewer review and repair rounds (L3) | −27.2% alone, −60.6% stacked | **better** — fewer rounds is less CI and less turnaround | Take it. The only lever that wins on both axes, as #566's second comment predicted. |
+| Fewer review and repair rounds (L3) | −29.5% alone, −62.0% stacked | **better** — fewer rounds is less CI and less turnaround | Take it. The only lever that wins on both axes, as #566's second comment predicted. |
 | More concurrency | slightly **worse** — each concurrent agent loads the pull request independently | better | **Forbidden by D7.** Not proposed. |
 | Faster CI | 0 | better, bounded by 12.7% of `pr_open` | Not a token lever; #552 and #553 already took most of it, and #565 showed runs per mission rose to meet it. |
 | Cut the coordinator's turnaround | 0 | better — 71% of #569's open life | Not a token lever. Listed so it is not mistaken for one. |
@@ -469,11 +508,25 @@ the command that fixes it.
 
 It is not filed as a fix child, because it is small enough to discharge in
 place and C8 asks for proportion. It is implemented here: this report's
-*Figures* block is written by `shape.py table` out of `shape.json` and
-`ceremony.json`, and `test_shape.ReportFigures` fails if they ever disagree.
-Numbers that are *not* in that block — the phase tables, which come from
-per-window sums over two named transcripts — remain hand-written, and that
-limitation is stated rather than hidden.
+*Figures* and *Levers* blocks are both written by `shape.py table` out of
+`shape.json` and `ceremony.json`, and `test_shape.ReportFigures` fails if
+either ever disagrees with them.
+
+**It earned its place immediately, and the evidence is this report's own first
+version.** The counterfactual table was hand-written beside the document rather
+than generated out of it, and one row silently priced a capped population on
+the subagent law while the baseline it was compared against used each
+population's own — a 6-point error in the campaign's headline number, in the
+row fix child #573 is scheduled on. #572's architecture review caught it as a
+Blocker. The durable repair was not a sharper reader: it was to move that table
+inside a generated block and give every row a *Cost law* column, which is what
+`shape-levers:v1` is.
+
+Numbers that are still *not* in either block — the phase tables, which come
+from per-window sums over two named transcripts — remain hand-written. That is
+the residual risk, stated rather than hidden, and it is smaller than what was
+repaired because those sums are per-mission evidence rather than the headline
+lever.
 
 ## Fix children
 
@@ -482,12 +535,12 @@ here.
 
 | Rank | Child | What it does | Modelled saving |
 | --- | --- | --- | ---: |
-| 1 | **F1** | Cap an agent context and hand off to a fresh one; supersedes #570 | −44.0% |
-| 3 | **F2** | Cut the round count: one `ai-review` round plus thread closure, `delivery-review` exempt at `medium`, step 0 untouched | −27.2% alone |
-| 2 | **F3** | Shrink the standing frame, starting with a skill catalogue in which 146 of 158 skills belong to other projects | −5.1% at −10,000/request |
-| — | **F4** | Let the registry name a transcript, not only a session, so F1 to F3 can be graded at all | enables the rest |
+| 1 | [**#573**](https://github.com/milocaetano/quantick/issues/573) | Cap an agent context and hand off to a fresh one; supersedes #570 | −45.9% |
+| 2 | [**#574**](https://github.com/milocaetano/quantick/issues/574) | Shrink the standing frame, starting with a skill catalogue in which 146 of 158 skills belong to other projects | −5.1% at −10,000/request |
+| 3 | [**#575**](https://github.com/milocaetano/quantick/issues/575) | Cut the round count: one `ai-review` round plus thread closure, `delivery-review` exempt at `medium`, step 0 untouched | −29.5% alone |
+| — | [**#576**](https://github.com/milocaetano/quantick/issues/576) | Let the registry name a transcript, not only a session, so the other three can be graded at all | enables the rest |
 
-F4 is not a saving; it is the reason the others can be measured. The registry's
+#576 is not a saving; it is the reason the others can be measured. The registry's
 unit is the session, and all three of this campaign's children are subagents of
 **one** coordinator session, so declaring a session id — D5's remedy — would
 make each child claim its siblings. The exact unit is the transcript file, and

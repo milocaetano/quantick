@@ -77,6 +77,100 @@ class Counterfactual(unittest.TestCase):
         self.assertEqual(found["handoff_requests"], 25)
         self.assertGreater(found["caps"][0]["change"], looser["caps"][0]["change"])
 
+    def test_the_handoff_is_charged_once_per_extra_context_not_once_per_piece(self):
+        """The bug #572's review found: `k` handoffs charged where `k - 1` happen.
+
+        One context of 100 requests capped at 50 becomes two contexts and one
+        handoff, so the modelled total is exactly two pieces of 54 requests --
+        not two of 58.
+        """
+        rows = [{"requests": 100, "billable_tokens": 0, "kind": "a"}]
+        laws = {"a": {"frame_tokens_per_request": 1000,
+                      "slope_tokens_per_request_squared": 0}}
+        found = SHAPE.modelled(rows, laws, cap=50, handoff=8)
+        self.assertAlmostEqual(found, 2 * 54 * 1000, places=6)
+
+    def test_a_cap_no_context_reaches_charges_no_handoff_at_all(self):
+        rows = [{"requests": 30, "billable_tokens": 0, "kind": "a"}]
+        laws = {"a": {"frame_tokens_per_request": 1000,
+                      "slope_tokens_per_request_squared": 0}}
+        self.assertAlmostEqual(
+            SHAPE.modelled(rows, laws, cap=50, handoff=8), 30 * 1000, places=6
+        )
+
+
+class Levers(unittest.TestCase):
+    """The cross-population policy table, and the law each row is priced on.
+
+    #572's architecture review found a headline row priced on the subagent law
+    while the baseline it was compared against used each population's own. The
+    fix is that the law is an output, not an assumption, and these tests hold
+    it there.
+    """
+
+    def setUp(self):
+        self.laws = {
+            "subagent": {"frame_tokens_per_request": 60000,
+                         "slope_tokens_per_request_squared": 500},
+            "main": {"frame_tokens_per_request": 150000,
+                     "slope_tokens_per_request_squared": 200},
+        }
+        self.rows = (
+            [{"requests": n, "billable_tokens": 0, "kind": "subagent"}
+             for n in (20, 120, 400)]
+            + [{"requests": n, "billable_tokens": 0, "kind": "main"}
+               for n in (50, 300)]
+        )
+
+    def test_the_baseline_prices_every_context_on_its_own_law(self):
+        found = SHAPE.levers(self.rows, self.laws)
+        expected = sum(
+            self.laws[row["kind"]]["frame_tokens_per_request"] * row["requests"]
+            + self.laws[row["kind"]]["slope_tokens_per_request_squared"]
+            * row["requests"] ** 2
+            for row in self.rows
+        )
+        self.assertEqual(found["baseline_modelled_tokens"], round(expected))
+        self.assertEqual(found["baseline_law"], "each population's own")
+
+    def test_every_row_says_which_law_it_used(self):
+        found = SHAPE.levers(self.rows, self.laws)
+        by_name = {row["lever"]: row for row in found["levers"]}
+        for name in ("L1", "L1+L2", "L1+L3", "L1+L2+L3"):
+            self.assertEqual(by_name[name]["law"], "subagent")
+        for name in ("L2", "L3"):
+            self.assertEqual(by_name[name]["law"], "each population's own")
+
+    def test_a_row_that_does_not_cap_is_reproducible_from_the_baseline_law(self):
+        found = SHAPE.levers(self.rows, self.laws, trim=10000)
+        trimmed = next(r for r in found["levers"] if r["lever"] == "L2")
+        expected = found["baseline_modelled_tokens"] - 10000 * sum(
+            row["requests"] for row in self.rows
+        )
+        self.assertEqual(trimmed["modelled_tokens"], round(expected))
+
+    def test_stacking_never_costs_more_than_the_lever_alone(self):
+        found = SHAPE.levers(self.rows, self.laws)
+        by_name = {row["lever"]: row["change"] for row in found["levers"]}
+        self.assertLess(by_name["L1+L2"], by_name["L1"])
+        self.assertLess(by_name["L1+L3"], by_name["L1"])
+        self.assertLessEqual(by_name["L1+L2+L3"], by_name["L1+L2"])
+        self.assertLessEqual(by_name["L1+L2+L3"], by_name["L1+L3"])
+
+
+class LengthBands(unittest.TestCase):
+    def test_a_band_no_context_exceeds_holds_nothing(self):
+        rows = [{"requests": 10, "billable_tokens": 100, "kind": "a"}]
+        found = SHAPE.length_bands(rows, bands=(50,))
+        self.assertEqual(found[0]["contexts"], 0)
+        self.assertEqual(found[0]["share_of_tokens"], 0.0)
+
+    def test_a_band_every_context_exceeds_holds_all_of_it(self):
+        rows = [{"requests": 90, "billable_tokens": 100, "kind": "a"}]
+        found = SHAPE.length_bands(rows, bands=(50,))
+        self.assertEqual(found[0]["contexts"], 1)
+        self.assertEqual(found[0]["share_of_tokens"], 1.0)
+
 
 class Concentration(unittest.TestCase):
     def test_the_top_decile_share_never_exceeds_the_whole(self):
@@ -178,6 +272,9 @@ class Figures(unittest.TestCase):
     def shape(self):
         rows = synthetic(60000, 500, [10, 50, 120, 400])
         law = SHAPE.fit(rows)
+        for row in rows:
+            row["opening_cache_reads"] = 40000 * min(row["requests"], 10)
+            row["opening_requests"] = min(row["requests"], 10)
         group = {
             "contexts": len(rows),
             "requests": sum(row["requests"] for row in rows),
@@ -185,6 +282,8 @@ class Figures(unittest.TestCase):
             "cost_law": law,
             "terms": SHAPE.terms(rows, law),
             "concentration": SHAPE.concentration(rows),
+            "length_bands": SHAPE.length_bands(rows),
+            "opening": SHAPE.opening_cache_reads(rows),
         }
         return {
             "inputs": {"contexts": 8, "requests": 100, "billable_tokens": 999},
@@ -248,7 +347,30 @@ class ReportFigures(unittest.TestCase):
             carried,
             SHAPE.figures(shape, ceremony),
             "the ranking's figures block no longer matches the committed JSON; "
-            "regenerate it with `shape.py table`",
+            "regenerate it with `shape.py table --block figures`",
+        )
+
+    def test_the_committed_report_carries_the_generated_lever_table(self):
+        """The Blocker #572's review found lived in a table like this one.
+
+        It was computed beside the document rather than out of it, and one row
+        was priced on a law the baseline did not use. Generating it is the
+        durable fix; this is what makes the fix stick.
+        """
+        for path in (SHAPE_DOCUMENT, RANKING):
+            if not os.path.isfile(path):
+                self.skipTest(f"{path} is not committed here")
+        with open(SHAPE_DOCUMENT, "r", encoding="utf-8") as stream:
+            shape = json.load(stream)
+        with open(RANKING, "r", encoding="utf-8") as stream:
+            markdown = stream.read()
+        carried = SHAPE.extract_levers(markdown)
+        self.assertIsNotNone(carried, "the ranking carries no shape-levers block")
+        self.assertEqual(
+            carried,
+            SHAPE.lever_table(shape),
+            "the ranking's lever table no longer matches the committed JSON; "
+            "regenerate it with `shape.py table --block levers`",
         )
 
 

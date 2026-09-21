@@ -93,6 +93,20 @@ HANDOFF_REQUESTS = 8
 # "hand off to a fresh context after this many requests".
 CAPS = (40, 60, 80, 120, 150, 200)
 
+# The policy the lever table prices: the cap it proposes, how much of the
+# standing frame it supposes can be cut, and what fraction of today's requests
+# it supposes remain. Three stated assumptions, in one place, so that a reader
+# who disagrees with one can redo the arithmetic with another number.
+# How many of a context's first requests count as its opening, before the
+# standing prompt has grown, and the context lengths the length-band table
+# reports against.
+FIRST_REQUESTS = 10
+LENGTH_BANDS = (60, 100, 150)
+
+POLICY_CAP = 80
+FRAME_TRIM_TOKENS = 10000
+REQUEST_SCALE = 0.8
+
 
 def fit(rows):
     """Least squares for ``billable = frame * n + slope * n^2``, no intercept.
@@ -189,25 +203,95 @@ def concentration(rows, fractions=(0.1, 0.25, 0.5)):
     return found
 
 
-def counterfactual(rows, coefficients, caps=CAPS, handoff=HANDOFF_REQUESTS):
-    """What the same work would have cost with every context capped.
+def pieces_for(requests, cap):
+    """How many contexts a run of ``requests`` becomes under ``cap``."""
+    if cap is None:
+        return 1
+    return max(1, math.ceil(requests / cap))
 
-    Arithmetic over the fitted coefficients: split each context's requests into
-    equal pieces no longer than the cap, charge every extra piece ``handoff``
-    requests for re-reading its brief, and price each piece on its own curve.
+
+def modelled(rows, laws, cap=None, handoff=HANDOFF_REQUESTS, trim=0, scale=1.0,
+             law=None):
+    """What a population costs under one policy, on the fitted coefficients.
+
+    ``cap`` splits each context into equal pieces no longer than it. The
+    handoff is charged **once per extra piece**, not once per piece: a run of
+    ``N`` requests cut into ``k`` contexts re-reads its brief ``k - 1`` times,
+    because the first context is the one that wrote it.
+
+    ``law`` names the cost law every piece is priced on. ``None`` prices each
+    context on its own population's law, which is what the baseline does.
+    Naming one -- in practice ``"subagent"`` -- says every piece runs as a fresh
+    dispatch, which is the whole content of the capping proposal and is
+    therefore stated here rather than assumed.
     """
-    frame = coefficients["frame_tokens_per_request"]
-    slope = coefficients["slope_tokens_per_request_squared"]
-    baseline = frame * sum(row["requests"] for row in rows) + slope * sum(
-        row["requests"] ** 2 for row in rows
-    )
+    total = 0.0
+    for row in rows:
+        chosen = laws[law] if law is not None else laws[row["kind"]]
+        frame = chosen["frame_tokens_per_request"] - trim
+        slope = chosen["slope_tokens_per_request_squared"]
+        requests = row["requests"] * scale
+        parts = pieces_for(requests, cap)
+        each = (requests + handoff * (parts - 1)) / parts
+        total += parts * (frame * each + slope * each * each)
+    return total
+
+
+def length_bands(rows, bands=LENGTH_BANDS):
+    """How much of a population's cost sits in its longer contexts.
+
+    The concentration view asks "how much do the dearest contexts hold"; this
+    asks "how much sits above a length a cap could actually name", which is the
+    question a capping rule is chosen on.
+    """
+    total = sum(row["billable_tokens"] for row in rows)
+    found = []
+    for band in bands:
+        over = [row for row in rows if row["requests"] > band]
+        found.append(
+            {
+                "requests_over": band,
+                "contexts": len(over),
+                "of_contexts": len(rows),
+                "share_of_tokens": round(
+                    sum(row["billable_tokens"] for row in over) / total, 4
+                )
+                if total
+                else 0.0,
+            }
+        )
+    return found
+
+
+def opening_cache_reads(rows):
+    """Mean cache reads per request over each context's first requests.
+
+    The bottom of the accumulation curve, measured rather than modelled. It is
+    the number the fitted frame coefficient should be read against.
+    """
+    reads = sum(row["opening_cache_reads"] for row in rows)
+    requests = sum(row["opening_requests"] for row in rows)
+    return {
+        "first_requests_per_context": FIRST_REQUESTS,
+        "requests": requests,
+        "mean_cache_read_tokens": round(reads / requests) if requests else 0,
+    }
+
+
+def counterfactual(rows, coefficients, caps=CAPS, handoff=HANDOFF_REQUESTS):
+    """One population's cap sweep, priced on its own law throughout.
+
+    This is the *within-population* view: it answers "what would capping have
+    done to these contexts", and it never borrows another population's law.
+    The cross-population policy view is :func:`levers`, which says in its own
+    output which law it used.
+    """
+    laws = {"only": coefficients}
+    rows = [dict(row, kind="only") for row in rows]
+    baseline = modelled(rows, laws, cap=None, handoff=0)
     found = []
     for cap in caps:
-        total = 0.0
-        for row in rows:
-            pieces = max(1, math.ceil(row["requests"] / cap))
-            each = row["requests"] / pieces + (handoff if pieces > 1 else 0)
-            total += pieces * (frame * each + slope * each * each)
+        total = modelled(rows, laws, cap=cap, handoff=handoff)
         found.append(
             {
                 "cap_requests": cap,
@@ -222,31 +306,142 @@ def counterfactual(rows, coefficients, caps=CAPS, handoff=HANDOFF_REQUESTS):
     }
 
 
+def levers(rows, laws, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
+           trim=FRAME_TRIM_TOKENS, scale=REQUEST_SCALE):
+    """The three levers the ranking proposes, alone and stacked.
+
+    The baseline prices every context on its own population's law. So does
+    every row that does not cap, because trimming the frame or asking for fewer
+    requests does not change where an agent runs. Every row that **does** cap
+    prices its pieces on the subagent law, because a handed-off piece is a
+    fresh dispatch by construction -- and each row says which law it used, so a
+    reader never has to infer it.
+    """
+    baseline = modelled(rows, laws, cap=None, handoff=0)
+    plans = (
+        ("L1", f"cap every context at {cap} requests, handing off to a fresh "
+               "dispatch", dict(cap=cap, law="subagent")),
+        ("L1+L2", f"the same, and {trim:,} tokens off the standing frame",
+         dict(cap=cap, law="subagent", trim=trim)),
+        ("L1+L3", f"the same as L1, and {1 - scale:.0%} fewer requests",
+         dict(cap=cap, law="subagent", scale=scale)),
+        ("L1+L2+L3", "all three together",
+         dict(cap=cap, law="subagent", trim=trim, scale=scale)),
+        ("L2", f"{trim:,} tokens off the standing frame, no cap",
+         dict(trim=trim)),
+        ("L3", f"{1 - scale:.0%} fewer requests, no cap", dict(scale=scale)),
+    )
+    found = []
+    for name, description, plan in plans:
+        total = modelled(rows, laws, handoff=handoff, **plan)
+        found.append(
+            {
+                "lever": name,
+                "description": description,
+                "cap_requests": plan.get("cap"),
+                "law": plan.get("law", "each population's own"),
+                "frame_trim_tokens": plan.get("trim", 0),
+                "request_scale": plan.get("scale", 1.0),
+                "modelled_tokens": round(total),
+                "change": round(total / baseline - 1.0, 4) if baseline else 0.0,
+            }
+        )
+    return {
+        "handoff_requests": handoff,
+        "baseline_modelled_tokens": round(baseline),
+        "baseline_law": "each population's own",
+        "levers": found,
+    }
+
+
+def bounded(path, since, until):
+    """Fold one transcript, counting only the requests inside the window.
+
+    The window has to cut **requests**, not whole files. The transcript
+    directory is live and append-only, so a context that is still running when
+    a reading is taken keeps growing afterwards; dropping or keeping the whole
+    file either way makes the reading unrepeatable, because tomorrow's run over
+    the same closed window would see a longer file. Counting only the requests
+    at or before ``until`` makes the answer stable, since a request already
+    made never changes.
+
+    The privacy boundary is ``transcripts.record_from``, as everywhere else in
+    this module: five values come out of a line and the line is dropped.
+    """
+    requests = 0
+    opening = opened = 0
+    counters = {name: 0 for name in TRANSCRIPTS.COUNTERS}
+    first = last = None
+    spans = []
+    previous = None
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                parsed = json.loads(line)
+            except ValueError:
+                continue
+            record = TRANSCRIPTS.record_from(parsed)
+            if record is None:
+                continue
+            when = record.timestamp
+            if since is not None and when < since:
+                continue
+            if until is not None and when > until:
+                continue
+            requests += 1
+            if requests <= FIRST_REQUESTS:
+                opening += record.cache_read_input_tokens
+                opened += 1
+            for name in TRANSCRIPTS.COUNTERS:
+                counters[name] += getattr(record, name)
+            if first is None or when < first:
+                first = when
+            last = when if last is None or when > last else last
+            if previous is not None:
+                gap = (when - previous).total_seconds()
+                if 0 <= gap <= TRANSCRIPTS.IDLE_GAP_SECONDS:
+                    spans.append(gap)
+            previous = when
+    if not requests:
+        return None
+    return {
+        "requests": requests,
+        "billable_tokens": sum(counters.values()),
+        "cache_read_input_tokens": counters["cache_read_input_tokens"],
+        "output_tokens": counters["output_tokens"],
+        "first": first,
+        "last": last,
+        "active_seconds": sum(spans),
+        "opening_cache_reads": opening,
+        "opening_requests": opened,
+    }
+
+
 def contexts(roots, since, until):
-    """Every transcript in the window, folded to one row each."""
+    """Every transcript with a request in the window, folded to one row each."""
     rows = []
     for root in roots:
         found, _ = TRANSCRIPTS.discover(root)
         for item in found:
-            if item.first() is None:
+            folded = bounded(item.path, since, until)
+            if folded is None:
                 continue
-            if since is not None and item.last() < since:
-                continue
-            if until is not None and item.first() > until:
-                continue
-            totals = item.totals()
             rows.append(
                 {
                     "relative": item.relative,
                     "root": item.root,
                     "kind": item.kind,
-                    "requests": totals["requests"],
-                    "billable_tokens": totals["billable_tokens"],
-                    "cache_read_input_tokens": totals["cache_read_input_tokens"],
-                    "output_tokens": totals["output_tokens"],
-                    "first": item.first().isoformat(),
-                    "last": item.last().isoformat(),
-                    "active_seconds": round(item.active_seconds()),
+                    "requests": folded["requests"],
+                    "billable_tokens": folded["billable_tokens"],
+                    "cache_read_input_tokens": folded["cache_read_input_tokens"],
+                    "output_tokens": folded["output_tokens"],
+                    "first": folded["first"].isoformat(),
+                    "last": folded["last"].isoformat(),
+                    "active_seconds": round(folded["active_seconds"]),
+                    "opening_cache_reads": folded["opening_cache_reads"],
+                    "opening_requests": folded["opening_requests"],
                 }
             )
     rows.sort(key=lambda row: (row["root"], row["relative"]))
@@ -284,10 +479,15 @@ def build_shape(rows, since, until):
         },
         "populations": {},
     }
+    laws = {
+        name: fit(group) for name, group in population.items() if group
+    }
+    if "subagent" in laws:
+        document["policy"] = levers(rows, laws)
     for name, group in population.items():
         if not group:
             continue
-        coefficients = fit(group)
+        coefficients = laws[name]
         document["populations"][name] = {
             "contexts": len(group),
             "requests": sum(row["requests"] for row in group),
@@ -302,6 +502,8 @@ def build_shape(rows, since, until):
             "cost_law": coefficients,
             "terms": terms(group, coefficients),
             "concentration": concentration(group),
+            "length_bands": length_bands(group),
+            "opening": opening_cache_reads(group),
             "counterfactual": counterfactual(group, coefficients),
         }
     return document
@@ -496,6 +698,8 @@ def build_ceremony(rows):
 
 FIGURES_BEGIN = "<!-- shape-figures:v1 -->"
 FIGURES_END = "<!-- end shape-figures:v1 -->"
+LEVERS_BEGIN = "<!-- shape-levers:v1 -->"
+LEVERS_END = "<!-- end shape-levers:v1 -->"
 
 
 def _thousands(value):
@@ -518,7 +722,9 @@ def figures(shape, ceremony):
     lines.append(f"| Requests | {inputs['requests']:,} |")
     lines.append(f"| Billable tokens | {inputs['billable_tokens']:,} |")
     for name in ("subagent", "main"):
-        group = shape["populations"][name]
+        group = shape["populations"].get(name)
+        if group is None:
+            continue
         law = group["cost_law"]
         term = group["terms"]
         lines.append(
@@ -540,6 +746,18 @@ def figures(shape, ceremony):
         f"| **All contexts, standing frame / accumulation** | "
         f"**{both['standing_frame_share']:.1%} / {both['accumulation_share']:.1%}** |"
     )
+    opening = shape["populations"]["subagent"]["opening"]
+    lines.append(
+        f"| Mean cache reads per request over a subagent context's first "
+        f"{opening['first_requests_per_context']} requests | "
+        f"{opening['mean_cache_read_tokens']:,} |"
+    )
+    for entry in shape["populations"]["subagent"]["length_bands"]:
+        lines.append(
+            f"| Subagent contexts over {entry['requests_over']} requests | "
+            f"{entry['contexts']} of {entry['of_contexts']}, holding "
+            f"{entry['share_of_tokens']:.1%} |"
+        )
     for entry in shape["populations"]["subagent"]["concentration"]:
         lines.append(
             f"| Top {entry['top_fraction_of_contexts']:.0%} of subagent contexts "
@@ -562,10 +780,11 @@ def figures(shape, ceremony):
         f"{totals['ai_review_threads']} / {totals['ai_review_threads_open']} |"
     )
     commits = totals["commits_before_pr"] + totals["commits_after_pr"]
+    repair = totals["commits_after_pr"] / commits if commits else 0.0
     lines.append(
         f"| Commits before / after the pull request existed | "
         f"{totals['commits_before_pr']} / {totals['commits_after_pr']} "
-        f"({totals['commits_after_pr'] / commits:.1%} repair) |"
+        f"({repair:.1%} repair) |"
     )
     lines.append("")
     lines.append(FIGURES_END)
@@ -577,7 +796,7 @@ def _combined(shape):
     standing = sum(
         group["terms"]["standing_frame_tokens"]
         for group in shape["populations"].values()
-    )
+    )  # every population present contributes; an absent one simply is not there
     growing = sum(
         group["terms"]["accumulation_tokens"] for group in shape["populations"].values()
     )
@@ -590,13 +809,56 @@ def _combined(shape):
     }
 
 
+def lever_table(shape):
+    """The lever table, rendered from the committed policy block.
+
+    #572's architecture review found the first version of this table computed
+    by hand beside the document rather than out of it, with one row silently
+    priced on a different cost law than the baseline it was compared against.
+    The fix is not a sharper reviewer: it is that this table, like the figures
+    block, is generated, and that every row carries the law it used.
+    """
+    policy = shape["policy"]
+    baseline = policy["baseline_modelled_tokens"]
+    lines = [LEVERS_BEGIN, ""]
+    lines.append("| Levers applied | Cost law | Modelled tokens | Change |")
+    lines.append("| --- | --- | ---: | ---: |")
+    lines.append(
+        f"| Baseline (modelled) | {policy['baseline_law']} | "
+        f"{baseline:,} | — |"
+    )
+    for row in policy["levers"]:
+        lines.append(
+            f"| **{row['lever']}** — {row['description']} | {row['law']} | "
+            f"{row['modelled_tokens']:,} | **{row['change']:+.1%}** |"
+        )
+    lines.append("")
+    lines.append(
+        f"Handoff charged at {policy['handoff_requests']} requests per *extra* "
+        "context, once per handoff rather than once per piece."
+    )
+    lines.append("")
+    lines.append(LEVERS_END)
+    return "\n".join(lines) + "\n"
+
+
+def extract_block(markdown, begin, end):
+    """The delimited block a document carries, or ``None`` when it carries none."""
+    start = markdown.find(begin)
+    stop = markdown.find(end)
+    if start < 0 or stop < 0:
+        return None
+    return markdown[start : stop + len(end)] + "\n"
+
+
 def extract_figures(markdown):
     """The figures block a document carries, or ``None`` when it carries none."""
-    start = markdown.find(FIGURES_BEGIN)
-    end = markdown.find(FIGURES_END)
-    if start < 0 or end < 0:
-        return None
-    return markdown[start : end + len(FIGURES_END)] + "\n"
+    return extract_block(markdown, FIGURES_BEGIN, FIGURES_END)
+
+
+def extract_levers(markdown):
+    """The lever block a document carries, or ``None`` when it carries none."""
+    return extract_block(markdown, LEVERS_BEGIN, LEVERS_END)
 
 
 # --------------------------------------------------------------- commands ---
@@ -631,9 +893,19 @@ def main(argv=None):
     )
     price.add_argument("--out", default="-", help="where to write; - is stdout")
 
-    table = modes.add_parser("table", help="render the figures block from committed JSON")
+    table = modes.add_parser("table", help="render a report block from committed JSON")
     table.add_argument("--shape", required=True, help="a shape document")
-    table.add_argument("--ceremony", required=True, help="a ceremony document")
+    table.add_argument(
+        "--ceremony",
+        default=None,
+        help="a ceremony document; the figures block needs one",
+    )
+    table.add_argument(
+        "--block",
+        default="figures",
+        choices=("figures", "levers"),
+        help="which generated block to render",
+    )
     table.add_argument("--out", default="-", help="where to write; - is stdout")
 
     options = parser.parse_args(argv)
@@ -679,6 +951,11 @@ def main(argv=None):
 
     with open(options.shape, "r", encoding="utf-8") as stream:
         shape = json.load(stream)
+    if options.block == "levers":
+        CANONICAL.emit(lever_table(shape), options.out)
+        return 0
+    if options.ceremony is None:
+        parser.error("the figures block needs --ceremony")
     with open(options.ceremony, "r", encoding="utf-8") as stream:
         ceremony = json.load(stream)
     CANONICAL.emit(figures(shape, ceremony), options.out)

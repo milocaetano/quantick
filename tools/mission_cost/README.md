@@ -61,6 +61,35 @@ And to grade one metric across the registry's two groups:
 python tools/mission_cost/measure.py compare --repo . --metric billable_tokens
 ```
 
+`shape.py` answers the question a mission comparison cannot: what one **agent
+context** costs as it lengthens, and what the review chain around it caught. It
+has three subcommands.
+
+```sh
+# the cost shape, from local transcripts; the window cuts requests, not files
+python tools/mission_cost/shape.py measure --repo . \
+  --since 2026-09-11T15:16:05Z --until 2026-09-21T06:20:00Z \
+  --out docs/quality/velocity/shape.json
+
+# what the review chain produced, from `gh`, over the registry's pull requests
+python tools/mission_cost/shape.py ceremony --out docs/quality/velocity/ceremony.json
+
+# the report's generated blocks, offline, out of those two committed documents
+python tools/mission_cost/shape.py table --block figures \
+  --shape docs/quality/velocity/shape.json \
+  --ceremony docs/quality/velocity/ceremony.json
+python tools/mission_cost/shape.py table --block levers \
+  --shape docs/quality/velocity/shape.json
+```
+
+`table` is the answer to a drift class rather than a convenience. A report that
+retypes a figure out of a file that already holds it goes stale silently, and a
+checker over prose goes stale the same way; a **generator** does not, because
+`test_shape.ReportFigures` fails the moment
+`docs/quality/velocity/ranking.md`'s blocks stop matching the JSON. Every row
+of the lever table carries the cost law it was priced on, because the first
+version of that table priced one row on a law its own baseline did not use.
+
 `--metric` takes a token kind, `billable_tokens`, `main_thread.<kind>`,
 `subagents.<kind>`, `agent_seconds`, `elapsed_seconds`, `span_seconds`,
 `pr_open_seconds`, `ci_seconds`, `ci_wall_seconds` or `ci_runs`.
@@ -101,6 +130,7 @@ point of the bucket.
 | `measure.py` | the command, the report and the comparison |
 | `group_registry.py` | one registry, regrouped `before`/`after` around an instant |
 | `opening_frame.py` | how big the prompt is on a session's first request |
+| `shape.py` | what one agent context costs as it lengthens, what the review chain caught, and the report blocks generated from both |
 
 `group_registry.py` exists because the method gives each mission one `group`
 field, so grading seven merged changes needs seven groupings of one population.
