@@ -89,6 +89,37 @@ checker over prose goes stale the same way; a **generator** does not, because
 `docs/quality/velocity/ranking.md`'s blocks stop matching the JSON. Every row
 of the lever table carries the cost law it was priced on, because the first
 version of that table priced one row on a law its own baseline did not use.
+`--block` takes its choices from the `BLOCKS` registry, so a third generated
+block is one entry there rather than five edits in five places.
+
+The policy assumptions the lever table is priced on are **assumptions, not
+measurements**, so each is a flag on `measure` rather than a source edit, and
+the `policy` block records what the run used:
+
+| Flag | Default | What it supposes |
+| --- | --- | --- |
+| `--cap` | 80 | requests after which a context hands off to a fresh dispatch |
+| `--handoff` | 8 | requests a handed-off context spends re-reading its brief |
+| `--frame-trim` | 10000 | tokens cut from the standing frame |
+| `--request-scale` | 0.8 | fraction of today's requests that remain |
+
+Two things each document says about itself, because a number nobody can grade
+is worse than no number:
+
+- **`cost_law.validity`.** The fit is an unconstrained least squares, so a
+  narrow population — a short window, one campaign's contexts, a main-only run
+  — can put its minimum at a negative coefficient, which is arithmetic rather
+  than a measurement. Every law carries `usable` and, when it is not,
+  `degenerate_because`; the figures block labels such a law instead of
+  rendering its shares as a reading. The committed fixture is one of those
+  populations on purpose, and `test_shape.Command` pins it.
+- **`totals.truncated_pulls` and each pull's `truncated`.** Every `gh`
+  connection is asked for its `totalCount` and the document records what it did
+  not see. Above zero, every ceremony total is a floor rather than a number.
+  `ceremony` also stamps an `inputs` block — the registry it read, the pull
+  requests in it and a digest over their facts — for the reason `measure` and
+  `opening_frame.py` do. The committed `ceremony.json` predates those three
+  fields and is the reading taken at the time; the next run writes them.
 
 `--metric` takes a token kind, `billable_tokens`, `main_thread.<kind>`,
 `subagents.<kind>`, `agent_seconds`, `elapsed_seconds`, `span_seconds`,
@@ -123,6 +154,7 @@ point of the bucket.
 | File | What it owns |
 | --- | --- |
 | `transcripts.py` | the privacy boundary: discovery, the five-field record, the 300-second idle bound, and the one rule for reading an instant |
+| | `locate` walks and classifies without opening a file; `discover` is `locate` plus the fold. A caller with its own fold — `shape.py`'s windowed one — takes `locate`, so no transcript is parsed twice |
 | `canonical.py` | section 7's byte contract: sorted keys, ASCII, LF, one trailing newline |
 | `attribution.py` | the registry, the two assignment rules, and the main/subagent split |
 | `dispersion.py` | quartiles, and the registered rule for when a fall counts as a reduction |

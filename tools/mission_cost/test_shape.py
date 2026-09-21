@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Offline tests for `shape.py`. No transcript outside the fixture, no network."""
 
+import builtins
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 
 import transcripts as TRANSCRIPTS_MODULE  # noqa: F401  (import guard, see below)
@@ -11,6 +15,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 SHAPE = TRANSCRIPTS_MODULE.load("shape")
+
+FIXTURES = os.path.join(HERE, "fixtures", "transcripts")
+SHAPE_MODULE = os.path.join(HERE, "shape.py")
 
 SHAPE_DOCUMENT = os.path.join(REPO, "docs", "quality", "velocity", "shape.json")
 CEREMONY_DOCUMENT = os.path.join(REPO, "docs", "quality", "velocity", "ceremony.json")
@@ -43,6 +50,47 @@ class Fit(unittest.TestCase):
     def test_refuses_a_population_with_no_second_order_information(self):
         with self.assertRaises(ValueError):
             SHAPE.fit(synthetic(1000, 1, [7, 7, 7]))
+
+
+class Validity(unittest.TestCase):
+    """A law that cannot be true says so in the document, not to the reader.
+
+    The fit is an unconstrained least squares, so a narrow population can put
+    its minimum at a negative coefficient. A request cannot cost less than
+    nothing before its context has grown; publishing that as a number and
+    leaving a consumer to notice is the data-honesty failure this closes.
+    """
+
+    def test_a_law_that_can_be_true_is_marked_usable(self):
+        found = SHAPE.fit(synthetic(60000, 500, [10, 25, 50, 100]))
+        self.assertTrue(found["validity"]["usable"])
+        self.assertEqual(found["validity"]["degenerate_because"], [])
+
+    def test_a_negative_frame_is_named_rather_than_printed(self):
+        found = SHAPE.fit(synthetic(-1000, 500, [10, 25, 50, 100]))
+        self.assertLess(found["frame_tokens_per_request"], 0)
+        self.assertFalse(found["validity"]["usable"])
+        self.assertIn(SHAPE.NEGATIVE_FRAME, found["validity"]["degenerate_because"])
+
+    def test_a_negative_slope_is_named_too(self):
+        found = SHAPE.fit(synthetic(60000, -50, [10, 25, 50, 100]))
+        self.assertFalse(found["validity"]["usable"])
+        self.assertIn(SHAPE.NEGATIVE_SLOPE, found["validity"]["degenerate_because"])
+
+    def test_a_share_outside_the_unit_interval_is_named(self):
+        rows = synthetic(-1000, 500, [10, 25, 50, 100])
+        law = SHAPE.fit(rows)
+        term = SHAPE.terms(rows, law)
+        self.assertLess(term["standing_frame_share"], 0.0)
+        judged = SHAPE.validity(law, term)
+        self.assertFalse(judged["usable"])
+        self.assertIn(SHAPE.SHARE_OUTSIDE_UNIT, judged["degenerate_because"])
+
+    def test_the_shares_alone_cannot_condemn_a_sound_law(self):
+        rows = synthetic(60000, 500, [10, 25, 50, 100])
+        law = SHAPE.fit(rows)
+        judged = SHAPE.validity(law, SHAPE.terms(rows, law))
+        self.assertTrue(judged["usable"])
 
 
 class Terms(unittest.TestCase):
@@ -202,7 +250,16 @@ class StepZero(unittest.TestCase):
         self.assertIsNone(SHAPE._step_zero("## Findings\n\nBlockers: none."))
 
 
-def _payload(body, tier_text, commits, threads):
+def _payload(body, tier_text, commits, threads, totals=None):
+    """One `gh` answer. ``totals`` overrides a connection's `totalCount`.
+
+    Left alone, every `totalCount` equals the number of nodes returned, which
+    is what an untruncated page looks like.
+    """
+    totals = totals or {}
+    comments = [{"createdAt": "2026-09-20T11:00:00Z", "body": body}]
+    commit_nodes = [{"commit": {"committedDate": when}} for when in commits]
+    thread_nodes = [{"isResolved": one} for one in threads]
     return json.dumps(
         {
             "data": {
@@ -213,12 +270,19 @@ def _payload(body, tier_text, commits, threads):
                         "deletions": 2,
                         "createdAt": "2026-09-20T10:00:00Z",
                         "bodyText": tier_text,
-                        "comments": {"nodes": [{"createdAt": "2026-09-20T11:00:00Z", "body": body}]},
+                        "comments": {
+                            "totalCount": totals.get("comments", len(comments)),
+                            "nodes": comments,
+                        },
                         "commits": {
-                            "nodes": [{"commit": {"committedDate": when}} for when in commits]
+                            "totalCount": totals.get("commits", len(commit_nodes)),
+                            "nodes": commit_nodes,
                         },
                         "reviewThreads": {
-                            "nodes": [{"isResolved": one} for one in threads]
+                            "totalCount": totals.get(
+                                "reviewThreads", len(thread_nodes)
+                            ),
+                            "nodes": thread_nodes,
                         },
                     }
                 }
@@ -267,6 +331,94 @@ class PullCeremony(unittest.TestCase):
     def test_no_prose_survives_into_the_record(self):
         self.assertNotIn(self.BAIT, json.dumps(self.record()))
 
+    def test_a_complete_page_records_no_truncation(self):
+        self.assertEqual(self.record()["truncated"], {})
+
+
+class Truncation(unittest.TestCase):
+    """A short page is recorded, never reported as the whole.
+
+    The ceremony totals are the denominator of every cost-per-catch number. PR
+    #542 has 176 commits against a page of 100, and the `comments` cap is
+    sharper still because the durable-report filter runs after the page: a
+    pull request whose 61st comment is a review report would lose that report
+    from `reports`, `step_zero_rounds` and `step_zero_findings` in silence.
+    """
+
+    def payload(self, totals):
+        return _payload(
+            "<!-- quantick-review-report:v1 kind=arch-review -->\n"
+            "step 0: code-review at low, 4 findings.\n",
+            "Tier: medium",
+            ["2026-09-20T09:00:00Z"],
+            [True],
+            totals=totals,
+        )
+
+    def record(self, totals):
+        raw = self.payload(totals)
+        return SHAPE.pull_ceremony("owner", "repo", 42, runner=lambda args: raw)
+
+    def test_the_query_asks_every_connection_for_its_total(self):
+        for name in SHAPE.PAGES:
+            self.assertIn(f"{name}(first:{SHAPE.PAGES[name]}){{totalCount", SHAPE.CEREMONY_QUERY)
+
+    def test_a_short_page_is_named_with_what_was_missed(self):
+        found = self.record({"commits": 176})
+        self.assertEqual(found["truncated"], {"commits": {"fetched": 1, "total": 176}})
+
+    def test_every_connection_is_checked_not_only_the_first(self):
+        found = self.record({"comments": 61, "reviewThreads": 400})
+        self.assertEqual(sorted(found["truncated"]), ["comments", "reviewThreads"])
+
+    def test_the_document_totals_count_the_truncated_pull_requests(self):
+        rows = [self.record({}), self.record({"commits": 176})]
+        rows[1]["pr"] = 43
+        document = SHAPE.build_ceremony(rows)
+        self.assertEqual(document["totals"]["truncated_pulls"], 1)
+
+
+class CeremonyProvenance(unittest.TestCase):
+    """`build_ceremony` stamps what it read, the way `build_shape` does.
+
+    Its input is live GitHub state: one reopened pull request, one edited
+    comment or one more registry entry moves every total. Without a digest the
+    document cannot be told apart from a changed harness.
+    """
+
+    def row(self, pr, threads=3):
+        return {
+            "pr": pr,
+            "tier": "medium",
+            "churn": 100,
+            "reports": {"arch-review": 1},
+            "step_zero_rounds": 1,
+            "step_zero_findings": 2,
+            "step_zero_empty_rounds": 0,
+            "ai_review_threads": threads,
+            "ai_review_threads_open": 0,
+            "commits_before_pr": 4,
+            "commits_after_pr": 6,
+            "truncated": {},
+        }
+
+    def test_the_document_carries_an_inputs_block(self):
+        document = SHAPE.build_ceremony([self.row(7), self.row(9)], registry="r.json")
+        self.assertEqual(document["inputs"]["missions"], 2)
+        self.assertEqual(document["inputs"]["pulls"], [7, 9])
+        self.assertEqual(document["inputs"]["registry"], "r.json")
+        self.assertEqual(len(document["inputs"]["digest"]), 64)
+
+    def test_the_digest_does_not_depend_on_the_order_the_pulls_arrived(self):
+        one = SHAPE.build_ceremony([self.row(7), self.row(9)])
+        other = SHAPE.build_ceremony([self.row(9), self.row(7)])
+        self.assertEqual(one["inputs"]["digest"], other["inputs"]["digest"])
+
+    def test_a_changed_fact_changes_the_digest(self):
+        one = SHAPE.build_ceremony([self.row(7)])
+        other = SHAPE.build_ceremony([self.row(7, threads=4)])
+        self.assertNotEqual(one["inputs"]["digest"], other["inputs"]["digest"])
+
 
 class Figures(unittest.TestCase):
     def shape(self):
@@ -311,7 +463,25 @@ class Figures(unittest.TestCase):
         rendered = SHAPE.figures(self.shape(), self.ceremony())
         self.assertTrue(rendered.startswith(SHAPE.FIGURES_BEGIN))
         self.assertTrue(rendered.endswith(SHAPE.FIGURES_END + "\n"))
-        self.assertEqual(SHAPE.extract_figures("before\n" + rendered + "after"), rendered)
+        self.assertEqual(
+            SHAPE.extract("before\n" + rendered + "after", "figures"), rendered
+        )
+
+    def test_a_degenerate_law_is_labelled_in_the_report_too(self):
+        """`-112.6% / 212.6%` must never render as though it were a reading."""
+        shape = self.shape()
+        rows = synthetic(-1000, 500, [10, 25, 50, 100])
+        law = SHAPE.fit(rows)
+        term = SHAPE.terms(rows, law)
+        shape["populations"]["subagent"]["cost_law"] = dict(
+            law, validity=SHAPE.validity(law, term)
+        )
+        rendered = SHAPE.figures(shape, self.ceremony())
+        self.assertIn("degenerate", rendered)
+        self.assertIn(SHAPE.NEGATIVE_FRAME, rendered)
+
+    def test_a_sound_law_carries_no_warning(self):
+        self.assertNotIn("degenerate", SHAPE.figures(self.shape(), self.ceremony()))
 
     def test_it_ends_in_one_newline_and_carries_no_carriage_return(self):
         # Markdown, not canonical JSON, so `canonical.py`'s ASCII rule does not
@@ -331,7 +501,14 @@ class ReportFigures(unittest.TestCase):
     generator does not, because the moment it stops matching, this fails.
     """
 
-    def test_the_committed_report_carries_the_generated_block(self):
+    def test_the_committed_report_carries_every_generated_block(self):
+        """Every block in the registry, not one test method per block.
+
+        The Blocker #572's review found lived in a table computed beside the
+        document rather than out of it, with one row priced on a law its own
+        baseline did not use. Generating the table is the durable fix; looping
+        over `BLOCKS` is what keeps the next block covered for free.
+        """
         for path in (SHAPE_DOCUMENT, CEREMONY_DOCUMENT, RANKING):
             if not os.path.isfile(path):
                 self.skipTest(f"{path} is not committed here")
@@ -341,37 +518,225 @@ class ReportFigures(unittest.TestCase):
             ceremony = json.load(stream)
         with open(RANKING, "r", encoding="utf-8") as stream:
             markdown = stream.read()
-        carried = SHAPE.extract_figures(markdown)
-        self.assertIsNotNone(carried, "the ranking carries no shape-figures block")
+        for name, block in sorted(SHAPE.BLOCKS.items()):
+            with self.subTest(block=name):
+                carried = SHAPE.extract(markdown, name)
+                self.assertIsNotNone(
+                    carried, f"the ranking carries no {name} block"
+                )
+                self.assertEqual(
+                    carried,
+                    block.render(shape, ceremony),
+                    f"the ranking's {name} block no longer matches the committed "
+                    f"JSON; regenerate it with `shape.py table --block {name}`",
+                )
+
+
+class Bounded(unittest.TestCase):
+    """The window cut itself, over the committed fixture.
+
+    `bounded()` is the repair that makes a reading over a live, append-only
+    directory repeatable: a context still running when the reading is taken
+    keeps growing afterwards, so the window has to cut **requests** rather than
+    whole files. These pin that semantics, because the whole report rests on a
+    closed window giving the same answer tomorrow.
+    """
+
+    # The four requests of the fixture's first main thread.
+    MAIN = os.path.join(FIXTURES, "aaaaaaaa-0000-4000-8000-000000000001.jsonl")
+
+    def test_a_context_wholly_inside_the_window_is_read_whole(self):
+        found = SHAPE.bounded(self.MAIN, None, None)
+        self.assertEqual(found["requests"], 4)
+
+    def test_a_context_wholly_outside_the_window_is_dropped(self):
+        since = TRANSCRIPTS_MODULE.require_instant("2026-01-02T00:00:00Z", "since")
+        self.assertIsNone(SHAPE.bounded(self.MAIN, since, None))
+
+    def test_a_context_straddling_the_boundary_is_truncated_not_dropped(self):
+        until = TRANSCRIPTS_MODULE.require_instant("2026-01-01T00:15:00Z", "until")
+        found = SHAPE.bounded(self.MAIN, None, until)
+        self.assertEqual(found["requests"], 3)
+        self.assertEqual(found["last"].isoformat(), "2026-01-01T00:15:00+00:00")
+
+    def test_the_boundary_instant_itself_is_inside_the_window(self):
+        at = TRANSCRIPTS_MODULE.require_instant("2026-01-01T00:10:30Z", "at")
+        found = SHAPE.bounded(self.MAIN, at, at)
+        self.assertEqual(found["requests"], 1)
+
+    def test_only_the_requests_inside_the_window_are_billed(self):
+        until = TRANSCRIPTS_MODULE.require_instant("2026-01-01T00:15:00Z", "until")
+        whole = SHAPE.bounded(self.MAIN, None, None)
+        cut = SHAPE.bounded(self.MAIN, None, until)
+        self.assertLess(cut["billable_tokens"], whole["billable_tokens"])
+        # The 00:59 request is more than the idle bound past 00:15, so dropping
+        # it must not change the active time either way.
+        self.assertEqual(cut["active_seconds"], whole["active_seconds"])
+
+
+class Contexts(unittest.TestCase):
+    """Discovery, the per-context row and the order, over the fixture."""
+
+    def rows(self, since=None, until=None):
+        return SHAPE.contexts([FIXTURES], since, until)
+
+    def test_every_fixture_transcript_becomes_one_row(self):
+        rows = self.rows()
+        self.assertEqual(len(rows), 7)
         self.assertEqual(
-            carried,
-            SHAPE.figures(shape, ceremony),
-            "the ranking's figures block no longer matches the committed JSON; "
-            "regenerate it with `shape.py table --block figures`",
+            sorted(row["kind"] for row in rows),
+            ["main", "main", "main", "main", "subagent", "subagent", "subagent"],
         )
 
-    def test_the_committed_report_carries_the_generated_lever_table(self):
-        """The Blocker #572's review found lived in a table like this one.
+    def test_the_rows_are_ordered_so_two_runs_agree(self):
+        rows = self.rows()
+        self.assertEqual(
+            rows, sorted(rows, key=lambda row: (row["root"], row["relative"]))
+        )
 
-        It was computed beside the document rather than out of it, and one row
-        was priced on a law the baseline did not use. Generating it is the
-        durable fix; this is what makes the fix stick.
+    def test_a_row_carries_the_counts_bounded_folded(self):
+        rows = {row["relative"]: row for row in self.rows()}
+        one = rows["aaaaaaaa-0000-4000-8000-000000000001.jsonl"]
+        self.assertEqual(one["requests"], 4)
+        self.assertEqual(one["kind"], "main")
+        self.assertEqual(one["first"], "2026-01-01T00:10:00+00:00")
+
+    def test_a_window_drops_the_contexts_outside_it(self):
+        since = TRANSCRIPTS_MODULE.require_instant("2026-01-02T00:00:00Z", "since")
+        until = TRANSCRIPTS_MODULE.require_instant("2026-01-03T00:00:00Z", "until")
+        rows = self.rows(since, until)
+        self.assertEqual([row["relative"] for row in rows],
+                         ["dddddddd-0000-4000-8000-000000000004.jsonl"])
+
+    def test_each_transcript_is_opened_exactly_once(self):
+        """The repair: `locate` walks, `bounded` reads, and nothing reads twice.
+
+        `discover` would fold every file and `contexts` would then throw that
+        fold away and read the same lines again. Counting the opens is the only
+        way to say so without reading the implementation.
         """
-        for path in (SHAPE_DOCUMENT, RANKING):
-            if not os.path.isfile(path):
-                self.skipTest(f"{path} is not committed here")
-        with open(SHAPE_DOCUMENT, "r", encoding="utf-8") as stream:
-            shape = json.load(stream)
-        with open(RANKING, "r", encoding="utf-8") as stream:
-            markdown = stream.read()
-        carried = SHAPE.extract_levers(markdown)
-        self.assertIsNotNone(carried, "the ranking carries no shape-levers block")
-        self.assertEqual(
-            carried,
-            SHAPE.lever_table(shape),
-            "the ranking's lever table no longer matches the committed JSON; "
-            "regenerate it with `shape.py table --block levers`",
+        opened = []
+
+        def counting(path, *args, **kwargs):
+            opened.append(os.path.abspath(path))
+            return builtins.open(path, *args, **kwargs)
+
+        # A module global shadows the builtin for code inside that module, so
+        # this counts `bounded`'s opens and nothing else's.
+        SHAPE.open = counting
+        try:
+            self.rows()
+        finally:
+            del SHAPE.open
+        self.assertEqual(len(opened), 7)
+        self.assertEqual(len(set(opened)), 7)
+
+
+class Command(unittest.TestCase):
+    """`main()` end to end over the fixture, the way the sibling modules do."""
+
+    def measure(self, *extra):
+        with tempfile.TemporaryDirectory() as folder:
+            out = os.path.join(folder, "shape.json")
+            self.assertEqual(
+                SHAPE.main(["measure", "--transcripts", FIXTURES, "--out", out,
+                            *extra]),
+                0,
+            )
+            with open(out, "rb") as stream:
+                return stream.read()
+
+    def test_measure_writes_a_shape_document_over_the_fixture(self):
+        document = json.loads(self.measure().decode("ascii"))
+        self.assertEqual(document["metric"], "context_cost_shape")
+        self.assertFalse(document["registered_comparison"])
+        self.assertEqual(sorted(document["populations"]), ["main", "subagent"])
+        self.assertEqual(document["inputs"]["contexts"], 7)
+
+    def test_the_fixture_law_is_published_as_degenerate_rather_than_as_a_number(self):
+        """The fixture is exactly the narrow population that breaks the fit.
+
+        Seven short contexts of very different jobs put the least-squares
+        minimum at a negative frame coefficient. The document has to say so.
+        """
+        document = json.loads(self.measure().decode("ascii"))
+        judged = document["populations"]["subagent"]["cost_law"]["validity"]
+        self.assertFalse(judged["usable"])
+        self.assertTrue(judged["degenerate_because"])
+
+    def test_two_runs_over_one_closed_window_are_byte_identical(self):
+        """The property the whole reading rests on.
+
+        The transcript directory is live and append-only, so a reading is only
+        repeatable if a closed window gives the same bytes tomorrow.
+        """
+        window = ("--since", "2026-01-01T00:00:00Z", "--until", "2026-01-01T23:59:59Z")
+        self.assertEqual(self.measure(*window), self.measure(*window))
+
+    def test_the_policy_block_records_the_assumptions_the_run_used(self):
+        document = json.loads(
+            self.measure(
+                "--cap", "120", "--handoff", "15",
+                "--frame-trim", "25000", "--request-scale", "0.5",
+            ).decode("ascii")
         )
+        policy = document["policy"]
+        self.assertEqual(policy["cap_requests"], 120)
+        self.assertEqual(policy["handoff_requests"], 15)
+        self.assertEqual(policy["frame_trim_tokens"], 25000)
+        self.assertEqual(policy["request_scale"], 0.5)
+        self.assertTrue(
+            all(row["cap_requests"] in (None, 120) for row in policy["levers"])
+        )
+
+    def test_a_flag_left_off_defaults_to_the_stated_assumption(self):
+        policy = json.loads(self.measure().decode("ascii"))["policy"]
+        self.assertEqual(policy["cap_requests"], SHAPE.POLICY_CAP)
+        self.assertEqual(policy["handoff_requests"], SHAPE.HANDOFF_REQUESTS)
+        self.assertEqual(policy["frame_trim_tokens"], SHAPE.FRAME_TRIM_TOKENS)
+        self.assertEqual(policy["request_scale"], SHAPE.REQUEST_SCALE)
+
+    def test_a_missing_transcript_directory_is_refused(self):
+        with self.assertRaises(SystemExit):
+            SHAPE.main(["measure", "--transcripts", os.path.join(HERE, "nowhere")])
+
+    def test_a_window_no_transcript_falls_inside_is_refused(self):
+        with self.assertRaises(SystemExit):
+            SHAPE.main(["measure", "--transcripts", FIXTURES,
+                        "--since", "2030-01-01T00:00:00Z"])
+
+    def test_the_figures_block_refuses_to_render_without_a_ceremony_document(self):
+        with self.assertRaises(SystemExit):
+            SHAPE.main(["table", "--block", "figures", "--shape", SHAPE_DOCUMENT])
+
+    def test_every_block_in_the_registry_is_a_choice_the_command_takes(self):
+        if not os.path.isfile(SHAPE_DOCUMENT):
+            self.skipTest(f"{SHAPE_DOCUMENT} is not committed here")
+        with tempfile.TemporaryDirectory() as folder:
+            for name, block in sorted(SHAPE.BLOCKS.items()):
+                if block.needs_ceremony:
+                    continue
+                out = os.path.join(folder, f"{name}.md")
+                self.assertEqual(
+                    SHAPE.main(["table", "--block", name, "--shape", SHAPE_DOCUMENT,
+                                "--out", out]),
+                    0,
+                )
+                with open(out, "r", encoding="utf-8") as stream:
+                    self.assertTrue(stream.read().startswith(block.begin))
+
+    def test_the_module_runs_as_a_subprocess(self):
+        """The real entry point, not just the function behind it."""
+        with tempfile.TemporaryDirectory() as folder:
+            out = os.path.join(folder, "shape.json")
+            result = subprocess.run(
+                [sys.executable, SHAPE_MODULE, "measure",
+                 "--transcripts", FIXTURES, "--out", out],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(out, "r", encoding="utf-8") as stream:
+                self.assertEqual(json.load(stream)["inputs"]["contexts"], 7)
 
 
 if __name__ == "__main__":

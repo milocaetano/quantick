@@ -49,6 +49,7 @@ What bounds any claim taken from the fit:
 """
 
 import argparse
+import collections
 import hashlib
 import importlib.util
 import json
@@ -131,13 +132,52 @@ def fit(rows):
         raise ValueError("the request counts carry no second-order information")
     frame = (s1y * s22 - s2y * s12) / determinant
     slope = (s2y * s11 - s1y * s12) / determinant
-    return {
+    law = {
         "frame_tokens_per_request": round(frame, 1),
         "slope_tokens_per_request_squared": round(slope, 2),
         "r_squared": round(_r_squared(rows, frame, slope), 4),
         "linear_only_r_squared": round(_linear_r_squared(rows), 4),
         "contexts": len(rows),
     }
+    law["validity"] = validity(law)
+    return law
+
+
+# Why a fitted law can fail to be a cost law at all, in the words the document
+# publishes. The fit is an unconstrained least squares, so a narrow population
+# -- a short window, one campaign's contexts, a main-only run -- can put the
+# minimum at a negative coefficient. A request cannot cost less than nothing
+# before its context has grown, and a share of a total cannot sit outside
+# [0, 1]; both are arithmetic that came out, not measurements.
+NEGATIVE_FRAME = "negative_frame_tokens_per_request"
+NEGATIVE_SLOPE = "negative_slope_tokens_per_request_squared"
+SHARE_OUTSIDE_UNIT = "share_outside_unit_interval"
+
+
+def validity(coefficients, term=None):
+    """Whether a fitted law can be true, and if not, in which way.
+
+    Data honesty: a law that cannot be true is *labelled* rather than printed
+    as a number and left to the reader to catch. The judgement belongs in the
+    document because a consumer -- #573 is scheduled on a number this function
+    produces -- has to be able to branch on it without re-deriving the
+    arithmetic that produced it.
+
+    ``term`` is the matching :func:`terms` block when there is one. The two
+    shares are the same law seen from the other end, so they are graded here
+    rather than in a second field a reader would have to find.
+    """
+    reasons = []
+    if coefficients["frame_tokens_per_request"] < 0:
+        reasons.append(NEGATIVE_FRAME)
+    if coefficients["slope_tokens_per_request_squared"] < 0:
+        reasons.append(NEGATIVE_SLOPE)
+    if term is not None and not all(
+        0.0 <= term[name] <= 1.0
+        for name in ("standing_frame_share", "accumulation_share")
+    ):
+        reasons.append(SHARE_OUTSIDE_UNIT)
+    return {"usable": not reasons, "degenerate_because": reasons}
 
 
 def _r_squared(rows, frame, slope):
@@ -347,7 +387,13 @@ def levers(rows, laws, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
             }
         )
     return {
+        # The four stated assumptions this table was priced on, recorded here
+        # rather than recoverable only by reading the source at the right
+        # commit. Every one of them is a flag on `measure`.
         "handoff_requests": handoff,
+        "cap_requests": cap,
+        "frame_trim_tokens": trim,
+        "request_scale": scale,
         "baseline_modelled_tokens": round(baseline),
         "baseline_law": "each population's own",
         "levers": found,
@@ -372,7 +418,7 @@ def bounded(path, since, until):
     opening = opened = 0
     counters = {name: 0 for name in TRANSCRIPTS.COUNTERS}
     first = last = None
-    spans = []
+    active = 0.0
     previous = None
     with open(path, "r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
@@ -402,7 +448,11 @@ def bounded(path, since, until):
             if previous is not None:
                 gap = (when - previous).total_seconds()
                 if 0 <= gap <= TRANSCRIPTS.IDLE_GAP_SECONDS:
-                    spans.append(gap)
+                    # A running total, not a list: `Transcript.add` keeps work
+                    # blocks rather than requests for a reason, and a buffer
+                    # proportional to the number of requests ever made would
+                    # give that back.
+                    active += gap
             previous = when
     if not requests:
         return None
@@ -413,17 +463,26 @@ def bounded(path, since, until):
         "output_tokens": counters["output_tokens"],
         "first": first,
         "last": last,
-        "active_seconds": sum(spans),
+        "active_seconds": active,
         "opening_cache_reads": opening,
         "opening_requests": opened,
     }
 
 
 def contexts(roots, since, until):
-    """Every transcript with a request in the window, folded to one row each."""
+    """Every transcript with a request in the window, folded to one row each.
+
+    ``locate`` rather than ``discover``: this module folds each file itself,
+    through :func:`bounded`, because the window has to cut requests rather than
+    whole files. ``discover`` would fold every file first and this would then
+    throw that fold away and read the same lines again -- two passes over a
+    directory that is append-only and never pruned. ``locate`` walks and
+    classifies without opening anything, so each file is read exactly once and
+    ``transcripts._classify`` stays the one owner of the layout rule.
+    """
     rows = []
     for root in roots:
-        found, _ = TRANSCRIPTS.discover(root)
+        found, _ = TRANSCRIPTS.locate(root)
         for item in found:
             folded = bounded(item.path, since, until)
             if folded is None:
@@ -459,8 +518,15 @@ def digest(rows):
     return hasher.hexdigest()
 
 
-def build_shape(rows, since, until):
-    """The whole shape document: population, fit, terms, concentration, caps."""
+def build_shape(rows, since, until, cap=POLICY_CAP, handoff=HANDOFF_REQUESTS,
+                trim=FRAME_TRIM_TOKENS, scale=REQUEST_SCALE):
+    """The whole shape document: population, fit, terms, concentration, caps.
+
+    The four policy assumptions arrive as arguments rather than being read off
+    the module, because ``measure`` gives each of them a flag: a reader who
+    disagrees with one redoes the arithmetic from the command line, and the
+    ``policy`` block records what the run actually used.
+    """
     population = {
         "subagent": [row for row in rows if row["kind"] == "subagent"],
         "main": [row for row in rows if row["kind"] == "main"],
@@ -483,11 +549,18 @@ def build_shape(rows, since, until):
         name: fit(group) for name, group in population.items() if group
     }
     if "subagent" in laws:
-        document["policy"] = levers(rows, laws)
+        document["policy"] = levers(
+            rows, laws, cap=cap, handoff=handoff, trim=trim, scale=scale
+        )
     for name, group in population.items():
         if not group:
             continue
         coefficients = laws[name]
+        term = terms(group, coefficients)
+        # The law is republished with the judgement the shares complete: a
+        # negative coefficient and a share outside [0, 1] are the same defect
+        # seen twice, so they are graded in one field rather than two.
+        coefficients = dict(coefficients, validity=validity(coefficients, term))
         document["populations"][name] = {
             "contexts": len(group),
             "requests": sum(row["requests"] for row in group),
@@ -500,31 +573,60 @@ def build_shape(rows, since, until):
                 [row["billable_tokens"] for row in group]
             ),
             "cost_law": coefficients,
-            "terms": terms(group, coefficients),
+            "terms": term,
             "concentration": concentration(group),
             "length_bands": length_bands(group),
             "opening": opening_cache_reads(group),
-            "counterfactual": counterfactual(group, coefficients),
+            "counterfactual": counterfactual(group, coefficients, handoff=handoff),
         }
     return document
 
 
 # ---------------------------------------------------------------- ceremony ---
 
+# How many nodes each connection is asked for. Named here rather than spelled
+# into the query alone, because the truncation check compares against them and
+# a cap that drifted from its own check would be worse than no check at all.
+PAGES = {"comments": 60, "commits": 100, "reviewThreads": 100}
+
 CEREMONY_QUERY = """
 query($owner:String!,$repo:String!,$num:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$num){
       number additions deletions createdAt bodyText
-      comments(first:60){nodes{createdAt body}}
-      commits(first:100){nodes{commit{committedDate}}}
-      reviewThreads(first:100){nodes{isResolved}}
+      comments(first:%(comments)d){totalCount nodes{createdAt body}}
+      commits(first:%(commits)d){totalCount nodes{commit{committedDate}}}
+      reviewThreads(first:%(reviewThreads)d){totalCount nodes{isResolved}}
     }
   }
 }
-"""
+""" % PAGES
 
 REPORT_MARKER = "<!-- quantick-review-report"
+
+
+def truncation(pull):
+    """Which connections came back short, and by how much.
+
+    A cost-per-catch number is a ratio whose denominator is counted here, so a
+    page that silently dropped a durable report or a hundred commits would move
+    the answer with nothing saying it had. PR #542 has 176 commits against a
+    page of 100, and the ``comments`` cap is sharper still because the report
+    filter runs *after* the page. So each connection is asked for its
+    ``totalCount`` and the document records what it did not see, rather than
+    reporting a truncated list as the whole.
+
+    Returns a mapping of connection name to ``{fetched, total}``, empty when
+    everything asked for arrived.
+    """
+    short = {}
+    for name in sorted(PAGES):
+        connection = pull.get(name) or {}
+        total = connection.get("totalCount")
+        fetched = len(connection.get("nodes") or ())
+        if isinstance(total, int) and total > fetched:
+            short[name] = {"fetched": fetched, "total": total}
+    return short
 
 
 def ceremony_command(owner, repo, number):
@@ -641,10 +743,35 @@ def pull_ceremony(owner, repo, number, runner=DELIVERY.shell):
         "ai_review_threads_open": sum(1 for one in threads if not one["isResolved"]),
         "commits_before_pr": before,
         "commits_after_pr": after,
+        "truncated": truncation(pull),
     }
 
 
-def build_ceremony(rows):
+def ceremony_digest(rows):
+    """A fingerprint of the pull requests read, for the reason section 7 gives.
+
+    The counterpart of :func:`digest`, over ``gh`` facts rather than
+    transcripts. It covers every value a total is summed from, so a reopened
+    pull request, an edited comment, one more durable report or one more
+    registry entry changes the digest and a reader can tell a changed input
+    from a changed harness.
+    """
+    hasher = hashlib.sha256()
+    for row in sorted(rows, key=lambda row: row["pr"]):
+        reports = ";".join(f"{k}={v}" for k, v in sorted(row["reports"].items()))
+        hasher.update(
+            f"{row['pr']}:{row['tier']}:{row['churn']}:{reports}:"
+            f"{row['step_zero_rounds']}:{row['step_zero_findings']}:"
+            f"{row['step_zero_empty_rounds']}:{row['ai_review_threads']}:"
+            f"{row['ai_review_threads_open']}:{row['commits_before_pr']}:"
+            f"{row['commits_after_pr']}:{sorted(row['truncated'])}\n".encode(
+                "ascii", "replace"
+            )
+        )
+    return hasher.hexdigest()
+
+
+def build_ceremony(rows, registry=None):
     """Totals and per-tier rollups over the pull requests read."""
     document = {
         "schema": VERSION,
@@ -652,6 +779,15 @@ def build_ceremony(rows):
         "metric": "ceremony_cost_per_catch",
         "registered_comparison": False,
         "missions": len(rows),
+        "inputs": {
+            "missions": len(rows),
+            # Forward slashes whatever the host: a document read on one
+            # platform and re-derived on another must not differ by a
+            # separator.
+            "registry": registry.replace(os.sep, "/") if registry else registry,
+            "pulls": sorted(row["pr"] for row in rows),
+            "digest": ceremony_digest(rows),
+        },
         "totals": {
             "arch_review_reports": sum(r["reports"].get("arch-review", 0) for r in rows),
             "ai_review_reports": sum(r["reports"].get("ai-review", 0) for r in rows),
@@ -665,6 +801,10 @@ def build_ceremony(rows):
             "ai_review_threads_open": sum(r["ai_review_threads_open"] for r in rows),
             "commits_before_pr": sum(r["commits_before_pr"] for r in rows),
             "commits_after_pr": sum(r["commits_after_pr"] for r in rows),
+            # Not a rollup of the others: the count of pull requests whose
+            # facts arrived short. Above zero, every total on this document is
+            # a floor rather than a number.
+            "truncated_pulls": sum(1 for r in rows if r["truncated"]),
         },
         "tiers": {},
     }
@@ -731,11 +871,21 @@ def figures(shape, ceremony):
             f"| {name.capitalize()} contexts | {group['contexts']:,} "
             f"({group['requests']:,} requests, {group['billable_tokens']:,} tokens) |"
         )
+        # A law the document itself calls degenerate says so in the report too.
+        # Rendering `-112.6% / 212.6%` as though it were a reading is the exact
+        # data-honesty failure the `validity` field exists to make impossible.
+        judged = law.get("validity") or {}
+        warning = (
+            ""
+            if judged.get("usable", True)
+            else " **— degenerate: " + ", ".join(judged["degenerate_because"]) + "**"
+        )
         lines.append(
             f"| {name.capitalize()} cost law, tokens | "
             f"{_thousands(law['frame_tokens_per_request'])}·N + "
             f"{law['slope_tokens_per_request_squared']}·N² "
-            f"(R² {law['r_squared']}, linear-only R² {law['linear_only_r_squared']}) |"
+            f"(R² {law['r_squared']}, linear-only R² {law['linear_only_r_squared']})"
+            f"{warning} |"
         )
         lines.append(
             f"| {name.capitalize()} standing frame / accumulation | "
@@ -809,8 +959,11 @@ def _combined(shape):
     }
 
 
-def lever_table(shape):
+def lever_table(shape, ceremony=None):
     """The lever table, rendered from the committed policy block.
+
+    ``ceremony`` is accepted and unused so that every renderer in ``BLOCKS``
+    has one signature and the registry needs no per-block calling convention.
 
     #572's architecture review found the first version of this table computed
     by hand beside the document rather than out of it, with one row silently
@@ -851,14 +1004,27 @@ def extract_block(markdown, begin, end):
     return markdown[start : stop + len(end)] + "\n"
 
 
-def extract_figures(markdown):
-    """The figures block a document carries, or ``None`` when it carries none."""
-    return extract_block(markdown, FIGURES_BEGIN, FIGURES_END)
+Block = collections.namedtuple("Block", ("begin", "end", "render", "needs_ceremony"))
+"""One generated block: its delimiters, what writes it, and what it reads."""
+
+BLOCKS = {
+    "figures": Block(FIGURES_BEGIN, FIGURES_END, figures, True),
+    "levers": Block(LEVERS_BEGIN, LEVERS_END, lever_table, False),
+}
+"""Every generated block, keyed by the name ``--block`` takes.
+
+A registry rather than a closed choice, because the data is uniform and the
+next block should cost one entry. Adding ``levers`` beside ``figures`` during
+this pull request's own repair round cost five edits -- two constants, a
+renderer, an ``extract_*`` wrapper, a ``choices`` tuple and a branch in
+``main``. Four of those five were bookkeeping; this table is the four.
+"""
 
 
-def extract_levers(markdown):
-    """The lever block a document carries, or ``None`` when it carries none."""
-    return extract_block(markdown, LEVERS_BEGIN, LEVERS_END)
+def extract(markdown, name):
+    """The named block a document carries, or ``None`` when it carries none."""
+    block = BLOCKS[name]
+    return extract_block(markdown, block.begin, block.end)
 
 
 # --------------------------------------------------------------- commands ---
@@ -881,6 +1047,35 @@ def main(argv=None):
     )
     measure.add_argument("--since", default=None, help="drop contexts that ended before this")
     measure.add_argument("--until", default=None, help="drop contexts that began after this")
+    # The four stated assumptions the lever table is priced on. They are
+    # assumptions rather than measurements, and the documents say so, so
+    # disagreeing with one has to be a named call rather than an edit to this
+    # file. The document records what was used.
+    measure.add_argument(
+        "--cap",
+        type=int,
+        default=POLICY_CAP,
+        help=f"requests after which a context hands off (default {POLICY_CAP})",
+    )
+    measure.add_argument(
+        "--handoff",
+        type=int,
+        default=HANDOFF_REQUESTS,
+        help="requests a handed-off context spends re-reading its brief "
+        f"(default {HANDOFF_REQUESTS})",
+    )
+    measure.add_argument(
+        "--frame-trim",
+        type=int,
+        default=FRAME_TRIM_TOKENS,
+        help=f"tokens off the standing frame (default {FRAME_TRIM_TOKENS})",
+    )
+    measure.add_argument(
+        "--request-scale",
+        type=float,
+        default=REQUEST_SCALE,
+        help=f"fraction of today's requests that remain (default {REQUEST_SCALE})",
+    )
     measure.add_argument("--out", default="-", help="where to write; - is stdout")
 
     price = modes.add_parser("ceremony", help="what the review chain caught, from gh")
@@ -903,7 +1098,7 @@ def main(argv=None):
     table.add_argument(
         "--block",
         default="figures",
-        choices=("figures", "levers"),
+        choices=sorted(BLOCKS),
         help="which generated block to render",
     )
     table.add_argument("--out", default="-", help="where to write; - is stdout")
@@ -934,7 +1129,15 @@ def main(argv=None):
         rows = contexts(roots, since, until)
         if not rows:
             parser.error("no transcript fell inside the window")
-        document = build_shape(rows, options.since, options.until)
+        document = build_shape(
+            rows,
+            options.since,
+            options.until,
+            cap=options.cap,
+            handoff=options.handoff,
+            trim=options.frame_trim,
+            scale=options.request_scale,
+        )
         CANONICAL.emit(CANONICAL.render(document), options.out)
         return 0
 
@@ -946,19 +1149,20 @@ def main(argv=None):
             for mission in registry["missions"]
             if mission.get("pr")
         ]
-        CANONICAL.emit(CANONICAL.render(build_ceremony(rows)), options.out)
+        document = build_ceremony(rows, registry=options.registry)
+        CANONICAL.emit(CANONICAL.render(document), options.out)
         return 0
 
+    block = BLOCKS[options.block]
+    if block.needs_ceremony and options.ceremony is None:
+        parser.error(f"the {options.block} block needs --ceremony")
     with open(options.shape, "r", encoding="utf-8") as stream:
         shape = json.load(stream)
-    if options.block == "levers":
-        CANONICAL.emit(lever_table(shape), options.out)
-        return 0
-    if options.ceremony is None:
-        parser.error("the figures block needs --ceremony")
-    with open(options.ceremony, "r", encoding="utf-8") as stream:
-        ceremony = json.load(stream)
-    CANONICAL.emit(figures(shape, ceremony), options.out)
+    ceremony = None
+    if options.ceremony is not None:
+        with open(options.ceremony, "r", encoding="utf-8") as stream:
+            ceremony = json.load(stream)
+    CANONICAL.emit(block.render(shape, ceremony), options.out)
     return 0
 
 

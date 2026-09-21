@@ -10,6 +10,8 @@
   "policy": {
     "baseline_law": "each population's own",
     "baseline_modelled_tokens": 9585006964,
+    "cap_requests": 80,
+    "frame_trim_tokens": 10000,
     "handoff_requests": 8,
     "levers": [
       {
@@ -72,7 +74,8 @@
         "modelled_tokens": 6757272499,
         "request_scale": 0.8
       }
-    ]
+    ],
+    "request_scale": 0.8
   },
   "populations": {
     "main": {
@@ -113,7 +116,11 @@
         "frame_tokens_per_request": 150062.2,
         "linear_only_r_squared": 0.8826,
         "r_squared": 0.9937,
-        "slope_tokens_per_request_squared": 233.14
+        "slope_tokens_per_request_squared": 233.14,
+        "validity": {
+          "degenerate_because": [],
+          "usable": true
+        }
       },
       "counterfactual": {
         "baseline_modelled_tokens": 2341163890,
@@ -233,7 +240,11 @@
         "frame_tokens_per_request": 64223.5,
         "linear_only_r_squared": 0.8089,
         "r_squared": 0.9664,
-        "slope_tokens_per_request_squared": 530.98
+        "slope_tokens_per_request_squared": 530.98,
+        "validity": {
+          "degenerate_because": [],
+          "usable": true
+        }
       },
       "counterfactual": {
         "baseline_modelled_tokens": 7243843074,

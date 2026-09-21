@@ -260,15 +260,28 @@ def _classify(parts, name):
     return None
 
 
-def discover(root):
-    """Find every transcript under ``root``.
+Located = collections.namedtuple(
+    "Located", ("path", "relative", "session", "kind", "root")
+)
+"""Where one transcript is and what the layout says it is. Nothing read yet."""
 
-    Returns ``(transcripts, skipped)`` with both ordered by relative path, so
-    two runs over one directory agree. Each transcript remembers the name of
-    the root it came from, because a session started in a worktree lands in a
-    different projects directory than one started in the main checkout.
+
+def locate(root):
+    """Find every transcript under ``root`` **without opening one**.
+
+    The walk and section 2's layout rule, on their own. A caller that brings
+    its own fold -- ``shape.py``, which counts only the requests inside a
+    window -- would otherwise pay for :func:`discover`'s fold as well and throw
+    it away, reading every line of every file twice. Splitting the walk out
+    lets each file be read exactly once while ``_classify`` stays the one owner
+    of "which file is a main thread and which is a subagent".
+
+    Returns ``(located, skipped)`` with both ordered by relative path, so two
+    runs over one directory agree. Each entry remembers the name of the root it
+    came from, because a session started in a worktree lands in a different
+    projects directory than one started in the main checkout.
     """
-    found = []
+    located = []
     skipped = []
     root_name = os.path.basename(os.path.abspath(root))
     for directory, subdirectories, filenames in os.walk(root):
@@ -284,8 +297,8 @@ def discover(root):
                 skipped.append(relative)
                 continue
             session, kind = placed
-            found.append(
-                read(
+            located.append(
+                Located(
                     os.path.join(directory, filename),
                     relative,
                     session,
@@ -293,8 +306,23 @@ def discover(root):
                     root_name,
                 )
             )
-    found.sort(key=lambda item: item.relative)
+    located.sort(key=lambda item: item.relative)
     skipped.sort()
+    return located, skipped
+
+
+def discover(root):
+    """Find every transcript under ``root`` and fold each one.
+
+    :func:`locate` owns the walk; this adds the read, which is what a caller
+    with no fold of its own wants. Returns ``(transcripts, skipped)`` ordered
+    by relative path, exactly as :func:`locate` orders them.
+    """
+    located, skipped = locate(root)
+    found = [
+        read(item.path, item.relative, item.session, item.kind, item.root)
+        for item in located
+    ]
     return found, skipped
 
 
