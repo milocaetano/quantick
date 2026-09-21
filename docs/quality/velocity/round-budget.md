@@ -128,7 +128,8 @@ requests**.
 #571 and #572 ran before L1 (the 80-request context cap) shipped, so their
 totals carry L1's saving as well as L3's. Protocol section 8 serialises the two
 levers for exactly this reason. Two facts keep it honest here: the smallest
-reference on both axes is #578, whose own review passes ran inline and are
+reference on both of the protocol's axes — `removed_requests` and
+`total_requests` — is #578, whose own review passes ran inline and are
 unaffected by L1's context arithmetic; and #580, the one fully post-L1
 reference, is reported beside the protocol's own answer so the stricter reading
 is visible.
