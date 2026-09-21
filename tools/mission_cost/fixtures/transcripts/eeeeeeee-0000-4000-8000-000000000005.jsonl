@@ -1,0 +1,2 @@
+{"type":"assistant","timestamp":"2026-02-01T00:00:00.000Z","message":{"role":"assistant","content":"FIXTURE-ANSWER-MUST-NOT-APPEAR","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}
+{"type":"assistant","timestamp":"2026-02-01T00:02:00.000Z","message":{"role":"assistant","content":"FIXTURE-ANSWER-MUST-NOT-APPEAR","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1000}}}

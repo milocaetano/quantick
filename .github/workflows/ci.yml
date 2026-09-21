@@ -260,6 +260,15 @@ jobs:
         # `pr-gate` prints. Discovered rather than named, so a suite added
         # beside these runs the moment it exists.
         run: python3 -m unittest discover -s tools/read_cost -p 'test_*.py'
+      - name: Mission-cost tests
+        # The harness that measures what a mission costs. Its real input is the
+        # trader's local session transcripts, which no runner has and none ever
+        # will, so the suite runs against a synthetic fixture committed beside
+        # it. Half of what these cases assert is a negative: the bait strings
+        # planted in that fixture must not reach a record or a report, so a
+        # reader widened by one field fails here rather than in a published
+        # aggregate. Discovered rather than named, like the two suites above.
+        run: python3 -m unittest discover -s tools/mission_cost -p 'test_*.py'
       - name: Binary hook scan tests
         # The scan below reads a half-gigabyte binary, so its own cases run
         # against fixtures instead: the boundary rule, the prose exemption, and
