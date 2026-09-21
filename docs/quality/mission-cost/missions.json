@@ -852,15 +852,17 @@
     },
     {
       "branch": "fix/poc-plate-price",
-      "pr": null,
+      "pr": 589,
       "sessions": [],
-      "transcripts": [],
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab4879516208c61bc.jsonl"
+      ],
       "claim": [
         {
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "role": "subagent",
           "started_at": "2026-09-21T18:35:00Z",
-          "ended_at": null
+          "ended_at": "2026-09-21T19:14:26Z"
         }
       ],
       "started_at": null,
