@@ -99,6 +99,28 @@ disagree. Both are regenerated, never edited by hand.
 
 <!-- end shape-figures:v1 -->
 
+**The last row of that block says less than is known, on purpose.** The
+generator is strictly document-derived: it reports what `ceremony.json` holds
+and never what somebody checked elsewhere, which is the discipline that caught
+this report's own worst error. The committed ceremony reading predates the
+truncation field, so the block can only say completeness is unrecorded.
+
+It was nevertheless checked, externally and by hand, and the answer is that the
+reading is **complete**. Every `gh` connection the ceremony command pages was
+compared against the live API across all 87 registry pull requests:
+
+| Connection | Page size | Worst case over 87 missions |
+| --- | ---: | --- |
+| `commits` | 100 | 48 |
+| `reviewThreads` | 100 | 7 |
+| `comments` | 60 | 19 |
+
+Nothing reached half of any cap. **The 86 step-0 findings over 66 rounds, the
+75 AI-review threads and the 334-against-248 commit split are whole counts, not
+floors.** That check is prose because it is prose evidence; the moment a
+ceremony reading is taken with the current command, the block will carry the
+answer itself.
+
 Window `2026-09-11T15:16:05Z .. 2026-09-21T06:20:00Z`, closed at the instant
 checkpoint 4 dispatched this task. Digest
 `c5e51be429b2e852bdb2c2422e98e5a00e96737e903ea002312328c50b9d3135`.
