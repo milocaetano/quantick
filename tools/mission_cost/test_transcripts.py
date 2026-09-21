@@ -236,9 +236,15 @@ class IdleBound(unittest.TestCase):
             0.0,
         )
 
-    def test_span_includes_the_idle_the_bound_dropped(self):
+    def test_the_bound_drops_only_the_gap_and_keeps_the_requests(self):
+        # 00:59:00 is 2,640 seconds after 00:15:00, so the bound drops that gap
+        # whole. The request itself still counts: four requests, 300 seconds.
         item = self.index[f"{ALPHA}.jsonl"]
-        self.assertEqual(item.span_seconds(), 2940.0)
+        self.assertEqual(len(item.records), 4)
+        self.assertEqual(item.active_seconds(), 300.0)
+        self.assertEqual(
+            (item.last() - item.first()).total_seconds(), 2940.0
+        )
 
 
 class Union(unittest.TestCase):

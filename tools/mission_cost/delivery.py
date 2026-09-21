@@ -25,40 +25,44 @@ PULL_FIELDS = (
 )
 RUN_FIELDS = "status,conclusion,headSha,startedAt,updatedAt,workflowName"
 
+# How many workflow runs to ask `gh` for. A busy campaign branch can have
+# hundreds, and a listing cut off at the limit undercounts CI time without
+# saying so, which is worse than a slow call. The report says when the listing
+# came back full, so a truncated one is visible rather than quietly low.
+CI_RUN_LIMIT = 300
+
 
 class DeliveryError(RuntimeError):
     """A delivery timing could not be read."""
 
 
-def load_transcripts():
-    key = "quantick_mission_cost_transcripts"
+def load(name, path=None):
+    """Load a module by path under a stable key, the way `tools/read_cost` does.
+
+    One helper, the same shape in every module of this package, so a missing
+    file is one error rather than three different ones.
+    """
+    key = f"quantick_mission_cost_{name}"
     if key in sys.modules:
         return sys.modules[key]
-    spec = importlib.util.spec_from_file_location(
-        key, os.path.join(HERE, "transcripts.py")
-    )
+    path = path or os.path.join(HERE, f"{name}.py")
+    spec = importlib.util.spec_from_file_location(key, path)
+    if spec is None or spec.loader is None:
+        raise DeliveryError(f"cannot load {name} at {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
 
 
-TRANSCRIPTS = load_transcripts()
+TRANSCRIPTS = load("transcripts")
 
 
 def load_read_cost_ledger():
     """Reuse `tools/read_cost/ledger.py`'s parser rather than a second one."""
-    key = "quantick_mission_cost_read_cost_ledger"
-    if key in sys.modules:
-        return sys.modules[key]
-    path = os.path.join(HERE, "..", "read_cost", "ledger.py")
-    spec = importlib.util.spec_from_file_location(key, path)
-    if spec is None or spec.loader is None:
-        raise DeliveryError(f"cannot load the read-cost ledger parser at {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[key] = module
-    spec.loader.exec_module(module)
-    return module
+    return load(
+        "read_cost_ledger", os.path.join(HERE, "..", "read_cost", "ledger.py")
+    )
 
 
 def shell(args):
@@ -110,11 +114,15 @@ def pull_facts(number, runner=shell, as_of=None):
     }
 
 
-def ci_facts(branch, runner=shell, limit=100):
+def ci_facts(branch, runner=shell, limit=CI_RUN_LIMIT):
     """Completed workflow runs on one branch: their sum, their wall and their count.
 
     ``ci_seconds`` adds the runs up; ``ci_wall_seconds`` counts two workflows
     running side by side once. Error mode E10: both include queue time.
+
+    ``ci_listing_truncated`` says the listing came back exactly full, which is
+    how a branch with more runs than ``CI_RUN_LIMIT`` announces that its CI
+    time is a floor rather than a total.
     """
     raw = runner(
         [
@@ -148,6 +156,7 @@ def ci_facts(branch, runner=shell, limit=100):
             sum((end - start).total_seconds() for start, end in spans), 3
         ),
         "ci_wall_seconds": round(TRANSCRIPTS.union_seconds(spans), 3),
+        "ci_listing_truncated": len(runs) >= limit,
     }
 
 

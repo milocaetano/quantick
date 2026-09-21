@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -88,6 +89,49 @@ class Command(unittest.TestCase):
         )
 
 
+class Defaults(unittest.TestCase):
+    def test_the_default_root_is_this_hosts_projects_directory_for_the_repo(self):
+        found = measure.default_transcripts(r"C:\src\quantick")
+        self.assertTrue(found.endswith("C--src-quantick"))
+        self.assertIn(os.path.join(".claude", "projects"), found)
+
+    def test_a_worktree_gets_its_own_root(self):
+        main = measure.default_transcripts(r"C:\src\quantick")
+        tree = measure.default_transcripts(r"C:\src\quantick-worktrees\feat-x")
+        self.assertNotEqual(main, tree)
+        self.assertTrue(tree.endswith("C--src-quantick-worktrees-feat-x"))
+
+
+class Metrics(unittest.TestCase):
+    ENTRY = {
+        "total": {"billable_tokens": 10, "output_tokens": 3},
+        "main_thread": {"billable_tokens": 6},
+        "subagents": {"billable_tokens": 4},
+        "agent_seconds": 120.0,
+        "delivery": {"ci_seconds": 600.0},
+    }
+
+    def test_a_bare_name_reads_the_mission_total(self):
+        self.assertEqual(measure.metric_value(self.ENTRY, "billable_tokens"), 10)
+
+    def test_a_dotted_name_reads_one_thread(self):
+        self.assertEqual(
+            measure.metric_value(self.ENTRY, "main_thread.billable_tokens"), 6
+        )
+        self.assertEqual(
+            measure.metric_value(self.ENTRY, "subagents.billable_tokens"), 4
+        )
+
+    def test_wall_clock_and_delivery_metrics_are_read_from_their_own_places(self):
+        self.assertEqual(measure.metric_value(self.ENTRY, "agent_seconds"), 120.0)
+        self.assertEqual(measure.metric_value(self.ENTRY, "ci_seconds"), 600.0)
+
+    def test_a_delivery_metric_without_delivery_is_absent_not_zero(self):
+        self.assertIsNone(
+            measure.metric_value({"total": {}, "delivery": None}, "ci_seconds")
+        )
+
+
 class Determinism(unittest.TestCase):
     def test_two_runs_over_one_input_set_are_byte_identical(self):
         self.assertEqual(report_bytes(), report_bytes())
@@ -134,6 +178,13 @@ class Determinism(unittest.TestCase):
         )
         self.assertEqual(found["inputs"]["roots"], ["subagents", "transcripts"])
         self.assertEqual(found["inputs"]["transcripts"], 8)
+
+    def test_out_writes_the_same_bytes_it_would_have_printed(self):
+        with tempfile.TemporaryDirectory() as room:
+            target = os.path.join(room, "report.json")
+            report_bytes("--out", target)
+            with open(target, "rb") as stream:
+                self.assertEqual(stream.read(), report_bytes())
 
     def test_the_output_ends_in_exactly_one_newline(self):
         raw = report_bytes()
@@ -211,8 +262,32 @@ class Shape(unittest.TestCase):
                 {
                     "session": "bbbbbbbb-0000-4000-8000-000000000002",
                     "candidates": ["feat/fixture-alpha", "feat/fixture-beta"],
+                    "first_timestamp_seen": "2026-01-01T01:00:00+00:00",
+                    "last_timestamp_seen": "2026-01-01T02:30:00+00:00",
+                    "total": {
+                        "requests": 2,
+                        "input_tokens": 2,
+                        "cache_creation_input_tokens": 2,
+                        "cache_read_input_tokens": 2,
+                        "output_tokens": 2,
+                        "billable_tokens": 8,
+                    },
                 }
             ],
+        )
+
+    def test_an_unplaced_session_carries_its_own_totals_and_extent(self):
+        # Per session, not per bucket: the group share is computed from the
+        # sessions whose time actually reaches that group's window, so one
+        # stray session cannot charge a group every unplaced token there is.
+        unassigned = self.found["unplaced"]["unassigned"]["sessions"]
+        self.assertEqual(len(unassigned), 1)
+        self.assertEqual(
+            unassigned[0]["session"], "dddddddd-0000-4000-8000-000000000004"
+        )
+        self.assertEqual(unassigned[0]["total"]["billable_tokens"], 8)
+        self.assertEqual(
+            unassigned[0]["first_timestamp_seen"], "2026-01-02T10:00:00+00:00"
         )
 
     def test_delivery_is_explicitly_absent_rather_than_zero_when_skipped(self):
@@ -389,6 +464,24 @@ class Delivery(unittest.TestCase):
     def test_a_pull_request_with_no_commits_has_no_first_instant(self):
         runner = FakeRunner({("gh", "pr", "view"): json.dumps({"commits": []})})
         self.assertIsNone(delivery.first_commit_instant(9001, runner=runner))
+
+    def test_a_full_run_listing_is_flagged_rather_than_silently_short(self):
+        runs = [
+            {
+                "status": "completed",
+                "conclusion": "success",
+                "headSha": "c0ffee",
+                "startedAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-01T00:01:00Z",
+            }
+        ] * 3
+        runner = FakeRunner({("gh", "run", "list"): json.dumps(runs)})
+        self.assertTrue(
+            delivery.ci_facts("feat/x", runner=runner, limit=3)["ci_listing_truncated"]
+        )
+        self.assertFalse(
+            delivery.ci_facts("feat/x", runner=runner, limit=4)["ci_listing_truncated"]
+        )
 
     def test_the_read_cost_row_is_reused_rather_than_recomputed(self):
         ledger = os.path.join(FIXTURES, "read-cost-ledger.md")

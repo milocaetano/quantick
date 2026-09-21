@@ -251,6 +251,28 @@ def bucket(owned):
     }
 
 
+def session_totals(session):
+    """One session's own totals and extent.
+
+    The unplaced buckets carry these per session, so a group's unplaced share
+    counts only the sessions whose time actually reaches that group's window.
+    Without it a single stray session brushing one window charges that group
+    the whole unplaced total and every comparison collapses to
+    `cannot_be_attributed`.
+    """
+    names = TRANSCRIPTS.EMPTY_TOTALS
+    total = {}
+    for item in session.transcripts:
+        _add(total, item.totals())
+    first, last = session.first(), session.last()
+    return {
+        "session": session.uuid,
+        "total": {name: total.get(name, 0) for name in names},
+        "first_timestamp_seen": first.isoformat() if first else None,
+        "last_timestamp_seen": last.isoformat() if last else None,
+    }
+
+
 def totals_by_mission(sessions, missions, placement):
     """Per-mission aggregates, plus the two unplaced buckets, keyed by branch."""
     found = collections.OrderedDict()

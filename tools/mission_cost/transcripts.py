@@ -104,11 +104,6 @@ class Transcript:
             sum((end - start).total_seconds() for start, end in self.intervals())
         )
 
-    def span_seconds(self):
-        if len(self.records) < 2:
-            return 0.0
-        return (self.last() - self.first()).total_seconds()
-
 
 def read(path, relative, session, kind, root=""):
     """Read one transcript into a :class:`Transcript`.

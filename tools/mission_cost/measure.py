@@ -99,7 +99,28 @@ def digest(found):
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def resolve_windows(missions, repo, use_gh, as_of):
+class Pulls:
+    """One `gh pr view` per pull request, however many callers want it.
+
+    The window resolution and the delivery block both need the same facts, and
+    a campaign registry is dozens of missions long: asking twice each turns one
+    report into a hundred needless round trips.
+    """
+
+    def __init__(self, use_gh, as_of):
+        self.use_gh = use_gh
+        self.as_of = as_of
+        self._facts = {}
+
+    def facts(self, pr):
+        if not self.use_gh or not pr:
+            return None
+        if pr not in self._facts:
+            self._facts[pr] = DELIVERY.pull_facts(pr, as_of=self.as_of)
+        return self._facts[pr]
+
+
+def resolve_windows(missions, pulls):
     """Fill in the default window of any mission the registry left open.
 
     The registry is the authority; this only supplies what it left ``null``.
@@ -108,9 +129,9 @@ def resolve_windows(missions, repo, use_gh, as_of):
     notes = []
     for mission in missions:
         started, ended = mission.started_at, mission.ended_at
-        if use_gh and mission.pr and (started is None or ended is None):
+        if pulls.use_gh and mission.pr and (started is None or ended is None):
             try:
-                facts = DELIVERY.pull_facts(mission.pr, as_of=as_of)
+                facts = pulls.facts(mission.pr)
                 if ended is None and facts["ended_at"]:
                     ended = TRANSCRIPTS.parse_timestamp(facts["ended_at"])
                 if started is None:
@@ -128,10 +149,11 @@ def resolve_windows(missions, repo, use_gh, as_of):
     return resolved, notes
 
 
-def delivery_for(mission, repo, use_gh, as_of):
-    if not use_gh or not mission.pr:
+def delivery_for(mission, repo, pulls):
+    found = pulls.facts(mission.pr)
+    if found is None:
         return None
-    facts = DELIVERY.pull_facts(mission.pr, as_of=as_of)
+    facts = dict(found)
     facts.update(DELIVERY.ci_facts(mission.branch))
     facts["read_cost"] = DELIVERY.read_cost_row(
         os.path.join(repo, DELIVERY.LEDGER), mission.pr
@@ -143,7 +165,8 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
     found, skipped = collect(roots)
     sessions = ATTRIBUTION.sessions_from(found)
     missions = ATTRIBUTION.load_registry(registry_path)
-    missions, notes = resolve_windows(missions, repo, use_gh, as_of)
+    pulls = Pulls(use_gh, as_of)
+    missions, notes = resolve_windows(missions, pulls)
     placement = ATTRIBUTION.assign(sessions, missions)
     totals = ATTRIBUTION.totals_by_mission(sessions, missions, placement)
 
@@ -168,18 +191,20 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
                     {"session": uuid, "method": placement.assigned[uuid][1]}
                     for uuid in placement.sessions_of(mission.branch)
                 ],
-                "delivery": delivery_for(mission, repo, use_gh, as_of),
+                "delivery": delivery_for(mission, repo, pulls),
             }
         )
         reported.append(entry)
 
     shared = dict(totals[ATTRIBUTION.SHARED])
     shared["sessions"] = [
-        {"session": uuid, "candidates": candidates}
+        dict(ATTRIBUTION.session_totals(sessions[uuid]), candidates=candidates)
         for uuid, candidates in placement.shared.items()
     ]
     unassigned = dict(totals[ATTRIBUTION.UNASSIGNED])
-    unassigned["sessions"] = [{"session": uuid} for uuid in placement.unassigned]
+    unassigned["sessions"] = [
+        ATTRIBUTION.session_totals(sessions[uuid]) for uuid in placement.unassigned
+    ]
 
     measured = sum(item.totals()["billable_tokens"] for item in found)
     unplaced = (
@@ -249,14 +274,18 @@ def _touches(session, window):
 
 
 def _unplaced_share(report, entries):
-    """How much of a group's measured cost the attribution could not place."""
+    """How much of a group's measured cost the attribution could not place.
+
+    Session by session, not bucket by bucket: one stray session brushing the
+    window must not charge the group every unplaced token in the directory.
+    """
     window = _group_window(entries)
     placed = sum(entry["total"]["billable_tokens"] for entry in entries)
     unplaced = 0
     for bucket in ("shared", "unassigned"):
-        side = report["unplaced"][bucket]
-        if _touches(side, window):
-            unplaced += side["total"]["billable_tokens"]
+        for session in report["unplaced"][bucket]["sessions"]:
+            if _touches(session, window):
+                unplaced += session["total"]["billable_tokens"]
     measured = placed + unplaced
     return (unplaced / measured) if measured else 0.0
 
@@ -341,11 +370,23 @@ def add_common(parser):
 
 
 def emit(text, where):
+    """Write the report with LF endings, whichever way it leaves.
+
+    Through the text layer, Windows turns every newline into CRLF on the way to
+    standard output while `--out` writes LF, so the same report would hash two
+    ways depending on how it was captured. The bytes go out as bytes.
+    """
+    raw = text.encode("utf-8")
     if where == "-":
-        sys.stdout.write(text)
+        stream = getattr(sys.stdout, "buffer", None)
+        if stream is None:
+            sys.stdout.write(text)
+            return
+        stream.write(raw)
+        stream.flush()
         return
-    with open(where, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(text)
+    with open(where, "wb") as stream:
+        stream.write(raw)
 
 
 def main(argv=None):
