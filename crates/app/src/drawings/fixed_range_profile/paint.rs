@@ -2,7 +2,7 @@
 //! the passes that read it — edges, histogram, silhouette, levels, labels.
 
 use eframe::egui;
-use quantick_anchored_studies::{FrvpEmpty, ProfileOutput};
+use quantick_anchored_studies::{FrvpEmpty, LevelPrices, ProfileOutput};
 use quantick_engine::{ValueArea, VolumeProfile};
 use rust_decimal::Decimal;
 
@@ -301,12 +301,9 @@ impl<'a> ProfileFrame<'a> {
     fn paint_levels(&self, profile: &VolumeProfile, area: ValueArea) {
         let (painter, style, left, right) = (self.painter, self.style, self.left, self.right);
         let scale = &self.ctxt.scale;
+        let levels = LevelPrices::of(profile, area);
         if self.payload.show_poc {
-            let y = scale.y(to_f64(
-                profile
-                    .bucket_price(area.poc)
-                    .saturating_add(profile.group() / Decimal::TWO),
-            ));
+            let y = scale.y(to_f64(levels.poc));
             let width = style.width_px.max(1.0);
             // The casing carries the POC over the map's yellow band —
             // #FFD54F against it is the worst number of the scene
@@ -325,8 +322,8 @@ impl<'a> ProfileFrame<'a> {
             // VAH tops its row, VAL bottoms its row: the dashes hug
             // the area they bound. Casing dashes share the geometry,
             // so the phase matches and the map shows through the gaps.
-            let vah_y = scale.y(to_f64(profile.bucket_price(area.vah.saturating_add(1))));
-            let val_y = scale.y(to_f64(profile.bucket_price(area.val)));
+            let vah_y = scale.y(to_f64(levels.vah));
+            let val_y = scale.y(to_f64(levels.val));
             let width = style.width_px.max(0.75);
             for y in [vah_y, val_y] {
                 let ends = [egui::pos2(left, y), egui::pos2(right, y)];
@@ -362,19 +359,9 @@ impl<'a> ProfileFrame<'a> {
                 status.push_str(&status_line(profile, &cache, payload, self.outline_active));
                 if let Some(area) = value_area {
                     // POC/VAH/VAL price plates at the right edge of the range.
-                    let labels = [
-                        ("POC", area.poc, theme::POC),
-                        ("VAH", area.vah.saturating_add(1), theme::TEXT_MUTED),
-                        ("VAL", area.val, theme::TEXT_MUTED),
-                    ];
-                    for (name, bucket, color) in labels {
-                        if name != "POC" && !payload.show_value_area {
-                            continue;
-                        }
-                        if name == "POC" && !payload.show_poc {
-                            continue;
-                        }
-                        let price = profile.bucket_price(bucket);
+                    for (name, price, color) in
+                        level_plates(profile, *area, payload).into_iter().flatten()
+                    {
                         knockout_text(
                             self.painter,
                             egui::pos2(
@@ -414,4 +401,24 @@ impl<'a> ProfileFrame<'a> {
             );
         }
     }
+}
+
+/// What the three price plates say, in paint order, `None` where the payload
+/// hides that level. Kept out of the painter so a test can read the printed
+/// price and hold it against the line the pointer can find.
+pub(super) fn level_plates(
+    profile: &VolumeProfile,
+    area: ValueArea,
+    payload: &FrvpPayload,
+) -> [Option<(&'static str, Decimal, egui::Color32)>; 3] {
+    let levels = LevelPrices::of(profile, area);
+    [
+        payload.show_poc.then_some(("POC", levels.poc, theme::POC)),
+        payload
+            .show_value_area
+            .then_some(("VAH", levels.vah, theme::TEXT_MUTED)),
+        payload
+            .show_value_area
+            .then_some(("VAL", levels.val, theme::TEXT_MUTED)),
+    ]
 }

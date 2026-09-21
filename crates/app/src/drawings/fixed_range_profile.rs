@@ -23,7 +23,7 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 #[cfg(test)]
 use quantick_anchored_studies::FrvpCacheKey;
-use quantick_anchored_studies::{ProfileOutput, RangeProfile as FrvpCache};
+use quantick_anchored_studies::{LevelPrices, ProfileOutput, RangeProfile as FrvpCache};
 use quantick_engine::{ValueArea, VolumeProfile};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -815,6 +815,7 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod levels;
     mod precise_hit;
     use crate::chart::PriceScale;
     use crate::drawings::{ChartPoint, ValueUnit};

@@ -849,6 +849,24 @@
       "ended_at": null,
       "group": null,
       "note": "T7 of #563, the graded mission of ledger entry L1. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff, because the point of this lever is that there will be several and a later context cannot recover an earlier one's identity. Claim one closed at the first handoff, at 111 requests: the context that wrote the rule measured itself with the command the rule adds and found it already past the cap, which is the finding the rule is reported with. At the draft pull request both claims resolved by containment, uncontested, to one transcript each; the union is the transcripts field."
+    },
+    {
+      "branch": "fix/poc-plate-price",
+      "pr": null,
+      "sessions": [],
+      "transcripts": [],
+      "claim": [
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T18:35:00Z",
+          "ended_at": null
+        }
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "Mission for issue #157 (POC price plate names a different price than the POC line marks), dispatched under campaign #563 as the first comparable product-code datapoint for the mission-velocity reading: real Rust work in crates/app, run with lever 1 (the context cap) merged. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff. This mission grades no lever; the coordinator places the number."
     }
   ]
 }

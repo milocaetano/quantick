@@ -6,5 +6,6 @@ pub use average::{
     AnchoredAverage, AverageInputs, AverageOutput, AverageRequest, AvwapBand, AvwapCacheKey,
 };
 pub use profile::{
-    FrvpCacheKey, FrvpEmpty, ProfileInputs, ProfileOutput, ProfileRequest, RangeProfile,
+    FrvpCacheKey, FrvpEmpty, LevelPrices, ProfileInputs, ProfileOutput, ProfileRequest,
+    RangeProfile,
 };

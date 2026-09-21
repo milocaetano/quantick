@@ -25,6 +25,36 @@ pub struct ProfileRequest {
     pub approximate_history: bool,
     pub value_area_pct: u8,
 }
+
+/// The single price each of a value area's three levels stands for.
+///
+/// A row is an interval, so naming it with one number is a reading, and the
+/// reading has to be the same one everywhere it shows. POC is the centre of
+/// its row, the way the footprint ladder reads it; VAH tops its row and VAL
+/// bottoms its, so a drawn bound hugs the area it bounds. Every surface that
+/// draws, names or catches a level takes its price from here — a plate that
+/// named a price its own line was not drawn at cost a trader the difference
+/// between the number he read and the number the chart marked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelPrices {
+    pub poc: Decimal,
+    pub vah: Decimal,
+    pub val: Decimal,
+}
+
+impl LevelPrices {
+    /// The three prices one profile's value area marks.
+    #[must_use]
+    pub fn of(profile: &VolumeProfile, area: ValueArea) -> Self {
+        Self {
+            poc: profile
+                .bucket_price(area.poc)
+                .saturating_add(profile.group() / Decimal::TWO),
+            vah: profile.bucket_price(area.vah.saturating_add(1)),
+            val: profile.bucket_price(area.val),
+        }
+    }
+}
 /// A range's fold of **closed** bars: where it got to, and the engine-side
 /// accumulator it got there with.
 ///
